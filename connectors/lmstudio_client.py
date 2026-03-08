@@ -4,6 +4,7 @@ import requests
 import json
 from typing import Any, Union, List
 
+
 class LMStudioConnector:
     def __init__(self, base_url: str = "http://localhost:1234", model_name: str = "local-model"):
         """
@@ -16,14 +17,43 @@ class LMStudioConnector:
         self.base_url = base_url.rstrip('/')
         self.model_name = model_name
         self.api_endpoint = f"{self.base_url}/v1/chat/completions"
+        self._connected = False
+
+    def connect(self) -> bool:
+        """
+        Test connection to LMStudio server
         
-        # Test connection on init
+        Returns:
+            True if connection successful, False otherwise
+        """
         try:
             response = requests.get(f"{self.base_url}/v1/models", timeout=5)
-            if response.status_code != 200:
+            if response.status_code == 200:
+                self._connected = True
+                return True
+            else:
                 print(f"Warning: Could not connect to LMStudio at {self.base_url}")
+                return False
+        except requests.exceptions.RequestException as e:
+            print(f"Warning: LMStudio not accessible at {self.base_url}: {e}")
+            return False
+
+    def health_check(self) -> bool:
+        """
+        Check if the connection is still healthy
+        
+        Returns:
+            True if connection is healthy, False otherwise
+        """
+        if not self._connected:
+            return self.connect()
+        
+        try:
+            response = requests.get(f"{self.base_url}/v1/models", timeout=5)
+            return response.status_code == 200
         except requests.exceptions.RequestException:
-            print(f"Warning: LMStudio not accessible at {self.base_url}")
+            self._connected = False
+            return False
 
     def contextualize(self, context_data: Union[Any, List[Any]]) -> str:
         """

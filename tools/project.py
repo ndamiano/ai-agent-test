@@ -1,25 +1,24 @@
+"""Generic project container for the agentic loop"""
+
 from typing import Optional
-from data_classes.world import WorldContext
-from generators.world_generator import WorldGenerator
-from repository.context_repository import ContextRepository
+from tools.tool_manager import ToolManager
+
 
 class Project:
     """
-    A bounded creative project with its own context and generators.
-    Examples: "Skyrim Mod", "D&D Campaign", "Visual Novel"
+    A generic project container with a tool manager.
+    No worldbuilding-specific logic or dependencies.
     """
     
     def __init__(self, name: str):
         """
-        Initialize a new AI project
+        Initialize a new project
         
         Args:
-            name: Human-readable project name (e.g. "Nordic Power Fantasy Mod")
+            name: Human-readable project name
         """
         self.name = name
-        self.context_repo = ContextRepository()
-        
-        self.world_gen = WorldGenerator(self.context_repo)
+        self.tool_manager = ToolManager()
     
     def __repr__(self):
         return f"Project('{self.name}')"

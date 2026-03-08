@@ -1,6 +1,7 @@
 """Minimal example of the refactored agentic loop"""
 
 from agents.main_agent import MainAgent
+from agents.agent_spawner import AgentSpawner
 from tools.project_manager import project_manager
 from tools.project import Project
 from tools.tool_manager import tool_manager

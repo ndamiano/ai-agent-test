@@ -64,6 +64,8 @@ class AgentSpawner:
             sub_agent: The sub-agent instance to configure
             selected_tool_names: List of tool names the sub-agent should have access to
         """
+        from tools.tool_manager import build_openai_tool_schema
+        
         # Get all tools and filter to only the selected ones
         all_tools = tool_manager.getTools()
         selected_tools = [tool for tool in all_tools if tool['name'] in selected_tool_names]
@@ -73,57 +75,7 @@ class AgentSpawner:
         openai_tools = []
         
         for tool in selected_tools:
-            # Convert parameter info to JSON schema
-            properties = {}
-            required = []
-            
-            # Get the parameters schema from the tool
-            params_schema = tool['parameters']
-            
-            # Handle the case where parameters is already in OpenAI format
-            if 'properties' in params_schema:
-                properties = params_schema['properties']
-                required = params_schema.get('required', [])
-            else:
-                # Legacy format - convert each parameter
-                for param_name, param_info in params_schema.items():
-                    param_type = param_info.get('type', 'string')
-                    
-                    # Convert Python types to JSON schema types
-                    if param_type == str or param_type == 'str':
-                        json_type = "string"
-                    elif param_type == int or param_type == 'int':
-                        json_type = "integer"
-                    elif param_type == float or param_type == 'float':
-                        json_type = "number"
-                    elif param_type == bool or param_type == 'bool':
-                        json_type = "boolean"
-                    elif param_type == list or param_type == 'list':
-                        json_type = "array"
-                    elif param_type == dict or param_type == 'dict':
-                        json_type = "object"
-                    else:
-                        json_type = "string"  # Default fallback
-                    
-                    properties[param_name] = {"type": json_type}
-                    
-                    if param_info.get('required', False):
-                        required.append(param_name)
-            
-            # Create OpenAI tool schema
-            openai_tool = {
-                "type": "function",
-                "function": {
-                    "name": tool['name'],
-                    "description": tool['description'],
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": required
-                    }
-                }
-            }
-            
+            openai_tool = build_openai_tool_schema(tool)
             openai_tools.append(openai_tool)
         
         # Set the filtered tools schema on the sub-agent

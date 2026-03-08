@@ -116,17 +116,21 @@ class MainAgent:
         
         try:
             if self.use_native_tools and hasattr(self.connector, 'generate_with_tools'):
-                return self._agentic_loop_with_native_tools()
+                return self._agentic_loop_with_native_tools(message)
             else:
-                return self._agentic_loop_with_text_fallback()
+                return self._agentic_loop_with_text_fallback(message)
                 
         except Exception as e:
             error_response = f"Sorry, I encountered an error: {str(e)}"
             self.message_history.append({"role": "assistant", "content": error_response})
             return error_response
 
-    def _agentic_loop_with_native_tools(self) -> str:
-        """Handle chat using native tool calling with proper agentic loop"""
+    def _agentic_loop_with_native_tools(self, user_message: str) -> str:
+        """Handle chat using native tool calling with proper agentic loop
+        
+        Args:
+            user_message: The original user message for logging purposes
+        """
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
         
@@ -140,7 +144,7 @@ class MainAgent:
             
             if "error" in response:
                 # Fallback to text-based if native tools fail
-                return self._agentic_loop_with_text_fallback()
+                return self._agentic_loop_with_text_fallback(user_message)
             
             # Process the response
             choice = response.get("choices", [{}])[0]
@@ -165,7 +169,7 @@ class MainAgent:
                         
                         # Log the tool call
                         log_agent_decision(
-                            user_input=message,
+                            user_input=user_message,
                             decision=f"Executing tool: {tool_name}",
                             details={"tool_name": tool_name, "arguments": arguments}
                         )
@@ -196,8 +200,12 @@ class MainAgent:
         # If we hit max iterations, return the last response
         return content
 
-    def _agentic_loop_with_text_fallback(self) -> str:
-        """Handle chat using text-based tool calling with proper agentic loop"""
+    def _agentic_loop_with_text_fallback(self, user_message: str) -> str:
+        """Handle chat using text-based tool calling with proper agentic loop
+        
+        Args:
+            user_message: The original user message for logging purposes
+        """
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
         

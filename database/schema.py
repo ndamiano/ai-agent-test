@@ -5,8 +5,10 @@ from typing import Optional
 # Import the vector store initialization function
 from .vector_store import init_vector_store
 
-# Database path constant that reads from environment variable with fallback
-DB_PATH = os.environ.get("TASK_DB_PATH", "data/tasks.db")
+# Database path function that reads from environment variable with fallback
+def get_db_path():
+    """Get the current database path from environment variable."""
+    return os.environ.get("TASK_DB_PATH", "data/tasks.db")
 
 
 def init_db(db_path: Optional[str] = None) -> None:
@@ -20,7 +22,7 @@ def init_db(db_path: Optional[str] = None) -> None:
         db_path: Optional path to database file. If None, uses DB_PATH constant.
     """
     if db_path is None:
-        db_path = DB_PATH
+        db_path = get_db_path()
     
     # Ensure directory exists
     dir_path = os.path.dirname(db_path)
@@ -28,8 +30,10 @@ def init_db(db_path: Optional[str] = None) -> None:
         os.makedirs(dir_path, exist_ok=True)
     
     with sqlite3.connect(db_path) as conn:
-        # Enable foreign key constraints
+        # Enable foreign key constraints and WAL mode for better concurrent read throughput
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         
         # Create tasks table
         conn.execute("""
@@ -98,4 +102,4 @@ def init_db(db_path: Optional[str] = None) -> None:
 if __name__ == "__main__":
     # Initialize database when run directly
     init_db()
-    print(f"Database initialized at: {DB_PATH}")
+    print(f"Database initialized at: {get_db_path()}")

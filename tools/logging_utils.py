@@ -3,6 +3,8 @@
 import json
 import datetime
 import os
+import logging
+import threading
 from typing import Any, Dict, Optional
 
 
@@ -13,6 +15,17 @@ class ToolLogger:
         self.log_dir = log_dir
         self.ensure_log_dir()
         self.session_id = self._generate_session_id()
+        self._lock = threading.Lock()
+        
+        # Set up proper Python logging
+        self._setup_logging()
+        
+        # Create a file handler for JSONL logs
+        self._jsonl_handler = logging.FileHandler(
+            os.path.join(self.log_dir, f"{self.session_id}.jsonl"),
+            encoding='utf-8'
+        )
+        self._jsonl_handler.setFormatter(logging.Formatter('%(message)s'))
         
     def ensure_log_dir(self):
         """Ensure the log directory exists"""
@@ -23,6 +36,23 @@ class ToolLogger:
         """Generate a unique session ID"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"session_{timestamp}"
+    
+    def _setup_logging(self):
+        """Set up Python logging configuration"""
+        # Create logger
+        self.logger = logging.getLogger(f"tool_logger_{self.session_id}")
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Create console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        
+        # Add handlers to logger
+        self.logger.addHandler(console_handler)
     
     def log_tool_call(self, tool_name: str, parameters: Dict[str, Any], result: Any, error: Optional[str] = None):
         """Log a tool call with all relevant information"""
@@ -39,13 +69,13 @@ class ToolLogger:
         
         self._write_log(log_entry)
         
-        # Also print to console for immediate feedback
+        # Log to console using proper logging
         if error:
-            print(f"❌ Tool '{tool_name}' failed: {error}")
+            self.logger.error(f"Tool '{tool_name}' failed: {error}")
         else:
-            print(f"✅ Tool '{tool_name}' executed successfully")
-            print(f"   Parameters: {parameters}")
-            print(f"   Result: {result}")
+            self.logger.info(f"Tool '{tool_name}' executed successfully")
+            self.logger.debug(f"Parameters: {parameters}")
+            self.logger.debug(f"Result: {result}")
     
     def log_agent_decision(self, user_input: str, decision: str, details: Optional[Dict[str, Any]] = None):
         """Log agent decisions and reasoning"""
@@ -60,10 +90,10 @@ class ToolLogger:
         
         self._write_log(log_entry)
         
-        # Print to console
-        print(f"🤖 Agent decision: {decision}")
+        # Log to console
+        self.logger.info(f"Agent decision: {decision}")
         if details:
-            print(f"   Details: {details}")
+            self.logger.debug(f"Details: {details}")
     
     def log_error(self, error_type: str, error_message: str, context: Optional[Dict[str, Any]] = None):
         """Log general errors"""
@@ -78,10 +108,10 @@ class ToolLogger:
         
         self._write_log(log_entry)
         
-        # Print to console
-        print(f"🚨 Error ({error_type}): {error_message}")
+        # Log to console
+        self.logger.error(f"Error ({error_type}): {error_message}")
         if context:
-            print(f"   Context: {context}")
+            self.logger.debug(f"Context: {context}")
     
     def error(self, message: str, context: Optional[Dict[str, Any]] = None):
         """Convenience method for logging errors (compatible with standard logging interface)"""
@@ -103,20 +133,21 @@ class ToolLogger:
         
         self._write_log(log_entry)
         
-        # Print to console
-        print(f"ℹ️ Info: {message}")
+        # Log to console
+        self.logger.info(f"Info: {message}")
         if context:
-            print(f"   Context: {context}")
+            self.logger.debug(f"Context: {context}")
     
     def _write_log(self, log_entry: Dict[str, Any]):
         """Write a log entry to the session log file"""
-        log_file = os.path.join(self.log_dir, f"{self.session_id}.jsonl")
-        
-        try:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
-        except Exception as e:
-            print(f"Failed to write log entry: {e}")
+        with self._lock:
+            try:
+                # Write to JSONL file
+                log_file = os.path.join(self.log_dir, f"{self.session_id}.jsonl")
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+            except Exception as e:
+                self.logger.error(f"Failed to write log entry: {e}")
     
     def get_session_log_path(self) -> str:
         """Get the path to the current session log file"""

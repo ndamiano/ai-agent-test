@@ -26,6 +26,8 @@ class TaskRunner:
             return 'sequential'
         elif any(keyword in goal_lower for keyword in ['world', 'setting', 'universe', 'map']):
             return 'sequential'
+        elif any(keyword in goal_lower for keyword in ['research', 'find', 'search', 'compare', 'check', 'analyze', 'investigate', 'gather', 'collect', 'review', 'examine', 'study', 'explore', 'identify']):
+            return 'parallel'
         else:
             return 'sequential'
     
@@ -63,13 +65,14 @@ class TaskRunner:
         task_id = task_dict["id"]
         logger.info(f"Background task created: {task_id}")
         
-        # Plan the task
-        self.planner.run(goal, task_id)
-        logger.info(f"Background task planned: {task_id}")
-        
-        # Execute in background thread
+        # Execute everything in background thread
         def run_task():
             try:
+                # Plan the task
+                self.planner.run(goal, task_id)
+                logger.info(f"Background task planned: {task_id}")
+                
+                # Execute the task
                 self.orchestrator.run_task(task_id)
                 logger.info(f"Background task completed: {task_id}")
             except Exception as e:

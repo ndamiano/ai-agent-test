@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import logging
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from threading import Lock
@@ -17,6 +18,13 @@ def _get_db_path():
     return os.environ.get("TASK_DB_PATH", "data/tasks.db")
 
 
+def _connect():
+    """Create a database connection with foreign key constraints enabled."""
+    conn = sqlite3.connect(_get_db_path())
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 class TaskStore:
     """Singleton database interface for task management operations."""
     
@@ -28,8 +36,8 @@ class TaskStore:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super(TaskStore, cls).__new__(cls)
-                    # Initialize database on instantiation
-                    init_db()
+                    # Initialize database on instantiation with dynamic path
+                    init_db(_get_db_path())
         return cls._instance
     
     @classmethod
@@ -217,7 +225,6 @@ class TaskStore:
             # Generate a context key based on the subtask goal
             goal = subtask.get('goal', 'output')
             # Clean up the goal to make a good context key
-            import re
             context_key = re.sub(r'[^a-zA-Z0-9_]', '_', goal.lower())[:50]
             if not context_key:
                 context_key = f"subtask_output_{subtask_id[:8]}"
@@ -226,7 +233,6 @@ class TaskStore:
             self.write_context(task_id, context_key, output, subtask_id=subtask_id)
         except Exception as e:
             # If context storage fails, log but don't fail the main operation
-            import logging
             logging.warning(f"Failed to store context for subtask {subtask_id}: {e}")
     
     def get_ready_subtasks(self, task_id: str) -> List[Dict]:
@@ -301,16 +307,9 @@ class TaskStore:
             embedding = embedding_client.embed(value)
             store_embedding(context_id, task_id, embedding)
         except Exception as e:
-            # Log error and store a flag indicating embedding failed
+            # Log error but don't corrupt the stored value
             logging.error(f"Failed to create embedding for context '{key}' in task {task_id}: {e}")
-            # Store a flag in the context_store to indicate embedding failed
-            with sqlite3.connect(_get_db_path()) as conn:
-                conn.execute("""
-                    UPDATE context_store 
-                    SET value = value || ' [EMBEDDING_FAILED]'
-                    WHERE id = ?
-                """, (context_id,))
-                conn.commit()
+            # Don't modify the stored value - it's still usable for exact-key lookups
     
     def get_context(self, task_id: str, key: str) -> Optional[str]:
         """Get a context value by key for a task."""
@@ -322,7 +321,13 @@ class TaskStore:
             """, (task_id, key))
             
             row = cursor.fetchone()
-            return row[0] if row else None
+            if row:
+                value = row[0]
+                # Strip [EMBEDDING_FAILED] suffix if present
+                if value.endswith(' [EMBEDDING_FAILED]'):
+                    value = value[:-20]  # Remove the suffix
+                return value
+            return None
     
     def get_all_context(self, task_id: str) -> Dict[str, str]:
         """Get all context key-value pairs for a task."""
@@ -378,11 +383,48 @@ class TaskStore:
         """
         from .vector_store import retrieve
         
-        # Embed the query text
-        query_embedding = embedding_client.embed(query)
+        # Try to embed the query text for semantic search
+        try:
+            query_embedding = embedding_client.embed(query)
+            # Retrieve similar context entries
+            return retrieve(task_id, query_embedding, k)
+        except Exception as e:
+            # If embedding fails, fall back to keyword-based search
+            import logging
+            logging.warning(f"Semantic search failed for query '{query}': {e}. Falling back to keyword search.")
+            return self._keyword_search_context(task_id, query, k)
+    
+    def _keyword_search_context(self, task_id: str, query: str, k: int = 5) -> List[Dict]:
+        """
+        Fallback keyword-based search when semantic search fails.
         
-        # Retrieve similar context entries
-        return retrieve(task_id, query_embedding, k)
+        Args:
+            task_id: The ID of the task to search within
+            query: Plain text query to search for
+            k: Number of results to return
+            
+        Returns:
+            List of context entries matching the query
+        """
+        with sqlite3.connect(_get_db_path()) as conn:
+            # Use LIKE for keyword search, order by length of value (shorter matches first)
+            cursor = conn.execute("""
+                SELECT id, key, value
+                FROM context_store 
+                WHERE task_id = ? AND value LIKE ?
+                ORDER BY LENGTH(value)
+                LIMIT ?
+            """, (task_id, f"%{query}%", k))
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'id': row[0],
+                    'key': row[1], 
+                    'value': row[2]
+                })
+            
+            return results
 
 
 # Global instance

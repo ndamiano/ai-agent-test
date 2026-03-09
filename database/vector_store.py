@@ -35,9 +35,9 @@ def init_vector_store(db_path: Optional[str] = None) -> None:
         db_path: Optional path to database file. If None, uses the same path as the main database.
     """
     if db_path is None:
-        # Import DB_PATH from schema module to maintain consistency
-        from database.schema import DB_PATH
-        db_path = DB_PATH
+        # Import get_db_path from schema module to maintain consistency
+        from database.schema import get_db_path
+        db_path = get_db_path()
     
     # Ensure directory exists
     os.makedirs(os.path.dirname(db_path), exist_ok=True) if os.path.dirname(db_path) else None
@@ -73,8 +73,8 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         db_path: Optional path to database file. If None, uses the same path as the main database.
     """
     if db_path is None:
-        from database.schema import DB_PATH
-        db_path = DB_PATH
+        from database.schema import get_db_path
+        db_path = get_db_path()
     
     with sqlite3.connect(db_path) as conn:
         # Enable extension loading and load sqlite-vec extension
@@ -110,8 +110,8 @@ def retrieve(task_id: str, query_embedding: List[float], k: int = 5, db_path: Op
         List of dictionaries with context_id, distance, key, and value fields
     """
     if db_path is None:
-        from database.schema import DB_PATH
-        db_path = DB_PATH
+        from database.schema import get_db_path
+        db_path = get_db_path()
     
     with sqlite3.connect(db_path) as conn:
         # Enable extension loading
@@ -162,8 +162,8 @@ def retrieve_global(query_embedding: List[float], k: int = 5, db_path: Optional[
         List of dictionaries with context_id, distance, key, and value fields
     """
     if db_path is None:
-        from database.schema import DB_PATH
-        db_path = DB_PATH
+        from database.schema import get_db_path
+        db_path = get_db_path()
     
     with sqlite3.connect(db_path) as conn:
         # Enable extension loading
@@ -203,4 +203,5 @@ def retrieve_global(query_embedding: List[float], k: int = 5, db_path: Optional[
 if __name__ == "__main__":
     # Initialize vector store when run directly
     init_vector_store()
-    print(f"Vector store initialized at: {DB_PATH}")
+    from database.schema import get_db_path
+    print(f"Vector store initialized at: {get_db_path()}")

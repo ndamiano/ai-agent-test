@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -169,9 +168,8 @@ class Orchestrator:
                 future.cancel()
             raise
         
-        finally:
-            # Ensure executor shutdown to prevent thread leaks
-            self._executor.shutdown(wait=False)
+        # Note: Not shutting down the shared executor here to allow reuse across tasks
+        # The executor will be properly cleaned up when the Orchestrator instance is destroyed
         
         # All subtasks completed successfully
         self.task_store.update_task_status(task_id, 'completed')
@@ -204,38 +202,17 @@ class Orchestrator:
             except KeyError:
                 raise ValueError(f"Agent {agent_id} not found")
             
-            # Build context for the agent
-            context_text = ""
-            
-            # Retrieve context from task store
-            retrieved_context = self.task_store.retrieve_context(
-                subtask['task_id'], 
-                subtask['goal'], 
-                k=5
-            )
-            
-            if retrieved_context:
-                context_text += "Retrieved context:\n"
-                for i, ctx in enumerate(retrieved_context, 1):
-                    context_text += f"{i}. {ctx}\n"
-                context_text += "\n"
-            
-            # Add explicitly listed context keys
-            context_keys = subtask.get('context_keys', [])
-            if context_keys:
-                context_text += "Explicit context:\n"
-                for key in context_keys:
-                    context_value = self.task_store.get_context(subtask['task_id'], key)
-                    if context_value:
-                        context_text += f"- {key}: {context_value}\n"
-                context_text += "\n"
+            # Use ContextBuilder to build the context
+            from agents.context_builder import ContextBuilder
+            context_builder = ContextBuilder(self.task_store)
+            context_text = context_builder.build_for_subtask(subtask['task_id'], subtask)
             
             # Instantiate the agent
             from agents.main_agent import MainAgent
             agent = MainAgent(agent_id)
             
             # Build the message with context
-            message = f"{context_text}Task: {subtask['goal']}"
+            message = f"{context_text}\n\nTask: {subtask['goal']}"
             
             # Execute the agent
             output = agent.chat(message)

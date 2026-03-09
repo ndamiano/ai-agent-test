@@ -32,10 +32,8 @@ class EmbeddingClient:
     
     @property
     def endpoint(self):
-        """Lazy property to construct endpoint URL."""
-        if self._endpoint is None:
-            self._endpoint = f"{self.base_url}/v1/embeddings"
-        return self._endpoint
+        """Property to construct endpoint URL dynamically."""
+        return f"{self.base_url}/v1/embeddings"
     
     def embed(self, text: str) -> List[float]:
         """

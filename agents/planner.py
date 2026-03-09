@@ -1,9 +1,7 @@
 """Planner agent for decomposing user goals into ordered subtasks"""
 
 import json
-import sqlite3
 import os
-from datetime import datetime
 from typing import Dict, List, Any, Optional
 from agents.main_agent import MainAgent
 from agents.agent_store import AgentStore
@@ -144,12 +142,13 @@ RULES:
             created_subtasks.append(subtask)
         
         # Second pass: update depends_on with real IDs
-        for subtask in created_subtasks:
-            depends_on_positions = subtask.get("depends_on", [])
+        # Iterate through the original plan subtasks, not the created_subtasks
+        for i, subtask_data in enumerate(subtasks):
+            depends_on_positions = subtask_data.get("depends_on", [])
             if depends_on_positions:
                 real_depends_on = [position_to_id[pos] for pos in depends_on_positions if pos in position_to_id]
                 # Update the subtask in the database using task_store method
-                self.task_store.update_subtask_depends_on(subtask["id"], real_depends_on)
+                self.task_store.update_subtask_depends_on(created_subtasks[i]["id"], real_depends_on)
         
         # Log the planning event
         self.task_store.log_event(task_id, "task_planned", f"Created {len(created_subtasks)} subtasks")

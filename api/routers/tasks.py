@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, WebSocket
 from typing import List, Optional
 from api.models.requests import CreateTaskRequest, AskRequest
 from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse, AskResponse
 from agents.task_runner import task_runner
 from database.task_store import task_store
+from api.websocket.manager import manager
 
 router = APIRouter(
     prefix="/tasks",
@@ -19,7 +20,8 @@ async def create_task(request: CreateTaskRequest):
     """
     task_id = task_runner.create_and_run_background(
         goal=request.goal,
-        execution_mode=request.execution_mode
+        execution_mode=request.execution_mode,
+        broadcast_fn=lambda event: manager.broadcast(task_id, event)
     )
     task = task_store.get_task(task_id)
     return TaskResponse(**task)
@@ -43,7 +45,7 @@ async def get_task(task_id: str):
         subtasks = task_store.get_subtasks_for_task(task_id)
         events = task_store.get_events(task_id)
         context_keys = list(task_store.get_all_context(task_id).keys())
-        
+
         return TaskDetailResponse(
             id=task["id"],
             goal=task["goal"],
@@ -97,3 +99,38 @@ async def cancel_task(task_id: str):
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return
+
+@router.websocket("/{task_id}/ws")
+async def websocket_endpoint(websocket: WebSocket, task_id: str):
+    """
+    WebSocket endpoint for real-time task updates.
+    Sends task status on connect and all subsequent events.
+    """
+    await manager.connect(task_id, websocket)
+
+    try:
+        # Send initial task status
+        task = task_store.get_task(task_id)
+        await websocket.send_json({
+            "type": "task_status",
+            "task_id": task_id,
+            "task": task
+        })
+
+        # Keep the connection open until client disconnects
+        while True:
+            # Wait for client messages (if any) or just keep connection alive
+            data = await websocket.receive_text()
+            # For now, we don't process client messages, just keep connection alive
+    except Exception as e:
+        # Handle task not found or other errors
+        if "not found" in str(e).lower():
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Task {task_id} not found",
+                "task_id": task_id
+            })
+        # Client disconnected or other error
+        pass
+    finally:
+        manager.disconnect(task_id, websocket)

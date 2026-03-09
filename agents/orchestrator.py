@@ -1,7 +1,10 @@
 import os
 import logging
+import asyncio
+import queue
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 import time
 from datetime import datetime
 
@@ -23,42 +26,13 @@ class Orchestrator:
 
         self.logger.log_agent_decision("Orchestrator initialization", f"Initialized with {max_workers} max parallel workers")
 
-    def run_task(self, task_id: str) -> None:
-        """
-        Main entry point for running a task.
-        
-        Args:
-            task_id: The ID of the task to run
-            
-        Raises:
-            Exception: Re-raises any unhandled exceptions after logging
-        """
-        try:
-            self.logger.info(f"Starting task execution for task_id: {task_id}")
-            
-            # Load the task
-            task = self.task_store.get_task(task_id)
-            
-            # Get execution mode and route accordingly
-            execution_mode = task.get('execution_mode', 'sequential')
-            
-            if execution_mode == 'sequential':
-                self._run_sequential(task_id)
-            elif execution_mode == 'parallel':
-                self._run_parallel(task_id)
-            else:
-                raise ValueError(f"Unknown execution mode: {execution_mode}")
-                
-        except Exception as e:
-            self.logger.error(f"Task {task_id} failed with error: {str(e)}")
-            raise
-
-    def _run_sequential(self, task_id: str) -> None:
+    def _run_sequential(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> None:
         """
         Execute subtasks sequentially, respecting dependencies.
         
         Args:
             task_id: The ID of the task to run
+            broadcast_fn: Optional callback function to broadcast events to WebSocket clients
         """
         self.logger.info(f"Running task {task_id} in sequential mode")
         
@@ -83,7 +57,7 @@ class Orchestrator:
             subtask = ready_subtasks[0]
             try:
                 self.logger.info(f"Executing subtask {subtask['id']} for task {task_id}")
-                output = self._execute_subtask(subtask)
+                output = self._execute_subtask(subtask, broadcast_fn)
                 self.logger.info(f"Subtask {subtask['id']} completed successfully")
                 
             except Exception as e:
@@ -98,12 +72,13 @@ class Orchestrator:
         self.task_store.update_task_status(task_id, 'completed')
         self.logger.info(f"Task {task_id} completed successfully")
 
-    def _run_parallel(self, task_id: str) -> None:
+    def _run_parallel(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> None:
         """
         Execute subtasks in parallel, respecting dependencies.
         
         Args:
             task_id: The ID of the task to run
+            broadcast_fn: Optional callback function to broadcast events to WebSocket clients
         """
         self.logger.info(f"Running task {task_id} in parallel mode")
         
@@ -130,7 +105,7 @@ class Orchestrator:
                     if subtask['id'] not in in_flight_subtasks:
                         # Remove pre-submission status update - trust _execute_subtask to set in_progress when it actually starts
                         self.logger.info(f"Submitting subtask {subtask['id']} for parallel execution")
-                        future = self._executor.submit(self._execute_subtask, subtask)
+                        future = self._executor.submit(self._execute_subtask, subtask, broadcast_fn)
                         futures_to_subtask[future] = subtask
                         in_flight_subtasks.add(subtask['id'])
                 
@@ -179,7 +154,7 @@ class Orchestrator:
         self.task_store.update_task_status(task_id, 'completed')
         self.logger.info(f"Task {task_id} completed successfully")
 
-def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = None) -> str:
+    def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = None) -> str:
         """
         Execute a single subtask.
 
@@ -200,43 +175,52 @@ def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = Non
             self.task_store.update_subtask_status(subtask_id, 'in_progress')
             self.logger.info(f"Subtask {subtask_id} started")
             if broadcast_fn:
-                broadcast_fn({
-                    'type': 'subtask_started',
-                    'message': f"Subtask {subtask_id} started",
-                    'task_id': subtask['task_id'],
-                    'subtask_id': subtask_id,
-                    'timestamp': datetime.now().isoformat()
-                })
-            
+                # Use asyncio.run_coroutine_threadsafe for thread-safe async execution
+                import asyncio
+                try:
+                    # Get the main event loop
+                    loop = asyncio.get_event_loop()
+                    # Schedule the coroutine in the main event loop
+                    asyncio.run_coroutine_threadsafe(broadcast_fn({
+                        'type': 'subtask_started',
+                        'message': f"Subtask {subtask_id} started",
+                        'task_id': subtask['task_id'],
+                        'subtask_id': subtask_id,
+                        'timestamp': datetime.now().isoformat()
+                    }), loop)
+                except RuntimeError:
+                    # No event loop available, skip broadcasting
+                    pass
+
             # Load agent definition
             agent_id = subtask['agent_id']
             try:
                 agent_definition = self.agent_store.get(agent_id)
             except KeyError:
                 raise ValueError(f"Agent {agent_id} not found")
-            
+
             # Re-fetch the subtask from the DB immediately before building context
             # to ensure we have the latest dependency information
             fresh_subtask = self.task_store.get_subtask(subtask_id)
-            
+
             # Use ContextBuilder to build the context
             from agents.context_builder import ContextBuilder
             context_builder = ContextBuilder(self.task_store)
             context_text = context_builder.build_for_subtask(fresh_subtask['task_id'], fresh_subtask)
-            
+
             # Instantiate the agent
             from agents.main_agent import MainAgent
             agent = MainAgent(agent_id)
-            
+
             # Build the message with context
             message = f"{context_text}\n\nTask: {fresh_subtask['goal']}"
-            
+
             # Execute the agent
             output = agent.chat(message)
-            
+
             # Store the output and update status to completed
             self.task_store.set_subtask_output(subtask_id, output)
-            
+
             # Log completion
             output_preview = output[:100] + "..." if len(output) > 100 else output
             self.logger.info(f"Subtask {subtask_id} completed. Output preview: {output_preview}")
@@ -248,9 +232,9 @@ def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = Non
                     'subtask_id': subtask_id,
                     'timestamp': datetime.now().isoformat()
                 })
-            
+
             return output
-            
+
         except Exception as e:
             # Update subtask status to failed
             self.task_store.update_subtask_status(subtask_id, 'failed')
@@ -263,4 +247,35 @@ def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = Non
                     'subtask_id': subtask_id,
                     'timestamp': datetime.now().isoformat()
                 })
+            raise
+
+    def run_task(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> None:
+        """
+        Main entry point for running a task.
+
+        Args:
+            task_id: The ID of the task to run
+            broadcast_fn: Optional callback function to broadcast events to WebSocket clients
+
+        Raises:
+            Exception: Re-raises any unhandled exceptions after logging
+        """
+        try:
+            self.logger.info(f"Starting task execution for task_id: {task_id}")
+
+            # Load the task
+            task = self.task_store.get_task(task_id)
+
+            # Get execution mode and route accordingly
+            execution_mode = task.get('execution_mode', 'sequential')
+
+            if execution_mode == 'sequential':
+                self._run_sequential(task_id, broadcast_fn)
+            elif execution_mode == 'parallel':
+                self._run_parallel(task_id, broadcast_fn)
+            else:
+                raise ValueError(f"Unknown execution mode: {execution_mode}")
+
+        except Exception as e:
+            self.logger.error(f"Task {task_id} failed with error: {str(e)}")
             raise

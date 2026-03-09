@@ -1,3 +1,7 @@
 requests
 python-dotenv
 sqlite-vec
+fastapi
+uvicorn
+websockets
+pydantic

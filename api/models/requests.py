@@ -1,0 +1,21 @@
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+
+class TaskCreateRequest(BaseModel):
+    goal: str
+    execution_mode: Optional[str] = "sequential"
+    subtasks: Optional[List[Dict[str, Any]]] = []
+
+class TaskUpdateRequest(BaseModel):
+    status: Optional[str] = None
+    goal: Optional[str] = None
+
+class AgentCreateRequest(BaseModel):
+    name: str
+    type: str
+    capabilities: Optional[List[str]] = []
+
+class AgentUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    capabilities: Optional[List[str]] = None

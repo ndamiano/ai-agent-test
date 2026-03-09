@@ -8,8 +8,11 @@ from tools.tool_manager import ToolManager, tool_manager
 class TestToolManager(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures before each test method."""
-        # Create a fresh ToolManager instance for each test
+        # Clear any existing tools to ensure clean state
+        # Since ToolManager is a singleton, we need to clear the registry
         self.tool_manager = ToolManager()
+        # Clear the registry by creating a new empty one
+        self.tool_manager._tools_registry = {}
         
     def test_register_tool(self):
         """Test registering a tool with the manager."""

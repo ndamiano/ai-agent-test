@@ -104,7 +104,7 @@ class MainAgent:
         
         while iteration < max_iterations:
             # Prepare messages for native tool calling
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+            messages = [{"role": "system", "content": self.system_context}]
             messages.extend(self.message_history)
             
             # Get response with tools
@@ -136,6 +136,7 @@ class MainAgent:
                     tool_name = function.get("name")
                     tool_call_id = tool_call.get("id")
                     
+                    arguments = {}
                     try:
                         arguments = json.loads(function.get("arguments", "{}"))
                         

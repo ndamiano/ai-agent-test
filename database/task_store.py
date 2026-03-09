@@ -6,7 +6,12 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from threading import Lock
 
-from .schema import init_db, DB_PATH
+from .schema import init_db
+
+
+def _get_db_path():
+    """Get the current database path from environment variable."""
+    return os.environ.get("TASK_DB_PATH", "data/tasks.db")
 
 
 class TaskStore:
@@ -29,7 +34,7 @@ class TaskStore:
         task_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 INSERT INTO tasks (id, goal, status, execution_mode, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -47,7 +52,7 @@ class TaskStore:
     
     def get_task(self, task_id: str) -> Dict:
         """Get a task by ID, raises KeyError if not found."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, goal, status, execution_mode, created_at, updated_at
@@ -66,7 +71,7 @@ class TaskStore:
         if status not in valid_statuses:
             raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 UPDATE tasks 
                 SET status = ?, updated_at = ?
@@ -76,7 +81,7 @@ class TaskStore:
     
     def list_tasks(self, status: Optional[str] = None) -> List[Dict]:
         """List all tasks, optionally filtered by status."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             if status:
                 cursor = conn.execute("""
@@ -97,7 +102,7 @@ class TaskStore:
         subtask_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 INSERT INTO subtasks (id, task_id, agent_id, status, goal, input_context, 
                                     depends_on, position, created_at, updated_at)
@@ -125,7 +130,7 @@ class TaskStore:
     
     def get_subtask(self, subtask_id: str) -> Dict:
         """Get a subtask by ID, raises KeyError if not found."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, task_id, agent_id, status, goal, input_context, output, 
@@ -148,7 +153,7 @@ class TaskStore:
     
     def get_subtasks_for_task(self, task_id: str) -> List[Dict]:
         """Get all subtasks for a task, ordered by position."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, task_id, agent_id, status, goal, input_context, output, 
@@ -174,7 +179,7 @@ class TaskStore:
         if status not in valid_statuses:
             raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 UPDATE subtasks 
                 SET status = ?, updated_at = ?
@@ -184,7 +189,7 @@ class TaskStore:
     
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
         """Set the output of a subtask, also updates status to completed."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 UPDATE subtasks 
                 SET output = ?, status = 'completed', updated_at = ?
@@ -194,7 +199,7 @@ class TaskStore:
     
     def get_ready_subtasks(self, task_id: str) -> List[Dict]:
         """Get subtasks that are ready to run (pending status and all dependencies completed)."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             # Get all pending subtasks for the task
             cursor = conn.execute("""
@@ -242,7 +247,7 @@ class TaskStore:
         context_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 INSERT INTO context_store (id, task_id, subtask_id, key, value, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -251,7 +256,7 @@ class TaskStore:
     
     def get_context(self, task_id: str, key: str) -> Optional[str]:
         """Get a context value by key for a task."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             cursor = conn.execute("""
                 SELECT value FROM context_store 
                 WHERE task_id = ? AND key = ? 
@@ -263,7 +268,7 @@ class TaskStore:
     
     def get_all_context(self, task_id: str) -> Dict[str, str]:
         """Get all context key-value pairs for a task."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             cursor = conn.execute("""
                 SELECT key, value FROM context_store 
                 WHERE task_id = ? 
@@ -283,7 +288,7 @@ class TaskStore:
         event_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 INSERT INTO task_events (id, task_id, subtask_id, event_type, message, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -292,7 +297,7 @@ class TaskStore:
     
     def get_events(self, task_id: str) -> List[Dict]:
         """Get all events for a task, ordered by creation time."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(_get_db_path()) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, task_id, subtask_id, event_type, message, created_at

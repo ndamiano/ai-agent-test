@@ -36,7 +36,7 @@ class Orchestrator:
         max_workers = int(os.getenv('MAX_PARALLEL_WORKERS', '2'))
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         
-        self.logger.info(f"Orchestrator initialized with {max_workers} max parallel workers")
+        self.logger.log_agent_decision("Orchestrator initialization", f"Initialized with {max_workers} max parallel workers")
 
     def run_task(self, task_id: str) -> None:
         """

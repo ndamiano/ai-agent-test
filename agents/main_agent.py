@@ -15,15 +15,17 @@ class MainAgent:
     Implements a proper agentic loop: send messages → receive response → execute tool calls → repeat.
     """
     
-    def __init__(self, agent_id: Optional[str] = None):
+    def __init__(self, agent_id: Optional[str] = None, max_history_length: int = 20):
         """Initialize the agent with connector and tool manager access
         
         Args:
             agent_id: Optional agent ID to load from agent store. If provided,
                      uses the agent's system prompt and tool list instead of defaults.
+            max_history_length: Maximum number of messages to keep in history (default: 20)
         """
         self.connector = get_connector("main_agent", "conversation", "text")
         self.message_history: List[Dict[str, str]] = []
+        self.max_history_length = max_history_length
         
         # Load agent from store if agent_id provided
         if agent_id:
@@ -66,6 +68,12 @@ class MainAgent:
     def clear_history(self):
         """Clear the message history"""
         self.message_history.clear()
+    
+    def _trim_history(self):
+        """Trim message history to stay within length limits"""
+        if len(self.message_history) > self.max_history_length:
+            # Keep the most recent messages
+            self.message_history = self.message_history[-self.max_history_length:]
     
     def chat(self, message: str) -> str:
         """

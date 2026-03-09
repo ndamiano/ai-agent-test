@@ -48,6 +48,10 @@ class TestPlannerAgent(unittest.TestCase):
         if os.path.exists(self.temp_db.name):
             os.unlink(self.temp_db.name)
         
+        # Reset TaskStore singleton to ensure test isolation
+        from database.task_store import TaskStore
+        TaskStore.reset()
+        
         # Restore original environment variable
         if self.original_db_path:
             os.environ["TASK_DB_PATH"] = self.original_db_path

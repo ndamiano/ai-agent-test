@@ -75,7 +75,8 @@ def init_db(db_path: Optional[str] = None) -> None:
                 value TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
-                FOREIGN KEY (subtask_id) REFERENCES subtasks (id) ON DELETE CASCADE
+                FOREIGN KEY (subtask_id) REFERENCES subtasks (id) ON DELETE CASCADE,
+                UNIQUE (task_id, key)
             )
         """)
         

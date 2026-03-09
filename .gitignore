@@ -26,3 +26,6 @@ logs/
 
 # Database
 data/
+
+# Outputs from our AI
+outputs/

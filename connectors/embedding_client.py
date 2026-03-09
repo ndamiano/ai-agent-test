@@ -19,6 +19,7 @@ class EmbeddingClient:
         self._base_url = base_url
         self._model_name = model_name
         self._endpoint = None
+        self._session = None  # Add session for connection pooling
     
     @property
     def base_url(self):
@@ -48,8 +49,12 @@ class EmbeddingClient:
         Raises:
             RuntimeError: If the server is unreachable or returns a non-200 status
         """
+        # Initialize session for connection pooling if not already done
+        if self._session is None:
+            self._session = requests.Session()
+        
         try:
-            response = requests.post(
+            response = self._session.post(
                 self.endpoint,
                 json={
                     "model": self.model_name,

@@ -14,19 +14,18 @@ class ToolLogger:
     def __init__(self, log_dir: str = "logs"):
         self.log_dir = log_dir
         self.ensure_log_dir()
-        self.session_id = self._generate_session_id()
         self._lock = threading.Lock()
         
-        # Set up proper Python logging
+        # Set up proper Python logging with fixed logger name
         self._setup_logging()
         
         # Create a file handler for JSONL logs
         self._jsonl_handler = logging.FileHandler(
-            os.path.join(self.log_dir, f"{self.session_id}.jsonl"),
+            os.path.join(self.log_dir, f"tool_logger.jsonl"),
             encoding='utf-8'
         )
         self._jsonl_handler.setFormatter(logging.Formatter('%(message)s'))
-        
+    
     def ensure_log_dir(self):
         """Ensure the log directory exists"""
         if not os.path.exists(self.log_dir):
@@ -39,8 +38,8 @@ class ToolLogger:
     
     def _setup_logging(self):
         """Set up Python logging configuration"""
-        # Create logger
-        self.logger = logging.getLogger(f"tool_logger_{self.session_id}")
+        # Create logger with fixed name
+        self.logger = logging.getLogger("tool_logger")
         self.logger.setLevel(logging.DEBUG)
         
         # Create console handler
@@ -58,7 +57,6 @@ class ToolLogger:
         """Log a tool call with all relevant information"""
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": self.session_id,
             "type": "tool_call",
             "tool_name": tool_name,
             "parameters": parameters,
@@ -81,7 +79,6 @@ class ToolLogger:
         """Log agent decisions and reasoning"""
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": self.session_id,
             "type": "agent_decision",
             "user_input": user_input,
             "decision": decision,
@@ -99,7 +96,6 @@ class ToolLogger:
         """Log general errors"""
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": self.session_id,
             "type": "error",
             "error_type": error_type,
             "error_message": error_message,
@@ -125,7 +121,6 @@ class ToolLogger:
         """Convenience method for logging info (compatible with standard logging interface)"""
         log_entry = {
             "timestamp": datetime.datetime.now().isoformat(),
-            "session_id": self.session_id,
             "type": "info",
             "message": message,
             "context": context or {}
@@ -143,7 +138,7 @@ class ToolLogger:
         with self._lock:
             try:
                 # Write to JSONL file
-                log_file = os.path.join(self.log_dir, f"{self.session_id}.jsonl")
+                log_file = os.path.join(self.log_dir, "tool_logger.jsonl")
                 with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
             except Exception as e:
@@ -151,7 +146,7 @@ class ToolLogger:
     
     def get_session_log_path(self) -> str:
         """Get the path to the current session log file"""
-        return os.path.join(self.log_dir, f"{self.session_id}.jsonl")
+        return os.path.join(self.log_dir, "tool_logger.jsonl")
 
 
 # Global logger instance

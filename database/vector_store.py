@@ -76,10 +76,16 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         from database.schema import get_db_path
         db_path = get_db_path()
     
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
         # Enable extension loading and load sqlite-vec extension
         conn.enable_load_extension(True)
         load_sqlite_vec(conn)
+        
+        # Set WAL mode and other performance settings for concurrent access
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = 10000")
+        conn.execute("PRAGMA temp_store = MEMORY")
         
         # Generate new UUID for the embedding
         embedding_id = str(uuid.uuid4())
@@ -87,13 +93,27 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         # Serialize the embedding using sqlite_vec
         serialized_embedding = sqlite_vec.serialize_float32(embedding)
         
-        # Insert the embedding
-        conn.execute("""
-            INSERT INTO context_embeddings (id, context_id, task_id, embedding)
-            VALUES (?, ?, ?, ?)
-        """, (embedding_id, context_id, task_id, serialized_embedding))
-        
-        conn.commit()
+        # Insert the embedding with transaction safety
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("""
+                INSERT INTO context_embeddings (id, context_id, task_id, embedding)
+                VALUES (?, ?, ?, ?)
+            """, (embedding_id, context_id, task_id, serialized_embedding))
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                # Retry once after a short delay
+                import time
+                time.sleep(0.1)
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("""
+                    INSERT INTO context_embeddings (id, context_id, task_id, embedding)
+                    VALUES (?, ?, ?, ?)
+                """, (embedding_id, context_id, task_id, serialized_embedding))
+                conn.commit()
+            else:
+                raise
 
 
 def retrieve(task_id: str, query_embedding: List[float], k: int = 5, db_path: Optional[str] = None) -> List[Dict]:
@@ -113,12 +133,18 @@ def retrieve(task_id: str, query_embedding: List[float], k: int = 5, db_path: Op
         from database.schema import get_db_path
         db_path = get_db_path()
     
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
         # Enable extension loading
         conn.enable_load_extension(True)
         
         # Load sqlite-vec extension
         load_sqlite_vec(conn)
+        
+        # Set WAL mode and other performance settings for concurrent access
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = 10000")
+        conn.execute("PRAGMA temp_store = MEMORY")
         
         # Serialize the query embedding
         serialized_query = sqlite_vec.serialize_float32(query_embedding)
@@ -165,12 +191,18 @@ def retrieve_global(query_embedding: List[float], k: int = 5, db_path: Optional[
         from database.schema import get_db_path
         db_path = get_db_path()
     
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
         # Enable extension loading
         conn.enable_load_extension(True)
         
         # Load sqlite-vec extension
         load_sqlite_vec(conn)
+        
+        # Set WAL mode and other performance settings for concurrent access
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA cache_size = 10000")
+        conn.execute("PRAGMA temp_store = MEMORY")
         
         # Serialize the query embedding
         serialized_query = sqlite_vec.serialize_float32(query_embedding)

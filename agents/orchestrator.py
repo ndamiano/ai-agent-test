@@ -2,27 +2,11 @@ import os
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
-from enum import Enum
 import time
 
 from database.task_store import TaskStore
 from agents.agent_store import AgentStore
 from tools.logging_utils import tool_logger
-
-class ExecutionMode(Enum):
-    SEQUENTIAL = "sequential"
-    PARALLEL = "parallel"
-
-@dataclass
-class Subtask:
-    id: str
-    agent_id: str
-    goal: str
-    status: str
-    position: int
-    context_keys: List[str]
-    retry_failed: bool
 
 class Orchestrator:
     def __init__(self):
@@ -52,8 +36,6 @@ class Orchestrator:
             
             # Load the task
             task = self.task_store.get_task(task_id)
-            if not task:
-                raise ValueError(f"Task {task_id} not found")
             
             # Get execution mode and route accordingly
             execution_mode = task.get('execution_mode', 'sequential')
@@ -73,18 +55,32 @@ class Orchestrator:
 
     def _run_sequential(self, task_id: str) -> None:
         """
-        Execute subtasks sequentially, one at a time.
+        Execute subtasks sequentially, respecting dependencies.
         
         Args:
             task_id: The ID of the task to run
         """
         self.logger.info(f"Running task {task_id} in sequential mode")
         
-        # Get all subtasks ordered by position
-        subtasks = self.task_store.get_subtasks_for_task(task_id)
-        subtasks.sort(key=lambda x: x.get('position', 0))
-        
-        for subtask in subtasks:
+        # Use the same dependency-aware approach as parallel mode
+        while True:
+            # Get ready subtasks (this respects dependencies)
+            ready_subtasks = self.task_store.get_ready_subtasks(task_id)
+            
+            if not ready_subtasks:
+                # No more ready subtasks, check if all are completed
+                all_subtasks = self.task_store.get_subtasks_for_task(task_id)
+                pending_subtasks = [s for s in all_subtasks if s['status'] != 'completed']
+                
+                if pending_subtasks:
+                    self.logger.error(f"Task {task_id} has pending subtasks but no ready subtasks: {[s['id'] for s in pending_subtasks]}")
+                    self.task_store.update_task_status(task_id, 'failed')
+                    raise RuntimeError(f"Task {task_id} has pending subtasks but no ready subtasks")
+                else:
+                    break  # All subtasks completed successfully
+            
+            # Execute the first ready subtask
+            subtask = ready_subtasks[0]
             try:
                 self.logger.info(f"Executing subtask {subtask['id']} for task {task_id}")
                 output = self._execute_subtask(subtask)
@@ -124,25 +120,44 @@ class Orchestrator:
         # Track in-flight subtasks to avoid double submission
         in_flight_subtasks = set()
         futures_to_subtask = {}
+        iteration_count = 0
+        max_iterations = 100  # Prevent infinite loops
         
         try:
             # Keep checking for ready subtasks until all are done
             while True:
+                iteration_count += 1
+                if iteration_count > max_iterations:
+                    self.logger.error(f"Task {task_id} exceeded maximum iterations ({max_iterations}), possible deadlock")
+                    self.task_store.update_task_status(task_id, 'failed')
+                    raise RuntimeError(f"Task {task_id} exceeded maximum iterations, possible deadlock")
+                
                 # Get ready subtasks
                 ready_subtasks = self.task_store.get_ready_subtasks(task_id)
                 
                 # Submit ready subtasks that aren't already in flight
                 for subtask in ready_subtasks:
                     if subtask['id'] not in in_flight_subtasks:
+                        # Update subtask status to in_progress atomically before submitting
+                        self.task_store.update_subtask_status(subtask['id'], 'in_progress')
                         self.logger.info(f"Submitting subtask {subtask['id']} for parallel execution")
                         future = self._executor.submit(self._execute_subtask, subtask)
                         futures_to_subtask[future] = subtask
                         in_flight_subtasks.add(subtask['id'])
                 
-                # If no futures, we're done
+                # If no futures, check if all subtasks are actually completed
                 if not futures_to_subtask:
-                    break
+                    # Verify all subtasks are completed before marking task as completed
+                    all_subtasks = self.task_store.get_subtasks_for_task(task_id)
+                    pending_subtasks = [s for s in all_subtasks if s['status'] != 'completed']
                     
+                    if pending_subtasks:
+                        self.logger.error(f"Task {task_id} has pending subtasks but no futures to process: {[s['id'] for s in pending_subtasks]}")
+                        self.task_store.update_task_status(task_id, 'failed')
+                        raise RuntimeError(f"Task {task_id} has pending subtasks but no futures to process")
+                    else:
+                        break  # All subtasks completed successfully
+                
                 # Wait for at least one future to complete
                 completed_futures = []
                 for future in as_completed(futures_to_subtask):
@@ -202,17 +217,21 @@ class Orchestrator:
             except KeyError:
                 raise ValueError(f"Agent {agent_id} not found")
             
+            # Re-fetch the subtask from the DB immediately before building context
+            # to ensure we have the latest dependency information
+            fresh_subtask = self.task_store.get_subtask(subtask_id)
+            
             # Use ContextBuilder to build the context
             from agents.context_builder import ContextBuilder
             context_builder = ContextBuilder(self.task_store)
-            context_text = context_builder.build_for_subtask(subtask['task_id'], subtask)
+            context_text = context_builder.build_for_subtask(fresh_subtask['task_id'], fresh_subtask)
             
             # Instantiate the agent
             from agents.main_agent import MainAgent
             agent = MainAgent(agent_id)
             
             # Build the message with context
-            message = f"{context_text}\n\nTask: {subtask['goal']}"
+            message = f"{context_text}\n\nTask: {fresh_subtask['goal']}"
             
             # Execute the agent
             output = agent.chat(message)

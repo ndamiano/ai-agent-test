@@ -2,6 +2,7 @@
 
 import requests
 import json
+import os
 from typing import Any, Union, List
 
 
@@ -12,10 +13,13 @@ class LMStudioConnector:
         
         Args:
             base_url: LMStudio server URL (default: http://localhost:1234)
+                     Can be overridden by LMSTUDIO_BASE_URL environment variable.
             model_name: Model identifier to use (default: "local-model")
+                       Can be overridden by LMSTUDIO_MODEL environment variable.
         """
-        self.base_url = base_url.rstrip('/')
-        self.model_name = model_name
+        # Use environment variables if available, otherwise use provided defaults
+        self.base_url = os.getenv("LMSTUDIO_BASE_URL", base_url).rstrip('/')
+        self.model_name = os.getenv("LMSTUDIO_MODEL", model_name)
         self.api_endpoint = f"{self.base_url}/v1/chat/completions"
         self._connected = False
 

@@ -15,6 +15,7 @@ class ToolManager:
     
     def __init__(self):
         self._tools_registry: Dict[str, Dict[str, Any]] = {}
+        self._lock = Lock()  # Add lock for thread safety
     
     def register_tool(self, name: str, description: str, parameters: Dict[str, Any], fn: Callable) -> None:
         """

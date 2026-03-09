@@ -37,6 +37,7 @@ class TaskStore:
                 if cls._instance is None:
                     cls._instance = super(TaskStore, cls).__new__(cls)
                     # Initialize database on instantiation with dynamic path
+                    # Note: This will be called again in each connection method for safety
                     init_db(_get_db_path())
         return cls._instance
     
@@ -208,15 +209,6 @@ class TaskStore:
     
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
         """Set the output of a subtask, also updates status to completed and stores context."""
-        with sqlite3.connect(_get_db_path()) as conn:
-            conn.execute("""
-                UPDATE subtasks 
-                SET output = ?, status = 'completed', updated_at = ?
-                WHERE id = ?
-            """, (output, datetime.utcnow().isoformat(), subtask_id))
-            conn.commit()
-        
-        # Also store the output as context for semantic search
         # Get the subtask to retrieve task_id
         try:
             subtask = self.get_subtask(subtask_id)
@@ -229,8 +221,34 @@ class TaskStore:
             if not context_key:
                 context_key = f"subtask_output_{subtask_id[:8]}"
             
-            # Store as context
-            self.write_context(task_id, context_key, output, subtask_id=subtask_id)
+            # Use a single transaction for both operations
+            with sqlite3.connect(_get_db_path()) as conn:
+                # Update subtask status and output
+                conn.execute("""
+                    UPDATE subtasks 
+                    SET output = ?, status = 'completed', updated_at = ?
+                    WHERE id = ?
+                """, (output, datetime.utcnow().isoformat(), subtask_id))
+                
+                # Store as context
+                context_id = str(uuid.uuid4())
+                now = datetime.utcnow().isoformat()
+                conn.execute("""
+                    INSERT INTO context_store (id, task_id, subtask_id, key, value, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (context_id, task_id, subtask_id, context_key, output, now))
+                
+                # Try to embed the value for semantic search capability
+                try:
+                    embedding = embedding_client.embed(output)
+                    store_embedding(context_id, task_id, embedding)
+                except Exception as e:
+                    # Log error but don't corrupt the stored value
+                    logging.error(f"Failed to create embedding for context '{context_key}' in task {task_id}: {e}")
+                    # Don't modify the stored value - it's still usable for exact-key lookups
+                
+                conn.commit()
+                
         except Exception as e:
             # If context storage fails, log but don't fail the main operation
             logging.warning(f"Failed to store context for subtask {subtask_id}: {e}")
@@ -322,11 +340,7 @@ class TaskStore:
             
             row = cursor.fetchone()
             if row:
-                value = row[0]
-                # Strip [EMBEDDING_FAILED] suffix if present
-                if value.endswith(' [EMBEDDING_FAILED]'):
-                    value = value[:-20]  # Remove the suffix
-                return value
+                return row[0]
             return None
     
     def get_all_context(self, task_id: str) -> Dict[str, str]:
@@ -419,7 +433,8 @@ class TaskStore:
             results = []
             for row in cursor.fetchall():
                 results.append({
-                    'id': row[0],
+                    'context_id': row[0],
+                    'distance': 0.0,  # No distance for keyword search
                     'key': row[1], 
                     'value': row[2]
                 })

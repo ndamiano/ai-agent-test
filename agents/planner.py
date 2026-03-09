@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from typing import Dict, List, Any, Optional
 from agents.main_agent import MainAgent
 from agents.agent_store import AgentStore
@@ -19,7 +20,10 @@ class PlannerAgent:
         """Initialize the planner agent with references to stores."""
         self.agent_store = AgentStore()
         self.task_store = TaskStore()
-        self.planner_agent = MainAgent(agent_id="planner")
+        try:
+            self.planner_agent = MainAgent(agent_id="planner")
+        except KeyError as e:
+            raise RuntimeError(f"Failed to initialize planner agent: {str(e)}. Please ensure the planner agent definition exists in agents/store/planner.json") from e
     
     def build_planning_prompt(self, goal: str, task_id: str) -> str:
         """
@@ -42,8 +46,19 @@ class PlannerAgent:
             agents_section += f"  Description: {agent['description']}\n"
             agents_section += f"  Tools: {', '.join(agent['tools']) if agent['tools'] else 'None'}\n\n"
         
-        # Retrieve relevant context from past tasks
-        context_entries = self.task_store.retrieve_context(task_id, goal, k=3)
+        # Retrieve relevant context from past tasks (cross-task search)
+        from database.vector_store import retrieve_global
+        try:
+            # Try to embed the goal text for semantic search
+            from connectors.embedding_client import embedding_client
+            query_embedding = embedding_client.embed(goal)
+            # Retrieve similar context entries from all tasks
+            context_entries = retrieve_global(query_embedding, k=3)
+        except Exception as e:
+            # If embedding fails, fall back to keyword-based search
+            import logging
+            logging.warning(f"Semantic search failed for planning context: {e}. Falling back to keyword search.")
+            context_entries = self.task_store._keyword_search_context(task_id, goal, k=3)
         
         context_section = ""
         if context_entries:
@@ -102,7 +117,6 @@ RULES:
             response = self.planner_agent.chat(prompt)
             
             # Strip markdown code fences if present using regex
-            import re
             response = re.sub(r'^```(?:json)?\s*', '', response.strip())
             response = re.sub(r'\s*```$', '', response.strip())
             

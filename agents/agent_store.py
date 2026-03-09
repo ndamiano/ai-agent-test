@@ -92,7 +92,9 @@ class AgentStore:
                     agent = json.load(f)
                     agents.append(agent)
             except json.JSONDecodeError:
-                # Skip invalid JSON files
+                # Log warning for invalid JSON files
+                import logging
+                logging.warning(f"Skipping invalid JSON file: {json_file}")
                 continue
         
         return agents

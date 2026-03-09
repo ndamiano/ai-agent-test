@@ -6,68 +6,9 @@ from agents.task_runner import task_runner
 from tools.project_manager import project_manager
 from tools.project import Project
 from tools.tool_manager import tool_manager
+from tools.write_to_file import register_write_tools
 import datetime
 import textwrap
-
-
-def create_example_tools():
-    """Create some example tools to demonstrate the system"""
-    
-    def add_numbers(a: int, b: int) -> str:
-        """Add two numbers together"""
-        result = a + b
-        return f"The sum of {a} and {b} is {result}"
-    
-    def multiply_numbers(a: int, b: int) -> str:
-        """Multiply two numbers together"""
-        result = a * b
-        return f"The product of {a} and {b} is {result}"
-    
-    def get_current_time() -> str:
-        """Get the current time"""
-        import datetime
-        return f"The current time is {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    
-    # Register the tools
-    tool_manager.register_tool(
-        name="add_numbers",
-        description="Add two numbers together",
-        parameters={
-            "type": "object",
-            "properties": {
-                "a": {"type": "integer", "description": "First number"},
-                "b": {"type": "integer", "description": "Second number"}
-            },
-            "required": ["a", "b"]
-        },
-        fn=add_numbers
-    )
-    
-    tool_manager.register_tool(
-        name="multiply_numbers",
-        description="Multiply two numbers together",
-        parameters={
-            "type": "object",
-            "properties": {
-                "a": {"type": "integer", "description": "First number"},
-                "b": {"type": "integer", "description": "Second number"}
-            },
-            "required": ["a", "b"]
-        },
-        fn=multiply_numbers
-    )
-    
-    tool_manager.register_tool(
-        name="get_current_time",
-        description="Get the current time",
-        parameters={
-            "type": "object",
-            "properties": {},
-            "required": []
-        },
-        fn=get_current_time
-    )
-
 
 def format_task_status(status_data: dict) -> str:
     """Format task status with a tree-like structure"""
@@ -180,8 +121,8 @@ def main():
     project = Project("example-project")
     project_manager.set_current_project(project)
     
-    # Create example tools
-    create_example_tools()
+    # Register write tools
+    register_write_tools(tool_manager)
     
     # Create main agent
     agent = MainAgent()

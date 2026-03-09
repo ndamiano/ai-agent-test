@@ -18,18 +18,13 @@ class TaskRunner:
         self.main_agent = MainAgent()
         
     def execution_mode_from_goal(self, goal: str) -> str:
-        """Determine execution mode based on goal content."""
-        goal_lower = goal.lower()
-        if any(keyword in goal_lower for keyword in ['code', 'program', 'script', 'build', 'develop']):
-            return 'sequential'
-        elif any(keyword in goal_lower for keyword in ['story', 'write', 'narrative', 'plot', 'chapter']):
-            return 'sequential'
-        elif any(keyword in goal_lower for keyword in ['world', 'setting', 'universe', 'map']):
-            return 'sequential'
-        elif any(keyword in goal_lower for keyword in ['research', 'find', 'search', 'compare', 'check', 'analyze', 'investigate', 'gather', 'collect', 'review', 'examine', 'study', 'explore', 'identify']):
-            return 'parallel'
-        else:
-            return 'sequential'
+        """Determine execution mode based on goal content.
+        
+        Note: This method is deprecated. Execution mode should be explicitly
+        passed to create_and_run() or create_and_run_background().
+        """
+        # Default to sequential for backward compatibility
+        return 'sequential'
     
     def create_and_run(self, goal: str, execution_mode: str = None) -> str:
         """Create and run a task synchronously."""
@@ -113,20 +108,27 @@ class TaskRunner:
     
     def ask(self, task_id: str, question: str) -> str:
         """Query a task's accumulated context with a natural language question."""
-        # Get relevant context chunks
-        context_chunks = task_store.retrieve_context(task_id, question, k=5)
-        
-        if not context_chunks:
-            return "No context found for this task. The task may not exist or have no recorded context yet."
-        
-        # Format context for the main agent
-        context_text = "\n\n".join([
-            f"Context chunk {i+1}:\n{chunk['value']}"
-            for i, chunk in enumerate(context_chunks)
-        ])
-        
-        # Create a prompt for the main agent
-        prompt = f"""Answer the following question based on the provided context from task {task_id}:
+        try:
+            # Get relevant context chunks
+            context_chunks = task_store.retrieve_context(task_id, question, k=5)
+            
+            if not context_chunks:
+                # Try to get all context as fallback
+                all_context = task_store.get_all_context(task_id)
+                if all_context:
+                    context_text = "\n\n".join([f"{key}: {value}" for key, value in all_context.items()])
+                    context_chunks = [{"value": context_text}]
+                else:
+                    return "No context found for this task. The task may not exist or have no recorded context yet."
+            
+            # Format context for the main agent
+            context_text = "\n\n".join([
+                f"Context chunk {i+1}:\n{chunk.get('value', chunk.get('text', str(chunk)))}"
+                for i, chunk in enumerate(context_chunks)
+            ])
+            
+            # Create a prompt for the main agent
+            prompt = f"""Answer the following question based on the provided context from task {task_id}:
 
 Question: {question}
 
@@ -134,11 +136,15 @@ Context:
 {context_text}
 
 Please provide a concise, direct answer based solely on the context provided."""
-        
-        # Create a fresh MainAgent instance to avoid message history sharing
-        fresh_agent = MainAgent()
-        response = fresh_agent.chat(prompt)
-        return response
+            
+            # Create a fresh MainAgent instance to avoid message history sharing
+            fresh_agent = MainAgent()
+            response = fresh_agent.chat(prompt)
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error querying task {task_id}: {e}")
+            return f"Error querying task: {str(e)}"
 
 # Global instance
 task_runner = TaskRunner()

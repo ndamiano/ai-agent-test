@@ -199,7 +199,7 @@ class TaskStore:
             conn.commit()
     
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
-        """Set the output of a subtask, also updates status to completed."""
+        """Set the output of a subtask, also updates status to completed and stores context."""
         with sqlite3.connect(_get_db_path()) as conn:
             conn.execute("""
                 UPDATE subtasks 
@@ -207,6 +207,27 @@ class TaskStore:
                 WHERE id = ?
             """, (output, datetime.utcnow().isoformat(), subtask_id))
             conn.commit()
+        
+        # Also store the output as context for semantic search
+        # Get the subtask to retrieve task_id
+        try:
+            subtask = self.get_subtask(subtask_id)
+            task_id = subtask['task_id']
+            
+            # Generate a context key based on the subtask goal
+            goal = subtask.get('goal', 'output')
+            # Clean up the goal to make a good context key
+            import re
+            context_key = re.sub(r'[^a-zA-Z0-9_]', '_', goal.lower())[:50]
+            if not context_key:
+                context_key = f"subtask_output_{subtask_id[:8]}"
+            
+            # Store as context
+            self.write_context(task_id, context_key, output, subtask_id=subtask_id)
+        except Exception as e:
+            # If context storage fails, log but don't fail the main operation
+            import logging
+            logging.warning(f"Failed to store context for subtask {subtask_id}: {e}")
     
     def get_ready_subtasks(self, task_id: str) -> List[Dict]:
         """Get subtasks that are ready to run (pending status and all dependencies completed)."""

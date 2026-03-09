@@ -126,41 +126,52 @@ class Orchestrator:
         in_flight_subtasks = set()
         futures_to_subtask = {}
         
-        # Keep checking for ready subtasks until all are done
-        while True:
-            # Get ready subtasks
-            ready_subtasks = self.task_store.get_ready_subtasks(task_id)
-            
-            # Submit ready subtasks that aren't already in flight
-            for subtask in ready_subtasks:
-                if subtask['id'] not in in_flight_subtasks:
-                    self.logger.info(f"Submitting subtask {subtask['id']} for parallel execution")
-                    future = self._executor.submit(self._execute_subtask, subtask)
-                    futures_to_subtask[future] = subtask
-                    in_flight_subtasks.add(subtask['id'])
-            
-            # If no futures, we're done
-            if not futures_to_subtask:
-                break
+        try:
+            # Keep checking for ready subtasks until all are done
+            while True:
+                # Get ready subtasks
+                ready_subtasks = self.task_store.get_ready_subtasks(task_id)
                 
-            # Wait for at least one future to complete
-            completed_futures = []
-            for future in as_completed(futures_to_subtask):
-                completed_futures.append(future)
-                break  # Wait for at least one completion
-            
-            # Process completed futures
-            for future in completed_futures:
-                subtask = futures_to_subtask.pop(future)
-                in_flight_subtasks.remove(subtask['id'])
+                # Submit ready subtasks that aren't already in flight
+                for subtask in ready_subtasks:
+                    if subtask['id'] not in in_flight_subtasks:
+                        self.logger.info(f"Submitting subtask {subtask['id']} for parallel execution")
+                        future = self._executor.submit(self._execute_subtask, subtask)
+                        futures_to_subtask[future] = subtask
+                        in_flight_subtasks.add(subtask['id'])
                 
-                try:
-                    result = future.result()
-                    self.logger.info(f"Subtask {subtask['id']} completed successfully")
-                except Exception as e:
-                    self.logger.error(f"Subtask {subtask['id']} failed: {str(e)}")
-                    self.task_store.update_task_status(task_id, 'failed')
-                    return
+                # If no futures, we're done
+                if not futures_to_subtask:
+                    break
+                    
+                # Wait for at least one future to complete
+                completed_futures = []
+                for future in as_completed(futures_to_subtask):
+                    completed_futures.append(future)
+                    break  # Wait for at least one completion
+                
+                # Process completed futures
+                for future in completed_futures:
+                    subtask = futures_to_subtask.pop(future)
+                    in_flight_subtasks.remove(subtask['id'])
+                    
+                    try:
+                        result = future.result()
+                        self.logger.info(f"Subtask {subtask['id']} completed successfully")
+                    except Exception as e:
+                        self.logger.error(f"Subtask {subtask['id']} failed: {str(e)}")
+                        self.task_store.update_task_status(task_id, 'failed')
+                        raise
+        
+        except Exception as e:
+            # On failure, cancel remaining futures to prevent thread leaks
+            for future in futures_to_subtask:
+                future.cancel()
+            raise
+        
+        finally:
+            # Ensure executor shutdown to prevent thread leaks
+            self._executor.shutdown(wait=False)
         
         # All subtasks completed successfully
         self.task_store.update_task_status(task_id, 'completed')
@@ -188,8 +199,9 @@ class Orchestrator:
             
             # Load agent definition
             agent_id = subtask['agent_id']
-            agent_definition = self.agent_store.get(agent_id)
-            if not agent_definition:
+            try:
+                agent_definition = self.agent_store.get(agent_id)
+            except KeyError:
                 raise ValueError(f"Agent {agent_id} not found")
             
             # Build context for the agent
@@ -213,7 +225,7 @@ class Orchestrator:
             if context_keys:
                 context_text += "Explicit context:\n"
                 for key in context_keys:
-                    context_value = self.task_store.get_context(key)
+                    context_value = self.task_store.get_context(subtask['task_id'], key)
                     if context_value:
                         context_text += f"- {key}: {context_value}\n"
                 context_text += "\n"
@@ -228,7 +240,7 @@ class Orchestrator:
             # Execute the agent
             output = agent.chat(message)
             
-            # Store the output
+            # Store the output and update status to completed
             self.task_store.set_subtask_output(subtask_id, output)
             
             # Log completion

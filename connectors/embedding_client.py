@@ -16,9 +16,26 @@ class EmbeddingClient:
             model_name: Name of the embedding model to use. Defaults to "nomic-ai/nomic-embed-text-v1.5-GGUF".
                        Can be overridden by EMBEDDING_MODEL environment variable.
         """
-        self.base_url = os.getenv("EMBEDDING_BASE_URL", base_url)
-        self.model_name = os.getenv("EMBEDDING_MODEL", model_name)
-        self.endpoint = f"{self.base_url}/v1/embeddings"
+        self._base_url = base_url
+        self._model_name = model_name
+        self._endpoint = None
+    
+    @property
+    def base_url(self):
+        """Lazy property to get base URL from environment variable."""
+        return os.getenv("EMBEDDING_BASE_URL", self._base_url)
+    
+    @property
+    def model_name(self):
+        """Lazy property to get model name from environment variable."""
+        return os.getenv("EMBEDDING_MODEL", self._model_name)
+    
+    @property
+    def endpoint(self):
+        """Lazy property to construct endpoint URL."""
+        if self._endpoint is None:
+            self._endpoint = f"{self.base_url}/v1/embeddings"
+        return self._endpoint
     
     def embed(self, text: str) -> List[float]:
         """

@@ -103,11 +103,10 @@ RULES:
             # Send prompt to planner agent
             response = self.planner_agent.chat(prompt)
             
-            # Strip markdown code fences if present
-            if response.startswith("```json"):
-                response = response[7:]  # Remove ```json
-            if response.endswith("```"):
-                response = response[:-3]  # Remove ```
+            # Strip markdown code fences if present using regex
+            import re
+            response = re.sub(r'^```(?:json)?\s*', '', response.strip())
+            response = re.sub(r'\s*```$', '', response.strip())
             
             # Parse JSON response
             plan = json.loads(response)
@@ -129,35 +128,28 @@ RULES:
         """
         subtasks = plan.get("subtasks", [])
         created_subtasks = []
+        position_to_id = {}
         
-        # Create all subtasks first
+        # First pass: create all subtasks with no depends_on
         for subtask_data in subtasks:
             subtask = self.task_store.create_subtask(
                 task_id=task_id,
                 agent_id=subtask_data["agent_id"],
                 goal=subtask_data["goal"],
                 position=subtask_data["position"],
-                depends_on=subtask_data.get("depends_on", []),
+                depends_on=None,
                 input_context=None
             )
+            position_to_id[subtask_data["position"]] = subtask["id"]
             created_subtasks.append(subtask)
         
-        # Build position to ID map
-        position_to_id = {subtask["position"]: subtask["id"] for subtask in created_subtasks}
-        
-        # Update depends_on with real subtask IDs
+        # Second pass: update depends_on with real IDs
         for subtask in created_subtasks:
             depends_on_positions = subtask.get("depends_on", [])
             if depends_on_positions:
                 real_depends_on = [position_to_id[pos] for pos in depends_on_positions if pos in position_to_id]
-                # Update the subtask in the database
-                with sqlite3.connect(os.environ.get("TASK_DB_PATH", "data/tasks.db")) as conn:
-                    conn.execute("""
-                        UPDATE subtasks 
-                        SET depends_on = ?, updated_at = ?
-                        WHERE id = ?
-                    """, (json.dumps(real_depends_on), datetime.utcnow().isoformat(), subtask["id"]))
-                    conn.commit()
+                # Update the subtask in the database using task_store method
+                self.task_store.update_subtask_depends_on(subtask["id"], real_depends_on)
         
         # Log the planning event
         self.task_store.log_event(task_id, "task_planned", f"Created {len(created_subtasks)} subtasks")

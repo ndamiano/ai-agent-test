@@ -96,7 +96,7 @@ class ContextBuilder:
         
         formatted_outputs = []
         for subtask_id in depends_on:
-            subtask = self.task_store.get_subtask(task_id, subtask_id)
+            subtask = self.task_store.get_subtask(subtask_id)
             if (
                 subtask
                 and subtask.get("status") == "completed"

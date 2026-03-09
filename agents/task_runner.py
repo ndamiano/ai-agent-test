@@ -132,8 +132,9 @@ Context:
 
 Please provide a concise, direct answer based solely on the context provided."""
         
-        # Use the main agent to answer
-        response = self.main_agent.run(prompt)
+        # Create a fresh MainAgent instance to avoid message history sharing
+        fresh_agent = MainAgent()
+        response = fresh_agent.chat(prompt)
         return response
 
 # Global instance

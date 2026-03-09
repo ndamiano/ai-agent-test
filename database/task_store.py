@@ -32,6 +32,12 @@ class TaskStore:
                     init_db()
         return cls._instance
     
+    @classmethod
+    def reset(cls):
+        """Reset the singleton instance. Useful for testing."""
+        with cls._lock:
+            cls._instance = None
+    
     def create_task(self, goal: str, execution_mode: str = "sequential") -> Dict:
         """Create a new task and return the full task dictionary."""
         task_id = str(uuid.uuid4())
@@ -246,6 +252,16 @@ class TaskStore:
                     ready_subtasks.append(subtask)
             
             return ready_subtasks
+
+    def update_subtask_depends_on(self, subtask_id: str, depends_on: List[str]) -> None:
+        """Update the depends_on field of a subtask with real subtask IDs."""
+        with sqlite3.connect(_get_db_path()) as conn:
+            conn.execute("""
+                UPDATE subtasks 
+                SET depends_on = ?, updated_at = ?
+                WHERE id = ?
+            """, (json.dumps(depends_on), datetime.utcnow().isoformat(), subtask_id))
+            conn.commit()
     
     def write_context(self, task_id: str, key: str, value: str, subtask_id: Optional[str] = None) -> None:
         """Write a context key-value pair for a task and automatically embed the value."""
@@ -264,8 +280,16 @@ class TaskStore:
             embedding = embedding_client.embed(value)
             store_embedding(context_id, task_id, embedding)
         except Exception as e:
-            # Log warning but don't raise - context store write should always succeed
-            logging.warning(f"Failed to create embedding for context '{key}' in task {task_id}: {e}")
+            # Log error and store a flag indicating embedding failed
+            logging.error(f"Failed to create embedding for context '{key}' in task {task_id}: {e}")
+            # Store a flag in the context_store to indicate embedding failed
+            with sqlite3.connect(_get_db_path()) as conn:
+                conn.execute("""
+                    UPDATE context_store 
+                    SET value = value || ' [EMBEDDING_FAILED]'
+                    WHERE id = ?
+                """, (context_id,))
+                conn.commit()
     
     def get_context(self, task_id: str, key: str) -> Optional[str]:
         """Get a context value by key for a task."""

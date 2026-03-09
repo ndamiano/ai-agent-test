@@ -101,6 +101,7 @@ class MainAgent:
         """
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
+        content = ""  # Initialize content variable
         
         while iteration < max_iterations:
             # Prepare messages for native tool calling

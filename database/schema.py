@@ -23,7 +23,9 @@ def init_db(db_path: Optional[str] = None) -> None:
         db_path = DB_PATH
     
     # Ensure directory exists
-    os.makedirs(os.path.dirname(db_path), exist_ok=True) if os.path.dirname(db_path) else None
+    dir_path = os.path.dirname(db_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
     
     with sqlite3.connect(db_path) as conn:
         # Enable foreign key constraints

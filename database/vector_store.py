@@ -77,10 +77,8 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         db_path = DB_PATH
     
     with sqlite3.connect(db_path) as conn:
-        # Enable extension loading
+        # Enable extension loading and load sqlite-vec extension
         conn.enable_load_extension(True)
-        
-        # Load sqlite-vec extension
         load_sqlite_vec(conn)
         
         # Generate new UUID for the embedding

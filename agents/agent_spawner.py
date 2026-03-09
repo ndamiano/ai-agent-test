@@ -15,39 +15,46 @@ class AgentSpawner:
         """Initialize the agent spawner"""
         pass
     
-    def spawn_agent(self, task: str, tools: Optional[str] = None) -> str:
+    def spawn_agent(self, task: str, tools: Optional[str] = None, agent_id: Optional[str] = None) -> str:
         """
-        Create and run a sub-agent with specified tools on a task.
+        Create and run a sub-agent with specified tools or agent definition on a task.
         
         Args:
             task: The task for the sub-agent to perform
             tools: Comma-separated list of tool names to give the sub-agent.
                   If None or empty, the sub-agent gets all available tools.
+            agent_id: Optional agent ID to load from agent store. If provided,
+                     uses the agent's system prompt and tool list instead of tools parameter.
                   
         Returns:
             The result from the sub-agent's execution
         """
-        # Parse tools list
-        available_tools = tool_manager.getTools()
-        tool_names = [tool['name'] for tool in available_tools]
-        
-        if tools:
-            requested_tools = [t.strip() for t in tools.split(',') if t.strip()]
-            # Validate requested tools exist
-            for tool_name in requested_tools:
-                if tool_name not in tool_names:
-                    raise ValueError(f"Unknown tool: {tool_name}")
-            selected_tools = requested_tools
+        # If agent_id is provided, load agent from store
+        if agent_id:
+            # Create sub-agent with the specified agent definition
+            sub_agent = MainAgent(agent_id=agent_id)
         else:
-            # Give all tools if none specified
-            selected_tools = tool_names
-        
-        # Create a fresh MainAgent instance
-        sub_agent = MainAgent()
-        
-        # Register only the specified tools on the sub-agent
-        # We need to rebuild the tools schema with only the selected tools
-        self._configure_sub_agent_tools(sub_agent, selected_tools)
+            # Parse tools list
+            available_tools = tool_manager.getTools()
+            tool_names = [tool['name'] for tool in available_tools]
+            
+            if tools:
+                requested_tools = [t.strip() for t in tools.split(',') if t.strip()]
+                # Validate requested tools exist
+                for tool_name in requested_tools:
+                    if tool_name not in tool_names:
+                        raise ValueError(f"Unknown tool: {tool_name}")
+                selected_tools = requested_tools
+            else:
+                # Give all tools if none specified
+                selected_tools = tool_names
+            
+            # Create a fresh MainAgent instance
+            sub_agent = MainAgent()
+            
+            # Register only the specified tools on the sub-agent
+            # We need to rebuild the tools schema with only the selected tools
+            self._configure_sub_agent_tools(sub_agent, selected_tools)
         
         try:
             # Run the agent loop on the task
@@ -83,16 +90,16 @@ class AgentSpawner:
 
 
 # Register the agent spawner as a tool
-def _spawn_agent_impl(task: str, tools: Optional[str] = None) -> str:
+def _spawn_agent_impl(task: str, tools: Optional[str] = None, agent_id: Optional[str] = None) -> str:
     """Implementation function for the spawn_agent tool"""
     spawner = AgentSpawner()
-    return spawner.spawn_agent(task, tools)
+    return spawner.spawn_agent(task, tools, agent_id)
 
 
 # Register the tool with the tool manager
 tool_manager.register_tool(
     name="spawn_agent",
-    description="Create and run a sub-agent with specified tools on a task",
+    description="Create and run a sub-agent with specified tools or agent definition on a task",
     parameters={
         "type": "object",
         "properties": {
@@ -103,6 +110,10 @@ tool_manager.register_tool(
             "tools": {
                 "type": "string",
                 "description": "Comma-separated list of tool names to give the sub-agent (optional)"
+            },
+            "agent_id": {
+                "type": "string",
+                "description": "Optional agent ID to load from agent store (optional)"
             }
         },
         "required": ["task"]

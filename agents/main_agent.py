@@ -6,6 +6,7 @@ from connectors.connector_selector import get_connector
 from tools.tool_manager import tool_manager
 from config.agent_prompts import SYSTEM_PROMPT
 from tools.logging_utils import log_tool_call, log_agent_decision, log_error
+from .agent_store import AgentStore
 
 
 class MainAgent:
@@ -14,23 +15,47 @@ class MainAgent:
     Implements a proper agentic loop: send messages → receive response → execute tool calls → repeat.
     """
     
-    def __init__(self):
-        """Initialize the agent with connector and tool manager access"""
+    def __init__(self, agent_id: Optional[str] = None):
+        """Initialize the agent with connector and tool manager access
+        
+        Args:
+            agent_id: Optional agent ID to load from agent store. If provided,
+                     uses the agent's system prompt and tool list instead of defaults.
+        """
         self.connector = get_connector("main_agent", "conversation", "text")
         self.message_history: List[Dict[str, str]] = []
-        self.system_context = SYSTEM_PROMPT
-        self._tools_schema = self._build_tools_schema()
+        
+        # Load agent from store if agent_id provided
+        if agent_id:
+            agent_store = AgentStore()
+            try:
+                agent_data = agent_store.get(agent_id)
+                self.system_context = agent_data["system_prompt"]
+                self._tools_schema = self._build_tools_schema(agent_data["tools"])
+            except KeyError:
+                # Fall back to default behavior if agent not found
+                self.system_context = SYSTEM_PROMPT
+                self._tools_schema = self._build_tools_schema()
+        else:
+            self.system_context = SYSTEM_PROMPT
+            self._tools_schema = self._build_tools_schema()
 
-    def _build_tools_schema(self) -> List[Dict[str, Any]]:
-        """Convert tool manager tools to OpenAI function calling format"""
+    def _build_tools_schema(self, allowed_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Convert tool manager tools to OpenAI function calling format
+        
+        Args:
+            allowed_tools: Optional list of tool names to include. If None, includes all tools.
+        """
         from tools.tool_manager import build_openai_tool_schema
         
         tools = tool_manager.getTools()
         openai_tools = []
         
         for tool in tools:
-            openai_tool = build_openai_tool_schema(tool)
-            openai_tools.append(openai_tool)
+            # If allowed_tools is specified, only include tools in the list
+            if allowed_tools is None or tool['name'] in allowed_tools:
+                openai_tool = build_openai_tool_schema(tool)
+                openai_tools.append(openai_tool)
         
         return openai_tools
 

@@ -1,0 +1,93 @@
+import sqlite3
+import os
+from typing import Optional
+
+# Database path constant that reads from environment variable with fallback
+DB_PATH = os.environ.get("TASK_DB_PATH", "data/tasks.db")
+
+
+def init_db(db_path: Optional[str] = None) -> None:
+    """
+    Initialize the SQLite database with all required tables.
+    
+    Creates the database and all tables if they don't exist. Uses IF NOT EXISTS
+    so it's safe to call on every startup. Sets up foreign key constraints.
+    
+    Args:
+        db_path: Optional path to database file. If None, uses DB_PATH constant.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+    
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(db_path), exist_ok=True) if os.path.dirname(db_path) else None
+    
+    with sqlite3.connect(db_path) as conn:
+        # Enable foreign key constraints
+        conn.execute("PRAGMA foreign_keys = ON")
+        
+        # Create tasks table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                goal TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'planning', 'in_progress', 'completed', 'failed')),
+                execution_mode TEXT NOT NULL DEFAULT 'sequential' CHECK(execution_mode IN ('sequential', 'parallel')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        
+        # Create subtasks table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS subtasks (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'in_progress', 'completed', 'failed')),
+                goal TEXT NOT NULL,
+                input_context TEXT,
+                output TEXT,
+                depends_on TEXT,
+                position INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create context_store table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS context_store (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                subtask_id TEXT,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+                FOREIGN KEY (subtask_id) REFERENCES subtasks (id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create task_events table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS task_events (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                subtask_id TEXT,
+                event_type TEXT NOT NULL CHECK(event_type IN ('task_created', 'task_planned', 'subtask_started', 'subtask_completed', 'subtask_failed', 'task_completed', 'task_failed', 'agent_message')),
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE,
+                FOREIGN KEY (subtask_id) REFERENCES subtasks (id) ON DELETE CASCADE
+            )
+        """)
+        
+        conn.commit()
+
+
+if __name__ == "__main__":
+    # Initialize database when run directly
+    init_db()
+    print(f"Database initialized at: {DB_PATH}")

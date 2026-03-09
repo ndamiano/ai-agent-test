@@ -2,40 +2,43 @@ from typing import Dict, List, Set
 from fastapi import WebSocket
 import logging
 
-class WebSocketManager:
+class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[str, Set[WebSocket]] = {}
+        self.active_connections: Dict[str, List[WebSocket]] = {}
         self.logger = logging.getLogger(__name__)
 
-    async def connect(self, websocket: WebSocket, agent_id: str):
-        """Connect a new WebSocket client."""
+    async def connect(self, task_id: str, websocket: WebSocket) -> None:
+        """Accept the connection and register it for the given task_id."""
         await websocket.accept()
-        if agent_id not in self.active_connections:
-            self.active_connections[agent_id] = set()
-        self.active_connections[agent_id].add(websocket)
-        self.logger.info(f"WebSocket connected for agent: {agent_id}")
+        if task_id not in self.active_connections:
+            self.active_connections[task_id] = []
+        self.active_connections[task_id].append(websocket)
+        self.logger.info(f"WebSocket connected for task: {task_id}")
 
-    def disconnect(self, websocket: WebSocket, agent_id: str):
-        """Disconnect a WebSocket client."""
-        if agent_id in self.active_connections:
-            self.active_connections[agent_id].discard(websocket)
-            if not self.active_connections[agent_id]:
-                del self.active_connections[agent_id]
-        self.logger.info(f"WebSocket disconnected for agent: {agent_id}")
+    def disconnect(self, task_id: str, websocket: WebSocket) -> None:
+        """Remove the connection and clean up empty task entries."""
+        if task_id in self.active_connections:
+            if websocket in self.active_connections[task_id]:
+                self.active_connections[task_id].remove(websocket)
+                if not self.active_connections[task_id]:
+                    del self.active_connections[task_id]
+        self.logger.info(f"WebSocket disconnected for task: {task_id}")
 
-    async def send_message(self, message: str, agent_id: str):
-        """Send a message to all clients connected to an agent."""
-        if agent_id in self.active_connections:
-            disconnected = set()
-            for websocket in self.active_connections[agent_id]:
+    async def broadcast(self, task_id: str, message: dict) -> None:
+        """Send a JSON message to all connections for a task. Handles disconnected clients gracefully."""
+        if task_id in self.active_connections:
+            disconnected = []
+            for websocket in self.active_connections[task_id]:
                 try:
-                    await websocket.send_text(message)
+                    await websocket.send_json(message)
                 except:
-                    disconnected.add(websocket)
+                    disconnected.append(websocket)
             for websocket in disconnected:
-                self.disconnect(websocket, agent_id)
+                self.disconnect(task_id, websocket)
 
-    async def broadcast(self, message: str):
-        """Broadcast a message to all connected clients."""
-        for agent_id, connections in self.active_connections.items():
-            await self.send_message(message, agent_id)
+    async def broadcast_all(self, message: dict) -> None:
+        """Broadcast to all connected clients across all tasks. Used for system-level events."""
+        for task_id, connections in self.active_connections.items():
+            await self.broadcast(task_id, message)
+
+manager = ConnectionManager()

@@ -3,22 +3,24 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional
 import time
+from datetime import datetime
 
 from database.task_store import TaskStore
 from agents.agent_store import AgentStore
 from tools.logging_utils import tool_logger
 
 class Orchestrator:
-    def __init__(self):
+    def __init__(self, broadcast_fn: Optional[Callable] = None):
         """Initialize the orchestrator with task store, agent store, and executor."""
         self.task_store = TaskStore()
         self.agent_store = AgentStore()
         self.logger = tool_logger
-        
+        self.broadcast_fn = broadcast_fn
+
         # Get max parallel workers from environment, default to 2
         max_workers = int(os.getenv('MAX_PARALLEL_WORKERS', '2'))
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        
+
         self.logger.log_agent_decision("Orchestrator initialization", f"Initialized with {max_workers} max parallel workers")
 
     def run_task(self, task_id: str) -> None:
@@ -177,25 +179,34 @@ class Orchestrator:
         self.task_store.update_task_status(task_id, 'completed')
         self.logger.info(f"Task {task_id} completed successfully")
 
-    def _execute_subtask(self, subtask: Dict) -> str:
+def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = None) -> str:
         """
         Execute a single subtask.
-        
+
         Args:
             subtask: The subtask dictionary containing id, agent_id, goal, etc.
-            
+            broadcast_fn: Optional callback function to broadcast events to WebSocket clients
+
         Returns:
             The output string from the agent execution
-            
+
         Raises:
             Exception: Re-raises any exceptions after logging and updating status
         """
         subtask_id = subtask['id']
-        
+
         try:
             # Update subtask status to in_progress
             self.task_store.update_subtask_status(subtask_id, 'in_progress')
             self.logger.info(f"Subtask {subtask_id} started")
+            if broadcast_fn:
+                broadcast_fn({
+                    'type': 'subtask_started',
+                    'message': f"Subtask {subtask_id} started",
+                    'task_id': subtask['task_id'],
+                    'subtask_id': subtask_id,
+                    'timestamp': datetime.now().isoformat()
+                })
             
             # Load agent definition
             agent_id = subtask['agent_id']
@@ -229,6 +240,14 @@ class Orchestrator:
             # Log completion
             output_preview = output[:100] + "..." if len(output) > 100 else output
             self.logger.info(f"Subtask {subtask_id} completed. Output preview: {output_preview}")
+            if broadcast_fn:
+                broadcast_fn({
+                    'type': 'subtask_completed',
+                    'message': f"Subtask {subtask_id} completed",
+                    'task_id': subtask['task_id'],
+                    'subtask_id': subtask_id,
+                    'timestamp': datetime.now().isoformat()
+                })
             
             return output
             
@@ -236,4 +255,12 @@ class Orchestrator:
             # Update subtask status to failed
             self.task_store.update_subtask_status(subtask_id, 'failed')
             self.logger.error(f"Subtask {subtask_id} failed: {str(e)}")
+            if broadcast_fn:
+                broadcast_fn({
+                    'type': 'subtask_failed',
+                    'message': f"Subtask {subtask_id} failed: {str(e)}",
+                    'task_id': subtask['task_id'],
+                    'subtask_id': subtask_id,
+                    'timestamp': datetime.now().isoformat()
+                })
             raise

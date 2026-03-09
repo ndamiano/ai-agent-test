@@ -149,9 +149,9 @@ class LMStudioConnector:
                 return f"Error: LMStudio returned status {response.status_code}: {response.text}"
                 
         except requests.exceptions.RequestException as e:
-            return f"Error connecting to LMStudio: {str(e)}"
+            raise RuntimeError(f"Error connecting to LMStudio: {str(e)}")
         except (KeyError, json.JSONDecodeError) as e:
-            return f"Error parsing LMStudio response: {str(e)}"
+            raise RuntimeError(f"Error parsing LMStudio response: {str(e)}")
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         """Generate response with optional tool support"""

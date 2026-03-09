@@ -43,5 +43,6 @@ def get_connector(caller: str = "unknown", task_type: str = "general", generatio
     Note: This creates a new connector instance each time to avoid shared state.
     For better performance, components should create and reuse their own ConnectorSelector instance.
     """
+    # Create a new selector instance each time to avoid shared mutable state
     selector = ConnectorSelector()
     return selector.getConnector(caller, task_type, generation_type)

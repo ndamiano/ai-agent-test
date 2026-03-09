@@ -42,16 +42,17 @@ class ToolLogger:
         self.logger = logging.getLogger("tool_logger")
         self.logger.setLevel(logging.DEBUG)
         
-        # Create console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        # Create formatter
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        console_handler.setFormatter(formatter)
-        
-        # Add handlers to logger
-        self.logger.addHandler(console_handler)
+        # Create console handler only if not already present
+        if not self.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.INFO)
+            
+            # Create formatter
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            
+            # Add handlers to logger
+            self.logger.addHandler(console_handler)
     
     def log_tool_call(self, tool_name: str, parameters: Dict[str, Any], result: Any, error: Optional[str] = None):
         """Log a tool call with all relevant information"""

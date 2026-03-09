@@ -17,19 +17,10 @@ class TaskRunner:
         self.context_builder = ContextBuilder(task_store)
         self.main_agent = MainAgent()
         
-    def execution_mode_from_goal(self, goal: str) -> str:
-        """Determine execution mode based on goal content.
-        
-        Note: This method is deprecated. Execution mode should be explicitly
-        passed to create_and_run() or create_and_run_background().
-        """
-        # Default to sequential for backward compatibility
-        return 'sequential'
-    
     def create_and_run(self, goal: str, execution_mode: str = None) -> str:
         """Create and run a task synchronously."""
         if execution_mode is None:
-            execution_mode = self.execution_mode_from_goal(goal)
+            execution_mode = 'sequential'  # Default to sequential
             
         # Create task
         task_dict = task_store.create_task(goal, execution_mode)
@@ -49,7 +40,7 @@ class TaskRunner:
     def create_and_run_background(self, goal: str, execution_mode: str = None) -> str:
         """Create and run a task asynchronously in the background."""
         if execution_mode is None:
-            execution_mode = self.execution_mode_from_goal(goal)
+            execution_mode = 'sequential'  # Default to sequential
         
         # Default to sequential if execution_mode is not sequential or parallel
         if execution_mode not in ['sequential', 'parallel']:

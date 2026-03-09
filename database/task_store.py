@@ -19,9 +19,11 @@ def _get_db_path():
 
 
 def _connect():
-    """Create a database connection with foreign key constraints enabled."""
+    """Create a database connection with foreign key constraints and WAL mode enabled."""
     conn = sqlite3.connect(_get_db_path())
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -217,10 +219,13 @@ class TaskStore:
         
         # Generate a context key based on the subtask goal
         goal = subtask.get('goal', 'output')
-        # Clean up the goal to make a good context key
-        context_key = re.sub(r'[^a-zA-Z0-9_]', '_', goal.lower())[:50]
+        # Clean up the goal to make a good context key and append subtask ID for uniqueness
+        context_key = re.sub(r'[^a-zA-Z0-9_]', '_', goal.lower())[:40]
         if not context_key:
             context_key = f"subtask_output_{subtask_id[:8]}"
+        else:
+            # Append subtask ID to make the key unique
+            context_key = f"{context_key}_{subtask_id[:8]}"
         
         # Update subtask status and output - this must succeed or raise
         with _connect() as conn:
@@ -231,13 +236,13 @@ class TaskStore:
             """, (output, datetime.utcnow().isoformat(), subtask_id))
             conn.commit()
         
-        # Store as context - wrap embedding in swallowable try/except
+        # Store as context using upsert to handle key collisions
         try:
             context_id = str(uuid.uuid4())
             now = datetime.utcnow().isoformat()
             with _connect() as conn:
                 conn.execute("""
-                    INSERT INTO context_store (id, task_id, subtask_id, key, value, created_at)
+                    INSERT OR REPLACE INTO context_store (id, task_id, subtask_id, key, value, created_at)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (context_id, task_id, subtask_id, context_key, output, now))
                 conn.commit()
@@ -317,7 +322,7 @@ class TaskStore:
         
         with _connect() as conn:
             conn.execute("""
-                INSERT INTO context_store (id, task_id, subtask_id, key, value, created_at)
+                INSERT OR REPLACE INTO context_store (id, task_id, subtask_id, key, value, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (context_id, task_id, subtask_id, key, value, now))
             conn.commit()

@@ -2,7 +2,6 @@ import sqlite3
 import os
 import uuid
 from typing import List, Dict, Optional
-import sqlite_vec
 
 
 def load_sqlite_vec(conn: sqlite3.Connection) -> None:
@@ -16,6 +15,7 @@ def load_sqlite_vec(conn: sqlite3.Connection) -> None:
         RuntimeError: If sqlite-vec extension cannot be loaded
     """
     try:
+        import sqlite_vec
         sqlite_vec.load(conn)
     except ImportError:
         raise RuntimeError(
@@ -91,6 +91,7 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         embedding_id = str(uuid.uuid4())
         
         # Serialize the embedding using sqlite_vec
+        import sqlite_vec
         serialized_embedding = sqlite_vec.serialize_float32(embedding)
         
         # Insert the embedding with transaction safety
@@ -109,6 +110,7 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
                     INSERT INTO context_embeddings (id, context_id, task_id, embedding)
                     VALUES (?, ?, ?, ?)
                 """, (embedding_id, context_id, task_id, serialized_embedding))
+                conn.commit()  # Explicitly commit the retry
             else:
                 raise
 
@@ -144,6 +146,7 @@ def retrieve(task_id: str, query_embedding: List[float], k: int = 5, db_path: Op
         conn.execute("PRAGMA temp_store = MEMORY")
         
         # Serialize the query embedding
+        import sqlite_vec
         serialized_query = sqlite_vec.serialize_float32(query_embedding)
         
         # Perform KNN search with join against context_store
@@ -202,6 +205,7 @@ def retrieve_global(query_embedding: List[float], k: int = 5, db_path: Optional[
         conn.execute("PRAGMA temp_store = MEMORY")
         
         # Serialize the query embedding
+        import sqlite_vec
         serialized_query = sqlite_vec.serialize_float32(query_embedding)
         
         # Perform KNN search across all tasks with join against context_store

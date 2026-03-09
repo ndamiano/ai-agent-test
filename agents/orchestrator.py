@@ -49,8 +49,6 @@ class Orchestrator:
                 
         except Exception as e:
             self.logger.error(f"Task {task_id} failed with error: {str(e)}")
-            self.task_store.update_task_status(task_id, 'failed')
-            self.logger.info(f"Task {task_id} marked as failed")
             raise
 
     def _run_sequential(self, task_id: str) -> None:

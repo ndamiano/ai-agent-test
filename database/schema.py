@@ -2,8 +2,16 @@ import sqlite3
 import os
 from typing import Optional
 
-# Import the vector store initialization function
-from .vector_store import init_vector_store
+# Import the vector store initialization function (lazy import to avoid hard dependency)
+def _lazy_import_vector_store():
+    """Lazy import of vector store to avoid hard sqlite-vec dependency."""
+    try:
+        from .vector_store import init_vector_store
+        return init_vector_store
+    except ImportError as e:
+        import logging
+        logging.warning(f"Vector store not available due to missing dependency: {e}")
+        return None
 
 # Database path function that reads from environment variable with fallback
 def get_db_path():
@@ -96,8 +104,18 @@ def init_db(db_path: Optional[str] = None) -> None:
         
         conn.commit()
         
-        # Initialize vector store alongside the main schema
-        init_vector_store(db_path)
+        # Add performance indexes for frequently queried columns
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id ON context_store(task_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id_key ON context_store(task_id, key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id)")
+        
+        conn.commit()
+        
+        # Initialize vector store alongside the main schema (if available)
+        vector_store_init = _lazy_import_vector_store()
+        if vector_store_init:
+            vector_store_init(db_path)
 
 
 if __name__ == "__main__":

@@ -116,12 +116,17 @@ RULES:
             # Send prompt to planner agent
             response = self.planner_agent.chat(prompt)
             
-            # Strip markdown code fences if present using regex
-            response = re.sub(r'^```(?:json)?\s*', '', response.strip())
-            response = re.sub(r'\s*```$', '', response.strip())
+            # More robust extraction: find the first { and last } and slice between them
+            first_brace = response.find('{')
+            last_brace = response.rfind('}')
+            
+            if first_brace == -1 or last_brace == -1 or first_brace >= last_brace:
+                raise ValueError(f"Could not find JSON structure in response: {response[:200]}...")
+            
+            json_str = response[first_brace:last_brace + 1]
             
             # Parse JSON response
-            plan = json.loads(response)
+            plan = json.loads(json_str)
             return plan
             
         except json.JSONDecodeError as e:
@@ -160,7 +165,13 @@ RULES:
         for i, subtask_data in enumerate(subtasks):
             depends_on_positions = subtask_data.get("depends_on", [])
             if depends_on_positions:
-                real_depends_on = [position_to_id[pos] for pos in depends_on_positions if pos in position_to_id]
+                # Validate that all referenced positions exist
+                missing_positions = [pos for pos in depends_on_positions if pos not in position_to_id]
+                if missing_positions:
+                    raise ValueError(f"Planner referenced non-existent positions: {missing_positions}. "
+                                   f"Available positions: {list(position_to_id.keys())}")
+                
+                real_depends_on = [position_to_id[pos] for pos in depends_on_positions]
                 # Update the subtask in the database using task_store method
                 self.task_store.update_subtask_depends_on(created_subtasks[i]["id"], real_depends_on)
         

@@ -1,5 +1,6 @@
 import os
 import requests
+import threading
 from typing import List
 from dotenv import load_dotenv
 
@@ -20,6 +21,7 @@ class EmbeddingClient:
         self._model_name = model_name
         self._endpoint = None
         self._session = None  # Add session for connection pooling
+        self._session_lock = threading.Lock()  # Thread-safe session initialization
     
     @property
     def base_url(self):

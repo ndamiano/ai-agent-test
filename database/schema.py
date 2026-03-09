@@ -2,6 +2,9 @@ import sqlite3
 import os
 from typing import Optional
 
+# Import the vector store initialization function
+from .vector_store import init_vector_store
+
 # Database path constant that reads from environment variable with fallback
 DB_PATH = os.environ.get("TASK_DB_PATH", "data/tasks.db")
 
@@ -85,6 +88,9 @@ def init_db(db_path: Optional[str] = None) -> None:
         """)
         
         conn.commit()
+        
+        # Initialize vector store alongside the main schema
+        init_vector_store(db_path)
 
 
 if __name__ == "__main__":

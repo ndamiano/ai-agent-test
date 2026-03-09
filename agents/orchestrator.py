@@ -82,7 +82,7 @@ class Orchestrator:
         self.logger.info(f"Running task {task_id} in sequential mode")
         
         # Get all subtasks ordered by position
-        subtasks = self.task_store.get_subtasks(task_id)
+        subtasks = self.task_store.get_subtasks_for_task(task_id)
         subtasks.sort(key=lambda x: x.get('position', 0))
         
         for subtask in subtasks:
@@ -188,7 +188,7 @@ class Orchestrator:
             
             # Load agent definition
             agent_id = subtask['agent_id']
-            agent_definition = self.agent_store.get_agent(agent_id)
+            agent_definition = self.agent_store.get(agent_id)
             if not agent_definition:
                 raise ValueError(f"Agent {agent_id} not found")
             

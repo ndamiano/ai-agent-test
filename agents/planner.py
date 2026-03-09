@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from agents.main_agent import MainAgent
 from agents.agent_store import AgentStore
-from database.task_store import task_store
+from database.task_store import TaskStore
 from tools.logging_utils import log_agent_decision, log_error
 
 
@@ -20,7 +20,7 @@ class PlannerAgent:
     def __init__(self):
         """Initialize the planner agent with references to stores."""
         self.agent_store = AgentStore()
-        self.task_store = task_store
+        self.task_store = TaskStore()
         self.planner_agent = MainAgent(agent_id="planner")
     
     def build_planning_prompt(self, goal: str, task_id: str) -> str:

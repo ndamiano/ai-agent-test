@@ -83,6 +83,31 @@ class ToolLogger:
         if context:
             print(f"   Context: {context}")
     
+    def error(self, message: str, context: Optional[Dict[str, Any]] = None):
+        """Convenience method for logging errors (compatible with standard logging interface)"""
+        self.log_error("error", message, context)
+    
+    def warning(self, message: str, context: Optional[Dict[str, Any]] = None):
+        """Convenience method for logging warnings (compatible with standard logging interface)"""
+        self.log_error("warning", message, context)
+    
+    def info(self, message: str, context: Optional[Dict[str, Any]] = None):
+        """Convenience method for logging info (compatible with standard logging interface)"""
+        log_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "session_id": self.session_id,
+            "type": "info",
+            "message": message,
+            "context": context or {}
+        }
+        
+        self._write_log(log_entry)
+        
+        # Print to console
+        print(f"ℹ️ Info: {message}")
+        if context:
+            print(f"   Context: {context}")
+    
     def _write_log(self, log_entry: Dict[str, Any]):
         """Write a log entry to the session log file"""
         log_file = os.path.join(self.log_dir, f"{self.session_id}.jsonl")

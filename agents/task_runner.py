@@ -35,7 +35,8 @@ class TaskRunner:
             execution_mode = self.execution_mode_from_goal(goal)
             
         # Create task
-        task_id = task_store.create_task(goal, execution_mode)
+        task_dict = task_store.create_task(goal, execution_mode)
+        task_id = task_dict["id"]
         logger.info(f"Task created: {task_id}")
         
         # Plan the task
@@ -58,7 +59,8 @@ class TaskRunner:
             execution_mode = 'sequential'
             
         # Create task
-        task_id = task_store.create_task(goal, execution_mode)
+        task_dict = task_store.create_task(goal, execution_mode)
+        task_id = task_dict["id"]
         logger.info(f"Background task created: {task_id}")
         
         # Plan the task
@@ -85,8 +87,8 @@ class TaskRunner:
         except KeyError:
             return {"error": f"Task {task_id} not found"}
         
-        subtasks = task_store.get_subtasks(task_id)
-        events = task_store.get_events(task_id, limit=10)
+        subtasks = task_store.get_subtasks_for_task(task_id)
+        events = task_store.get_events(task_id)
         
         # Build summary
         total_subtasks = len(subtasks)

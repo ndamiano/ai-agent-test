@@ -4,6 +4,8 @@ import requests
 import json
 import os
 from typing import Any, Union, List
+from threading import Lock
+import time
 
 
 class LMStudioConnector:
@@ -22,6 +24,10 @@ class LMStudioConnector:
         self.model_name = os.getenv("LMSTUDIO_MODEL", model_name)
         self.api_endpoint = f"{self.base_url}/v1/chat/completions"
         self._connected = False
+        self._session = None
+        self._session_lock = Lock()
+        self._last_health_check = 0
+        self._health_check_interval = 30  # seconds
 
     def connect(self) -> bool:
         """
@@ -107,6 +113,21 @@ class LMStudioConnector:
                 lines.append(f"  {key}: {value}")
         return "\n".join(lines)
 
+    def _get_session(self) -> requests.Session:
+        """Get or create a connection-pooled session for better performance."""
+        with self._session_lock:
+            if self._session is None:
+                self._session = requests.Session()
+                # Configure session for better performance
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=10,
+                    pool_maxsize=10,
+                    max_retries=3
+                )
+                self._session.mount('http://', adapter)
+                self._session.mount('https://', adapter)
+            return self._session
+    
     def generate(self, prompt: str, context: str) -> str:
         """
         Generate response using context and prompt
@@ -134,8 +155,11 @@ class LMStudioConnector:
             "max_tokens": 2000
         }
         
+        # Use connection pooling for better performance
+        session = self._get_session()
+        
         try:
-            response = requests.post(
+            response = session.post(
                 self.api_endpoint,
                 json=payload,
                 headers={"Content-Type": "application/json"},

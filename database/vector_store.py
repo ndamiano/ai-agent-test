@@ -71,48 +71,59 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         task_id: The ID of the task this embedding belongs to
         embedding: The vector embedding as a list of floats
         db_path: Optional path to database file. If None, uses the same path as the main database.
+        
+    Raises:
+        RuntimeError: If sqlite-vec extension is not available or database operations fail
     """
     if db_path is None:
         from database.schema import get_db_path
         db_path = get_db_path()
     
-    with sqlite3.connect(db_path, timeout=30.0) as conn:
-        # Enable extension loading and load sqlite-vec extension
-        conn.enable_load_extension(True)
-        load_sqlite_vec(conn)
-        
-        # Set WAL mode and other performance settings for concurrent access
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA cache_size = 10000")
-        conn.execute("PRAGMA temp_store = MEMORY")
-        
-        # Generate new UUID for the embedding
-        embedding_id = str(uuid.uuid4())
-        
-        # Serialize the embedding using sqlite_vec
-        import sqlite_vec
-        serialized_embedding = sqlite_vec.serialize_float32(embedding)
-        
-        # Insert the embedding with transaction safety
-        # Remove manual BEGIN IMMEDIATE - let the context manager handle transactions
+    # Retry logic for database operations
+    max_retries = 3
+    retry_delay = 0.1
+    
+    for attempt in range(max_retries):
         try:
-            conn.execute("""
-                INSERT INTO context_embeddings (id, context_id, task_id, embedding)
-                VALUES (?, ?, ?, ?)
-            """, (embedding_id, context_id, task_id, serialized_embedding))
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e):
-                # Retry once after a short delay
-                import time
-                time.sleep(0.1)
+            with sqlite3.connect(db_path, timeout=30.0) as conn:
+                # Enable extension loading and load sqlite-vec extension
+                conn.enable_load_extension(True)
+                load_sqlite_vec(conn)
+                
+                # Set WAL mode and other performance settings for concurrent access
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                conn.execute("PRAGMA cache_size = 10000")
+                conn.execute("PRAGMA temp_store = MEMORY")
+                
+                # Generate new UUID for the embedding
+                embedding_id = str(uuid.uuid4())
+                
+                # Serialize the embedding using sqlite_vec
+                import sqlite_vec
+                serialized_embedding = sqlite_vec.serialize_float32(embedding)
+                
+                # Insert the embedding with transaction safety
                 conn.execute("""
                     INSERT INTO context_embeddings (id, context_id, task_id, embedding)
                     VALUES (?, ?, ?, ?)
                 """, (embedding_id, context_id, task_id, serialized_embedding))
-                conn.commit()  # Explicitly commit the retry
+                
+                # Commit is handled by the context manager
+                return
+                
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                # Retry after a delay
+                import time
+                time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                continue
             else:
-                raise
+                raise RuntimeError(f"Failed to store embedding after {max_retries} attempts: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Database error while storing embedding: {str(e)}")
+    
+    raise RuntimeError(f"Failed to store embedding after {max_retries} attempts")
 
 
 def retrieve(task_id: str, query_embedding: List[float], k: int = 5, db_path: Optional[str] = None) -> List[Dict]:

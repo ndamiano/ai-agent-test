@@ -13,9 +13,21 @@ class ToolManager:
     Tools are registered explicitly at runtime, not auto-discovered.
     """
     
+    _instance = None
+    _lock = Lock()
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self):
-        self._tools_registry: Dict[str, Dict[str, Any]] = {}
-        self._lock = Lock()  # Add lock for thread safety
+        if not hasattr(self, '_initialized'):
+            self._tools_registry: Dict[str, Dict[str, Any]] = {}
+            self._lock = Lock()
+            self._initialized = True
     
     def register_tool(self, name: str, description: str, parameters: Dict[str, Any], fn: Callable) -> None:
         """

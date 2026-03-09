@@ -2,11 +2,14 @@ import sqlite3
 import os
 import json
 import uuid
+import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from threading import Lock
 
 from .schema import init_db
+from connectors.embedding_client import embedding_client
+from .vector_store import store_embedding
 
 
 def _get_db_path():
@@ -243,7 +246,7 @@ class TaskStore:
             return ready_subtasks
     
     def write_context(self, task_id: str, key: str, value: str, subtask_id: Optional[str] = None) -> None:
-        """Write a context key-value pair for a task."""
+        """Write a context key-value pair for a task and automatically embed the value."""
         context_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
@@ -253,6 +256,14 @@ class TaskStore:
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (context_id, task_id, subtask_id, key, value, now))
             conn.commit()
+        
+        # Try to embed the value for semantic search capability
+        try:
+            embedding = embedding_client.embed(value)
+            store_embedding(context_id, task_id, embedding)
+        except Exception as e:
+            # Log warning but don't raise - context store write should always succeed
+            logging.warning(f"Failed to create embedding for context '{key}' in task {task_id}: {e}")
     
     def get_context(self, task_id: str, key: str) -> Optional[str]:
         """Get a context value by key for a task."""
@@ -305,6 +316,26 @@ class TaskStore:
             """, (task_id,))
             
             return [dict(row) for row in cursor.fetchall()]
+    
+    def retrieve_context(self, task_id: str, query: str, k: int = 5) -> List[Dict]:
+        """
+        Retrieve context entries for a task using semantic search.
+        
+        Args:
+            task_id: The ID of the task to search within
+            query: Plain text query to embed and search for
+            k: Number of nearest neighbors to return (default: 5)
+            
+        Returns:
+            List of dictionaries with context_id, distance, key, and value fields
+        """
+        from .vector_store import retrieve
+        
+        # Embed the query text
+        query_embedding = embedding_client.embed(query)
+        
+        # Retrieve similar context entries
+        return retrieve(task_id, query_embedding, k)
 
 
 # Global instance

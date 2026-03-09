@@ -172,6 +172,8 @@ class TaskStore:
                     result["input_context"] = json.loads(result["input_context"])
                 if result["depends_on"]:
                     result["depends_on"] = json.loads(result["depends_on"])
+                else:
+                    result["depends_on"] = []
                 results.append(result)
             
             return results

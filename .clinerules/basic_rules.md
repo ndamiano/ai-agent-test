@@ -1,0 +1,2 @@
+Do not use comments unless they add large amounts of value
+Do not add comments that explain what you're doing. Only add comments when they're important and explain something that isn't immediately obvious like a tradeoff you've made that led to this bit of code

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any>
+from typing import Optional, List, Dict, Any
 class HealthResponse(BaseModel):
     status: str
     server: str
@@ -28,6 +28,13 @@ class TaskResponse(BaseModel):
     created_at: str
     updated_at: str
     subtasks: List[SubtaskResponse] = []
+
+class EventResponse(BaseModel):
+    id: str
+    event_type: str
+    message: str
+    subtask_id: Optional[str]
+    created_at: str
 
 class TaskDetailResponse(TaskResponse):
     events: List[EventResponse]

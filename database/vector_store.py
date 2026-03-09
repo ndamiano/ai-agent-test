@@ -94,24 +94,21 @@ def store_embedding(context_id: str, task_id: str, embedding: List[float], db_pa
         serialized_embedding = sqlite_vec.serialize_float32(embedding)
         
         # Insert the embedding with transaction safety
+        # Remove manual BEGIN IMMEDIATE - let the context manager handle transactions
         try:
-            conn.execute("BEGIN IMMEDIATE")
             conn.execute("""
                 INSERT INTO context_embeddings (id, context_id, task_id, embedding)
                 VALUES (?, ?, ?, ?)
             """, (embedding_id, context_id, task_id, serialized_embedding))
-            conn.commit()
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e):
                 # Retry once after a short delay
                 import time
                 time.sleep(0.1)
-                conn.execute("BEGIN IMMEDIATE")
                 conn.execute("""
                     INSERT INTO context_embeddings (id, context_id, task_id, embedding)
                     VALUES (?, ?, ?, ?)
                 """, (embedding_id, context_id, task_id, serialized_embedding))
-                conn.commit()
             else:
                 raise
 

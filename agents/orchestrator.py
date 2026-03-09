@@ -89,20 +89,10 @@ class Orchestrator:
             except Exception as e:
                 self.logger.error(f"Subtask {subtask['id']} failed: {str(e)}")
                 
-                # Check if we should retry
-                retry_failed = subtask.get('retry_failed', False)
-                if retry_failed:
-                    self.logger.info(f"Retrying subtask {subtask['id']}")
-                    try:
-                        output = self._execute_subtask(subtask)
-                        self.logger.info(f"Subtask {subtask['id']} retry successful")
-                    except Exception as retry_e:
-                        self.logger.error(f"Subtask {subtask['id']} retry failed: {str(retry_e)}")
-                        self.task_store.update_task_status(task_id, 'failed')
-                        return
-                else:
-                    self.task_store.update_task_status(task_id, 'failed')
-                    return
+                # Check if we should retry - remove dead retry logic since retry_failed field is never set
+                # The retry_failed field is not wired from ExecutionConfig to subtasks, so this branch is dead code
+                self.task_store.update_task_status(task_id, 'failed')
+                return
         
         # All subtasks completed successfully
         self.task_store.update_task_status(task_id, 'completed')
@@ -138,8 +128,7 @@ class Orchestrator:
                 # Submit ready subtasks that aren't already in flight
                 for subtask in ready_subtasks:
                     if subtask['id'] not in in_flight_subtasks:
-                        # Update subtask status to in_progress atomically before submitting
-                        self.task_store.update_subtask_status(subtask['id'], 'in_progress')
+                        # Remove pre-submission status update - trust _execute_subtask to set in_progress when it actually starts
                         self.logger.info(f"Submitting subtask {subtask['id']} for parallel execution")
                         future = self._executor.submit(self._execute_subtask, subtask)
                         futures_to_subtask[future] = subtask

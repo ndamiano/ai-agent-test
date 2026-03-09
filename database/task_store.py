@@ -52,7 +52,7 @@ class TaskStore:
         task_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 INSERT INTO tasks (id, goal, status, execution_mode, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -70,7 +70,7 @@ class TaskStore:
     
     def get_task(self, task_id: str) -> Dict:
         """Get a task by ID, raises KeyError if not found."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, goal, status, execution_mode, created_at, updated_at
@@ -89,7 +89,7 @@ class TaskStore:
         if status not in valid_statuses:
             raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
         
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 UPDATE tasks 
                 SET status = ?, updated_at = ?
@@ -99,7 +99,7 @@ class TaskStore:
     
     def list_tasks(self, status: Optional[str] = None) -> List[Dict]:
         """List all tasks, optionally filtered by status."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.row_factory = sqlite3.Row
             if status:
                 cursor = conn.execute("""
@@ -120,7 +120,7 @@ class TaskStore:
         subtask_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 INSERT INTO subtasks (id, task_id, agent_id, status, goal, input_context, 
                                     depends_on, position, created_at, updated_at)
@@ -148,7 +148,7 @@ class TaskStore:
     
     def get_subtask(self, subtask_id: str) -> Dict:
         """Get a subtask by ID, raises KeyError if not found."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, task_id, agent_id, status, goal, input_context, output, 
@@ -166,12 +166,14 @@ class TaskStore:
                 result["input_context"] = json.loads(result["input_context"])
             if result["depends_on"]:
                 result["depends_on"] = json.loads(result["depends_on"])
+            else:
+                result["depends_on"] = []
             
             return result
     
     def get_subtasks_for_task(self, task_id: str) -> List[Dict]:
         """Get all subtasks for a task, ordered by position."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, task_id, agent_id, status, goal, input_context, output, 
@@ -199,7 +201,7 @@ class TaskStore:
         if status not in valid_statuses:
             raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
         
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 UPDATE subtasks 
                 SET status = ?, updated_at = ?
@@ -210,44 +212,44 @@ class TaskStore:
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
         """Set the output of a subtask, also updates status to completed and stores context."""
         # Get the subtask to retrieve task_id
+        subtask = self.get_subtask(subtask_id)
+        task_id = subtask['task_id']
+        
+        # Generate a context key based on the subtask goal
+        goal = subtask.get('goal', 'output')
+        # Clean up the goal to make a good context key
+        context_key = re.sub(r'[^a-zA-Z0-9_]', '_', goal.lower())[:50]
+        if not context_key:
+            context_key = f"subtask_output_{subtask_id[:8]}"
+        
+        # Update subtask status and output - this must succeed or raise
+        with _connect() as conn:
+            conn.execute("""
+                UPDATE subtasks 
+                SET output = ?, status = 'completed', updated_at = ?
+                WHERE id = ?
+            """, (output, datetime.utcnow().isoformat(), subtask_id))
+            conn.commit()
+        
+        # Store as context - wrap embedding in swallowable try/except
         try:
-            subtask = self.get_subtask(subtask_id)
-            task_id = subtask['task_id']
-            
-            # Generate a context key based on the subtask goal
-            goal = subtask.get('goal', 'output')
-            # Clean up the goal to make a good context key
-            context_key = re.sub(r'[^a-zA-Z0-9_]', '_', goal.lower())[:50]
-            if not context_key:
-                context_key = f"subtask_output_{subtask_id[:8]}"
-            
-            # Use a single transaction for both operations
-            with sqlite3.connect(_get_db_path()) as conn:
-                # Update subtask status and output
-                conn.execute("""
-                    UPDATE subtasks 
-                    SET output = ?, status = 'completed', updated_at = ?
-                    WHERE id = ?
-                """, (output, datetime.utcnow().isoformat(), subtask_id))
-                
-                # Store as context
-                context_id = str(uuid.uuid4())
-                now = datetime.utcnow().isoformat()
+            context_id = str(uuid.uuid4())
+            now = datetime.utcnow().isoformat()
+            with _connect() as conn:
                 conn.execute("""
                     INSERT INTO context_store (id, task_id, subtask_id, key, value, created_at)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (context_id, task_id, subtask_id, context_key, output, now))
-                
-                # Try to embed the value for semantic search capability
-                try:
-                    embedding = embedding_client.embed(output)
-                    store_embedding(context_id, task_id, embedding)
-                except Exception as e:
-                    # Log error but don't corrupt the stored value
-                    logging.error(f"Failed to create embedding for context '{context_key}' in task {task_id}: {e}")
-                    # Don't modify the stored value - it's still usable for exact-key lookups
-                
                 conn.commit()
+            
+            # Try to embed the value for semantic search capability
+            try:
+                embedding = embedding_client.embed(output)
+                store_embedding(context_id, task_id, embedding)
+            except Exception as e:
+                # Log error but don't corrupt the stored value
+                logging.error(f"Failed to create embedding for context '{context_key}' in task {task_id}: {e}")
+                # Don't modify the stored value - it's still usable for exact-key lookups
                 
         except Exception as e:
             # If context storage fails, log but don't fail the main operation
@@ -255,7 +257,7 @@ class TaskStore:
     
     def get_ready_subtasks(self, task_id: str) -> List[Dict]:
         """Get subtasks that are ready to run (pending status and all dependencies completed)."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.row_factory = sqlite3.Row
             # Get all pending subtasks for the task
             cursor = conn.execute("""
@@ -300,7 +302,7 @@ class TaskStore:
 
     def update_subtask_depends_on(self, subtask_id: str, depends_on: List[str]) -> None:
         """Update the depends_on field of a subtask with real subtask IDs."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 UPDATE subtasks 
                 SET depends_on = ?, updated_at = ?
@@ -313,7 +315,7 @@ class TaskStore:
         context_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 INSERT INTO context_store (id, task_id, subtask_id, key, value, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -331,7 +333,7 @@ class TaskStore:
     
     def get_context(self, task_id: str, key: str) -> Optional[str]:
         """Get a context value by key for a task."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             cursor = conn.execute("""
                 SELECT value FROM context_store 
                 WHERE task_id = ? AND key = ? 
@@ -345,7 +347,7 @@ class TaskStore:
     
     def get_all_context(self, task_id: str) -> Dict[str, str]:
         """Get all context key-value pairs for a task."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             cursor = conn.execute("""
                 SELECT key, value FROM context_store 
                 WHERE task_id = ? 
@@ -365,7 +367,7 @@ class TaskStore:
         event_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
         
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.execute("""
                 INSERT INTO task_events (id, task_id, subtask_id, event_type, message, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -374,7 +376,7 @@ class TaskStore:
     
     def get_events(self, task_id: str) -> List[Dict]:
         """Get all events for a task, ordered by creation time."""
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("""
                 SELECT id, task_id, subtask_id, event_type, message, created_at
@@ -420,7 +422,7 @@ class TaskStore:
         Returns:
             List of context entries matching the query
         """
-        with sqlite3.connect(_get_db_path()) as conn:
+        with _connect() as conn:
             # Use LIKE for keyword search, order by length of value (shorter matches first)
             cursor = conn.execute("""
                 SELECT id, key, value

@@ -17,7 +17,7 @@ class SubtaskResponse(BaseModel):
     goal: str
     status: str
     position: int
-    output_preview: Optional[str]
+    output: Optional[str]
     depends_on: List[str]
 
 class TaskResponse(BaseModel):
@@ -39,13 +39,6 @@ class EventResponse(BaseModel):
 class TaskDetailResponse(TaskResponse):
     events: List[EventResponse]
     context_keys: List[str]
-
-class EventResponse(BaseModel):
-    id: str
-    event_type: str
-    message: str
-    subtask_id: Optional[str]
-    created_at: str
 
 class AskResponse(BaseModel):
     question: str

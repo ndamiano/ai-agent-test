@@ -1,0 +1,60 @@
+import React, { useState, useEffect } from 'react';
+import Layout from './components/Layout';
+import { api } from './api/client';
+import ErrorBoundary from './components/ErrorBoundary';
+
+function App() {
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [systemStatus, setSystemStatus] = useState<{ connected: boolean; message: string }>({
+    connected: false,
+    message: 'LMStudio disconnected',
+  });
+
+  // Fetch task detail when selectedTaskId changes
+  useEffect(() => {
+    if (selectedTaskId) {
+      const fetchTaskDetail = async () => {
+        try {
+          await api.getTask(selectedTaskId);
+        } catch (error) {
+          console.error('Failed to fetch task detail:', error);
+        }
+      };
+      fetchTaskDetail();
+    }
+  }, [selectedTaskId]);
+
+  // Fetch system status every 30 seconds
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const status = await api.getStatus();
+        setSystemStatus({
+          connected: status.lmstudio_connected,
+          message: status.lmstudio_connected ? 'LMStudio connected' : 'LMStudio disconnected',
+        });
+      } catch (error) {
+        setSystemStatus({ connected: false, message: 'LMStudio disconnected' });
+      }
+    };
+
+    checkStatus();
+    const intervalId = setInterval(checkStatus, 30000);
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-900">
+      <ErrorBoundary>
+        <Layout
+          selectedTaskId={selectedTaskId}
+          setSelectedTaskId={setSelectedTaskId}
+          systemStatus={systemStatus}
+        />
+      </ErrorBoundary>
+    </div>
+  );
+}
+
+export default App;

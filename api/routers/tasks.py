@@ -6,11 +6,7 @@ from agents.task_runner import task_runner
 from database.task_store import task_store
 from api.websocket.manager import manager
 
-router = APIRouter(
-    prefix="/tasks",
-    tags=["tasks"],
-    responses={404: {"description": "Task not found"}}
-)
+router = APIRouter()
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_task(request: CreateTaskRequest):
@@ -31,6 +27,7 @@ async def get_tasks(status: Optional[str] = None):
     """
     List all tasks, optionally filtered by status.
     """
+    print("Here")
     tasks = task_store.list_tasks(status)
     return [TaskResponse(**task) for task in tasks]
 

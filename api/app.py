@@ -74,9 +74,9 @@ async def root():
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
 
 # Mount routers
-app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
-app.include_router(agents.router, prefix="/agents", tags=["agents"])
-app.include_router(system.router, prefix="/system", tags=["system"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
+app.include_router(system.router, prefix="/api/system", tags=["system"])
 
 # Export the app for use in other modules
 __all__ = ["app"]

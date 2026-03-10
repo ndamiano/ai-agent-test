@@ -90,14 +90,7 @@ class AgentSpawner:
 
 
 # Register the agent spawner as a tool
-def _spawn_agent_impl(task: str, tools: Optional[str] = None, agent_id: Optional[str] = None) -> str:
-    """Implementation function for the spawn_agent tool"""
-    spawner = AgentSpawner()
-    return spawner.spawn_agent(task, tools, agent_id)
-
-
-# Register the tool with the tool manager
-tool_manager.register_tool(
+@tool_manager.tool(
     name="spawn_agent",
     description="Create and run a sub-agent with specified tools or agent definition on a task",
     parameters={
@@ -117,6 +110,9 @@ tool_manager.register_tool(
             }
         },
         "required": ["task"]
-    },
-    fn=_spawn_agent_impl
+    }
 )
+def spawn_agent(task: str, tools: Optional[str] = None, agent_id: Optional[str] = None) -> str:
+    """Implementation function for the spawn_agent tool"""
+    spawner = AgentSpawner()
+    return spawner.spawn_agent(task, tools, agent_id)

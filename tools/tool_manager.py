@@ -3,6 +3,7 @@
 from typing import Dict, List, Any, Callable, Optional, Tuple, Union
 import inspect
 from threading import Lock
+from functools import wraps
 
 from .logging_utils import log_tool_call, log_error
 
@@ -82,28 +83,29 @@ class ToolManager:
         parameters = tool_info['parameters'].get('properties', {})
         required_params = tool_info['parameters'].get('required', [])
         validated = {}
-        
+
         # Check required parameters
         for param_name in required_params:
             if param_name not in provided_kwargs:
                 raise ValueError(f"Missing required parameter '{param_name}' for tool '{tool_info['name']}'")
-        
+
         # Filter and validate provided parameters
         for param_name, value in provided_kwargs.items():
             if param_name in parameters:
                 validated[param_name] = value
             # Silently ignore extra parameters to be flexible
-        
+
         return validated
-    
+
     def list_tools(self) -> str:
         """Get a formatted string listing available tools"""
+        
         tools = self.getTools()
         
         if not tools:
             return "No tools available"
-        
         lines = ["Available tools:"]
+        
         for tool in tools:
             params = []
             properties = tool['parameters'].get('properties', {})
@@ -117,6 +119,31 @@ class ToolManager:
             lines.append(f"  {tool['name']}({param_str}) - {tool['description']}")
         
         return "\n".join(lines)
+
+    @classmethod
+    def tool(cls, name: str, description: str, parameters: Dict[str, Any]):
+        """
+        Decorator for registering tools with the tool manager.
+        
+        Args:
+            name: Unique tool name
+            description: Tool description
+            parameters: Parameter schema in OpenAI function calling format
+        
+        Returns:
+            Decorator function
+        """
+        def decorator(fn):
+            @wraps(fn)
+            def wrapper(*args, **kwargs):
+                return fn(*args, **kwargs)
+            
+            # Get the singleton instance
+            instance = cls._instance if cls._instance is not None else cls()
+            instance.register_tool(name, description, parameters, fn)
+            return wrapper
+        
+        return decorator
 
 
 def build_openai_tool_schema(tool: dict) -> dict:
@@ -185,15 +212,3 @@ def build_openai_tool_schema(tool: dict) -> dict:
 
 # Global instance using module-level singleton pattern
 tool_manager = ToolManager()
-
-def get_tools():
-    """Get list of all available tools"""
-    return tool_manager.getTools()
-
-def use_tool(tool_name: str, **kwargs):
-    """Execute a tool by name with provided arguments"""
-    return tool_manager.useTool(tool_name, **kwargs)
-
-def list_tools() -> str:
-    """Get formatted string of available tools"""
-    return tool_manager.list_tools()

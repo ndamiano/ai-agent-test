@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 import json
 
 from .logging_utils import log_tool_call, log_error
+from tools.tool_manager import tool_manager
 
 
 def write_to_file(
@@ -160,7 +161,7 @@ def write_json_to_file(
 
 
 # Tool registration for the agent system
-def register_write_tools(tool_manager):
+def register_write_tools():
     """Register write tools with the tool manager"""
     
     # Register write_to_file tool

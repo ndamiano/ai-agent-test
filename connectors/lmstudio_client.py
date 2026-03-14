@@ -152,7 +152,7 @@ class LMStudioConnector:
                 {"role": "user", "content": full_prompt}
             ],
             "temperature": 0.7,
-            "max_tokens": 2000
+            "max_tokens": 50000
         }
         
         # Use connection pooling for better performance
@@ -184,7 +184,7 @@ class LMStudioConnector:
             "model": self.model_name,
             "messages": messages,
             "temperature": 0.7,
-            "max_tokens": 2000
+            "max_tokens": 50000
         }
         
         # Add tools if provided

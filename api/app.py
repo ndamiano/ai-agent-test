@@ -27,25 +27,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Import routers (they will be mounted in the startup event)
 from api.routers import tasks, system
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event handler to initialize database and perform health checks."""
+    """Startup event handler to initialize database and register tools."""
     try:
         # Initialize database
         init_db()
         logging.info("Database initialized successfully")
-        
-        # Perform health checks
+
+        # Register tools
+        from tools.task_tools import register_task_tools
+        from tools.agent_tools import register_agent_tools
+        register_task_tools()
+        register_agent_tools()
+        logging.info("Tools registered successfully")
+
+        # Health checks
         lmstudio_status = lmstudio_client.health_check()
         embedding_status = embedding_client.health_check()
-        
-        # Log health check results
         logging.info(f"LMStudio connectivity: {'Healthy' if lmstudio_status else 'Unhealthy'}")
         logging.info(f"Embedding client connectivity: {'Healthy' if embedding_status else 'Unhealthy'}")
-        
+
     except Exception as e:
         logging.error(f"Startup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Server startup failed")
@@ -54,21 +58,14 @@ async def startup_event():
 async def root():
     """Root endpoint that returns health check information."""
     try:
-        # Check database connectivity
-        db_status = "Healthy"
-        
-        # Check LMStudio connectivity
         lmstudio_status = lmstudio_client.health_check()
-        
-        # Check embedding client connectivity
         embedding_status = embedding_client.health_check()
-        
         return {
             "status": "healthy",
             "server": "running",
-            "database": db_status,
+            "database": "healthy",
             "lmstudio": "healthy" if lmstudio_status else "unhealthy",
-            "embedding": "healthy" if embedding_status else "unhealthy"
+            "embedding": "healthy" if embedding_status else "unhealthy",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
@@ -77,5 +74,4 @@ async def root():
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 
-# Export the app for use in other modules
 __all__ = ["app"]

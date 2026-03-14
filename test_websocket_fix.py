@@ -45,3 +45,26 @@ async def test_websocket_connection(task_id, expected_behavior):
         return False
 
 async def main():
+    """Main test function to verify WebSocket functionality."""
+    print("Testing WebSocket 403 fix...")
+    
+    # Test with an invalid task ID
+    print("\n=== Testing with invalid task ID ===")
+    result1 = await test_websocket_connection("invalid-task-id", "Should receive error message")
+    
+    # Test with a valid task ID (if server is running)
+    print("\n=== Testing with valid task ID ===")
+    result2 = await test_websocket_connection("test-task-123", "Should receive task status")
+    
+    # Summary
+    print("\n=== Test Results ===")
+    print(f"Invalid task ID test: {'✓ PASS' if result1 else '✗ FAIL'}")
+    print(f"Valid task ID test: {'✓ PASS' if result2 else '✗ FAIL'}")
+    
+    if result1 and result2:
+        print("\n🎉 All tests passed! WebSocket 403 fix is working correctly.")
+    else:
+        print("\n❌ Some tests failed. Please check the WebSocket implementation.")
+
+if __name__ == "__main__":
+    asyncio.run(main())

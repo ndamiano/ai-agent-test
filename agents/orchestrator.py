@@ -66,11 +66,26 @@ class Orchestrator:
                 # Check if we should retry - remove dead retry logic since retry_failed field is never set
                 # The retry_failed field is not wired from ExecutionConfig to subtasks, so this branch is dead code
                 self.task_store.update_task_status(task_id, 'failed')
+                
+                # Broadcast task failure to WebSocket clients
+                if broadcast_fn:
+                    broadcast_fn({
+                        'type': 'task_failed',
+                        'task_id': task_id,
+                        'error': str(e)
+                    })
                 return
         
         # All subtasks completed successfully
         self.task_store.update_task_status(task_id, 'completed')
         self.logger.info(f"Task {task_id} completed successfully")
+        
+        # Broadcast task completion to WebSocket clients
+        if broadcast_fn:
+            broadcast_fn({
+                'type': 'task_completed',
+                'task_id': task_id
+            })
 
     def _run_parallel(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> None:
         """
@@ -139,6 +154,14 @@ class Orchestrator:
                     except Exception as e:
                         self.logger.error(f"Subtask {subtask['id']} failed: {str(e)}")
                         self.task_store.update_task_status(task_id, 'failed')
+                        
+                        # Broadcast task failure to WebSocket clients
+                        if broadcast_fn:
+                            broadcast_fn({
+                                'type': 'task_failed',
+                                'task_id': task_id,
+                                'error': str(e)
+                            })
                         raise
         
         except Exception as e:
@@ -153,6 +176,13 @@ class Orchestrator:
         # All subtasks completed successfully
         self.task_store.update_task_status(task_id, 'completed')
         self.logger.info(f"Task {task_id} completed successfully")
+        
+        # Broadcast task completion to WebSocket clients
+        if broadcast_fn:
+            broadcast_fn({
+                'type': 'task_completed',
+                'task_id': task_id
+            })
 
     def _execute_subtask(self, subtask: Dict, broadcast_fn: Optional[Callable] = None) -> str:
         """
@@ -272,4 +302,12 @@ class Orchestrator:
 
         except Exception as e:
             self.logger.error(f"Task {task_id} failed with error: {str(e)}")
+            
+            # Broadcast task failure to WebSocket clients
+            if broadcast_fn:
+                broadcast_fn({
+                    'type': 'task_failed',
+                    'task_id': task_id,
+                    'error': str(e)
+                })
             raise

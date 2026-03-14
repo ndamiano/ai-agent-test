@@ -175,22 +175,16 @@ class Orchestrator:
             self.task_store.update_subtask_status(subtask_id, 'in_progress')
             self.logger.info(f"Subtask {subtask_id} started")
             if broadcast_fn:
-                # Use asyncio.run_coroutine_threadsafe for thread-safe async execution
-                import asyncio
                 try:
-                    # Get the main event loop
-                    loop = asyncio.get_event_loop()
-                    # Schedule the coroutine in the main event loop
-                    asyncio.run_coroutine_threadsafe(broadcast_fn({
+                    broadcast_fn({
                         'type': 'subtask_started',
                         'message': f"Subtask {subtask_id} started",
                         'task_id': subtask['task_id'],
                         'subtask_id': subtask_id,
                         'timestamp': datetime.now().isoformat()
-                    }), loop)
-                except RuntimeError:
-                    # No event loop available, skip broadcasting
-                    pass
+                    })
+                except Exception as e:
+                    self.logger.error(f"Broadcast error: {e}")
 
             # Load agent definition
             agent_id = subtask['agent_id']

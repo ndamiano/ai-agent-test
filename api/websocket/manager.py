@@ -24,13 +24,15 @@ class ConnectionManager:
                     del self.active_connections[task_id]
         self.logger.info(f"WebSocket disconnected for task: {task_id}")
 
-    async def broadcast(self, task_id: str, message: dict) -> None:
+    def broadcast(self, task_id: str, message: dict) -> None:
         """Send a JSON message to all connections for a task. Handles disconnected clients gracefully."""
         if task_id in self.active_connections:
             disconnected = []
             for websocket in self.active_connections[task_id]:
                 try:
-                    await websocket.send_json(message)
+                    # Use websocket.send_json() synchronously instead of await
+                    import asyncio
+                    asyncio.run(websocket.send_json(message))
                 except:
                     disconnected.append(websocket)
             for websocket in disconnected:

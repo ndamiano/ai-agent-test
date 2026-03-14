@@ -26,7 +26,7 @@ export function useTaskSocket(taskId: string | null) {
             return
         }
 
-        const url = `${import.meta.env.VITE_WS_URL}/tasks/${taskId}/ws`
+        const url = `${import.meta.env.VITE_WS_URL}/api/tasks/${taskId}/ws`
         wsRef.current = new WebSocket(url)
 
         wsRef.current.onopen = () => {
@@ -36,6 +36,7 @@ export function useTaskSocket(taskId: string | null) {
 
         wsRef.current.onmessage = (event) => {
             try {
+                console.log(event);
                 const message: WebSocketMessage = JSON.parse(event.data)
                 setMessages(prev => [...prev, message])
 

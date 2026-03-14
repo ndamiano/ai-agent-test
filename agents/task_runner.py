@@ -8,6 +8,7 @@ gone; MaestroAgent owns the full lifecycle.
 
 import logging
 from typing import Any, Callable, Dict, Optional
+from datetime import datetime
 
 from agents.maestro_agent import MaestroAgent
 from agents.main_agent import MainAgent
@@ -48,6 +49,15 @@ class TaskRunner:
         task_dict = task_store.create_task(goal)
         task_id = task_dict["id"]
         logger.info(f"Task created (background): {task_id}")
+
+        # Broadcast task_created event
+        if broadcast_fn:
+            broadcast_fn({
+                'type': 'task_created',
+                'task_id': task_id,
+                'goal': goal,
+                'timestamp': datetime.now().isoformat()
+            })
 
         # Fix the lambda capture before spawning the thread
         tid = task_id

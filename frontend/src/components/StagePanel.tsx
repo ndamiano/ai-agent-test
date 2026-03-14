@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useTaskSocket } from '../hooks/useTaskSocket'
 import { api } from '../api/client'
-import type { TaskDetail, Subtask } from '../types'
+import type { TaskDetail, Subtask, ToolUsage, AgentMessage } from '../types'
 import AgentCard from './AgentCard'
 
 interface StagePanelProps {
@@ -86,6 +86,12 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
     const [phase, setPhase] = useState<'idle' | 'live' | 'completing' | 'done' | 'failed'>('idle')
     const [agentsExpanded, setAgentsExpanded] = useState(false)
     const prevTaskId = useRef<string | null>(null)
+
+    // New state for tool usage and agent messages
+    const [expandedSubtasks, setExpandedSubtasks] = useState<Set<string>>(new Set())
+    const [toolUsageBySubtask, setToolUsageBySubtask] = useState<Map<string, ToolUsage[]>>(new Map())
+    const [agentMessagesBySubtask, setAgentMessagesBySubtask] = useState<Map<string, AgentMessage[]>>(new Map())
+    const [maestroExpanded, setMaestroExpanded] = useState(false)
 
     const subtasks = mergeSubtasks(baseSubtasks, messages)
     const isPlanning = task?.status === 'planning' && subtasks.length === 0
@@ -184,6 +190,35 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                 .catch(console.error)
         }
     }, [messages, taskId])
+
+    // Process tool_usage and agent_message events
+    useEffect(() => {
+        const toolUsage = new Map<string, ToolUsage[]>()
+        const agentMsgs = new Map<string, AgentMessage[]>()
+
+        messages.forEach(msg => {
+            if (msg.type === 'tool_usage') {
+                const existing = toolUsage.get(msg.subtask_id) || []
+                toolUsage.set(msg.subtask_id, [...existing, {
+                    tool_name: msg.tool_name,
+                    arguments: msg.arguments,
+                    status: msg.status,
+                    timestamp: msg.timestamp
+                }])
+            } else if (msg.type === 'agent_message' && msg.subtask_id) {
+                const existing = agentMsgs.get(msg.subtask_id) || []
+                agentMsgs.set(msg.subtask_id, [...existing, {
+                    agent_id: msg.agent_id,
+                    phase: msg.phase,
+                    message: msg.message,
+                    timestamp: msg.timestamp
+                }])
+            }
+        })
+
+        setToolUsageBySubtask(toolUsage)
+        setAgentMessagesBySubtask(agentMsgs)
+    }, [messages])
 
     // ── Empty state ──────────────────────────────────────────────────────────
     if (!taskId) {
@@ -290,6 +325,20 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                                                         outputPreview={subtask.outputPreview}
                                                         position={subtask.position}
                                                         animationDelay={0}
+                                                        toolUsage={toolUsageBySubtask.get(subtask.id)}
+                                                        agentMessages={agentMessagesBySubtask.get(subtask.id)}
+                                                        isExpanded={expandedSubtasks.has(subtask.id)}
+                                                        onToggleExpand={() => {
+                                                            setExpandedSubtasks(prev => {
+                                                                const next = new Set(prev)
+                                                                if (next.has(subtask.id)) {
+                                                                    next.delete(subtask.id)
+                                                                } else {
+                                                                    next.add(subtask.id)
+                                                                }
+                                                                return next
+                                                            })
+                                                        }}
                                                     />
                                                 </FadeSlideIn>
                                             ))
@@ -338,6 +387,45 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                     </div>
                 )}
 
+                {/* Maestro activity section */}
+                {(() => {
+                    const maestroMessages = messages.filter((m): m is Extract<typeof m, { type: 'agent_message' }> =>
+                        m.type === 'agent_message' && m.agent_id === 'maestro'
+                    )
+                    return maestroMessages.length > 0 && (
+                        <div className="border border-white/5 bg-white/[0.02] rounded-lg p-3">
+                            <button
+                                className="w-full flex items-center gap-2 text-left"
+                                onClick={() => setMaestroExpanded(prev => !prev)}
+                            >
+                                <span className={`text-gray-600 text-xs transition-transform duration-200 ${maestroExpanded ? 'rotate-90' : ''}`}>
+                                    ▶
+                                </span>
+                                <span className="text-xs text-gray-500">Orchestrator activity</span>
+                                <span className="ml-auto text-xs text-gray-600">
+                                    {maestroMessages.length} updates
+                                </span>
+                            </button>
+
+                            {maestroExpanded && (
+                                <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+                                    {maestroMessages.map((msg, idx) => (
+                                        <div key={idx} className="text-xs bg-white/5 p-2 rounded">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-purple-400">{msg.phase}</span>
+                                                <span className="text-gray-600 text-[10px]">
+                                                    {new Date(msg.timestamp).toLocaleTimeString()}
+                                                </span>
+                                            </div>
+                                            <p className="text-gray-400 whitespace-pre-wrap">{msg.message}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )
+                })()}
+
                 {/* Agent cards — staggered entrance */}
                 {subtasks.length > 0 && (
                     <div className="flex flex-col gap-3">
@@ -352,6 +440,20 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                                     outputPreview={subtask.outputPreview}
                                     position={subtask.position}
                                     animationDelay={subtask.position * 80}
+                                    toolUsage={toolUsageBySubtask.get(subtask.id)}
+                                    agentMessages={agentMessagesBySubtask.get(subtask.id)}
+                                    isExpanded={expandedSubtasks.has(subtask.id)}
+                                    onToggleExpand={() => {
+                                        setExpandedSubtasks(prev => {
+                                            const next = new Set(prev)
+                                            if (next.has(subtask.id)) {
+                                                next.delete(subtask.id)
+                                            } else {
+                                                next.add(subtask.id)
+                                            }
+                                            return next
+                                        })
+                                    }}
                                 />
                             ))
                         }

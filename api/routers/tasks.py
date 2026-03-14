@@ -17,7 +17,7 @@ async def create_task(request: CreateTaskRequest):
     task_id = task_runner.create_and_run_background(
         goal=request.goal,
         execution_mode=request.execution_mode,
-        broadcast_fn=lambda event: manager.broadcast(task_id, event)
+        broadcast_fn=lambda event: manager.broadcast(event['task_id'], event)
     )
     task = task_store.get_task(task_id)
     return TaskResponse(**task)

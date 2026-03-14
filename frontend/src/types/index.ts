@@ -53,11 +53,27 @@ export interface AskResponse {
     context_used: string[]
 }
 
+export interface ToolUsage {
+    tool_name: string
+    arguments: Record<string, any>
+    status: 'success' | 'failed'
+    timestamp: string
+}
+
+export interface AgentMessage {
+    agent_id: string
+    phase: string
+    message: string
+    timestamp: string
+}
+
 export type WebSocketMessage =
+    | { type: 'task_created'; task_id: string; goal: string; timestamp: string }
     | { type: 'task_status'; task_id: string; task: Task }
     | { type: 'subtask_started'; task_id: string; subtask_id: string; message: string; timestamp: string }
     | { type: 'subtask_completed'; task_id: string; subtask_id: string; message: string; timestamp: string }
     | { type: 'subtask_failed'; task_id: string; subtask_id: string; message: string; timestamp: string }
     | { type: 'task_completed'; task_id: string }
     | { type: 'task_failed'; task_id: string; error: string }
-    | { type: 'agent_message'; task_id: string; subtask_id: string; message: string }
+    | { type: 'agent_message'; task_id: string; agent_id: string; phase: string; message: string; timestamp: string; subtask_id?: string }
+    | { type: 'tool_usage'; task_id: string; subtask_id: string; tool_name: string; arguments: Record<string, any>; status: 'success' | 'failed'; timestamp: string }

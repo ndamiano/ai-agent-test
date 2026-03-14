@@ -394,6 +394,10 @@ class MaestroAgent:
             fresh = self.task_store.get_subtask(subtask_id)
             context_text = self.context_builder.build_for_subtask(task_id, fresh)
             agent = MainAgent(agent_id=fresh["agent_id"])
+
+            # Set broadcast context for tool usage events
+            agent.set_broadcast_context(task_id, subtask_id, broadcast_fn)
+
             message = f"{context_text}\n\nTask: {fresh['goal']}"
             output = agent.chat(message)
 

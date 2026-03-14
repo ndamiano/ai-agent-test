@@ -1,7 +1,8 @@
 """Main conversational agent that orchestrates tools with a proper agentic loop"""
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 import json
+from datetime import datetime
 from connectors.connector_selector import get_connector
 from tools.tool_manager import tool_manager
 from config.agent_prompts import SYSTEM_PROMPT
@@ -35,6 +36,10 @@ class MainAgent:
         self.connector = get_connector("main_agent", "conversation", "text")
         self.message_history: List[Dict[str, str]] = []
         self.max_history_length = max_history_length
+
+        # Broadcasting context for tool usage events
+        self.broadcast_fn: Optional[Callable] = None
+        self.broadcast_context: Dict[str, str] = {}
 
         if agent_id:
             agent_store = AgentStore()
@@ -70,6 +75,66 @@ class MainAgent:
                 openai_tools.append(openai_tool)
 
         return openai_tools
+
+    def set_broadcast_context(self, task_id: str, subtask_id: str, broadcast_fn: Callable):
+        """Set context for broadcasting tool usage events
+
+        Args:
+            task_id: ID of the current task
+            subtask_id: ID of the current subtask
+            broadcast_fn: Function to call for broadcasting events
+        """
+        self.broadcast_fn = broadcast_fn
+        self.broadcast_context = {
+            'task_id': task_id,
+            'subtask_id': subtask_id
+        }
+
+    def _sanitize_tool_arguments(self, tool_name: str, args: Dict) -> Dict:
+        """Remove sensitive data from tool arguments for broadcasting
+
+        Args:
+            tool_name: Name of the tool
+            args: Tool arguments to sanitize
+
+        Returns:
+            Sanitized arguments dictionary
+        """
+        # Sensitive patterns to redact
+        sensitive_keys = ['password', 'token', 'secret', 'key', 'credential', 'api_key']
+        sanitized = {}
+
+        for k, v in args.items():
+            # Redact sensitive keys
+            if any(sens in k.lower() for sens in sensitive_keys):
+                sanitized[k] = "[REDACTED]"
+            # Truncate long string values
+            elif isinstance(v, str) and len(v) > 100:
+                sanitized[k] = v[:100] + "..."
+            else:
+                sanitized[k] = v
+
+        return sanitized
+
+    def _broadcast_tool_usage(self, tool_name: str, arguments: Dict, status: str):
+        """Broadcast tool usage event if broadcast_fn is set
+
+        Args:
+            tool_name: Name of the tool used
+            arguments: Tool arguments
+            status: 'success' or 'failed'
+        """
+        if self.broadcast_fn and self.broadcast_context:
+            sanitized = self._sanitize_tool_arguments(tool_name, arguments)
+            self.broadcast_fn({
+                'type': 'tool_usage',
+                'task_id': self.broadcast_context['task_id'],
+                'subtask_id': self.broadcast_context['subtask_id'],
+                'tool_name': tool_name,
+                'arguments': sanitized,
+                'status': status,
+                'timestamp': datetime.now().isoformat()
+            })
 
     def get_message_history(self) -> List[Dict[str, str]]:
         """Get the current message history"""
@@ -156,6 +221,9 @@ class MainAgent:
                         result = tool_manager.useTool(tool_name, **arguments)
                         log_tool_call(tool_name, arguments, result)
 
+                        # Broadcast successful tool usage
+                        self._broadcast_tool_usage(tool_name, arguments, 'success')
+
                         self.message_history.append({
                             "role": "tool",
                             "tool_call_id": tool_call_id,
@@ -164,6 +232,10 @@ class MainAgent:
 
                     except Exception as e:
                         log_tool_call(tool_name, arguments, None, str(e))
+
+                        # Broadcast failed tool usage
+                        self._broadcast_tool_usage(tool_name, arguments, 'failed')
+
                         self.message_history.append({
                             "role": "tool",
                             "tool_call_id": tool_call_id,

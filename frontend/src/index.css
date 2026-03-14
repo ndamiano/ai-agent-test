@@ -1,3 +1,22 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@keyframes shimmer {
+    0% {
+        background-position: -200% center;
+    }
+
+    100% {
+        background-position: 200% center;
+    }
+}
+
+.shimmer {
+    background: linear-gradient(90deg,
+            transparent 25%,
+            rgba(59, 130, 246, 0.4) 50%,
+            transparent 75%);
+    background-size: 200% auto;
+    animation: shimmer 1.5s linear infinite;
+}

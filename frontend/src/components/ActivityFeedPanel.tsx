@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useTaskSocket } from '../hooks/useTaskSocket'
+import { api } from '../api/client'
 import type { TaskDetail, Subtask } from '../types'
 
 interface ActivityFeedPanelProps {
@@ -13,22 +14,25 @@ const ActivityFeedPanel: React.FC<ActivityFeedPanelProps> = ({ taskId }) => {
     const feedRef = useRef<HTMLDivElement>(null)
     const scrollRef = useRef<HTMLDivElement>(null)
 
-    const [taskData, setTaskData] = useState<TaskDetail | null>(null)
-
+    // Fetch task data when taskId changes
     useEffect(() => {
-        const taskMessage = messages.find(
-            (msg): msg is { type: 'task_status'; data: TaskDetail } => msg.type === 'task_status'
-        )
-        if (taskMessage) {
-            setTaskData(taskMessage.data)
-        }
-    }, [messages])
+        const fetchTaskData = async () => {
+            if (!taskId) {
+                setTask(null)
+                return
+            }
 
-    useEffect(() => {
-        if (taskData) {
-            setTask(taskData)
+            try {
+                const taskDetail = await api.getTask(taskId)
+                setTask(taskDetail)
+            } catch (error) {
+                console.error('Failed to fetch task data:', error)
+                setTask(null)
+            }
         }
-    }, [taskData])
+
+        fetchTaskData()
+    }, [taskId])
 
     const handleScroll = useCallback(() => {
         if (scrollRef.current) {
@@ -37,12 +41,13 @@ const ActivityFeedPanel: React.FC<ActivityFeedPanelProps> = ({ taskId }) => {
     }, [])
 
     useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.addEventListener('scroll', handleScroll)
+        const scrollElement = scrollRef.current
+        if (scrollElement) {
+            scrollElement.addEventListener('scroll', handleScroll)
         }
         return () => {
-            if (scrollRef.current) {
-                scrollRef.current.removeEventListener('scroll', handleScroll)
+            if (scrollElement) {
+                scrollElement.removeEventListener('scroll', handleScroll)
             }
         }
     }, [handleScroll])
@@ -77,7 +82,7 @@ const ActivityFeedPanel: React.FC<ActivityFeedPanelProps> = ({ taskId }) => {
         return colors[type] || 'bg-gray-100 border-gray-400 text-gray-800'
     }
 
-    const renderSubtask = (subtask: Subtask, index: number) => {
+    const renderSubtask = (subtask: Subtask) => {
         const isRoot = subtask.depends_on.length === 0
         const marginLeft = isRoot ? 0 : 24
 
@@ -193,9 +198,9 @@ const ActivityFeedPanel: React.FC<ActivityFeedPanelProps> = ({ taskId }) => {
                             <div className="space-y-3">
                                 {task.subtasks
                                     .sort((a, b) => a.position - b.position)
-                                    .map((subtask, index) => (
+                                    .map((subtask) => (
                                         <div key={subtask.id}>
-                                            {renderSubtask(subtask, index)}
+                                            {renderSubtask(subtask)}
                                         </div>
                                     ))}
                             </div>

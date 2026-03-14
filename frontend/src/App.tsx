@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import Layout from './components/Layout';
 import { api } from './api/client';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -9,6 +9,15 @@ function App() {
     connected: false,
     message: 'LMStudio disconnected',
   });
+
+  const handleTaskCreate = async (goal: string) => {
+    try {
+      const newTask = await api.createTask(goal);
+      setSelectedTaskId(newTask.id);
+    } catch (error) {
+      console.error('Failed to create task:', error);
+    }
+  };
 
   // Fetch task detail when selectedTaskId changes
   useEffect(() => {
@@ -34,6 +43,7 @@ function App() {
           message: status.lmstudio_connected ? 'LMStudio connected' : 'LMStudio disconnected',
         });
       } catch (error) {
+        console.error(error);
         setSystemStatus({ connected: false, message: 'LMStudio disconnected' });
       }
     };
@@ -51,6 +61,7 @@ function App() {
           selectedTaskId={selectedTaskId}
           setSelectedTaskId={setSelectedTaskId}
           systemStatus={systemStatus}
+          onTaskCreate={handleTaskCreate}
         />
       </ErrorBoundary>
     </div>

@@ -48,7 +48,7 @@ def init_db(db_path: Optional[str] = None) -> None:
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 goal TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN ('pending', 'planning', 'in_progress', 'completed', 'failed')),
+                status TEXT NOT NULL CHECK(status IN ('pending', 'planning', 'in_progress', 'needs_assistance', 'completed', 'failed', 'archived')),
                 execution_mode TEXT NOT NULL DEFAULT 'sequential' CHECK(execution_mode IN ('sequential', 'parallel')),
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL

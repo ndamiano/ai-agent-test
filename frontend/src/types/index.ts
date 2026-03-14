@@ -19,7 +19,7 @@ export interface TaskEvent {
 export interface Task {
     id: string
     goal: string
-    status: 'pending' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled'
+    status: 'pending' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'needs_assistance' | 'archived'
     execution_mode: string
     created_at: string
     updated_at: string

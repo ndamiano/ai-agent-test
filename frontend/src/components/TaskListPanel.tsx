@@ -1,191 +1,147 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { api } from '../api/client'
 import type { Task } from '../types'
 import { useTasks } from '../hooks/useTasks'
+import TaskItem from './TaskItem'
 
 interface TaskListPanelProps {
     selectedTaskId: string | null
-    onSelectTask: (id: string) => void
+    onSelectTask: (id: string | null) => void
 }
 
-const TaskListPanel: React.FC<TaskListPanelProps> = ({
-    selectedTaskId,
-    onSelectTask,
-}) => {
+const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectTask }) => {
     const { tasks, loading, error, refresh } = useTasks()
-    const [newGoal, setNewGoal] = useState('')
-    const [executionMode, setExecutionMode] = useState('Sequential')
-    const [isCreating, setIsCreating] = useState(false)
 
-    const handleCreateTask = async () => {
-        if (!newGoal.trim()) return
-
-        setIsCreating(true)
+    const handleArchiveTask = async (taskId: string) => {
         try {
-            const newTask = await api.createTask(newGoal.trim(), executionMode)
+            await api.deleteTask(taskId)
             await refresh()
-            onSelectTask(newTask.id)
-            setNewGoal('')
+            if (selectedTaskId === taskId) onSelectTask(null)
         } catch (e) {
-            console.error('Failed to create task:', e)
-        } finally {
-            setIsCreating(false)
+            console.error('Failed to archive task:', e)
         }
     }
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-            e.preventDefault()
-            handleCreateTask()
-        }
-    }
+    const sortByNewest = (taskList: Task[]) =>
+        [...taskList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-    const getStatusColor = (status: Task['status']) => {
-        switch (status) {
-            case 'pending':
-            case 'planning':
-                return 'bg-gray-200 dark:bg-gray-700'
-            case 'in_progress':
-                return 'bg-yellow-200 dark:bg-yellow-700'
-            case 'completed':
-                return 'bg-green-200 dark:bg-green-700'
-            case 'failed':
-                return 'bg-red-200 dark:bg-red-700'
-            default:
-                return 'bg-gray-200 dark:bg-gray-700'
-        }
-    }
+    const needsAssistance = sortByNewest(tasks.filter(t => t.status === 'needs_assistance'))
+    const inProgress = sortByNewest(tasks.filter(t => t.status === 'planning' || t.status === 'in_progress'))
+    const completed = sortByNewest(tasks.filter(t => t.status === 'completed' || t.status === 'failed'))
 
-    const getRelativeTime = (createdAt: string) => {
-        const date = new Date(createdAt)
-        const now = new Date()
-        const diffMs = now.getTime() - date.getTime()
-        const diffMins = Math.floor(diffMs / 60000)
-        const diffHours = Math.floor(diffMins / 60)
-        const diffDays = Math.floor(diffHours / 24)
+    if (loading) return (
+        <div className="h-full flex flex-col gap-4 p-4">
+            {[...Array(3)].map((_, i) => (
+                <div key={i} className="flex-1 rounded-lg bg-white/5 animate-pulse" />
+            ))}
+        </div>
+    )
 
-        if (diffMins < 1) return 'just now'
-        if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`
-        if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
-        if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`
-        return date.toLocaleDateString()
-    }
-
-    if (loading) {
-        return (
-            <div className="h-full flex flex-col p-4">
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-                    Task List
-                </h3>
-                <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded p-4 text-gray-600 dark:text-gray-400">
-                    <div className="space-y-2">
-                        <div className="animate-pulse">
-                            <div className="h-4 bg-gray-400 rounded w-3/4"></div>
-                        </div>
-                        <div className="animate-pulse">
-                            <div className="h-4 bg-gray-400 rounded w-2/3"></div>
-                        </div>
-                        <div className="animate-pulse">
-                            <div className="h-4 bg-gray-400 rounded w-1/2"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    if (error) {
-        return (
-            <div className="h-full flex flex-col p-4">
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-                    Task List
-                </h3>
-                <div className="flex-1 bg-red-50 dark:bg-red-900/50 rounded p-4 text-red-600 dark:text-red-400">
-                    <p>Error loading tasks: {error}</p>
-                </div>
-            </div>
-        )
-    }
+    if (error) return (
+        <div className="h-full flex items-center justify-center p-4">
+            <p className="text-sm text-red-400">Failed to load tasks</p>
+        </div>
+    )
 
     return (
-        <div className="h-full flex flex-col p-4">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-                Task List
-            </h3>
+        <div className="h-full flex flex-col gap-3 p-3 overflow-hidden">
 
-            {/* New Task Input */}
-            <div className="mb-4">
-                <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 mb-3">
-                    <div className="flex items-start gap-3">
-                        <textarea
-                            className="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-3 text-sm resize-none min-h-[60px]"
-                            placeholder="Enter task goal..."
-                            value={newGoal}
-                            onChange={(e) => setNewGoal(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            rows={1}
-                            style={{ lineHeight: '1.5' }}
+            {/* Needs Assistance — only shown when non-empty */}
+            {needsAssistance.length > 0 && (
+                <Section
+                    title="Needs Assistance"
+                    titleClass="text-orange-400"
+                    dot="bg-orange-500 animate-pulse"
+                >
+                    {needsAssistance.map(task => (
+                        <TaskItem
+                            key={task.id}
+                            task={task}
+                            isSelected={selectedTaskId === task.id}
+                            onSelect={onSelectTask}
+                            onArchive={handleArchiveTask}
+                            sectionType="needs_assistance"
                         />
-                        <div className="flex flex-col gap-2">
-                            <select
-                                className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-sm"
-                                value={executionMode}
-                                onChange={(e) => setExecutionMode(e.target.value)}
-                            >
-                                <option value="Sequential">Sequential</option>
-                                <option value="Parallel">Parallel</option>
-                            </select>
-                            <button
-                                onClick={handleCreateTask}
-                                disabled={isCreating || !newGoal.trim()}
-                                className="px-4 py-2 bg-blue-500 dark:bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-600 dark:hover:bg-blue-700 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-                            >
-                                {isCreating ? 'Creating...' : 'Submit'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                    ))}
+                </Section>
+            )}
 
-            {/* Task List */}
-            <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded p-4 text-gray-600 dark:text-gray-400 overflow-y-auto">
-                {tasks.length === 0 ? (
-                    <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-                        <p className="text-sm mb-2">No tasks yet — create one above</p>
-                    </div>
-                ) : (
-                    <div className="space-y-2">
-                        {tasks.map((task) => (
-                            <div
-                                key={task.id}
-                                onClick={() => onSelectTask(task.id)}
-                                className={`group cursor-pointer p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ${selectedTaskId === task.id
-                                    ? 'bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-500 dark:border-blue-400 pl-2'
-                                    : 'border-l-4 border-transparent pl-2'
-                                    }`}
-                            >
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <div
-                                            className={`w-2 h-2 rounded-full ${getStatusColor(task.status)}`}
-                                        ></div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 dark:text-gray-200 group-hover:text-gray-800 dark:group-hover:text-gray-300 truncate">
-                                                {task.goal}
-                                            </p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                                {getRelativeTime(task.created_at)}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
+            {/* In Progress — always shown */}
+            <Section
+                title="In Progress"
+                titleClass="text-gray-400"
+                trailing={inProgress.length === 0
+                    ? <span className="text-xs text-gray-600">None running</span>
+                    : undefined
+                }
+            >
+                {inProgress.length === 0
+                    ? <Empty message="No tasks in progress" />
+                    : inProgress.map(task => (
+                        <TaskItem
+                            key={task.id}
+                            task={task}
+                            isSelected={selectedTaskId === task.id}
+                            onSelect={onSelectTask}
+                            onArchive={handleArchiveTask}
+                            sectionType="in_progress"
+                        />
+                    ))
+                }
+            </Section>
+
+            {/* Completed — always shown */}
+            <Section title="Completed" titleClass="text-gray-400">
+                {completed.length === 0
+                    ? <Empty message="No completed tasks yet" />
+                    : completed.map(task => (
+                        <TaskItem
+                            key={task.id}
+                            task={task}
+                            isSelected={selectedTaskId === task.id}
+                            onSelect={onSelectTask}
+                            onArchive={handleArchiveTask}
+                            sectionType="completed"
+                        />
+                    ))
+                }
+            </Section>
+
         </div>
     )
 }
+
+// -- Helpers --
+
+interface SectionProps {
+    title: string
+    titleClass?: string
+    dot?: string
+    trailing?: React.ReactNode
+    children: React.ReactNode
+}
+
+const Section: React.FC<SectionProps> = ({ title, titleClass = '', dot, trailing, children }) => (
+    <div className="flex-1 flex flex-col min-h-0 rounded-lg bg-white/[0.03] border border-white/[0.06] p-3">
+        <div className="flex items-center justify-between mb-2 flex-shrink-0">
+            <div className="flex items-center gap-2">
+                {dot && <div className={`w-1.5 h-1.5 rounded-full ${dot}`} />}
+                <h4 className={`text-xs font-semibold uppercase tracking-wider ${titleClass}`}>
+                    {title}
+                </h4>
+            </div>
+            {trailing}
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
+            {children}
+        </div>
+    </div>
+)
+
+const Empty: React.FC<{ message: string }> = ({ message }) => (
+    <div className="h-full flex items-center justify-center">
+        <p className="text-xs text-gray-600">{message}</p>
+    </div>
+)
 
 export default TaskListPanel

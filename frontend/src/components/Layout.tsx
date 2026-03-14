@@ -1,20 +1,24 @@
 import TaskListPanel from './TaskListPanel';
 import ActivityFeedPanel from './ActivityFeedPanel';
 import { OutputPanel } from './OutputPanel';
+import CommandBar from '../assets/CommandBar';
 
 interface LayoutProps {
     selectedTaskId: string | null;
     setSelectedTaskId: (id: string | null) => void;
     systemStatus: { connected: boolean; message: string };
+    onTaskCreate: (goal: string) => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({
     selectedTaskId,
     setSelectedTaskId,
     systemStatus,
+    onTaskCreate,
 }) => {
     return (
         <div className="h-screen flex flex-col overflow-hidden">
+
             {/* Header */}
             <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between">
                 <div className="text-white font-semibold text-lg">AI Agent Test</div>
@@ -28,6 +32,8 @@ const Layout: React.FC<LayoutProps> = ({
                     </span>
                 </div>
             </div>
+            {/* Command Bar */}
+            <CommandBar onTaskCreate={onTaskCreate} />
 
             {/* Three panel layout */}
             <div className="flex-1 flex overflow-hidden">

@@ -12,7 +12,9 @@ export function useTasks() {
         setError(null)
         try {
             const fetchedTasks = await api.listTasks()
-            setTasks(fetchedTasks)
+            // Filter out archived tasks from the display
+            const filteredTasks = fetchedTasks.filter(task => task.status !== 'archived')
+            setTasks(filteredTasks)
         } catch (e) {
             setError(e instanceof Error ? e.message : 'Failed to fetch tasks')
         } finally {

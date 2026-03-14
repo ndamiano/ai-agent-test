@@ -28,7 +28,7 @@ app.add_middleware(
 )
 
 # Import routers (they will be mounted in the startup event)
-from api.routers import tasks, agents, system
+from api.routers import tasks, system
 
 @app.on_event("startup")
 async def startup_event():
@@ -75,7 +75,6 @@ async def root():
 
 # Mount routers
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
-app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 
 # Export the app for use in other modules

@@ -6,10 +6,6 @@ from api.app import lmstudio_client, embedding_client
 
 router = APIRouter()
 
-@router.get("/health")
-async def get_health():
-    return {"message": "System health endpoint - implementation pending"}
-
 @router.get("/status")
 async def get_status() -> Dict[str, Any]:
     """
@@ -32,11 +28,3 @@ async def get_status() -> Dict[str, Any]:
         "agent_count": 0,  # TODO: Implement agent counting
         "task_count": 0,   # TODO: Implement task counting
     }
-
-@router.post("/restart")
-async def restart_system():
-    return {"message": "System restart endpoint - implementation pending"}
-
-@router.post("/shutdown")
-async def shutdown_system():
-    return {"message": "System shutdown endpoint - implementation pending"}

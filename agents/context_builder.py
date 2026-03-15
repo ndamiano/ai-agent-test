@@ -30,15 +30,6 @@ class ContextBuilder:
         if task and "goal" in task:
             context_parts.append(f"Overall task goal: {task['goal']}")
         
-        # 2. Add semantically relevant context
-        semantic_context = self.task_store.retrieve_context(
-            task_id, subtask["goal"], k=5
-        )
-        if semantic_context:
-            formatted_semantic = self.format_retrieved_chunks(semantic_context)
-            if formatted_semantic:
-                context_parts.append(f"Relevant context:\n{formatted_semantic}")
-        
         # 3. Add explicitly requested context keys
         if "context_keys" in subtask and subtask["context_keys"]:
             context_keys = subtask["context_keys"]
@@ -57,28 +48,6 @@ class ContextBuilder:
         
         # Join all parts with double newlines for readability
         return "\n\n".join(context_parts)
-
-    def format_retrieved_chunks(self, chunks: List[Dict]) -> str:
-        """
-        Format the raw results from retrieve_context into a readable block.
-        
-        Args:
-            chunks (List[Dict]): List of context chunks with 'key' and 'value' fields
-            
-        Returns:
-            str: Formatted context chunks or empty string if no chunks
-        """
-        if not chunks:
-            return ""
-        
-        formatted_chunks = []
-        for chunk in chunks:
-            key = chunk.get("key", "")
-            value = chunk.get("value", "")
-            if key and value:
-                formatted_chunks.append(f"Key: {key}\n{value}")
-        
-        return "\n\n".join(formatted_chunks)
 
     def format_dependency_outputs(self, task_id: str, depends_on: List[str]) -> str:
         """

@@ -6,7 +6,6 @@ from datetime import datetime
 from connectors.connector_selector import get_connector
 from tools.tool_manager import tool_manager
 from config.agent_prompts import SYSTEM_PROMPT
-from tools.logging_utils import log_tool_call, log_agent_decision, log_error
 from .agent_store import AgentStore
 
 
@@ -212,14 +211,7 @@ class MainAgent:
                     try:
                         arguments = json.loads(function.get("arguments", "{}"))
 
-                        log_agent_decision(
-                            user_input=user_message,
-                            decision=f"Executing tool: {tool_name}",
-                            details={"tool_name": tool_name, "arguments": arguments}
-                        )
-
                         result = tool_manager.useTool(tool_name, **arguments)
-                        log_tool_call(tool_name, arguments, result)
 
                         # Broadcast successful tool usage
                         self._broadcast_tool_usage(tool_name, arguments, 'success')
@@ -231,7 +223,6 @@ class MainAgent:
                         })
 
                     except Exception as e:
-                        log_tool_call(tool_name, arguments, None, str(e))
 
                         # Broadcast failed tool usage
                         self._broadcast_tool_usage(tool_name, arguments, 'failed')

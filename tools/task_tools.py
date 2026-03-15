@@ -10,7 +10,7 @@ Register at startup via register_task_tools().
 
 import json
 import logging
-from typing import Optional, Union
+from typing import Optional, Union, List, Dict
 
 from tools.tool_manager import tool_manager
 from database.task_store import TaskStore
@@ -45,6 +45,143 @@ def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
     raise ValueError(f"depends_on must be a list or JSON string, got {type(depends_on).__name__}")
 
 
+def _validate_dependencies(task_id: str, depends_on: List[str]) -> None:
+    """
+    Validate dependency list for a new subtask.
+    
+    Args:
+        task_id: The parent task ID
+        depends_on: List of dependency subtask IDs to validate
+        
+    Raises:
+        ValueError: If dependencies are invalid
+    """
+    if not depends_on:
+        return
+        
+    # Get all existing subtasks for this task
+    existing_subtasks = _task_store.get_subtasks_for_task(task_id)
+    existing_ids = {s["id"] for s in existing_subtasks}
+    
+    # Check for non-existent dependencies
+    missing_deps = [dep_id for dep_id in depends_on if dep_id not in existing_ids]
+    if missing_deps:
+        raise ValueError(
+            f"Invalid dependencies: {missing_deps}. "
+            f"These subtask IDs do not exist in task {task_id}. "
+            f"Existing subtasks: {list(existing_ids)}"
+        )
+    
+    # Check for self-dependency
+    # Note: We can't check self-dependency here because the subtask doesn't exist yet
+    # This will be checked in the task store's create_subtask method
+    
+    # Check for circular dependencies
+    if _has_circular_dependencies(task_id, depends_on):
+        raise ValueError(
+            f"Circular dependency detected in task {task_id}. "
+            f"Dependencies {depends_on} would create a cycle."
+        )
+
+
+def _has_circular_dependencies(task_id: str, new_depends_on: List[str]) -> bool:
+    """
+    Check if adding a new subtask with the given dependencies would create a cycle.
+    
+    Uses depth-first search to detect cycles in the dependency graph.
+    
+    Args:
+        task_id: The parent task ID
+        new_depends_on: Dependencies for the new subtask being created
+        
+    Returns:
+        True if a circular dependency would be created, False otherwise
+    """
+    # Build the current dependency graph
+    subtasks = _task_store.get_subtasks_for_task(task_id)
+    graph = {}
+    
+    # Add existing dependencies to the graph
+    for subtask in subtasks:
+        task_id_key = subtask["id"]
+        depends_on = subtask.get("depends_on") or []
+        graph[task_id_key] = depends_on
+    
+    # Temporarily add the new subtask's dependencies to check for cycles
+    # We use a placeholder ID since the subtask doesn't exist yet
+    placeholder_id = "NEW_SUBTASK"
+    graph[placeholder_id] = new_depends_on
+    
+    # Check for cycles using DFS
+    visited = set()
+    rec_stack = set()
+    
+    def has_cycle_dfs(node: str) -> bool:
+        visited.add(node)
+        rec_stack.add(node)
+        
+        # Get neighbors (dependencies)
+        neighbors = graph.get(node, [])
+        
+        for neighbor in neighbors:
+            if neighbor not in graph:
+                # This dependency doesn't exist in our graph, skip it
+                # (should have been caught by _validate_dependencies)
+                continue
+                
+            if neighbor not in visited:
+                if has_cycle_dfs(neighbor):
+                    return True
+            elif neighbor in rec_stack:
+                return True
+        
+        rec_stack.remove(node)
+        return False
+    
+    # Check for cycles starting from the new subtask
+    if has_cycle_dfs(placeholder_id):
+        return True
+    
+    return False
+
+
+def _has_path_to_any(graph: Dict[str, List[str]], start: str, targets: List[str]) -> bool:
+    """
+    Check if there's a path from start node to any of the target nodes.
+    
+    Args:
+        graph: Dependency graph as adjacency list
+        start: Starting node
+        targets: List of target nodes to check reachability to
+        
+    Returns:
+        True if there's a path from start to any target, False otherwise
+    """
+    if start not in graph:
+        return False
+        
+    visited = set()
+    
+    def dfs(node: str) -> bool:
+        if node in visited:
+            return False
+        visited.add(node)
+        
+        # Check if current node is one of our targets
+        if node in targets:
+            return True
+            
+        # Check all neighbors
+        neighbors = graph.get(node, [])
+        for neighbor in neighbors:
+            if dfs(neighbor):
+                return True
+                
+        return False
+    
+    return dfs(start)
+
+
 def _spawn_task(
     task_id: str,
     agent_id: str,
@@ -73,6 +210,9 @@ def _spawn_task(
     _task_store.get_task(task_id)  # raises KeyError if missing
 
     dep_ids = _parse_depends_on(depends_on)
+    
+    # Validate dependencies before creating the subtask
+    _validate_dependencies(task_id, dep_ids)
 
     existing = _task_store.get_subtasks_for_task(task_id)
     position = max((s["position"] for s in existing), default=-1) + 1

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import json
 
-from .logging_utils import log_tool_call, log_error
+from .logging_utils import log_error
 from tools.tool_manager import tool_manager
 
 
@@ -52,14 +52,6 @@ def write_to_file(
             "mode": mode,
             "content_length": len(content)
         }
-        
-        log_tool_call("write_to_file", {
-            "path": path,
-            "mode": mode,
-            "encoding": encoding,
-            "create_dirs": create_dirs,
-            "content_length": len(content)
-        }, result)
         
         return result
         

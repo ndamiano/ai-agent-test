@@ -133,10 +133,8 @@ class MaestroAgent:
 
         Returns the final synthesized output.
         """
-        print("Running loop!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         max_waves = 20  # safety valve
         wave = 0
-
         while wave < max_waves:
             wave += 1
             logger.info(f"Maestro: task {task_id} — wave {wave}")
@@ -154,6 +152,7 @@ class MaestroAgent:
                 self._maestro_turn(task_id, broadcast_fn, phase="error_recovery")
                 continue
 
+            # There is a bug here, probably because we're not properly enforcing subtasks to have "proper" depends on.
             if pending:
                 # More subtasks exist but aren't ready yet — something is still running.
                 # This shouldn't happen (we wait for the wave to finish) but guard anyway.

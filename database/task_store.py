@@ -11,8 +11,6 @@ import threading
 import atexit
 
 from .schema import init_db
-from connectors.embedding_client import embedding_client
-from .vector_store import store_embedding, retrieve
 
 _thread_local = threading.local()
 logger = logging.getLogger(__name__)
@@ -119,6 +117,9 @@ class TaskStore:
     def create_subtask(self, task_id: str, agent_id: str, goal: str, position: int,
                        depends_on: Optional[List[str]] = None,
                        input_context: Optional[Dict] = None) -> Dict:
+        # Validate dependencies before creating the subtask
+        self._validate_subtask_dependencies(task_id, depends_on)
+        
         subtask_id, now = str(uuid.uuid4()), _now()
         with _get_connection() as conn:
             conn.execute(
@@ -215,17 +216,6 @@ class TaskStore:
         ).fetchall()
         return dict(rows)
 
-    def retrieve_context(self, task_id: str, query: str, k: int = 5) -> List[Dict]:
-        try:
-            return retrieve(task_id, embedding_client.embed(query), k)
-        except Exception as e:
-            logger.warning(f"Semantic search failed for '{query}': {e}. Falling back to keyword search.")
-            rows = _get_connection().execute(
-                "SELECT id, key, value FROM context_store WHERE task_id=? AND value LIKE ? ORDER BY LENGTH(value) LIMIT ?",
-                (task_id, f"%{query}%", k)
-            ).fetchall()
-            return [{"context_id": r[0], "distance": 0.0, "key": r[1], "value": r[2]} for r in rows]
-
     # -------------------------------------------------------------------------
     # Events
     # -------------------------------------------------------------------------
@@ -249,6 +239,36 @@ class TaskStore:
             (task_id,)
         ).fetchall()]
 
+    def _validate_subtask_dependencies(self, task_id: str, depends_on: Optional[List[str]]) -> None:
+        """
+        Validate dependencies for a new subtask.
+        
+        Args:
+            task_id: The parent task ID
+            depends_on: List of dependency subtask IDs to validate
+            
+        Raises:
+            ValueError: If dependencies are invalid
+        """
+        if not depends_on:
+            return
+            
+        # Get all existing subtasks for this task
+        existing_subtasks = self.get_subtasks_for_task(task_id)
+        existing_ids = {s["id"] for s in existing_subtasks}
+        
+        # Check for non-existent dependencies
+        missing_deps = [dep_id for dep_id in depends_on if dep_id not in existing_ids]
+        if missing_deps:
+            raise ValueError(
+                f"Invalid dependencies: {missing_deps}. "
+                f"These subtask IDs do not exist in task {task_id}. "
+                f"Existing subtasks: {list(existing_ids)}"
+            )
+        
+        # Note: Self-dependency check is not needed here since the subtask doesn't exist yet
+        # Circular dependency detection is handled at the spawn_task level
+
     # -------------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------------
@@ -265,10 +285,6 @@ class TaskStore:
                     "INSERT OR REPLACE INTO context_store (id, task_id, subtask_id, key, value, created_at) VALUES (?,?,?,?,?,?)",
                     (context_id, task_id, subtask_id, key, value, now),
                 )
-            try:
-                store_embedding(context_id, task_id, embedding_client.embed(value))
-            except Exception as e:
-                logger.error(f"Failed to embed context '{key}' for task {task_id}: {e}")
         except Exception as e:
             logger.warning(f"Failed to store context '{key}' for task {task_id}: {e}")
 

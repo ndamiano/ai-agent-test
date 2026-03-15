@@ -4,7 +4,9 @@ import json
 import os
 import pathlib
 from typing import Dict, List, Optional
+from datetime import datetime
 from config.time_utils import get_utc_timestamp
+from config.protected_agents import is_protected_agent
 
 
 class AgentStore:
@@ -119,12 +121,110 @@ class AgentStore:
     def exists(self, agent_id: str) -> bool:
         """
         Check if an agent exists.
-        
+
         Args:
             agent_id: Unique identifier to check
-            
+
         Returns:
             True if agent exists, False otherwise
         """
         file_path = self.store_dir / f"{agent_id}.json"
         return file_path.exists()
+
+    def get_agent_by_id(self, agent_id: str) -> Optional[Dict]:
+        """
+        Get an agent by ID without raising an error if not found.
+
+        Args:
+            agent_id: Unique identifier of the agent
+
+        Returns:
+            Agent dictionary if found, None otherwise
+        """
+        try:
+            return self.get(agent_id)
+        except KeyError:
+            return None
+
+    def update_metrics(self, agent_id: str, success: bool, execution_time_ms: int) -> None:
+        """
+        Update quality metrics for an agent after task execution.
+
+        Args:
+            agent_id: Unique identifier of the agent
+            success: Whether the task completed successfully
+            execution_time_ms: Execution time in milliseconds
+
+        Raises:
+            KeyError: If agent doesn't exist
+        """
+        agent = self.get(agent_id)
+
+        # Initialize metadata if not present
+        if 'metadata' not in agent:
+            agent['metadata'] = {}
+
+        # Initialize quality_metrics if not present
+        if 'quality_metrics' not in agent['metadata']:
+            agent['metadata']['quality_metrics'] = {
+                'tasks_completed': 0,
+                'tasks_failed': 0,
+                'success_rate': 0.0,
+                'last_used_at': None,
+                'quality_score': 0.0
+            }
+
+        metrics = agent['metadata']['quality_metrics']
+
+        # Update counts
+        if success:
+            metrics['tasks_completed'] += 1
+        else:
+            metrics['tasks_failed'] += 1
+
+        # Update success rate
+        total_tasks = metrics['tasks_completed'] + metrics['tasks_failed']
+        metrics['success_rate'] = (metrics['tasks_completed'] / total_tasks * 100) if total_tasks > 0 else 0.0
+
+        # Update last used timestamp
+        metrics['last_used_at'] = get_utc_timestamp() + "Z"
+
+        # Save updated agent
+        self.save(agent)
+
+    def get_agents_by_lifecycle(self, lifecycle: str) -> List[Dict]:
+        """
+        Get all agents with a specific lifecycle type.
+
+        Args:
+            lifecycle: Either 'permanent' or 'temporary'
+
+        Returns:
+            List of agent dictionaries matching the lifecycle
+        """
+        all_agents = self.list()
+        return [
+            agent for agent in all_agents
+            if agent.get('metadata', {}).get('lifecycle', 'permanent') == lifecycle
+        ]
+
+    def is_protected(self, agent_id: str) -> bool:
+        """
+        Check if an agent is protected from deletion.
+
+        Args:
+            agent_id: Unique identifier of the agent
+
+        Returns:
+            True if agent is protected, False otherwise
+        """
+        # Check global protected list
+        if is_protected_agent(agent_id):
+            return True
+
+        # Check agent metadata
+        agent = self.get_agent_by_id(agent_id)
+        if agent and agent.get('metadata', {}).get('is_protected', False):
+            return True
+
+        return False

@@ -11,6 +11,7 @@ Replaces the static PlannerAgent + Orchestrator chain.
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -18,6 +19,7 @@ from typing import Callable, Dict, List, Optional
 from config.time_utils import get_utc_timestamp
 
 from agents.agent_store import AgentStore
+from agents.agent_lifecycle import AgentLifecycleManager
 from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
 from database.task_store import TaskStore
@@ -44,6 +46,7 @@ class MaestroAgent:
         self.task_store = TaskStore()
         self.agent_store = AgentStore()
         self.context_builder = ContextBuilder(self.task_store)
+        self.lifecycle_manager = AgentLifecycleManager(self.agent_store, self.task_store)
         self.broadcast_fn = broadcast_fn
         self.logger = tool_logger
 
@@ -97,6 +100,11 @@ class MaestroAgent:
                 "type": "task_completed",
                 "task_id": task_id,
             })
+
+            # --- Step 4: Cleanup temporary agents ---
+            cleanup_count = self.lifecycle_manager.cleanup_task_temporary_agents(task_id)
+            if cleanup_count > 0:
+                logger.info(f"Cleaned up {cleanup_count} temporary agent(s) for task {task_id}")
 
             return final_output
 
@@ -391,6 +399,8 @@ class MaestroAgent:
         """Execute a single subtask. Mirrors the existing Orchestrator pattern."""
         subtask_id = subtask["id"]
         task_id = subtask["task_id"]
+        agent_id = subtask["agent_id"]
+        start_time = time.time()
 
         try:
             self.task_store.update_subtask_status(subtask_id, "in_progress")
@@ -398,7 +408,7 @@ class MaestroAgent:
                 "type": "subtask_started",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
-                "agent_id": subtask["agent_id"],
+                "agent_id": agent_id,
                 "timestamp": get_utc_timestamp(),
             })
 
@@ -423,9 +433,21 @@ class MaestroAgent:
                 "timestamp": get_utc_timestamp(),
             })
 
+            # Track successful agent usage
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            self.lifecycle_manager.register_agent_usage(
+                agent_id, task_id, subtask_id, success=True, execution_time_ms=execution_time_ms
+            )
+
             return output
 
         except Exception as e:
+            # Track failed agent usage
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            self.lifecycle_manager.register_agent_usage(
+                agent_id, task_id, subtask_id, success=False, execution_time_ms=execution_time_ms
+            )
+
             self.task_store.update_subtask_status(subtask_id, "failed")
             self.task_store.log_event(
                 task_id, "subtask_failed", f"Subtask {subtask_id} failed: {e}", subtask_id

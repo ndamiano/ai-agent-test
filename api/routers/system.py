@@ -1,9 +1,10 @@
 from fastapi import APIRouter
 from typing import Dict, Any
-from connectors.lmstudio_client import LMStudioConnector
-from connectors.embedding_client import EmbeddingClient
 from api.app import lmstudio_client, embedding_client
+from database.task_store import task_store
+from agents.agent_store import AgentStore
 
+_agent_store = AgentStore()
 router = APIRouter()
 
 @router.get("/status")
@@ -25,6 +26,6 @@ async def get_status() -> Dict[str, Any]:
         "lmstudio_connected": lmstudio_connected,
         "embedding_connected": embedding_connected,
         "lmstudio_url": lmstudio_client.base_url,
-        "agent_count": 0,  # TODO: Implement agent counting
-        "task_count": 0,   # TODO: Implement task counting
+        "agent_count": len(_agent_store.list_agents()) if hasattr(_agent_store, 'list_agents') else 0,
+        "task_count": len(task_store.list_tasks()),
     }

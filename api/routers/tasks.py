@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, WebSocket
 from typing import List, Optional
-from api.models.requests import CreateTaskRequest, AskRequest
-from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse, AskResponse
+from api.models.requests import CreateTaskRequest
+from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse
 from agents.task_runner import task_runner
 from database.task_store import task_store
 from api.websocket.manager import manager
@@ -69,20 +69,6 @@ async def get_task_context(task_id: str, key: str):
         return value
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Context key '{key}' not found for task {task_id}")
-
-@router.post("/{task_id}/ask", response_model=AskResponse)
-async def ask_task(task_id: str, request: AskRequest):
-    """
-    Ask a question about the task's context.
-    Returns the answer and which context keys were used.
-    """
-    try:
-        answer = task_runner.ask(task_id, request.question)
-        # Note: The current implementation doesn't track which context keys were used
-        # This would need to be enhanced in the task_runner.ask method
-        return AskResponse(question=request.question, answer=answer, context_used=[])
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Error querying task {task_id}: {str(e)}")
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_task(task_id: str):

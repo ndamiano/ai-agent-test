@@ -2,10 +2,10 @@
 
 from typing import List, Dict, Any, Optional, Callable
 import json
-from datetime import datetime
 from connectors.connector_selector import get_connector
 from tools.tool_manager import tool_manager
 from config.agent_prompts import SYSTEM_PROMPT
+from config.time_utils import get_utc_timestamp
 from .agent_store import AgentStore
 
 
@@ -132,7 +132,7 @@ class MainAgent:
                 'tool_name': tool_name,
                 'arguments': sanitized,
                 'status': status,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': get_utc_timestamp()
             })
 
     def get_message_history(self) -> List[Dict[str, str]]:

@@ -21,16 +21,10 @@ class ConnectorSelector:
             AI connector instance
         """
         # For now, always return LMStudio connector
-        # TODO: Add logic to choose connector based on parameters
-        
         if self._lmstudio_connector is None:
             self._lmstudio_connector = LMStudioConnector()
         
         return self._lmstudio_connector
-
-# Remove global singleton instance to avoid shared mutable state
-# Each component should create its own ConnectorSelector instance
-# _global_selector = ConnectorSelector()
 
 def get_connector(caller: str = "unknown", task_type: str = "general", generation_type: str = "text"):
     """

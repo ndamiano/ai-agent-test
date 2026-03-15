@@ -8,6 +8,19 @@ def get_db_path():
     return os.environ.get("TASK_DB_PATH", "data/tasks.db")
 
 
+def configure_connection(conn: sqlite3.Connection) -> None:
+    """
+    Configure SQLite connection with optimal settings.
+
+    Args:
+        conn: SQLite connection to configure
+    """
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+
+
 def init_db(db_path: Optional[str] = None) -> None:
     """
     Initialize the SQLite database with all required tables.
@@ -28,9 +41,7 @@ def init_db(db_path: Optional[str] = None) -> None:
     
     with sqlite3.connect(db_path) as conn:
         # Enable foreign key constraints and WAL mode for better concurrent read throughput
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
+        configure_connection(conn)
         
         # Create tasks table
         conn.execute("""

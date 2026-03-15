@@ -8,10 +8,9 @@ gone; MaestroAgent owns the full lifecycle.
 
 import logging
 from typing import Any, Callable, Dict, Optional
-from datetime import datetime
 
+from config.time_utils import get_utc_timestamp
 from agents.maestro_agent import MaestroAgent
-from agents.main_agent import MainAgent
 from database.task_store import task_store
 
 logger = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ class TaskRunner:
                 'type': 'task_created',
                 'task_id': task_id,
                 'goal': goal,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': get_utc_timestamp()
             })
 
         # Fix the lambda capture before spawning the thread

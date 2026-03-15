@@ -10,23 +10,18 @@ from threading import Lock
 import threading
 import atexit
 
-from .schema import init_db
+from .schema import init_db, get_db_path, configure_connection
+from .constants import TASK_STATUSES, SUBTASK_STATUSES
+from config.time_utils import get_utc_timestamp
 
 _thread_local = threading.local()
 logger = logging.getLogger(__name__)
 
 
-def _get_db_path() -> str:
-    return os.environ.get("TASK_DB_PATH", "data/tasks.db")
-
-
 def _get_connection() -> sqlite3.Connection:
     if not hasattr(_thread_local, 'conn') or _thread_local.conn is None:
-        conn = sqlite3.connect(_get_db_path())
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        conn = sqlite3.connect(get_db_path())
+        configure_connection(conn)
         _thread_local.conn = conn
     return _thread_local.conn
 
@@ -39,10 +34,6 @@ def close_connection() -> None:
 
 
 atexit.register(close_connection)
-
-
-def _now() -> str:
-    return datetime.utcnow().isoformat()
 
 
 def _parse_subtask_row(row: dict) -> dict:
@@ -62,7 +53,7 @@ class TaskStore:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    init_db(_get_db_path())
+                    init_db(get_db_path())
         return cls._instance
 
     @classmethod
@@ -75,7 +66,7 @@ class TaskStore:
     # -------------------------------------------------------------------------
 
     def create_task(self, goal: str, execution_mode: str = "sequential") -> Dict:
-        task_id, now = str(uuid.uuid4()), _now()
+        task_id, now = str(uuid.uuid4()), get_utc_timestamp()
         with _get_connection() as conn:
             conn.execute(
                 "INSERT INTO tasks (id, goal, status, execution_mode, created_at, updated_at) VALUES (?,?,?,?,?,?)",
@@ -96,11 +87,10 @@ class TaskStore:
         return dict(row)
 
     def update_task_status(self, task_id: str, status: str) -> None:
-        valid = {"pending", "planning", "in_progress", "completed", "failed"}
-        if status not in valid:
-            raise ValueError(f"Invalid status: {status}. Must be one of {valid}")
+        if status not in TASK_STATUSES:
+            raise ValueError(f"Invalid status: {status}. Must be one of {TASK_STATUSES}")
         with _get_connection() as conn:
-            conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE id=?", (status, _now(), task_id))
+            conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE id=?", (status, get_utc_timestamp(), task_id))
 
     def list_tasks(self, status: Optional[str] = None) -> List[Dict]:
         conn = _get_connection()
@@ -120,7 +110,7 @@ class TaskStore:
         # Validate dependencies before creating the subtask
         self._validate_subtask_dependencies(task_id, depends_on)
         
-        subtask_id, now = str(uuid.uuid4()), _now()
+        subtask_id, now = str(uuid.uuid4()), get_utc_timestamp()
         with _get_connection() as conn:
             conn.execute(
                 """INSERT INTO subtasks
@@ -156,22 +146,21 @@ class TaskStore:
         return [_parse_subtask_row(dict(r)) for r in rows]
 
     def update_subtask_status(self, subtask_id: str, status: str) -> None:
-        valid = {"pending", "in_progress", "completed", "failed"}
-        if status not in valid:
-            raise ValueError(f"Invalid status: {status}. Must be one of {valid}")
+        if status not in SUBTASK_STATUSES:
+            raise ValueError(f"Invalid status: {status}. Must be one of {SUBTASK_STATUSES}")
         with _get_connection() as conn:
-            conn.execute("UPDATE subtasks SET status=?, updated_at=? WHERE id=?", (status, _now(), subtask_id))
+            conn.execute("UPDATE subtasks SET status=?, updated_at=? WHERE id=?", (status, get_utc_timestamp(), subtask_id))
 
     def update_subtask_depends_on(self, subtask_id: str, depends_on: List[str]) -> None:
         with _get_connection() as conn:
             conn.execute("UPDATE subtasks SET depends_on=?, updated_at=? WHERE id=?",
-                         (json.dumps(depends_on), _now(), subtask_id))
+                         (json.dumps(depends_on), get_utc_timestamp(), subtask_id))
 
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
         subtask = self.get_subtask(subtask_id)
         with _get_connection() as conn:
             conn.execute("UPDATE subtasks SET output=?, status='completed', updated_at=? WHERE id=?",
-                         (output, _now(), subtask_id))
+                         (output, get_utc_timestamp(), subtask_id))
         self._store_context(subtask["task_id"], self._context_key(subtask, subtask_id), output, subtask_id)
 
     def get_ready_subtasks(self, task_id: str) -> List[Dict]:
@@ -228,7 +217,7 @@ class TaskStore:
         with _get_connection() as conn:
             conn.execute(
                 "INSERT INTO task_events (id, task_id, subtask_id, event_type, message, created_at) VALUES (?,?,?,?,?,?)",
-                (str(uuid.uuid4()), task_id, subtask_id, event_type, message, _now()),
+                (str(uuid.uuid4()), task_id, subtask_id, event_type, message, get_utc_timestamp()),
             )
 
     def get_events(self, task_id: str) -> List[Dict]:
@@ -241,33 +230,17 @@ class TaskStore:
 
     def _validate_subtask_dependencies(self, task_id: str, depends_on: Optional[List[str]]) -> None:
         """
-        Validate dependencies for a new subtask.
-        
+        Validate dependencies for a new subtask (delegates to shared validation).
+
         Args:
             task_id: The parent task ID
             depends_on: List of dependency subtask IDs to validate
-            
+
         Raises:
             ValueError: If dependencies are invalid
         """
-        if not depends_on:
-            return
-            
-        # Get all existing subtasks for this task
-        existing_subtasks = self.get_subtasks_for_task(task_id)
-        existing_ids = {s["id"] for s in existing_subtasks}
-        
-        # Check for non-existent dependencies
-        missing_deps = [dep_id for dep_id in depends_on if dep_id not in existing_ids]
-        if missing_deps:
-            raise ValueError(
-                f"Invalid dependencies: {missing_deps}. "
-                f"These subtask IDs do not exist in task {task_id}. "
-                f"Existing subtasks: {list(existing_ids)}"
-            )
-        
-        # Note: Self-dependency check is not needed here since the subtask doesn't exist yet
-        # Circular dependency detection is handled at the spawn_task level
+        from tools.task_tools import _validate_dependencies
+        _validate_dependencies(task_id, depends_on or [])
 
     # -------------------------------------------------------------------------
     # Private helpers
@@ -278,7 +251,7 @@ class TaskStore:
         return f"{base}_{subtask_id[:8]}" if base else f"subtask_output_{subtask_id[:8]}"
 
     def _store_context(self, task_id: str, key: str, value: str, subtask_id: Optional[str]) -> None:
-        context_id, now = str(uuid.uuid4()), _now()
+        context_id, now = str(uuid.uuid4()), get_utc_timestamp()
         try:
             with _get_connection() as conn:
                 conn.execute(

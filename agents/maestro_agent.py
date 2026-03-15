@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
+from config.time_utils import get_utc_timestamp
+
 from agents.agent_store import AgentStore
 from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
@@ -152,7 +154,6 @@ class MaestroAgent:
                 self._maestro_turn(task_id, broadcast_fn, phase="error_recovery")
                 continue
 
-            # There is a bug here, probably because we're not properly enforcing subtasks to have "proper" depends on.
             if pending:
                 # More subtasks exist but aren't ready yet — something is still running.
                 # This shouldn't happen (we wait for the wave to finish) but guard anyway.
@@ -230,7 +231,7 @@ class MaestroAgent:
             "agent_id": "maestro",
             "phase": phase,
             "message": f"Maestro evaluating ({phase})",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_utc_timestamp(),
         })
 
         response = maestro.chat(prompt)
@@ -333,7 +334,7 @@ class MaestroAgent:
             "task_id": task_id,
             "agent_id": self.SYNTHESIS_AGENT_ID,
             "message": "Synthesizing final output",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": get_utc_timestamp(),
         })
 
         if not self.agent_store.exists(self.SYNTHESIS_AGENT_ID):
@@ -392,7 +393,7 @@ class MaestroAgent:
                 "task_id": task_id,
                 "subtask_id": subtask_id,
                 "agent_id": subtask["agent_id"],
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_utc_timestamp(),
             })
 
             fresh = self.task_store.get_subtask(subtask_id)
@@ -406,7 +407,7 @@ class MaestroAgent:
                 "type": "subtask_completed",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_utc_timestamp(),
             })
 
             return output
@@ -421,7 +422,7 @@ class MaestroAgent:
                 "task_id": task_id,
                 "subtask_id": subtask_id,
                 "error": str(e),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": get_utc_timestamp(),
             })
             raise
 

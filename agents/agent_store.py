@@ -4,7 +4,7 @@ import json
 import os
 import pathlib
 from typing import Dict, List, Optional
-from datetime import datetime
+from config.time_utils import get_utc_timestamp
 
 
 class AgentStore:
@@ -44,7 +44,7 @@ class AgentStore:
             raise ValueError("Agent tools must be a list")
         
         # Set/update timestamps
-        current_time = datetime.utcnow().isoformat() + "Z"
+        current_time = get_utc_timestamp() + "Z"
         agent['updated_at'] = current_time
         
         # Set created_at if this is a new agent

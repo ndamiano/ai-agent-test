@@ -1,9 +1,10 @@
-"""Write to file tool for the AI agent system"""
+"""File tools for the AI agent system"""
 
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import json
+import glob as glob_module
 
 from .logging_utils import log_error
 from tools.tool_manager import tool_manager
@@ -80,9 +81,242 @@ def write_to_file(
         }
 
 
+def read_file(
+    path: str,
+    encoding: str = "utf-8",
+    task_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Read content from a file in the outputs directory, automatically scoped to task_id.
+
+    Reads from outputs/{task_id}/{path} when a task_id is available,
+    otherwise reads from outputs/{path}.
+
+    Args:
+        path: File path relative to outputs directory
+        encoding: File encoding (default: utf-8)
+        task_id: Task ID (auto-injected from execution context if not provided)
+
+    Returns:
+        Dict containing success status, file path, and content
+    """
+    try:
+        # Ensure path is relative to outputs directory, organized by task_id
+        if not path.startswith("outputs/"):
+            if task_id:
+                path = f"outputs/{task_id}/{path}"
+            else:
+                path = f"outputs/{path}"
+
+        # Convert to Path object for better path handling
+        file_path = Path(path)
+
+        # Check if file exists
+        if not file_path.exists():
+            return {
+                "success": False,
+                "error": f"File not found: {path}",
+                "file_path": str(file_path)
+            }
+
+        if not file_path.is_file():
+            return {
+                "success": False,
+                "error": f"Path is not a file: {path}",
+                "file_path": str(file_path)
+            }
+
+        # Read content from file
+        with open(file_path, mode="r", encoding=encoding) as f:
+            content = f.read()
+
+        # Log successful operation
+        result = {
+            "success": True,
+            "file_path": str(file_path),
+            "content": content,
+            "content_length": len(content)
+        }
+
+        return result
+
+    except Exception as e:
+        error_msg = f"Failed to read file {path}: {str(e)}"
+        log_error("ReadFileError", error_msg, {
+            "path": path,
+            "encoding": encoding,
+            "error": str(e)
+        })
+
+        return {
+            "success": False,
+            "error": error_msg,
+            "file_path": path
+        }
+
+
+def list_files(
+    path: str = "",
+    pattern: str = "*",
+    recursive: bool = False,
+    task_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    List files in the outputs directory, automatically scoped to task_id.
+
+    Lists files in outputs/{task_id}/{path} when a task_id is available,
+    otherwise lists from outputs/{path}.
+
+    Args:
+        path: Directory path relative to outputs directory (default: root of task outputs)
+        pattern: Glob pattern to match files (default: "*" for all files)
+        recursive: Whether to search recursively (default: False)
+        task_id: Task ID (auto-injected from execution context if not provided)
+
+    Returns:
+        Dict containing success status and list of file paths
+    """
+    try:
+        # Build the base path
+        if not path.startswith("outputs/"):
+            if task_id:
+                base_path = f"outputs/{task_id}/{path}" if path else f"outputs/{task_id}"
+            else:
+                base_path = f"outputs/{path}" if path else "outputs"
+        else:
+            base_path = path
+
+        # Convert to Path object
+        dir_path = Path(base_path)
+
+        # Create directory if it doesn't exist
+        if not dir_path.exists():
+            dir_path.mkdir(parents=True, exist_ok=True)
+            return {
+                "success": True,
+                "directory": str(dir_path),
+                "files": [],
+                "count": 0
+            }
+
+        # Build glob pattern
+        if recursive:
+            glob_pattern = f"{dir_path}/**/{pattern}"
+            matches = glob_module.glob(glob_pattern, recursive=True)
+        else:
+            glob_pattern = f"{dir_path}/{pattern}"
+            matches = glob_module.glob(glob_pattern)
+
+        # Filter to only files (not directories)
+        files = [str(Path(f).relative_to(dir_path)) for f in matches if Path(f).is_file()]
+        files.sort()
+
+        result = {
+            "success": True,
+            "directory": str(dir_path),
+            "files": files,
+            "count": len(files),
+            "pattern": pattern,
+            "recursive": recursive
+        }
+
+        return result
+
+    except Exception as e:
+        error_msg = f"Failed to list files in {path}: {str(e)}"
+        log_error("ListFilesError", error_msg, {
+            "path": path,
+            "pattern": pattern,
+            "recursive": recursive,
+            "error": str(e)
+        })
+
+        return {
+            "success": False,
+            "error": error_msg,
+            "directory": path
+        }
+
+
+def delete_file(
+    path: str,
+    task_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Delete a file from the outputs directory, automatically scoped to task_id.
+
+    Deletes from outputs/{task_id}/{path} when a task_id is available,
+    otherwise deletes from outputs/{path}.
+
+    Args:
+        path: File path relative to outputs directory
+        task_id: Task ID (auto-injected from execution context if not provided)
+
+    Returns:
+        Dict containing success status and file path
+    """
+    try:
+        # Ensure path is relative to outputs directory, organized by task_id
+        if not path.startswith("outputs/"):
+            if task_id:
+                path = f"outputs/{task_id}/{path}"
+            else:
+                path = f"outputs/{path}"
+
+        # Convert to Path object
+        file_path = Path(path)
+
+        # Safety check: ensure we're only deleting from outputs directory
+        if not str(file_path.resolve()).startswith(str(Path("outputs").resolve())):
+            return {
+                "success": False,
+                "error": "Can only delete files from outputs directory",
+                "file_path": str(file_path)
+            }
+
+        # Check if file exists
+        if not file_path.exists():
+            return {
+                "success": False,
+                "error": f"File not found: {path}",
+                "file_path": str(file_path)
+            }
+
+        if not file_path.is_file():
+            return {
+                "success": False,
+                "error": f"Path is not a file: {path}",
+                "file_path": str(file_path)
+            }
+
+        # Delete the file
+        file_path.unlink()
+
+        result = {
+            "success": True,
+            "file_path": str(file_path),
+            "message": f"File deleted successfully: {file_path}"
+        }
+
+        return result
+
+    except Exception as e:
+        error_msg = f"Failed to delete file {path}: {str(e)}"
+        log_error("DeleteFileError", error_msg, {
+            "path": path,
+            "error": str(e)
+        })
+
+        return {
+            "success": False,
+            "error": error_msg,
+            "file_path": path
+        }
+
+
 def register_file_tools():
-    """Register write tools with the tool manager"""
-    
+    """Register file tools with the tool manager"""
+
     # Register write_to_file tool
     tool_manager.register_tool(
         name="write_to_file",
@@ -121,5 +355,86 @@ def register_file_tools():
             "required": ["path", "content"]
         },
         fn=write_to_file,
+        auto_inject_context=True
+    )
+
+    # Register read_file tool
+    tool_manager.register_tool(
+        name="read_file",
+        description=(
+            "Read content from a file in the outputs directory. "
+            "Files are automatically scoped to task_id when available: outputs/{task_id}/{path}"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to task outputs directory (e.g., 'report.txt' or 'data/output.json')"
+                },
+                "encoding": {
+                    "type": "string",
+                    "default": "utf-8",
+                    "description": "File encoding (default: utf-8)"
+                }
+            },
+            "required": ["path"]
+        },
+        fn=read_file,
+        auto_inject_context=True
+    )
+
+    # Register list_files tool
+    tool_manager.register_tool(
+        name="list_files",
+        description=(
+            "List files in the outputs directory. "
+            "Files are automatically scoped to task_id when available: outputs/{task_id}/{path}. "
+            "Supports glob patterns and recursive search."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Directory path relative to task outputs directory (default: root of task outputs)"
+                },
+                "pattern": {
+                    "type": "string",
+                    "default": "*",
+                    "description": "Glob pattern to match files (e.g., '*.txt', '*.json', default: '*' for all files)"
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Whether to search recursively in subdirectories (default: False)"
+                }
+            },
+            "required": []
+        },
+        fn=list_files,
+        auto_inject_context=True
+    )
+
+    # Register delete_file tool
+    tool_manager.register_tool(
+        name="delete_file",
+        description=(
+            "Delete a file from the outputs directory. "
+            "Files are automatically scoped to task_id when available: outputs/{task_id}/{path}. "
+            "Safety: Can only delete files from the outputs directory."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to task outputs directory (e.g., 'report.txt' or 'data/output.json')"
+                }
+            },
+            "required": ["path"]
+        },
+        fn=delete_file,
         auto_inject_context=True
     )

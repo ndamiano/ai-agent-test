@@ -143,3 +143,200 @@ class TestWriteToFileWithTaskId:
         file_path = Path("outputs/task-append/log.txt")
         content = file_path.read_text()
         assert content == "Line 1\nLine 2\nLine 3\n"
+
+
+class TestReadFile:
+    """Test read_file with automatic task_id path resolution"""
+
+    def test_read_file_with_task_context(self, temp_dir):
+        """Test reading a file with task context"""
+        # First write a file
+        with execution_context(task_id="task-read-1"):
+            tool_manager.useTool("write_to_file", path="test.txt", content="Hello, World!")
+            result = tool_manager.useTool("read_file", path="test.txt")
+
+        assert result["success"] is True
+        assert result["content"] == "Hello, World!"
+        assert "task-read-1" in result["file_path"]
+
+    def test_read_file_without_task_context(self, temp_dir):
+        """Test reading a file without task context"""
+        tool_manager.useTool("write_to_file", path="test.txt", content="No context")
+        result = tool_manager.useTool("read_file", path="test.txt")
+
+        assert result["success"] is True
+        assert result["content"] == "No context"
+        assert result["file_path"] == "outputs/test.txt"
+
+    def test_read_nonexistent_file(self, temp_dir):
+        """Test reading a file that doesn't exist"""
+        with execution_context(task_id="task-read-2"):
+            result = tool_manager.useTool("read_file", path="nonexistent.txt")
+
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_read_file_different_encoding(self, temp_dir):
+        """Test reading a file with different encoding"""
+        with execution_context(task_id="task-read-3"):
+            # Write with utf-8
+            tool_manager.useTool("write_to_file", path="test.txt", content="Test content", encoding="utf-8")
+            # Read with utf-8
+            result = tool_manager.useTool("read_file", path="test.txt", encoding="utf-8")
+
+        assert result["success"] is True
+        assert result["content"] == "Test content"
+
+
+class TestListFiles:
+    """Test list_files with automatic task_id path resolution"""
+
+    def test_list_files_empty_directory(self, temp_dir):
+        """Test listing files in an empty directory"""
+        with execution_context(task_id="task-list-1"):
+            result = tool_manager.useTool("list_files")
+
+        assert result["success"] is True
+        assert result["files"] == []
+        assert result["count"] == 0
+
+    def test_list_files_with_content(self, temp_dir):
+        """Test listing files in a directory with content"""
+        with execution_context(task_id="task-list-2"):
+            tool_manager.useTool("write_to_file", path="file1.txt", content="Content 1")
+            tool_manager.useTool("write_to_file", path="file2.txt", content="Content 2")
+            tool_manager.useTool("write_to_file", path="file3.json", content='{"key": "value"}')
+
+            result = tool_manager.useTool("list_files")
+
+        assert result["success"] is True
+        assert result["count"] == 3
+        assert "file1.txt" in result["files"]
+        assert "file2.txt" in result["files"]
+        assert "file3.json" in result["files"]
+
+    def test_list_files_with_pattern(self, temp_dir):
+        """Test listing files with a glob pattern"""
+        with execution_context(task_id="task-list-3"):
+            tool_manager.useTool("write_to_file", path="file1.txt", content="Content 1")
+            tool_manager.useTool("write_to_file", path="file2.txt", content="Content 2")
+            tool_manager.useTool("write_to_file", path="file3.json", content='{"key": "value"}')
+
+            result = tool_manager.useTool("list_files", pattern="*.txt")
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert "file1.txt" in result["files"]
+        assert "file2.txt" in result["files"]
+        assert "file3.json" not in result["files"]
+
+    def test_list_files_recursive(self, temp_dir):
+        """Test listing files recursively"""
+        with execution_context(task_id="task-list-4"):
+            tool_manager.useTool("write_to_file", path="root.txt", content="Root")
+            tool_manager.useTool("write_to_file", path="subdir/nested.txt", content="Nested")
+            tool_manager.useTool("write_to_file", path="subdir/deep/deeper.txt", content="Deeper")
+
+            result = tool_manager.useTool("list_files", recursive=True)
+
+        assert result["success"] is True
+        assert result["count"] == 3
+        assert "root.txt" in result["files"]
+        assert any("nested.txt" in f for f in result["files"])
+        assert any("deeper.txt" in f for f in result["files"])
+
+    def test_list_files_in_subdirectory(self, temp_dir):
+        """Test listing files in a specific subdirectory"""
+        with execution_context(task_id="task-list-5"):
+            tool_manager.useTool("write_to_file", path="root.txt", content="Root")
+            tool_manager.useTool("write_to_file", path="data/file1.txt", content="Data 1")
+            tool_manager.useTool("write_to_file", path="data/file2.txt", content="Data 2")
+
+            result = tool_manager.useTool("list_files", path="data")
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert "file1.txt" in result["files"]
+        assert "file2.txt" in result["files"]
+        assert "root.txt" not in result["files"]
+
+    def test_list_files_without_task_context(self, temp_dir):
+        """Test listing files without task context"""
+        tool_manager.useTool("write_to_file", path="test.txt", content="Test")
+        result = tool_manager.useTool("list_files")
+
+        assert result["success"] is True
+        assert result["count"] >= 1
+        assert "test.txt" in result["files"]
+
+
+class TestDeleteFile:
+    """Test delete_file with automatic task_id path resolution"""
+
+    def test_delete_file_with_task_context(self, temp_dir):
+        """Test deleting a file with task context"""
+        with execution_context(task_id="task-delete-1"):
+            # Create a file
+            tool_manager.useTool("write_to_file", path="to_delete.txt", content="Delete me")
+
+            # Verify it exists
+            file_path = Path("outputs/task-delete-1/to_delete.txt")
+            assert file_path.exists()
+
+            # Delete it
+            result = tool_manager.useTool("delete_file", path="to_delete.txt")
+
+        assert result["success"] is True
+        assert "task-delete-1" in result["file_path"]
+        assert not file_path.exists()
+
+    def test_delete_file_without_task_context(self, temp_dir):
+        """Test deleting a file without task context"""
+        # Create a file
+        tool_manager.useTool("write_to_file", path="to_delete.txt", content="Delete me")
+
+        # Verify it exists
+        file_path = Path("outputs/to_delete.txt")
+        assert file_path.exists()
+
+        # Delete it
+        result = tool_manager.useTool("delete_file", path="to_delete.txt")
+
+        assert result["success"] is True
+        assert not file_path.exists()
+
+    def test_delete_nonexistent_file(self, temp_dir):
+        """Test deleting a file that doesn't exist"""
+        with execution_context(task_id="task-delete-2"):
+            result = tool_manager.useTool("delete_file", path="nonexistent.txt")
+
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_delete_file_isolation(self, temp_dir):
+        """Test that deleting a file from one task doesn't affect another task"""
+        # Create files in two different tasks
+        with execution_context(task_id="task-A"):
+            tool_manager.useTool("write_to_file", path="shared_name.txt", content="Task A")
+
+        with execution_context(task_id="task-B"):
+            tool_manager.useTool("write_to_file", path="shared_name.txt", content="Task B")
+
+        # Delete from task A
+        with execution_context(task_id="task-A"):
+            result = tool_manager.useTool("delete_file", path="shared_name.txt")
+
+        assert result["success"] is True
+
+        # Verify task A file is gone but task B file still exists
+        assert not Path("outputs/task-A/shared_name.txt").exists()
+        assert Path("outputs/task-B/shared_name.txt").exists()
+
+    def test_delete_file_safety_check(self, temp_dir):
+        """Test that delete_file only works within outputs directory"""
+        with execution_context(task_id="task-delete-3"):
+            # Try to delete a file outside outputs (should fail)
+            result = tool_manager.useTool("delete_file", path="outputs/../../etc/passwd")
+
+        assert result["success"] is False
+        assert "outputs directory" in result["error"].lower()

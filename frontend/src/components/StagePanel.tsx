@@ -46,14 +46,6 @@ const mergeSubtasks = (base: SubtaskState[], messages: WSMessage[]): SubtaskStat
     })
 }
 
-const statusLabel = (status: string) => ({
-    pending: { label: 'Pending', color: 'bg-gray-700 text-gray-300' },
-    planning: { label: 'Planning', color: 'bg-yellow-900/50 text-yellow-400' },
-    in_progress: { label: 'In Progress', color: 'bg-yellow-900/50 text-yellow-400' },
-    completed: { label: 'Completed', color: 'bg-green-900/50 text-green-400' },
-    failed: { label: 'Failed', color: 'bg-red-900/50 text-red-400' },
-}[status] ?? { label: status, color: 'bg-gray-700 text-gray-300' })
-
 // Separate component so it can manage its own mount animation
 const FadeSlideIn: React.FC<{
     children: React.ReactNode
@@ -91,7 +83,6 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
     const [expandedSubtasks, setExpandedSubtasks] = useState<Set<string>>(new Set())
     const [toolUsageBySubtask, setToolUsageBySubtask] = useState<Map<string, ToolUsage[]>>(new Map())
     const [agentMessagesBySubtask, setAgentMessagesBySubtask] = useState<Map<string, AgentMessage[]>>(new Map())
-    const [maestroExpanded, setMaestroExpanded] = useState(false)
 
     const subtasks = mergeSubtasks(baseSubtasks, messages)
     const isPlanning = task?.status === 'planning' && subtasks.length === 0
@@ -229,7 +220,6 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
         )
     }
 
-    const { label, color } = statusLabel(task?.status ?? 'pending')
     const isDone = phase === 'done' || phase === 'failed'
     // Live view fades out during 'completing', done view fades in during 'done'/'failed'
     const liveVisible = phase === 'live' || phase === 'completing'
@@ -359,17 +349,6 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                 {task && (
                     <div>
                         <p className="text-white font-medium leading-snug mb-3">{task.goal}</p>
-                        <div className="flex items-center gap-2">
-                            {(phase === 'live') && (
-                                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                            )}
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>
-                                {label}
-                            </span>
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-white/5 text-gray-400 capitalize">
-                                {task.execution_mode}
-                            </span>
-                        </div>
                     </div>
                 )}
 
@@ -384,45 +363,6 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                         <span className="text-sm text-gray-500">Planning...</span>
                     </div>
                 )}
-
-                {/* Maestro activity section */}
-                {(() => {
-                    const maestroMessages = messages.filter((m): m is Extract<typeof m, { type: 'agent_message' }> =>
-                        m.type === 'agent_message' && m.agent_id === 'maestro'
-                    )
-                    return maestroMessages.length > 0 && (
-                        <div className="border border-white/5 bg-white/[0.02] rounded-lg p-3">
-                            <button
-                                className="w-full flex items-center gap-2 text-left"
-                                onClick={() => setMaestroExpanded(prev => !prev)}
-                            >
-                                <span className={`text-gray-600 text-xs transition-transform duration-200 ${maestroExpanded ? 'rotate-90' : ''}`}>
-                                    ▶
-                                </span>
-                                <span className="text-xs text-gray-500">Orchestrator activity</span>
-                                <span className="ml-auto text-xs text-gray-600">
-                                    {maestroMessages.length} updates
-                                </span>
-                            </button>
-
-                            {maestroExpanded && (
-                                <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-                                    {maestroMessages.map((msg, idx) => (
-                                        <div key={idx} className="text-xs bg-white/5 p-2 rounded">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-purple-400">{msg.phase}</span>
-                                                <span className="text-gray-600 text-[10px]">
-                                                    {new Date(msg.timestamp).toLocaleTimeString()}
-                                                </span>
-                                            </div>
-                                            <p className="text-gray-400 whitespace-pre-wrap">{msg.message}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )
-                })()}
 
                 {/* Agent cards — staggered entrance */}
                 {subtasks.length > 0 && (

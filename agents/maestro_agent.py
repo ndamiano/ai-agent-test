@@ -133,6 +133,7 @@ class MaestroAgent:
 
         Returns the final synthesized output.
         """
+        print("Running loop!~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         max_waves = 20  # safety valve
         wave = 0
 
@@ -211,6 +212,10 @@ class MaestroAgent:
         Returns True if Maestro spawned any new subtasks (more work to do),
         False if it made no tool calls (signals completion / ready to synthesize).
         """
+        # Snapshot total subtask count before the turn so we can detect
+        # whether Maestro actually spawned anything new vs. just evaluating.
+        count_before = len(self.task_store.get_subtasks_for_task(task_id))
+
         prompt = self._build_maestro_prompt(task_id, phase)
 
         # Render the agent roster into Maestro's system prompt
@@ -241,12 +246,12 @@ class MaestroAgent:
             task_id, "agent_message", f"Maestro ({phase}): {response[:200]}"
         )
 
-        # Detect whether Maestro spawned new subtasks by comparing counts
-        subtasks_after = self.task_store.get_subtasks_for_task(task_id)
-        pending_after = [s for s in subtasks_after if s["status"] == "pending"]
-
-        spawned_new = len(pending_after) > 0
-        return spawned_new
+        # Spawned new = total subtask count increased during this turn.
+        # Checking pending-only was wrong: a pending synthesizer from a prior
+        # spawn would make the loop think there was always more work to do,
+        # burning through all 20 waves before hitting the limit.
+        count_after = len(self.task_store.get_subtasks_for_task(task_id))
+        return count_after > count_before
 
     def _build_maestro_prompt(self, task_id: str, phase: str) -> str:
         """
@@ -394,10 +399,6 @@ class MaestroAgent:
             fresh = self.task_store.get_subtask(subtask_id)
             context_text = self.context_builder.build_for_subtask(task_id, fresh)
             agent = MainAgent(agent_id=fresh["agent_id"])
-
-            # Set broadcast context for tool usage events
-            agent.set_broadcast_context(task_id, subtask_id, broadcast_fn)
-
             message = f"{context_text}\n\nTask: {fresh['goal']}"
             output = agent.chat(message)
 

@@ -10,7 +10,7 @@ Register at startup via register_task_tools().
 
 import json
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from tools.tool_manager import tool_manager
 from database.task_store import TaskStore
@@ -22,11 +22,34 @@ _task_store = TaskStore()
 _agent_store = AgentStore()
 
 
+def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
+    """
+    Normalise depends_on to a plain Python list.
+
+    LLMs are inconsistent about whether they pass a JSON string or a real list
+    for array-typed tool arguments. Accept both so spawn_task never fails on
+    a type mismatch.
+    """
+    if not depends_on:
+        return []
+    if isinstance(depends_on, list):
+        return depends_on
+    if isinstance(depends_on, str):
+        try:
+            parsed = json.loads(depends_on)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"depends_on is not valid JSON: {e}") from e
+        if not isinstance(parsed, list):
+            raise ValueError("depends_on must be a JSON array")
+        return parsed
+    raise ValueError(f"depends_on must be a list or JSON string, got {type(depends_on).__name__}")
+
+
 def _spawn_task(
     task_id: str,
     agent_id: str,
     goal: str,
-    depends_on: Optional[str] = None,
+    depends_on=None,
     priority: str = "normal",
 ) -> str:
     """
@@ -36,8 +59,9 @@ def _spawn_task(
         task_id:    The parent task ID this subtask belongs to.
         agent_id:   The ID of the agent that should execute this subtask.
         goal:       The specific, self-contained instruction for the agent.
-        depends_on: JSON array string of subtask IDs that must complete first.
-                    e.g. '["abc-123", "def-456"]'. Omit or pass null for no deps.
+        depends_on: List or JSON-string array of subtask IDs that must complete
+                    first. e.g. ["abc-123", "def-456"] or '["abc-123"]'.
+                    Omit or pass null for no deps.
         priority:   "normal" or "high". Reserved for future scheduling use.
 
     Returns:
@@ -48,14 +72,7 @@ def _spawn_task(
 
     _task_store.get_task(task_id)  # raises KeyError if missing
 
-    dep_ids = []
-    if depends_on:
-        try:
-            dep_ids = json.loads(depends_on)
-            if not isinstance(dep_ids, list):
-                raise ValueError("depends_on must be a JSON array")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"depends_on is not valid JSON: {e}") from e
+    dep_ids = _parse_depends_on(depends_on)
 
     existing = _task_store.get_subtasks_for_task(task_id)
     position = max((s["position"] for s in existing), default=-1) + 1
@@ -88,13 +105,6 @@ def _get_task_status(task_id: str, subtask_id: Optional[str] = None) -> str:
 
     If subtask_id is provided, returns status for that subtask only.
     Otherwise returns the parent task status plus a summary of all subtasks.
-
-    Args:
-        task_id:    The parent task ID.
-        subtask_id: Optional subtask ID for a targeted status check.
-
-    Returns:
-        JSON string with status information.
     """
     if subtask_id:
         subtask = _task_store.get_subtask(subtask_id)
@@ -161,10 +171,11 @@ def register_task_tools() -> None:
                     ),
                 },
                 "depends_on": {
-                    "type": "string",
+                    "type": "array",
+                    "items": {"type": "string"},
                     "description": (
-                        "JSON array of subtask IDs that must complete before this one runs. "
-                        "Example: '[\"abc-123\", \"def-456\"]'. Omit for no dependencies."
+                        "Array of subtask IDs that must complete before this one runs. "
+                        "Example: [\"abc-123\", \"def-456\"]. Omit for no dependencies."
                     ),
                 },
                 "priority": {

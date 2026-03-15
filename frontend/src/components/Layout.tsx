@@ -1,7 +1,7 @@
 import React from 'react'
 import TaskListPanel from './TaskListPanel'
 import StagePanel from './StagePanel'
-import CommandBar from '../assets/CommandBar'
+import CommandBar from './CommandBar'
 
 interface LayoutProps {
     selectedTaskId: string | null

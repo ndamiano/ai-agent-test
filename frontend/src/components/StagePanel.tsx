@@ -320,10 +320,8 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                                                 <FadeSlideIn key={subtask.id} delay={agentsExpanded ? i * 60 : 0}>
                                                     <AgentCard
                                                         agentId={subtask.agentId}
-                                                        goal={subtask.goal}
                                                         status={subtask.status}
                                                         outputPreview={subtask.outputPreview}
-                                                        position={subtask.position}
                                                         animationDelay={0}
                                                         toolUsage={toolUsageBySubtask.get(subtask.id)}
                                                         agentMessages={agentMessagesBySubtask.get(subtask.id)}
@@ -435,10 +433,8 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                                 <AgentCard
                                     key={subtask.id}
                                     agentId={subtask.agentId}
-                                    goal={subtask.goal}
                                     status={subtask.status}
                                     outputPreview={subtask.outputPreview}
-                                    position={subtask.position}
                                     animationDelay={subtask.position * 80}
                                     toolUsage={toolUsageBySubtask.get(subtask.id)}
                                     agentMessages={agentMessagesBySubtask.get(subtask.id)}

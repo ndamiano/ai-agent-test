@@ -3,10 +3,8 @@ import type { ToolUsage, AgentMessage } from '../types'
 
 interface AgentCardProps {
     agentId: string
-    goal: string
     status: 'pending' | 'in_progress' | 'completed' | 'failed'
     outputPreview: string | null
-    position: number
     animationDelay: number
     toolUsage?: ToolUsage[]
     agentMessages?: AgentMessage[]
@@ -21,10 +19,8 @@ const formatAgentName = (agentId: string) =>
 
 const AgentCard: React.FC<AgentCardProps> = ({
     agentId,
-    goal: _goal,
     status,
     outputPreview,
-    position: _position,
     animationDelay,
     toolUsage,
     agentMessages,

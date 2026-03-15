@@ -5,7 +5,6 @@ import json
 import os
 from typing import Any, Union, List
 from threading import Lock
-import time
 
 
 class LMStudioConnector:

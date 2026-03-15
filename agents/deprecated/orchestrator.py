@@ -1,11 +1,8 @@
 import os
 import logging
-import asyncio
-import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Callable
-import time
 from datetime import datetime
 
 from database.task_store import TaskStore
@@ -62,9 +59,6 @@ class Orchestrator:
                 
             except Exception as e:
                 self.logger.error(f"Subtask {subtask['id']} failed: {str(e)}")
-                
-                # Check if we should retry - remove dead retry logic since retry_failed field is never set
-                # The retry_failed field is not wired from ExecutionConfig to subtasks, so this branch is dead code
                 self.task_store.update_task_status(task_id, 'failed')
                 
                 # Broadcast task failure to WebSocket clients

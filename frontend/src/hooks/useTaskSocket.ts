@@ -36,7 +36,6 @@ export function useTaskSocket(taskId: string | null) {
 
         wsRef.current.onmessage = (event) => {
             try {
-                console.log(event);
                 const message: WebSocketMessage = JSON.parse(event.data)
                 setMessages(prev => [...prev, message])
 
@@ -67,11 +66,5 @@ export function useTaskSocket(taskId: string | null) {
         }
     }, [taskId])
 
-    // cleanup function moved to top of useEffect
-
-    const clearMessages = () => {
-        setMessages([])
-    }
-
-    return { messages, connected, finished, error, clearMessages }
+    return { messages, connected, finished, error }
 }

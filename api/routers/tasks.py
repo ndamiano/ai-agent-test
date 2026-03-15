@@ -27,7 +27,6 @@ async def get_tasks(status: Optional[str] = None):
     """
     List all tasks, optionally filtered by status.
     """
-    print("Here")
     tasks = task_store.list_tasks(status)
     return [TaskResponse(**task) for task in tasks]
 

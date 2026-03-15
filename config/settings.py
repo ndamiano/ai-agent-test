@@ -9,7 +9,7 @@ load_dotenv()
 # API Configuration
 API_KEYS = {
     "openai": os.getenv("OPENAI_API_KEY"),
-    "claude": os.getenv("CLAUDE_API_KEY")
+    "claude": os.getenv("CLAUDE_API_KEY")  # Reserved for future use
 }
 
 # Model Configuration

@@ -239,13 +239,21 @@ def _spawn_task(
     })
 
 
-def _get_task_status(task_id: str, subtask_id: Optional[str] = None) -> str:
+def _get_task_status(task_id: Optional[str] = None, subtask_id: Optional[str] = None) -> str:
     """
     Return the current status of a task or a specific subtask.
 
+    If task_id is not provided, uses the current execution context.
     If subtask_id is provided, returns status for that subtask only.
     Otherwise returns the parent task status plus a summary of all subtasks.
     """
+    # Use execution context if task_id not provided
+    if task_id is None:
+        from tools.execution_context import get_task_id
+        task_id = get_task_id()
+        if task_id is None:
+            raise ValueError("task_id must be provided or available in execution context")
+
     if subtask_id:
         subtask = _task_store.get_subtask(subtask_id)
         return json.dumps({
@@ -294,10 +302,6 @@ def register_task_tools() -> None:
         parameters={
             "type": "object",
             "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "The parent task ID this subtask belongs to.",
-                },
                 "agent_id": {
                     "type": "string",
                     "description": "ID of the agent to assign this subtask to.",
@@ -323,32 +327,35 @@ def register_task_tools() -> None:
                     "description": '"normal" or "high". Defaults to "normal".',
                 },
             },
-            "required": ["task_id", "agent_id", "goal"],
+            "required": ["agent_id", "goal"],
         },
         fn=_spawn_task,
+        auto_inject_context=True,
     )
 
     tool_manager.register_tool(
         name="get_task_status",
         description=(
             "Get the current status of a task and all its subtasks, or a specific subtask. "
-            "Use this to check whether a wave of work is complete before evaluating outputs."
+            "Use this to check whether a wave of work is complete before evaluating outputs. "
+            "The task_id will be automatically inferred from the current execution context if not provided."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "task_id": {
                     "type": "string",
-                    "description": "The parent task ID to check.",
+                    "description": "Optional. The parent task ID to check. Defaults to current task context.",
                 },
                 "subtask_id": {
                     "type": "string",
                     "description": "Optional. A specific subtask ID for a targeted status check.",
                 },
             },
-            "required": ["task_id"],
+            "required": [],
         },
         fn=_get_task_status,
+        auto_inject_context=True,
     )
 
     logger.info("Task tools registered: spawn_task, get_task_status")

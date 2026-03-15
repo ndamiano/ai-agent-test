@@ -14,26 +14,35 @@ def write_to_file(
     content: str,
     mode: str = "w",
     encoding: str = "utf-8",
-    create_dirs: bool = True
+    create_dirs: bool = True,
+    task_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Write content to a file in the outputs directory.
-    
+    Write content to a file in the outputs directory, automatically organized by task_id.
+
+    Files are written to outputs/{task_id}/{path} when a task_id is available,
+    otherwise falls back to outputs/{path}.
+
     Args:
         path: File path relative to outputs directory
         content: Content to write to the file
         mode: File mode ('w' for write, 'a' for append, etc.)
         encoding: File encoding (default: utf-8)
         create_dirs: Whether to create parent directories if they don't exist
-    
+        task_id: Task ID (auto-injected from execution context if not provided)
+
     Returns:
         Dict containing success status and file path
     """
     try:
-        # Ensure path is relative to outputs directory
+
+        # Ensure path is relative to outputs directory, organized by task_id
         if not path.startswith("outputs/"):
-            path = f"outputs/{path}"
-        
+            if task_id:
+                path = f"outputs/{task_id}/{path}"
+            else:
+                path = f"outputs/{path}"
+
         # Convert to Path object for better path handling
         file_path = Path(path)
         
@@ -77,13 +86,16 @@ def register_file_tools():
     # Register write_to_file tool
     tool_manager.register_tool(
         name="write_to_file",
-        description="Write content to a file in the outputs directory",
+        description=(
+            "Write content to a file in the outputs directory. "
+            "Files are automatically organized by task_id when available: outputs/{task_id}/{path}"
+        ),
         parameters={
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')"
+                    "description": "File path relative to task outputs directory (e.g., 'report.txt' or 'data/output.json')"
                 },
                 "content": {
                     "type": "string",
@@ -108,5 +120,6 @@ def register_file_tools():
             },
             "required": ["path", "content"]
         },
-        fn=write_to_file
+        fn=write_to_file,
+        auto_inject_context=True
     )

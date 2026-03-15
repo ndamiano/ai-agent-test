@@ -22,6 +22,7 @@ from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
 from database.task_store import TaskStore
 from tools.logging_utils import tool_logger
+from tools.execution_context import execution_context
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,9 @@ class MaestroAgent:
         )
         maestro = MainAgent(agent_id="maestro", system_prompt=rendered_system_prompt)
 
+        # Set broadcast context for maestro
+        maestro.set_broadcast_context(task_id, "maestro", broadcast_fn)
+
         self._broadcast(broadcast_fn, {
             "type": "agent_message",
             "task_id": task_id,
@@ -234,7 +238,9 @@ class MaestroAgent:
             "timestamp": get_utc_timestamp(),
         })
 
-        response = maestro.chat(prompt)
+        # Execute within execution context
+        with execution_context(task_id=task_id, subtask_id="maestro"):
+            response = maestro.chat(prompt)
 
         # Write Maestro's reasoning into the context store for traceability
         self.task_store.write_context(
@@ -399,8 +405,15 @@ class MaestroAgent:
             fresh = self.task_store.get_subtask(subtask_id)
             context_text = self.context_builder.build_for_subtask(task_id, fresh)
             agent = MainAgent(agent_id=fresh["agent_id"])
+
+            # Set broadcast context AND execution context
+            agent.set_broadcast_context(task_id, subtask_id, broadcast_fn)
+
             message = f"{context_text}\n\nTask: {fresh['goal']}"
-            output = agent.chat(message)
+
+            # Execute within execution context
+            with execution_context(task_id=task_id, subtask_id=subtask_id):
+                output = agent.chat(message)
 
             self.task_store.set_subtask_output(subtask_id, output)
             self._broadcast(broadcast_fn, {

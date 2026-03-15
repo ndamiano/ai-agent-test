@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Callable
 import json
 from connectors.connector_selector import get_connector
 from tools.tool_manager import tool_manager
+from tools.execution_context import execution_context
 from config.agent_prompts import SYSTEM_PROMPT
 from config.time_utils import get_utc_timestamp
 from .agent_store import AgentStore
@@ -201,37 +202,42 @@ class MainAgent:
             if not tool_calls:
                 return content
 
-            for tool_call in tool_calls:
-                if tool_call.get("type") == "function":
-                    function = tool_call.get("function", {})
-                    tool_name = function.get("name")
-                    tool_call_id = tool_call.get("id")
+            # Set execution context for tool calls
+            ctx_task_id = self.broadcast_context.get('task_id') if self.broadcast_context else None
+            ctx_subtask_id = self.broadcast_context.get('subtask_id') if self.broadcast_context else None
 
-                    arguments = {}
-                    try:
-                        arguments = json.loads(function.get("arguments", "{}"))
+            with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id):
+                for tool_call in tool_calls:
+                    if tool_call.get("type") == "function":
+                        function = tool_call.get("function", {})
+                        tool_name = function.get("name")
+                        tool_call_id = tool_call.get("id")
 
-                        result = tool_manager.useTool(tool_name, **arguments)
+                        arguments = {}
+                        try:
+                            arguments = json.loads(function.get("arguments", "{}"))
 
-                        # Broadcast successful tool usage
-                        self._broadcast_tool_usage(tool_name, arguments, 'success')
+                            result = tool_manager.useTool(tool_name, **arguments)
 
-                        self.message_history.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": str(result)
-                        })
+                            # Broadcast successful tool usage
+                            self._broadcast_tool_usage(tool_name, arguments, 'success')
 
-                    except Exception as e:
+                            self.message_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": str(result)
+                            })
 
-                        # Broadcast failed tool usage
-                        self._broadcast_tool_usage(tool_name, arguments, 'failed')
+                        except Exception as e:
 
-                        self.message_history.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": f"Tool '{tool_name}' failed: {str(e)}"
-                        })
+                            # Broadcast failed tool usage
+                            self._broadcast_tool_usage(tool_name, arguments, 'failed')
+
+                            self.message_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": f"Tool '{tool_name}' failed: {str(e)}"
+                            })
 
             iteration += 1
 

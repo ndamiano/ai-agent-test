@@ -250,6 +250,11 @@ class MaestroAgent:
         with execution_context(task_id=task_id, subtask_id="maestro"):
             response = maestro.chat(prompt)
 
+        # Ensure response is never None
+        if response is None:
+            response = ""
+            logger.warning(f"Maestro returned None response for task {task_id} phase {phase}")
+
         # Write Maestro's reasoning into the context store for traceability
         self.task_store.write_context(
             task_id,

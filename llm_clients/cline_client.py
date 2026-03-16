@@ -49,6 +49,8 @@ class ClineConnector:
             logger.warning("Cline API key not configured")
             return False
 
+        logger.debug(f"Testing connection to Cline API at {self.api_endpoint}")
+
         try:
             # Try a simple request to verify the API key works
             response = requests.post(
@@ -66,6 +68,7 @@ class ClineConnector:
             )
             if response.status_code in [200, 400]:  # 400 is ok for health check
                 self._connected = True
+                logger.info(f"Successfully connected to Cline API (status {response.status_code})")
                 return True
             else:
                 logger.warning(f"Could not connect to Cline API: {response.status_code}")
@@ -181,6 +184,8 @@ class ClineConnector:
             "max_tokens": self.max_tokens
         }
 
+        logger.debug(f"Cline API request to {self.api_endpoint} with model {self.model_name}")
+
         # Use connection pooling for better performance
         session = self._get_session()
 
@@ -195,31 +200,53 @@ class ClineConnector:
                 timeout=60
             )
 
+            logger.debug(f"Cline API response status: {response.status_code}")
+
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"]
+
+                # Cline API wraps the response in a "data" object
+                if "data" in result:
+                    data = result["data"]
+                    logger.debug(f"Cline API returned success with {len(data.get('choices', []))} choices")
+                    return data["choices"][0]["message"]["content"]
+                else:
+                    # Fallback for standard OpenAI format
+                    logger.debug(f"Cline API returned standard format with {len(result.get('choices', []))} choices")
+                    return result["choices"][0]["message"]["content"]
             else:
-                return f"Error: Cline API returned status {response.status_code}: {response.text}"
+                error_msg = f"Error: Cline API returned status {response.status_code}: {response.text}"
+                logger.error(error_msg)
+                return error_msg
 
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Error connecting to Cline API: {str(e)}")
+            error_msg = f"Error connecting to Cline API: {str(e)}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         except (KeyError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"Error parsing Cline API response: {str(e)}")
+            error_msg = f"Error parsing Cline API response: {str(e)}"
+            logger.error(error_msg)
+            logger.debug(f"Response content: {response.text[:500]}")
+            raise RuntimeError(error_msg)
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
-        """Generate response with optional tool support"""
+        """Generate response with optional tool support (non-streaming)"""
 
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "stream": False
         }
 
         # Add tools if provided
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"  # Let model decide when to use tools
+            logger.debug(f"Cline API request with {len(tools)} tools available")
+
+        logger.debug(f"Cline API request to {self.api_endpoint} with model {self.model_name}")
 
         try:
             response = requests.post(
@@ -229,13 +256,113 @@ class ClineConnector:
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {self.api_key}"
                 },
-                timeout=60
+                timeout=300  # Increased timeout to 5 minutes
             )
 
+            logger.debug(f"Cline API response status: {response.status_code}")
+
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+
+                # Cline API wraps the response in a "data" object
+                if "data" in result:
+                    logger.debug(f"Cline API returned wrapped response (success={result.get('success')})")
+                    return result["data"]
+                else:
+                    # Fallback for standard OpenAI format
+                    logger.debug("Cline API returned standard OpenAI format")
+                    return result
             else:
-                return {"error": f"Status {response.status_code}: {response.text}"}
+                error_msg = f"Status {response.status_code}: {response.text}"
+                logger.error(f"Cline API error: {error_msg}")
+                return {"error": error_msg}
 
         except requests.exceptions.RequestException as e:
-            return {"error": f"Connection error: {str(e)}"}
+            error_msg = f"Connection error: {str(e)}"
+            logger.error(f"Cline API connection error: {error_msg}")
+            return {"error": error_msg}
+
+    def generate_with_tools_stream(self, messages: list, tools: list = None):
+        """
+        Generate response with optional tool support (streaming).
+
+        Yields chunks of the response as they arrive to prevent timeouts.
+
+        Args:
+            messages: List of message dicts
+            tools: Optional list of tool definitions
+
+        Yields:
+            dict: Streaming response chunks
+        """
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True
+        }
+
+        # Add tools if provided
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+            logger.debug(f"Cline API streaming request with {len(tools)} tools available")
+
+        logger.debug(f"Cline API streaming request to {self.api_endpoint} with model {self.model_name}")
+
+        try:
+            response = requests.post(
+                self.api_endpoint,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.api_key}"
+                },
+                stream=True,
+                timeout=(10, 300)  # (connection timeout, read timeout)
+            )
+
+            logger.debug(f"Cline API streaming response status: {response.status_code}")
+
+            if response.status_code == 200:
+                # Process the streaming response
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+
+                    line = line.decode('utf-8')
+
+                    # Skip empty lines and comments
+                    if not line.strip() or line.startswith(':'):
+                        continue
+
+                    # Parse SSE format: "data: {json}"
+                    if line.startswith('data: '):
+                        data_str = line[6:]  # Remove "data: " prefix
+
+                        # Check for end of stream
+                        if data_str.strip() == '[DONE]':
+                            break
+
+                        try:
+                            chunk = json.loads(data_str)
+
+                            # Unwrap Cline API response if needed
+                            if "data" in chunk:
+                                yield chunk["data"]
+                            else:
+                                yield chunk
+
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse streaming chunk: {e}")
+                            continue
+            else:
+                error_msg = f"Status {response.status_code}: {response.text}"
+                logger.error(f"Cline API streaming error: {error_msg}")
+                yield {"error": error_msg}
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Streaming connection error: {str(e)}"
+            logger.error(f"Cline API streaming error: {error_msg}")
+            yield {"error": error_msg}

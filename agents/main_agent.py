@@ -76,6 +76,92 @@ class MainAgent:
 
         return openai_tools
 
+    def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:
+        """
+        Get response from connector, using streaming if available to prevent timeouts.
+
+        Args:
+            messages: Message history
+            tools: Tool schemas
+
+        Returns:
+            Complete response dict
+        """
+        # Check if connector supports streaming
+        if hasattr(self.connector, 'generate_with_tools_stream'):
+            try:
+                # Accumulate streaming response
+                accumulated_response = None
+
+                for chunk in self.connector.generate_with_tools_stream(messages, tools):
+                    if "error" in chunk:
+                        return chunk
+
+                    # Accumulate the chunks
+                    if accumulated_response is None:
+                        accumulated_response = chunk
+                    else:
+                        # Merge delta content for streaming
+                        if "choices" in chunk:
+                            for i, choice in enumerate(chunk["choices"]):
+                                if "delta" in choice:
+                                    delta = choice["delta"]
+                                    acc_choice = accumulated_response["choices"][i]
+                                    acc_message = acc_choice.get("message", {})
+
+                                    # Merge content
+                                    if "content" in delta and delta["content"]:
+                                        content = acc_message.get("content", "")
+                                        acc_message["content"] = content + delta["content"]
+
+                                    # Merge tool calls
+                                    if "tool_calls" in delta:
+                                        if "tool_calls" not in acc_message:
+                                            acc_message["tool_calls"] = []
+
+                                        for tool_call_delta in delta["tool_calls"]:
+                                            idx = tool_call_delta.get("index", 0)
+
+                                            # Extend list if needed
+                                            while len(acc_message["tool_calls"]) <= idx:
+                                                acc_message["tool_calls"].append({
+                                                    "id": "",
+                                                    "type": "function",
+                                                    "function": {"name": "", "arguments": ""}
+                                                })
+
+                                            # Merge tool call fields
+                                            acc_tool_call = acc_message["tool_calls"][idx]
+
+                                            if "id" in tool_call_delta:
+                                                acc_tool_call["id"] = tool_call_delta["id"]
+
+                                            if "type" in tool_call_delta:
+                                                acc_tool_call["type"] = tool_call_delta["type"]
+
+                                            if "function" in tool_call_delta:
+                                                func_delta = tool_call_delta["function"]
+                                                acc_func = acc_tool_call["function"]
+
+                                                if "name" in func_delta:
+                                                    acc_func["name"] += func_delta["name"]
+
+                                                if "arguments" in func_delta:
+                                                    acc_func["arguments"] += func_delta["arguments"]
+
+                                    acc_choice["message"] = acc_message
+
+                return accumulated_response if accumulated_response else {"error": "Empty streaming response"}
+
+            except Exception as e:
+                # Fall back to non-streaming on error
+                import logging
+                logging.warning(f"Streaming failed, falling back to non-streaming: {e}")
+                return self.connector.generate_with_tools(messages, tools)
+        else:
+            # Use non-streaming if streaming not supported
+            return self.connector.generate_with_tools(messages, tools)
+
     def set_broadcast_context(self, task_id: str, subtask_id: str, broadcast_fn: Callable):
         """Set context for broadcasting tool usage events
 
@@ -184,14 +270,15 @@ class MainAgent:
             messages = [{"role": "system", "content": self.system_context}]
             messages.extend(self.message_history)
 
-            response = self.connector.generate_with_tools(messages, self._tools_schema)
+            # Use streaming if available to prevent timeouts
+            response = self._get_response_with_tools(messages, self._tools_schema)
 
             if "error" in response:
                 raise Exception(f"Connector error: {response['error']}")
 
             choice = response.get("choices", [{}])[0]
             message_response = choice.get("message", {})
-            content = message_response.get("content", "")
+            content = message_response.get("content") or ""
             tool_calls = message_response.get("tool_calls", [])
 
             assistant_message = {"role": "assistant", "content": content}

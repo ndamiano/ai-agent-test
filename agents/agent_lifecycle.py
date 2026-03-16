@@ -54,16 +54,11 @@ class AgentLifecycleManager:
             execution_time_ms: Execution time in milliseconds
         """
         try:
-            # Update agent metrics
+            # Update agent metrics in database
             self.agent_store.update_metrics(agent_id, success, execution_time_ms)
 
-            # Calculate and update quality score
+            # Calculate quality score from database metrics
             quality_score = self.calculate_quality_score(agent_id)
-            agent = self.agent_store.get(agent_id)
-
-            if 'metadata' in agent and 'quality_metrics' in agent['metadata']:
-                agent['metadata']['quality_metrics']['quality_score'] = quality_score
-                self.agent_store.save(agent)
 
             logger.info(
                 f"Registered usage for agent '{agent_id}': "
@@ -86,14 +81,24 @@ class AgentLifecycleManager:
         Returns:
             Quality score from 0.0 to 100.0
         """
-        agent = self.agent_store.get(agent_id)
-        metadata = agent.get('metadata', {})
-        metrics = metadata.get('quality_metrics', {})
+        # Get metrics from database
+        import sqlite3
+        from database.schema import get_db_path, configure_connection
+
+        db_path = get_db_path()
+        with sqlite3.connect(db_path) as conn:
+            configure_connection(conn)
+            cursor = conn.execute(
+                "SELECT tasks_completed, tasks_failed, last_used_at FROM agent_metrics WHERE agent_id = ?",
+                (agent_id,)
+            )
+            row = cursor.fetchone()
 
         # Get metrics with defaults
-        tasks_completed = metrics.get('tasks_completed', 0)
-        tasks_failed = metrics.get('tasks_failed', 0)
-        last_used_at = metrics.get('last_used_at')
+        if row:
+            tasks_completed, tasks_failed, last_used_at = row
+        else:
+            tasks_completed, tasks_failed, last_used_at = 0, 0, None
 
         total_tasks = tasks_completed + tasks_failed
 
@@ -157,13 +162,29 @@ class AgentLifecycleManager:
             min_quality = auto_cleanup.get('min_quality_score', self.DEFAULT_MIN_QUALITY_SCORE)
             max_idle_days = auto_cleanup.get('max_idle_days', self.DEFAULT_MAX_IDLE_DAYS)
 
-            # Calculate current metrics
+            # Get metrics from database
+            import sqlite3
+            from database.schema import get_db_path, configure_connection
+
+            db_path = get_db_path()
+            with sqlite3.connect(db_path) as conn:
+                configure_connection(conn)
+                cursor = conn.execute(
+                    "SELECT tasks_completed, tasks_failed, last_used_at FROM agent_metrics WHERE agent_id = ?",
+                    (agent_id,)
+                )
+                row = cursor.fetchone()
+
+            if row:
+                tasks_completed, tasks_failed, last_used_at = row
+            else:
+                tasks_completed, tasks_failed, last_used_at = 0, 0, None
+
+            # Calculate current quality score
             quality_score = self.calculate_quality_score(agent_id)
-            metrics = metadata.get('quality_metrics', {})
-            last_used_at = metrics.get('last_used_at')
 
             # Check quality threshold
-            if quality_score < min_quality and metrics.get('tasks_completed', 0) + metrics.get('tasks_failed', 0) >= 5:
+            if quality_score < min_quality and (tasks_completed + tasks_failed) >= 5:
                 candidates.append({
                     'agent': agent,
                     'reason': f'Low quality score: {quality_score:.1f} < {min_quality}',

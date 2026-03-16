@@ -4,7 +4,6 @@ import json
 import os
 import pathlib
 from typing import Dict, List, Optional
-from datetime import datetime
 from config.time_utils import get_utc_timestamp
 from config.protected_agents import is_protected_agent
 
@@ -15,10 +14,10 @@ class AgentStore:
     Each agent is a named persona with a system prompt and tool list.
     """
     
-    def __init__(self, store_dir: str = "agents/store"):
+    def __init__(self, store_dir: str = "config/agents"):
         """
         Initialize the agent store.
-        
+
         Args:
             store_dir: Directory to store agent JSON files (relative to project root)
         """

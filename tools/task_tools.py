@@ -145,43 +145,6 @@ def _has_circular_dependencies(task_id: str, new_depends_on: List[str]) -> bool:
     return False
 
 
-def _has_path_to_any(graph: Dict[str, List[str]], start: str, targets: List[str]) -> bool:
-    """
-    Check if there's a path from start node to any of the target nodes.
-    
-    Args:
-        graph: Dependency graph as adjacency list
-        start: Starting node
-        targets: List of target nodes to check reachability to
-        
-    Returns:
-        True if there's a path from start to any target, False otherwise
-    """
-    if start not in graph:
-        return False
-        
-    visited = set()
-    
-    def dfs(node: str) -> bool:
-        if node in visited:
-            return False
-        visited.add(node)
-        
-        # Check if current node is one of our targets
-        if node in targets:
-            return True
-            
-        # Check all neighbors
-        neighbors = graph.get(node, [])
-        for neighbor in neighbors:
-            if dfs(neighbor):
-                return True
-                
-        return False
-    
-    return dfs(start)
-
-
 def _spawn_task(
     task_id: str,
     agent_id: str,

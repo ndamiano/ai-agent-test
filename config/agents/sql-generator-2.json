@@ -1,0 +1,33 @@
+{
+  "id": "sql-generator-2",
+  "name": "SQL Generator",
+  "description": "Generates SQL queries for PostgreSQL databases",
+  "system_prompt": "You are an expert SQL query generator specialized in PostgreSQL syntax and best practices.",
+  "tools": [
+    "write_to_file",
+    "read_file"
+  ],
+  "metadata": {
+    "lifecycle": "temporary",
+    "is_protected": false,
+    "created_by": "agent-designer",
+    "creation_context": {
+      "task_id": null,
+      "created_for": "Dynamically created for task requirements"
+    },
+    "quality_metrics": {
+      "tasks_completed": 0,
+      "tasks_failed": 0,
+      "success_rate": 0.0,
+      "last_used_at": null,
+      "quality_score": 0.0
+    },
+    "auto_cleanup": {
+      "enabled": true,
+      "min_quality_score": 40.0,
+      "max_idle_days": 30
+    }
+  },
+  "updated_at": "2026-03-16T00:04:38.189740Z",
+  "created_at": "2026-03-16T00:04:38.189740Z"
+}

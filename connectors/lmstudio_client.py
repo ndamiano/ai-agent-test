@@ -1,10 +1,13 @@
 """LMStudio local API connector"""
 
+import logging
 import requests
 import json
 import os
 from typing import Any, Union, List
 from threading import Lock
+
+logger = logging.getLogger(__name__)
 
 
 class LMStudioConnector:
@@ -41,10 +44,10 @@ class LMStudioConnector:
                 self._connected = True
                 return True
             else:
-                print(f"Warning: Could not connect to LMStudio at {self.base_url}")
+                logger.warning(f"Could not connect to LMStudio at {self.base_url}")
                 return False
         except requests.exceptions.RequestException as e:
-            print(f"Warning: LMStudio not accessible at {self.base_url}: {e}")
+            logger.warning(f"LMStudio not accessible at {self.base_url}: {e}")
             return False
 
     def health_check(self) -> bool:

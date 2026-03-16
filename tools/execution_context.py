@@ -1,4 +1,35 @@
-"""Execution context for passing task_id and subtask_id to tool calls automatically"""
+"""
+Execution context for automatic task_id and subtask_id injection into tool calls.
+
+This module provides thread-safe context variables that track the current execution
+context (task_id and subtask_id). The tool_manager automatically injects these values
+into tool calls that accept them as parameters, eliminating the need for manual passing.
+
+Thread Safety:
+    Uses contextvars.ContextVar for thread-safe context isolation across concurrent
+    agent executions. Each thread/async task maintains its own independent context.
+
+Usage:
+    with execution_context(task_id="task-123", subtask_id="sub-456"):
+        # All tool calls within this context automatically receive task_id/subtask_id
+        tool_manager.useTool("spawn_task", ...)
+        tool_manager.useTool("write_to_file", path="output.txt", content="data")
+
+Integration:
+    - MaestroAgent sets context before agent execution
+    - MainAgent sets context for top-level task execution
+    - ToolManager reads context for auto-injection during tool calls
+    - File tools use context for automatic path scoping to task directories
+
+Functions:
+    execution_context: Context manager to set execution context
+    get_task_id: Get current task_id from context
+    get_subtask_id: Get current subtask_id from context
+    get_execution_context: Get full context as dictionary
+    has_execution_context: Check if context is available
+    require_task_id: Get task_id or raise error if not available
+    require_execution_context: Get full context or raise error if not available
+"""
 
 from contextvars import ContextVar
 from typing import Optional, Dict

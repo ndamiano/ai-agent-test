@@ -10,6 +10,25 @@ from .logging_utils import log_error
 from tools.tool_manager import tool_manager
 
 
+def _normalize_path(path: str, task_id: Optional[str]) -> str:
+    """
+    Normalize a path to be relative to outputs directory, organized by task_id.
+
+    Args:
+        path: File path that may or may not start with "outputs/"
+        task_id: Optional task ID for organization
+
+    Returns:
+        Normalized path string
+    """
+    if not path.startswith("outputs/"):
+        if task_id:
+            return f"outputs/{task_id}/{path}"
+        else:
+            return f"outputs/{path}"
+    return path
+
+
 def write_to_file(
     path: str,
     content: str,
@@ -36,13 +55,8 @@ def write_to_file(
         Dict containing success status and file path
     """
     try:
-
-        # Ensure path is relative to outputs directory, organized by task_id
-        if not path.startswith("outputs/"):
-            if task_id:
-                path = f"outputs/{task_id}/{path}"
-            else:
-                path = f"outputs/{path}"
+        # Normalize path to outputs directory
+        path = _normalize_path(path, task_id)
 
         # Convert to Path object for better path handling
         file_path = Path(path)
@@ -101,12 +115,8 @@ def read_file(
         Dict containing success status, file path, and content
     """
     try:
-        # Ensure path is relative to outputs directory, organized by task_id
-        if not path.startswith("outputs/"):
-            if task_id:
-                path = f"outputs/{task_id}/{path}"
-            else:
-                path = f"outputs/{path}"
+        # Normalize path to outputs directory
+        path = _normalize_path(path, task_id)
 
         # Convert to Path object for better path handling
         file_path = Path(path)
@@ -178,13 +188,7 @@ def list_files(
     """
     try:
         # Build the base path
-        if not path.startswith("outputs/"):
-            if task_id:
-                base_path = f"outputs/{task_id}/{path}" if path else f"outputs/{task_id}"
-            else:
-                base_path = f"outputs/{path}" if path else "outputs"
-        else:
-            base_path = path
+        base_path = _normalize_path(path, task_id)
 
         # Convert to Path object
         dir_path = Path(base_path)
@@ -256,12 +260,8 @@ def delete_file(
         Dict containing success status and file path
     """
     try:
-        # Ensure path is relative to outputs directory, organized by task_id
-        if not path.startswith("outputs/"):
-            if task_id:
-                path = f"outputs/{task_id}/{path}"
-            else:
-                path = f"outputs/{path}"
+        # Normalize path to outputs directory
+        path = _normalize_path(path, task_id)
 
         # Convert to Path object
         file_path = Path(path)

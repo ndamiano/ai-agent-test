@@ -77,3 +77,15 @@ export type WebSocketMessage =
     | { type: 'task_failed'; task_id: string; error: string }
     | { type: 'agent_message'; task_id: string; agent_id: string; phase: string; message: string; timestamp: string; subtask_id?: string }
     | { type: 'tool_usage'; task_id: string; subtask_id: string; tool_name: string; arguments: Record<string, any>; status: 'success' | 'failed'; timestamp: string }
+
+export interface LMStudioSettings {
+    base_url: string
+    model: string
+    temperature?: number
+    max_tokens?: number
+}
+
+export interface Settings {
+    connector_type: string
+    lmstudio: LMStudioSettings
+}

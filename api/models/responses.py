@@ -58,3 +58,7 @@ class AgentResponse(BaseModel):
     name: str
     description: str
     tools: List[str]
+
+class SettingsResponse(BaseModel):
+    connector_type: str
+    lmstudio: Dict[str, Any]

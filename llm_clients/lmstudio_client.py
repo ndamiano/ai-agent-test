@@ -4,26 +4,32 @@ import logging
 import requests
 import json
 import os
-from typing import Any, Union, List
+from typing import Any, Union, List, Dict, Optional
 from threading import Lock
 
 logger = logging.getLogger(__name__)
 
 
 class LMStudioConnector:
-    def __init__(self, base_url: str = "http://localhost:1234", model_name: str = "local-model"):
+    def __init__(self, settings: Optional[Dict[str, Any]] = None):
         """
         Initialize LMStudio connector
-        
+
         Args:
-            base_url: LMStudio server URL (default: http://localhost:1234)
-                     Can be overridden by LMSTUDIO_BASE_URL environment variable.
-            model_name: Model identifier to use (default: "local-model")
-                       Can be overridden by LMSTUDIO_MODEL environment variable.
+            settings: Optional settings dictionary. If not provided, will load from SettingsManager.
+                     Expected keys: base_url, model, temperature (optional), max_tokens (optional)
         """
-        # Use environment variables if available, otherwise use provided defaults
-        self.base_url = os.getenv("LMSTUDIO_BASE_URL", base_url).rstrip('/')
-        self.model_name = os.getenv("LMSTUDIO_MODEL", model_name)
+        # Load settings
+        if settings is None:
+            from config.settings_manager import settings_manager
+            settings = settings_manager.get_connector_settings("lmstudio")
+
+        # Use environment variables as fallback
+        self.base_url = settings.get("base_url", os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234")).rstrip('/')
+        self.model_name = settings.get("model", os.getenv("LMSTUDIO_MODEL", "local-model"))
+        self.temperature = settings.get("temperature", 0.7)
+        self.max_tokens = settings.get("max_tokens", 50000)
+
         self.api_endpoint = f"{self.base_url}/v1/chat/completions"
         self._connected = False
         self._session = None
@@ -153,8 +159,8 @@ class LMStudioConnector:
             "messages": [
                 {"role": "user", "content": full_prompt}
             ],
-            "temperature": 0.7,
-            "max_tokens": 50000
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
         }
         
         # Use connection pooling for better performance
@@ -181,12 +187,12 @@ class LMStudioConnector:
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         """Generate response with optional tool support"""
-        
+
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 50000
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
         }
         
         # Add tools if provided

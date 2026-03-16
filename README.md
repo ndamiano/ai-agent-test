@@ -21,10 +21,10 @@ The framework consists of several key components:
 - **AgentStore**: Persistent storage for agent configurations and metadata
 - **AgentSpawner**: Factory for creating agents with specific tool sets and system prompts
 
-### Connectors
+### LLM Clients
 
 - **LMStudio Client**: Local LLM inference with function calling support
-- **Connector Selector**: Dynamic connector selection based on configuration
+- **Connector Selector**: Dynamic connector selection based on configuration (located in `llm_clients/`)
 
 ### Utilities
 
@@ -95,16 +95,58 @@ store.add(
    pip install -r requirements.txt
    ```
 
-2. Configure LMStudio connection in `.env`:
-   ```
-   LMSTUDIO_HOST=localhost
-   LMSTUDIO_PORT=1234
+2. Start the backend:
+   ```bash
+   python run.py
    ```
 
-3. Run the demo:
+   On first run, `config/settings.json` will be created automatically with default settings.
+
+3. (Optional) Build the frontend:
    ```bash
-   python demo_agent_store.py
+   cd frontend
+   npm install
+   npm run dev
    ```
+
+## Configuration
+
+Settings are managed through `config/settings.json`, which is automatically created on first run and **gitignored** to avoid committing environment-specific configuration.
+
+### Settings File
+
+**Location**: `config/settings.json` (gitignored)
+**Template**: `config/settings.example.json`
+
+The settings file contains:
+```json
+{
+  "connector_type": "lmstudio",
+  "lmstudio": {
+    "base_url": "http://localhost:1234",
+    "model": "local-model",
+    "temperature": 0.7,
+    "max_tokens": 50000
+  }
+}
+```
+
+### Configuring via UI
+
+The easiest way to configure settings is through the web UI:
+1. Start the backend server
+2. Open the frontend
+3. Click the gear icon (⚙️) in the top-right corner
+4. Modify your LMStudio connection settings
+
+### Environment Variables (Fallback)
+
+If `config/settings.json` doesn't exist or is missing values, the system falls back to environment variables:
+
+- `LMSTUDIO_BASE_URL` - LMStudio server URL (default: `http://localhost:1234`)
+- `LMSTUDIO_MODEL` - Model identifier (default: `local-model`)
+
+**Note**: The `.env` file is also gitignored and should not be committed.
 
 ## Contributing
 

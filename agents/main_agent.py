@@ -2,7 +2,7 @@
 
 from typing import List, Dict, Any, Optional, Callable
 import json
-from connectors.connector_selector import get_connector
+from llm_clients.connector_selector import get_connector
 from tools.tool_manager import tool_manager
 from tools.execution_context import execution_context
 from config.agent_prompts import SYSTEM_PROMPT

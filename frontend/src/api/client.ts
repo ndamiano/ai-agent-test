@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Task, TaskDetail, AskResponse, Agent, SystemStatus } from '../types'
+import type { Task, TaskDetail, AskResponse, Agent, SystemStatus, Settings } from '../types'
 
 const base = axios.create({ baseURL: '/api' })
 
@@ -27,4 +27,10 @@ export const api = {
     // System
     getStatus: () =>
         base.get<SystemStatus>('/system/status').then(r => r.data),
+
+    // Settings
+    getSettings: () =>
+        base.get<Settings>('/settings').then(r => r.data),
+    updateSettings: (settings: Settings) =>
+        base.put<Settings>('/settings', settings).then(r => r.data),
 }

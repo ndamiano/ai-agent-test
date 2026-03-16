@@ -1,6 +1,6 @@
 """Connector selector for choosing appropriate AI connectors"""
 
-from connectors.lmstudio_client import LMStudioConnector
+from llm_clients.lmstudio_client import LMStudioConnector
 from typing import Optional
 
 class ConnectorSelector:
@@ -31,7 +31,7 @@ def get_connector(caller: str = "unknown", task_type: str = "general", generatio
     Convenience function to get a connector
     
     Usage:
-        from connectors.connector_selector import get_connector
+        from llm_clients.connector_selector import get_connector
         ai = get_connector("world_generator", "world_building", "text")
     
     Note: This creates a new connector instance each time to avoid shared state.

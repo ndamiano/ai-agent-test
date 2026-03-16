@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import Layout from './components/Layout';
+import SettingsModal from './components/SettingsModal';
 import { api } from './api/client';
 import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [systemStatus, setSystemStatus] = useState<{ connected: boolean; message: string }>({
     connected: false,
     message: 'LMStudio disconnected',
@@ -62,7 +64,9 @@ function App() {
           setSelectedTaskId={setSelectedTaskId}
           systemStatus={systemStatus}
           onTaskCreate={handleTaskCreate}
+          onSettingsClick={() => setShowSettings(true)}
         />
+        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       </ErrorBoundary>
     </div>
   );

@@ -3,7 +3,7 @@ import unittest
 import sys
 import os
 
-from connectors.lmstudio_client import LMStudioConnector
+from llm_clients.lmstudio_client import LMStudioConnector
 
 class TestConnectors(unittest.TestCase):
     

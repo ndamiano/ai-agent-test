@@ -17,6 +17,7 @@ venv/
 
 # Config
 config/api_keys.py
+config/settings.json
 
 # Build data
 output/

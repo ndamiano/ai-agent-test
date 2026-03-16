@@ -61,4 +61,5 @@ class AgentResponse(BaseModel):
 
 class SettingsResponse(BaseModel):
     connector_type: str
-    lmstudio: Dict[str, Any]
+    lmstudio: Optional[Dict[str, Any]] = None
+    cline: Optional[Dict[str, Any]] = None

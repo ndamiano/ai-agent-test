@@ -44,9 +44,14 @@ async def update_settings(request: UpdateSettingsRequest):
     try:
         # Convert Pydantic models to dicts
         new_settings = {
-            "connector_type": request.connector_type,
-            "lmstudio": request.lmstudio.model_dump()
+            "connector_type": request.connector_type
         }
+
+        if request.lmstudio:
+            new_settings["lmstudio"] = request.lmstudio.model_dump()
+
+        if request.cline:
+            new_settings["cline"] = request.cline.model_dump()
 
         # Update settings (validation happens in settings_manager)
         updated_settings = settings_manager.update_settings(new_settings)

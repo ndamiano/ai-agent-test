@@ -31,6 +31,13 @@ class LMStudioSettingsRequest(BaseModel):
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 50000
 
+class ClineSettingsRequest(BaseModel):
+    api_key: str
+    model: str
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 50000
+
 class UpdateSettingsRequest(BaseModel):
     connector_type: str
-    lmstudio: LMStudioSettingsRequest
+    lmstudio: Optional[LMStudioSettingsRequest] = None
+    cline: Optional[ClineSettingsRequest] = None

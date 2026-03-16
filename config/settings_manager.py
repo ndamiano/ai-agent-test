@@ -42,10 +42,16 @@ class SettingsManager:
 
         # Default settings
         self.defaults = {
-            "connector_type": "lmstudio",
+            "connector_type": os.getenv("CONNECTOR_TYPE", "lmstudio"),
             "lmstudio": {
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
                 "model": os.getenv("LMSTUDIO_MODEL", "local-model"),
+                "temperature": 0.7,
+                "max_tokens": 50000
+            },
+            "cline": {
+                "api_key": os.getenv("CLINE_API_KEY", ""),
+                "model": os.getenv("CLINE_MODEL", "claude-sonnet-4-5"),
                 "temperature": 0.7,
                 "max_tokens": 50000
             }
@@ -126,7 +132,7 @@ class SettingsManager:
             raise ValueError("Missing required field: connector_type")
 
         # Validate connector type
-        valid_connectors = ["lmstudio"]  # Can expand in future
+        valid_connectors = ["lmstudio", "cline"]
         if settings["connector_type"] not in valid_connectors:
             raise ValueError(f"Invalid connector_type. Must be one of: {valid_connectors}")
 
@@ -154,6 +160,29 @@ class SettingsManager:
             tokens = lm["max_tokens"]
             if not isinstance(tokens, int) or tokens < 1:
                 raise ValueError("lmstudio.max_tokens must be a positive integer")
+
+        # Validate cline settings if present
+        if "cline" in settings:
+            cl = settings["cline"]
+            if not isinstance(cl, dict):
+                raise ValueError("cline must be a dictionary")
+
+            if "api_key" not in cl:
+                raise ValueError("cline.api_key is required")
+
+            if "model" not in cl or not cl["model"]:
+                raise ValueError("cline.model is required")
+
+            # Validate optional numeric fields
+            if "temperature" in cl:
+                temp = cl["temperature"]
+                if not isinstance(temp, (int, float)) or temp < 0 or temp > 2:
+                    raise ValueError("cline.temperature must be between 0 and 2")
+
+            if "max_tokens" in cl:
+                tokens = cl["max_tokens"]
+                if not isinstance(tokens, int) or tokens < 1:
+                    raise ValueError("cline.max_tokens must be a positive integer")
 
     def get_connector_settings(self, connector_type: str) -> Dict[str, Any]:
         """

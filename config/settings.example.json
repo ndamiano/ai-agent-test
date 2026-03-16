@@ -5,5 +5,11 @@
     "model": "local-model",
     "temperature": 0.7,
     "max_tokens": 50000
+  },
+  "cline": {
+    "api_key": "",
+    "model": "claude-sonnet-4-5",
+    "temperature": 0.7,
+    "max_tokens": 50000
   }
 }

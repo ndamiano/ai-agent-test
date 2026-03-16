@@ -85,7 +85,15 @@ export interface LMStudioSettings {
     max_tokens?: number
 }
 
+export interface ClineSettings {
+    api_key: string
+    model: string
+    temperature?: number
+    max_tokens?: number
+}
+
 export interface Settings {
     connector_type: string
-    lmstudio: LMStudioSettings
+    lmstudio?: LMStudioSettings
+    cline?: ClineSettings
 }

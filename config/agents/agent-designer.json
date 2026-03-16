@@ -17,13 +17,6 @@
       "task_id": null,
       "created_for": "Core system meta-agent for dynamic agent creation"
     },
-    "quality_metrics": {
-      "tasks_completed": 6,
-      "tasks_failed": 0,
-      "success_rate": 100.0,
-      "last_used_at": "2026-03-16T02:16:17.021100Z",
-      "quality_score": 92.0
-    },
     "auto_cleanup": {
       "enabled": false,
       "min_quality_score": 40.0,

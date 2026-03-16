@@ -101,7 +101,21 @@ def init_db(db_path: Optional[str] = None) -> None:
                 FOREIGN KEY (subtask_id) REFERENCES subtasks (id) ON DELETE CASCADE
             )
         """)
-        
+
+        # Create agent_metrics table for runtime statistics
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_metrics (
+                agent_id TEXT PRIMARY KEY,
+                tasks_completed INTEGER NOT NULL DEFAULT 0,
+                tasks_failed INTEGER NOT NULL DEFAULT 0,
+                success_rate REAL NOT NULL DEFAULT 0.0,
+                last_used_at TEXT,
+                quality_score REAL NOT NULL DEFAULT 0.0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
         
         # Add performance indexes for frequently queried columns
@@ -109,7 +123,8 @@ def init_db(db_path: Optional[str] = None) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id ON context_store(task_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id_key ON context_store(task_id, key)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id)")
-        
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_metrics_last_used ON agent_metrics(last_used_at)")
+
         conn.commit()
 
 if __name__ == "__main__":

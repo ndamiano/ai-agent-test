@@ -10,23 +10,24 @@ from .logging_utils import log_error
 from tools.tool_manager import tool_manager
 
 
-def _normalize_path(path: str, task_id: Optional[str]) -> str:
+def _normalize_path(path: str) -> str:
     """
-    Normalize a path to be relative to outputs directory, organized by task_id.
+    Normalize a path to be relative to outputs directory.
 
     Args:
         path: File path that may or may not start with "outputs/"
-        task_id: Optional task ID for organization
 
     Returns:
-        Normalized path string
+        Normalized path string in format outputs/{path}
     """
-    if not path.startswith("outputs/"):
-        if task_id:
-            return f"outputs/{task_id}/{path}"
-        else:
-            return f"outputs/{path}"
-    return path
+    # Strip outputs/ prefix if present, then rebuild
+    if path.startswith("outputs/"):
+        # Extract the path after outputs/
+        parts = path.split('/', 1)  # ['outputs', rest...]
+        if len(parts) >= 2:
+            path = parts[1]
+
+    return f"outputs/{path}"
 
 
 def write_to_file(
@@ -34,29 +35,24 @@ def write_to_file(
     content: str,
     mode: str = "w",
     encoding: str = "utf-8",
-    create_dirs: bool = True,
-    task_id: Optional[str] = None
+    create_dirs: bool = True
 ) -> Dict[str, Any]:
     """
-    Write content to a file in the outputs directory, automatically organized by task_id.
-
-    Files are written to outputs/{task_id}/{path} when a task_id is available,
-    otherwise falls back to outputs/{path}.
+    Write content to a file in the outputs directory.
 
     Args:
-        path: File path relative to outputs directory
+        path: File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')
         content: Content to write to the file
         mode: File mode ('w' for write, 'a' for append, etc.)
         encoding: File encoding (default: utf-8)
         create_dirs: Whether to create parent directories if they don't exist
-        task_id: Task ID (auto-injected from execution context if not provided)
 
     Returns:
         Dict containing success status and file path
     """
     try:
         # Normalize path to outputs directory
-        path = _normalize_path(path, task_id)
+        path = _normalize_path(path)
 
         # Convert to Path object for better path handling
         file_path = Path(path)
@@ -97,26 +93,21 @@ def write_to_file(
 
 def read_file(
     path: str,
-    encoding: str = "utf-8",
-    task_id: Optional[str] = None
+    encoding: str = "utf-8"
 ) -> Dict[str, Any]:
     """
-    Read content from a file in the outputs directory, automatically scoped to task_id.
-
-    Reads from outputs/{task_id}/{path} when a task_id is available,
-    otherwise reads from outputs/{path}.
+    Read content from a file in the outputs directory.
 
     Args:
-        path: File path relative to outputs directory
+        path: File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')
         encoding: File encoding (default: utf-8)
-        task_id: Task ID (auto-injected from execution context if not provided)
 
     Returns:
         Dict containing success status, file path, and content
     """
     try:
         # Normalize path to outputs directory
-        path = _normalize_path(path, task_id)
+        path = _normalize_path(path)
 
         # Convert to Path object for better path handling
         file_path = Path(path)
@@ -168,27 +159,22 @@ def read_file(
 def list_files(
     path: str = "",
     pattern: str = "*",
-    recursive: bool = False,
-    task_id: Optional[str] = None
+    recursive: bool = False
 ) -> Dict[str, Any]:
     """
-    List files in the outputs directory, automatically scoped to task_id.
-
-    Lists files in outputs/{task_id}/{path} when a task_id is available,
-    otherwise lists from outputs/{path}.
+    List files in the outputs directory.
 
     Args:
-        path: Directory path relative to outputs directory (default: root of task outputs)
+        path: Directory path relative to outputs directory (default: root of outputs)
         pattern: Glob pattern to match files (default: "*" for all files)
         recursive: Whether to search recursively (default: False)
-        task_id: Task ID (auto-injected from execution context if not provided)
 
     Returns:
         Dict containing success status and list of file paths
     """
     try:
         # Build the base path
-        base_path = _normalize_path(path, task_id)
+        base_path = _normalize_path(path)
 
         # Convert to Path object
         dir_path = Path(base_path)
@@ -243,25 +229,20 @@ def list_files(
 
 
 def delete_file(
-    path: str,
-    task_id: Optional[str] = None
+    path: str
 ) -> Dict[str, Any]:
     """
-    Delete a file from the outputs directory, automatically scoped to task_id.
-
-    Deletes from outputs/{task_id}/{path} when a task_id is available,
-    otherwise deletes from outputs/{path}.
+    Delete a file from the outputs directory.
 
     Args:
-        path: File path relative to outputs directory
-        task_id: Task ID (auto-injected from execution context if not provided)
+        path: File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')
 
     Returns:
         Dict containing success status and file path
     """
     try:
         # Normalize path to outputs directory
-        path = _normalize_path(path, task_id)
+        path = _normalize_path(path)
 
         # Convert to Path object
         file_path = Path(path)
@@ -322,14 +303,14 @@ def register_file_tools():
         name="write_to_file",
         description=(
             "Write content to a file in the outputs directory. "
-            "Files are automatically organized by task_id when available: outputs/{task_id}/{path}"
+            "Files are written to outputs/{path}."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to task outputs directory (e.g., 'report.txt' or 'data/output.json')"
+                    "description": "File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')"
                 },
                 "content": {
                     "type": "string",
@@ -355,7 +336,7 @@ def register_file_tools():
             "required": ["path", "content"]
         },
         fn=write_to_file,
-        auto_inject_context=True
+        auto_inject_context=False
     )
 
     # Register read_file tool
@@ -363,14 +344,14 @@ def register_file_tools():
         name="read_file",
         description=(
             "Read content from a file in the outputs directory. "
-            "Files are automatically scoped to task_id when available: outputs/{task_id}/{path}"
+            "Reads from outputs/{path}."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to task outputs directory (e.g., 'report.txt' or 'data/output.json')"
+                    "description": "File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')"
                 },
                 "encoding": {
                     "type": "string",
@@ -381,7 +362,7 @@ def register_file_tools():
             "required": ["path"]
         },
         fn=read_file,
-        auto_inject_context=True
+        auto_inject_context=False
     )
 
     # Register list_files tool
@@ -389,7 +370,7 @@ def register_file_tools():
         name="list_files",
         description=(
             "List files in the outputs directory. "
-            "Files are automatically scoped to task_id when available: outputs/{task_id}/{path}. "
+            "Lists files in outputs/{path}. "
             "Supports glob patterns and recursive search."
         ),
         parameters={
@@ -398,7 +379,7 @@ def register_file_tools():
                 "path": {
                     "type": "string",
                     "default": "",
-                    "description": "Directory path relative to task outputs directory (default: root of task outputs)"
+                    "description": "Directory path relative to outputs directory (default: root of outputs)"
                 },
                 "pattern": {
                     "type": "string",
@@ -414,7 +395,7 @@ def register_file_tools():
             "required": []
         },
         fn=list_files,
-        auto_inject_context=True
+        auto_inject_context=False
     )
 
     # Register delete_file tool
@@ -422,7 +403,7 @@ def register_file_tools():
         name="delete_file",
         description=(
             "Delete a file from the outputs directory. "
-            "Files are automatically scoped to task_id when available: outputs/{task_id}/{path}. "
+            "Deletes from outputs/{path}. "
             "Safety: Can only delete files from the outputs directory."
         ),
         parameters={
@@ -430,11 +411,11 @@ def register_file_tools():
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to task outputs directory (e.g., 'report.txt' or 'data/output.json')"
+                    "description": "File path relative to outputs directory (e.g., 'report.txt' or 'data/output.json')"
                 }
             },
             "required": ["path"]
         },
         fn=delete_file,
-        auto_inject_context=True
+        auto_inject_context=False
     )

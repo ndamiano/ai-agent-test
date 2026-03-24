@@ -4,6 +4,7 @@ import { useTaskSocket } from '../hooks/useTaskSocket'
 import { api } from '../api/client'
 import type { TaskDetail, Subtask, ToolUsage, AgentMessage } from '../types'
 import AgentCard from './AgentCard'
+import MaestroCard from './MaestroCard'
 
 interface StagePanelProps {
     taskId: string | null
@@ -84,6 +85,14 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
     const [toolUsageBySubtask, setToolUsageBySubtask] = useState<Map<string, ToolUsage[]>>(new Map())
     const [agentMessagesBySubtask, setAgentMessagesBySubtask] = useState<Map<string, AgentMessage[]>>(new Map())
 
+    // State for Maestro visibility
+    const [maestroExpanded, setMaestroExpanded] = useState(false)
+    const [maestroMessage, setMaestroMessage] = useState<{
+        phase: string
+        message: string
+        timestamp: string
+    } | null>(null)
+
     const subtasks = mergeSubtasks(baseSubtasks, messages)
     const isPlanning = task?.status === 'planning' && subtasks.length === 0
 
@@ -108,6 +117,8 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
             setArtifact(null)
             setPhase('idle')
             setAgentsExpanded(false)
+            setMaestroMessage(null)
+            setMaestroExpanded(false)
             prevTaskId.current = null
             return
         }
@@ -206,6 +217,21 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                 }])
             }
         })
+
+        // Extract latest Maestro message (agent_message without subtask_id)
+        let latestMaestro = null
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i]
+            if (msg.type === 'agent_message' && msg.agent_id === 'maestro' && !msg.subtask_id) {
+                latestMaestro = {
+                    phase: msg.phase,
+                    message: msg.message,
+                    timestamp: msg.timestamp
+                }
+                break
+            }
+        }
+        setMaestroMessage(latestMaestro)
 
         setToolUsageBySubtask(toolUsage)
         setAgentMessagesBySubtask(agentMsgs)
@@ -361,6 +387,19 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                             <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }} />
                         </div>
                         <span className="text-sm text-gray-500">Planning...</span>
+                    </div>
+                )}
+
+                {/* Maestro orchestrator - show above agents */}
+                {maestroMessage && (
+                    <div className="mb-4">
+                        <MaestroCard
+                            phase={maestroMessage.phase as any}
+                            message={maestroMessage.message}
+                            timestamp={maestroMessage.timestamp}
+                            isExpanded={maestroExpanded}
+                            onToggleExpand={() => setMaestroExpanded(prev => !prev)}
+                        />
                     </div>
                 )}
 

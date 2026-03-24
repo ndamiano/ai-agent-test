@@ -10,16 +10,17 @@ Replaces the static PlannerAgent + Orchestrator chain.
 
 import json
 import logging
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from config.time_utils import get_utc_timestamp
 
 from agents.agent_store import AgentStore
-from agents.agent_lifecycle import AgentLifecycleManager
 from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
 from database.task_store import TaskStore
@@ -42,11 +43,12 @@ class MaestroAgent:
 
     SYNTHESIS_AGENT_ID = "synthesizer"
 
+    DEFAULT_AGENT_ID = "worker"
+
     def __init__(self, broadcast_fn: Optional[Callable] = None):
         self.task_store = TaskStore()
         self.agent_store = AgentStore()
         self.context_builder = ContextBuilder(self.task_store)
-        self.lifecycle_manager = AgentLifecycleManager(self.agent_store, self.task_store)
         self.broadcast_fn = broadcast_fn
         self.logger = tool_logger
 
@@ -101,10 +103,8 @@ class MaestroAgent:
                 "task_id": task_id,
             })
 
-            # --- Step 4: Cleanup temporary agents ---
-            cleanup_count = self.lifecycle_manager.cleanup_task_temporary_agents(task_id)
-            if cleanup_count > 0:
-                logger.info(f"Cleaned up {cleanup_count} temporary agent(s) for task {task_id}")
+            # --- Step 4: Cleanup outputs directory ---
+            self._cleanup_outputs()
 
             return final_output
 
@@ -401,11 +401,9 @@ class MaestroAgent:
     def _execute_subtask(
         self, subtask: Dict, broadcast_fn: Optional[Callable]
     ) -> str:
-        """Execute a single subtask. Mirrors the existing Orchestrator pattern."""
+        """Execute a single subtask using the worker agent by default."""
         subtask_id = subtask["id"]
         task_id = subtask["task_id"]
-        agent_id = subtask["agent_id"]
-        start_time = time.time()
 
         try:
             self.task_store.update_subtask_status(subtask_id, "in_progress")
@@ -413,20 +411,23 @@ class MaestroAgent:
                 "type": "subtask_started",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
-                "agent_id": agent_id,
+                "agent_id": subtask["agent_id"],
                 "timestamp": get_utc_timestamp(),
             })
 
             fresh = self.task_store.get_subtask(subtask_id)
             context_text = self.context_builder.build_for_subtask(task_id, fresh)
-            agent = MainAgent(agent_id=fresh["agent_id"])
 
-            # Set broadcast context AND execution context
+            # Default to worker if the specified agent doesn't exist
+            agent_id = fresh["agent_id"]
+            if not self.agent_store.exists(agent_id):
+                agent_id = self.DEFAULT_AGENT_ID
+
+            agent = MainAgent(agent_id=agent_id)
             agent.set_broadcast_context(task_id, subtask_id, broadcast_fn)
 
             message = f"{context_text}\n\nTask: {fresh['goal']}"
 
-            # Execute within execution context
             with execution_context(task_id=task_id, subtask_id=subtask_id):
                 output = agent.chat(message)
 
@@ -438,21 +439,9 @@ class MaestroAgent:
                 "timestamp": get_utc_timestamp(),
             })
 
-            # Track successful agent usage
-            execution_time_ms = int((time.time() - start_time) * 1000)
-            self.lifecycle_manager.register_agent_usage(
-                agent_id, task_id, subtask_id, success=True, execution_time_ms=execution_time_ms
-            )
-
             return output
 
         except Exception as e:
-            # Track failed agent usage
-            execution_time_ms = int((time.time() - start_time) * 1000)
-            self.lifecycle_manager.register_agent_usage(
-                agent_id, task_id, subtask_id, success=False, execution_time_ms=execution_time_ms
-            )
-
             self.task_store.update_subtask_status(subtask_id, "failed")
             self.task_store.log_event(
                 task_id, "subtask_failed", f"Subtask {subtask_id} failed: {e}", subtask_id
@@ -490,3 +479,14 @@ class MaestroAgent:
                 broadcast_fn(event)
             except Exception as e:
                 logger.warning(f"Broadcast failed: {e}")
+
+    @staticmethod
+    def _cleanup_outputs() -> None:
+        """Clean up all files in the outputs directory."""
+        outputs_dir = Path("outputs")
+        if outputs_dir.exists():
+            try:
+                shutil.rmtree(outputs_dir)
+                logger.info("Cleaned up outputs directory")
+            except Exception as e:
+                logger.warning(f"Failed to clean up outputs directory: {e}")

@@ -301,6 +301,32 @@ class TestTaskStore(unittest.TestCase):
         }
         self.assertEqual(all_context, expected)
     
+    def test_get_context_keys(self):
+        """Test get_context_keys returns only distinct keys without values."""
+        store = TaskStore()
+        
+        # Create a task
+        task = store.create_task("Test task")
+        
+        # Write context entries including an update to the same key
+        store.write_context(task["id"], "key1", "value1")
+        store.write_context(task["id"], "key2", "value2")
+        store.write_context(task["id"], "key1", "updated_value1")
+        
+        # Get context keys
+        keys = store.get_context_keys(task["id"])
+        
+        self.assertEqual(sorted(keys), ["key1", "key2"])
+    
+    def test_get_context_keys_empty(self):
+        """Test get_context_keys returns empty list when no context exists."""
+        store = TaskStore()
+        
+        task = store.create_task("Test task")
+        
+        keys = store.get_context_keys(task["id"])
+        self.assertEqual(keys, [])
+    
     def test_event_logging_and_retrieval(self):
         """Test that events are logged and retrieved in order."""
         store = TaskStore()

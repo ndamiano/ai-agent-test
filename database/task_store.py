@@ -211,6 +211,12 @@ class TaskStore:
         ).fetchall()
         return dict(rows)
 
+    def get_context_keys(self, task_id: str) -> List[str]:
+        rows = _get_connection().execute(
+            "SELECT DISTINCT key FROM context_store WHERE task_id=?", (task_id,)
+        ).fetchall()
+        return [row[0] for row in rows]
+
     # -------------------------------------------------------------------------
     # Events
     # -------------------------------------------------------------------------

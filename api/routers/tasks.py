@@ -1,6 +1,6 @@
+import asyncio
 from fastapi import APIRouter, HTTPException, status, WebSocket, Query
 from typing import List, Optional
-import asyncio
 from api.models.requests import CreateTaskRequest
 from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse
 from agents.task_runner import task_runner
@@ -44,10 +44,10 @@ async def get_task(task_id: str):
     Includes subtasks, events, and context keys.
     """
     try:
-        task = task_store.get_task(task_id)
-        subtasks = task_store.get_subtasks_for_task(task_id)
-        events = task_store.get_events(task_id)
-        context_keys = list(task_store.get_all_context(task_id).keys())
+        task = await asyncio.to_thread(task_store.get_task, task_id)
+        subtasks = await asyncio.to_thread(task_store.get_subtasks_for_task, task_id)
+        events = await asyncio.to_thread(task_store.get_events, task_id)
+        context_keys = await asyncio.to_thread(task_store.get_context_keys, task_id)
 
         return TaskDetailResponse(
             id=task["id"],

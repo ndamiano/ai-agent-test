@@ -229,8 +229,6 @@ class MaestroAgent:
             "{{AGENT_ROSTER}}", self._build_agent_roster()
         )
         maestro = MainAgent(agent_id="maestro", system_prompt=rendered_system_prompt)
-
-        # Set broadcast context for maestro
         maestro.set_broadcast_context(task_id, "maestro", broadcast_fn)
 
         self._broadcast(broadcast_fn, {

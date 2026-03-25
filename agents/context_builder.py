@@ -25,12 +25,10 @@ class ContextBuilder:
         """
         context_parts = []
         
-        # 1. Add overall task goal
         task = self.task_store.get_task(task_id)
         if task and "goal" in task:
             context_parts.append(f"Overall task goal: {task['goal']}")
         
-        # 3. Add explicitly requested context keys
         if "context_keys" in subtask and subtask["context_keys"]:
             context_keys = subtask["context_keys"]
             for key in context_keys:
@@ -38,7 +36,6 @@ class ContextBuilder:
                 if context_value:
                     context_parts.append(f"Context key '{key}': {context_value}")
         
-        # 4. Add dependency outputs
         if "depends_on" in subtask and subtask["depends_on"]:
             dependency_output = self.format_dependency_outputs(
                 task_id, subtask["depends_on"]

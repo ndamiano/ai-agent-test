@@ -134,9 +134,9 @@ class TestWriteToFileWithTaskId:
     def test_append_mode(self, temp_dir):
         """Test that append mode works correctly"""
         with execution_context(task_id="task-append"):
-            result1 = tool_manager.useTool("write_to_file", path="log.txt", content="Line 1\n", mode="w")
-            result2 = tool_manager.useTool("write_to_file", path="log.txt", content="Line 2\n", mode="a")
-            result3 = tool_manager.useTool("write_to_file", path="log.txt", content="Line 3\n", mode="a")
+            tool_manager.useTool("write_to_file", path="log.txt", content="Line 1\n", mode="w")
+            tool_manager.useTool("write_to_file", path="log.txt", content="Line 2\n", mode="a")
+            tool_manager.useTool("write_to_file", path="log.txt", content="Line 3\n", mode="a")
 
         file_path = Path("outputs/log.txt")
         content = file_path.read_text()

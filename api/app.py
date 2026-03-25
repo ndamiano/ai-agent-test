@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from typing import Dict, Any, Union
+from typing import Dict, Any
 import logging
 from database.schema import init_db
 from llm_clients.lmstudio_client import LMStudioConnector
@@ -33,7 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import tasks, system, settings as settings_router, agents
+from api.routers import tasks, system, settings as settings_router, agents  # noqa: E402
 
 @app.on_event("startup")
 async def startup_event():

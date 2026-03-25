@@ -195,17 +195,17 @@ def build_openai_tool_schema(tool: dict) -> dict:
             param_type = param_info.get('type', 'string')
             
             # Convert Python types to JSON schema types
-            if param_type == str or param_type == 'str':
+            if param_type is str or param_type == 'str':
                 json_type = "string"
-            elif param_type == int or param_type == 'int':
+            elif param_type is int or param_type == 'int':
                 json_type = "integer"
-            elif param_type == float or param_type == 'float':
+            elif param_type is float or param_type == 'float':
                 json_type = "number"
-            elif param_type == bool or param_type == 'bool':
+            elif param_type is bool or param_type == 'bool':
                 json_type = "boolean"
-            elif param_type == list or param_type == 'list':
+            elif param_type is list or param_type == 'list':
                 json_type = "array"
-            elif param_type == dict or param_type == 'dict':
+            elif param_type is dict or param_type == 'dict':
                 json_type = "object"
             else:
                 json_type = "string"  # Default fallback

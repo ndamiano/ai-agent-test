@@ -96,7 +96,7 @@ async def retry_task(task_id: str):
     Subtask statuses are batch-updated in a single UPDATE statement.
     """
     try:
-        task = await asyncio.to_thread(task_store.get_task, task_id)
+        await asyncio.to_thread(task_store.get_task, task_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
@@ -134,7 +134,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         # Keep the connection open until client disconnects
         while True:
             # Wait for client messages (if any) or just keep connection alive
-            data = await websocket.receive_text()
+            await websocket.receive_text()
             # For now, we don't process client messages, just keep connection alive
     except Exception as e:
         # Handle task not found or other errors

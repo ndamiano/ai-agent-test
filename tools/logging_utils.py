@@ -195,11 +195,6 @@ def log_tool_call(tool_name: str, parameters: Dict[str, Any], result: Any, error
     tool_logger.log_tool_call(tool_name, parameters, result, error)
 
 
-def log_agent_decision(user_input: str, decision: str, details: Optional[Dict[str, Any]] = None):
-    """Convenience function to log agent decisions"""
-    tool_logger.log_agent_decision(user_input, decision, details)
-
-
 def log_error(error_type: str, error_message: str, context: Optional[Dict[str, Any]] = None):
     """Convenience function to log errors"""
     tool_logger.log_error(error_type, error_message, context)

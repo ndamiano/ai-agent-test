@@ -8,7 +8,7 @@ The settings file is created automatically on first run.
 import json
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from threading import Lock
 import logging
 

@@ -8,14 +8,11 @@ synthesis agent for the final deliverable.
 Replaces the static PlannerAgent + Orchestrator chain.
 """
 
-import json
 import logging
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 from config.time_utils import get_utc_timestamp
 
@@ -147,7 +144,7 @@ class MaestroAgent:
             logger.info(f"Maestro: task {task_id} — wave {wave}")
 
             # Execute all currently ready subtasks
-            completed_any = self._execute_wave(task_id, broadcast_fn)
+            self._execute_wave(task_id, broadcast_fn)
 
             # Check if there are still subtasks in flight or pending
             subtasks = self.task_store.get_subtasks_for_task(task_id)

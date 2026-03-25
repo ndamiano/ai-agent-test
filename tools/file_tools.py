@@ -1,9 +1,7 @@
 """File tools for the AI agent system"""
 
-import os
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-import json
+from typing import Dict, Any
 import glob as glob_module
 
 from .logging_utils import log_error

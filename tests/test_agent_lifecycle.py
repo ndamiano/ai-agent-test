@@ -6,7 +6,6 @@ import pytest
 import json
 import tempfile
 import shutil
-from pathlib import Path
 
 from agents.agent_store import AgentStore
 from tools.tool_manager import tool_manager

@@ -17,8 +17,6 @@ if connector_type == "cline":
 else:
     lmstudio_client = LMStudioConnector(settings=settings.get("lmstudio"))
 
-embedding_client = None  # Removed: embeddings not currently used
-
 # Create FastAPI app
 app = FastAPI(
     title="AI Agent API",
@@ -99,4 +97,4 @@ def reinitialize_connectors():
         lmstudio_client = LMStudioConnector(settings=settings.get("lmstudio"))
         logging.info("Connectors reinitialized with LMStudio")
 
-__all__ = ["app", "lmstudio_client", "reinitialize_connectors"]
+__all__ = ["app", "lmstudio_client", "reinitialize_connectors"]lize_connectors"]

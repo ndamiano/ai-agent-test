@@ -25,13 +25,3 @@ def is_protected_agent(agent_id: str) -> bool:
         True if the agent is protected, False otherwise
     """
     return agent_id in PROTECTED_AGENTS
-
-
-def get_protected_agents() -> set:
-    """
-    Get the set of all protected agent IDs.
-
-    Returns:
-        Set of protected agent IDs
-    """
-    return PROTECTED_AGENTS.copy()

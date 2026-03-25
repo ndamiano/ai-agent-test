@@ -1,7 +1,6 @@
 """Tests for ToolManager"""
 
 import unittest
-from unittest.mock import Mock, patch
 from tools.tool_manager import ToolManager, tool_manager
 
 

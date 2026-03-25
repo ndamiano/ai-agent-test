@@ -1,7 +1,5 @@
 # tests/test_connectors.py
 import unittest
-import sys
-import os
 
 from llm_clients.lmstudio_client import LMStudioConnector
 

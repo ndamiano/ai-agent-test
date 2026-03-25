@@ -10,7 +10,7 @@ Register at startup via register_task_tools().
 
 import json
 import logging
-from typing import Optional, Union, List, Dict
+from typing import Optional, Union, List
 
 from tools.tool_manager import tool_manager
 from database.task_store import TaskStore

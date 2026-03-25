@@ -3,7 +3,7 @@
 import json
 import logging
 import pathlib
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from config.time_utils import get_utc_timestamp
 from config.protected_agents import is_protected_agent

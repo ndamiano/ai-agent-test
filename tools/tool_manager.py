@@ -1,6 +1,6 @@
 """Generic tool manager for registering and executing tools in an agentic loop"""
 
-from typing import Dict, List, Any, Callable, Optional, Tuple, Union
+from typing import Dict, List, Any, Callable, Optional
 import inspect
 from threading import Lock
 from functools import wraps

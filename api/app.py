@@ -35,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import tasks, system, settings as settings_router
+from api.routers import tasks, system, settings as settings_router, agents
 
 @app.on_event("startup")
 async def startup_event():
@@ -84,6 +84,7 @@ async def root():
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
+app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""

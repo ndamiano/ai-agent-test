@@ -84,7 +84,7 @@ async def cancel_task(task_id: str):
     Note: This does not stop in-progress background threads.
     """
     try:
-        task_store.update_task_status(task_id, "cancelled")
+        await asyncio.to_thread(task_store.update_task_status, task_id, "cancelled")
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return

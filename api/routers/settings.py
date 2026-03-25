@@ -1,5 +1,7 @@
 """Settings API router for managing application settings"""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from config.settings_manager import settings_manager
 from api.models.requests import UpdateSettingsRequest
@@ -54,7 +56,9 @@ async def update_settings(request: UpdateSettingsRequest):
             new_settings["cline"] = request.cline.model_dump()
 
         # Update settings (validation happens in settings_manager)
-        updated_settings = settings_manager.update_settings(new_settings)
+        updated_settings = await asyncio.to_thread(
+            settings_manager.update_settings, new_settings
+        )
 
         # Note: Connector reinitialization happens in app.py when needed
         logger.info("Settings updated successfully")

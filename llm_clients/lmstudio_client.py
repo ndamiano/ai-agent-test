@@ -74,6 +74,18 @@ class LMStudioConnector:
             self._connected = False
             return False
 
+    async def health_check_async(self) -> bool:
+        import httpx
+        if not self._connected:
+            return self.connect()
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(f"{self.base_url}/v1/models")
+                return response.status_code == 200
+        except (httpx.RequestError, httpx.TimeoutException):
+            self._connected = False
+            return False
+
     def contextualize(self, context_data: Union[Any, List[Any]]) -> str:
         """
         Flatten generic objects into a readable string context

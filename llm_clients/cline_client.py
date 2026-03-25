@@ -95,6 +95,10 @@ class ClineConnector:
         # Full connection test is expensive
         return bool(self.api_key)
 
+    async def health_check_async(self) -> bool:
+        import asyncio
+        return await asyncio.to_thread(self.health_check)
+
     def contextualize(self, context_data: Union[Any, List[Any]]) -> str:
         """
         Flatten generic objects into a readable string context

@@ -14,6 +14,8 @@ interface SubtaskState {
     id: string
     agentId: string
     goal: string
+    name: string | null
+    description: string | null
     status: 'pending' | 'in_progress' | 'completed' | 'failed'
     outputPreview: string | null
     position: number
@@ -23,6 +25,8 @@ const toSubtaskState = (s: Subtask): SubtaskState => ({
     id: s.id,
     agentId: s.agent_id,
     goal: s.goal,
+    name: s.name,
+    description: s.description,
     status: s.status as SubtaskState['status'],
     outputPreview: s.output_preview,
     position: s.position,
@@ -342,6 +346,8 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                                                         toolUsage={toolUsageBySubtask.get(subtask.id)}
                                                         agentMessages={agentMessagesBySubtask.get(subtask.id)}
                                                         isExpanded={expandedSubtasks.has(subtask.id)}
+                                                        subtaskName={subtask.name}
+                                                        subtaskDescription={subtask.description}
                                                         onToggleExpand={() => {
                                                             setExpandedSubtasks(prev => {
                                                                 const next = new Set(prev)
@@ -418,6 +424,8 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                                     toolUsage={toolUsageBySubtask.get(subtask.id)}
                                     agentMessages={agentMessagesBySubtask.get(subtask.id)}
                                     isExpanded={expandedSubtasks.has(subtask.id)}
+                                    subtaskName={subtask.name}
+                                    subtaskDescription={subtask.description}
                                     onToggleExpand={() => {
                                         setExpandedSubtasks(prev => {
                                             const next = new Set(prev)

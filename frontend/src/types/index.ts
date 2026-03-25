@@ -2,6 +2,8 @@ export interface Subtask {
     id: string
     agent_id: string
     goal: string
+    name: string | null
+    description: string | null
     status: 'pending' | 'in_progress' | 'completed' | 'failed'
     position: number
     output_preview: string | null

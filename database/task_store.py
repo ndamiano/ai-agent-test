@@ -112,7 +112,9 @@ class TaskStore:
 
     def create_subtask(self, task_id: str, agent_id: str, goal: str, position: int,
                        depends_on: Optional[List[str]] = None,
-                       input_context: Optional[Dict] = None) -> Dict:
+                       input_context: Optional[Dict] = None,
+                       name: Optional[str] = None,
+                       description: Optional[str] = None) -> Dict:
         # Validate dependencies before creating the subtask
         self._validate_subtask_dependencies(task_id, depends_on)
         
@@ -120,22 +122,22 @@ class TaskStore:
         with _get_connection() as conn:
             conn.execute(
                 """INSERT INTO subtasks
-                   (id, task_id, agent_id, status, goal, input_context, depends_on, position, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (subtask_id, task_id, agent_id, "pending", goal,
+                   (id, task_id, agent_id, status, name, description, goal, input_context, depends_on, position, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (subtask_id, task_id, agent_id, "pending", name, description, goal,
                  json.dumps(input_context) if input_context else None,
                  json.dumps(depends_on) if depends_on else None,
                  position, now, now),
             )
         return {"id": subtask_id, "task_id": task_id, "agent_id": agent_id, "status": "pending",
-                "goal": goal, "input_context": input_context, "depends_on": depends_on or [],
-                "position": position, "created_at": now, "updated_at": now}
+                "name": name, "description": description, "goal": goal, "input_context": input_context,
+                "depends_on": depends_on or [], "position": position, "created_at": now, "updated_at": now}
 
     def get_subtask(self, subtask_id: str) -> Dict:
         conn = _get_connection()
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, task_id, agent_id, status, goal, input_context, output, depends_on, position, created_at, updated_at FROM subtasks WHERE id=?",
+            "SELECT id, task_id, agent_id, status, name, description, goal, input_context, output, depends_on, position, created_at, updated_at FROM subtasks WHERE id=?",
             (subtask_id,)
         ).fetchone()
         if row is None:
@@ -146,7 +148,7 @@ class TaskStore:
         conn = _get_connection()
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, task_id, agent_id, status, goal, input_context, output, depends_on, position, created_at, updated_at FROM subtasks WHERE task_id=? ORDER BY position",
+            "SELECT id, task_id, agent_id, status, name, description, goal, input_context, output, depends_on, position, created_at, updated_at FROM subtasks WHERE task_id=? ORDER BY position",
             (task_id,)
         ).fetchall()
         return [_parse_subtask_row(dict(r)) for r in rows]
@@ -171,6 +173,12 @@ class TaskStore:
             conn.execute("UPDATE subtasks SET depends_on=?, updated_at=? WHERE id=?",
                          (json.dumps(depends_on), get_utc_timestamp(), subtask_id))
 
+    def update_subtask_name_description(self, subtask_id: str, name: Optional[str] = None,
+                                        description: Optional[str] = None) -> None:
+        with _get_connection() as conn:
+            conn.execute("UPDATE subtasks SET name=?, description=?, updated_at=? WHERE id=?",
+                         (name, description, get_utc_timestamp(), subtask_id))
+
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
         subtask = self.get_subtask(subtask_id)
         with _get_connection() as conn:
@@ -182,7 +190,7 @@ class TaskStore:
         conn = _get_connection()
         conn.row_factory = sqlite3.Row
         pending = [_parse_subtask_row(dict(r)) for r in conn.execute(
-            "SELECT id, task_id, agent_id, status, goal, input_context, output, depends_on, position, created_at, updated_at FROM subtasks WHERE task_id=? AND status='pending' ORDER BY position",
+            "SELECT id, task_id, agent_id, status, name, description, goal, input_context, output, depends_on, position, created_at, updated_at FROM subtasks WHERE task_id=? AND status='pending' ORDER BY position",
             (task_id,)
         ).fetchall()]
 

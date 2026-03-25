@@ -19,6 +19,8 @@ class SubtaskResponse(BaseModel):
     position: int
     output: Optional[str]
     depends_on: List[str]
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 class TaskResponse(BaseModel):
     id: str

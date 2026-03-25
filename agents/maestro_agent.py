@@ -292,8 +292,12 @@ class MaestroAgent:
         else:
             for s in subtasks:
                 dep_str = f" (depends on: {s['depends_on']})" if s.get("depends_on") else ""
+                name_desc = ""
+                n, d = s.get("name"), s.get("description")
+                if n or d:
+                    name_desc = f" {n or ''}" + (f" — {d}" if d else "") + " |"
                 lines.append(
-                    f"  [{s['status'].upper()}] {s['id'][:8]} | "
+                    f"  [{s['status'].upper()}] {s['id'][:8]} |{name_desc} "
                     f"agent={s['agent_id']} | pos={s['position']}{dep_str}"
                 )
                 if s.get("output"):

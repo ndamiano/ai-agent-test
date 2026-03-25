@@ -151,6 +151,8 @@ def _spawn_task(
     goal: str,
     depends_on=None,
     priority: str = "normal",
+    name: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> str:
     """
     Create a new subtask under the given task and assign it to an agent.
@@ -186,6 +188,8 @@ def _spawn_task(
         goal=goal,
         position=position,
         depends_on=dep_ids if dep_ids else None,
+        name=name,
+        description=description,
     )
 
     logger.info(
@@ -275,6 +279,21 @@ def register_task_tools() -> None:
                         "The specific, self-contained instruction for the agent. "
                         "Write this as if the agent has no prior context — "
                         "include everything it needs."
+                    ),
+                },
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "A short, human-readable name for this subtask "
+                        "(e.g. 'Write unit tests', 'Deploy to staging'). "
+                        "Displayed in the UI instead of the raw agent ID."
+                    ),
+                },
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "A brief description of what this subtask does. "
+                        "Shown beneath the name in the UI for additional context."
                     ),
                 },
                 "depends_on": {

@@ -10,6 +10,8 @@ interface AgentCardProps {
     agentMessages?: AgentMessage[]
     isExpanded?: boolean
     onToggleExpand?: () => void
+    subtaskName?: string | null
+    subtaskDescription?: string | null
 }
 
 const formatAgentName = (agentId: string) =>
@@ -26,6 +28,8 @@ const AgentCard: React.FC<AgentCardProps> = ({
     agentMessages,
     isExpanded = false,
     onToggleExpand,
+    subtaskName,
+    subtaskDescription,
 }) => {
     const [visible, setVisible] = useState(false)
 
@@ -77,9 +81,17 @@ const AgentCard: React.FC<AgentCardProps> = ({
         >
             <div className="flex items-center gap-3 mb-1">
                 <span className="text-base leading-none">{icon}</span>
-                <span className={`text-sm font-medium ${status === 'pending' ? 'text-gray-500' : 'text-white'}`}>
-                    {formatAgentName(agentId)}
-                </span>
+                <div className="flex flex-col">
+                    <span className={`text-sm font-medium ${status === 'pending' ? 'text-gray-500' : 'text-white'}`}>
+                        {subtaskName ?? formatAgentName(agentId)}
+                    </span>
+                    {subtaskName && (
+                        <span className="text-[11px] text-gray-500">{formatAgentName(agentId)}</span>
+                    )}
+                    {subtaskDescription && (
+                        <span className="text-xs text-gray-500 truncate max-w-xs">{subtaskDescription}</span>
+                    )}
+                </div>
             </div>
 
             <div className="pl-8">

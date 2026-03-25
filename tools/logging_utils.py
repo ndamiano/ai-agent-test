@@ -8,8 +8,26 @@ import threading
 from typing import Any, Dict, Optional
 
 
+# Map log entry types to their destination files
+_LOG_FILE_MAP = {
+    "tool_call": "tool_logger.jsonl",
+    "llm_interaction": "llm_logger.jsonl",
+    "agent_decision": "agent_logger.jsonl",
+    "error": "system_logger.jsonl",
+    "warning": "system_logger.jsonl",
+    "info": "system_logger.jsonl",
+}
+
+
 class ToolLogger:
-    """Handles logging of tool calls and agent activity"""
+    """Handles logging of tool calls, LLM interactions, agent decisions, and system events.
+
+    Each log type routes to its own JSONL file:
+      - tool_logger.jsonl  — tool invocations
+      - llm_logger.jsonl   — LLM prompt/response pairs
+      - agent_logger.jsonl — agent decisions
+      - system_logger.jsonl — errors, warnings, info
+    """
     
     def __init__(self, log_dir: str = "logs"):
         self.log_dir = log_dir
@@ -18,23 +36,11 @@ class ToolLogger:
         
         # Set up proper Python logging with fixed logger name
         self._setup_logging()
-        
-        # Create a file handler for JSONL logs
-        self._jsonl_handler = logging.FileHandler(
-            os.path.join(self.log_dir, f"tool_logger.jsonl"),
-            encoding='utf-8'
-        )
-        self._jsonl_handler.setFormatter(logging.Formatter('%(message)s'))
     
     def ensure_log_dir(self):
         """Ensure the log directory exists"""
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
-    
-    def _generate_session_id(self) -> str:
-        """Generate a unique session ID"""
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        return f"session_{timestamp}"
     
     def _setup_logging(self):
         """Set up Python logging configuration"""
@@ -167,19 +173,17 @@ class ToolLogger:
             self.logger.debug(f"LLM call to {connector} ({model}) completed")
 
     def _write_log(self, log_entry: Dict[str, Any]):
-        """Write a log entry to the session log file"""
+        """Write a log entry to the appropriate file based on entry type"""
+        entry_type = log_entry.get("type", "info")
+        filename = _LOG_FILE_MAP.get(entry_type, "system_logger.jsonl")
+        filepath = os.path.join(self.log_dir, filename)
+
         with self._lock:
             try:
-                # Write to JSONL file
-                log_file = os.path.join(self.log_dir, "tool_logger.jsonl")
-                with open(log_file, 'a', encoding='utf-8') as f:
+                with open(filepath, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
             except Exception as e:
-                self.logger.error(f"Failed to write log entry: {e}")
-    
-    def get_session_log_path(self) -> str:
-        """Get the path to the current session log file"""
-        return os.path.join(self.log_dir, "tool_logger.jsonl")
+                self.logger.error(f"Failed to write log entry to {filename}: {e}")
 
 
 # Global logger instance

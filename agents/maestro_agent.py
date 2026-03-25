@@ -366,18 +366,26 @@ class MaestroAgent:
         all_context = self.task_store.get_all_context(task_id)
         task = self.task_store.get_task(task_id)
 
-        context_dump = "\n\n".join(
-            f"[{key}]\n{value}" for key, value in all_context.items()
-        )
+        context_keys = list(all_context.keys())
+        subtasks = self.task_store.get_subtasks_for_task(task_id)
+        completed = [s for s in subtasks if s["status"] == "completed"]
+
         prompt = (
             f"ORIGINAL GOAL: {task['goal']}\n\n"
-            f"ALL PRODUCED CONTENT:\n{context_dump}\n\n"
-            "Synthesize the above into the final deliverable. "
-            "Follow the format appropriate for the goal. "
-            "Output only the deliverable — no meta-commentary."
+            f"AVAILABLE CONTEXT ({len(context_keys)} keys): {', '.join(context_keys)}\n\n"
+            f"COMPLETED SUBTASKS ({len(completed)}):\n"
+        )
+        for s in completed:
+            preview = (s["output"][:120].replace("\n", " ") + "...") if s.get("output") else "(no output)"
+            prompt += f"  - {s['id'][:8]} | agent={s['agent_id']} | {s['goal'][:80]}\n    Preview: {preview}\n"
+        prompt += (
+            "\nUse your tools (list_context_keys, get_context, list_subtasks, get_subtask_output) "
+            "to retrieve the specific content you need. "
+            "Then produce the final deliverable. Output only the deliverable — no meta-commentary."
         )
 
         synthesizer = MainAgent(agent_id=self.SYNTHESIS_AGENT_ID)
+        synthesizer.set_broadcast_context(task_id, "synthesizer", broadcast_fn)
         output = synthesizer.chat(prompt)
 
         self.task_store.write_context(task_id, "final_output", output)

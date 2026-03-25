@@ -157,6 +157,15 @@ class TaskStore:
         with _get_connection() as conn:
             conn.execute("UPDATE subtasks SET status=?, updated_at=? WHERE id=?", (status, get_utc_timestamp(), subtask_id))
 
+    def reset_subtasks_for_task(self, task_id: str) -> int:
+        """Reset all subtasks for a task to 'pending' status in a single UPDATE."""
+        with _get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE subtasks SET status='pending', updated_at=? WHERE task_id=?",
+                (get_utc_timestamp(), task_id),
+            )
+            return cur.rowcount
+
     def update_subtask_depends_on(self, subtask_id: str, depends_on: List[str]) -> None:
         with _get_connection() as conn:
             conn.execute("UPDATE subtasks SET depends_on=?, updated_at=? WHERE id=?",

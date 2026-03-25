@@ -89,6 +89,31 @@ async def cancel_task(task_id: str):
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return
 
+@router.post("/{task_id}/retry", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
+async def retry_task(task_id: str):
+    """
+    Reset a task and all its subtasks, then re-run from scratch.
+    Subtask statuses are batch-updated in a single UPDATE statement.
+    """
+    try:
+        task = await asyncio.to_thread(task_store.get_task, task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    await asyncio.to_thread(task_store.update_task_status, task_id, "planning")
+    await asyncio.to_thread(task_store.reset_subtasks_for_task, task_id)
+    await asyncio.to_thread(
+        task_store.log_event, task_id, "task_planned", "Task retry initiated"
+    )
+
+    task_runner.maestro.run_background(
+        task_id,
+        broadcast_fn=lambda event: manager.broadcast(event["task_id"], event),
+    )
+
+    refreshed = await asyncio.to_thread(task_store.get_task, task_id)
+    return TaskResponse(**refreshed)
+
 @router.websocket("/{task_id}/ws")
 async def websocket_endpoint(websocket: WebSocket, task_id: str):
     """

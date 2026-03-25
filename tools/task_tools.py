@@ -139,10 +139,7 @@ def _has_circular_dependencies(task_id: str, new_depends_on: List[str]) -> bool:
         return False
     
     # Check for cycles starting from the new subtask
-    if has_cycle_dfs(placeholder_id):
-        return True
-    
-    return False
+    return has_cycle_dfs(placeholder_id)
 
 
 def _spawn_task(

@@ -6,7 +6,7 @@ Tools for querying the agent registry and logging demand for new agent types.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -67,7 +67,7 @@ def _request_agent(
             "reason": reason,
             "task_id": task_id,
             "subtask_id": subtask_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat() + "Z",
         })
 
         # Write back

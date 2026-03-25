@@ -106,10 +106,8 @@ class LMStudioConnector:
         context_parts = []
         
         for item in context_data:
-            if hasattr(item, '__dict__'):  # Dataclass or custom object
-                # Convert object to dict and format nicely
-                item_dict = item.__dict__ if hasattr(item, '__dict__') else vars(item)
-                context_parts.append(self._format_dict(item_dict, item.__class__.__name__))
+            if hasattr(item, '__dict__'):
+                context_parts.append(self._format_dict(item.__dict__, item.__class__.__name__))
             elif isinstance(item, dict):
                 context_parts.append(self._format_dict(item))
             elif isinstance(item, (list, tuple)):

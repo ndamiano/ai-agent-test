@@ -1,31 +1,18 @@
 """Database constants for statuses and event types."""
 
 # Task statuses
-TASK_STATUS_PENDING = "pending"
-TASK_STATUS_PLANNING = "planning"
-TASK_STATUS_IN_PROGRESS = "in_progress"
-TASK_STATUS_COMPLETED = "completed"
-TASK_STATUS_FAILED = "failed"
-TASK_STATUS_CANCELLED = "cancelled"
-
 TASK_STATUSES = {
-    TASK_STATUS_PENDING,
-    TASK_STATUS_PLANNING,
-    TASK_STATUS_IN_PROGRESS,
-    TASK_STATUS_COMPLETED,
-    TASK_STATUS_FAILED,
-    TASK_STATUS_CANCELLED,
+    "pending",
+    "planning",
+    "in_progress",
+    "completed",
+    "failed",
+    "cancelled",
 }
 
-# Subtask statuses
-SUBTASK_STATUS_PENDING = "pending"
-SUBTASK_STATUS_IN_PROGRESS = "in_progress"
-SUBTASK_STATUS_COMPLETED = "completed"
-SUBTASK_STATUS_FAILED = "failed"
-
 SUBTASK_STATUSES = {
-    SUBTASK_STATUS_PENDING,
-    SUBTASK_STATUS_IN_PROGRESS,
-    SUBTASK_STATUS_COMPLETED,
-    SUBTASK_STATUS_FAILED,
+    "pending",
+    "in_progress",
+    "completed",
+    "failed",
 }

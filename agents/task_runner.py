@@ -58,9 +58,7 @@ class TaskRunner:
                 'timestamp': get_utc_timestamp()
             })
 
-        # Fix the lambda capture before spawning the thread
-        tid = task_id
-        self.maestro.run_background(tid, broadcast_fn=broadcast_fn)
+        self.maestro.run_background(task_id, broadcast_fn=broadcast_fn)
 
         return task_id
 

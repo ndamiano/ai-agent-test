@@ -9,23 +9,7 @@ from tools.tool_manager import tool_manager
 
 
 def _normalize_path(path: str) -> str:
-    """
-    Normalize a path to be relative to outputs directory.
-
-    Args:
-        path: File path that may or may not start with "outputs/"
-
-    Returns:
-        Normalized path string in format outputs/{path}
-    """
-    # Strip outputs/ prefix if present, then rebuild
-    if path.startswith("outputs/"):
-        # Extract the path after outputs/
-        parts = path.split('/', 1)  # ['outputs', rest...]
-        if len(parts) >= 2:
-            path = parts[1]
-
-    return f"outputs/{path}"
+    return "outputs/" + path.removeprefix("outputs/")
 
 
 def write_to_file(

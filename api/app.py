@@ -96,4 +96,4 @@ def reinitialize_connectors():
         lmstudio_client = LMStudioConnector(settings=settings.get("lmstudio"))
         logging.info("Connectors reinitialized with LMStudio")
 
-__all__ = ["app", "lmstudio_client", "reinitialize_connectors"]lize_connectors"]
+__all__ = ["app", "lmstudio_client", "reinitialize_connectors"]

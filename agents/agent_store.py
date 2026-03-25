@@ -6,7 +6,7 @@ import pathlib
 from typing import Dict, List
 
 from config.time_utils import get_utc_timestamp
-from config.protected_agents import is_protected_agent
+from config.protected_agents import PROTECTED_AGENTS
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class AgentStore:
 
     def delete(self, agent_id: str) -> None:
         """Delete an agent definition. Raises KeyError if not found."""
-        if is_protected_agent(agent_id):
+        if agent_id in PROTECTED_AGENTS:
             raise ValueError(f"Cannot delete protected agent '{agent_id}'")
         file_path = self.store_dir / f"{agent_id}.json"
         if not file_path.exists():

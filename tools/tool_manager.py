@@ -171,65 +171,21 @@ class ToolManager:
 def build_openai_tool_schema(tool: dict) -> dict:
     """
     Convert a registered tool into OpenAI function-calling schema format.
-    
-    Args:
-        tool: Tool dictionary from tool manager
-        
-    Returns:
-        OpenAI function-calling schema
     """
-    # Convert parameter info to JSON schema
-    properties = {}
-    required = []
-    
-    # Get the parameters schema from the tool
     params_schema = tool['parameters']
-    
-    # Handle the case where parameters is already in OpenAI format
-    if 'properties' in params_schema:
-        properties = params_schema['properties']
-        required = params_schema.get('required', [])
-    else:
-        # Legacy format - convert each parameter
-        for param_name, param_info in params_schema.items():
-            param_type = param_info.get('type', 'string')
-            
-            # Convert Python types to JSON schema types
-            if param_type is str or param_type == 'str':
-                json_type = "string"
-            elif param_type is int or param_type == 'int':
-                json_type = "integer"
-            elif param_type is float or param_type == 'float':
-                json_type = "number"
-            elif param_type is bool or param_type == 'bool':
-                json_type = "boolean"
-            elif param_type is list or param_type == 'list':
-                json_type = "array"
-            elif param_type is dict or param_type == 'dict':
-                json_type = "object"
-            else:
-                json_type = "string"  # Default fallback
-            
-            properties[param_name] = {"type": json_type}
-            
-            if param_info.get('required', False):
-                required.append(param_name)
-    
-    # Create OpenAI tool schema
-    openai_tool = {
+
+    return {
         "type": "function",
         "function": {
             "name": tool['name'],
             "description": tool['description'],
             "parameters": {
                 "type": "object",
-                "properties": properties,
-                "required": required
+                "properties": params_schema.get('properties', {}),
+                "required": params_schema.get('required', []),
             }
         }
     }
-    
-    return openai_tool
 
 
 # Global instance using module-level singleton pattern

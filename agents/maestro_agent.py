@@ -10,7 +10,6 @@ Replaces the static PlannerAgent + Orchestrator chain.
 
 import json
 import logging
-import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -102,9 +101,6 @@ class MaestroAgent:
                 "type": "task_completed",
                 "task_id": task_id,
             })
-
-            # --- Step 4: Cleanup outputs directory ---
-            self._cleanup_outputs()
 
             return final_output
 
@@ -487,14 +483,3 @@ class MaestroAgent:
                 broadcast_fn(event)
             except Exception as e:
                 logger.warning(f"Broadcast failed: {e}")
-
-    @staticmethod
-    def _cleanup_outputs() -> None:
-        """Clean up all files in the outputs directory."""
-        outputs_dir = Path("outputs")
-        if outputs_dir.exists():
-            try:
-                shutil.rmtree(outputs_dir)
-                logger.info("Cleaned up outputs directory")
-            except Exception as e:
-                logger.warning(f"Failed to clean up outputs directory: {e}")

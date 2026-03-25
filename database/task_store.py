@@ -92,12 +92,18 @@ class TaskStore:
         with _get_connection() as conn:
             conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE id=?", (status, get_utc_timestamp(), task_id))
 
-    def list_tasks(self, status: Optional[str] = None) -> List[Dict]:
+    def list_tasks(self, status: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Dict]:
         conn = _get_connection()
         conn.row_factory = sqlite3.Row
         query = "SELECT id, goal, status, execution_mode, created_at, updated_at FROM tasks"
-        rows = conn.execute(query + (" WHERE status=?" if status else ""),
-                            (status,) if status else ()).fetchall()
+        if status:
+            query += " WHERE status=?"
+            params: tuple = (status,)
+        else:
+            params = ()
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params = params + (limit, offset)
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
     # -------------------------------------------------------------------------

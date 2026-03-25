@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, List, Set
 from fastapi import WebSocket
 import logging
@@ -24,33 +25,34 @@ class ConnectionManager:
                     del self.active_connections[task_id]
         self.logger.info(f"WebSocket disconnected for task: {task_id}")
 
-    def broadcast(self, task_id: str, message: dict) -> None:
+    async def broadcast(self, task_id: str, message: dict) -> None:
         """Send a JSON message to all connections for a task. Handles disconnected clients gracefully."""
-        if task_id in self.active_connections:
-            disconnected = []
-            for websocket in self.active_connections[task_id]:
-                try:
-                    # Get or create event loop for async operations
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # If loop is already running, schedule the coroutine
-                            asyncio.ensure_future(websocket.send_json(message))
-                        else:
-                            # If no loop is running, run it
-                            loop.run_until_complete(websocket.send_json(message))
-                    except RuntimeError:
-                        # No event loop in this thread, create one
-                        asyncio.run(websocket.send_json(message))
-                except:
-                    disconnected.append(websocket)
-            for websocket in disconnected:
-                self.disconnect(task_id, websocket)
+        if task_id not in self.active_connections:
+            return
+        disconnected = []
+        send_tasks = []
+        for websocket in self.active_connections[task_id]:
+            send_tasks.append((websocket, asyncio.create_task(websocket.send_json(message))))
+        for websocket, task in send_tasks:
+            try:
+                await task
+            except Exception:
+                disconnected.append(websocket)
+        for websocket in disconnected:
+            self.disconnect(task_id, websocket)
+
+    def broadcast_sync(self, task_id: str, message: dict) -> None:
+        """Thread-safe sync wrapper for broadcast — usable from background threads."""
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(self.broadcast(task_id, message), loop)
+        except RuntimeError:
+            # No running loop; fallback to a new one
+            asyncio.run(self.broadcast(task_id, message))
 
     async def broadcast_all(self, message: dict) -> None:
         """Broadcast to all connected clients across all tasks. Used for system-level events."""
-        for task_id, connections in self.active_connections.items():
+        for task_id in list(self.active_connections.keys()):
             await self.broadcast(task_id, message)
 
 manager = ConnectionManager()

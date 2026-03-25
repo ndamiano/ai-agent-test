@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, status, WebSocket
+from fastapi import APIRouter, HTTPException, status, WebSocket, Query
 from typing import List, Optional
+import asyncio
 from api.models.requests import CreateTaskRequest
 from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse
 from agents.task_runner import task_runner
@@ -14,20 +15,26 @@ async def create_task(request: CreateTaskRequest):
     Create and run a task in the background.
     Returns immediately with task details while the task runs asynchronously.
     """
-    task_id = task_runner.create_and_run_background(
+    task_id = await asyncio.to_thread(
+        task_runner.create_and_run_background,
         goal=request.goal,
         execution_mode=request.execution_mode,
-        broadcast_fn=lambda event: manager.broadcast(event['task_id'], event)
+        broadcast_fn=lambda event: manager.broadcast_sync(event['task_id'], event),
     )
-    task = task_store.get_task(task_id)
+    task = await asyncio.to_thread(task_store.get_task, task_id)
     return TaskResponse(**task)
 
 @router.get("/", response_model=List[TaskResponse])
-async def get_tasks(status: Optional[str] = None):
+async def get_tasks(
+    status: Optional[str] = None,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
     """
     List all tasks, optionally filtered by status.
+    Supports pagination via offset and limit query parameters.
     """
-    tasks = task_store.list_tasks(status)
+    tasks = await asyncio.to_thread(task_store.list_tasks, status, offset, limit)
     return [TaskResponse(**task) for task in tasks]
 
 @router.get("/{task_id}", response_model=TaskDetailResponse)

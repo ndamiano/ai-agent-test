@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Task, TaskDetail, AskResponse, Agent, SystemStatus, Settings } from '../types'
+import type { Task, TaskDetail, AskResponse, SystemStatus, Settings } from '../types'
 
 const base = axios.create({ baseURL: '/api' })
 
@@ -17,12 +17,6 @@ export const api = {
         base.post<AskResponse>(`/tasks/${task_id}/ask`, { question }).then(r => r.data),
     deleteTask: (id: string) =>
         base.delete(`/tasks/${id}`),
-
-    // Agents
-    listAgents: () =>
-        base.get<Agent[]>('/agents').then(r => r.data),
-    getAgent: (id: string) =>
-        base.get<Agent>(`/agents/${id}`).then(r => r.data),
 
     // System
     getStatus: () =>

@@ -30,9 +30,19 @@ class ConnectionManager:
             disconnected = []
             for websocket in self.active_connections[task_id]:
                 try:
-                    # Use websocket.send_json() synchronously instead of await
+                    # Get or create event loop for async operations
                     import asyncio
-                    asyncio.run(websocket.send_json(message))
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # If loop is already running, schedule the coroutine
+                            asyncio.ensure_future(websocket.send_json(message))
+                        else:
+                            # If no loop is running, run it
+                            loop.run_until_complete(websocket.send_json(message))
+                    except RuntimeError:
+                        # No event loop in this thread, create one
+                        asyncio.run(websocket.send_json(message))
                 except:
                     disconnected.append(websocket)
             for websocket in disconnected:

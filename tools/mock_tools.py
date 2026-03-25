@@ -1,0 +1,178 @@
+"""
+Mock tools: execute_command, web_search, web_fetch.
+
+Stub implementations that return placeholder responses.
+Replace these with real implementations later.
+"""
+
+import json
+import logging
+from typing import Optional
+
+from tools.tool_manager import tool_manager
+
+logger = logging.getLogger(__name__)
+
+
+def _execute_command(
+    command: str,
+    working_dir: Optional[str] = None,
+    timeout: int = 30,
+) -> str:
+    """
+    Execute a shell command and return its output.
+
+    MOCK: Returns a placeholder response. Replace with real implementation.
+
+    Args:
+        command: The shell command to execute
+        working_dir: Optional working directory (defaults to outputs/)
+        timeout: Command timeout in seconds
+    """
+    logger.info(f"MOCK execute_command called: {command}")
+    return json.dumps({
+        "success": True,
+        "stdout": f"[MOCK] Command executed: {command}",
+        "stderr": "",
+        "return_code": 0,
+        "note": "This is a mock implementation. Replace with real command execution."
+    })
+
+
+def _web_search(
+    query: str,
+    num_results: int = 5,
+) -> str:
+    """
+    Search the web and return relevant results.
+
+    MOCK: Returns a placeholder response. Replace with real implementation.
+
+    Args:
+        query: The search query
+        num_results: Number of results to return (default: 5)
+    """
+    logger.info(f"MOCK web_search called: {query}")
+    return json.dumps({
+        "success": True,
+        "query": query,
+        "results": [
+            {
+                "title": f"[MOCK] Search result for: {query}",
+                "url": "https://example.com/mock-result",
+                "snippet": "This is a mock search result. Replace with real web search implementation."
+            }
+        ],
+        "note": "This is a mock implementation. Replace with real web search."
+    })
+
+
+def _web_fetch(
+    url: str,
+    extract_text: bool = True,
+    max_length: int = 10000,
+) -> str:
+    """
+    Fetch content from a URL.
+
+    MOCK: Returns a placeholder response. Replace with real implementation.
+
+    Args:
+        url: The URL to fetch
+        extract_text: Whether to extract clean text (default: True)
+        max_length: Maximum content length to return
+    """
+    logger.info(f"MOCK web_fetch called: {url}")
+    return json.dumps({
+        "success": True,
+        "url": url,
+        "content": f"[MOCK] Content from {url}. This is a mock implementation. Replace with real web fetching.",
+        "content_type": "text/html",
+        "note": "This is a mock implementation. Replace with real web fetching."
+    })
+
+
+def register_mock_tools() -> None:
+    """Register mock tools with the global tool manager."""
+
+    tool_manager.register_tool(
+        name="execute_command",
+        description=(
+            "Execute a shell command and return its output. "
+            "Use this for running scripts, building projects, or system operations."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute (e.g., 'ls -la', 'python script.py')"
+                },
+                "working_dir": {
+                    "type": "string",
+                    "description": "Optional working directory. Defaults to outputs/"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Command timeout in seconds (default: 30)"
+                }
+            },
+            "required": ["command"]
+        },
+        fn=_execute_command,
+        auto_inject_context=False
+    )
+
+    tool_manager.register_tool(
+        name="web_search",
+        description=(
+            "Search the web for information. "
+            "Returns a list of relevant results with titles, URLs, and snippets."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of results to return (default: 5)"
+                }
+            },
+            "required": ["query"]
+        },
+        fn=_web_search,
+        auto_inject_context=False
+    )
+
+    tool_manager.register_tool(
+        name="web_fetch",
+        description=(
+            "Fetch content from a URL. "
+            "Returns the page content, optionally extracted as clean text."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch (must include http:// or https://)"
+                },
+                "extract_text": {
+                    "type": "boolean",
+                    "description": "Whether to extract clean text from HTML (default: true)"
+                },
+                "max_length": {
+                    "type": "integer",
+                    "description": "Maximum content length to return (default: 10000)"
+                }
+            },
+            "required": ["url"]
+        },
+        fn=_web_fetch,
+        auto_inject_context=False
+    )
+
+    logger.info("Mock tools registered: execute_command, web_search, web_fetch")

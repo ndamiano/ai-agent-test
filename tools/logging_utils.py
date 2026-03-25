@@ -134,6 +134,38 @@ class ToolLogger:
         if context:
             self.logger.debug(f"Context: {context}")
     
+    def log_llm_interaction(
+        self,
+        connector: str,
+        model: str,
+        prompt: Any,
+        response: Any,
+        task_id: Optional[str] = None,
+        subtask_id: Optional[str] = None,
+        error: Optional[str] = None
+    ):
+        """Log an LLM interaction with prompt and response"""
+        log_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "type": "llm_interaction",
+            "connector": connector,
+            "model": model,
+            "prompt": prompt,
+            "response": str(response) if response is not None else None,
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "error": error,
+            "success": error is None
+        }
+        
+        self._write_log(log_entry)
+        
+        # Log summary to console
+        if error:
+            self.logger.error(f"LLM call to {connector} ({model}) failed: {error}")
+        else:
+            self.logger.debug(f"LLM call to {connector} ({model}) completed")
+
     def _write_log(self, log_entry: Dict[str, Any]):
         """Write a log entry to the session log file"""
         with self._lock:
@@ -167,3 +199,24 @@ def log_agent_decision(user_input: str, decision: str, details: Optional[Dict[st
 def log_error(error_type: str, error_message: str, context: Optional[Dict[str, Any]] = None):
     """Convenience function to log errors"""
     tool_logger.log_error(error_type, error_message, context)
+
+
+def log_llm_interaction(
+    connector: str,
+    model: str,
+    prompt: Any,
+    response: Any,
+    task_id: Optional[str] = None,
+    subtask_id: Optional[str] = None,
+    error: Optional[str] = None
+):
+    """Convenience function to log LLM interactions"""
+    tool_logger.log_llm_interaction(
+        connector=connector,
+        model=model,
+        prompt=prompt,
+        response=response,
+        task_id=task_id,
+        subtask_id=subtask_id,
+        error=error
+    )

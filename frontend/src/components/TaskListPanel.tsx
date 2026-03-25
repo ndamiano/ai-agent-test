@@ -7,10 +7,11 @@ import TaskItem from './TaskItem'
 interface TaskListPanelProps {
     selectedTaskId: string | null
     onSelectTask: (id: string | null) => void
+    refreshKey?: number
 }
 
-const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectTask }) => {
-    const { tasks, loading, error, refresh } = useTasks()
+const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectTask, refreshKey }) => {
+    const { tasks, loading, error, refresh } = useTasks(refreshKey)
 
     const handleArchiveTask = async (taskId: string) => {
         try {

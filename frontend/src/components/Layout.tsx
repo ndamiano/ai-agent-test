@@ -9,6 +9,7 @@ interface LayoutProps {
     systemStatus: { connected: boolean; message: string }
     onTaskCreate: (goal: string) => void
     onSettingsClick: () => void
+    taskListRefreshKey?: number
 }
 
 const Layout: React.FC<LayoutProps> = ({
@@ -17,6 +18,7 @@ const Layout: React.FC<LayoutProps> = ({
     systemStatus,
     onTaskCreate,
     onSettingsClick,
+    taskListRefreshKey,
 }) => {
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
@@ -55,6 +57,7 @@ const Layout: React.FC<LayoutProps> = ({
                     <TaskListPanel
                         selectedTaskId={selectedTaskId}
                         onSelectTask={setSelectedTaskId}
+                        refreshKey={taskListRefreshKey}
                     />
                 </div>
 

@@ -1,13 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api/client'
 import type { Task } from '../types'
 
-export function useTasks() {
+export function useTasks(refreshKey?: number) {
     const [tasks, setTasks] = useState<Task[]>([])
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    const refresh = async () => {
+    const refresh = useCallback(async () => {
         setLoading(true)
         setError(null)
         try {
@@ -20,11 +20,11 @@ export function useTasks() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [])
 
     useEffect(() => {
         refresh()
-    }, [])
+    }, [refresh, refreshKey])
 
     return { tasks, loading, error, refresh }
 }

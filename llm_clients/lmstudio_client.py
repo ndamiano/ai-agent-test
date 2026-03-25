@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any, Union, List, Dict, Optional
 from threading import Lock
+from tools.logging_utils import tool_logger
 
 logger = logging.getLogger(__name__)
 
@@ -176,14 +177,43 @@ class LMStudioConnector:
             
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"]
+                response_content = result["choices"][0]["message"]["content"]
+                self._log_llm(full_prompt, response_content)
+                return response_content
             else:
-                return f"Error: LMStudio returned status {response.status_code}: {response.text}"
+                error_msg = f"Error: LMStudio returned status {response.status_code}: {response.text}"
+                self._log_llm(full_prompt, None, error_msg)
+                return error_msg
                 
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Error connecting to LMStudio: {str(e)}")
+            error_msg = f"Error connecting to LMStudio: {str(e)}"
+            self._log_llm(full_prompt, None, error_msg)
+            raise RuntimeError(error_msg)
         except (KeyError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"Error parsing LMStudio response: {str(e)}")
+            error_msg = f"Error parsing LMStudio response: {str(e)}"
+            self._log_llm(full_prompt, None, error_msg)
+            raise RuntimeError(error_msg)
+
+    def _log_llm(self, prompt: Any, response: Any, error: Optional[str] = None):
+        """Log LLM interaction with task context from execution context"""
+        try:
+            from tools.execution_context import get_execution_context
+            ctx = get_execution_context()
+            task_id = ctx.get('task_id')
+            subtask_id = ctx.get('subtask_id')
+        except Exception:
+            task_id = None
+            subtask_id = None
+        
+        tool_logger.log_llm_interaction(
+            connector="lmstudio",
+            model=self.model_name,
+            prompt=prompt,
+            response=response,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=error
+        )
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         """Generate response with optional tool support"""
@@ -209,9 +239,15 @@ class LMStudioConnector:
             )
             
             if response.status_code == 200:
-                return response.json()
+                result = response.json()
+                self._log_llm(messages, result)
+                return result
             else:
-                return {"error": f"Status {response.status_code}: {response.text}"}
+                error_msg = f"Status {response.status_code}: {response.text}"
+                self._log_llm(messages, None, error_msg)
+                return {"error": error_msg}
                 
         except requests.exceptions.RequestException as e:
-            return {"error": f"Connection error: {str(e)}"}
+            error_msg = f"Connection error: {str(e)}"
+            self._log_llm(messages, None, error_msg)
+            return {"error": error_msg}

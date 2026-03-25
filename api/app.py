@@ -49,9 +49,11 @@ async def startup_event():
         from tools.task_tools import register_task_tools
         from tools.agent_tools import register_agent_tools
         from tools.file_tools import register_file_tools
+        from tools.mock_tools import register_mock_tools
         register_task_tools()
         register_agent_tools()
         register_file_tools()
+        register_mock_tools()
         logging.info("Tools registered successfully")
 
         # Health checks

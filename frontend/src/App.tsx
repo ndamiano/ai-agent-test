@@ -11,11 +11,13 @@ function App() {
     connected: false,
     message: 'LMStudio disconnected',
   });
+  const [taskListRefreshKey, setTaskListRefreshKey] = useState(0);
 
   const handleTaskCreate = async (goal: string) => {
     try {
       const newTask = await api.createTask(goal);
       setSelectedTaskId(newTask.id);
+      setTaskListRefreshKey(prev => prev + 1);
     } catch (error) {
       console.error('Failed to create task:', error);
     }
@@ -65,6 +67,7 @@ function App() {
           systemStatus={systemStatus}
           onTaskCreate={handleTaskCreate}
           onSettingsClick={() => setShowSettings(true)}
+          taskListRefreshKey={taskListRefreshKey}
         />
         {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       </ErrorBoundary>

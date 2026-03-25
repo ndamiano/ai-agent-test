@@ -95,7 +95,10 @@ class MainAgent:
 
                 for chunk in self.connector.generate_with_tools_stream(messages, tools):
                     if "error" in chunk:
-                        return chunk
+                        # Fall back to non-streaming on error
+                        import logging
+                        logging.warning(f"Streaming failed, falling back to non-streaming: {chunk['error']}")
+                        return self.connector.generate_with_tools(messages, tools)
 
                     # Accumulate the chunks
                     if accumulated_response is None:

@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any, Union, List, Dict, Optional
 from threading import Lock
+from tools.logging_utils import tool_logger
 
 logger = logging.getLogger(__name__)
 
@@ -212,22 +213,47 @@ class ClineConnector:
                     return data["choices"][0]["message"]["content"]
                 else:
                     # Fallback for standard OpenAI format
-                    logger.debug(f"Cline API returned standard format with {len(result.get('choices', []))} choices")
-                    return result["choices"][0]["message"]["content"]
+                    response_content = result["choices"][0]["message"]["content"]
+                    self._log_llm(full_prompt, response_content)
+                    return response_content
             else:
                 error_msg = f"Error: Cline API returned status {response.status_code}: {response.text}"
                 logger.error(error_msg)
+                self._log_llm(full_prompt, None, error_msg)
                 return error_msg
 
         except requests.exceptions.RequestException as e:
             error_msg = f"Error connecting to Cline API: {str(e)}"
             logger.error(error_msg)
+            self._log_llm(full_prompt, None, error_msg)
             raise RuntimeError(error_msg)
         except (KeyError, json.JSONDecodeError) as e:
             error_msg = f"Error parsing Cline API response: {str(e)}"
             logger.error(error_msg)
             logger.debug(f"Response content: {response.text[:500]}")
+            self._log_llm(full_prompt, None, error_msg)
             raise RuntimeError(error_msg)
+
+    def _log_llm(self, prompt: Any, response: Any, error: Optional[str] = None):
+        """Log LLM interaction with task context from execution context"""
+        try:
+            from tools.execution_context import get_execution_context
+            ctx = get_execution_context()
+            task_id = ctx.get('task_id')
+            subtask_id = ctx.get('subtask_id')
+        except Exception:
+            task_id = None
+            subtask_id = None
+        
+        tool_logger.log_llm_interaction(
+            connector="cline",
+            model=self.model_name,
+            prompt=prompt,
+            response=response,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            error=error
+        )
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         """Generate response with optional tool support (non-streaming)"""
@@ -267,19 +293,23 @@ class ClineConnector:
                 # Cline API wraps the response in a "data" object
                 if "data" in result:
                     logger.debug(f"Cline API returned wrapped response (success={result.get('success')})")
+                    self._log_llm(messages, result["data"])
                     return result["data"]
                 else:
                     # Fallback for standard OpenAI format
                     logger.debug("Cline API returned standard OpenAI format")
+                    self._log_llm(messages, result)
                     return result
             else:
                 error_msg = f"Status {response.status_code}: {response.text}"
                 logger.error(f"Cline API error: {error_msg}")
+                self._log_llm(messages, None, error_msg)
                 return {"error": error_msg}
 
         except requests.exceptions.RequestException as e:
             error_msg = f"Connection error: {str(e)}"
             logger.error(f"Cline API connection error: {error_msg}")
+            self._log_llm(messages, None, error_msg)
             return {"error": error_msg}
 
     def generate_with_tools_stream(self, messages: list, tools: list = None):
@@ -360,9 +390,11 @@ class ClineConnector:
             else:
                 error_msg = f"Status {response.status_code}: {response.text}"
                 logger.error(f"Cline API streaming error: {error_msg}")
+                self._log_llm(messages, None, error_msg)
                 yield {"error": error_msg}
 
         except requests.exceptions.RequestException as e:
             error_msg = f"Streaming connection error: {str(e)}"
             logger.error(f"Cline API streaming error: {error_msg}")
+            self._log_llm(messages, None, error_msg)
             yield {"error": error_msg}

@@ -143,10 +143,18 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             })
     }, [taskId, loadArtifact])
 
-    // React to WS messages
+    // Track processed message count to avoid re-processing old messages
+    const processedCountRef = useRef(0)
+
+    // React to WS messages (only process NEW messages)
     useEffect(() => {
-        const latest = messages[messages.length - 1]
-        if (!latest || !taskId) return
+        if (!taskId || messages.length === 0) return
+
+        const newMessages = messages.slice(processedCountRef.current)
+        processedCountRef.current = messages.length
+
+        if (newMessages.length === 0) return
+        const latest = newMessages[newMessages.length - 1]
 
         if (latest.type === 'task_status' || latest.type === 'subtask_started') {
             api.getTask(taskId)

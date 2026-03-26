@@ -7,6 +7,8 @@ Replace these with real implementations later.
 
 import json
 import logging
+import os
+import subprocess
 from typing import Optional
 
 from tools.tool_manager import tool_manager
@@ -22,21 +24,51 @@ def _execute_command(
     """
     Execute a shell command and return its output.
 
-    MOCK: Returns a placeholder response. Replace with real implementation.
-
     Args:
         command: The shell command to execute
         working_dir: Optional working directory (defaults to outputs/)
         timeout: Command timeout in seconds
     """
-    logger.info(f"MOCK execute_command called: {command}")
-    return json.dumps({
-        "success": True,
-        "stdout": f"[MOCK] Command executed: {command}",
-        "stderr": "",
-        "return_code": 0,
-        "note": "This is a mock implementation. Replace with real command execution."
-    })
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if working_dir is None:
+        working_dir = os.path.join(project_root, "outputs")
+
+    if not os.path.isabs(working_dir):
+        working_dir = os.path.join(project_root, working_dir)
+
+    logger.info(f"Executing command: {command} in {working_dir}")
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=working_dir,
+            timeout=timeout,
+        )
+        return json.dumps({
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "return_code": result.returncode,
+        })
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Command timed out after {timeout}s: {command}")
+        return json.dumps({
+            "success": False,
+            "stdout": "",
+            "stderr": f"Command timed out after {timeout} seconds",
+            "return_code": -1,
+        })
+    except Exception as e:
+        logger.error(f"Command execution failed: {e}")
+        return json.dumps({
+            "success": False,
+            "stdout": "",
+            "stderr": str(e),
+            "return_code": -1,
+        })
 
 
 def _web_search(

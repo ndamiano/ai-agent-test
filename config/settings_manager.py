@@ -12,6 +12,9 @@ from typing import Dict, Any
 from threading import Lock
 import logging
 
+from pydantic import ValidationError as PydanticValidationError
+from config.settings_schema import AppSettings
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +122,7 @@ class SettingsManager:
 
     def _validate_settings(self, settings: Dict[str, Any]) -> None:
         """
-        Validate settings structure and values
+        Validate settings structure and values using Pydantic schema.
 
         Args:
             settings: Settings dictionary to validate
@@ -127,62 +130,10 @@ class SettingsManager:
         Raises:
             ValueError: If validation fails
         """
-        # Check required keys
-        if "connector_type" not in settings:
-            raise ValueError("Missing required field: connector_type")
-
-        # Validate connector type
-        valid_connectors = ["lmstudio", "cline"]
-        if settings["connector_type"] not in valid_connectors:
-            raise ValueError(f"Invalid connector_type. Must be one of: {valid_connectors}")
-
-        # Validate lmstudio settings
-        if "lmstudio" not in settings:
-            raise ValueError("Missing required field: lmstudio")
-
-        lm = settings["lmstudio"]
-        if not isinstance(lm, dict):
-            raise ValueError("lmstudio must be a dictionary")
-
-        if "base_url" not in lm or not lm["base_url"]:
-            raise ValueError("lmstudio.base_url is required")
-
-        if "model" not in lm or not lm["model"]:
-            raise ValueError("lmstudio.model is required")
-
-        # Validate optional numeric fields
-        if "temperature" in lm:
-            temp = lm["temperature"]
-            if not isinstance(temp, (int, float)) or temp < 0 or temp > 2:
-                raise ValueError("lmstudio.temperature must be between 0 and 2")
-
-        if "max_tokens" in lm:
-            tokens = lm["max_tokens"]
-            if not isinstance(tokens, int) or tokens < 1:
-                raise ValueError("lmstudio.max_tokens must be a positive integer")
-
-        # Validate cline settings if present
-        if "cline" in settings:
-            cl = settings["cline"]
-            if not isinstance(cl, dict):
-                raise ValueError("cline must be a dictionary")
-
-            if "api_key" not in cl:
-                raise ValueError("cline.api_key is required")
-
-            if "model" not in cl or not cl["model"]:
-                raise ValueError("cline.model is required")
-
-            # Validate optional numeric fields
-            if "temperature" in cl:
-                temp = cl["temperature"]
-                if not isinstance(temp, (int, float)) or temp < 0 or temp > 2:
-                    raise ValueError("cline.temperature must be between 0 and 2")
-
-            if "max_tokens" in cl:
-                tokens = cl["max_tokens"]
-                if not isinstance(tokens, int) or tokens < 1:
-                    raise ValueError("cline.max_tokens must be a positive integer")
+        try:
+            AppSettings(**settings)
+        except PydanticValidationError as e:
+            raise ValueError(str(e)) from e
 
     def get_connector_settings(self, connector_type: str) -> Dict[str, Any]:
         """

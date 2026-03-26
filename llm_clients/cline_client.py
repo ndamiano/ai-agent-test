@@ -5,13 +5,14 @@ import requests
 import json
 import os
 from typing import Any, Union, List, Dict, Optional
-from threading import Lock
-from tools.logging_utils import tool_logger
+from llm_clients.base_connector import BaseConnector
 
 logger = logging.getLogger(__name__)
 
 
-class ClineConnector:
+class ClineConnector(BaseConnector):
+    connector_name = "cline"
+
     def __init__(self, settings: Optional[Dict[str, Any]] = None):
         """
         Initialize Cline connector
@@ -20,6 +21,7 @@ class ClineConnector:
             settings: Optional settings dictionary. If not provided, will load from SettingsManager.
                      Expected keys: api_key, model, temperature (optional), max_tokens (optional)
         """
+        super().__init__()
         # Load settings
         if settings is None:
             from config.settings_manager import settings_manager
@@ -34,8 +36,6 @@ class ClineConnector:
         self.base_url = "https://api.cline.bot"
         self.api_endpoint = f"{self.base_url}/api/v1/chat/completions"
         self._connected = False
-        self._session = None
-        self._session_lock = Lock()
         self._last_health_check = 0
         self._health_check_interval = 30  # seconds
 
@@ -53,7 +53,6 @@ class ClineConnector:
         logger.debug(f"Testing connection to Cline API at {self.api_endpoint}")
 
         try:
-            # Try a simple request to verify the API key works
             response = requests.post(
                 self.api_endpoint,
                 json={
@@ -92,73 +91,11 @@ class ClineConnector:
             return self.connect()
 
         # For API services, we'll just check if we have an API key
-        # Full connection test is expensive
         return bool(self.api_key)
 
     async def health_check_async(self) -> bool:
         import asyncio
         return await asyncio.to_thread(self.health_check)
-
-    def contextualize(self, context_data: Union[Any, List[Any]]) -> str:
-        """
-        Flatten generic objects into a readable string context
-
-        Args:
-            context_data: Object(s) to convert to string context
-
-        Returns:
-            Formatted string representation of the data
-        """
-        if context_data is None:
-            return ""
-
-        # Handle single object vs list
-        if not isinstance(context_data, list):
-            context_data = [context_data]
-
-        context_parts = []
-
-        for item in context_data:
-            if hasattr(item, '__dict__'):
-                context_parts.append(self._format_dict(item.__dict__, item.__class__.__name__))
-            elif isinstance(item, dict):
-                context_parts.append(self._format_dict(item))
-            elif isinstance(item, (list, tuple)):
-                context_parts.append(f"List: {', '.join(str(x) for x in item)}")
-            else:
-                context_parts.append(str(item))
-
-        return "\n\n".join(context_parts)
-
-    def _format_dict(self, data: dict, type_name: str = "Data") -> str:
-        """Helper to format dictionaries nicely"""
-        lines = [f"{type_name}:"]
-        for key, value in data.items():
-            if isinstance(value, (list, tuple)) and value:
-                if len(value) <= 3:
-                    lines.append(f"  {key}: {', '.join(str(v) for v in value)}")
-                else:
-                    lines.append(f"  {key}: {', '.join(str(v) for v in value[:3])}... ({len(value)} total)")
-            elif isinstance(value, dict):
-                lines.append(f"  {key}: {json.dumps(value, indent=4)}")
-            else:
-                lines.append(f"  {key}: {value}")
-        return "\n".join(lines)
-
-    def _get_session(self) -> requests.Session:
-        """Get or create a connection-pooled session for better performance."""
-        with self._session_lock:
-            if self._session is None:
-                self._session = requests.Session()
-                # Configure session for better performance
-                adapter = requests.adapters.HTTPAdapter(
-                    pool_connections=10,
-                    pool_maxsize=10,
-                    max_retries=3
-                )
-                self._session.mount('http://', adapter)
-                self._session.mount('https://', adapter)
-            return self._session
 
     def generate(self, prompt: str, context: str) -> str:
         """
@@ -235,27 +172,6 @@ class ClineConnector:
             logger.debug(f"Response content: {response.text[:500]}")
             self._log_llm(full_prompt, None, error_msg)
             raise RuntimeError(error_msg)
-
-    def _log_llm(self, prompt: Any, response: Any, error: Optional[str] = None):
-        """Log LLM interaction with task context from execution context"""
-        try:
-            from tools.execution_context import get_execution_context
-            ctx = get_execution_context()
-            task_id = ctx.get('task_id')
-            subtask_id = ctx.get('subtask_id')
-        except Exception:
-            task_id = None
-            subtask_id = None
-        
-        tool_logger.log_llm_interaction(
-            connector="cline",
-            model=self.model_name,
-            prompt=prompt,
-            response=response,
-            task_id=task_id,
-            subtask_id=subtask_id,
-            error=error
-        )
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         """Generate response with optional tool support (non-streaming)"""

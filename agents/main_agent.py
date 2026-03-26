@@ -87,7 +87,6 @@ class MainAgent:
         Returns:
             Complete response dict
         """
-        # Check if connector supports streaming
         if hasattr(self.connector, 'generate_with_tools_stream'):
             try:
                 # Accumulate streaming response

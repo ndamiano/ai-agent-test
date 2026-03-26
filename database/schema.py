@@ -40,7 +40,6 @@ def init_db(db_path: Optional[str] = None) -> None:
         os.makedirs(dir_path, exist_ok=True)
     
     with sqlite3.connect(db_path) as conn:
-        # Enable foreign key constraints and WAL mode for better concurrent read throughput
         configure_connection(conn)
         
         # Create tasks table

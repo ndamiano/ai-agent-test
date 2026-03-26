@@ -54,14 +54,12 @@ def _request_agent(
         subtask_id: Auto-injected subtask ID
     """
     try:
-        # Load existing demand file
         if _DEMAND_FILE.exists():
             with open(_DEMAND_FILE, 'r') as f:
                 data = json.load(f)
         else:
             data = {"requests": []}
 
-        # Append new request
         data["requests"].append({
             "capability": capability,
             "reason": reason,
@@ -70,7 +68,6 @@ def _request_agent(
             "timestamp": datetime.now(UTC).isoformat() + "Z",
         })
 
-        # Write back
         _DEMAND_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(_DEMAND_FILE, 'w') as f:
             json.dump(data, f, indent=2)

@@ -105,13 +105,12 @@ class ToolManager:
             if param_name not in provided_kwargs:
                 raise ValueError(f"Missing required parameter '{param_name}' for tool '{tool_info['name']}'")
 
-        # Filter and validate provided parameters
+        # Validate and filter provided parameters
         # Note: We now accept both declared parameters AND auto-injected context parameters
         fn = tool_info['function']
         fn_params = inspect.signature(fn).parameters
 
         for param_name, value in provided_kwargs.items():
-            # Accept if in schema OR if it's a valid function parameter (for auto-injected context)
             if param_name in parameters or param_name in fn_params:
                 validated[param_name] = value
             # Silently ignore other extra parameters to be flexible

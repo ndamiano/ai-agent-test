@@ -33,21 +33,16 @@ def write_to_file(
         Dict containing success status and file path
     """
     try:
-        # Normalize path to outputs directory
         path = _normalize_path(path)
-
-        # Convert to Path object for better path handling
         file_path = Path(path)
         
         # Create parent directories if requested
         if create_dirs:
             file_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Write content to file
         with open(file_path, mode=mode, encoding=encoding) as f:
             f.write(content)
         
-        # Log successful operation
         result = {
             "success": True,
             "file_path": str(file_path),
@@ -88,13 +83,9 @@ def read_file(
         Dict containing success status, file path, and content
     """
     try:
-        # Normalize path to outputs directory
         path = _normalize_path(path)
-
-        # Convert to Path object for better path handling
         file_path = Path(path)
 
-        # Check if file exists
         if not file_path.exists():
             return {
                 "success": False,
@@ -109,11 +100,9 @@ def read_file(
                 "file_path": str(file_path)
             }
 
-        # Read content from file
         with open(file_path, mode="r", encoding=encoding) as f:
             content = f.read()
 
-        # Log successful operation
         result = {
             "success": True,
             "file_path": str(file_path),
@@ -155,13 +144,10 @@ def list_files(
         Dict containing success status and list of file paths
     """
     try:
-        # Build the base path
         base_path = _normalize_path(path)
 
-        # Convert to Path object
         dir_path = Path(base_path)
 
-        # Create directory if it doesn't exist
         if not dir_path.exists():
             dir_path.mkdir(parents=True, exist_ok=True)
             return {
@@ -223,10 +209,7 @@ def delete_file(
         Dict containing success status and file path
     """
     try:
-        # Normalize path to outputs directory
         path = _normalize_path(path)
-
-        # Convert to Path object
         file_path = Path(path)
 
         # Safety check: ensure we're only deleting from outputs directory
@@ -237,7 +220,6 @@ def delete_file(
                 "file_path": str(file_path)
             }
 
-        # Check if file exists
         if not file_path.exists():
             return {
                 "success": False,

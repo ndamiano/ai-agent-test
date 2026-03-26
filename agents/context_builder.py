@@ -43,7 +43,6 @@ class ContextBuilder:
             if dependency_output:
                 context_parts.append(f"Dependency outputs:\n{dependency_output}")
         
-        # Join all parts with double newlines for readability
         return "\n\n".join(context_parts)
 
     def format_dependency_outputs(self, task_id: str, depends_on: List[str]) -> str:

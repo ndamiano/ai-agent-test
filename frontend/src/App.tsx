@@ -22,22 +22,6 @@ function App() {
       console.error('Failed to create task:', error);
     }
   };
-
-  // Fetch task detail when selectedTaskId changes
-  useEffect(() => {
-    if (selectedTaskId) {
-      const fetchTaskDetail = async () => {
-        try {
-          await api.getTask(selectedTaskId);
-        } catch (error) {
-          console.error('Failed to fetch task detail:', error);
-        }
-      };
-      fetchTaskDetail();
-    }
-  }, [selectedTaskId]);
-
-  // Fetch system status every 30 seconds
   useEffect(() => {
     const checkStatus = async () => {
       try {

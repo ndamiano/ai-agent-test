@@ -1,11 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, List
 
-class AgentCreateRequest(BaseModel):
-    name: str
-    type: str
-    capabilities: Optional[List[str]] = []
-
 class AgentUpdateRequest(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None

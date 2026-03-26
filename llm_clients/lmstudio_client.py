@@ -157,9 +157,12 @@ class LMStudioConnector(BaseConnector):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"  # Let model decide when to use tools
+        
+        # Use connection pooling for better performance
+        session = self._get_session()
 
         try:
-            response = requests.post(
+            response = session.post(
                 self.api_endpoint,
                 json=payload,
                 headers={"Content-Type": "application/json"},

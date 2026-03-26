@@ -192,8 +192,10 @@ class ClineConnector(BaseConnector):
 
         logger.debug(f"Cline API request to {self.api_endpoint} with model {self.model_name}")
 
+        session = self._get_session()
+
         try:
-            response = requests.post(
+            response = session.post(
                 self.api_endpoint,
                 json=payload,
                 headers={
@@ -259,8 +261,11 @@ class ClineConnector(BaseConnector):
 
         logger.debug(f"Cline API streaming request to {self.api_endpoint} with model {self.model_name}")
 
+        # Use connection pooling for better performance
+        session = self._get_session()
+
         try:
-            response = requests.post(
+            response = session.post(
                 self.api_endpoint,
                 json=payload,
                 headers={

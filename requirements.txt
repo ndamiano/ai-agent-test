@@ -6,3 +6,4 @@ uvicorn
 websockets
 pydantic
 httpx
+duckduckgo-search

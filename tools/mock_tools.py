@@ -44,27 +44,40 @@ def _web_search(
     num_results: int = 5,
 ) -> str:
     """
-    Search the web and return relevant results.
-
-    MOCK: Returns a placeholder response. Replace with real implementation.
+    Search the web using DuckDuckGo and return relevant results.
 
     Args:
         query: The search query
         num_results: Number of results to return (default: 5)
     """
-    logger.info(f"MOCK web_search called: {query}")
-    return json.dumps({
-        "success": True,
-        "query": query,
-        "results": [
-            {
-                "title": f"[MOCK] Search result for: {query}",
-                "url": "https://example.com/mock-result",
-                "snippet": "This is a mock search result. Replace with real web search implementation."
-            }
-        ],
-        "note": "This is a mock implementation. Replace with real web search."
-    })
+    logger.info(f"web_search called: {query}")
+    try:
+        from duckduckgo_search import DDGS
+
+        with DDGS() as ddgs:
+            raw_results = list(ddgs.text(keywords=query, max_results=num_results))
+
+        results = []
+        for r in raw_results:
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "snippet": r.get("body", ""),
+            })
+
+        return json.dumps({
+            "success": True,
+            "query": query,
+            "results": results,
+        })
+    except Exception as e:
+        logger.error(f"web_search failed: {e}")
+        return json.dumps({
+            "success": False,
+            "query": query,
+            "results": [],
+            "error": str(e),
+        })
 
 
 def _web_fetch(
@@ -126,7 +139,7 @@ def register_mock_tools() -> None:
     tool_manager.register_tool(
         name="web_search",
         description=(
-            "Search the web for information. "
+            "Search the web for information using DuckDuckGo. "
             "Returns a list of relevant results with titles, URLs, and snippets."
         ),
         parameters={

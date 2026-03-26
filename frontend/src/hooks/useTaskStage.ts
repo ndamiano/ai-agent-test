@@ -3,7 +3,7 @@ import { useTaskSocket } from './useTaskSocket'
 import { api } from '../api/client'
 import type { TaskDetail, Subtask, ToolUsage, AgentMessage } from '../types'
 
-interface SubtaskState {
+export interface SubtaskState {
     id: string
     agentId: string
     goal: string

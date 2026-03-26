@@ -2,16 +2,7 @@ import React from 'react'
 import AgentCard from './AgentCard'
 import MaestroCard from './MaestroCard'
 import type { ToolUsage, AgentMessage } from '../types'
-
-interface SubtaskState {
-    id: string
-    agentId: string
-    status: 'pending' | 'in_progress' | 'completed' | 'failed'
-    outputPreview: string | null
-    position: number
-    name: string | null
-    description: string | null
-}
+import type { SubtaskState } from '../hooks/useTaskStage'
 
 interface TaskLiveViewProps {
     task: { goal: string } | null

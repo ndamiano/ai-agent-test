@@ -3,16 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import AgentCard from './AgentCard'
 import { FadeSlideIn } from './FadeSlideIn'
 import type { ToolUsage, AgentMessage } from '../types'
-
-interface SubtaskState {
-    id: string
-    agentId: string
-    status: 'pending' | 'in_progress' | 'completed' | 'failed'
-    outputPreview: string | null
-    position: number
-    name: string | null
-    description: string | null
-}
+import type { SubtaskState } from '../hooks/useTaskStage'
 
 interface TaskCompletionViewProps {
     phase: 'done' | 'failed'

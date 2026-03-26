@@ -21,11 +21,8 @@ def _list_context_keys(task_id: Optional[str] = None) -> str:
     """
     List all context keys available for a task.
     """
-    if task_id is None:
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
-        if task_id is None:
-            raise ValueError("task_id must be provided or available in execution context")
+    from tools.execution_context import resolve_task_id
+    task_id = resolve_task_id(task_id)
 
     all_context = _task_store.get_all_context(task_id)
     keys = list(all_context.keys())
@@ -36,11 +33,8 @@ def _get_context(task_id: Optional[str] = None, key: str = "") -> str:
     """
     Retrieve a specific context value by key.
     """
-    if task_id is None:
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
-        if task_id is None:
-            raise ValueError("task_id must be provided or available in execution context")
+    from tools.execution_context import resolve_task_id
+    task_id = resolve_task_id(task_id)
 
     value = _task_store.get_context(task_id, key)
     if value is None:
@@ -52,11 +46,8 @@ def _list_subtasks(task_id: Optional[str] = None) -> str:
     """
     List all subtasks with status, agent, goal, and an output preview.
     """
-    if task_id is None:
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
-        if task_id is None:
-            raise ValueError("task_id must be provided or available in execution context")
+    from tools.execution_context import resolve_task_id
+    task_id = resolve_task_id(task_id)
 
     subtasks = _task_store.get_subtasks_for_task(task_id)
     summaries = []

@@ -131,3 +131,26 @@ def require_execution_context() -> Dict[str, str]:
             "Make sure this tool is called from within a task execution."
         )
     return context
+
+
+
+def resolve_task_id(task_id: Optional[str] = None) -> str:
+    """Resolve task_id from the execution context when not explicitly provided.
+
+    This encapsulates the common pattern used by tool functions that accept an
+    optional task_id parameter and fall back to the execution context.
+
+    Args:
+        task_id: An explicitly provided task_id, or None to use context.
+
+    Returns:
+        The resolved task_id (str).
+
+    Raises:
+        ValueError: If task_id is None and no context is available.
+    """
+    if task_id is None:
+        task_id = get_task_id()
+        if task_id is None:
+            raise ValueError("task_id must be provided or available in execution context")
+    return task_id

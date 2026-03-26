@@ -8,7 +8,8 @@ from tools.execution_context import (
     get_execution_context,
     has_execution_context,
     require_task_id,
-    require_execution_context
+    require_execution_context,
+    resolve_task_id
 )
 from tools.tool_manager import ToolManager
 
@@ -259,3 +260,20 @@ class TestAutoInjection:
         with execution_context(task_id="t1"):
             result = self.tm.useTool("test_validation", message="hello")
             assert result == "t1: hello"
+
+
+class TestResolveTaskId:
+    def test_explicit_task_id_returned_as_is(self):
+        assert resolve_task_id("explicit-123") == "explicit-123"
+
+    def test_falls_back_to_context(self):
+        with execution_context(task_id="ctx-456"):
+            assert resolve_task_id(None) == "ctx-456"
+
+    def test_raises_when_no_task_id_and_no_context(self):
+        with pytest.raises(ValueError, match="task_id must be provided"):
+            resolve_task_id(None)
+
+    def test_explicit_value_ignores_context(self):
+        with execution_context(task_id="ctx-789"):
+            assert resolve_task_id("explicit-abc") == "explicit-abc"

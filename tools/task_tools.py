@@ -212,11 +212,8 @@ def _get_task_status(task_id: Optional[str] = None, subtask_id: Optional[str] = 
     Otherwise returns the parent task status plus a summary of all subtasks.
     """
     # Use execution context if task_id not provided
-    if task_id is None:
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
-        if task_id is None:
-            raise ValueError("task_id must be provided or available in execution context")
+    from tools.execution_context import resolve_task_id
+    task_id = resolve_task_id(task_id)
 
     if subtask_id:
         subtask = _task_store.get_subtask(subtask_id)

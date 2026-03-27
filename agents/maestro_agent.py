@@ -439,6 +439,7 @@ class MaestroAgent:
                 "type": "subtask_completed",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
+                "agent_id": agent_id,
                 "timestamp": get_utc_timestamp(),
             })
 

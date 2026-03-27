@@ -74,9 +74,9 @@ export interface AgentMessage {
 export type WebSocketMessage =
     | { type: 'task_created'; task_id: string; goal: string; timestamp: string }
     | { type: 'task_status'; task_id: string; task: Task }
-    | { type: 'subtask_started'; task_id: string; subtask_id: string; message: string; timestamp: string }
-    | { type: 'subtask_completed'; task_id: string; subtask_id: string; message: string; timestamp: string }
-    | { type: 'subtask_failed'; task_id: string; subtask_id: string; message: string; timestamp: string }
+    | { type: 'subtask_started'; task_id: string; subtask_id: string; agent_id: string; timestamp: string }
+    | { type: 'subtask_completed'; task_id: string; subtask_id: string; agent_id: string; timestamp: string }
+    | { type: 'subtask_failed'; task_id: string; subtask_id: string; error: string; timestamp: string }
     | { type: 'task_completed'; task_id: string }
     | { type: 'task_failed'; task_id: string; error: string }
     | { type: 'agent_message'; task_id: string; agent_id: string; phase: MaestroPhase; message: string; timestamp: string; subtask_id?: string }

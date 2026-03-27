@@ -2,14 +2,14 @@ import React from 'react'
 import AgentCard from './AgentCard'
 import MaestroCard from './MaestroCard'
 import BounceDots from './BounceDots'
-import type { ToolUsage, AgentMessage } from '../types'
+import type { ToolUsage, AgentMessage, MaestroPhase } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
 
 interface TaskLiveViewProps {
     task: { goal: string } | null
     isPlanning: boolean
     subtasks: SubtaskState[]
-    maestroMessage: { phase: string; message: string; timestamp: string } | null
+    maestroMessage: { phase: MaestroPhase; message: string; timestamp: string } | null
     maestroExpanded: boolean
     expandedSubtasks: Set<string>
     toolUsageBySubtask: Map<string, ToolUsage[]>
@@ -48,7 +48,7 @@ const TaskLiveView: React.FC<TaskLiveViewProps> = ({
             {maestroMessage && (
                 <div className="mb-4">
                     <MaestroCard
-                        phase={maestroMessage.phase as any}
+                        phase={maestroMessage.phase}
                         message={maestroMessage.message}
                         timestamp={maestroMessage.timestamp}
                         isExpanded={maestroExpanded}
@@ -84,3 +84,4 @@ const TaskLiveView: React.FC<TaskLiveViewProps> = ({
 }
 
 export default TaskLiveView
+TaskLiveView

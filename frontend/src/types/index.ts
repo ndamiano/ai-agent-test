@@ -1,3 +1,5 @@
+export type MaestroPhase = 'planning' | 'evaluation' | 'error_recovery'
+
 export interface Subtask {
     id: string
     agent_id: string
@@ -64,7 +66,7 @@ export interface ToolUsage {
 
 export interface AgentMessage {
     agent_id: string
-    phase: string
+    phase: MaestroPhase
     message: string
     timestamp: string
 }
@@ -77,7 +79,7 @@ export type WebSocketMessage =
     | { type: 'subtask_failed'; task_id: string; subtask_id: string; message: string; timestamp: string }
     | { type: 'task_completed'; task_id: string }
     | { type: 'task_failed'; task_id: string; error: string }
-    | { type: 'agent_message'; task_id: string; agent_id: string; phase: string; message: string; timestamp: string; subtask_id?: string }
+    | { type: 'agent_message'; task_id: string; agent_id: string; phase: MaestroPhase; message: string; timestamp: string; subtask_id?: string }
     | { type: 'tool_usage'; task_id: string; subtask_id: string; tool_name: string; arguments: Record<string, any>; status: 'success' | 'failed'; timestamp: string }
 
 export interface LMStudioSettings {
@@ -96,6 +98,9 @@ export interface ClineSettings {
 
 export interface Settings {
     connector_type: string
+    lmstudio?: LMStudioSettings
+    cline?: ClineSettings
+} string
     lmstudio?: LMStudioSettings
     cline?: ClineSettings
 }

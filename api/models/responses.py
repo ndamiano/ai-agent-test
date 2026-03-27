@@ -28,6 +28,7 @@ class TaskResponse(BaseModel):
     status: str
     execution_mode: str
     created_at: str
+    created_at_relative: str
     updated_at: str
     subtasks: List[SubtaskResponse] = []
 

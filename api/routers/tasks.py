@@ -7,10 +7,19 @@ from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskRespon
 from agents.task_runner import task_runner
 from database.task_store import task_store
 from api.websocket.manager import manager
+from config.time_utils import format_relative_time
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def _task_to_response(task: dict) -> TaskResponse:
+    """Convert a task dict to a TaskResponse with relative time."""
+    return TaskResponse(
+        **task,
+        created_at_relative=format_relative_time(task["created_at"])
+    )
+
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_task(request: CreateTaskRequest):
@@ -25,7 +34,7 @@ async def create_task(request: CreateTaskRequest):
         broadcast_fn=lambda event: manager.broadcast_sync(event['task_id'], event),
     )
     task = await asyncio.to_thread(task_store.get_task, task_id)
-    return TaskResponse(**task)
+    return _task_to_response(task)
 
 @router.get("/", response_model=List[TaskResponse])
 async def get_tasks(
@@ -38,7 +47,7 @@ async def get_tasks(
     Supports pagination via offset and limit query parameters.
     """
     tasks = await asyncio.to_thread(task_store.list_tasks, status, offset, limit)
-    return [TaskResponse(**task) for task in tasks]
+    return [_task_to_response(task) for task in tasks]
 
 @router.get("/{task_id}", response_model=TaskDetailResponse)
 async def get_task(task_id: str):
@@ -58,6 +67,7 @@ async def get_task(task_id: str):
             status=task["status"],
             execution_mode=task["execution_mode"],
             created_at=task["created_at"],
+            created_at_relative=format_relative_time(task["created_at"]),
             updated_at=task["updated_at"],
             subtasks=[SubtaskResponse(**subtask) for subtask in subtasks],
             events=[EventResponse(**event) for event in events],
@@ -115,7 +125,7 @@ async def retry_task(task_id: str):
     )
 
     refreshed = await asyncio.to_thread(task_store.get_task, task_id)
-    return TaskResponse(**refreshed)
+    return _task_to_response(refreshed)
 
 @router.websocket("/{task_id}/ws")
 async def websocket_endpoint(websocket: WebSocket, task_id: str):

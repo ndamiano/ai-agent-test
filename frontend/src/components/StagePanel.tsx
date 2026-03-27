@@ -14,6 +14,7 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
         artifact,
         phase,
         isPlanning,
+        loading,
         expandedSubtasks,
         toolUsageBySubtask,
         agentMessagesBySubtask,
@@ -29,6 +30,18 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
         return (
             <div className="h-full flex items-center justify-center">
                 <p className="text-sm text-gray-600">Create a task to get started</p>
+            </div>
+        )
+    }
+
+    if (loading) {
+        return (
+            <div className="h-full flex flex-col gap-4 p-4">
+                <div className="h-12 rounded-lg bg-white/5 animate-pulse" />
+                <div className="h-10 rounded-lg bg-white/5 animate-pulse" />
+                <div className="flex-1 rounded-lg bg-white/5 animate-pulse" />
+                <div className="flex-1 rounded-lg bg-white/5 animate-pulse" />
+                <div className="flex-1 rounded-lg bg-white/5 animate-pulse" />
             </div>
         )
     }

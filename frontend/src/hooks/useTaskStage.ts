@@ -66,6 +66,7 @@ export interface TaskStageState {
     artifact: string | null
     phase: Phase
     isPlanning: boolean
+    loading: boolean
     expandedSubtasks: Set<string>
     toolUsageBySubtask: Map<string, ToolUsage[]>
     agentMessagesBySubtask: Map<string, AgentMessage[]>
@@ -83,6 +84,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     const [baseSubtasks, setBaseSubtasks] = useState<SubtaskState[]>([])
     const [artifact, setArtifact] = useState<string | null>(null)
     const [phase, setPhase] = useState<Phase>('idle')
+    const [loading, setLoading] = useState(false)
     const [agentsExpanded, setAgentsExpanded] = useState(false)
     const prevTaskId = useRef<string | null>(null)
 
@@ -122,6 +124,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             setAgentsExpanded(false)
             setMaestroMessage(null)
             setMaestroExpanded(false)
+            setLoading(false)
             prevTaskId.current = null
             return
         }
@@ -133,6 +136,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             prevTaskId.current = taskId
         }
 
+        setLoading(true)
         api.getTask(taskId)
             .then(detail => {
                 setTask(detail)
@@ -154,6 +158,9 @@ export function useTaskStage(taskId: string | null): TaskStageState {
                 setTask(null)
                 setBaseSubtasks([])
                 setPhase('idle')
+            })
+            .finally(() => {
+                setLoading(false)
             })
     }, [taskId, loadArtifact])
 
@@ -271,6 +278,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
         artifact,
         phase,
         isPlanning,
+        loading,
         expandedSubtasks,
         toolUsageBySubtask,
         agentMessagesBySubtask,

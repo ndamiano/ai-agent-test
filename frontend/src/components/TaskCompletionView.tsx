@@ -32,8 +32,7 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
 }) => {
     return (
         <div
-            className={`transition-all duration-500 ease-out opacity-100 translate-y-0`}
-            aria-hidden={false}
+            className="transition-all duration-500 ease-out opacity-100 translate-y-0"
         >
             {phase === 'done' && artifact ? (
                 <div className="border-b border-white/10">

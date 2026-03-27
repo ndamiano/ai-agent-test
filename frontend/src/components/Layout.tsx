@@ -2,6 +2,7 @@ import React from 'react'
 import TaskListPanel from './TaskListPanel'
 import StagePanel from './StagePanel'
 import CommandBar from './CommandBar'
+import type { Task } from '../types'
 
 interface LayoutProps {
     selectedTaskId: string | null
@@ -9,7 +10,10 @@ interface LayoutProps {
     systemStatus: { connected: boolean; message: string }
     onTaskCreate: (goal: string) => void
     onSettingsClick: () => void
-    taskListRefreshKey?: number
+    tasks: Task[]
+    tasksLoading: boolean
+    tasksError: string | null
+    onRefreshTasks: () => Promise<void>
 }
 
 const Layout: React.FC<LayoutProps> = ({
@@ -18,7 +22,10 @@ const Layout: React.FC<LayoutProps> = ({
     systemStatus,
     onTaskCreate,
     onSettingsClick,
-    taskListRefreshKey,
+    tasks,
+    tasksLoading,
+    tasksError,
+    onRefreshTasks,
 }) => {
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
@@ -57,7 +64,10 @@ const Layout: React.FC<LayoutProps> = ({
                     <TaskListPanel
                         selectedTaskId={selectedTaskId}
                         onSelectTask={setSelectedTaskId}
-                        refreshKey={taskListRefreshKey}
+                        tasks={tasks}
+                        loading={tasksLoading}
+                        error={tasksError}
+                        onRefresh={onRefreshTasks}
                     />
                 </div>
 

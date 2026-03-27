@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout';
 import SettingsModal from './components/SettingsModal';
 import { api } from './api/client';
 import ErrorBoundary from './components/ErrorBoundary';
+import type { Task } from './types';
 
 function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -11,13 +12,32 @@ function App() {
     connected: false,
     message: 'LMStudio disconnected',
   });
-  const [taskListRefreshKey, setTaskListRefreshKey] = useState(0);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+
+  const fetchTasks = useCallback(async () => {
+    setTasksLoading(true);
+    setTasksError(null);
+    try {
+      const fetchedTasks = await api.listTasks();
+      setTasks(fetchedTasks.filter(t => t.status !== 'archived'));
+    } catch (e) {
+      setTasksError(e instanceof Error ? e.message : 'Failed to fetch tasks');
+    } finally {
+      setTasksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
 
   const handleTaskCreate = async (goal: string) => {
     try {
       const newTask = await api.createTask(goal);
       setSelectedTaskId(newTask.id);
-      setTaskListRefreshKey(prev => prev + 1);
+      setTasks(prev => [newTask, ...prev]);
     } catch (error) {
       console.error('Failed to create task:', error);
     }
@@ -51,7 +71,10 @@ function App() {
           systemStatus={systemStatus}
           onTaskCreate={handleTaskCreate}
           onSettingsClick={() => setShowSettings(true)}
-          taskListRefreshKey={taskListRefreshKey}
+          tasks={tasks}
+          tasksLoading={tasksLoading}
+          tasksError={tasksError}
+          onRefreshTasks={fetchTasks}
         />
         {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       </ErrorBoundary>

@@ -1,22 +1,23 @@
 import React from 'react'
 import { api } from '../api/client'
 import type { Task } from '../types'
-import { useTasks } from '../hooks/useTasks'
 import TaskItem from './TaskItem'
 
 interface TaskListPanelProps {
     selectedTaskId: string | null
     onSelectTask: (id: string | null) => void
-    refreshKey?: number
+    tasks: Task[]
+    loading: boolean
+    error: string | null
+    onRefresh: () => Promise<void>
 }
 
-const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectTask, refreshKey }) => {
-    const { tasks, loading, error, refresh } = useTasks(refreshKey)
+const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectTask, tasks, loading, error, onRefresh }) => {
 
     const handleArchiveTask = async (taskId: string) => {
         try {
             await api.deleteTask(taskId)
-            await refresh()
+            await onRefresh()
             if (selectedTaskId === taskId) onSelectTask(null)
         } catch (e) {
             console.error('Failed to archive task:', e)

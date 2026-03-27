@@ -1,6 +1,7 @@
 import React from 'react'
 import AgentCard from './AgentCard'
 import MaestroCard from './MaestroCard'
+import BounceDots from './BounceDots'
 import type { ToolUsage, AgentMessage } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
 
@@ -39,11 +40,7 @@ const TaskLiveView: React.FC<TaskLiveViewProps> = ({
 
             {isPlanning && (
                 <div className="flex items-center gap-3 py-2">
-                    <div className="flex gap-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
+                    <BounceDots />
                     <span className="text-sm text-gray-500">Planning...</span>
                 </div>
             )}

@@ -1,70 +1,54 @@
-"""Connector selector for choosing appropriate AI connectors"""
+"""Factory for creating OpenAI-compatible connectors"""
 
-from llm_clients.lmstudio_client import LMStudioConnector
-from llm_clients.cline_client import ClineConnector
-from typing import Optional, Union
+from typing import Optional, Dict, Any
+from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
+from config.settings_manager import settings_manager
 
-class ConnectorSelector:
-    def __init__(self, connector_type: Optional[str] = None):
-        """
-        Initialize connector selector
-
-        Args:
-            connector_type: Override connector type ('lmstudio' or 'cline').
-                          If None, loads from settings.
-        """
-        self._connector_type = connector_type
-        self._connector: Optional[Union[LMStudioConnector, ClineConnector]] = None
-
-    def getConnector(self, _caller: str = "unknown", _task_type: str = "general", _generation_type: str = "text"):
-        """
-        Get appropriate connector for the task
-
-        Args:
-            _caller: Which component is requesting the connector (unused for now)
-            _task_type: Type of task (e.g. "character_creation", "world_building") (unused for now)
-            _generation_type: Type of generation (e.g. "text", "image") (unused for now)
-
-        Returns:
-            AI connector instance
-        """
-        if self._connector is None:
-            # Determine connector type
-            if self._connector_type is None:
-                from config.settings_manager import settings_manager
-                settings = settings_manager.get_settings()
-                connector_type = settings.get("connector_type", "lmstudio")
-            else:
-                connector_type = self._connector_type
-
-            # Create appropriate connector
-            if connector_type == "cline":
-                self._connector = ClineConnector()
-            else:
-                self._connector = LMStudioConnector()
-
-        return self._connector
-
-def get_connector(caller: str = "unknown", task_type: str = "general", generation_type: str = "text", connector_type: Optional[str] = None):
+def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[str, Any]] = None, *args, **kwargs) -> OpenAICompatibleConnector:
     """
-    Convenience function to get a connector
-
-    Usage:
-        from llm_clients.connector_selector import get_connector
-        ai = get_connector("world_generator", "world_building", "text")
-
-        # Or with explicit connector type:
-        ai = get_connector(connector_type="cline")
+    Factory function to get an OpenAI-compatible connector instance.
 
     Args:
-        caller: Component requesting the connector
-        task_type: Type of task
-        generation_type: Type of generation
-        connector_type: Override connector type ('lmstudio' or 'cline')
+        connector_type: The type of connector to use ('lmstudio' or 'cline'). 
+                       If None, reads from global settings.
+        settings: Optional settings dictionary to use instead of loading from manager.
+                 Useful for testing or overriding configuration.
+        *args, **kwargs: Ignored. Kept for backward compatibility with old ConnectorSelector usage.
 
-    Note: This creates a new connector instance each time to avoid shared state.
-    For better performance, components should create and reuse their own ConnectorSelector instance.
+    Returns:
+        An instance of OpenAICompatibleConnector configured for the requested provider.
     """
-    # Create a new selector instance each time to avoid shared mutable state
-    selector = ConnectorSelector(connector_type=connector_type)
-    return selector.getConnector(caller, task_type, generation_type)
+    global_settings = settings_manager.get_settings()
+    
+    # Handle old call signature: get_connector("type", "caller", "task_type", ...)
+    # where extra args were strings, not a settings dict
+    if not isinstance(settings, dict):
+        settings = None
+    
+    # If connector_type is not a recognized provider, use global setting
+    recognized_types = ("lmstudio", "cline")
+    if connector_type not in recognized_types:
+        connector_type = global_settings.get("connector_type", "lmstudio")
+        
+    if settings is None:
+        settings = settings_manager.get_connector_settings(connector_type)
+        
+    # Extract configuration
+    # api_key is optional (LMStudio doesn't have it, Cline does)
+    api_key = settings.get("api_key")
+    
+    base_url = settings.get("base_url")
+    if not base_url:
+        # Fallback for legacy configs or missing fields
+        if connector_type == "cline":
+            base_url = "https://api.cline.bot/api"
+        else:
+            base_url = "http://localhost:1234"
+
+    return OpenAICompatibleConnector(
+        base_url=base_url,
+        api_key=api_key,
+        model=settings.get("model", "default"),
+        temperature=settings.get("temperature", 0.7),
+        max_tokens=settings.get("max_tokens", 50000)
+    )

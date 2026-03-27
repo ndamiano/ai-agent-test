@@ -121,25 +121,23 @@ class TestGetConnectorClient(unittest.TestCase):
 
     def test_creates_lmstudio_by_default(self):
         from api.app import get_connector_client
-        from llm_clients.lmstudio_client import LMStudioConnector
 
-        with patch("api.app.settings_manager") as mock_sm:
-            mock_sm.get_settings.return_value = {"connector_type": "lmstudio"}
-            with patch.object(LMStudioConnector, "__init__", lambda self, **kw: None):
-                client = get_connector_client()
+        mock_connector = MagicMock()
+        with patch("api.app.get_connector", return_value=mock_connector) as mock_get:
+            client = get_connector_client()
+            mock_get.assert_called_once_with()
 
-        self.assertIsNotNone(client)
+        self.assertIs(client, mock_connector)
 
     def test_creates_cline_when_configured(self):
         from api.app import get_connector_client
-        from llm_clients.cline_client import ClineConnector
 
-        with patch("api.app.settings_manager") as mock_sm:
-            mock_sm.get_settings.return_value = {"connector_type": "cline"}
-            with patch.object(ClineConnector, "__init__", lambda self, **kw: None):
-                client = get_connector_client()
+        mock_connector = MagicMock()
+        with patch("api.app.get_connector", return_value=mock_connector) as mock_get:
+            client = get_connector_client()
+            mock_get.assert_called_once_with()
 
-        self.assertIsNotNone(client)
+        self.assertIs(client, mock_connector)
 
     def test_returns_cached_instance(self):
         import api.app
@@ -162,32 +160,32 @@ class TestReinitializeConnectors(unittest.TestCase):
     def test_reinitialize_creates_new_connector(self):
         import api.app
         from api.app import get_connector_client, reinitialize_connectors
-        from llm_clients.lmstudio_client import LMStudioConnector
 
-        # First call creates a connector
-        with patch.object(LMStudioConnector, "__init__", lambda self, **kw: None):
+        mock_connector_1 = MagicMock()
+        mock_connector_2 = MagicMock()
+
+        with patch("api.app.get_connector", return_value=mock_connector_1):
             first = get_connector_client()
 
-        # Reinitialize
-        with patch.object(LMStudioConnector, "__init__", lambda self, **kw: None):
-            reinitialize_connectors()
+        # Reinitialize clears the cache
+        reinitialize_connectors()
 
-        # After reinitialize, get_connector_client should return a different object
-        second = get_connector_client()
+        # Next call should create a new connector
+        with patch("api.app.get_connector", return_value=mock_connector_2):
+            second = get_connector_client()
+
         self.assertIsNot(first, second)
 
     def test_reinitialize_switches_to_cline(self):
         import api.app
         from api.app import get_connector_client, reinitialize_connectors
-        from llm_clients.cline_client import ClineConnector
 
-        with patch("api.app.settings_manager") as mock_sm:
-            mock_sm.get_settings.return_value = {"connector_type": "cline"}
-            with patch.object(ClineConnector, "__init__", lambda self, **kw: None):
-                reinitialize_connectors()
-                client = get_connector_client()
+        mock_connector = MagicMock()
+        with patch("api.app.get_connector", return_value=mock_connector):
+            reinitialize_connectors()
+            client = get_connector_client()
 
-        self.assertIsInstance(client, ClineConnector)
+        self.assertIs(client, mock_connector)
 
 
 if __name__ == "__main__":

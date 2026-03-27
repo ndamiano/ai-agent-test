@@ -1,26 +1,21 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 import logging
 from database.schema import init_db
-from llm_clients.lmstudio_client import LMStudioConnector
-from llm_clients.cline_client import ClineConnector
+from llm_clients.connector_selector import get_connector
+from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
 from config.settings_manager import settings_manager
 
 # Lazy-initialized connector client
-_connector_client: Optional[Union[LMStudioConnector, ClineConnector]] = None
+_connector_client: Optional[OpenAICompatibleConnector] = None
 
 
-def get_connector_client() -> Union[LMStudioConnector, ClineConnector]:
+def get_connector_client() -> OpenAICompatibleConnector:
     """Lazily create (or return cached) connector client."""
     global _connector_client
     if _connector_client is None:
-        settings = settings_manager.get_settings()
-        connector_type = settings.get("connector_type", "lmstudio")
-        if connector_type == "cline":
-            _connector_client = ClineConnector(settings=settings.get("cline"))
-        else:
-            _connector_client = LMStudioConnector(settings=settings.get("lmstudio"))
+        _connector_client = get_connector()
     return _connector_client
 
 
@@ -94,14 +89,7 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""
     global _connector_client
-    settings = settings_manager.get_settings()
-    connector_type = settings.get("connector_type", "lmstudio")
-
-    if connector_type == "cline":
-        _connector_client = ClineConnector(settings=settings.get("cline"))
-        logging.info("Connectors reinitialized with Cline")
-    else:
-        _connector_client = LMStudioConnector(settings=settings.get("lmstudio"))
-        logging.info("Connectors reinitialized with LMStudio")
+    _connector_client = get_connector()
+    logging.info("Connectors reinitialized")
 
 __all__ = ["app", "get_connector_client", "reinitialize_connectors"]

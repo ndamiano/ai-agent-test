@@ -8,6 +8,7 @@
   },
   "cline": {
     "api_key": "",
+    "base_url": "https://api.cline.bot/api",
     "model": "claude-sonnet-4-5",
     "temperature": 0.7,
     "max_tokens": 50000

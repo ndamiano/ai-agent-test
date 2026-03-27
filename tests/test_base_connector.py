@@ -1,25 +1,25 @@
-"""Tests verifying shared base connector methods work identically on both subclasses"""
+"""Tests verifying shared base connector methods work identically on configured instances"""
 
 import unittest
 from llm_clients.base_connector import BaseConnector
-from llm_clients.lmstudio_client import LMStudioConnector
-from llm_clients.cline_client import ClineConnector
+from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
 import requests
 
 
 class TestBaseConnectorShared(unittest.TestCase):
-    """Verify contextualize, _format_dict, _get_session produce identical behavior on both subclasses."""
+    """Verify contextualize, _format_dict, _get_session produce identical behavior on both configurations."""
 
     @classmethod
     def setUpClass(cls):
-        cls.lmstudio = LMStudioConnector(settings={
-            "base_url": "http://localhost:1234",
-            "model": "test-model",
-        })
-        cls.cline = ClineConnector(settings={
-            "api_key": "test-key",
-            "model": "test-model",
-        })
+        cls.lmstudio = OpenAICompatibleConnector(
+            base_url="http://localhost:1234",
+            model="test-model",
+        )
+        cls.cline = OpenAICompatibleConnector(
+            base_url="https://api.cline.bot/api",
+            api_key="test-key",
+            model="test-model",
+        )
         cls.connectors = {
             "lmstudio": cls.lmstudio,
             "cline": cls.cline,
@@ -108,8 +108,8 @@ class TestBaseConnectorShared(unittest.TestCase):
     # --- connector_name --------------------------------------------------------
 
     def test_connector_name_set(self):
-        self.assertEqual(self.lmstudio.connector_name, "lmstudio")
-        self.assertEqual(self.cline.connector_name, "cline")
+        self.assertEqual(self.lmstudio.connector_name, "openai_compatible")
+        self.assertEqual(self.cline.connector_name, "openai_compatible")
 
     def test_inheritance(self):
         for name, conn in self.connectors.items():

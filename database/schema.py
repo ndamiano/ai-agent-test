@@ -73,13 +73,6 @@ def init_db(db_path: Optional[str] = None) -> None:
                 FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
             )
         """)
-
-        # Migration: add missing columns to existing subtasks table
-        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(subtasks)").fetchall()}
-        if "name" not in existing_cols:
-            conn.execute("ALTER TABLE subtasks ADD COLUMN name TEXT")
-        if "description" not in existing_cols:
-            conn.execute("ALTER TABLE subtasks ADD COLUMN description TEXT")
         
         # Create context_store table
         conn.execute("""

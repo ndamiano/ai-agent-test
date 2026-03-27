@@ -100,7 +100,4 @@ export interface Settings {
     connector_type: string
     lmstudio?: LMStudioSettings
     cline?: ClineSettings
-} string
-    lmstudio?: LMStudioSettings
-    cline?: ClineSettings
 }

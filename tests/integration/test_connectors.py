@@ -1,12 +1,12 @@
 # tests/test_connectors.py
 import unittest
 
-from llm_clients.lmstudio_client import LMStudioConnector
+from llm_clients.connector_selector import get_connector
 
 class TestConnectors(unittest.TestCase):
     
     def setUp(self):
-        self.connector = LMStudioConnector()
+        self.connector = get_connector()
     
     def test_function_calling(self):
         """Test that function calling works with LMStudio"""

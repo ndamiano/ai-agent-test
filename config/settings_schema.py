@@ -13,6 +13,7 @@ class LLMStudioSettings(BaseModel):
 
 class ClineSettings(BaseModel):
     api_key: str
+    base_url: str = Field("https://api.cline.bot/api")
     model: str = Field(..., min_length=1)
     temperature: float = Field(0.7, ge=0, le=2)
     max_tokens: int = Field(50000, ge=1)

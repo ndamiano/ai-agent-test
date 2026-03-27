@@ -54,6 +54,7 @@ class SettingsManager:
             },
             "cline": {
                 "api_key": os.getenv("CLINE_API_KEY", ""),
+                "base_url": os.getenv("CLINE_BASE_URL", "https://api.cline.bot/api"),
                 "model": os.getenv("CLINE_MODEL", "claude-sonnet-4-5"),
                 "temperature": 0.7,
                 "max_tokens": 50000

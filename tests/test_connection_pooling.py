@@ -3,24 +3,21 @@
 
 import unittest
 from unittest.mock import patch, MagicMock
+from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
 
 
 class TestClineConnectionPooling(unittest.TestCase):
-    """Test that ClineConnector uses _get_session() consistently."""
+    """Test that OpenAICompatibleConnector (Cline config) uses _get_session() consistently."""
 
     def _make_connector(self):
-        from llm_clients.cline_client import ClineConnector
-        connector = ClineConnector.__new__(ClineConnector)
-        connector.api_key = "test-key"
-        connector.model_name = "test-model"
-        connector.temperature = 0.7
-        connector.max_tokens = 100
-        connector.base_url = "https://api.cline.bot"
-        connector.api_endpoint = f"{connector.base_url}/api/v1/chat/completions"
+        connector = OpenAICompatibleConnector(
+            base_url="https://api.cline.bot/api",
+            api_key="test-key",
+            model="test-model",
+            temperature=0.7,
+            max_tokens=100
+        )
         connector._connected = True
-        connector._session = None
-        from threading import Lock
-        connector._session_lock = Lock()
         return connector
 
     def test_generate_uses_session(self):
@@ -71,18 +68,16 @@ class TestClineConnectionPooling(unittest.TestCase):
 
 
 class TestLMStudioConnectionPooling(unittest.TestCase):
-    """Test that LMStudioConnector uses _get_session() consistently."""
+    """Test that OpenAICompatibleConnector (LMStudio config) uses _get_session() consistently."""
 
     def _make_connector(self):
-        from llm_clients.lmstudio_client import LMStudioConnector
-        connector = LMStudioConnector.__new__(LMStudioConnector)
-        connector.api_endpoint = "http://localhost:1234/v1/chat/completions"
-        connector.model_name = "test-model"
-        connector.temperature = 0.7
-        connector.max_tokens = 100
-        connector._session = None
-        from threading import Lock
-        connector._session_lock = Lock()
+        connector = OpenAICompatibleConnector(
+            base_url="http://localhost:1234",
+            model="test-model",
+            temperature=0.7,
+            max_tokens=100
+        )
+        connector._connected = True
         return connector
 
     def test_generate_uses_session(self):

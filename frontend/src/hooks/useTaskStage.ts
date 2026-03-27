@@ -3,27 +3,41 @@ import { useTaskSocket } from './useTaskSocket'
 import { api } from '../api/client'
 import type { TaskDetail, Subtask, ToolUsage, AgentMessage } from '../types'
 
+export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
+
 export interface SubtaskState {
     id: string
     agentId: string
     goal: string
     name: string | null
     description: string | null
-    status: 'pending' | 'in_progress' | 'completed' | 'failed'
+    status: SubtaskStatus
     outputPreview: string | null
     position: number
 }
 
-const toSubtaskState = (s: Subtask): SubtaskState => ({
-    id: s.id,
-    agentId: s.agent_id,
-    goal: s.goal,
-    name: s.name,
-    description: s.description,
-    status: s.status as SubtaskState['status'],
-    outputPreview: s.output_preview,
-    position: s.position,
-})
+export const VALID_SUBTASK_STATUSES: readonly SubtaskStatus[] = [
+    'pending',
+    'in_progress',
+    'completed',
+    'failed',
+] as const
+
+export function toSubtaskState(s: Subtask): SubtaskState {
+    const status = (VALID_SUBTASK_STATUSES as readonly string[]).includes(s.status)
+        ? s.status
+        : (console.warn(`Unrecognized subtask status: "${s.status}", defaulting to "pending"`), 'pending')
+    return {
+        id: s.id,
+        agentId: s.agent_id,
+        goal: s.goal,
+        name: s.name,
+        description: s.description,
+        status: status as SubtaskStatus,
+        outputPreview: s.output_preview,
+        position: s.position,
+    }
+}
 
 type WSMessage = ReturnType<typeof useTaskSocket>['messages'][number]
 

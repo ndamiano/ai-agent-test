@@ -2,11 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import type { Settings, LMStudioSettings, ClineSettings } from '../types'
 
-interface SettingsPageProps {
-    onClose: () => void
-}
-
-export default function SettingsPage({ onClose }: SettingsPageProps) {
+export default function SettingsPage() {
     const [settings, setSettings] = useState<Settings | null>(null)
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -111,20 +107,7 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
     }
 
     return (
-        <div className="p-6 space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-semibold text-white">Settings</h2>
-                <button
-                    onClick={onClose}
-                    className="text-gray-400 hover:text-white transition-colors"
-                >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
-            </div>
-
+        <div className="p-6 pt-2 space-y-6">
             {/* Error Message */}
             {error && (
                 <div className="bg-red-900/20 border border-red-500/50 text-red-400 px-4 py-3 rounded">

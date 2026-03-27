@@ -87,6 +87,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     const [loading, setLoading] = useState(false)
     const [agentsExpanded, setAgentsExpanded] = useState(false)
     const prevTaskId = useRef<string | null>(null)
+    const processedCountRef = useRef(0)
 
     const [expandedSubtasks, setExpandedSubtasks] = useState<Set<string>>(new Set())
     const [toolUsageBySubtask, setToolUsageBySubtask] = useState<Map<string, ToolUsage[]>>(new Map())
@@ -126,6 +127,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             setMaestroExpanded(false)
             setLoading(false)
             prevTaskId.current = null
+            processedCountRef.current = 0
             return
         }
 
@@ -134,6 +136,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             setArtifact(null)
             setAgentsExpanded(false)
             prevTaskId.current = taskId
+            processedCountRef.current = 0
         }
 
         setLoading(true)
@@ -164,8 +167,6 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             })
     }, [taskId, loadArtifact])
 
-    // Track processed message count to avoid re-processing old messages
-    const processedCountRef = useRef(0)
 
     // React to WS messages (only process NEW messages)
     useEffect(() => {

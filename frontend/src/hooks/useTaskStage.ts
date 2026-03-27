@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useTaskSocket } from './useTaskSocket'
 import { api } from '../api/client'
 import type { TaskDetail, Subtask, ToolUsage, AgentMessage } from '../types'
@@ -41,7 +41,7 @@ export function toSubtaskState(s: Subtask): SubtaskState {
 
 type WSMessage = ReturnType<typeof useTaskSocket>['messages'][number]
 
-const mergeSubtasks = (base: SubtaskState[], messages: WSMessage[]): SubtaskState[] => {
+export const mergeSubtasks = (base: SubtaskState[], messages: WSMessage[]): SubtaskState[] => {
     if (base.length === 0) return base
     return base.map(s => {
         let result = s
@@ -100,7 +100,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
         timestamp: string
     } | null>(null)
 
-    const subtasks = mergeSubtasks(baseSubtasks, messages)
+    const subtasks = useMemo(() => mergeSubtasks(baseSubtasks, messages), [baseSubtasks, messages])
     const isPlanning = task?.status === 'planning' && subtasks.length === 0
 
     const loadArtifact = useCallback(async (tid: string, contextKeys: string[]) => {

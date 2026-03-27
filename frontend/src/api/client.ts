@@ -17,6 +17,8 @@ export const api = {
         base.post<AskResponse>(`/tasks/${task_id}/ask`, { question }).then(r => r.data),
     deleteTask: (id: string) =>
         base.delete(`/tasks/${id}`),
+    retryTask: (id: string) =>
+        base.post<Task>(`/tasks/${id}/retry`).then(r => r.data),
 
     // System
     getStatus: () =>

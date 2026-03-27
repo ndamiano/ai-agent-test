@@ -67,6 +67,7 @@ export interface TaskStageState {
     phase: Phase
     isPlanning: boolean
     loading: boolean
+    retrying: boolean
     expandedSubtasks: Set<string>
     toolUsageBySubtask: Map<string, ToolUsage[]>
     agentMessagesBySubtask: Map<string, AgentMessage[]>
@@ -76,6 +77,7 @@ export interface TaskStageState {
     toggleSubtask: (id: string) => void
     toggleMaestro: () => void
     toggleAgents: () => void
+    retry: () => void
 }
 
 export function useTaskStage(taskId: string | null): TaskStageState {

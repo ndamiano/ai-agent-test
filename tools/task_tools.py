@@ -13,6 +13,7 @@ import logging
 from typing import Optional, Union, List
 
 from tools.tool_manager import tool_manager
+from database.validators import validate_dependencies
 from database.task_store import TaskStore
 from agents.agent_store import AgentStore
 
@@ -48,98 +49,30 @@ def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
 def _validate_dependencies(task_id: str, depends_on: List[str]) -> None:
     """
     Validate dependency list for a new subtask.
-    
+
     Args:
         task_id: The parent task ID
         depends_on: List of dependency subtask IDs to validate
-        
+
     Raises:
         ValueError: If dependencies are invalid
     """
-    if not depends_on:
-        return
-        
-    # Get all existing subtasks for this task
-    existing_subtasks = _task_store.get_subtasks_for_task(task_id)
-    existing_ids = {s["id"] for s in existing_subtasks}
-    
-    # Check for non-existent dependencies
-    missing_deps = [dep_id for dep_id in depends_on if dep_id not in existing_ids]
-    if missing_deps:
-        raise ValueError(
-            f"Invalid dependencies: {missing_deps}. "
-            f"These subtask IDs do not exist in task {task_id}. "
-            f"Existing subtasks: {list(existing_ids)}"
-        )
-    
-    # Check for self-dependency
-    # Note: We can't check self-dependency here because the subtask doesn't exist yet
-    # This will be checked in the task store's create_subtask method
-    
-    # Check for circular dependencies
-    if _has_circular_dependencies(task_id, depends_on):
-        raise ValueError(
-            f"Circular dependency detected in task {task_id}. "
-            f"Dependencies {depends_on} would create a cycle."
-        )
+    validate_dependencies(_task_store, task_id, depends_on)
 
 
 def _has_circular_dependencies(task_id: str, new_depends_on: List[str]) -> bool:
     """
     Check if adding a new subtask with the given dependencies would create a cycle.
-    
-    Uses depth-first search to detect cycles in the dependency graph.
-    
+
     Args:
         task_id: The parent task ID
         new_depends_on: Dependencies for the new subtask being created
-        
+
     Returns:
         True if a circular dependency would be created, False otherwise
     """
-    # Build the current dependency graph
-    subtasks = _task_store.get_subtasks_for_task(task_id)
-    graph = {}
-    
-    # Add existing dependencies to the graph
-    for subtask in subtasks:
-        task_id_key = subtask["id"]
-        depends_on = subtask.get("depends_on") or []
-        graph[task_id_key] = depends_on
-    
-    # Temporarily add the new subtask's dependencies to check for cycles
-    # We use a placeholder ID since the subtask doesn't exist yet
-    placeholder_id = "NEW_SUBTASK"
-    graph[placeholder_id] = new_depends_on
-    
-    # Check for cycles using DFS
-    visited = set()
-    rec_stack = set()
-    
-    def has_cycle_dfs(node: str) -> bool:
-        visited.add(node)
-        rec_stack.add(node)
-        
-        # Get neighbors (dependencies)
-        neighbors = graph.get(node, [])
-        
-        for neighbor in neighbors:
-            if neighbor not in graph:
-                # This dependency doesn't exist in our graph, skip it
-                # (should have been caught by _validate_dependencies)
-                continue
-                
-            if neighbor not in visited:
-                if has_cycle_dfs(neighbor):
-                    return True
-            elif neighbor in rec_stack:
-                return True
-        
-        rec_stack.remove(node)
-        return False
-    
-    # Check for cycles starting from the new subtask
-    return has_cycle_dfs(placeholder_id)
+    from database.validators import has_circular_dependencies
+    return has_circular_dependencies(_task_store, task_id, new_depends_on)
 
 
 def _spawn_task(

@@ -266,8 +266,8 @@ class TaskStore:
         Raises:
             ValueError: If dependencies are invalid
         """
-        from tools.task_tools import _validate_dependencies
-        _validate_dependencies(task_id, depends_on or [])
+        from .validators import validate_dependencies
+        validate_dependencies(self, task_id, depends_on or [])
 
     # -------------------------------------------------------------------------
     # Private helpers

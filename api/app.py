@@ -1,20 +1,28 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Union
 import logging
 from database.schema import init_db
 from llm_clients.lmstudio_client import LMStudioConnector
 from llm_clients.cline_client import ClineConnector
 from config.settings_manager import settings_manager
 
-# Initialize connector based on settings
-settings = settings_manager.get_settings()
-connector_type = settings.get("connector_type", "lmstudio")
+# Lazy-initialized connector client
+_connector_client: Optional[Union[LMStudioConnector, ClineConnector]] = None
 
-if connector_type == "cline":
-    lmstudio_client = ClineConnector(settings=settings.get("cline"))
-else:
-    lmstudio_client = LMStudioConnector(settings=settings.get("lmstudio"))
+
+def get_connector_client() -> Union[LMStudioConnector, ClineConnector]:
+    """Lazily create (or return cached) connector client."""
+    global _connector_client
+    if _connector_client is None:
+        settings = settings_manager.get_settings()
+        connector_type = settings.get("connector_type", "lmstudio")
+        if connector_type == "cline":
+            _connector_client = ClineConnector(settings=settings.get("cline"))
+        else:
+            _connector_client = LMStudioConnector(settings=settings.get("lmstudio"))
+    return _connector_client
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -56,7 +64,7 @@ async def startup_event():
         logging.info("Tools registered successfully")
 
         # Health checks
-        lmstudio_status = lmstudio_client.health_check()
+        lmstudio_status = get_connector_client().health_check()
         logging.info(f"LMStudio connectivity: {'Healthy' if lmstudio_status else 'Unhealthy'}")
 
     except Exception as e:
@@ -67,7 +75,7 @@ async def startup_event():
 async def root():
     """Root endpoint that returns health check information."""
     try:
-        lmstudio_status = lmstudio_client.health_check()
+        lmstudio_status = get_connector_client().health_check()
         return {
             "status": "healthy",
             "server": "running",
@@ -85,15 +93,15 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""
-    global lmstudio_client
+    global _connector_client
     settings = settings_manager.get_settings()
     connector_type = settings.get("connector_type", "lmstudio")
 
     if connector_type == "cline":
-        lmstudio_client = ClineConnector(settings=settings.get("cline"))
+        _connector_client = ClineConnector(settings=settings.get("cline"))
         logging.info("Connectors reinitialized with Cline")
     else:
-        lmstudio_client = LMStudioConnector(settings=settings.get("lmstudio"))
+        _connector_client = LMStudioConnector(settings=settings.get("lmstudio"))
         logging.info("Connectors reinitialized with LMStudio")
 
-__all__ = ["app", "lmstudio_client", "reinitialize_connectors"]
+__all__ = ["app", "get_connector_client", "reinitialize_connectors"]

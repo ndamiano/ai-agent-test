@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import APIRouter
 from typing import Dict, Any
-from api.app import lmstudio_client
+from api.app import get_connector_client
 from database.task_store import task_store
 from agents.agent_store import AgentStore
 
@@ -17,13 +17,14 @@ async def get_status() -> Dict[str, Any]:
     Returns:
         SystemStatus object with connection information
     """
-    lmstudio_connected = await lmstudio_client.health_check_async()
+    client = get_connector_client()
+    lmstudio_connected = await client.health_check_async()
 
     return {
         "status": "healthy",
         "lmstudio_connected": lmstudio_connected,
         "embedding_connected": False,
-        "lmstudio_url": lmstudio_client.base_url,
+        "lmstudio_url": client.base_url,
         "agent_count": len(_agent_store.list()),
         "task_count": len(await asyncio.to_thread(task_store.list_tasks)),
     }

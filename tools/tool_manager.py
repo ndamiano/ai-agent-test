@@ -117,29 +117,6 @@ class ToolManager:
 
         return validated
 
-    def list_tools(self) -> str:
-        """Get a formatted string listing available tools"""
-        
-        tools = self.getTools()
-        
-        if not tools:
-            return "No tools available"
-        lines = ["Available tools:"]
-        
-        for tool in tools:
-            params = []
-            properties = tool['parameters'].get('properties', {})
-            required = tool['parameters'].get('required', [])
-            
-            for param_name in properties:
-                required_marker = " (required)" if param_name in required else " (optional)"
-                params.append(f"{param_name}{required_marker}")
-            
-            param_str = ", ".join(params) if params else "None"
-            lines.append(f"  {tool['name']}({param_str}) - {tool['description']}")
-        
-        return "\n".join(lines)
-
     @classmethod
     def tool(cls, name: str, description: str, parameters: Dict[str, Any], auto_inject_context: bool = True):
         """

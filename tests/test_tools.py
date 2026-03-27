@@ -162,46 +162,6 @@ class TestToolManager(unittest.TestCase):
         
         self.assertIn("Tool execution failed for 'failing_tool'", str(context.exception))
     
-    def test_list_tools_empty(self):
-        """Test listing tools when none are registered."""
-        result = self.tool_manager.list_tools()
-        self.assertEqual(result, "No tools available")
-    
-    def test_list_tools_with_tools(self):
-        """Test listing tools when some are registered."""
-        def test_function1() -> str:
-            return "test1"
-        
-        def test_function2() -> str:
-            return "test2"
-        
-        self.tool_manager.register_tool(
-            name="tool1",
-            description="First test tool",
-            parameters={"type": "object", "properties": {}, "required": []},
-            fn=test_function1
-        )
-        
-        self.tool_manager.register_tool(
-            name="tool2",
-            description="Second test tool",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "param": {"type": "string"}
-                },
-                "required": ["param"]
-            },
-            fn=test_function2
-        )
-        
-        result = self.tool_manager.list_tools()
-        
-        # Check that the result contains expected information
-        self.assertIn("Available tools:", result)
-        self.assertIn("tool1(None) - First test tool", result)
-        self.assertIn("tool2(param (required)) - Second test tool", result)
-    
     def test_global_tool_manager_instance(self):
         """Test that the global tool_manager instance works correctly."""
         # Clear any existing tools

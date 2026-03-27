@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from fastapi import APIRouter, HTTPException, status, WebSocket, Query
 from typing import List, Optional
 from api.models.requests import CreateTaskRequest
@@ -6,6 +7,8 @@ from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskRespon
 from agents.task_runner import task_runner
 from database.task_store import task_store
 from api.websocket.manager import manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -137,6 +140,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
             await websocket.receive_text()
             # For now, we don't process client messages, just keep connection alive
     except Exception as e:
+        logger.error("WebSocket error for task %s: %s", task_id, e)
         # Handle task not found or other errors
         if "not found" in str(e).lower():
             await websocket.send_json({
@@ -144,7 +148,5 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 "message": f"Task {task_id} not found",
                 "task_id": task_id
             })
-        # Client disconnected or other error
-        pass
     finally:
         manager.disconnect(task_id, websocket)

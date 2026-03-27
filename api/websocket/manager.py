@@ -36,7 +36,10 @@ class ConnectionManager:
         for websocket, task in send_tasks:
             try:
                 await task
-            except Exception:
+            except Exception as e:
+                self.logger.error(
+                    "WebSocket broadcast error for task %s: %s", task_id, e
+                )
                 disconnected.append(websocket)
         for websocket in disconnected:
             self.disconnect(task_id, websocket)

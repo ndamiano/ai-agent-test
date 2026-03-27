@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { Clock, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import type { ToolUsage, AgentMessage } from '../types'
 
 interface AgentCardProps {
@@ -46,10 +47,10 @@ const AgentCard: React.FC<AgentCardProps> = ({
     }[status]
 
     const icon = {
-        pending: <span className="text-gray-600">⏳</span>,
-        in_progress: <span className="animate-spin inline-block">🔄</span>,
-        completed: <span>✅</span>,
-        failed: <span>❌</span>,
+        pending: <Clock className="w-4 h-4 text-gray-600" />,
+        in_progress: <Loader2 className="w-4 h-4 animate-spin" />,
+        completed: <CheckCircle2 className="w-4 h-4 text-green-500" />,
+        failed: <XCircle className="w-4 h-4 text-red-500" />,
     }[status]
 
     const subtext = () => {

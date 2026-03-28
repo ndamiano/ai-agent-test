@@ -5,8 +5,10 @@ import inspect
 from threading import Lock
 from functools import wraps
 
-from .logging_utils import log_tool_call, log_error
+import logging
 from .execution_context import get_execution_context
+
+logger = logging.getLogger(__name__)
 
 
 class ToolManager:
@@ -63,7 +65,7 @@ class ToolManager:
         tool_info = self._tools_registry.get(tool_name)
         if not tool_info:
             error_msg = f"Tool '{tool_name}' not found"
-            log_error("ToolNotFound", error_msg, {"requested_tool": tool_name})
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         # Get the function to call
@@ -91,7 +93,7 @@ class ToolManager:
             return result
         except Exception as e:
             error_msg = f"Tool execution failed for '{tool_name}': {str(e)}"
-            log_tool_call(tool_name, validated_kwargs, None, error_msg)
+            logger.error(error_msg)
             raise RuntimeError(error_msg)
     
     def _validate_arguments(self, tool_info: Dict[str, Any], provided_kwargs: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,8 +1,8 @@
 """
-Mock tools: execute_command, web_search, web_fetch.
+System tools: execute_command, web_search, web_fetch.
 
-Stub implementations that return placeholder responses.
-Replace these with real implementations later.
+Real implementations for command execution and web search.
+web_fetch is currently a mock — replace with real implementation when needed.
 """
 
 import json
@@ -137,8 +137,8 @@ def _web_fetch(
     })
 
 
-def register_mock_tools() -> None:
-    """Register mock tools with the global tool manager."""
+def register_system_tools() -> None:
+    """Register system tools with the global tool manager."""
 
     tool_manager.register_tool(
         name="execute_command",
@@ -220,4 +220,4 @@ def register_mock_tools() -> None:
         auto_inject_context=False
     )
 
-    logger.info("Mock tools registered: execute_command, web_search, web_fetch")
+    logger.info("System tools registered: execute_command, web_search, web_fetch")

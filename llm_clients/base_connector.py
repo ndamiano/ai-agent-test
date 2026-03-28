@@ -80,22 +80,7 @@ class BaseConnector:
 
     def _log_llm(self, prompt: Any, response: Any, error: Optional[str] = None):
         """Log LLM interaction with task context from execution context"""
-        try:
-            from tools.execution_context import get_execution_context
-            ctx = get_execution_context()
-            task_id = ctx.get('task_id')
-            subtask_id = ctx.get('subtask_id')
-        except Exception:
-            task_id = None
-            subtask_id = None
-
-        from tools.logging_utils import tool_logger
-        tool_logger.log_llm_interaction(
-            connector=self.connector_name,
-            model=self.model_name,
-            prompt=prompt,
-            response=response,
-            task_id=task_id,
-            subtask_id=subtask_id,
-            error=error
-        )
+        if error:
+            logger.error(f"LLM call to {self.connector_name} ({self.model_name}) failed: {error}")
+        else:
+            logger.debug(f"LLM call to {self.connector_name} ({self.model_name}) completed")

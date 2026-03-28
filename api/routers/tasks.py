@@ -4,12 +4,14 @@ from fastapi import APIRouter, HTTPException, status, WebSocket, Query
 from typing import List, Optional
 from api.models.requests import CreateTaskRequest
 from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse
-from agents.task_runner import task_runner
+from agents.maestro_agent import MaestroAgent
 from database.task_store import task_store
 from api.websocket.manager import manager
-from config.time_utils import format_relative_time
+from config.time_utils import format_relative_time, get_utc_timestamp
 
 logger = logging.getLogger(__name__)
+
+maestro = MaestroAgent()
 
 router = APIRouter()
 
@@ -27,12 +29,20 @@ async def create_task(request: CreateTaskRequest):
     Create and run a task in the background.
     Returns immediately with task details while the task runs asynchronously.
     """
-    task_id = await asyncio.to_thread(
-        task_runner.create_and_run_background,
-        goal=request.goal,
-        execution_mode=request.execution_mode,
-        broadcast_fn=lambda event: manager.broadcast_sync(event['task_id'], event),
-    )
+    task_dict = await asyncio.to_thread(task_store.create_task, request.goal)
+    task_id = task_dict["id"]
+    logger.info(f"Task created (background): {task_id}")
+
+    broadcast_fn = lambda event: manager.broadcast_sync(event['task_id'], event)
+    broadcast_fn({
+        'type': 'task_created',
+        'task_id': task_id,
+        'goal': request.goal,
+        'timestamp': get_utc_timestamp()
+    })
+
+    await asyncio.to_thread(maestro.run_background, task_id, broadcast_fn=broadcast_fn)
+
     task = await asyncio.to_thread(task_store.get_task, task_id)
     return _task_to_response(task)
 
@@ -119,7 +129,7 @@ async def retry_task(task_id: str):
         task_store.log_event, task_id, "task_planned", "Task retry initiated"
     )
 
-    task_runner.maestro.run_background(
+    maestro.run_background(
         task_id,
         broadcast_fn=lambda event: manager.broadcast(event["task_id"], event),
     )

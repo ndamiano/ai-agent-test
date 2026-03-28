@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from tools.mock_tools import _web_search
+from tools.system_tools import _web_search
 
 
 class TestWebSearchFunction:

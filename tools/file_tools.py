@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Dict, Any
 import glob as glob_module
 
-from .logging_utils import log_error
+import logging
+
+logger = logging.getLogger(__name__)
 from tools.tool_manager import tool_manager
 
 
@@ -54,12 +56,7 @@ def write_to_file(
         
     except Exception as e:
         error_msg = f"Failed to write to file {path}: {str(e)}"
-        log_error("WriteToFileError", error_msg, {
-            "path": path,
-            "mode": mode,
-            "encoding": encoding,
-            "error": str(e)
-        })
+        logger.error(error_msg)
         
         return {
             "success": False,
@@ -114,11 +111,7 @@ def read_file(
 
     except Exception as e:
         error_msg = f"Failed to read file {path}: {str(e)}"
-        log_error("ReadFileError", error_msg, {
-            "path": path,
-            "encoding": encoding,
-            "error": str(e)
-        })
+        logger.error(error_msg)
 
         return {
             "success": False,
@@ -182,12 +175,7 @@ def list_files(
 
     except Exception as e:
         error_msg = f"Failed to list files in {path}: {str(e)}"
-        log_error("ListFilesError", error_msg, {
-            "path": path,
-            "pattern": pattern,
-            "recursive": recursive,
-            "error": str(e)
-        })
+        logger.error(error_msg)
 
         return {
             "success": False,
@@ -247,10 +235,7 @@ def delete_file(
 
     except Exception as e:
         error_msg = f"Failed to delete file {path}: {str(e)}"
-        log_error("DeleteFileError", error_msg, {
-            "path": path,
-            "error": str(e)
-        })
+        logger.error(error_msg)
 
         return {
             "success": False,

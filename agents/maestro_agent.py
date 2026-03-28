@@ -20,7 +20,6 @@ from agents.agent_store import AgentStore
 from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
 from database.task_store import TaskStore
-from tools.logging_utils import tool_logger
 from tools.execution_context import execution_context
 
 logger = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ class MaestroAgent:
         self.agent_store = AgentStore()
         self.context_builder = ContextBuilder(self.task_store)
         self.broadcast_fn = broadcast_fn
-        self.logger = tool_logger
+        self.logger = logging.getLogger(__name__)
 
         import os
         max_workers = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))

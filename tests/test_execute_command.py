@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 
-from tools.mock_tools import _execute_command
+from tools.system_tools import _execute_command
 
 
 class TestExecuteCommand(unittest.TestCase):

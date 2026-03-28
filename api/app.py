@@ -1,22 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 from database.schema import init_db
-from llm_clients.connector_selector import get_connector
-from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
+from llm_clients.connector_selector import get_connector, reset_connector_cache
 from config.settings_manager import settings_manager
-
-# Lazy-initialized connector client
-_connector_client: Optional[OpenAICompatibleConnector] = None
-
-
-def get_connector_client() -> OpenAICompatibleConnector:
-    """Lazily create (or return cached) connector client."""
-    global _connector_client
-    if _connector_client is None:
-        _connector_client = get_connector()
-    return _connector_client
 
 
 # Create FastAPI app
@@ -59,7 +47,7 @@ async def startup_event():
         logging.info("Tools registered successfully")
 
         # Health checks
-        lmstudio_status = get_connector_client().health_check()
+        lmstudio_status = get_connector().health_check()
         logging.info(f"LMStudio connectivity: {'Healthy' if lmstudio_status else 'Unhealthy'}")
 
     except Exception as e:
@@ -70,7 +58,7 @@ async def startup_event():
 async def root():
     """Root endpoint that returns health check information."""
     try:
-        lmstudio_status = get_connector_client().health_check()
+        lmstudio_status = get_connector().health_check()
         return {
             "status": "healthy",
             "server": "running",
@@ -88,8 +76,7 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""
-    global _connector_client
-    _connector_client = get_connector()
+    reset_connector_cache()
     logging.info("Connectors reinitialized")
 
-__all__ = ["app", "get_connector_client", "reinitialize_connectors"]
+__all__ = ["app", "reinitialize_connectors"]

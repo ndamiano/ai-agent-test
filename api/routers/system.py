@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import APIRouter
 from typing import Dict, Any
-from api.app import get_connector_client
+from llm_clients.connector_selector import get_connector
 from database.task_store import task_store
 from agents.agent_store import agent_store
 router = APIRouter()
@@ -15,7 +15,7 @@ async def get_status() -> Dict[str, Any]:
     Returns:
         SystemStatus object with connection information
     """
-    client = get_connector_client()
+    client = get_connector()
     lmstudio_connected = await client.health_check_async()
 
     return {

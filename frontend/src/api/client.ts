@@ -1,32 +1,40 @@
-import axios from 'axios'
 import type { Task, TaskDetail, AskResponse, SystemStatus, Settings } from '../types'
 
-const base = axios.create({ baseURL: '/api' })
+const base = '/api'
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(`${base}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...init,
+    })
+    if (!res.ok) throw new Error(`${res.status}`)
+    return res.json() as Promise<T>
+}
 
 export const api = {
     // Tasks
     createTask: (goal: string, execution_mode?: string) =>
-        base.post<Task>('/tasks', { goal, execution_mode }).then(r => r.data),
+        request<Task>('/tasks', { method: 'POST', body: JSON.stringify({ goal, execution_mode }) }),
     listTasks: (status?: string) =>
-        base.get<Task[]>('/tasks', { params: { status } }).then(r => r.data),
+        request<Task[]>(status ? `/tasks?status=${encodeURIComponent(status)}` : '/tasks'),
     getTask: (id: string) =>
-        base.get<TaskDetail>(`/tasks/${id}`).then(r => r.data),
+        request<TaskDetail>(`/tasks/${id}`),
     getContextValue: (task_id: string, key: string) =>
-        base.get<string>(`/tasks/${task_id}/context/${key}`).then(r => r.data),
+        request<string>(`/tasks/${task_id}/context/${key}`),
     askTask: (task_id: string, question: string) =>
-        base.post<AskResponse>(`/tasks/${task_id}/ask`, { question }).then(r => r.data),
+        request<AskResponse>(`/tasks/${task_id}/ask`, { method: 'POST', body: JSON.stringify({ question }) }),
     deleteTask: (id: string) =>
-        base.delete(`/tasks/${id}`),
+        fetch(`${base}/tasks/${id}`, { method: 'DELETE' }),
     retryTask: (id: string) =>
-        base.post<Task>(`/tasks/${id}/retry`).then(r => r.data),
+        request<Task>(`/tasks/${id}/retry`, { method: 'POST' }),
 
     // System
     getStatus: () =>
-        base.get<SystemStatus>('/system/status').then(r => r.data),
+        request<SystemStatus>('/system/status'),
 
     // Settings
     getSettings: () =>
-        base.get<Settings>('/settings').then(r => r.data),
+        request<Settings>('/settings'),
     updateSettings: (settings: Settings) =>
-        base.put<Settings>('/settings', settings).then(r => r.data),
+        request<Settings>('/settings', { method: 'PUT', body: JSON.stringify(settings) }),
 }

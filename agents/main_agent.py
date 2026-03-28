@@ -7,7 +7,7 @@ from tools.tool_manager import tool_manager
 from tools.execution_context import execution_context
 from config.agent_prompts import SYSTEM_PROMPT
 from config.time_utils import get_utc_timestamp
-from .agent_store import AgentStore
+from .agent_store import agent_store
 
 
 class MainAgent:
@@ -42,7 +42,6 @@ class MainAgent:
         self.broadcast_context: Dict[str, str] = {}
 
         if agent_id:
-            agent_store = AgentStore()
             try:
                 agent_data = agent_store.get(agent_id)
                 self.system_context = agent_data["system_prompt"]

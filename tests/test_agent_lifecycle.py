@@ -15,6 +15,7 @@ from tools.agent_tools import register_agent_tools
 @pytest.fixture(scope="function")
 def temp_agent_store():
     """Create a temporary agent store for testing"""
+    AgentStore.reset()
     temp_dir = tempfile.mkdtemp()
     store = AgentStore(store_dir=temp_dir)
     yield store

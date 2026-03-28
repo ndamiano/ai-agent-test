@@ -3,9 +3,7 @@ from fastapi import APIRouter
 from typing import Dict, Any
 from api.app import get_connector_client
 from database.task_store import task_store
-from agents.agent_store import AgentStore
-
-_agent_store = AgentStore()
+from agents.agent_store import agent_store
 router = APIRouter()
 
 
@@ -25,6 +23,6 @@ async def get_status() -> Dict[str, Any]:
         "lmstudio_connected": lmstudio_connected,
         "embedding_connected": False,
         "lmstudio_url": client.base_url,
-        "agent_count": len(_agent_store.list()),
+        "agent_count": len(agent_store.list()),
         "task_count": len(await asyncio.to_thread(task_store.list_tasks)),
     }

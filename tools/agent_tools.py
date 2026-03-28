@@ -11,11 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 from tools.tool_manager import tool_manager
-from agents.agent_store import AgentStore
+from agents.agent_store import agent_store
 
 logger = logging.getLogger(__name__)
-
-_agent_store = AgentStore()
 _DEMAND_FILE = Path("data/agent_demand.json")
 
 
@@ -23,7 +21,7 @@ def _list_agents(task_id: Optional[str] = None) -> str:
     """
     Return the current agent roster with IDs, descriptions, and tools.
     """
-    agents = _agent_store.list()
+    agents = agent_store.list()
     roster = []
     for a in agents:
         if a.get("id") == "maestro":

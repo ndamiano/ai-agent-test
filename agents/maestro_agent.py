@@ -16,7 +16,7 @@ from typing import Callable, Dict, Optional
 
 from config.time_utils import get_utc_timestamp
 
-from agents.agent_store import AgentStore
+from agents.agent_store import agent_store
 from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
 from database.task_store import TaskStore
@@ -42,7 +42,7 @@ class MaestroAgent:
 
     def __init__(self, broadcast_fn: Optional[Callable] = None):
         self.task_store = TaskStore()
-        self.agent_store = AgentStore()
+        self.agent_store = agent_store
         self.context_builder = ContextBuilder(self.task_store)
         self.broadcast_fn = broadcast_fn
         self.logger = logging.getLogger(__name__)

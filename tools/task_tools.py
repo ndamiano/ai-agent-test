@@ -15,12 +15,11 @@ from typing import Optional, Union, List
 from tools.tool_manager import tool_manager
 from database.validators import validate_dependencies
 from database.task_store import TaskStore
-from agents.agent_store import AgentStore
+from agents.agent_store import agent_store
 
 logger = logging.getLogger(__name__)
 
 _task_store = TaskStore()
-_agent_store = AgentStore()
 
 
 def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
@@ -99,7 +98,7 @@ def _spawn_task(
     Returns:
         JSON string with the created subtask's id and status.
     """
-    if not _agent_store.exists(agent_id):
+    if not agent_store.exists(agent_id):
         raise ValueError(f"Agent '{agent_id}' not found in agent store.")
 
     _task_store.get_task(task_id)  # raises KeyError if missing

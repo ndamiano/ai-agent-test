@@ -129,32 +129,6 @@ class TestAgentStore(unittest.TestCase):
         agents = self.store.list()
         self.assertEqual(len(agents), 0)
 
-    def test_delete_existing_agent(self):
-        """Test deleting an existing agent"""
-        agent = {
-            "id": "test-agent",
-            "name": "Test Agent",
-            "description": "A test agent",
-            "system_prompt": "You are a test agent",
-            "tools": ["tool1", "tool2"]
-        }
-
-        self.store.save(agent)
-        self.store.delete("test-agent")
-
-        file_path = Path(self.temp_dir) / "test-agent.json"
-        self.assertFalse(file_path.exists())
-
-    def test_delete_nonexistent_agent(self):
-        """Test that deleting a non-existent agent raises KeyError"""
-        with self.assertRaises(KeyError):
-            self.store.delete("nonexistent-agent")
-
-    def test_delete_protected_agent(self):
-        """Test that deleting a protected agent raises ValueError"""
-        with self.assertRaises(ValueError):
-            self.store.delete("maestro")
-
     def test_exists_true(self):
         """Test exists() method returns True for existing agent"""
         agent = {

@@ -1,13 +1,12 @@
 import React from 'react'
-import ReactMarkdown from 'react-markdown'
 import AgentCard from './AgentCard'
 import { FadeSlideIn } from './FadeSlideIn'
-import type { ToolUsage, AgentMessage } from '../types'
+import type { ToolUsage, AgentMessage, ArtifactManifest } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
 
 interface TaskCompletionViewProps {
     phase: 'done' | 'failed'
-    artifact: string | null
+    artifact: ArtifactManifest | null
     goal: string | undefined
     subtasks: SubtaskState[]
     agentsExpanded: boolean
@@ -47,28 +46,23 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
                     </FadeSlideIn>
 
                     <FadeSlideIn delay={80}>
-                        <div className="px-6 py-6 [&_*]:!text-inherit text-gray-200
-                            [&_h1]:text-white [&_h1]:font-semibold [&_h1]:text-xl [&_h1]:mb-3 [&_h1]:mt-5
-                            [&_h2]:text-white [&_h2]:font-semibold [&_h2]:text-lg [&_h2]:mb-2 [&_h2]:mt-4
-                            [&_h3]:text-white [&_h3]:font-medium [&_h3]:text-base [&_h3]:mb-2 [&_h3]:mt-3
-                            [&_p]:text-gray-300 [&_p]:leading-relaxed [&_p]:mb-3
-                            [&_strong]:text-white [&_strong]:font-semibold
-                            [&_em]:text-gray-300 [&_em]:italic
-                            [&_ul]:text-gray-300 [&_ul]:pl-5 [&_ul]:mb-3 [&_ul]:list-disc
-                            [&_ol]:text-gray-300 [&_ol]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal
-                            [&_li]:text-gray-300 [&_li]:mb-1
-                            [&_li::marker]:text-gray-500
-                            [&_blockquote]:border-l-2 [&_blockquote]:border-gray-600 [&_blockquote]:pl-4 [&_blockquote]:text-gray-400 [&_blockquote]:italic [&_blockquote]:my-3
-                            [&_code]:text-blue-300 [&_code]:bg-white/5 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-sm
-                            [&_pre]:bg-white/5 [&_pre]:rounded-lg [&_pre]:p-4 [&_pre]:mb-3 [&_pre]:overflow-x-auto
-                            [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-blue-300
-                            [&_hr]:border-white/10 [&_hr]:my-4
-                            [&_a]:text-blue-400 [&_a]:underline [&_a:hover]:text-blue-300
-                            [&_table]:w-full [&_table]:text-sm [&_table]:mb-3
-                            [&_th]:text-gray-200 [&_th]:font-semibold [&_th]:text-left [&_th]:pb-2 [&_th]:border-b [&_th]:border-white/10
-                            [&_td]:text-gray-300 [&_td]:py-2 [&_td]:border-b [&_td]:border-white/5
-                        ">
-                            <ReactMarkdown>{artifact}</ReactMarkdown>
+                        <div className="px-6 py-6 space-y-6">
+                            <p className="text-gray-300 leading-relaxed whitespace-pre-wrap">
+                                {artifact.summary}
+                            </p>
+                            {artifact.artifacts.length > 0 && (
+                                <div className="flex flex-wrap gap-2">
+                                    {artifact.artifacts.map((a, i) => (
+                                        <a
+                                            key={i}
+                                            href={a.path}
+                                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-blue-400 hover:text-blue-300 hover:bg-white/10 transition-colors"
+                                        >
+                                            {a.label}
+                                        </a>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </FadeSlideIn>
                 </div>

@@ -1,8 +1,7 @@
 """
-Synthesis tools: list_context_keys, get_context, list_subtasks, get_subtask_output.
+Synthesis tools: list_context_keys, list_subtasks.
 
-Let the synthesizer agent pull what it needs from the task store on demand
-instead of receiving everything upfront.
+Let the summarizer agent discover what was produced during a task.
 """
 
 import json
@@ -29,19 +28,6 @@ def _list_context_keys(task_id: Optional[str] = None) -> str:
     return json.dumps({"task_id": task_id, "keys": keys, "count": len(keys)})
 
 
-def _get_context(task_id: Optional[str] = None, key: str = "") -> str:
-    """
-    Retrieve a specific context value by key.
-    """
-    from tools.execution_context import resolve_task_id
-    task_id = resolve_task_id(task_id)
-
-    value = _task_store.get_context(task_id, key)
-    if value is None:
-        return json.dumps({"error": f"Context key '{key}' not found", "task_id": task_id})
-    return json.dumps({"task_id": task_id, "key": key, "value": value})
-
-
 def _list_subtasks(task_id: Optional[str] = None) -> str:
     """
     List all subtasks with status, agent, goal, and an output preview.
@@ -66,26 +52,6 @@ def _list_subtasks(task_id: Optional[str] = None) -> str:
     return json.dumps({"task_id": task_id, "subtasks": summaries, "count": len(summaries)})
 
 
-def _get_subtask_output(subtask_id: str) -> str:
-    """
-    Get the full output of a specific subtask.
-    """
-    subtask = _task_store.get_subtask(subtask_id)
-    if subtask.get("output") is None:
-        return json.dumps({
-            "subtask_id": subtask_id,
-            "status": subtask["status"],
-            "error": "Subtask has no output (may not be completed yet)"
-        })
-    return json.dumps({
-        "subtask_id": subtask_id,
-        "agent_id": subtask["agent_id"],
-        "status": subtask["status"],
-        "goal": subtask["goal"],
-        "output": subtask["output"],
-    })
-
-
 def register_synthesis_tools() -> None:
     """Register synthesis tools with the global tool manager."""
 
@@ -105,26 +71,6 @@ def register_synthesis_tools() -> None:
     )
 
     tool_manager.register_tool(
-        name="get_context",
-        description=(
-            "Retrieve the value of a specific context key for the current task. "
-            "Use list_context_keys first to see what keys are available."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "key": {
-                    "type": "string",
-                    "description": "The context key to retrieve.",
-                },
-            },
-            "required": ["key"],
-        },
-        fn=_get_context,
-        auto_inject_context=True,
-    )
-
-    tool_manager.register_tool(
         name="list_subtasks",
         description=(
             "List all subtasks for the current task with their status, agent, goal, "
@@ -139,24 +85,4 @@ def register_synthesis_tools() -> None:
         auto_inject_context=True,
     )
 
-    tool_manager.register_tool(
-        name="get_subtask_output",
-        description=(
-            "Get the full output of a specific subtask by ID. "
-            "Use list_subtasks first to see available subtask IDs."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "subtask_id": {
-                    "type": "string",
-                    "description": "The subtask ID to retrieve output for.",
-                },
-            },
-            "required": ["subtask_id"],
-        },
-        fn=_get_subtask_output,
-        auto_inject_context=True,
-    )
-
-    logger.info("Synthesis tools registered: list_context_keys, get_context, list_subtasks, get_subtask_output")
+    logger.info("Synthesis tools registered: list_context_keys, list_subtasks")

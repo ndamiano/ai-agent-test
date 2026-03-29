@@ -75,22 +75,6 @@ class TestAgentStore:
         temp_agent_store.save(create_test_agent())
         assert temp_agent_store.exists("test-agent")
 
-    def test_delete(self, temp_agent_store):
-        """Should delete an agent"""
-        temp_agent_store.save(create_test_agent())
-        temp_agent_store.delete("test-agent")
-        assert not temp_agent_store.exists("test-agent")
-
-    def test_delete_protected_raises(self, temp_agent_store):
-        """Should not delete protected agents"""
-        with pytest.raises(ValueError, match="protected"):
-            temp_agent_store.delete("maestro")
-
-    def test_delete_nonexistent_raises(self, temp_agent_store):
-        """Should raise KeyError for non-existent agent"""
-        with pytest.raises(KeyError):
-            temp_agent_store.delete("nonexistent")
-
     def test_save_missing_fields_raises(self, temp_agent_store):
         """Should raise ValueError for missing required fields"""
         with pytest.raises(ValueError, match="required field"):

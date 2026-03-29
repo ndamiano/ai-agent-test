@@ -57,6 +57,11 @@ export interface AskResponse {
     context_used: string[]
 }
 
+export interface ArtifactManifest {
+    summary: string
+    artifacts: Array<{ type: string; label: string; path: string }>
+}
+
 export interface ToolUsage {
     tool_name: string
     arguments: Record<string, any>

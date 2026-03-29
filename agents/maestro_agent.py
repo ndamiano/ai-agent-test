@@ -36,7 +36,7 @@ class MaestroAgent:
       4. synthesize()           — hand off to synthesis agent, return final output
     """
 
-    SYNTHESIS_AGENT_ID = "synthesizer"
+    SYNTHESIS_AGENT_ID = "summarizer"
 
     DEFAULT_AGENT_ID = "worker"
 
@@ -256,7 +256,7 @@ class MaestroAgent:
         )
 
         # Spawned new = total subtask count increased during this turn.
-        # Checking pending-only was wrong: a pending synthesizer from a prior
+        # Checking pending-only was wrong: a pending summarizer from a prior
         # spawn would make the loop think there was always more work to do,
         # burning through all 20 waves before hitting the limit.
         count_after = len(self.task_store.get_subtasks_for_task(task_id))
@@ -339,62 +339,85 @@ class MaestroAgent:
 
     def _synthesize(self, task_id: str, broadcast_fn: Optional[Callable]) -> str:
         """
-        Hand off to the synthesis agent to produce the final deliverable.
-        Falls back to assembling raw context if no synthesizer agent exists.
+        Hand off to the summarizer agent to produce a brief summary and artifact manifest.
+        Falls back to a basic manifest if no summarizer agent exists.
         """
         self._broadcast(broadcast_fn, {
             "type": "agent_message",
             "task_id": task_id,
             "agent_id": self.SYNTHESIS_AGENT_ID,
-            "message": "Synthesizing final output",
+            "message": "Summarizing results",
             "timestamp": get_utc_timestamp(),
         })
 
         if not self.agent_store.exists(self.SYNTHESIS_AGENT_ID):
             logger.warning(
-                "MaestroAgent: no 'synthesizer' agent found — "
-                "returning raw context assembly as final output."
+                "MaestroAgent: no 'summarizer' agent found — "
+                "returning fallback manifest as final output."
             )
             return self._fallback_synthesis(task_id)
 
-        all_context = self.task_store.get_all_context(task_id)
         task = self.task_store.get_task(task_id)
-
-        context_keys = list(all_context.keys())
         subtasks = self.task_store.get_subtasks_for_task(task_id)
         completed = [s for s in subtasks if s["status"] == "completed"]
 
         prompt = (
             f"ORIGINAL GOAL: {task['goal']}\n\n"
-            f"AVAILABLE CONTEXT ({len(context_keys)} keys): {', '.join(context_keys)}\n\n"
             f"COMPLETED SUBTASKS ({len(completed)}):\n"
         )
         for s in completed:
             preview = (s["output"][:120].replace("\n", " ") + "...") if s.get("output") else "(no output)"
             prompt += f"  - {s['id'][:8]} | agent={s['agent_id']} | {s['goal'][:80]}\n    Preview: {preview}\n"
         prompt += (
-            "\nUse your tools (list_context_keys, get_context, list_subtasks, get_subtask_output) "
-            "to retrieve the specific content you need. "
-            "Then produce the final deliverable. Output only the deliverable — no meta-commentary."
+            "\nUse list_files and list_subtasks to see what was produced. "
+            "Then return a JSON manifest with 'summary' and 'artifacts' fields. "
+            "Output only the JSON — no other text."
         )
 
-        synthesizer = MainAgent(agent_id=self.SYNTHESIS_AGENT_ID)
-        synthesizer.set_broadcast_context(task_id, "synthesizer", broadcast_fn)
-        output = synthesizer.chat(prompt)
+        summarizer = MainAgent(agent_id=self.SYNTHESIS_AGENT_ID)
+        summarizer.set_broadcast_context(task_id, "summarizer", broadcast_fn)
+        output = summarizer.chat(prompt)
 
-        self.task_store.write_context(task_id, "final_output", output)
-        self.task_store.log_event(task_id, "task_completed", "Synthesis complete")
+        # Parse the JSON manifest from the summarizer's response
+        import json
+        try:
+            manifest = json.loads(output)
+            summary = manifest.get("summary", "")
+        except (json.JSONDecodeError, AttributeError):
+            # If parsing fails, treat the entire output as the summary
+            summary = output
+            manifest = {"summary": summary, "artifacts": []}
 
-        return output
+        # Store summary for display and manifest for frontend/API
+        self.task_store.write_context(task_id, "final_output", summary)
+        self.task_store.write_context(task_id, "final_manifest", json.dumps(manifest))
+        self.task_store.log_event(task_id, "task_completed", "Summarization complete")
+
+        return summary
 
     def _fallback_synthesis(self, task_id: str) -> str:
-        """Assemble raw outputs when no synthesizer agent is available."""
+        """Return a basic JSON manifest when no summarizer agent is available."""
+        import json
         subtasks = self.task_store.get_subtasks_for_task(task_id)
-        parts = []
-        for s in subtasks:
+        completed = [s for s in subtasks if s["status"] == "completed"]
+        summary = f"Completed {len(completed)} subtask(s)."
+
+        # Build artifacts from completed subtask outputs
+        artifacts = []
+        for s in completed:
             if s.get("output"):
-                parts.append(f"=== {s['agent_id']} (subtask {s['id'][:8]}) ===\n{s['output']}")
-        return "\n\n".join(parts) if parts else "No output produced."
+                artifacts.append({
+                    "type": "file",
+                    "label": f"{s['agent_id']} output ({s['id'][:8]})",
+                    "path": f"outputs/{s['id'][:8]}.txt"
+                })
+
+        manifest = {"summary": summary, "artifacts": artifacts}
+
+        self.task_store.write_context(task_id, "final_output", summary)
+        self.task_store.write_context(task_id, "final_manifest", json.dumps(manifest))
+
+        return summary
 
     # -------------------------------------------------------------------------
     # Subtask execution

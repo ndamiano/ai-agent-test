@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useTaskSocket } from './useTaskSocket'
 import { api } from '../api/client'
-import type { TaskDetail, Subtask, ToolUsage, AgentMessage } from '../types'
+import type { TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest } from '../types'
 
 export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 
@@ -63,7 +63,7 @@ export type Phase = 'idle' | 'live' | 'completing' | 'done' | 'failed'
 export interface TaskStageState {
     task: TaskDetail | null
     subtasks: SubtaskState[]
-    artifact: string | null
+    artifact: ArtifactManifest | null
     phase: Phase
     isPlanning: boolean
     loading: boolean
@@ -84,7 +84,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     const { messages } = useTaskSocket(taskId)
     const [task, setTask] = useState<TaskDetail | null>(null)
     const [baseSubtasks, setBaseSubtasks] = useState<SubtaskState[]>([])
-    const [artifact, setArtifact] = useState<string | null>(null)
+    const [artifact, setArtifact] = useState<ArtifactManifest | null>(null)
     const [phase, setPhase] = useState<Phase>('idle')
     const [loading, setLoading] = useState(false)
     const [agentsExpanded, setAgentsExpanded] = useState(false)
@@ -106,10 +106,28 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     const isPlanning = task?.status === 'planning' && subtasks.length === 0
 
     const loadArtifact = useCallback(async (tid: string, contextKeys: string[]) => {
-        const finalKey = contextKeys[contextKeys.length - 1]
+        const targetKey = contextKeys.find(k => k === 'final_manifest') ?? contextKeys[contextKeys.length - 1]
         try {
-            const content = await api.getContextValue(tid, finalKey)
-            setArtifact(content)
+            const raw = await api.getContextValue(tid, targetKey)
+            try {
+                let str = typeof raw === 'string' ? raw : JSON.stringify(raw)
+                // Strip markdown code block formatting if present
+                str = str.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim()
+                let parsed = JSON.parse(str)
+                // If summary contains a nested JSON code block, extract the real manifest
+                if (parsed.summary && typeof parsed.summary === 'string' && parsed.summary.includes('```json')) {
+                    const inner = parsed.summary.replace(/```json\s*\n?/, '').replace(/\n?```\s*$/, '').trim()
+                    try {
+                        parsed = JSON.parse(inner)
+                    } catch {
+                        // inner parse failed, use outer parsed result
+                    }
+                }
+                setArtifact(parsed as ArtifactManifest)
+            } catch {
+                const fallback = typeof raw === 'string' ? raw : JSON.stringify(raw)
+                setArtifact({ summary: fallback.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '').trim(), artifacts: [] })
+            }
             setTimeout(() => setPhase('done'), 150)
         } catch (e) {
             console.error('Failed to load artifact:', e)

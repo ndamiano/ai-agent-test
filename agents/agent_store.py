@@ -7,7 +7,6 @@ from threading import Lock
 from typing import Dict, List
 
 from config.time_utils import get_utc_timestamp
-from config.protected_agents import PROTECTED_AGENTS
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +68,6 @@ class AgentStore:
         file_path = self.store_dir / f"{agent['id']}.json"
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(agent, f, indent=2, ensure_ascii=False)
-
-    def delete(self, agent_id: str) -> None:
-        """Delete an agent definition. Raises KeyError if not found."""
-        if agent_id in PROTECTED_AGENTS:
-            raise ValueError(f"Cannot delete protected agent '{agent_id}'")
-        file_path = self.store_dir / f"{agent_id}.json"
-        if not file_path.exists():
-            raise KeyError(f"Agent '{agent_id}' not found")
-        file_path.unlink()
 
     def exists(self, agent_id: str) -> bool:
         """Check if an agent exists."""

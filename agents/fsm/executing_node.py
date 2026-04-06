@@ -148,9 +148,14 @@ class ExecutingNode(StateNode):
             return output
 
         except Exception as e:
+            # Log detailed error information
+            import traceback
+            error_details = f"Subtask {subtask_id} failed: {e}\nTraceback:\n{traceback.format_exc()}"
+            logger.error(error_details)
+
             context.task_store.update_subtask_status(subtask_id, "failed")
             context.task_store.log_event(
-                task_id, "subtask_failed", f"Subtask {subtask_id} failed: {e}", subtask_id
+                task_id, "subtask_failed", error_details, subtask_id
             )
             self._broadcast(context, {
                 "type": "subtask_failed",
@@ -163,12 +168,24 @@ class ExecutingNode(StateNode):
 
     def _build_context_for_subtask(self, task_id: str, subtask: Dict, context: StateContext) -> str:
         """Build context string for a subtask from task goal, context keys, and dependencies."""
+        if subtask is None:
+            raise RuntimeError(f"Subtask is None when building context for task {task_id}")
+
         task = context.task_store.get_task(task_id)
+        if task is None:
+            raise RuntimeError(f"Task {task_id} not found when building context for subtask {subtask.get('id', 'unknown')}")
 
         lines = [f"Overall task goal: {task['goal']}", ""]
 
         # Context keys
-        context_keys = subtask.get("input_context", {}).get("context_keys", [])
+        input_context = subtask.get("input_context")
+        if input_context is None:
+            context_keys = []
+        elif isinstance(input_context, dict):
+            context_keys = input_context.get("context_keys", [])
+        else:
+            logger.warning(f"Unexpected input_context type for subtask {subtask.get('id')}: {type(input_context)}")
+            context_keys = []
         if context_keys:
             for key in context_keys:
                 value = context.task_store.get_context(task_id, key)

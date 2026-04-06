@@ -38,8 +38,8 @@ async function request<T>(path: string, init?: RequestInit, retries = 2): Promis
 
 export const api = {
     // Tasks
-    createTask: (goal: string, execution_mode?: string) =>
-        request<Task>('/tasks', { method: 'POST', body: JSON.stringify({ goal, execution_mode }) }),
+    createTask: (goal: string, working_directory?: string) =>
+        request<Task>('/tasks', { method: 'POST', body: JSON.stringify({ goal, working_directory }) }),
     listTasks: (status?: string) =>
         request<Task[]>(status ? `/tasks?status=${encodeURIComponent(status)}` : '/tasks'),
     getTask: (id: string) =>

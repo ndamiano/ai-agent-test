@@ -44,8 +44,14 @@ class SettingsManager:
         self.settings_path = project_root / "config" / "settings.json"
 
         # Default settings
+        # Get absolute path for working directory
+        default_working_dir = os.getenv("WORKING_DIRECTORY", "outputs")
+        if not Path(default_working_dir).is_absolute():
+            default_working_dir = str((project_root / default_working_dir).resolve())
+
         self.defaults = {
             "connector_type": os.getenv("CONNECTOR_TYPE", "lmstudio"),
+            "working_directory": default_working_dir,
             "lmstudio": {
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
                 "model": os.getenv("LMSTUDIO_MODEL", "local-model"),

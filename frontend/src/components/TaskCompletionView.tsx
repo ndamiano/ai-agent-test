@@ -10,11 +10,7 @@ interface TaskCompletionViewProps {
     goal: string | undefined
     subtasks: SubtaskState[]
     agentsExpanded: boolean
-    expandedSubtasks: Set<string>
-    toolUsageBySubtask: Map<string, ToolUsage[]>
-    agentMessagesBySubtask: Map<string, AgentMessage[]>
     onToggleAgents: () => void
-    onToggleSubtask: (id: string) => void
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -123,11 +119,7 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
     goal,
     subtasks,
     agentsExpanded,
-    expandedSubtasks,
-    toolUsageBySubtask,
-    agentMessagesBySubtask,
     onToggleAgents,
-    onToggleSubtask,
 }) => {
     return (
         <div className="transition-all duration-500 ease-out opacity-100 translate-y-0">
@@ -206,14 +198,18 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
                         {agentsExpanded && (
                             <div className="mt-3 space-y-2">
                                 {subtasks.map((s) => (
-                                    <AgentCard
+                                    <div
                                         key={s.id}
-                                        subtask={s}
-                                        isExpanded={expandedSubtasks.has(s.id)}
-                                        toolUsage={toolUsageBySubtask.get(s.id) ?? []}
-                                        agentMessages={agentMessagesBySubtask.get(s.id) ?? []}
-                                        onToggle={() => onToggleSubtask(s.id)}
-                                    />
+                                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10"
+                                    >
+                                        <div className={`w-1.5 h-1.5 rounded-full ${
+                                            s.status === 'completed' ? 'bg-green-500' :
+                                            s.status === 'failed' ? 'bg-red-500' :
+                                            s.status === 'in_progress' ? 'bg-blue-500' :
+                                            'bg-gray-500'
+                                        }`} />
+                                        <span className="text-sm text-gray-300">{s.name || s.goal}</span>
+                                    </div>
                                 ))}
                             </div>
                         )}

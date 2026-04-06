@@ -64,11 +64,7 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                         goal={task?.goal}
                         subtasks={subtasks}
                         agentsExpanded={agentsExpanded}
-                        expandedSubtasks={expandedSubtasks}
-                        toolUsageBySubtask={toolUsageBySubtask}
-                        agentMessagesBySubtask={agentMessagesBySubtask}
                         onToggleAgents={toggleAgents}
-                        onToggleSubtask={toggleSubtask}
                     />
                 )}
             </div>

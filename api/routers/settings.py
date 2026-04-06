@@ -24,7 +24,16 @@ async def get_settings(request: Request):
         Current settings including connector type and connector-specific configurations
     """
     try:
+        from pathlib import Path
         settings = settings_manager.get_settings()
+        # Ensure working_directory is an absolute path
+        if settings.get('working_directory'):
+            wd = Path(settings['working_directory'])
+            if not wd.is_absolute():
+                settings['working_directory'] = str(wd.resolve())
+        else:
+            # Default to absolute path of outputs directory
+            settings['working_directory'] = str(Path('outputs').resolve())
         return SettingsResponse(**settings)
     except Exception as e:
         logger.error(f"Error retrieving settings: {e}")
@@ -33,12 +42,12 @@ async def get_settings(request: Request):
 
 @router.put("", response_model=SettingsResponse)
 @limiter.limit("2/second")
-async def update_settings(http_request: Request, request: UpdateSettingsRequest):
+async def update_settings(request: Request, settings_request: UpdateSettingsRequest):
     """
     Update application settings
 
     Args:
-        request: Settings update request with new configuration
+        settings_request: Settings update request with new configuration
 
     Returns:
         Updated settings
@@ -47,16 +56,25 @@ async def update_settings(http_request: Request, request: UpdateSettingsRequest)
         HTTPException: If settings validation fails or update fails
     """
     try:
+        from pathlib import Path
+
         # Convert Pydantic models to dicts
         new_settings = {
-            "connector_type": request.connector_type
+            "connector_type": settings_request.connector_type
         }
 
-        if request.lmstudio:
-            new_settings["lmstudio"] = request.lmstudio.model_dump()
+        if settings_request.working_directory:
+            # Validate that working_directory is an absolute path
+            wd = Path(settings_request.working_directory)
+            if not wd.is_absolute():
+                raise ValueError("working_directory must be an absolute path")
+            new_settings["working_directory"] = settings_request.working_directory
 
-        if request.cline:
-            new_settings["cline"] = request.cline.model_dump()
+        if settings_request.lmstudio:
+            new_settings["lmstudio"] = settings_request.lmstudio.model_dump()
+
+        if settings_request.cline:
+            new_settings["cline"] = settings_request.cline.model_dump()
 
         # Update settings (validation happens in settings_manager)
         updated_settings = await asyncio.to_thread(

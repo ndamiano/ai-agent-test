@@ -26,14 +26,20 @@ def _execute_command(
 
     Args:
         command: The shell command to execute
-        working_dir: Optional working directory (defaults to outputs/)
+        working_dir: Optional working directory (defaults to task working_directory or outputs/)
         timeout: Command timeout in seconds
     """
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if working_dir is None:
-        working_dir = os.path.join(project_root, "outputs")
 
-    if not os.path.isabs(working_dir):
+    if working_dir is None:
+        # Try to get working_directory from execution context
+        from tools.execution_context import get_working_directory
+        context_wd = get_working_directory()
+        if context_wd:
+            working_dir = context_wd if os.path.isabs(context_wd) else os.path.join(project_root, context_wd)
+        else:
+            working_dir = os.path.join(project_root, "outputs")
+    elif not os.path.isabs(working_dir):
         working_dir = os.path.join(project_root, working_dir)
 
     logger.info(f"Executing command: {command} in {working_dir}")

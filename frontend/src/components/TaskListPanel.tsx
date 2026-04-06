@@ -27,8 +27,7 @@ const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectT
     const sortByNewest = (taskList: Task[]) =>
         [...taskList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-    const needsAssistance = sortByNewest(tasks.filter(t => t.status === 'needs_assistance'))
-    const inProgress = sortByNewest(tasks.filter(t => t.status === 'planning' || t.status === 'in_progress'))
+    const inProgress = sortByNewest(tasks.filter(t => t.status === 'pending' || t.status === 'planning' || t.status === 'in_progress'))
     const completed = sortByNewest(tasks.filter(t => t.status === 'completed' || t.status === 'failed'))
 
     if (loading) return (
@@ -47,26 +46,6 @@ const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectT
 
     return (
         <div className="h-full flex flex-col gap-3 p-3 overflow-hidden">
-
-            {/* Needs Assistance — only shown when non-empty */}
-            {needsAssistance.length > 0 && (
-                <Section
-                    title="Needs Assistance"
-                    titleClass="text-orange-400"
-                    dot="bg-orange-500 animate-pulse"
-                >
-                    {needsAssistance.map(task => (
-                        <TaskItem
-                            key={task.id}
-                            task={task}
-                            isSelected={selectedTaskId === task.id}
-                            onSelect={onSelectTask}
-                            onArchive={handleArchiveTask}
-                            sectionType="needs_assistance"
-                        />
-                    ))}
-                </Section>
-            )}
 
             {/* In Progress — always shown */}
             <Section

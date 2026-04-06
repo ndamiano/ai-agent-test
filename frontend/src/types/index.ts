@@ -23,8 +23,7 @@ export interface TaskEvent {
 export interface Task {
     id: string
     goal: string
-    status: 'pending' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'needs_assistance' | 'archived'
-    execution_mode: string
+    status: 'pending' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'archived'
     created_at: string
     updated_at: string
     subtasks: Subtask[]
@@ -103,6 +102,7 @@ export interface ClineSettings {
 
 export interface Settings {
     connector_type: string
+    working_directory?: string
     lmstudio?: LMStudioSettings
     cline?: ClineSettings
 }

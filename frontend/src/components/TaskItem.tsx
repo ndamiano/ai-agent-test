@@ -7,7 +7,7 @@ interface TaskItemProps {
     isSelected: boolean
     onSelect: (id: string) => void
     onArchive: (id: string) => void
-    sectionType: 'needs_assistance' | 'in_progress' | 'completed'
+    sectionType: 'in_progress' | 'completed'
 }
 
 const TaskItem: React.FC<TaskItemProps> = ({
@@ -32,7 +32,6 @@ const TaskItem: React.FC<TaskItemProps> = ({
     }
 
     const getBorderColor = () => {
-        if (sectionType === 'needs_assistance') return 'border-orange-500'
         if (sectionType === 'in_progress') return isSelected ? 'border-blue-500' : 'border-transparent'
         if (task.status === 'failed') return 'border-red-500'
         return 'border-green-500'
@@ -40,13 +39,11 @@ const TaskItem: React.FC<TaskItemProps> = ({
 
     const getSelectedBg = () => {
         if (!isSelected) return ''
-        if (sectionType === 'needs_assistance') return 'bg-orange-900/20'
         if (sectionType === 'in_progress') return 'bg-blue-900/20'
         return task.status === 'failed' ? 'bg-red-900/20' : 'bg-green-900/20'
     }
 
     const getDotColor = () => {
-        if (sectionType === 'needs_assistance') return 'bg-orange-500'
         if (sectionType === 'in_progress') return 'bg-yellow-500'
         return task.status === 'failed' ? 'bg-red-500' : 'bg-green-500'
     }

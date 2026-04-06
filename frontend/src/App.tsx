@@ -8,10 +8,7 @@ import type { Task } from './types';
 function App() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [systemStatus, setSystemStatus] = useState<{ connected: boolean; message: string }>({
-    connected: false,
-    message: 'LMStudio disconnected',
-  });
+  const [workingDirectory, setWorkingDirectory] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
@@ -31,36 +28,23 @@ function App() {
 
   useEffect(() => {
     fetchTasks();
+    // Fetch working directory from settings
+    api.getSettings().then(settings => {
+      if (settings.working_directory) {
+        setWorkingDirectory(settings.working_directory);
+      }
+    }).catch(console.error);
   }, [fetchTasks]);
 
   const handleTaskCreate = async (goal: string) => {
     try {
-      const newTask = await api.createTask(goal);
+      const newTask = await api.createTask(goal, workingDirectory || undefined);
       setSelectedTaskId(newTask.id);
       setTasks(prev => [newTask, ...prev]);
     } catch (error) {
       console.error('Failed to create task:', error);
     }
   };
-  useEffect(() => {
-    const checkStatus = async () => {
-      try {
-        const status = await api.getStatus();
-        setSystemStatus({
-          connected: status.lmstudio_connected,
-          message: status.lmstudio_connected ? 'LMStudio connected' : 'LMStudio disconnected',
-        });
-      } catch (error) {
-        console.error(error);
-        setSystemStatus({ connected: false, message: 'LMStudio disconnected' });
-      }
-    };
-
-    checkStatus();
-    const intervalId = setInterval(checkStatus, 30000);
-
-    return () => clearInterval(intervalId);
-  }, []);
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -68,7 +52,6 @@ function App() {
         <Layout
           selectedTaskId={selectedTaskId}
           setSelectedTaskId={setSelectedTaskId}
-          systemStatus={systemStatus}
           onTaskCreate={handleTaskCreate}
           onSettingsClick={() => setShowSettings(true)}
           tasks={tasks}

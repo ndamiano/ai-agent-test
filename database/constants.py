@@ -8,6 +8,7 @@ TASK_STATUSES = {
     "completed",
     "failed",
     "cancelled",
+    "archived",
 }
 
 SUBTASK_STATUSES = {

@@ -27,6 +27,7 @@ class TaskResponse(BaseModel):
     goal: str
     status: str
     execution_mode: str
+    working_directory: Optional[str] = None
     created_at: str
     created_at_relative: str
     updated_at: str
@@ -64,5 +65,6 @@ class AgentResponse(BaseModel):
 
 class SettingsResponse(BaseModel):
     connector_type: str
+    working_directory: Optional[str] = None
     lmstudio: Optional[Dict[str, Any]] = None
     cline: Optional[Dict[str, Any]] = None

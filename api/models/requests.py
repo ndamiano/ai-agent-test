@@ -9,6 +9,7 @@ class AgentUpdateRequest(BaseModel):
 class CreateTaskRequest(BaseModel):
     goal: str
     execution_mode: Optional[str] = None
+    working_directory: Optional[str] = None
 
 class AskRequest(BaseModel):
     question: str
@@ -34,5 +35,6 @@ class ClineSettingsRequest(BaseModel):
 
 class UpdateSettingsRequest(BaseModel):
     connector_type: str
+    working_directory: Optional[str] = None
     lmstudio: Optional[LMStudioSettingsRequest] = None
     cline: Optional[ClineSettingsRequest] = None

@@ -47,8 +47,9 @@ def init_db(db_path: Optional[str] = None) -> None:
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 goal TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN ('pending', 'planning', 'in_progress', 'needs_assistance', 'completed', 'failed', 'archived')),
+                status TEXT NOT NULL CHECK(status IN ('pending', 'planning', 'in_progress', 'completed', 'failed', 'cancelled', 'archived')),
                 execution_mode TEXT NOT NULL DEFAULT 'sequential' CHECK(execution_mode IN ('sequential', 'parallel')),
+                working_directory TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -104,6 +105,14 @@ def init_db(db_path: Optional[str] = None) -> None:
         """)
 
         conn.commit()
+
+        # Migrate existing databases - add working_directory column if it doesn't exist
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN working_directory TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            # Column already exists, ignore
+            pass
 
         # Add performance indexes for frequently queried columns
         conn.execute("CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id)")

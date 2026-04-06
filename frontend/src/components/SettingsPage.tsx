@@ -122,6 +122,22 @@ export default function SettingsPage() {
                 </div>
             )}
 
+            {/* Working Directory Section */}
+            <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white">Working Directory</h3>
+                <div className="space-y-2">
+                    <label className="block text-sm text-gray-400">Default working directory for tasks</label>
+                    <input
+                        type="text"
+                        value={settings.working_directory || ''}
+                        onChange={(e) => setSettings(prev => prev ? { ...prev, working_directory: e.target.value } : null)}
+                        placeholder="/absolute/path/to/directory"
+                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500 font-mono text-sm"
+                    />
+                    <p className="text-xs text-gray-500">Must be an absolute path (e.g., /home/user/projects/outputs or C:\Users\Name\outputs)</p>
+                </div>
+            </div>
+
             {/* LLM Provider Section */}
             <div className="space-y-4">
                 <h3 className="text-lg font-semibold text-white">LLM Provider</h3>

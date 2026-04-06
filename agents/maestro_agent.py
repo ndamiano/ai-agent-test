@@ -217,6 +217,10 @@ class MaestroAgent:
         # whether Maestro actually spawned anything new vs. just evaluating.
         count_before = len(self.task_store.get_subtasks_for_task(task_id))
 
+        # Fetch task to get working_directory
+        task = self.task_store.get_task(task_id)
+        working_directory = task.get("working_directory")
+
         prompt = self._build_maestro_prompt(task_id, phase)
 
         # Render the agent roster into Maestro's system prompt
@@ -237,7 +241,7 @@ class MaestroAgent:
         })
 
         # Execute within execution context
-        with execution_context(task_id=task_id, subtask_id="maestro"):
+        with execution_context(task_id=task_id, subtask_id="maestro", working_directory=working_directory):
             response = maestro.chat(prompt)
 
         # Ensure response is never None
@@ -398,19 +402,25 @@ class MaestroAgent:
     def _fallback_synthesis(self, task_id: str) -> str:
         """Return a basic JSON manifest when no summarizer agent is available."""
         import json
+        from pathlib import Path
+
         subtasks = self.task_store.get_subtasks_for_task(task_id)
         completed = [s for s in subtasks if s["status"] == "completed"]
         summary = f"Completed {len(completed)} subtask(s)."
 
-        # Build artifacts from completed subtask outputs
+        # Build artifacts from actual files in the task's output directory
         artifacts = []
-        for s in completed:
-            if s.get("output"):
-                artifacts.append({
-                    "type": "file",
-                    "label": f"{s['agent_id']} output ({s['id'][:8]})",
-                    "path": f"outputs/{s['id'][:8]}.txt"
-                })
+        task_output_dir = Path(f"outputs/{task_id}")
+        if task_output_dir.exists() and task_output_dir.is_dir():
+            for file_path in task_output_dir.rglob("*"):
+                if file_path.is_file():
+                    # Make path relative to outputs directory
+                    relative_path = file_path.relative_to("outputs")
+                    artifacts.append({
+                        "type": "zip" if file_path.suffix in ['.zip', '.tar', '.gz'] else "file",
+                        "label": file_path.name,
+                        "path": f"outputs/{relative_path}"
+                    })
 
         manifest = {"summary": summary, "artifacts": artifacts}
 
@@ -440,6 +450,10 @@ class MaestroAgent:
                 "timestamp": get_utc_timestamp(),
             })
 
+            # Fetch task to get working_directory
+            task = self.task_store.get_task(task_id)
+            working_directory = task.get("working_directory")
+
             fresh = self.task_store.get_subtask(subtask_id)
             context_text = self.context_builder.build_for_subtask(task_id, fresh)
 
@@ -453,7 +467,7 @@ class MaestroAgent:
 
             message = f"{context_text}\n\nTask: {fresh['goal']}"
 
-            with execution_context(task_id=task_id, subtask_id=subtask_id):
+            with execution_context(task_id=task_id, subtask_id=subtask_id, working_directory=working_directory):
                 output = agent.chat(message)
 
             self.task_store.set_subtask_output(subtask_id, output)

@@ -43,26 +43,32 @@ class TaskStore:
     # Tasks
     # -------------------------------------------------------------------------
 
-    def create_task(self, goal: str, execution_mode: str = "sequential") -> Dict:
+    def create_task(self, goal: str, execution_mode: str = "sequential", working_directory: Optional[str] = None) -> Dict:
         task_id, now = str(uuid.uuid4()), get_utc_timestamp()
+        # Default to "outputs" if no working_directory specified
+        working_directory = working_directory or "outputs"
         with get_manager().transaction() as conn:
             conn.execute(
-                "INSERT INTO tasks (id, goal, status, execution_mode, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-                (task_id, goal, "pending", execution_mode, now, now),
+                "INSERT INTO tasks (id, goal, status, execution_mode, working_directory, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                (task_id, goal, "pending", execution_mode, working_directory, now, now),
             )
         return {"id": task_id, "goal": goal, "status": "pending",
-                "execution_mode": execution_mode, "created_at": now, "updated_at": now}
+                "execution_mode": execution_mode, "working_directory": working_directory, "created_at": now, "updated_at": now}
 
     def get_task(self, task_id: str) -> Dict:
         conn = get_manager().acquire()
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, goal, status, execution_mode, created_at, updated_at FROM tasks WHERE id = ?",
+            "SELECT id, goal, status, execution_mode, working_directory, created_at, updated_at FROM tasks WHERE id = ?",
             (task_id,)
         ).fetchone()
         if row is None:
             raise KeyError(f"Task {task_id} not found")
-        return dict(row)
+        task = dict(row)
+        # Default to "outputs" if working_directory is NULL (for backward compatibility)
+        if task.get("working_directory") is None:
+            task["working_directory"] = "outputs"
+        return task
 
     def update_task_status(self, task_id: str, status: str) -> None:
         if status not in TASK_STATUSES:
@@ -73,7 +79,7 @@ class TaskStore:
     def list_tasks(self, status: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Dict]:
         conn = get_manager().acquire()
         conn.row_factory = sqlite3.Row
-        query = "SELECT id, goal, status, execution_mode, created_at, updated_at FROM tasks"
+        query = "SELECT id, goal, status, execution_mode, working_directory, created_at, updated_at FROM tasks"
         if status:
             query += " WHERE status=?"
             params: tuple = (status,)
@@ -82,7 +88,12 @@ class TaskStore:
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params = params + (limit, offset)
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        tasks = [dict(r) for r in rows]
+        # Default to "outputs" if working_directory is NULL (for backward compatibility)
+        for task in tasks:
+            if task.get("working_directory") is None:
+                task["working_directory"] = "outputs"
+        return tasks
 
     # -------------------------------------------------------------------------
     # Subtasks

@@ -31,7 +31,12 @@ async def create_task(request: Request, task_request: CreateTaskRequest):
     Create and run a task in the background.
     Returns immediately with task details while the task runs asynchronously.
     """
-    task_dict = await asyncio.to_thread(task_store.create_task, task_request.goal)
+    task_dict = await asyncio.to_thread(
+        task_store.create_task,
+        task_request.goal,
+        task_request.execution_mode or "sequential",
+        task_request.working_directory
+    )
     task_id = task_dict["id"]
     logger.info(f"Task created (background): {task_id}")
 
@@ -81,6 +86,7 @@ async def get_task(request: Request, task_id: str):
             goal=task["goal"],
             status=task["status"],
             execution_mode=task["execution_mode"],
+            working_directory=task.get("working_directory"),
             created_at=task["created_at"],
             created_at_relative=format_relative_time(task["created_at"]),
             updated_at=task["updated_at"],
@@ -108,13 +114,13 @@ async def get_task_context(request: Request, task_id: str, key: str):
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 @limiter.limit("2/second")
-async def cancel_task(request: Request, task_id: str):
+async def archive_task(request: Request, task_id: str):
     """
-    Mark a task as cancelled.
+    Mark a task as archived.
     Note: This does not stop in-progress background threads.
     """
     try:
-        await asyncio.to_thread(task_store.update_task_status, task_id, "cancelled")
+        await asyncio.to_thread(task_store.update_task_status, task_id, "archived")
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return

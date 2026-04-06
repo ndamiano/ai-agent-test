@@ -17,8 +17,8 @@ def read_file(
     """
     Read a file from the filesystem.
 
-    When executed within a task context, relative paths are automatically
-    scoped to the task's output directory (outputs/<task_id>/).
+    When executed within a task context with a working directory, relative paths
+    are automatically scoped to the working directory.
     Absolute paths are never modified.
 
     Args:
@@ -30,15 +30,15 @@ def read_file(
         Dict containing success status, file path, and content
     """
     try:
-        # Scope relative paths to task directory when in execution context
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
+        # Scope relative paths to working directory when in execution context
+        from tools.execution_context import get_working_directory
+        working_dir = get_working_directory()
 
         path = Path(file_path).expanduser()
 
-        # If we have a task context and the path is relative, scope it
-        if task_id and not path.is_absolute():
-            path = Path("outputs") / task_id / path
+        # If we have a working directory and the path is relative, scope it
+        if working_dir and not path.is_absolute():
+            path = Path(working_dir) / path
 
         path = path.resolve()
 
@@ -96,8 +96,8 @@ def write_to_file(
     """
     Write content to a file, creating it if it doesn't exist.
 
-    When executed within a task context, relative paths are automatically
-    scoped to the task's output directory (outputs/<task_id>/).
+    When executed within a task context with a working directory, relative paths
+    are automatically scoped to the working directory.
     Absolute paths are never modified.
 
     Args:
@@ -109,15 +109,15 @@ def write_to_file(
         Dict containing success status and file path
     """
     try:
-        # Scope relative paths to task directory when in execution context
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
+        # Scope relative paths to working directory when in execution context
+        from tools.execution_context import get_working_directory
+        working_dir = get_working_directory()
 
         path = Path(file_path).expanduser()
 
-        # If we have a task context and the path is relative, scope it
-        if task_id and not path.is_absolute():
-            path = Path("outputs") / task_id / path
+        # If we have a working directory and the path is relative, scope it
+        if working_dir and not path.is_absolute():
+            path = Path(working_dir) / path
 
         path = path.resolve()
 
@@ -156,8 +156,8 @@ def edit_file(
 
     This is safer than rewriting entire files - just specify what to change.
 
-    When executed within a task context, relative paths are automatically
-    scoped to the task's output directory (outputs/<task_id>/).
+    When executed within a task context with a working directory, relative paths
+    are automatically scoped to the working directory.
     Absolute paths are never modified.
 
     Args:
@@ -169,15 +169,15 @@ def edit_file(
         Dict containing success status and details
     """
     try:
-        # Scope relative paths to task directory when in execution context
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
+        # Scope relative paths to working directory when in execution context
+        from tools.execution_context import get_working_directory
+        working_dir = get_working_directory()
 
         path = Path(file_path).expanduser()
 
-        # If we have a task context and the path is relative, scope it
-        if task_id and not path.is_absolute():
-            path = Path("outputs") / task_id / path
+        # If we have a working directory and the path is relative, scope it
+        if working_dir and not path.is_absolute():
+            path = Path(working_dir) / path
 
         path = path.resolve()
 
@@ -245,8 +245,8 @@ def list_directory(
     """
     List files and directories.
 
-    When executed within a task context, relative paths are automatically
-    scoped to the task's output directory (outputs/<task_id>/).
+    When executed within a task context with a working directory, relative paths
+    are automatically scoped to the working directory.
     Absolute paths are never modified.
 
     Args:
@@ -259,15 +259,15 @@ def list_directory(
         Dict containing success status and list of files/directories
     """
     try:
-        # Scope relative paths to task directory when in execution context
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
+        # Scope relative paths to working directory when in execution context
+        from tools.execution_context import get_working_directory
+        working_dir = get_working_directory()
 
         path = Path(directory).expanduser()
 
-        # If we have a task context and the path is relative, scope it
-        if task_id and not path.is_absolute():
-            path = Path("outputs") / task_id / path
+        # If we have a working directory and the path is relative, scope it
+        if working_dir and not path.is_absolute():
+            path = Path(working_dir) / path
 
         path = path.resolve()
 
@@ -361,8 +361,8 @@ def grep_files(
     """
     Search for a pattern in files using grep.
 
-    When executed within a task context, relative paths are automatically
-    scoped to the task's output directory (outputs/<task_id>/).
+    When executed within a task context with a working directory, relative paths
+    are automatically scoped to the working directory.
     Absolute paths are never modified.
 
     Args:
@@ -376,15 +376,15 @@ def grep_files(
         Dict containing success status and search results
     """
     try:
-        # Scope relative paths to task directory when in execution context
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
+        # Scope relative paths to working directory when in execution context
+        from tools.execution_context import get_working_directory
+        working_dir = get_working_directory()
 
         path = Path(directory).expanduser()
 
-        # If we have a task context and the path is relative, scope it
-        if task_id and not path.is_absolute():
-            path = Path("outputs") / task_id / path
+        # If we have a working directory and the path is relative, scope it
+        if working_dir and not path.is_absolute():
+            path = Path(working_dir) / path
 
         path = path.resolve()
 
@@ -459,8 +459,8 @@ def delete_file(
     """
     Delete a file from the filesystem.
 
-    When executed within a task context, relative paths are automatically
-    scoped to the task's output directory (outputs/<task_id>/).
+    When executed within a task context with a working directory, relative paths
+    are automatically scoped to the working directory.
     Absolute paths are never modified.
 
     Args:
@@ -470,15 +470,15 @@ def delete_file(
         Dict containing success status and file path
     """
     try:
-        # Scope relative paths to task directory when in execution context
-        from tools.execution_context import get_task_id
-        task_id = get_task_id()
+        # Scope relative paths to working directory when in execution context
+        from tools.execution_context import get_working_directory
+        working_dir = get_working_directory()
 
         path = Path(file_path).expanduser()
 
-        # If we have a task context and the path is relative, scope it
-        if task_id and not path.is_absolute():
-            path = Path("outputs") / task_id / path
+        # If we have a working directory and the path is relative, scope it
+        if working_dir and not path.is_absolute():
+            path = Path(working_dir) / path
 
         path = path.resolve()
 

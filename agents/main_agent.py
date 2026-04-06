@@ -268,7 +268,14 @@ class MainAgent:
         content = ""
 
         while iteration < max_iterations:
-            messages = [{"role": "system", "content": self.system_context}]
+            # Build system prompt with working directory context
+            system_content = self.system_context
+            from tools.execution_context import get_working_directory
+            working_dir = get_working_directory()
+            if working_dir:
+                system_content = f"{system_content}\n\nWorking Directory: {working_dir}\nAll file operations use paths relative to this working directory unless you use absolute paths."
+
+            messages = [{"role": "system", "content": system_content}]
             messages.extend(self.message_history)
 
             # Use streaming if available to prevent timeouts
@@ -291,10 +298,12 @@ class MainAgent:
                 return content
 
             # Set execution context for tool calls
+            from tools.execution_context import get_working_directory
             ctx_task_id = self.broadcast_context.get('task_id') if self.broadcast_context else None
             ctx_subtask_id = self.broadcast_context.get('subtask_id') if self.broadcast_context else None
+            ctx_working_dir = get_working_directory()  # Preserve current working_directory
 
-            with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id):
+            with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id, working_directory=ctx_working_dir):
                 for tool_call in tool_calls:
                     if tool_call.get("type") == "function":
                         function = tool_call.get("function", {})

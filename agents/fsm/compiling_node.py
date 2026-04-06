@@ -28,15 +28,6 @@ class CompilingNode(StateNode):
         """Run synthesis and transition to finished."""
         from agents.fsm.finished_node import FinishedNode
 
-        # Broadcast state entry
-        self._broadcast(context, {
-            "type": "fsm_state_change",
-            "task_id": context.task_id,
-            "from_state": "VALIDATING",
-            "to_state": self.state_name,
-            "timestamp": get_utc_timestamp(),
-        })
-
         logger.info(f"Maestro: task {context.task_id} — COMPILING final output")
 
         # Run synthesis

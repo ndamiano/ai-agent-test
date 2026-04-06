@@ -84,14 +84,17 @@ class MaestroAgent:
             The final synthesized output string.
         """
         broadcast_fn = broadcast_fn or self.broadcast_fn
-        self._broadcast(broadcast_fn, {
-            "type": "task_status",
-            "task_id": task_id,
-            "status": "planning",
-        })
 
         try:
             self.task_store.update_task_status(task_id, "planning")
+
+            # Broadcast task status with full task object (expected by frontend)
+            task = self.task_store.get_task(task_id)
+            self._broadcast(broadcast_fn, {
+                "type": "task_status",
+                "task_id": task_id,
+                "task": task,
+            })
 
             # Initialize FSM
             from agents.fsm.state_node import StateContext
@@ -107,8 +110,20 @@ class MaestroAgent:
 
             # FSM execution loop (async, non-blocking)
             node = PlanningNode()
+            first_transition = True
             while not isinstance(node, FinishedNode):
                 node = await node.execute_async(context)
+
+                # After planning completes (first transition), emit in_progress status
+                if first_transition:
+                    first_transition = False
+                    self.task_store.update_task_status(task_id, "in_progress")
+                    task = self.task_store.get_task(task_id)
+                    self._broadcast(broadcast_fn, {
+                        "type": "task_status",
+                        "task_id": task_id,
+                        "task": task,
+                    })
 
             # Task complete
             self.task_store.update_task_status(task_id, "completed")

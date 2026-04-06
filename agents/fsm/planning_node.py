@@ -30,16 +30,6 @@ class PlanningNode(StateNode):
         from agents.fsm.executing_node import ExecutingNode
         from agents.fsm.compiling_node import CompilingNode
 
-        # Broadcast state entry
-        self._broadcast(context, {
-            "type": "fsm_state_change",
-            "task_id": context.task_id,
-            "from_state": None if context.wave_count == 0 else "VALIDATING",
-            "to_state": self.state_name,
-            "wave": context.wave_count,
-            "timestamp": get_utc_timestamp(),
-        })
-
         logger.info(f"Maestro: task {context.task_id} — PLANNING")
 
         # Snapshot subtask count before Maestro turn

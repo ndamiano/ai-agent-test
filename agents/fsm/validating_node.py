@@ -30,16 +30,6 @@ class ValidatingNode(StateNode):
         from agents.fsm.planning_node import PlanningNode
         from agents.fsm.compiling_node import CompilingNode
 
-        # Broadcast state entry
-        self._broadcast(context, {
-            "type": "fsm_state_change",
-            "task_id": context.task_id,
-            "from_state": "EXECUTING",
-            "to_state": self.state_name,
-            "wave": context.wave_count,
-            "timestamp": get_utc_timestamp(),
-        })
-
         logger.info(f"Maestro: task {context.task_id} — wave {context.wave_count} — VALIDATING")
 
         # Check for pending/in-progress subtasks

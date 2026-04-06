@@ -600,7 +600,7 @@ def register_file_tools():
     )
 
     tool_manager.register_tool(
-        name="list_directory",
+        name="list_files",
         description=(
             "List files and directories. "
             "Supports glob patterns and recursive listing. "

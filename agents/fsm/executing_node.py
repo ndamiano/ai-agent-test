@@ -32,16 +32,6 @@ class ExecutingNode(StateNode):
         # Increment wave counter (enforces max_waves safety valve)
         context.increment_wave()
 
-        # Broadcast state entry
-        self._broadcast(context, {
-            "type": "fsm_state_change",
-            "task_id": context.task_id,
-            "from_state": "PLANNING",
-            "to_state": self.state_name,
-            "wave": context.wave_count,
-            "timestamp": get_utc_timestamp(),
-        })
-
         logger.info(f"Maestro: task {context.task_id} — wave {context.wave_count} — EXECUTING")
 
         # Execute all ready subtasks

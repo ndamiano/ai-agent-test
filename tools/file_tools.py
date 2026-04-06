@@ -30,17 +30,8 @@ def read_file(
         Dict containing success status, file path, and content
     """
     try:
-        # Scope relative paths to working directory when in execution context
-        from tools.execution_context import get_working_directory
-        working_dir = get_working_directory()
-
-        path = Path(file_path).expanduser()
-
-        # If we have a working directory and the path is relative, scope it
-        if working_dir and not path.is_absolute():
-            path = Path(working_dir) / path
-
-        path = path.resolve()
+        from tools.execution_context import resolve_base_path
+        path = resolve_base_path(file_path)
 
         if not path.exists():
             return {

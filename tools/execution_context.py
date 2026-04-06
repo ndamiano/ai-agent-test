@@ -35,6 +35,7 @@ Functions:
 from contextvars import ContextVar
 from typing import Optional, Dict
 from contextlib import contextmanager
+from pathlib import Path
 
 # Thread-safe context variables
 _task_id_var: ContextVar[Optional[str]] = ContextVar('task_id', default=None)
@@ -165,3 +166,46 @@ def resolve_task_id(task_id: Optional[str] = None) -> str:
         if task_id is None:
             raise ValueError("task_id must be provided or available in execution context")
     return task_id
+
+
+def resolve_base_path(input_path: Optional[str] = None) -> Path:
+    """
+    Unified path resolution for all tools.
+    
+    Resolution priority:
+    1. Absolute paths are returned unchanged
+    2. If execution context working directory is set, resolve relative paths against it
+    3. Otherwise resolve relative paths against configured working directory from settings
+
+    Args:
+        input_path: Path to resolve (if None returns just the base directory)
+
+    Returns:
+        Resolved absolute Path object
+    """
+    from pathlib import Path
+    
+    # First get base directory
+    context_wd = get_working_directory()
+    if context_wd:
+        base_dir = Path(context_wd)
+    else:
+        # Fallback to configured working directory from settings
+        from config.settings_manager import settings_manager
+        base_dir = Path(settings_manager.get_settings()['working_directory'])
+    
+    # Resolve base directory to absolute path
+    base_dir = base_dir.resolve()
+    
+    # If no input path provided, return just base directory
+    if input_path is None:
+        return base_dir
+    
+    path = Path(input_path).expanduser()
+    
+    # Absolute paths are used as-is
+    if path.is_absolute():
+        return path.resolve()
+    
+    # Relative paths are resolved against base directory
+    return (base_dir / path).resolve()

@@ -102,6 +102,8 @@ class ValidatingNode(StateNode):
 
         # Get task working directory
         task = context.task_store.get_task(context.task_id)
+        if task is None:
+            raise RuntimeError(f"Task {context.task_id} not found in task_store")
         working_directory = task.get("working_directory")
 
         self._broadcast(context, {
@@ -140,6 +142,8 @@ class ValidatingNode(StateNode):
     def _build_maestro_prompt(self, context: StateContext, phase: str) -> str:
         """Build the situational prompt Maestro receives."""
         task = context.task_store.get_task(context.task_id)
+        if task is None:
+            raise RuntimeError(f"Task {context.task_id} not found in task_store")
         subtasks = context.task_store.get_subtasks_for_task(context.task_id)
         all_context = context.task_store.get_all_context(context.task_id)
 

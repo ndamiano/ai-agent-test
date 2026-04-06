@@ -103,10 +103,14 @@ class ExecutingNode(StateNode):
 
             # Fetch task to get working_directory
             task = context.task_store.get_task(task_id)
+            if task is None:
+                raise RuntimeError(f"Task {task_id} not found in task_store")
             working_directory = task.get("working_directory")
 
             # Refresh subtask to get latest state
             fresh = context.task_store.get_subtask(subtask_id)
+            if fresh is None:
+                raise RuntimeError(f"Subtask {subtask_id} not found in task_store")
 
             # Build context for this subtask
             context_text = self._build_context_for_subtask(task_id, fresh, context)

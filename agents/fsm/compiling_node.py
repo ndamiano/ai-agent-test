@@ -72,6 +72,8 @@ class CompilingNode(StateNode):
 
         # Build synthesis prompt
         task = context.task_store.get_task(context.task_id)
+        if task is None:
+            raise RuntimeError(f"Task {context.task_id} not found in task_store")
         subtasks = context.task_store.get_subtasks_for_task(context.task_id)
         completed = [s for s in subtasks if s["status"] == "completed"]
 

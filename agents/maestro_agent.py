@@ -57,7 +57,24 @@ class MaestroAgent:
 
     def run(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> str:
         """
-        Run a task end-to-end. Blocks until complete.
+        Run a task end-to-end using FSM. Blocks until complete.
+
+        Args:
+            task_id:      The task ID (already created in task_store).
+            broadcast_fn: Optional WebSocket broadcast callback.
+
+        Returns:
+            The final synthesized output string.
+        """
+        import asyncio
+        return asyncio.run(self.run_async(task_id, broadcast_fn))
+
+    async def run_async(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> str:
+        """
+        Run a task end-to-end using async FSM. Non-blocking.
+
+        Uses a finite state machine with explicit states:
+        PLANNING → EXECUTING → VALIDATING → (PLANNING or COMPILING) → FINISHED
 
         Args:
             task_id:      The task ID (already created in task_store).
@@ -76,29 +93,31 @@ class MaestroAgent:
         try:
             self.task_store.update_task_status(task_id, "planning")
 
-            # --- Step 1: Initial planning ---
-            # Maestro makes its first LLM call. Its tools include spawn_task,
-            # so it will call spawn_task one or more times to seed the plan.
-            self._maestro_turn(task_id, broadcast_fn, phase="planning")
+            # Initialize FSM
+            from agents.fsm.state_node import StateContext
+            from agents.fsm.planning_node import PlanningNode
+            from agents.fsm.finished_node import FinishedNode
 
-            self.task_store.update_task_status(task_id, "in_progress")
-            self._broadcast(broadcast_fn, {
-                "type": "task_status",
-                "task_id": task_id,
-                "status": "in_progress",
-            })
+            context = StateContext(
+                task_id=task_id,
+                broadcast_fn=broadcast_fn,
+                task_store=self.task_store,
+                agent_store=self.agent_store,
+            )
 
-            # --- Step 2: Execute → evaluate → re-plan loop ---
-            final_output = self._run_loop(task_id, broadcast_fn)
+            # FSM execution loop (async, non-blocking)
+            node = PlanningNode()
+            while not isinstance(node, FinishedNode):
+                node = await node.execute_async(context)
 
-            # --- Step 3: Mark complete ---
+            # Task complete
             self.task_store.update_task_status(task_id, "completed")
             self._broadcast(broadcast_fn, {
                 "type": "task_completed",
                 "task_id": task_id,
             })
 
-            return final_output
+            return context.final_output
 
         except Exception as e:
             logger.error(f"Maestro: task {task_id} failed: {e}")
@@ -126,391 +145,8 @@ class MaestroAgent:
         thread.start()
 
     # -------------------------------------------------------------------------
-    # Core loop
-    # -------------------------------------------------------------------------
-
-    def _run_loop(self, task_id: str, broadcast_fn: Optional[Callable]) -> str:
-        """
-        Execute subtasks in waves. After each wave completes, Maestro
-        evaluates outputs and either spawns more work or triggers synthesis.
-
-        Returns the final synthesized output.
-        """
-        max_waves = 20  # safety valve
-        wave = 0
-        while wave < max_waves:
-            wave += 1
-            logger.info(f"Maestro: task {task_id} — wave {wave}")
-
-            # Execute all currently ready subtasks
-            self._execute_wave(task_id, broadcast_fn)
-
-            # Check if there are still subtasks in flight or pending
-            subtasks = self.task_store.get_subtasks_for_task(task_id)
-            pending = [s for s in subtasks if s["status"] in ("pending", "in_progress")]
-            failed  = [s for s in subtasks if s["status"] == "failed"]
-
-            if failed:
-                # Let Maestro decide what to do about failures
-                self._maestro_turn(task_id, broadcast_fn, phase="error_recovery")
-                continue
-
-            if pending:
-                # More subtasks exist but aren't ready yet — something is still running.
-                # This shouldn't happen (we wait for the wave to finish) but guard anyway.
-                continue
-
-            # Queue is empty — ask Maestro to evaluate and decide next step.
-            # Maestro will either call spawn_task (more work) or not (done).
-            more_work = self._maestro_turn(task_id, broadcast_fn, phase="evaluation")
-
-            if not more_work:
-                # Maestro decided we're done — run synthesis
-                return self._synthesize(task_id, broadcast_fn)
-
-        raise RuntimeError(f"Task {task_id} exceeded maximum wave limit ({max_waves})")
-
-    def _execute_wave(self, task_id: str, broadcast_fn: Optional[Callable]) -> bool:
-        """
-        Execute all currently ready subtasks in parallel.
-        Blocks until every submitted subtask either completes or fails.
-
-        Returns True if at least one subtask was executed.
-        """
-        ready = self.task_store.get_ready_subtasks(task_id)
-        if not ready:
-            return False
-
-        futures = {
-            self._executor.submit(self._execute_subtask, s, broadcast_fn): s
-            for s in ready
-        }
-
-        for future in as_completed(futures):
-            subtask = futures[future]
-            try:
-                future.result()
-            except Exception as e:
-                logger.error(f"Maestro: subtask {subtask['id']} failed: {e}")
-                # Status already set to failed inside _execute_subtask
-
-        return True
-
-    # -------------------------------------------------------------------------
-    # Maestro LLM turn
-    # -------------------------------------------------------------------------
-
-    def _maestro_turn(
-        self,
-        task_id: str,
-        broadcast_fn: Optional[Callable],
-        phase: str = "evaluation",
-    ) -> bool:
-        """
-        Make one Maestro LLM call. Maestro receives the full context and
-        task status, then decides what to do next via tool calls.
-
-        Returns True if Maestro spawned any new subtasks (more work to do),
-        False if it made no tool calls (signals completion / ready to synthesize).
-        """
-        # Snapshot total subtask count before the turn so we can detect
-        # whether Maestro actually spawned anything new vs. just evaluating.
-        count_before = len(self.task_store.get_subtasks_for_task(task_id))
-
-        # Fetch task to get working_directory
-        task = self.task_store.get_task(task_id)
-        working_directory = task.get("working_directory")
-
-        prompt = self._build_maestro_prompt(task_id, phase)
-
-        # Render the agent roster into Maestro's system prompt
-        agent_data = self.agent_store.get("maestro")
-        rendered_system_prompt = agent_data["system_prompt"].replace(
-            "{{AGENT_ROSTER}}", self._build_agent_roster()
-        )
-        maestro = MainAgent(agent_id="maestro", system_prompt=rendered_system_prompt)
-        maestro.set_broadcast_context(task_id, "maestro", broadcast_fn)
-
-        self._broadcast(broadcast_fn, {
-            "type": "agent_message",
-            "task_id": task_id,
-            "agent_id": "maestro",
-            "phase": phase,
-            "message": f"Maestro evaluating ({phase})",
-            "timestamp": get_utc_timestamp(),
-        })
-
-        # Execute within execution context
-        with execution_context(task_id=task_id, subtask_id="maestro", working_directory=working_directory):
-            response = maestro.chat(prompt)
-
-        # Ensure response is never None
-        if response is None:
-            response = ""
-            logger.warning(f"Maestro returned None response for task {task_id} phase {phase}")
-
-        # Write Maestro's reasoning into the context store for traceability
-        self.task_store.write_context(
-            task_id,
-            key=f"maestro_{phase}_{datetime.now().strftime('%H%M%S')}",
-            value=response,
-        )
-        self.task_store.log_event(
-            task_id, "agent_message", f"Maestro ({phase}): {response[:200]}"
-        )
-
-        # Spawned new = total subtask count increased during this turn.
-        # Checking pending-only was wrong: a pending summarizer from a prior
-        # spawn would make the loop think there was always more work to do,
-        # burning through all 20 waves before hitting the limit.
-        count_after = len(self.task_store.get_subtasks_for_task(task_id))
-        return count_after > count_before
-
-    def _build_maestro_prompt(self, task_id: str, phase: str) -> str:
-        """
-        Build the situational prompt Maestro receives at each turn.
-        Injects: original goal, all context store output, subtask status summary.
-        """
-        task = self.task_store.get_task(task_id)
-        subtasks = self.task_store.get_subtasks_for_task(task_id)
-        all_context = self.task_store.get_all_context(task_id)
-
-        # --- Goal ---
-        lines = [
-            f"TASK ID: {task_id}",
-            f"ORIGINAL GOAL: {task['goal']}",
-            f"CURRENT PHASE: {phase}",
-            "",
-        ]
-
-        # --- Subtask status summary ---
-        lines.append("SUBTASK STATUS:")
-        if not subtasks:
-            lines.append("  No subtasks yet.")
-        else:
-            for s in subtasks:
-                dep_str = f" (depends on: {s['depends_on']})" if s.get("depends_on") else ""
-                name_desc = ""
-                n, d = s.get("name"), s.get("description")
-                if n or d:
-                    name_desc = f" {n or ''}" + (f" — {d}" if d else "") + " |"
-                lines.append(
-                    f"  [{s['status'].upper()}] {s['id'][:8]} |{name_desc} "
-                    f"agent={s['agent_id']} | pos={s['position']}{dep_str}"
-                )
-                if s.get("output"):
-                    preview = s["output"][:120].replace("\n", " ")
-                    lines.append(f"    Output preview: {preview}...")
-        lines.append("")
-
-        # --- Full context store ---
-        lines.append("CONTEXT STORE (all outputs and notes):")
-        if not all_context:
-            lines.append("  Empty.")
-        else:
-            for key, value in all_context.items():
-                lines.append(f"\n  [{key}]")
-                lines.append(f"  {value[:500]}{'...' if len(value) > 500 else ''}")
-        lines.append("")
-
-        # --- Phase-specific instruction ---
-        if phase == "planning":
-            lines.append(
-                "INSTRUCTION: This is the initial planning phase. "
-                "Review the goal and spawn the first wave of subtasks. "
-                "Only plan what you can plan now — you will re-evaluate after each wave completes."
-            )
-        elif phase == "evaluation":
-            lines.append(
-                "INSTRUCTION: A wave of subtasks has completed. "
-                "Review the outputs above. If the goal is not yet achieved and more work is needed, "
-                "spawn the next wave of subtasks. "
-                "If all work is complete and ready for synthesis, do NOT call spawn_task — "
-                "simply respond confirming the work is done."
-            )
-        elif phase == "error_recovery":
-            lines.append(
-                "INSTRUCTION: One or more subtasks have failed. "
-                "Review the failures above and decide how to proceed: "
-                "retry the failed subtask, spawn an alternative, or acknowledge the failure and continue."
-            )
-
-        return "\n".join(lines)
-
-    # -------------------------------------------------------------------------
-    # Synthesis
-    # -------------------------------------------------------------------------
-
-    def _synthesize(self, task_id: str, broadcast_fn: Optional[Callable]) -> str:
-        """
-        Hand off to the summarizer agent to produce a brief summary and artifact manifest.
-        Falls back to a basic manifest if no summarizer agent exists.
-        """
-        self._broadcast(broadcast_fn, {
-            "type": "agent_message",
-            "task_id": task_id,
-            "agent_id": self.SYNTHESIS_AGENT_ID,
-            "message": "Summarizing results",
-            "timestamp": get_utc_timestamp(),
-        })
-
-        if not self.agent_store.exists(self.SYNTHESIS_AGENT_ID):
-            logger.warning(
-                "MaestroAgent: no 'summarizer' agent found — "
-                "returning fallback manifest as final output."
-            )
-            return self._fallback_synthesis(task_id)
-
-        task = self.task_store.get_task(task_id)
-        subtasks = self.task_store.get_subtasks_for_task(task_id)
-        completed = [s for s in subtasks if s["status"] == "completed"]
-
-        prompt = (
-            f"ORIGINAL GOAL: {task['goal']}\n\n"
-            f"COMPLETED SUBTASKS ({len(completed)}):\n"
-        )
-        for s in completed:
-            preview = (s["output"][:120].replace("\n", " ") + "...") if s.get("output") else "(no output)"
-            prompt += f"  - {s['id'][:8]} | agent={s['agent_id']} | {s['goal'][:80]}\n    Preview: {preview}\n"
-        prompt += (
-            "\nUse list_files and list_subtasks to see what was produced. "
-            "Then return a JSON manifest with 'summary' and 'artifacts' fields. "
-            "Output only the JSON — no other text."
-        )
-
-        summarizer = MainAgent(agent_id=self.SYNTHESIS_AGENT_ID)
-        summarizer.set_broadcast_context(task_id, "summarizer", broadcast_fn)
-        output = summarizer.chat(prompt)
-
-        # Parse the JSON manifest from the summarizer's response
-        import json
-        try:
-            manifest = json.loads(output)
-            summary = manifest.get("summary", "")
-        except (json.JSONDecodeError, AttributeError):
-            # If parsing fails, treat the entire output as the summary
-            summary = output
-            manifest = {"summary": summary, "artifacts": []}
-
-        # Store summary for display and manifest for frontend/API
-        self.task_store.write_context(task_id, "final_output", summary)
-        self.task_store.write_context(task_id, "final_manifest", json.dumps(manifest))
-        self.task_store.log_event(task_id, "task_completed", "Summarization complete")
-
-        return summary
-
-    def _fallback_synthesis(self, task_id: str) -> str:
-        """Return a basic JSON manifest when no summarizer agent is available."""
-        import json
-        from pathlib import Path
-
-        subtasks = self.task_store.get_subtasks_for_task(task_id)
-        completed = [s for s in subtasks if s["status"] == "completed"]
-        summary = f"Completed {len(completed)} subtask(s)."
-
-        # Build artifacts from actual files in the task's output directory
-        artifacts = []
-        task_output_dir = Path(f"outputs/{task_id}")
-        if task_output_dir.exists() and task_output_dir.is_dir():
-            for file_path in task_output_dir.rglob("*"):
-                if file_path.is_file():
-                    # Make path relative to outputs directory
-                    relative_path = file_path.relative_to("outputs")
-                    artifacts.append({
-                        "type": "zip" if file_path.suffix in ['.zip', '.tar', '.gz'] else "file",
-                        "label": file_path.name,
-                        "path": f"outputs/{relative_path}"
-                    })
-
-        manifest = {"summary": summary, "artifacts": artifacts}
-
-        self.task_store.write_context(task_id, "final_output", summary)
-        self.task_store.write_context(task_id, "final_manifest", json.dumps(manifest))
-
-        return summary
-
-    # -------------------------------------------------------------------------
-    # Subtask execution
-    # -------------------------------------------------------------------------
-
-    def _execute_subtask(
-        self, subtask: Dict, broadcast_fn: Optional[Callable]
-    ) -> str:
-        """Execute a single subtask using the worker agent by default."""
-        subtask_id = subtask["id"]
-        task_id = subtask["task_id"]
-
-        try:
-            self.task_store.update_subtask_status(subtask_id, "in_progress")
-            self._broadcast(broadcast_fn, {
-                "type": "subtask_started",
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "agent_id": subtask["agent_id"],
-                "timestamp": get_utc_timestamp(),
-            })
-
-            # Fetch task to get working_directory
-            task = self.task_store.get_task(task_id)
-            working_directory = task.get("working_directory")
-
-            fresh = self.task_store.get_subtask(subtask_id)
-            context_text = self.context_builder.build_for_subtask(task_id, fresh)
-
-            # Default to worker if the specified agent doesn't exist
-            agent_id = fresh["agent_id"]
-            if not self.agent_store.exists(agent_id):
-                agent_id = self.DEFAULT_AGENT_ID
-
-            agent = MainAgent(agent_id=agent_id)
-            agent.set_broadcast_context(task_id, subtask_id, broadcast_fn)
-
-            message = f"{context_text}\n\nTask: {fresh['goal']}"
-
-            with execution_context(task_id=task_id, subtask_id=subtask_id, working_directory=working_directory):
-                output = agent.chat(message)
-
-            self.task_store.set_subtask_output(subtask_id, output)
-            self._broadcast(broadcast_fn, {
-                "type": "subtask_completed",
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "agent_id": agent_id,
-                "timestamp": get_utc_timestamp(),
-            })
-
-            return output
-
-        except Exception as e:
-            self.task_store.update_subtask_status(subtask_id, "failed")
-            self.task_store.log_event(
-                task_id, "subtask_failed", f"Subtask {subtask_id} failed: {e}", subtask_id
-            )
-            self._broadcast(broadcast_fn, {
-                "type": "subtask_failed",
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "error": str(e),
-                "timestamp": get_utc_timestamp(),
-            })
-            raise
-
-    # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
-
-    def _build_agent_roster(self) -> str:
-        """Format the agent roster for injection into Maestro's system prompt."""
-        agents = self.agent_store.list()
-        lines = []
-        for a in agents:
-            if a.get("id") == "maestro":
-                continue
-            tools = ", ".join(a.get("tools", [])) or "none"
-            lines.append(f"- {a['id']}: {a['name']}")
-            lines.append(f"  {a['description']}")
-            lines.append(f"  Tools: {tools}")
-        return "\n".join(lines)
 
     @staticmethod
     def _broadcast(broadcast_fn: Optional[Callable], event: Dict) -> None:

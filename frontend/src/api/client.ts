@@ -2,13 +2,38 @@ import type { Task, TaskDetail, AskResponse, SystemStatus, Settings } from '../t
 
 const base = '/api'
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${base}${path}`, {
-        headers: { 'Content-Type': 'application/json' },
-        ...init,
-    })
-    if (!res.ok) throw new Error(`${res.status}`)
-    return res.json() as Promise<T>
+async function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function request<T>(path: string, init?: RequestInit, retries = 2): Promise<T> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        const res = await fetch(`${base}${path}`, {
+            headers: { 'Content-Type': 'application/json' },
+            ...init,
+        })
+
+        // Handle rate limiting with exponential backoff
+        if (res.status === 429 && attempt < retries) {
+            const retryAfter = res.headers.get('Retry-After')
+            const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : Math.pow(2, attempt) * 500
+            console.warn(`Rate limited, retrying after ${waitTime}ms (attempt ${attempt + 1}/${retries})`)
+            await sleep(waitTime)
+            continue
+        }
+
+        if (!res.ok) {
+            // Provide better error messages
+            if (res.status === 429) {
+                throw new Error('Rate limit exceeded. Please try again in a moment.')
+            }
+            throw new Error(`${res.status}`)
+        }
+
+        return res.json() as Promise<T>
+    }
+
+    throw new Error('Rate limit exceeded after retries')
 }
 
 export const api = {

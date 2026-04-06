@@ -2,10 +2,11 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from config.settings_manager import settings_manager
 from api.models.requests import UpdateSettingsRequest
 from api.models.responses import SettingsResponse
+from api.rate_limiter import limiter
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,8 @@ router = APIRouter()
 
 
 @router.get("", response_model=SettingsResponse)
-async def get_settings():
+@limiter.limit("2/second")
+async def get_settings(request: Request):
     """
     Get current application settings
 
@@ -30,7 +32,8 @@ async def get_settings():
 
 
 @router.put("", response_model=SettingsResponse)
-async def update_settings(request: UpdateSettingsRequest):
+@limiter.limit("2/second")
+async def update_settings(http_request: Request, request: UpdateSettingsRequest):
     """
     Update application settings
 

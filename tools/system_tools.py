@@ -120,21 +120,70 @@ def _web_fetch(
     """
     Fetch content from a URL.
 
-    MOCK: Returns a placeholder response. Replace with real implementation.
-
     Args:
         url: The URL to fetch
         extract_text: Whether to extract clean text (default: True)
         max_length: Maximum content length to return
     """
-    logger.info(f"MOCK web_fetch called: {url}")
-    return json.dumps({
-        "success": True,
-        "url": url,
-        "content": f"[MOCK] Content from {url}. This is a mock implementation. Replace with real web fetching.",
-        "content_type": "text/html",
-        "note": "This is a mock implementation. Replace with real web fetching."
-    })
+    logger.info(f"web_fetch called: {url}")
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        # Add headers to avoid being blocked
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        content_type = response.headers.get('content-type', 'unknown')
+
+        if extract_text and 'text/html' in content_type:
+            # Parse HTML and extract text
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Remove script and style elements
+            for script in soup(['script', 'style', 'nav', 'footer', 'header']):
+                script.decompose()
+
+            # Get text and clean it up
+            text = soup.get_text()
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+
+            content = text[:max_length] if len(text) > max_length else text
+        else:
+            # Return raw content
+            content = response.text[:max_length] if len(response.text) > max_length else response.text
+
+        return json.dumps({
+            "success": True,
+            "url": url,
+            "content": content,
+            "content_type": content_type,
+            "status_code": response.status_code,
+            "truncated": len(response.text) > max_length
+        })
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"web_fetch failed for {url}: {e}")
+        return json.dumps({
+            "success": False,
+            "url": url,
+            "error": str(e),
+            "content": ""
+        })
+    except Exception as e:
+        logger.error(f"web_fetch unexpected error for {url}: {e}")
+        return json.dumps({
+            "success": False,
+            "url": url,
+            "error": f"Unexpected error: {str(e)}",
+            "content": ""
+        })
 
 
 def register_system_tools() -> None:

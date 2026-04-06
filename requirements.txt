@@ -3,3 +3,5 @@ fastapi
 uvicorn
 pydantic
 ddgs
+beautifulsoup4
+slowapi

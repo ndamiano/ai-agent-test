@@ -4,8 +4,9 @@ import mimetypes
 import urllib.parse
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from api.rate_limiter import limiter
 
 router = APIRouter()
 
@@ -26,7 +27,8 @@ def _safe_resolve(rel_path: str) -> Path:
 
 
 @router.get("/{file_path:path}")
-async def download_output_file(file_path: str):
+@limiter.limit("2/second")
+async def download_output_file(request: Request, file_path: str):
     """
     Download a file from the outputs directory.
 

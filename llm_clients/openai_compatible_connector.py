@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any, Union, List, Dict, Optional
 from llm_clients.base_connector import BaseConnector
+from llm_clients.rate_limiter import get_llm_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,13 @@ class OpenAICompatibleConnector(BaseConnector):
         Returns:
             Generated response from API
         """
+        # Apply rate limiting (wait up to 10 seconds)
+        rate_limiter = get_llm_rate_limiter()
+        if not rate_limiter.acquire(blocking=True, timeout=10):
+            error_msg = "Rate limit exceeded: too many LLM requests"
+            logger.warning(error_msg)
+            raise RuntimeError(error_msg)
+
         if context.strip():
             full_prompt = f"Context:\n{context}\n\nUser Request:\n{prompt}"
         else:
@@ -206,6 +214,13 @@ class OpenAICompatibleConnector(BaseConnector):
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         """Generate response with optional tool support"""
 
+        # Apply rate limiting (wait up to 10 seconds)
+        rate_limiter = get_llm_rate_limiter()
+        if not rate_limiter.acquire(blocking=True, timeout=10):
+            error_msg = "Rate limit exceeded: too many LLM requests"
+            logger.warning(error_msg)
+            return {"error": error_msg}
+
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -217,7 +232,7 @@ class OpenAICompatibleConnector(BaseConnector):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        
+
         session = self._get_session()
 
         try:
@@ -256,6 +271,14 @@ class OpenAICompatibleConnector(BaseConnector):
         Yields:
             dict: Streaming response chunks
         """
+        # Apply rate limiting (wait up to 10 seconds)
+        rate_limiter = get_llm_rate_limiter()
+        if not rate_limiter.acquire(blocking=True, timeout=10):
+            error_msg = "Rate limit exceeded: too many LLM requests"
+            logger.warning(error_msg)
+            yield {"error": error_msg}
+            return
+
         payload = {
             "model": self.model_name,
             "messages": messages,

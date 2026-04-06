@@ -1,11 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import logging
 from database.schema import init_db
 from llm_clients.connector_selector import get_connector, reset_connector_cache
 from config.settings_manager import settings_manager
-
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from api.rate_limiter import limiter
 
 # Create FastAPI app
 app = FastAPI(
@@ -13,6 +15,10 @@ app = FastAPI(
     description="API for AI agent management and task execution",
     version="1.0.0"
 )
+
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS to allow all origins, methods, and headers
 app.add_middleware(
@@ -55,7 +61,8 @@ async def startup_event():
         raise HTTPException(status_code=500, detail="Server startup failed")
 
 @app.get("/", response_model=Dict[str, Any])
-async def root():
+@limiter.limit("2/second")
+async def root(request: Request):
     """Root endpoint that returns health check information."""
     try:
         lmstudio_status = get_connector().health_check()
@@ -80,4 +87,4 @@ def reinitialize_connectors():
     reset_connector_cache()
     logging.info("Connectors reinitialized")
 
-__all__ = ["app", "reinitialize_connectors"]
+__all__ = ["app", "reinitialize_connectors", "limiter"]

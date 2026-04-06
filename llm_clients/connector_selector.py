@@ -51,7 +51,7 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
         settings = None
     
     # If connector_type is not a recognized provider, use global setting
-    recognized_types = ("lmstudio", "cline")
+    recognized_types = ("lmstudio", "cline", "openrouter")
     if connector_type not in recognized_types:
         connector_type = global_settings.get("connector_type", "lmstudio")
         

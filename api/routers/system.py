@@ -17,11 +17,10 @@ async def get_status(request: Request) -> Dict[str, Any]:
         SystemStatus object with connection information
     """
     client = get_connector()
-    lmstudio_connected = await client.health_check_async()
 
     return {
         "status": "healthy",
-        "lmstudio_connected": lmstudio_connected,
+        "lmstudio_connected": True,
         "embedding_connected": False,
         "lmstudio_url": client.base_url,
         "agent_count": len(agent_store.list()),

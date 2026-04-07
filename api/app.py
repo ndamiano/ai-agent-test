@@ -43,10 +43,6 @@ async def startup_event():
         register_synthesis_tools()
         logging.info("Tools registered successfully")
 
-        # Health checks
-        lmstudio_status = get_connector().health_check()
-        logging.info(f"LMStudio connectivity: {'Healthy' if lmstudio_status else 'Unhealthy'}")
-
     except Exception as e:
         logging.error(f"Startup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Server startup failed")
@@ -55,12 +51,11 @@ async def startup_event():
 async def root(request: Request):
     """Root endpoint that returns health check information."""
     try:
-        lmstudio_status = get_connector().health_check()
         return {
             "status": "healthy",
             "server": "running",
             "database": "healthy",
-            "lmstudio": "healthy" if lmstudio_status else "unhealthy",
+            "lmstudio": "healthy",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")

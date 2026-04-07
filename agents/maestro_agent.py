@@ -1,14 +1,3 @@
-"""
-MaestroAgent: the LLM-powered orchestrator.
-
-Maestro owns a task from receipt to delivery. It plans, executes waves of
-agent work, evaluates outputs, re-plans as needed, and hands off to a
-synthesis agent for the final deliverable.
-
-Uses a finite state machine (FSM) with explicit states:
-PLANNING → EXECUTING → VALIDATING → (loop or COMPILING) → FINISHED
-"""
-
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -50,10 +39,6 @@ class MaestroAgent:
         max_workers = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    # -------------------------------------------------------------------------
-    # Public entry point
-    # -------------------------------------------------------------------------
-
     def run(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> str:
         """
         Run a task end-to-end using FSM. Blocks until complete.
@@ -87,7 +72,6 @@ class MaestroAgent:
         try:
             self.task_store.update_task_status(task_id, "planning")
 
-            # Broadcast task status with full task object (expected by frontend)
             task = self.task_store.get_task(task_id)
             self._broadcast(broadcast_fn, {
                 "type": "task_status",
@@ -95,7 +79,6 @@ class MaestroAgent:
                 "task": task,
             })
 
-            # Initialize FSM
             from agents.fsm.state_node import StateContext
             from agents.fsm.planning_node import PlanningNode
             from agents.fsm.finished_node import FinishedNode
@@ -107,13 +90,11 @@ class MaestroAgent:
                 agent_store=self.agent_store,
             )
 
-            # FSM execution loop (async, non-blocking)
             node = PlanningNode()
             first_transition = True
             while not isinstance(node, FinishedNode):
                 node = await node.execute_async(context)
 
-                # After planning completes (first transition), emit in_progress status
                 if first_transition:
                     first_transition = False
                     self.task_store.update_task_status(task_id, "in_progress")
@@ -124,7 +105,6 @@ class MaestroAgent:
                         "task": task,
                     })
 
-            # Task complete
             self.task_store.update_task_status(task_id, "completed")
             self._broadcast(broadcast_fn, {
                 "type": "task_completed",
@@ -157,10 +137,6 @@ class MaestroAgent:
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
-
-    # -------------------------------------------------------------------------
-    # Helpers
-    # -------------------------------------------------------------------------
 
     @staticmethod
     def _broadcast(broadcast_fn: Optional[Callable], event: Dict) -> None:

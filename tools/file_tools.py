@@ -100,19 +100,9 @@ def write_to_file(
         Dict containing success status and file path
     """
     try:
-        # Scope relative paths to working directory when in execution context
-        from tools.execution_context import get_working_directory
-        working_dir = get_working_directory()
+        from tools.execution_context import resolve_base_path
+        path = resolve_base_path(file_path)
 
-        path = Path(file_path).expanduser()
-
-        # If we have a working directory and the path is relative, scope it
-        if working_dir and not path.is_absolute():
-            path = Path(working_dir) / path
-
-        path = path.resolve()
-
-        # Create parent directories if requested
         if create_dirs:
             path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -160,17 +150,8 @@ def edit_file(
         Dict containing success status and details
     """
     try:
-        # Scope relative paths to working directory when in execution context
-        from tools.execution_context import get_working_directory
-        working_dir = get_working_directory()
-
-        path = Path(file_path).expanduser()
-
-        # If we have a working directory and the path is relative, scope it
-        if working_dir and not path.is_absolute():
-            path = Path(working_dir) / path
-
-        path = path.resolve()
+        from tools.execution_context import resolve_base_path
+        path = resolve_base_path(file_path)
 
         if not path.exists():
             return {
@@ -179,11 +160,9 @@ def edit_file(
                 "file_path": str(path)
             }
 
-        # Read current content
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        # Check if old_text exists
         if old_text not in content:
             return {
                 "success": False,
@@ -192,7 +171,6 @@ def edit_file(
                 "old_text": old_text[:100] + "..." if len(old_text) > 100 else old_text
             }
 
-        # Count occurrences
         occurrences = content.count(old_text)
         if occurrences > 1:
             return {
@@ -202,10 +180,8 @@ def edit_file(
                 "occurrences": occurrences
             }
 
-        # Perform replacement
         new_content = content.replace(old_text, new_text)
 
-        # Write back
         with open(path, 'w', encoding='utf-8') as f:
             f.write(new_content)
 
@@ -227,7 +203,7 @@ def edit_file(
         }
 
 
-def list_directory(
+def list_files(
     directory: str = ".",
     pattern: Optional[str] = None,
     recursive: bool = False,
@@ -250,17 +226,8 @@ def list_directory(
         Dict containing success status and list of files/directories
     """
     try:
-        # Scope relative paths to working directory when in execution context
-        from tools.execution_context import get_working_directory
-        working_dir = get_working_directory()
-
-        path = Path(directory).expanduser()
-
-        # If we have a working directory and the path is relative, scope it
-        if working_dir and not path.is_absolute():
-            path = Path(working_dir) / path
-
-        path = path.resolve()
+        from tools.execution_context import resolve_base_path
+        path = resolve_base_path(directory)
 
         if not path.exists():
             return {
@@ -280,11 +247,9 @@ def list_directory(
         dirs = []
 
         if pattern and recursive:
-            # Use glob with pattern
             matches = path.glob(pattern)
             for item in matches:
                 rel_path = str(item.relative_to(path))
-                # Check depth
                 depth = len(Path(rel_path).parts)
                 if depth <= max_depth:
                     if item.is_file():
@@ -292,7 +257,6 @@ def list_directory(
                     elif item.is_dir():
                         dirs.append(rel_path)
         elif pattern:
-            # Non-recursive glob
             matches = path.glob(pattern)
             for item in matches:
                 rel_path = str(item.relative_to(path))
@@ -301,7 +265,6 @@ def list_directory(
                 elif item.is_dir():
                     dirs.append(rel_path)
         elif recursive:
-            # Recursive without pattern
             for item in path.rglob('*'):
                 rel_path = str(item.relative_to(path))
                 depth = len(Path(rel_path).parts)
@@ -311,7 +274,6 @@ def list_directory(
                     elif item.is_dir():
                         dirs.append(rel_path)
         else:
-            # Just list immediate children
             for item in path.iterdir():
                 if item.is_file():
                     files.append(item.name)
@@ -341,109 +303,6 @@ def list_directory(
             "directory": directory
         }
 
-
-def grep_files(
-    pattern: str,
-    directory: str = ".",
-    file_pattern: Optional[str] = None,
-    ignore_case: bool = False,
-    max_results: int = 100,
-) -> Dict[str, Any]:
-    """
-    Search for a pattern in files using grep.
-
-    When executed within a task context with a working directory, relative paths
-    are automatically scoped to the working directory.
-    Absolute paths are never modified.
-
-    Args:
-        pattern: Regular expression pattern to search for
-        directory: Directory to search in (default: current directory)
-        file_pattern: Optional file glob pattern (e.g., "*.py")
-        ignore_case: Whether to ignore case in search
-        max_results: Maximum number of results to return
-
-    Returns:
-        Dict containing success status and search results
-    """
-    try:
-        # Scope relative paths to working directory when in execution context
-        from tools.execution_context import get_working_directory
-        working_dir = get_working_directory()
-
-        path = Path(directory).expanduser()
-
-        # If we have a working directory and the path is relative, scope it
-        if working_dir and not path.is_absolute():
-            path = Path(working_dir) / path
-
-        path = path.resolve()
-
-        if not path.exists():
-            return {
-                "success": False,
-                "error": f"Directory not found: {directory}",
-                "directory": str(path)
-            }
-
-        # Build grep command
-        cmd = ["grep", "-rn"]
-        if ignore_case:
-            cmd.append("-i")
-
-        cmd.append(pattern)
-        cmd.append(str(path))
-
-        if file_pattern:
-            cmd.extend(["--include", file_pattern])
-
-        # Execute grep
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        # Parse results
-        matches = []
-        if result.stdout:
-            lines = result.stdout.strip().split('\n')
-            for line in lines[:max_results]:
-                # Format: file_path:line_number:content
-                parts = line.split(':', 2)
-                if len(parts) >= 3:
-                    matches.append({
-                        "file": parts[0],
-                        "line": int(parts[1]),
-                        "content": parts[2].strip()
-                    })
-
-        return {
-            "success": True,
-            "pattern": pattern,
-            "directory": str(path),
-            "matches": matches,
-            "match_count": len(matches),
-            "truncated": len(result.stdout.strip().split('\n')) > max_results if result.stdout else False
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "error": "Search timed out after 30 seconds",
-            "pattern": pattern
-        }
-    except Exception as e:
-        error_msg = f"Failed to grep for pattern '{pattern}': {str(e)}"
-        logger.error(error_msg)
-        return {
-            "success": False,
-            "error": error_msg,
-            "pattern": pattern
-        }
-
-
 def delete_file(
     file_path: str
 ) -> Dict[str, Any]:
@@ -461,17 +320,8 @@ def delete_file(
         Dict containing success status and file path
     """
     try:
-        # Scope relative paths to working directory when in execution context
-        from tools.execution_context import get_working_directory
-        working_dir = get_working_directory()
-
-        path = Path(file_path).expanduser()
-
-        # If we have a working directory and the path is relative, scope it
-        if working_dir and not path.is_absolute():
-            path = Path(working_dir) / path
-
-        path = path.resolve()
+        from tools.execution_context import resolve_base_path
+        path = resolve_base_path(file_path)
 
         if not path.exists():
             return {
@@ -487,7 +337,6 @@ def delete_file(
                 "file_path": str(path)
             }
 
-        # Delete the file
         path.unlink()
 
         result = {
@@ -631,47 +480,7 @@ def register_file_tools():
             },
             "required": []
         },
-        fn=list_directory,
-        auto_inject_context=False
-    )
-
-    tool_manager.register_tool(
-        name="grep_files",
-        description=(
-            "Search for a pattern in files using grep. "
-            "Returns file paths, line numbers, and matching content. "
-            "Use this to find where specific text appears in your codebase."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Regular expression pattern to search for"
-                },
-                "directory": {
-                    "type": "string",
-                    "default": ".",
-                    "description": "Directory to search in (default: current directory)"
-                },
-                "file_pattern": {
-                    "type": "string",
-                    "description": "Optional file glob pattern (e.g., '*.py')"
-                },
-                "ignore_case": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Whether to ignore case in search"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "default": 100,
-                    "description": "Maximum number of results to return"
-                }
-            },
-            "required": ["pattern"]
-        },
-        fn=grep_files,
+        fn=list_files,
         auto_inject_context=False
     )
 
@@ -695,4 +504,4 @@ def register_file_tools():
         auto_inject_context=False
     )
 
-    logger.info("File tools registered: read_file, write_to_file, edit_file, list_directory, grep_files, delete_file")
+    logger.info("File tools registered: read_file, write_to_file, edit_file, list_files, delete_file")

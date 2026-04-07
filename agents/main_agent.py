@@ -1,5 +1,3 @@
-"""Main conversational agent that orchestrates tools with a proper agentic loop"""
-
 from typing import List, Dict, Any, Optional, Callable
 import json
 from llm_clients.connector_selector import get_connector
@@ -22,22 +20,10 @@ class MainAgent:
         max_history_length: int = 20,
         system_prompt: Optional[str] = None,
     ):
-        """
-        Initialize the agent.
-
-        Args:
-            agent_id:         Load system prompt and tool list from the agent store.
-            max_history_length: Max messages to keep in history.
-            system_prompt:    Override the system prompt after loading from the store.
-                              Useful for injecting rendered template variables (e.g.
-                              {{AGENT_ROSTER}}) before the agent makes its first call.
-                              If agent_id is also provided, this replaces the stored prompt.
-        """
         self.connector = get_connector("main_agent", "conversation", "text")
         self.message_history: List[Dict[str, str]] = []
         self.max_history_length = max_history_length
 
-        # Broadcasting context for tool usage events
         self.broadcast_fn: Optional[Callable] = None
         self.broadcast_context: Dict[str, str] = {}
 
@@ -53,16 +39,10 @@ class MainAgent:
             self.system_context = SYSTEM_PROMPT
             self._tools_schema = self._build_tools_schema()
 
-        # Apply override last so it always wins
         if system_prompt is not None:
             self.system_context = system_prompt
 
     def _build_tools_schema(self, allowed_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Convert tool manager tools to OpenAI function calling format
-
-        Args:
-            allowed_tools: Optional list of tool names to include. If None, includes all tools.
-        """
         from tools.tool_manager import build_openai_tool_schema
 
         tools = tool_manager.getTools()
@@ -76,33 +56,19 @@ class MainAgent:
         return openai_tools
 
     def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:
-        """
-        Get response from connector, using streaming if available to prevent timeouts.
-
-        Args:
-            messages: Message history
-            tools: Tool schemas
-
-        Returns:
-            Complete response dict
-        """
         if hasattr(self.connector, 'generate_with_tools_stream'):
             try:
-                # Accumulate streaming response
                 accumulated_response = None
 
                 for chunk in self.connector.generate_with_tools_stream(messages, tools):
                     if "error" in chunk:
-                        # Fall back to non-streaming on error
                         import logging
                         logging.warning(f"Streaming failed, falling back to non-streaming: {chunk['error']}")
                         return self.connector.generate_with_tools(messages, tools)
 
-                    # Accumulate the chunks
                     if accumulated_response is None:
                         accumulated_response = chunk
                     else:
-                        # Merge delta content for streaming
                         if "choices" in chunk:
                             for i, choice in enumerate(chunk["choices"]):
                                 if "delta" in choice:
@@ -110,12 +76,10 @@ class MainAgent:
                                     acc_choice = accumulated_response["choices"][i]
                                     acc_message = acc_choice.get("message", {})
 
-                                    # Merge content
                                     if "content" in delta and delta["content"]:
                                         content = acc_message.get("content", "")
                                         acc_message["content"] = content + delta["content"]
 
-                                    # Merge tool calls
                                     if "tool_calls" in delta:
                                         if "tool_calls" not in acc_message:
                                             acc_message["tool_calls"] = []
@@ -123,7 +87,6 @@ class MainAgent:
                                         for tool_call_delta in delta["tool_calls"]:
                                             idx = tool_call_delta.get("index", 0)
 
-                                            # Extend list if needed
                                             while len(acc_message["tool_calls"]) <= idx:
                                                 acc_message["tool_calls"].append({
                                                     "id": "",
@@ -131,7 +94,6 @@ class MainAgent:
                                                     "function": {"name": "", "arguments": ""}
                                                 })
 
-                                            # Merge tool call fields
                                             acc_tool_call = acc_message["tool_calls"][idx]
 
                                             if "id" in tool_call_delta:
@@ -155,12 +117,10 @@ class MainAgent:
                 return accumulated_response if accumulated_response else {"error": "Empty streaming response"}
 
             except Exception as e:
-                # Fall back to non-streaming on error
                 import logging
                 logging.warning(f"Streaming failed, falling back to non-streaming: {e}")
                 return self.connector.generate_with_tools(messages, tools)
         else:
-            # Use non-streaming if streaming not supported
             return self.connector.generate_with_tools(messages, tools)
 
     def set_broadcast_context(self, task_id: str, subtask_id: str, broadcast_fn: Callable):
@@ -187,15 +147,12 @@ class MainAgent:
         Returns:
             Sanitized arguments dictionary
         """
-        # Sensitive patterns to redact
         sensitive_keys = ['password', 'token', 'secret', 'key', 'credential', 'api_key']
         sanitized = {}
 
         for k, v in args.items():
-            # Redact sensitive keys
             if any(sens in k.lower() for sens in sensitive_keys):
                 sanitized[k] = "[REDACTED]"
-            # Truncate long string values
             elif isinstance(v, str) and len(v) > 100:
                 sanitized[k] = v[:100] + "..."
             else:
@@ -268,17 +225,15 @@ class MainAgent:
         content = ""
 
         while iteration < max_iterations:
-            # Build system prompt with working directory context
             system_content = self.system_context
-            from tools.execution_context import get_working_directory
-            working_dir = get_working_directory()
-            if working_dir:
-                system_content = f"{system_content}\n\nWorking Directory: {working_dir}\nAll file operations use paths relative to this working directory unless you use absolute paths."
+            from tools.execution_context import resolve_base_path
+            path = resolve_base_path()
+            if path:
+                system_content = f"{system_content}\n\nWorking Directory: {path}\nAll file operations use paths relative to this working directory unless you use absolute paths."
 
             messages = [{"role": "system", "content": system_content}]
             messages.extend(self.message_history)
 
-            # Use streaming if available to prevent timeouts
             response = self._get_response_with_tools(messages, self._tools_schema)
 
             if "error" in response:
@@ -297,13 +252,10 @@ class MainAgent:
             if not tool_calls:
                 return content
 
-            # Set execution context for tool calls
-            from tools.execution_context import get_working_directory
             ctx_task_id = self.broadcast_context.get('task_id') if self.broadcast_context else None
             ctx_subtask_id = self.broadcast_context.get('subtask_id') if self.broadcast_context else None
-            ctx_working_dir = get_working_directory()  # Preserve current working_directory
 
-            with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id, working_directory=ctx_working_dir):
+            with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id, working_directory=path):
                 for tool_call in tool_calls:
                     if tool_call.get("type") == "function":
                         function = tool_call.get("function", {})
@@ -316,7 +268,6 @@ class MainAgent:
 
                             result = tool_manager.useTool(tool_name, **arguments)
 
-                            # Broadcast successful tool usage
                             self._broadcast_tool_usage(tool_name, arguments, 'success')
 
                             self.message_history.append({
@@ -327,7 +278,6 @@ class MainAgent:
 
                         except Exception as e:
 
-                            # Broadcast failed tool usage
                             self._broadcast_tool_usage(tool_name, arguments, 'failed')
 
                             self.message_history.append({

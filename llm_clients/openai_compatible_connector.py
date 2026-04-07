@@ -5,10 +5,34 @@ import requests
 import json
 import os
 from typing import Any, Union, List, Dict, Optional
+from datetime import datetime
 from llm_clients.base_connector import BaseConnector
 from llm_clients.rate_limiter import get_llm_rate_limiter
 
 logger = logging.getLogger(__name__)
+
+
+def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
+    """Simple and dirty logging of AI model requests to a file"""
+    # Essentially this is a debug variable, but lazy
+    if false:
+        return
+
+    log_file = "logs/llm_requests.log"
+
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "endpoint": endpoint,
+        "payload": payload,
+        "metadata": metadata or {}
+    }
+
+    try:
+        with open(log_file, "a") as f:
+            f.write(json.dumps(log_entry, indent=2))
+            f.write("\n" + "="*80 + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to log request to file: {e}")
 
 
 class OpenAICompatibleConnector(BaseConnector):
@@ -183,6 +207,13 @@ class OpenAICompatibleConnector(BaseConnector):
 
         session = self._get_session()
 
+        # Log the request
+        _log_request_to_file(
+            payload=payload,
+            endpoint=self.api_endpoint,
+            metadata={"method": "generate", "model": self.model_name}
+        )
+
         try:
             response = session.post(
                 self.api_endpoint,
@@ -234,6 +265,13 @@ class OpenAICompatibleConnector(BaseConnector):
             payload["tool_choice"] = "auto"
 
         session = self._get_session()
+
+        # Log the request
+        _log_request_to_file(
+            payload=payload,
+            endpoint=self.api_endpoint,
+            metadata={"method": "generate_with_tools", "model": self.model_name, "has_tools": bool(tools)}
+        )
 
         try:
             response = session.post(
@@ -292,6 +330,13 @@ class OpenAICompatibleConnector(BaseConnector):
             payload["tool_choice"] = "auto"
 
         session = self._get_session()
+
+        # Log the request
+        _log_request_to_file(
+            payload=payload,
+            endpoint=self.api_endpoint,
+            metadata={"method": "generate_with_tools_stream", "model": self.model_name, "has_tools": bool(tools), "streaming": True}
+        )
 
         try:
             response = session.post(

@@ -1,5 +1,5 @@
 """
-Task tools: spawn_task, get_task_status.
+Task tools: spawn_task
 
 Orchestration primitives for creating and inspecting subtasks.
 Available to MaestroAgent and, selectively, to agents with quality-gate
@@ -134,53 +134,6 @@ def _spawn_task(
         "depends_on": dep_ids,
     })
 
-
-def _get_task_status(task_id: Optional[str] = None, subtask_id: Optional[str] = None) -> str:
-    """
-    Return the current status of a task or a specific subtask.
-
-    If task_id is not provided, uses the current execution context.
-    If subtask_id is provided, returns status for that subtask only.
-    Otherwise returns the parent task status plus a summary of all subtasks.
-    """
-    # Use execution context if task_id not provided
-    from tools.execution_context import resolve_task_id
-    task_id = resolve_task_id(task_id)
-
-    if subtask_id:
-        subtask = _task_store.get_subtask(subtask_id)
-        return json.dumps({
-            "subtask_id": subtask_id,
-            "agent_id": subtask["agent_id"],
-            "status": subtask["status"],
-            "goal": subtask["goal"],
-            "has_output": subtask.get("output") is not None,
-        })
-
-    task = _task_store.get_task(task_id)
-    subtasks = _task_store.get_subtasks_for_task(task_id)
-
-    counts = {"pending": 0, "in_progress": 0, "completed": 0, "failed": 0}
-    summaries = []
-    for s in subtasks:
-        status = s["status"]
-        counts[status] = counts.get(status, 0) + 1
-        summaries.append({
-            "subtask_id": s["id"],
-            "agent_id": s["agent_id"],
-            "status": status,
-            "position": s["position"],
-            "has_output": s.get("output") is not None,
-        })
-
-    return json.dumps({
-        "task_id": task_id,
-        "task_status": task["status"],
-        "subtask_counts": counts,
-        "subtasks": summaries,
-    })
-
-
 def register_task_tools() -> None:
     """Register task tools with the global tool manager."""
 
@@ -241,29 +194,4 @@ def register_task_tools() -> None:
         auto_inject_context=True,
     )
 
-    tool_manager.register_tool(
-        name="get_task_status",
-        description=(
-            "Get the current status of a task and all its subtasks, or a specific subtask. "
-            "Use this to check whether a wave of work is complete before evaluating outputs. "
-            "The task_id will be automatically inferred from the current execution context if not provided."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Optional. The parent task ID to check. Defaults to current task context.",
-                },
-                "subtask_id": {
-                    "type": "string",
-                    "description": "Optional. A specific subtask ID for a targeted status check.",
-                },
-            },
-            "required": [],
-        },
-        fn=_get_task_status,
-        auto_inject_context=True,
-    )
-
-    logger.info("Task tools registered: spawn_task, get_task_status")
+    logger.info("Task tools registered: spawn_task")

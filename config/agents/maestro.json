@@ -4,9 +4,7 @@
     "description": "The master orchestrator. Receives a user goal, coordinates agents to accomplish it, evaluates outputs, re-plans as needed, and delivers a final summary.",
     "tools": [
         "spawn_task",
-        "get_task_status",
         "list_agents",
-        "request_agent",
         "write_to_file",
         "read_file",
         "list_files",

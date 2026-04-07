@@ -5,7 +5,8 @@ Maestro owns a task from receipt to delivery. It plans, executes waves of
 agent work, evaluates outputs, re-plans as needed, and hands off to a
 synthesis agent for the final deliverable.
 
-Replaces the static PlannerAgent + Orchestrator chain.
+Uses a finite state machine (FSM) with explicit states:
+PLANNING → EXECUTING → VALIDATING → (loop or COMPILING) → FINISHED
 """
 
 import logging
@@ -17,7 +18,6 @@ from typing import Callable, Dict, Optional
 from config.time_utils import get_utc_timestamp
 
 from agents.agent_store import agent_store
-from agents.context_builder import ContextBuilder
 from agents.main_agent import MainAgent
 from database.task_store import TaskStore
 from tools.execution_context import execution_context
@@ -43,7 +43,6 @@ class MaestroAgent:
     def __init__(self, broadcast_fn: Optional[Callable] = None):
         self.task_store = TaskStore()
         self.agent_store = agent_store
-        self.context_builder = ContextBuilder(self.task_store)
         self.broadcast_fn = broadcast_fn
         self.logger = logging.getLogger(__name__)
 

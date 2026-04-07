@@ -84,4 +84,3 @@ const TaskLiveView: React.FC<TaskLiveViewProps> = ({
 }
 
 export default TaskLiveView
-TaskLiveView

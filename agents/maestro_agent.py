@@ -8,7 +8,7 @@ from config.time_utils import get_utc_timestamp
 
 from agents.agent_store import agent_store
 from agents.main_agent import MainAgent
-from database.task_store import TaskStore
+from database.task_store import task_store
 from tools.execution_context import execution_context
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class MaestroAgent:
     """LLM-powered orchestrator that coordinates all agents to accomplish a goal."""
 
     def __init__(self, broadcast_fn: Optional[Callable] = None):
-        self.task_store = TaskStore()
+        self.task_store = task_store
         self.agent_store = agent_store
         self.broadcast_fn = broadcast_fn
         self.logger = logging.getLogger(__name__)

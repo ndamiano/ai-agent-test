@@ -8,9 +8,8 @@ if __name__ == "__main__":
     log_config["formatters"]["access"]["fmt"] = "%(levelname)s:%(name)s:%(message)s"
 
     # Add our application loggers with propagate=False to prevent duplicates
-    log_config["loggers"]["agents"] = {"handlers": ["default"], "level": "INFO", "propagate": False}
-    log_config["loggers"]["tools"] = {"handlers": ["default"], "level": "INFO", "propagate": False}
-    log_config["loggers"]["database"] = {"handlers": ["default"], "level": "INFO", "propagate": False}
+    for logger_name in ["agents", "tools", "database"]:
+        log_config["loggers"][logger_name] = {"handlers": ["default"], "level": "INFO", "propagate": False}
 
     uvicorn.run(
         "api.app:app",

@@ -9,11 +9,11 @@ import logging
 from typing import Optional
 
 from tools.tool_manager import tool_manager
-from database.task_store import TaskStore
+from database.task_store import task_store
 
 logger = logging.getLogger(__name__)
 
-_task_store = TaskStore()
+_task_store = task_store
 
 
 def _list_context_keys(task_id: Optional[str] = None) -> str:

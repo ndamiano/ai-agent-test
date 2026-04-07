@@ -21,7 +21,7 @@ class MainAgent:
         max_history_length: int = 20,
         system_prompt: Optional[str] = None,
     ):
-        self.connector = get_connector("main_agent", "conversation", "text")
+        self.connector = get_connector()
         self.message_history: List[Dict[str, str]] = []
         self.max_history_length = max_history_length
 

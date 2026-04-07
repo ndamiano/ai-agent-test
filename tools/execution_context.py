@@ -27,9 +27,8 @@ Functions:
     get_subtask_id: Get current subtask_id from context
     get_working_directory: Get current working_directory from context
     get_execution_context: Get full context as dictionary
-    has_execution_context: Check if context is available
-    require_task_id: Get task_id or raise error if not available
-    require_execution_context: Get full context or raise error if not available
+    resolve_task_id: Resolve task_id from parameter or context
+    resolve_base_path: Unified path resolution for tools
 """
 
 from contextvars import ContextVar
@@ -98,52 +97,6 @@ def get_execution_context() -> Dict[str, Optional[str]]:
         'subtask_id': get_subtask_id(),
         'working_directory': get_working_directory()
     }
-
-
-def has_execution_context() -> bool:
-    """Check if we're running within an execution context"""
-    return get_task_id() is not None
-
-
-def require_task_id() -> str:
-    """
-    Get task_id from execution context, raising error if not available.
-
-    Use this in tools that need task_id but don't want it as a parameter.
-
-    Raises:
-        RuntimeError: If no task_id in current execution context
-
-    Returns:
-        Current task_id
-    """
-    task_id = get_task_id()
-    if task_id is None:
-        raise RuntimeError(
-            "This tool requires a task_id but none is available in execution context. "
-            "Make sure this tool is called from within a task execution."
-        )
-    return task_id
-
-
-def require_execution_context() -> Dict[str, str]:
-    """
-    Get full execution context, raising error if not available.
-
-    Raises:
-        RuntimeError: If no execution context set
-
-    Returns:
-        Dict with task_id and subtask_id
-    """
-    context = get_execution_context()
-    if context['task_id'] is None:
-        raise RuntimeError(
-            "This tool requires execution context but none is available. "
-            "Make sure this tool is called from within a task execution."
-        )
-    return context
-
 
 
 def resolve_task_id(task_id: Optional[str] = None) -> str:

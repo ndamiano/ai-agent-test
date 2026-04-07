@@ -6,9 +6,6 @@ from tools.execution_context import (
     get_task_id,
     get_subtask_id,
     get_execution_context,
-    has_execution_context,
-    require_task_id,
-    require_execution_context,
     resolve_task_id
 )
 from tools.tool_manager import ToolManager
@@ -25,12 +22,12 @@ class TestExecutionContext:
         with execution_context(task_id="test-123", subtask_id="sub-456"):
             assert get_task_id() == "test-123"
             assert get_subtask_id() == "sub-456"
-            assert has_execution_context() is True
+            assert get_execution_context()['task_id'] is not None
 
         # Context cleared after exiting
         assert get_task_id() is None
         assert get_subtask_id() is None
-        assert has_execution_context() is False
+        assert get_execution_context()['task_id'] is None
 
     def test_nested_contexts(self):
         """Test that nested contexts work correctly"""
@@ -59,33 +56,12 @@ class TestExecutionContext:
     def test_get_execution_context(self):
         """Test getting full execution context"""
         context = get_execution_context()
-        assert context == {'task_id': None, 'subtask_id': None}
+        assert context == {'task_id': None, 'subtask_id': None, 'working_directory': None}
 
         with execution_context(task_id="t1", subtask_id="s1"):
             context = get_execution_context()
-            assert context == {'task_id': 't1', 'subtask_id': 's1'}
-
-    def test_require_task_id_success(self):
-        """Test require_task_id when context is available"""
-        with execution_context(task_id="test-123"):
-            task_id = require_task_id()
-            assert task_id == "test-123"
-
-    def test_require_task_id_failure(self):
-        """Test require_task_id when context is not available"""
-        with pytest.raises(RuntimeError, match="requires a task_id"):
-            require_task_id()
-
-    def test_require_execution_context_success(self):
-        """Test require_execution_context when context is available"""
-        with execution_context(task_id="t1", subtask_id="s1"):
-            context = require_execution_context()
-            assert context == {'task_id': 't1', 'subtask_id': 's1'}
-
-    def test_require_execution_context_failure(self):
-        """Test require_execution_context when context is not available"""
-        with pytest.raises(RuntimeError, match="requires execution context"):
-            require_execution_context()
+            assert context['task_id'] == 't1'
+            assert context['subtask_id'] == 's1'
 
 
 class TestAutoInjection:
@@ -93,8 +69,6 @@ class TestAutoInjection:
 
     def setup_method(self):
         """Create a fresh ToolManager for each test"""
-        # Clear the singleton instance to get a fresh tool manager
-        ToolManager._instance = None
         self.tm = ToolManager()
 
     def test_auto_injection_with_task_id(self):

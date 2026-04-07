@@ -23,7 +23,7 @@ def reset_connector_cache() -> None:
     _cached_settings_hash = None
 
 
-def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[str, Any]] = None, *args, **kwargs) -> OpenAICompatibleConnector:
+def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[str, Any]] = None) -> OpenAICompatibleConnector:
     """
     Get a singleton OpenAI-compatible connector instance.
 
@@ -32,11 +32,10 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
     connector instance.
 
     Args:
-        connector_type: The type of connector to use ('lmstudio' or 'cline'). 
+        connector_type: The type of connector to use ('lmstudio' or 'cline').
                        If None, reads from global settings.
         settings: Optional settings dictionary to use instead of loading from manager.
                  Useful for testing or overriding configuration.
-        *args, **kwargs: Ignored. Kept for backward compatibility with old ConnectorSelector usage.
 
     Returns:
         An instance of OpenAICompatibleConnector configured for the requested provider.
@@ -44,12 +43,7 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
     global _cached_connector, _cached_settings_hash
 
     global_settings = settings_manager.get_settings()
-    
-    # Handle old call signature: get_connector("type", "caller", "task_type", ...)
-    # where extra args were strings, not a settings dict
-    if not isinstance(settings, dict):
-        settings = None
-    
+
     # If connector_type is not a recognized provider, use global setting
     recognized_types = ("lmstudio", "cline", "openrouter")
     if connector_type not in recognized_types:

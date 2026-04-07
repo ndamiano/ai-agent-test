@@ -31,15 +31,7 @@ class TestTaskStore(unittest.TestCase):
         self.db_path_patch.stop()
         # Remove the temporary directory and all its contents
         shutil.rmtree(self.temp_dir, ignore_errors=True)
-        # Clear singleton instance
-        TaskStore._instance = None
-    
-    def test_singleton_pattern(self):
-        """Test that TaskStore follows the singleton pattern."""
-        store1 = TaskStore()
-        store2 = TaskStore()
-        self.assertIs(store1, store2, "TaskStore should return the same instance")
-    
+
     def test_create_and_read_task(self):
         """Test creating a task and reading it back."""
         store = TaskStore()

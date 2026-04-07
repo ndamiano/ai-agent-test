@@ -13,7 +13,6 @@ class TestAgentStore(unittest.TestCase):
 
     def setUp(self):
         """Set up test environment with temporary directory"""
-        AgentStore.reset()
         self.temp_dir = tempfile.mkdtemp()
         self.store = AgentStore(store_dir=self.temp_dir)
 
@@ -149,7 +148,6 @@ class TestAgentStore(unittest.TestCase):
     def test_agent_store_directory_creation(self):
         """Test that store directory is created if it doesn't exist"""
         new_store_dir = os.path.join(self.temp_dir, "new_store")
-        AgentStore.reset()
         new_store = AgentStore(store_dir=new_store_dir)
 
         self.assertTrue(os.path.exists(new_store_dir))

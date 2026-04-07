@@ -19,24 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsManager:
-    """Singleton settings manager with JSON persistence"""
-
-    _instance = None
-    _lock = Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
+    """Settings manager with JSON persistence"""
 
     def __init__(self):
-        # Only initialize once
-        if hasattr(self, '_initialized'):
-            return
-
-        self._initialized = True
         self._settings_lock = Lock()
 
         # Get project root directory

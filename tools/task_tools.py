@@ -14,12 +14,12 @@ from typing import Optional, Union, List
 
 from tools.tool_manager import tool_manager
 from database.validators import validate_dependencies
-from database.task_store import TaskStore
+from database.task_store import task_store
 from agents.agent_store import agent_store
 
 logger = logging.getLogger(__name__)
 
-_task_store = TaskStore()
+_task_store = task_store
 
 
 def _parse_depends_on(depends_on: Union[str, list, None]) -> list:

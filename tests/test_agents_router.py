@@ -60,11 +60,11 @@ SAMPLE_AGENTS = [
 
 
 def _make_client(store_mock):
-    """Return a TestClient with _agent_store patched to the given mock."""
+    """Return a TestClient with agent_store patched to the given mock."""
     app = FastAPI()
     app.include_router(router, prefix="/api/agents")
     return TestClient(app, raise_server_exceptions=False), \
-           patch.object(agents_module, "_agent_store", store_mock)
+           patch.object(agents_module, "agent_store", store_mock)
 
 
 # --- Endpoint tests ---

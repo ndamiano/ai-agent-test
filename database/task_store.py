@@ -4,7 +4,6 @@ import uuid
 import logging
 import re
 from typing import Dict, List, Optional
-from threading import Lock
 
 from .schema import init_db, get_db_path
 from .connection import get_manager, close_connection
@@ -21,23 +20,10 @@ def _parse_subtask_row(row: dict) -> dict:
 
 
 class TaskStore:
-    """Singleton database interface for task management."""
+    """Database interface for task management."""
 
-    _instance = None
-    _lock = Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    init_db(get_db_path())
-        return cls._instance
-
-    @classmethod
-    def reset(cls):
-        with cls._lock:
-            cls._instance = None
+    def __init__(self):
+        init_db(get_db_path())
 
     # -------------------------------------------------------------------------
     # Tasks

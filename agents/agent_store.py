@@ -3,7 +3,6 @@
 import json
 import logging
 import pathlib
-from threading import Lock
 from typing import Dict, List
 
 from config.time_utils import get_utc_timestamp
@@ -17,22 +16,9 @@ class AgentStore:
     Each agent is a named persona with a system prompt and tool list.
     """
 
-    _instance = None
-    _lock = Lock()
-
-    def __new__(cls, store_dir: str = "config/agents"):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance.store_dir = pathlib.Path(store_dir)
-                    cls._instance.store_dir.mkdir(parents=True, exist_ok=True)
-        return cls._instance
-
-    @classmethod
-    def reset(cls):
-        with cls._lock:
-            cls._instance = None
+    def __init__(self, store_dir: str = "config/agents"):
+        self.store_dir = pathlib.Path(store_dir)
+        self.store_dir.mkdir(parents=True, exist_ok=True)
 
     def get(self, agent_id: str) -> Dict:
         """Load an agent definition by ID. Raises KeyError if not found."""

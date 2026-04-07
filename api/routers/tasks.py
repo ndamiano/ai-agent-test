@@ -8,7 +8,6 @@ from agents.maestro_agent import MaestroAgent
 from database.task_store import task_store
 from api.websocket.manager import manager
 from config.time_utils import format_relative_time, get_utc_timestamp
-from api.rate_limiter import limiter
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,6 @@ def _task_to_response(task: dict) -> TaskResponse:
 
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
-@limiter.limit("2/second")
 async def create_task(request: Request, task_request: CreateTaskRequest):
     """
     Create and run a task in the background.
@@ -54,7 +52,6 @@ async def create_task(request: Request, task_request: CreateTaskRequest):
     return _task_to_response(task)
 
 @router.get("/", response_model=List[TaskResponse])
-@limiter.limit("2/second")
 async def get_tasks(
     request: Request,
     status: Optional[str] = None,
@@ -69,7 +66,6 @@ async def get_tasks(
     return [_task_to_response(task) for task in tasks]
 
 @router.get("/{task_id}", response_model=TaskDetailResponse)
-@limiter.limit("2/second")
 async def get_task(request: Request, task_id: str):
     """
     Get detailed information about a specific task.
@@ -98,7 +94,6 @@ async def get_task(request: Request, task_id: str):
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
 @router.get("/{task_id}/context/{key}")
-@limiter.limit("2/second")
 async def get_task_context(request: Request, task_id: str, key: str):
     """
     Get the raw context value for a specific key.
@@ -113,7 +108,6 @@ async def get_task_context(request: Request, task_id: str, key: str):
         raise HTTPException(status_code=404, detail=f"Context key '{key}' not found for task {task_id}")
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-@limiter.limit("2/second")
 async def archive_task(request: Request, task_id: str):
     """
     Mark a task as archived.
@@ -126,7 +120,6 @@ async def archive_task(request: Request, task_id: str):
     return
 
 @router.post("/{task_id}/retry", response_model=TaskResponse, status_code=status.HTTP_202_ACCEPTED)
-@limiter.limit("2/second")
 async def retry_task(request: Request, task_id: str):
     """
     Reset a task and all its subtasks, then re-run from scratch.

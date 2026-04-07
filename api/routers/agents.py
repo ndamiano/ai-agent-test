@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException, Request
 
 from agents.agent_store import agent_store
 from api.models.responses import AgentResponse
-from api.rate_limiter import limiter
 
 router = APIRouter()
 
@@ -21,7 +20,6 @@ def _agent_to_response(agent: Dict) -> AgentResponse:
 
 
 @router.get("/", response_model=List[AgentResponse])
-@limiter.limit("2/second")
 async def list_agents(request: Request):
     """List all available agents."""
     agents = await asyncio.to_thread(agent_store.list)
@@ -29,7 +27,6 @@ async def list_agents(request: Request):
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-@limiter.limit("2/second")
 async def get_agent(request: Request, agent_id: str):
     """Get a specific agent by ID."""
     try:

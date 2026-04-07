@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
     """Simple and dirty logging of AI model requests to a file"""
     # Essentially this is a debug variable, but lazy
-    if false:
+    if False:
         return
 
     log_file = "logs/llm_requests.log"

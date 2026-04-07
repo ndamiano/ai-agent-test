@@ -4,13 +4,11 @@ from typing import Dict, Any
 from llm_clients.connector_selector import get_connector
 from database.task_store import task_store
 from agents.agent_store import agent_store
-from api.rate_limiter import limiter
 
 router = APIRouter()
 
 
 @router.get("/status")
-@limiter.limit("2/second")
 async def get_status(request: Request) -> Dict[str, Any]:
     """
     Get system status including LM Studio connection status

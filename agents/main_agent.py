@@ -11,7 +11,8 @@ from .agent_store import agent_store
 class MainAgent:
     """
     Main conversational agent that orchestrates AI connectors and tools.
-    Implements a proper agentic loop: send messages → receive response → execute tool calls → repeat.
+    Implements a finite state machine
+    Planning -> Execution -> Validation -> Compiling -> Finished
     """
 
     def __init__(
@@ -124,13 +125,6 @@ class MainAgent:
             return self.connector.generate_with_tools(messages, tools)
 
     def set_broadcast_context(self, task_id: str, subtask_id: str, broadcast_fn: Callable):
-        """Set context for broadcasting tool usage events
-
-        Args:
-            task_id: ID of the current task
-            subtask_id: ID of the current subtask
-            broadcast_fn: Function to call for broadcasting events
-        """
         self.broadcast_fn = broadcast_fn
         self.broadcast_context = {
             'task_id': task_id,
@@ -138,15 +132,6 @@ class MainAgent:
         }
 
     def _sanitize_tool_arguments(self, tool_name: str, args: Dict) -> Dict:
-        """Remove sensitive data from tool arguments for broadcasting
-
-        Args:
-            tool_name: Name of the tool
-            args: Tool arguments to sanitize
-
-        Returns:
-            Sanitized arguments dictionary
-        """
         sensitive_keys = ['password', 'token', 'secret', 'key', 'credential', 'api_key']
         sanitized = {}
 
@@ -161,13 +146,6 @@ class MainAgent:
         return sanitized
 
     def _broadcast_tool_usage(self, tool_name: str, arguments: Dict, status: str):
-        """Broadcast tool usage event if broadcast_fn is set
-
-        Args:
-            tool_name: Name of the tool used
-            arguments: Tool arguments
-            status: 'success' or 'failed'
-        """
         if self.broadcast_fn and self.broadcast_context:
             sanitized = self._sanitize_tool_arguments(tool_name, arguments)
             self.broadcast_fn({
@@ -181,34 +159,16 @@ class MainAgent:
             })
 
     def get_message_history(self) -> List[Dict[str, str]]:
-        """Get the current message history"""
         return self.message_history.copy()
 
     def clear_history(self):
-        """Clear the message history"""
         self.message_history.clear()
 
     def _trim_history(self):
-        """Trim message history to stay within length limits"""
         if len(self.message_history) > self.max_history_length:
             self.message_history = self.message_history[-self.max_history_length:]
 
     def chat(self, message: str) -> str:
-        """
-        Process a chat message and return response, potentially using tools.
-
-        Implements proper agentic loop:
-        1. Send messages to LLM
-        2. Receive response
-        3. If tool calls exist, execute them and feed results back
-        4. Repeat until no tool calls
-
-        Args:
-            message: User's message
-
-        Returns:
-            AI response, potentially including tool usage results
-        """
         self.message_history.append({"role": "user", "content": message})
 
         try:
@@ -219,7 +179,6 @@ class MainAgent:
             return error_response
 
     def _agentic_loop_with_native_tools(self, user_message: str) -> str:
-        """Handle chat using native tool calling with proper agentic loop"""
         max_iterations = 10
         iteration = 0
         content = ""

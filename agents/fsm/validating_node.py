@@ -108,6 +108,7 @@ class ValidatingNode(StateNode):
 
     def _build_maestro_prompt(self, context: StateContext, phase: str) -> str:
         """Build the situational prompt Maestro receives."""
+        import json as _json
         task = context.task_store.get_task(context.task_id)
         if task is None:
             raise RuntimeError(f"Task {context.task_id} not found in task_store")
@@ -150,14 +151,41 @@ class ValidatingNode(StateNode):
         lines.append("")
 
         if phase == "evaluation":
-            lines.append(
-                "INSTRUCTION: Review the completed subtask outputs above against the ORIGINAL GOAL. "
-                "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
-                "Assess whether the work fully satisfies the original goal. Then respond with:\n"
-                "- The word COMPLETE if the goal has been fully achieved and is ready for synthesis.\n"
-                "- The word INCOMPLETE if the goal has not been fully achieved, followed by a brief explanation of what is missing.\n\n"
-                "Do not suggest next steps. Do not describe what you would do. Just verdict and justification."
-            )
+            # Inject acceptance criteria if they exist — this is the source of truth for the verdict
+            criteria_raw = context.task_store.get_context(context.task_id, "acceptance_criteria")
+            has_criteria = False
+            if criteria_raw:
+                try:
+                    criteria = _json.loads(criteria_raw)
+                    lines.append("ACCEPTANCE CRITERIA (must all pass for COMPLETE):")
+                    for c in criteria:
+                        lines.append(f"  [{c['id']}] {c['criterion']}")
+                        if c.get("rationale"):
+                            lines.append(f"         Rationale: {c['rationale']}")
+                    lines.append("")
+                    has_criteria = True
+                except Exception:
+                    pass
+
+            if has_criteria:
+                lines.append(
+                    "INSTRUCTION: Review the completed work against EACH acceptance criterion listed above. "
+                    "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
+                    "Every criterion must pass for the verdict to be COMPLETE. "
+                    "If any criterion is not fully satisfied by the work in the context store, "
+                    "the verdict is INCOMPLETE.\n\n"
+                    "Call submit_verdict with your verdict and a justification that names which criteria "
+                    "passed and which failed (if any). Do not suggest next steps."
+                )
+            else:
+                lines.append(
+                    "INSTRUCTION: Review the completed subtask outputs above against the ORIGINAL GOAL. "
+                    "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
+                    "Assess whether the work fully satisfies the original goal. "
+                    "Call submit_verdict with COMPLETE if the goal has been fully achieved and is ready "
+                    "for synthesis, or INCOMPLETE with a brief explanation of what is missing.\n\n"
+                    "Do not suggest next steps. Do not describe what you would do. Just verdict and justification."
+                )
         elif phase == "error_recovery":
             lines.append(
                 "INSTRUCTION: One or more subtasks have failed. "

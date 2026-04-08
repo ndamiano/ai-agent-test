@@ -35,8 +35,11 @@ class PlanningNode(StateNode):
         # Snapshot subtask count before Maestro turn
         count_before = len(context.task_store.get_subtasks_for_task(context.task_id))
 
+        # Detect whether this is the first planning pass or a re-plan
+        has_criteria = context.task_store.get_context(context.task_id, "acceptance_criteria") is not None
+
         # Build prompt for Maestro
-        prompt = self._build_maestro_prompt(context, phase="planning")
+        prompt = self._build_maestro_prompt(context, phase="planning", has_criteria=has_criteria)
 
         # Get Maestro agent config and render agent roster
         agent_data = context.agent_store.get("maestro")
@@ -86,8 +89,9 @@ class PlanningNode(StateNode):
         # Transition to EXECUTING
         return ExecutingNode()
 
-    def _build_maestro_prompt(self, context: StateContext, phase: str) -> str:
+    def _build_maestro_prompt(self, context: StateContext, phase: str, has_criteria: bool = False) -> str:
         """Build the situational prompt Maestro receives."""
+        import json as _json
         task = context.task_store.get_task(context.task_id)
         if task is None:
             raise RuntimeError(f"Task {context.task_id} not found in task_store")
@@ -100,6 +104,34 @@ class PlanningNode(StateNode):
             f"CURRENT PHASE: {phase}",
             "",
         ]
+
+        # On re-planning passes, surface the committed criteria and checklist up front
+        if has_criteria:
+            criteria_raw = context.task_store.get_context(context.task_id, "acceptance_criteria")
+            if criteria_raw:
+                try:
+                    criteria = _json.loads(criteria_raw)
+                    lines.append("ACCEPTANCE CRITERIA (committed at start of task):")
+                    for c in criteria:
+                        lines.append(f"  [{c['id']}] {c['criterion']}")
+                    lines.append("")
+                except Exception:
+                    pass
+
+            checklist_raw = context.task_store.get_context(context.task_id, "maestro_checklist")
+            if checklist_raw:
+                try:
+                    checklist = _json.loads(checklist_raw)
+                    lines.append("PLANNING CHECKLIST (last update):")
+                    for item in checklist:
+                        notes = f" — {item['notes']}" if item.get("notes") else ""
+                        lines.append(
+                            f"  [{item['status'].upper()}] {item['id']} | {item['item']} "
+                            f"(→ {item['linked_criteria_id']}){notes}"
+                        )
+                    lines.append("")
+                except Exception:
+                    pass
 
         # Subtask status summary
         lines.append("SUBTASK STATUS:")
@@ -133,11 +165,22 @@ class PlanningNode(StateNode):
 
         # Phase-specific instruction
         if phase == "planning":
-            lines.append(
-                "INSTRUCTION: This is the initial planning phase. "
-                "Review the goal and spawn the first wave of subtasks. "
-                "Only plan what you can plan now — you will re-evaluate after each wave completes."
-            )
+            if not has_criteria:
+                lines.append(
+                    "INSTRUCTION: This is the initial planning phase. Before spawning any subtasks, "
+                    "call set_acceptance_criteria with a list of concrete, verifiable things that must "
+                    "all be true for this goal to be complete. Make reasonable assumptions — commit to "
+                    "a clear definition of done. Once criteria are set, spawn the first wave of subtasks."
+                )
+            else:
+                lines.append(
+                    "INSTRUCTION: This is a re-planning pass. The acceptance criteria above are fixed — "
+                    "do not change them. Call read_plan to re-orient yourself, then call update_checklist "
+                    "to reflect current state (mark completed items done, add any newly discovered items). "
+                    "Then spawn the subtasks needed to satisfy any remaining criteria. "
+                    "Only stop spawning when every acceptance criterion will be met by existing or "
+                    "in-progress work."
+                )
 
         return "\n".join(lines)
 

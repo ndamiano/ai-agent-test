@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict
 from agents.fsm.state_node import StateNode, StateContext
 from config.time_utils import get_utc_timestamp
+from api.websocket.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class ExecutingNode(StateNode):
 
         try:
             context.task_store.update_subtask_status(subtask_id, "in_progress")
-            self._broadcast(context, {
+            event_bus.publish_sync({
                 "type": "subtask_started",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
@@ -115,7 +116,6 @@ class ExecutingNode(StateNode):
             # Instantiate agent
             from agents.main_agent import MainAgent
             agent = MainAgent(agent_id=agent_id)
-            agent.set_broadcast_context(task_id, subtask_id, context.broadcast_fn)
 
             # Build message
             message = f"{context_text}\n\nTask: {fresh['goal']}"
@@ -127,7 +127,7 @@ class ExecutingNode(StateNode):
 
             # Store output and mark completed
             context.task_store.set_subtask_output(subtask_id, output)
-            self._broadcast(context, {
+            event_bus.publish_sync({
                 "type": "subtask_completed",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
@@ -147,7 +147,7 @@ class ExecutingNode(StateNode):
             context.task_store.log_event(
                 task_id, "subtask_failed", error_details, subtask_id
             )
-            self._broadcast(context, {
+            event_bus.publish_sync({
                 "type": "subtask_failed",
                 "task_id": task_id,
                 "subtask_id": subtask_id,

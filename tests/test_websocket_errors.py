@@ -8,7 +8,7 @@ from api.websocket.manager import ConnectionManager
 
 
 class TestConnectionManagerBroadcast(unittest.IsolatedAsyncioTestCase):
-    """Tests for ConnectionManager.broadcast exception handling."""
+    """Tests for ConnectionManager.broadcast_to_all exception handling."""
 
     async def asyncSetUp(self):
         self.manager = ConnectionManager()
@@ -16,36 +16,38 @@ class TestConnectionManagerBroadcast(unittest.IsolatedAsyncioTestCase):
         self.ws2 = AsyncMock(spec=WebSocket)
 
     async def test_broadcast_sends_to_all_connections(self):
-        self.manager.active_connections["task-1"] = [self.ws1, self.ws2]
-        await self.manager.broadcast("task-1", {"type": "status"})
+        self.manager.active_connections = {self.ws1, self.ws2}
+        await self.manager.broadcast_to_all({"type": "status", "task_id": "task-1"})
 
-        self.ws1.send_json.assert_awaited_once_with({"type": "status"})
-        self.ws2.send_json.assert_awaited_once_with({"type": "status"})
+        self.ws1.send_json.assert_awaited_once_with({"type": "status", "task_id": "task-1"})
+        self.ws2.send_json.assert_awaited_once_with({"type": "status", "task_id": "task-1"})
 
     async def test_broadcast_logs_and_disconnects_failed_client(self):
-        self.manager.active_connections["task-1"] = [self.ws1, self.ws2]
+        self.manager.active_connections = {self.ws1, self.ws2}
         self.ws1.send_json = AsyncMock(side_effect=ConnectionError("gone away"))
 
         with self.assertLogs(self.manager.logger, level=logging.ERROR) as cm:
-            await self.manager.broadcast("task-1", {"type": "status"})
+            await self.manager.broadcast_to_all({"type": "status", "task_id": "task-1"})
 
         self.assertIn("gone away", cm.output[0])
-        self.assertIn("task-1", cm.output[0])
         # ws1 removed, ws2 remains
-        self.assertEqual(self.manager.active_connections["task-1"], [self.ws2])
+        self.assertIn(self.ws2, self.manager.active_connections)
+        self.assertNotIn(self.ws1, self.manager.active_connections)
 
     async def test_broadcast_removes_key_when_all_clients_fail(self):
         self.ws1.send_json = AsyncMock(side_effect=ConnectionError("fail"))
         self.ws2.send_json = AsyncMock(side_effect=ConnectionError("fail"))
-        self.manager.active_connections["task-1"] = [self.ws1, self.ws2]
+        self.manager.active_connections = {self.ws1, self.ws2}
 
         with self.assertLogs(self.manager.logger, level=logging.ERROR):
-            await self.manager.broadcast("task-1", {"type": "status"})
+            await self.manager.broadcast_to_all({"type": "status", "task_id": "task-1"})
 
-        self.assertIsNone(self.manager.active_connections.get("task-1"))
+        # Both should be removed
+        self.assertEqual(len(self.manager.active_connections), 0)
 
     async def test_broadcast_noop_for_unknown_task(self):
-        await self.manager.broadcast("nonexistent", {"type": "status"})
+        # Empty connections - should not raise
+        await self.manager.broadcast_to_all({"type": "status", "task_id": "nonexistent"})
 
 
 class TestConnectionManagerDisconnect(unittest.IsolatedAsyncioTestCase):
@@ -54,24 +56,24 @@ class TestConnectionManagerDisconnect(unittest.IsolatedAsyncioTestCase):
     async def test_disconnect_removes_connection(self):
         manager = ConnectionManager()
         ws = AsyncMock(spec=WebSocket)
-        manager.active_connections["task-1"] = [ws]
+        manager.active_connections = {ws}
 
-        manager.disconnect("task-1", ws)
+        manager.disconnect(ws)
 
-        self.assertNotIn("task-1", manager.active_connections)
+        self.assertNotIn(ws, manager.active_connections)
 
     async def test_disconnect_noop_for_missing_task(self):
         manager = ConnectionManager()
         ws = AsyncMock(spec=WebSocket)
-        manager.disconnect("nonexistent", ws)
+        # Should not raise even if ws not in set
+        manager.disconnect(ws)
 
 
 class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
     """Tests that websocket_endpoint logs errors in its catch block."""
 
-    async def _run_endpoint(self, task_id, receive_raise=None, task_return=None,
-                            get_task_raise=None):
-        from api.routers import tasks as tasks_module
+    async def _run_endpoint(self, receive_raise=None):
+        from api.routers import websocket as websocket_module
 
         websocket = AsyncMock(spec=WebSocket)
         websocket.send_json = AsyncMock()
@@ -83,48 +85,34 @@ class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
         manager_mock.connect = AsyncMock()
         manager_mock.disconnect = MagicMock()
 
-        store_mock = MagicMock()
-        if get_task_raise is not None:
-            store_mock.get_task.side_effect = get_task_raise
-        else:
-            store_mock.get_task.return_value = task_return or {"status": "active"}
-
         logger_mock = MagicMock()
 
-        with patch.object(tasks_module, "manager", manager_mock), \
-             patch.object(tasks_module, "task_store", store_mock), \
-             patch.object(tasks_module, "logger", logger_mock):
-            await tasks_module.websocket_endpoint(websocket, task_id)
+        with patch.object(websocket_module, "manager", manager_mock), \
+             patch.object(websocket_module, "logger", logger_mock):
+            await websocket_module.websocket_endpoint(websocket)
 
         return websocket, logger_mock, manager_mock
 
     async def test_endpoint_logs_on_client_disconnect(self):
-        ws, logger_mock, manager_mock = await self._run_endpoint("task-1")
+        ws, logger_mock, manager_mock = await self._run_endpoint()
 
-        logger_mock.error.assert_called()
-        fmt, task_id_arg, exc_arg = logger_mock.error.call_args[0]
-        self.assertEqual(task_id_arg, "task-1")
-        manager_mock.disconnect.assert_called_with("task-1", ws)
+        logger_mock.info.assert_called()
+        manager_mock.disconnect.assert_called_with(ws)
 
     async def test_endpoint_sends_error_when_task_not_found(self):
+        # With the new global websocket, task-not-found errors are not sent from the endpoint
+        # They are handled by the client filtering messages by task_id
         ws, logger_mock, manager_mock = await self._run_endpoint(
-            "task-1",
-            get_task_raise=Exception("task not found in store"),
+            receive_raise=Exception("something went wrong"),
         )
 
         logger_mock.error.assert_called()
-        ws.send_json.assert_awaited_once()
-        sent = ws.send_json.call_args[0][0]
-        self.assertEqual(sent["type"], "error")
-        self.assertIn("not found", sent["message"])
-        manager_mock.disconnect.assert_called_with("task-1", ws)
+        manager_mock.disconnect.assert_called_with(ws)
 
     async def test_endpoint_logs_generic_error_without_sending(self):
         ws, logger_mock, manager_mock = await self._run_endpoint(
-            "task-1",
-            get_task_raise=KeyError("task-1"),
+            receive_raise=KeyError("some-key"),
         )
 
         logger_mock.error.assert_called()
-        ws.send_json.assert_not_awaited()
-        manager_mock.disconnect.assert_called_with("task-1", ws)
+        manager_mock.disconnect.assert_called_with(ws)

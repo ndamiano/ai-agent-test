@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from agents.fsm.state_node import StateNode, StateContext
 from config.time_utils import get_utc_timestamp
+from api.websocket.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +57,13 @@ class ValidatingNode(StateNode):
 
         from agents.main_agent import MainAgent
         validator = MainAgent(agent_id="validator", system_prompt=rendered_system_prompt)
-        validator.set_broadcast_context(context.task_id, "validator", context.broadcast_fn)
 
         task = context.task_store.get_task(context.task_id)
         if task is None:
             raise RuntimeError(f"Task {context.task_id} not found in task_store")
         working_directory = task.get("working_directory")
 
-        self._broadcast(context, {
+        event_bus.publish_sync({
             "type": "agent_message",
             "task_id": context.task_id,
             "agent_id": "validator",

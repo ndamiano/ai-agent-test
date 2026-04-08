@@ -1,7 +1,6 @@
 import React from 'react'
-import AgentCard from './AgentCard'
 import { FadeSlideIn } from './FadeSlideIn'
-import type { ToolUsage, AgentMessage, ArtifactManifest } from '../types'
+import type { ArtifactManifest } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
 
 interface TaskCompletionViewProps {

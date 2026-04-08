@@ -76,6 +76,7 @@ export interface AgentMessage {
 }
 
 export type WebSocketMessage =
+    | { type: 'connected'; timestamp: string }
     | { type: 'task_created'; task_id: string; goal: string; timestamp: string }
     | { type: 'task_status'; task_id: string; task: Task }
     | { type: 'subtask_started'; task_id: string; subtask_id: string; agent_id: string; timestamp: string }

@@ -2,9 +2,10 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Callable, Dict, Optional
+from typing import Dict, Optional
 
 from config.time_utils import get_utc_timestamp
+from api.websocket.event_bus import event_bus
 
 from agents.agent_store import agent_store
 from agents.main_agent import MainAgent
@@ -17,25 +18,22 @@ logger = logging.getLogger(__name__)
 class MaestroAgent:
     """LLM-powered orchestrator that coordinates all agents to accomplish a goal."""
 
-    def __init__(self, broadcast_fn: Optional[Callable] = None):
+    def __init__(self):
         self.task_store = task_store
         self.agent_store = agent_store
-        self.broadcast_fn = broadcast_fn
         self.logger = logging.getLogger(__name__)
 
         import os
         max_workers = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    def run_background(self, task_id: str, broadcast_fn: Optional[Callable] = None) -> None:
+    def run_background(self, task_id: str) -> None:
         """Launch task in a background thread. Returns immediately."""
         async def _run_async():
-            broadcast_fn_ = broadcast_fn or self.broadcast_fn
-
             try:
                 self.task_store.update_task_status(task_id, "planning")
                 task = self.task_store.get_task(task_id)
-                self._broadcast(broadcast_fn_, {
+                event_bus.publish_sync({
                     "type": "task_status",
                     "task_id": task_id,
                     "task": task,
@@ -47,7 +45,6 @@ class MaestroAgent:
 
                 context = StateContext(
                     task_id=task_id,
-                    broadcast_fn=broadcast_fn_,
                     task_store=self.task_store,
                     agent_store=self.agent_store,
                 )
@@ -61,14 +58,14 @@ class MaestroAgent:
                         first_transition = False
                         self.task_store.update_task_status(task_id, "in_progress")
                         task = self.task_store.get_task(task_id)
-                        self._broadcast(broadcast_fn_, {
+                        event_bus.publish_sync({
                             "type": "task_status",
                             "task_id": task_id,
                             "task": task,
                         })
 
                 self.task_store.update_task_status(task_id, "completed")
-                self._broadcast(broadcast_fn_, {
+                event_bus.publish_sync({
                     "type": "task_completed",
                     "task_id": task_id,
                 })
@@ -77,7 +74,7 @@ class MaestroAgent:
                 logger.error(f"Maestro: task {task_id} failed: {e}")
                 self.task_store.update_task_status(task_id, "failed")
                 self.task_store.log_event(task_id, "task_failed", f"Maestro error: {e}")
-                self._broadcast(broadcast_fn_, {
+                event_bus.publish_sync({
                     "type": "task_failed",
                     "task_id": task_id,
                     "error": str(e),
@@ -93,11 +90,3 @@ class MaestroAgent:
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
-
-    @staticmethod
-    def _broadcast(broadcast_fn: Optional[Callable], event: Dict) -> None:
-        if broadcast_fn:
-            try:
-                broadcast_fn(event)
-            except Exception as e:
-                logger.warning(f"Broadcast failed: {e}")

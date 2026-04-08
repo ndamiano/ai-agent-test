@@ -7,7 +7,7 @@ StateContext: Dataclass carrying shared state across node transitions
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from database.task_store import TaskStore
@@ -23,7 +23,6 @@ class StateContext:
     including task identifiers, store references, and mutable state like wave count.
     """
     task_id: str
-    broadcast_fn: Optional[Callable]
     task_store: 'TaskStore'
     agent_store: 'AgentStore'
 
@@ -82,18 +81,3 @@ class StateNode(ABC):
     def state_name(self) -> str:
         """Human-readable name for this state (for logging/broadcasting)."""
         pass
-
-    def _broadcast(self, context: StateContext, event: dict) -> None:
-        """
-        Utility method to broadcast events.
-
-        Args:
-            context: State context containing broadcast_fn
-            event: Event dictionary to broadcast
-        """
-        if context.broadcast_fn:
-            try:
-                context.broadcast_fn(event)
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"Broadcast failed: {e}")

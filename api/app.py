@@ -22,7 +22,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import tasks, system, settings, agents, outputs
+from api.routers import tasks, system, settings, agents, outputs, websocket
 
 @app.on_event("startup")
 async def startup_event():
@@ -31,6 +31,11 @@ async def startup_event():
         # Initialize database
         init_db()
         logging.info("Database initialized successfully")
+
+        # Start event bus
+        from api.websocket.event_bus import event_bus
+        await event_bus.start()
+        logging.info("Event bus started")
 
         # Register tools
         from tools.task_tools import register_task_tools
@@ -48,6 +53,16 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Startup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Server startup failed")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown event handler to clean up resources."""
+    try:
+        from api.websocket.event_bus import event_bus
+        await event_bus.shutdown()
+        logging.info("Event bus stopped")
+    except Exception as e:
+        logging.error(f"Shutdown error: {str(e)}")
 
 @app.get("/", response_model=Dict[str, Any])
 async def root(request: Request):
@@ -68,6 +83,7 @@ app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(outputs.router, prefix="/api/outputs", tags=["outputs"])
+app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""

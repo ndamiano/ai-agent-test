@@ -1,10 +1,11 @@
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional
 import json
 from llm_clients.connector_selector import get_connector
 from tools.tool_manager import tool_manager
 from tools.execution_context import execution_context
 from config.agent_prompts import SYSTEM_PROMPT
 from config.time_utils import get_utc_timestamp
+from api.websocket.event_bus import event_bus
 from .agent_store import agent_store
 
 
@@ -24,9 +25,6 @@ class MainAgent:
         self.connector = get_connector()
         self.message_history: List[Dict[str, str]] = []
         self.max_history_length = max_history_length
-
-        self.broadcast_fn: Optional[Callable] = None
-        self.broadcast_context: Dict[str, str] = {}
 
         if agent_id:
             try:
@@ -124,13 +122,6 @@ class MainAgent:
         else:
             return self.connector.generate_with_tools(messages, tools)
 
-    def set_broadcast_context(self, task_id: str, subtask_id: str, broadcast_fn: Callable):
-        self.broadcast_fn = broadcast_fn
-        self.broadcast_context = {
-            'task_id': task_id,
-            'subtask_id': subtask_id
-        }
-
     def _sanitize_tool_arguments(self, tool_name: str, args: Dict) -> Dict:
         sensitive_keys = ['password', 'token', 'secret', 'key', 'credential', 'api_key']
         sanitized = {}
@@ -146,12 +137,15 @@ class MainAgent:
         return sanitized
 
     def _broadcast_tool_usage(self, tool_name: str, arguments: Dict, status: str):
-        if self.broadcast_fn and self.broadcast_context:
+        # Get task_id and subtask_id from execution context
+        from tools.execution_context import get_task_id, get_subtask_id
+        task_id = get_task_id()
+        if task_id:
             sanitized = self._sanitize_tool_arguments(tool_name, arguments)
-            self.broadcast_fn({
+            event_bus.publish_sync({
                 'type': 'tool_usage',
-                'task_id': self.broadcast_context['task_id'],
-                'subtask_id': self.broadcast_context['subtask_id'],
+                'task_id': task_id,
+                'subtask_id': get_subtask_id(),
                 'tool_name': tool_name,
                 'arguments': sanitized,
                 'status': status,
@@ -211,8 +205,10 @@ class MainAgent:
             if not tool_calls:
                 return content
 
-            ctx_task_id = self.broadcast_context.get('task_id') if self.broadcast_context else None
-            ctx_subtask_id = self.broadcast_context.get('subtask_id') if self.broadcast_context else None
+            # Get existing context if any
+            from tools.execution_context import get_task_id, get_subtask_id
+            ctx_task_id = get_task_id()
+            ctx_subtask_id = get_subtask_id()
 
             with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id, working_directory=path):
                 for tool_call in tool_calls:

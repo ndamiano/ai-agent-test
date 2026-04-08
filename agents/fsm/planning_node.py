@@ -47,7 +47,6 @@ class PlanningNode(StateNode):
         # Instantiate and execute Maestro
         from agents.main_agent import MainAgent
         maestro = MainAgent(agent_id="maestro", system_prompt=rendered_system_prompt)
-        maestro.set_broadcast_context(context.task_id, "maestro", context.broadcast_fn)
 
         # Get task working directory for execution context
         task = context.task_store.get_task(context.task_id)

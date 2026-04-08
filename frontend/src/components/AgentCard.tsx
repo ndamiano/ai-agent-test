@@ -15,10 +15,34 @@ interface AgentCardProps {
     subtaskDescription?: string | null
 }
 
-const formatAgentName = (agentId: string) =>
-    agentId
-        .replace(/[-_]/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase())
+const formatAgentName = (id: string) => id.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
+const STATUS_CONFIG = {
+    pending: {
+        border: 'border-l-white/10',
+        icon: <Clock className="w-4 h-4 text-gray-600" />,
+        text: 'Waiting...',
+        textClass: 'text-gray-600'
+    },
+    in_progress: {
+        border: 'border-l-blue-500',
+        icon: <Loader2 className="w-4 h-4 animate-spin" />,
+        text: 'Working...',
+        textClass: 'text-gray-500'
+    },
+    completed: {
+        border: 'border-l-green-500',
+        icon: <CheckCircle2 className="w-4 h-4 text-green-500" />,
+        text: null, // Uses outputPreview
+        textClass: 'text-gray-400'
+    },
+    failed: {
+        border: 'border-l-red-500',
+        icon: <XCircle className="w-4 h-4 text-red-500" />,
+        text: 'Something went wrong',
+        textClass: 'text-red-500/70'
+    }
+} as const
 
 const AgentCard: React.FC<AgentCardProps> = ({
     agentId,
@@ -35,45 +59,17 @@ const AgentCard: React.FC<AgentCardProps> = ({
     const [visible, setVisible] = useState(false)
 
     useEffect(() => {
-        const t = setTimeout(() => setVisible(true), animationDelay)
-        return () => clearTimeout(t)
+        const timer = setTimeout(() => setVisible(true), animationDelay)
+        return () => clearTimeout(timer)
     }, [animationDelay])
 
-    const borderColor = {
-        pending: 'border-l-white/10',
-        in_progress: 'border-l-blue-500',
-        completed: 'border-l-green-500',
-        failed: 'border-l-red-500',
-    }[status]
-
-    const icon = {
-        pending: <Clock className="w-4 h-4 text-gray-600" />,
-        in_progress: <Loader2 className="w-4 h-4 animate-spin" />,
-        completed: <CheckCircle2 className="w-4 h-4 text-green-500" />,
-        failed: <XCircle className="w-4 h-4 text-red-500" />,
-    }[status]
-
-    const subtext = () => {
-        if (status === 'pending') return (
-            <span className="text-gray-600 text-xs">Waiting...</span>
-        )
-        if (status === 'in_progress') return (
-            <span className="text-gray-500 text-xs">Working...</span>
-        )
-        if (status === 'failed') return (
-            <span className="text-red-500/70 text-xs">Something went wrong</span>
-        )
-        if (status === 'completed') return (
-            <span className="text-gray-400 text-xs line-clamp-2">
-                {outputPreview ?? 'Completed'}
-            </span>
-        )
-    }
+    const config = STATUS_CONFIG[status]
+    const subtextContent = config.text ?? (outputPreview || 'Completed')
 
     return (
         <div
             className={`
-                border border-white/[0.06] border-l-4 ${borderColor}
+                border border-white/[0.06] border-l-4 ${config.border}
                 bg-white/[0.03] rounded-lg p-4 transition-all duration-500
                 ${status === 'in_progress' ? 'shadow-[0_0_12px_rgba(59,130,246,0.15)]' : ''}
                 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}
@@ -81,7 +77,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
             style={{ transitionDelay: visible ? '0ms' : `${animationDelay}ms` }}
         >
             <div className="flex items-center gap-3 mb-1">
-                <span className="text-base leading-none">{icon}</span>
+                <span className="text-base leading-none">{config.icon}</span>
                 <div className="flex flex-col">
                     <span className={`text-sm font-medium ${status === 'pending' ? 'text-gray-500' : 'text-white'}`}>
                         {subtaskName ?? formatAgentName(agentId)}
@@ -96,7 +92,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
             </div>
 
             <div className="pl-8">
-                {subtext()}
+                <span className={`text-xs ${config.textClass} ${status === 'completed' ? 'line-clamp-2' : ''}`}>
+                    {subtextContent}
+                </span>
             </div>
 
             {status === 'in_progress' && (

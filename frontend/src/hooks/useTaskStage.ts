@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useTaskSocket } from './useTaskSocket'
+import { useTaskWebSocket } from '../contexts/WebSocketContext'
 import { api } from '../api/client'
-import type { TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest } from '../types'
+import type { TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest, MaestroPhase } from '../types'
 
 export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 
@@ -39,7 +39,7 @@ export function toSubtaskState(s: Subtask): SubtaskState {
     }
 }
 
-type WSMessage = ReturnType<typeof useTaskSocket>['messages'][number]
+type WSMessage = ReturnType<typeof useTaskWebSocket>['messages'][number]
 
 export const mergeSubtasks = (base: SubtaskState[], messages: WSMessage[]): SubtaskState[] => {
     if (base.length === 0) return base
@@ -70,7 +70,7 @@ export interface TaskStageState {
     expandedSubtasks: Set<string>
     toolUsageBySubtask: Map<string, ToolUsage[]>
     agentMessagesBySubtask: Map<string, AgentMessage[]>
-    maestroMessage: { phase: string; message: string; timestamp: string } | null
+    maestroMessage: { phase: MaestroPhase; message: string; timestamp: string } | null
     maestroExpanded: boolean
     agentsExpanded: boolean
     toggleSubtask: (id: string) => void
@@ -79,7 +79,7 @@ export interface TaskStageState {
 }
 
 export function useTaskStage(taskId: string | null): TaskStageState {
-    const { messages } = useTaskSocket(taskId)
+    const { messages } = useTaskWebSocket(taskId)
     const [task, setTask] = useState<TaskDetail | null>(null)
     const [baseSubtasks, setBaseSubtasks] = useState<SubtaskState[]>([])
     const [artifact, setArtifact] = useState<ArtifactManifest | null>(null)
@@ -95,7 +95,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
 
     const [maestroExpanded, setMaestroExpanded] = useState(false)
     const [maestroMessage, setMaestroMessage] = useState<{
-        phase: string
+        phase: MaestroPhase
         message: string
         timestamp: string
     } | null>(null)

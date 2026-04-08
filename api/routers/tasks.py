@@ -1,12 +1,12 @@
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, status, WebSocket, Query, Request
+from fastapi import APIRouter, HTTPException, status, Query, Request
 from typing import List, Optional
 from api.models.requests import CreateTaskRequest
 from api.models.responses import TaskResponse, TaskDetailResponse, SubtaskResponse, EventResponse
 from agents.maestro_agent import MaestroAgent
 from database.task_store import task_store
-from api.websocket.manager import manager
+from api.websocket.event_bus import event_bus
 from config.time_utils import format_relative_time, get_utc_timestamp
 
 logger = logging.getLogger(__name__)
@@ -38,15 +38,14 @@ async def create_task(request: Request, task_request: CreateTaskRequest):
     task_id = task_dict["id"]
     logger.info(f"Task created (background): {task_id}")
 
-    broadcast_fn = lambda event: manager.broadcast_sync(event['task_id'], event)
-    broadcast_fn({
+    await event_bus.publish({
         'type': 'task_created',
         'task_id': task_id,
         'goal': task_request.goal,
         'timestamp': get_utc_timestamp()
     })
 
-    await asyncio.to_thread(maestro.run_background, task_id, broadcast_fn=broadcast_fn)
+    await asyncio.to_thread(maestro.run_background, task_id)
 
     task = await asyncio.to_thread(task_store.get_task, task_id)
     return _task_to_response(task)
@@ -136,44 +135,7 @@ async def retry_task(request: Request, task_id: str):
         task_store.log_event, task_id, "task_planned", "Task retry initiated"
     )
 
-    maestro.run_background(
-        task_id,
-        broadcast_fn=lambda event: manager.broadcast(event["task_id"], event),
-    )
+    await asyncio.to_thread(maestro.run_background, task_id)
 
     refreshed = await asyncio.to_thread(task_store.get_task, task_id)
     return _task_to_response(refreshed)
-
-@router.websocket("/{task_id}/ws")
-async def websocket_endpoint(websocket: WebSocket, task_id: str):
-    """
-    WebSocket endpoint for real-time task updates.
-    Sends task status on connect and all subsequent events.
-    """
-    await manager.connect(task_id, websocket)
-
-    try:
-        # Send initial task status
-        task = task_store.get_task(task_id)
-        await websocket.send_json({
-            "type": "task_status",
-            "task_id": task_id,
-            "task": task
-        })
-
-        # Keep the connection open until client disconnects
-        while True:
-            # Wait for client messages (if any) or just keep connection alive
-            await websocket.receive_text()
-            # For now, we don't process client messages, just keep connection alive
-    except Exception as e:
-        logger.error("WebSocket error for task %s: %s", task_id, e)
-        # Handle task not found or other errors
-        if "not found" in str(e).lower():
-            await websocket.send_json({
-                "type": "error",
-                "message": f"Task {task_id} not found",
-                "task_id": task_id
-            })
-    finally:
-        manager.disconnect(task_id, websocket)

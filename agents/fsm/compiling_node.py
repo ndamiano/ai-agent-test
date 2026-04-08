@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from agents.fsm.state_node import StateNode, StateContext
 from config.time_utils import get_utc_timestamp
+from api.websocket.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class CompilingNode(StateNode):
         """
         SYNTHESIS_AGENT_ID = "summarizer"
 
-        self._broadcast(context, {
+        event_bus.publish_sync({
             "type": "agent_message",
             "task_id": context.task_id,
             "agent_id": SYNTHESIS_AGENT_ID,
@@ -84,7 +85,6 @@ class CompilingNode(StateNode):
         # Instantiate and execute summarizer
         from agents.main_agent import MainAgent
         summarizer = MainAgent(agent_id=SYNTHESIS_AGENT_ID)
-        summarizer.set_broadcast_context(context.task_id, "summarizer", context.broadcast_fn)
 
         output = summarizer.chat(prompt)
 

@@ -1,13 +1,3 @@
-"""
-Task tools: spawn_task
-
-Orchestration primitives for creating and inspecting subtasks.
-Available to MaestroAgent and, selectively, to agents with quality-gate
-spawning permissions (spawn_task only, scoped to their own output).
-
-Register at startup via register_task_tools().
-"""
-
 import json
 import logging
 from typing import Optional, Union, List
@@ -19,17 +9,8 @@ from agents.agent_store import agent_store
 
 logger = logging.getLogger(__name__)
 
-_task_store = task_store
-
 
 def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
-    """
-    Normalise depends_on to a plain Python list.
-
-    LLMs are inconsistent about whether they pass a JSON string or a real list
-    for array-typed tool arguments. Accept both so spawn_task never fails on
-    a type mismatch.
-    """
     if not depends_on:
         return []
     if isinstance(depends_on, list):
@@ -45,33 +26,24 @@ def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
     raise ValueError(f"depends_on must be a list or JSON string, got {type(depends_on).__name__}")
 
 
-def _validate_dependencies(task_id: str, depends_on: List[str]) -> None:
-    """
-    Validate dependency list for a new subtask.
-
-    Args:
-        task_id: The parent task ID
-        depends_on: List of dependency subtask IDs to validate
-
-    Raises:
-        ValueError: If dependencies are invalid
-    """
-    validate_dependencies(_task_store, task_id, depends_on)
-
-
-def _has_circular_dependencies(task_id: str, new_depends_on: List[str]) -> bool:
-    """
-    Check if adding a new subtask with the given dependencies would create a cycle.
-
-    Args:
-        task_id: The parent task ID
-        new_depends_on: Dependencies for the new subtask being created
-
-    Returns:
-        True if a circular dependency would be created, False otherwise
-    """
-    from database.validators import has_circular_dependencies
-    return has_circular_dependencies(_task_store, task_id, new_depends_on)
+def _expand_dep_ids(task_id: str, dep_ids: list) -> list:
+    """Expand short ID prefixes to full UUIDs. Raises if a prefix is ambiguous or unmatched."""
+    if not dep_ids:
+        return dep_ids
+    existing = {s["id"] for s in task_store.get_subtasks_for_task(task_id)}
+    expanded = []
+    for dep in dep_ids:
+        if dep in existing:
+            expanded.append(dep)
+            continue
+        matches = [full_id for full_id in existing if full_id.startswith(dep)]
+        if len(matches) == 1:
+            expanded.append(matches[0])
+        elif len(matches) > 1:
+            raise ValueError(f"Ambiguous dependency prefix '{dep}' matches multiple subtasks: {matches}")
+        else:
+            expanded.append(dep)  # leave as-is; validate_dependencies will report the error
+    return expanded
 
 
 def _spawn_task(
@@ -83,35 +55,19 @@ def _spawn_task(
     name: Optional[str] = None,
     description: Optional[str] = None,
 ) -> str:
-    """
-    Create a new subtask under the given task and assign it to an agent.
-
-    Args:
-        task_id:    The parent task ID this subtask belongs to.
-        agent_id:   The ID of the agent that should execute this subtask.
-        goal:       The specific, self-contained instruction for the agent.
-        depends_on: List or JSON-string array of subtask IDs that must complete
-                    first. e.g. ["abc-123", "def-456"] or '["abc-123"]'.
-                    Omit or pass null for no deps.
-        priority:   "normal" or "high". Reserved for future scheduling use.
-
-    Returns:
-        JSON string with the created subtask's id and status.
-    """
     if not agent_store.exists(agent_id):
         raise ValueError(f"Agent '{agent_id}' not found in agent store.")
 
-    _task_store.get_task(task_id)  # raises KeyError if missing
+    task_store.get_task(task_id)  # raises KeyError if missing
 
     dep_ids = _parse_depends_on(depends_on)
-    
-    # Validate dependencies before creating the subtask
-    _validate_dependencies(task_id, dep_ids)
+    dep_ids = _expand_dep_ids(task_id, dep_ids)
+    validate_dependencies(task_store, task_id, dep_ids)
 
-    existing = _task_store.get_subtasks_for_task(task_id)
+    existing = task_store.get_subtasks_for_task(task_id)
     position = max((s["position"] for s in existing), default=-1) + 1
 
-    subtask = _task_store.create_subtask(
+    subtask = task_store.create_subtask(
         task_id=task_id,
         agent_id=agent_id,
         goal=goal,
@@ -121,10 +77,7 @@ def _spawn_task(
         description=description,
     )
 
-    logger.info(
-        f"spawn_task: created subtask {subtask['id']} "
-        f"(agent={agent_id}, position={position}, deps={dep_ids})"
-    )
+    logger.info(f"spawn_task: created subtask {subtask['id']} (agent={agent_id}, position={position}, deps={dep_ids})")
 
     return json.dumps({
         "subtask_id": subtask["id"],
@@ -134,9 +87,8 @@ def _spawn_task(
         "depends_on": dep_ids,
     })
 
-def register_task_tools() -> None:
-    """Register task tools with the global tool manager."""
 
+def register_task_tools() -> None:
     tool_manager.register_tool(
         name="spawn_task",
         description=(
@@ -162,26 +114,16 @@ def register_task_tools() -> None:
                 },
                 "name": {
                     "type": "string",
-                    "description": (
-                        "A short, human-readable name for this subtask "
-                        "(e.g. 'Write unit tests', 'Deploy to staging'). "
-                        "Displayed in the UI instead of the raw agent ID."
-                    ),
+                    "description": "A short, human-readable name for this subtask (e.g. 'Write unit tests').",
                 },
                 "description": {
                     "type": "string",
-                    "description": (
-                        "A brief description of what this subtask does. "
-                        "Shown beneath the name in the UI for additional context."
-                    ),
+                    "description": "A brief description of what this subtask does.",
                 },
                 "depends_on": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": (
-                        "Array of subtask IDs that must complete before this one runs. "
-                        "Example: [\"abc-123\", \"def-456\"]. Omit for no dependencies."
-                    ),
+                    "description": 'Array of subtask IDs that must complete before this one runs. Example: ["abc-123"].',
                 },
                 "priority": {
                     "type": "string",

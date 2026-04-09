@@ -13,11 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
-    """Simple and dirty logging of AI model requests to a file"""
-    # Essentially this is a debug variable, but lazy
-    if False:
-        return
-
     log_file = "logs/llm_requests.log"
 
     log_entry = {
@@ -38,19 +33,8 @@ def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
 class OpenAICompatibleConnector(BaseConnector):
     connector_name = "openai_compatible"
 
-    def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "default", 
+    def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "default",
                  temperature: float = 0.7, max_tokens: int = 50000):
-        """
-        Initialize OpenAI-compatible connector
-
-        Args:
-            base_url: The base URL of the API (e.g., http://localhost:1234 or https://api.openai.com/v1).
-                     Should NOT include /chat/completions.
-            api_key: Optional API key for authentication.
-            model: The model name to use.
-            temperature: The temperature setting for generation.
-            max_tokens: The maximum number of tokens to generate.
-        """
         super().__init__()
         
         self.base_url = base_url.rstrip('/')
@@ -65,7 +49,6 @@ class OpenAICompatibleConnector(BaseConnector):
              self.api_endpoint = f"{self.base_url}/v1/chat/completions"
 
     def _is_versioned_path(self, url: str) -> bool:
-        """Check if the URL path seems to already include a version prefix (e.g. /v1, /api/v1)."""
         path = url.split('?')[0]
         parts = path.strip('/').split('/')
         last_part = parts[-1] if parts else ""
@@ -78,23 +61,11 @@ class OpenAICompatibleConnector(BaseConnector):
         return headers
 
     def _unwrap_response(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """Unwrap response if it's nested in a 'data' object (common in some proxies like Cline)"""
         if "data" in result and "choices" not in result:
             return result["data"]
         return result
 
     def generate(self, prompt: str, context: str) -> str:
-        """
-        Generate response using context and prompt
-
-        Args:
-            context: Context information to prepend
-            prompt: User prompt/question
-
-        Returns:
-            Generated response from API
-        """
-        # Apply rate limiting (wait up to 10 seconds)
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -153,9 +124,6 @@ class OpenAICompatibleConnector(BaseConnector):
             raise RuntimeError(error_msg)
 
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
-        """Generate response with optional tool support"""
-
-        # Apply rate limiting (wait up to 10 seconds)
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -207,19 +175,6 @@ class OpenAICompatibleConnector(BaseConnector):
             return {"error": error_msg}
 
     def generate_with_tools_stream(self, messages: list, tools: list = None):
-        """
-        Generate response with optional tool support (streaming).
-
-        Yields chunks of the response as they arrive.
-
-        Args:
-            messages: List of message dicts
-            tools: Optional list of tool definitions
-
-        Yields:
-            dict: Streaming response chunks
-        """
-        # Apply rate limiting (wait up to 10 seconds)
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"

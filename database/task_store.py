@@ -31,7 +31,6 @@ class TaskStore:
 
     def create_task(self, goal: str, execution_mode: str = "sequential", working_directory: Optional[str] = None) -> Dict:
         task_id, now = str(uuid.uuid4()), get_utc_timestamp()
-        # Default to "outputs" if no working_directory specified
         working_directory = working_directory or "outputs"
         with get_manager().transaction() as conn:
             conn.execute(
@@ -51,7 +50,6 @@ class TaskStore:
         if row is None:
             raise KeyError(f"Task {task_id} not found")
         task = dict(row)
-        # Default to "outputs" if working_directory is NULL (for backward compatibility)
         if task.get("working_directory") is None:
             task["working_directory"] = "outputs"
         return task
@@ -90,8 +88,8 @@ class TaskStore:
                        input_context: Optional[Dict] = None,
                        name: Optional[str] = None,
                        description: Optional[str] = None) -> Dict:
-        # Validate dependencies before creating the subtask
-        self._validate_subtask_dependencies(task_id, depends_on)
+        from .validators import validate_dependencies
+        validate_dependencies(self, task_id, depends_on or [])
         
         subtask_id, now = str(uuid.uuid4()), get_utc_timestamp()
         with get_manager().transaction() as conn:
@@ -231,20 +229,6 @@ class TaskStore:
             "SELECT id, task_id, subtask_id, event_type, message, created_at FROM task_events WHERE task_id=? ORDER BY created_at",
             (task_id,)
         ).fetchall()]
-
-    def _validate_subtask_dependencies(self, task_id: str, depends_on: Optional[List[str]]) -> None:
-        """
-        Validate dependencies for a new subtask (delegates to shared validation).
-
-        Args:
-            task_id: The parent task ID
-            depends_on: List of dependency subtask IDs to validate
-
-        Raises:
-            ValueError: If dependencies are invalid
-        """
-        from .validators import validate_dependencies
-        validate_dependencies(self, task_id, depends_on or [])
 
     # -------------------------------------------------------------------------
     # Private helpers

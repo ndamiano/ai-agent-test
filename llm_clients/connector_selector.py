@@ -1,5 +1,3 @@
-"""Factory for creating OpenAI-compatible connectors with singleton caching"""
-
 from typing import Optional, Dict, Any
 import hashlib
 import json
@@ -24,52 +22,25 @@ def reset_connector_cache() -> None:
 
 
 def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[str, Any]] = None) -> OpenAICompatibleConnector:
-    """
-    Get a singleton OpenAI-compatible connector instance.
-
-    Returns a cached connector if settings haven't changed, otherwise creates
-    a new one. This ensures the health check and agents always use the same
-    connector instance.
-
-    Args:
-        connector_type: The type of connector to use ('lmstudio' or 'cline').
-                       If None, reads from global settings.
-        settings: Optional settings dictionary to use instead of loading from manager.
-                 Useful for testing or overriding configuration.
-
-    Returns:
-        An instance of OpenAICompatibleConnector configured for the requested provider.
-    """
     global _cached_connector, _cached_settings_hash
 
     global_settings = settings_manager.get_settings()
 
-    # If connector_type is not a recognized provider, use global setting
-    recognized_types = ("lmstudio", "cline", "openrouter")
-    if connector_type not in recognized_types:
+    if connector_type not in ("lmstudio", "cline", "openrouter"):
         connector_type = global_settings.get("connector_type", "lmstudio")
-        
+
     if settings is None:
         settings = settings_manager.get_connector_settings(connector_type)
 
-    # Check if cached connector is still valid
     settings_hash = _hash_settings(settings)
     if _cached_connector is not None and _cached_settings_hash == settings_hash:
         return _cached_connector
 
-    # Extract configuration
-    # api_key is optional (LMStudio doesn't have it, Cline does)
     api_key = settings.get("api_key")
-    
     base_url = settings.get("base_url")
     if not base_url:
-        # Fallback for legacy configs or missing fields
-        if connector_type == "cline":
-            base_url = "https://api.cline.bot/api"
-        else:
-            base_url = "http://localhost:1234"
+        base_url = "https://api.cline.bot/api" if connector_type == "cline" else "http://localhost:1234"
 
-    # Create new connector and update cache
     _cached_connector = OpenAICompatibleConnector(
         base_url=base_url,
         api_key=api_key,

@@ -1,10 +1,3 @@
-"""Settings manager for persistent configuration with JSON storage
-
-Settings are stored in config/settings.json which is gitignored.
-See config/settings.example.json for the default structure.
-The settings file is created automatically on first run.
-"""
-
 import json
 import os
 from pathlib import Path
@@ -19,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsManager:
-    """Settings manager with JSON persistence"""
 
     def __init__(self):
         self._settings_lock = Lock()
@@ -87,24 +79,10 @@ class SettingsManager:
             raise
 
     def get_settings(self) -> Dict[str, Any]:
-        """Get current settings (thread-safe)"""
         with self._settings_lock:
             return self._settings.copy()
 
     def update_settings(self, new_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update settings with validation (thread-safe)
-
-        Args:
-            new_settings: New settings dictionary
-
-        Returns:
-            Updated settings
-
-        Raises:
-            ValueError: If settings validation fails
-        """
-        # Validate settings
         self._validate_settings(new_settings)
 
         with self._settings_lock:
@@ -113,30 +91,12 @@ class SettingsManager:
             return self._settings.copy()
 
     def _validate_settings(self, settings: Dict[str, Any]) -> None:
-        """
-        Validate settings structure and values using Pydantic schema.
-
-        Args:
-            settings: Settings dictionary to validate
-
-        Raises:
-            ValueError: If validation fails
-        """
         try:
             AppSettings(**settings)
         except PydanticValidationError as e:
             raise ValueError(str(e)) from e
 
     def get_connector_settings(self, connector_type: str) -> Dict[str, Any]:
-        """
-        Get settings for a specific connector
-
-        Args:
-            connector_type: Type of connector ('lmstudio', 'embedding', etc.)
-
-        Returns:
-            Connector-specific settings dictionary
-        """
         with self._settings_lock:
             return self._settings.get(connector_type, {}).copy()
 

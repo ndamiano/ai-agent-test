@@ -16,19 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class MaestroAgent:
-    """LLM-powered orchestrator that coordinates all agents to accomplish a goal."""
 
     def __init__(self):
         self.task_store = task_store
         self.agent_store = agent_store
-        self.logger = logging.getLogger(__name__)
-
         import os
-        max_workers = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._executor = ThreadPoolExecutor(max_workers=int(os.getenv("MAX_PARALLEL_WORKERS", "2")))
 
     def run_background(self, task_id: str) -> None:
-        """Launch task in a background thread. Returns immediately."""
         async def _run_async():
             try:
                 self.task_store.update_task_status(task_id, "planning")

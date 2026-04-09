@@ -2,19 +2,12 @@ import sqlite3
 import os
 from typing import Optional
 
-# Database path function that reads from environment variable with fallback
+
 def get_db_path():
-    """Get the current database path from environment variable."""
     return os.environ.get("TASK_DB_PATH", "data/tasks.db")
 
 
 def configure_connection(conn: sqlite3.Connection) -> None:
-    """
-    Configure SQLite connection with optimal settings.
-
-    Args:
-        conn: SQLite connection to configure
-    """
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -22,27 +15,16 @@ def configure_connection(conn: sqlite3.Connection) -> None:
 
 
 def init_db(db_path: Optional[str] = None) -> None:
-    """
-    Initialize the SQLite database with all required tables.
-    
-    Creates the database and all tables if they don't exist. Uses IF NOT EXISTS
-    so it's safe to call on every startup. Sets up foreign key constraints.
-    
-    Args:
-        db_path: Optional path to database file. If None, uses DB_PATH constant.
-    """
     if db_path is None:
         db_path = get_db_path()
-    
-    # Ensure directory exists
+
     dir_path = os.path.dirname(db_path)
     if dir_path:
         os.makedirs(dir_path, exist_ok=True)
-    
+
     with sqlite3.connect(db_path) as conn:
         configure_connection(conn)
-        
-        # Create tasks table
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
@@ -54,8 +36,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                 updated_at TEXT NOT NULL
             )
         """)
-        
-        # Create subtasks table
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS subtasks (
                 id TEXT PRIMARY KEY,
@@ -74,8 +55,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                 FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
             )
         """)
-        
-        # Create context_store table
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS context_store (
                 id TEXT PRIMARY KEY,
@@ -89,8 +69,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                 UNIQUE (task_id, key)
             )
         """)
-        
-        # Create task_events table
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS task_events (
                 id TEXT PRIMARY KEY,
@@ -106,23 +85,20 @@ def init_db(db_path: Optional[str] = None) -> None:
 
         conn.commit()
 
-        # Migrate existing databases - add working_directory column if it doesn't exist
+        # Migrate existing databases
         try:
             conn.execute("ALTER TABLE tasks ADD COLUMN working_directory TEXT")
             conn.commit()
         except sqlite3.OperationalError:
-            # Column already exists, ignore
             pass
 
-        # Add performance indexes for frequently queried columns
         conn.execute("CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id ON context_store(task_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id_key ON context_store(task_id, key)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_task_events_task_id ON task_events(task_id)")
-
         conn.commit()
 
+
 if __name__ == "__main__":
-    # Initialize database when run directly
     init_db()
     print(f"Database initialized at: {get_db_path()}")

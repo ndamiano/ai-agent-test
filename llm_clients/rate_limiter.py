@@ -1,25 +1,12 @@
-"""Rate limiter for LLM API calls using token bucket algorithm."""
-
 import time
 import threading
 from typing import Optional
 
 
 class LLMRateLimiter:
-    """
-    Thread-safe rate limiter using token bucket algorithm.
-
-    Allows bursts up to capacity, then enforces a steady rate.
-    """
+    """Thread-safe token bucket rate limiter."""
 
     def __init__(self, rate: float = 2.0, capacity: Optional[int] = None):
-        """
-        Initialize rate limiter.
-
-        Args:
-            rate: Maximum requests per second (default: 2)
-            capacity: Maximum burst size (default: same as rate)
-        """
         self.rate = rate
         self.capacity = capacity if capacity is not None else int(rate)
         self.tokens = float(self.capacity)
@@ -27,16 +14,6 @@ class LLMRateLimiter:
         self.lock = threading.Lock()
 
     def acquire(self, blocking: bool = True, timeout: Optional[float] = None) -> bool:
-        """
-        Acquire a token for making a request.
-
-        Args:
-            blocking: If True, wait until a token is available
-            timeout: Maximum time to wait in seconds (only used if blocking=True)
-
-        Returns:
-            True if token acquired, False otherwise
-        """
         deadline = None if timeout is None else time.time() + timeout
 
         while True:
@@ -73,16 +50,13 @@ class LLMRateLimiter:
             time.sleep(wait_time)
 
     def reset(self):
-        """Reset the rate limiter to full capacity."""
         with self.lock:
             self.tokens = float(self.capacity)
             self.last_update = time.time()
 
 
-# Global rate limiter instance (2 requests per second)
 _llm_rate_limiter = LLMRateLimiter(rate=2.0)
 
 
 def get_llm_rate_limiter() -> LLMRateLimiter:
-    """Get the global LLM rate limiter instance."""
     return _llm_rate_limiter

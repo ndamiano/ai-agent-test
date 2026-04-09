@@ -85,10 +85,10 @@ def _web_search(
     """
     logger.info(f"web_search called: {query}")
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
 
         with DDGS() as ddgs:
-            raw_results = list(ddgs.text(keywords=query, max_results=num_results))
+            raw_results = list(ddgs.text(query, max_results=num_results))
 
         results = []
         for r in raw_results:

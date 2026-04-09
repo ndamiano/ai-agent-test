@@ -10,11 +10,6 @@ from .agent_store import agent_store
 
 
 class MainAgent:
-    """
-    Main conversational agent that orchestrates AI connectors and tools.
-    Implements a finite state machine
-    Planning -> Execution -> Validation -> Compiling -> Finished
-    """
 
     def __init__(
         self,
@@ -205,7 +200,6 @@ class MainAgent:
             if not tool_calls:
                 return content
 
-            # Get existing context if any
             from tools.execution_context import get_task_id, get_subtask_id
             ctx_task_id = get_task_id()
             ctx_subtask_id = get_subtask_id()

@@ -1,54 +1,36 @@
-"""
-Validating state node: Maestro validates quality and checks goal completion.
-"""
-
-import logging
 import json
+import logging
 from datetime import datetime
 from agents.fsm.state_node import StateNode, StateContext
-from config.time_utils import get_utc_timestamp
 from api.websocket.event_bus import event_bus
+from config.time_utils import get_utc_timestamp
 
 logger = logging.getLogger(__name__)
 
 
 class ValidatingNode(StateNode):
-    """VALIDATING state: Maestro validates execution quality and checks goal completion."""
-
     @property
     def state_name(self) -> str:
         return "VALIDATING"
 
     async def execute_async(self, context: StateContext) -> StateNode:
-        """Validate outputs and decide next state."""
         from agents.fsm.planning_node import PlanningNode
         from agents.fsm.compiling_node import CompilingNode
 
         logger.info(f"Maestro: task {context.task_id} — wave {context.wave_count} — VALIDATING")
 
         subtasks = context.task_store.get_subtasks_for_task(context.task_id)
-        pending = [s for s in subtasks if s["status"] in ("pending", "in_progress")]
-        failed = [s for s in subtasks if s["status"] == "failed"]
-
-        if failed:
-            logger.warning(f"Task {context.task_id} has {len(failed)} failed subtasks")
+        if [s for s in subtasks if s["status"] == "failed"]:
             return PlanningNode()
-
-        if pending:
-            logger.warning(f"Task {context.task_id} still has pending subtasks after wave completion")
+        if [s for s in subtasks if s["status"] in ("pending", "in_progress")]:
             from agents.fsm.executing_node import ExecutingNode
             return ExecutingNode()
 
-        is_complete = await self._maestro_turn(context, phase="evaluation")
+        is_complete = await self._validator_turn(context)
+        return CompilingNode() if is_complete else PlanningNode()
 
-        if is_complete:
-            return CompilingNode()
-        else:
-            return PlanningNode()
-
-    async def _maestro_turn(self, context: StateContext, phase: str) -> bool:
-        """Make one Maestro LLM call to evaluate state."""
-        prompt = self._build_maestro_prompt(context, phase)
+    async def _validator_turn(self, context: StateContext) -> bool:
+        prompt = self._build_validator_prompt(context)
 
         agent_data = context.agent_store.get("validator")
         rendered_system_prompt = agent_data["system_prompt"].replace(
@@ -59,16 +41,14 @@ class ValidatingNode(StateNode):
         validator = MainAgent(agent_id="validator", system_prompt=rendered_system_prompt)
 
         task = context.task_store.get_task(context.task_id)
-        if task is None:
-            raise RuntimeError(f"Task {context.task_id} not found in task_store")
         working_directory = task.get("working_directory")
 
         event_bus.publish_sync({
             "type": "agent_message",
             "task_id": context.task_id,
             "agent_id": "validator",
-            "phase": phase,
-            "message": f"Validator evaluating ({phase})",
+            "phase": "evaluation",
+            "message": "Validator evaluating",
             "timestamp": get_utc_timestamp(),
         })
 
@@ -78,51 +58,39 @@ class ValidatingNode(StateNode):
 
         if response is None:
             response = ""
-            logger.warning(f"Validator returned None response for task {context.task_id} phase {phase}")
+            logger.warning(f"Validator returned None for task {context.task_id}")
 
         context.task_store.write_context(
             context.task_id,
-            key=f"validator_{phase}_{datetime.now().strftime('%H%M%S')}",
+            key=f"validator_evaluation_{datetime.now().strftime('%H%M%S')}",
             value=response,
         )
-        context.task_store.log_event(
-            context.task_id, "agent_message", f"Validator ({phase}): {response[:200]}"
-        )
+        context.task_store.log_event(context.task_id, "agent_message", f"Validator: {response[:200]}")
 
-        verdict = None
         for msg in reversed(validator.get_message_history()):
             if msg.get("role") == "tool":
                 try:
                     result = json.loads(msg["content"])
                     if "verdict" in result:
-                        verdict = result["verdict"]
-                        break
+                        return result["verdict"] == "COMPLETE"
                 except (json.JSONDecodeError, KeyError):
                     continue
 
-        if verdict is None:
-            logger.warning(f"Validator did not call submit_verdict for task {context.task_id}, defaulting to INCOMPLETE")
-            return False
+        logger.warning(f"Validator did not call submit_verdict for task {context.task_id}, defaulting to INCOMPLETE")
+        return False
 
-        return verdict == "COMPLETE"
-
-    def _build_maestro_prompt(self, context: StateContext, phase: str) -> str:
-        """Build the situational prompt Maestro receives."""
-        import json as _json
+    def _build_validator_prompt(self, context: StateContext) -> str:
         task = context.task_store.get_task(context.task_id)
-        if task is None:
-            raise RuntimeError(f"Task {context.task_id} not found in task_store")
         subtasks = context.task_store.get_subtasks_for_task(context.task_id)
         all_context = context.task_store.get_all_context(context.task_id)
 
         lines = [
             f"TASK ID: {context.task_id}",
             f"ORIGINAL GOAL: {task['goal']}",
-            f"CURRENT PHASE: {phase}",
             "",
+            "SUBTASK STATUS:",
         ]
 
-        lines.append("SUBTASK STATUS:")
         if not subtasks:
             lines.append("  No subtasks yet.")
         else:
@@ -137,8 +105,7 @@ class ValidatingNode(StateNode):
                     f"agent={s['agent_id']} | pos={s['position']}{dep_str}"
                 )
                 if s.get("output"):
-                    preview = s["output"][:120].replace("\n", " ")
-                    lines.append(f"    Output preview: {preview}...")
+                    lines.append(f"    Output preview: {s['output'][:120].replace(chr(10), ' ')}...")
         lines.append("")
 
         lines.append("CONTEXT STORE (all outputs and notes):")
@@ -150,56 +117,45 @@ class ValidatingNode(StateNode):
                 lines.append(f"  {value[:500]}{'...' if len(value) > 500 else ''}")
         lines.append("")
 
-        if phase == "evaluation":
-            # Inject acceptance criteria if they exist — this is the source of truth for the verdict
-            criteria_raw = context.task_store.get_context(context.task_id, "acceptance_criteria")
-            has_criteria = False
-            if criteria_raw:
-                try:
-                    criteria = _json.loads(criteria_raw)
-                    lines.append("ACCEPTANCE CRITERIA (must all pass for COMPLETE):")
-                    for c in criteria:
-                        lines.append(f"  [{c['id']}] {c['criterion']}")
-                        if c.get("rationale"):
-                            lines.append(f"         Rationale: {c['rationale']}")
-                    lines.append("")
-                    has_criteria = True
-                except Exception:
-                    pass
+        criteria_raw = context.task_store.get_context(context.task_id, "acceptance_criteria")
+        has_criteria = False
+        if criteria_raw:
+            try:
+                criteria = json.loads(criteria_raw)
+                lines.append("ACCEPTANCE CRITERIA (must all pass for COMPLETE):")
+                for c in criteria:
+                    lines.append(f"  [{c['id']}] {c['criterion']}")
+                    if c.get("rationale"):
+                        lines.append(f"         Rationale: {c['rationale']}")
+                lines.append("")
+                has_criteria = True
+            except Exception:
+                pass
 
-            if has_criteria:
-                lines.append(
-                    "INSTRUCTION: Review the completed work against EACH acceptance criterion listed above. "
-                    "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
-                    "Every criterion must pass for the verdict to be COMPLETE. "
-                    "If any criterion is not fully satisfied by the work in the context store, "
-                    "the verdict is INCOMPLETE.\n\n"
-                    "Call submit_verdict with your verdict and a justification that names which criteria "
-                    "passed and which failed (if any). Do not suggest next steps."
-                )
-            else:
-                lines.append(
-                    "INSTRUCTION: Review the completed subtask outputs above against the ORIGINAL GOAL. "
-                    "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
-                    "Assess whether the work fully satisfies the original goal. "
-                    "Call submit_verdict with COMPLETE if the goal has been fully achieved and is ready "
-                    "for synthesis, or INCOMPLETE with a brief explanation of what is missing.\n\n"
-                    "Do not suggest next steps. Do not describe what you would do. Just verdict and justification."
-                )
-        elif phase == "error_recovery":
+        if has_criteria:
             lines.append(
-                "INSTRUCTION: One or more subtasks have failed. "
-                "Review the failures above and decide how to proceed: "
-                "retry the failed subtask, spawn an alternative, or acknowledge the failure and continue."
+                "INSTRUCTION: Review the completed work against EACH acceptance criterion listed above. "
+                "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
+                "Every criterion must pass for the verdict to be COMPLETE. "
+                "If any criterion is not fully satisfied by the work in the context store, "
+                "the verdict is INCOMPLETE.\n\n"
+                "Call submit_verdict with your verdict and a justification that names which criteria "
+                "passed and which failed (if any). Do not suggest next steps."
+            )
+        else:
+            lines.append(
+                "INSTRUCTION: Review the completed subtask outputs above against the ORIGINAL GOAL. "
+                "Your job is verification only — you cannot create or spawn any new tasks.\n\n"
+                "Call submit_verdict with COMPLETE if the goal has been fully achieved and is ready "
+                "for synthesis, or INCOMPLETE with a brief explanation of what is missing.\n\n"
+                "Do not suggest next steps. Do not describe what you would do. Just verdict and justification."
             )
 
         return "\n".join(lines)
 
     def _build_agent_roster(self, context: StateContext) -> str:
-        """Format the agent roster for injection into Maestro's system prompt."""
-        agents = context.agent_store.list()
         lines = []
-        for a in agents:
+        for a in context.agent_store.list():
             if a.get("id") == "maestro":
                 continue
             tools = ", ".join(a.get("tools", [])) or "none"

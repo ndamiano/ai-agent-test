@@ -1,5 +1,3 @@
-"""Centralized timestamp utilities for consistent time handling across the system."""
-
 from datetime import datetime, UTC
 
 
@@ -8,14 +6,6 @@ def get_utc_timestamp() -> str:
 
 
 def format_relative_time(iso_timestamp: str) -> str:
-    """Convert an ISO timestamp to a human-readable relative time string.
-    
-    Args:
-        iso_timestamp: ISO format timestamp string (e.g., "2024-01-15T10:30:00+00:00")
-    
-    Returns:
-        Relative time string like "just now", "5 minutes ago", "2 hours ago", etc.
-    """
     dt = datetime.fromisoformat(iso_timestamp)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)

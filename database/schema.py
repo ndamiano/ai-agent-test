@@ -29,11 +29,13 @@ def init_db(db_path: Optional[str] = None) -> None:
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 goal TEXT NOT NULL,
-                status TEXT NOT NULL CHECK(status IN ('pending', 'planning', 'in_progress', 'completed', 'failed', 'cancelled', 'archived')),
+                status TEXT NOT NULL CHECK(status IN ('pending', 'refining', 'synthesizing', 'planning', 'in_progress', 'completed', 'failed', 'cancelled', 'archived')),
                 execution_mode TEXT NOT NULL DEFAULT 'sequential' CHECK(execution_mode IN ('sequential', 'parallel')),
                 working_directory TEXT,
+                parent_task_id TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (parent_task_id) REFERENCES tasks (id) ON DELETE CASCADE
             )
         """)
 
@@ -91,6 +93,42 @@ def init_db(db_path: Optional[str] = None) -> None:
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        # Migrate: expand tasks.status CHECK constraint to include refining/synthesizing.
+        # SQLite can't ALTER a CHECK constraint, so we recreate the table.
+        # FK checks and automatic FK-reference rewriting (SQLite 3.26+) must both be
+        # disabled during the rename/recreate or child tables end up pointing at tasks_old.
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
+        ).fetchone()
+        if row and "'refining'" not in row[0]:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            conn.execute("PRAGMA legacy_alter_table = ON")
+            conn.execute("ALTER TABLE tasks RENAME TO tasks_old")
+            conn.execute("""
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    goal TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'refining', 'synthesizing', 'planning', 'in_progress', 'completed', 'failed', 'cancelled', 'archived')),
+                    execution_mode TEXT NOT NULL DEFAULT 'sequential' CHECK(execution_mode IN ('sequential', 'parallel')),
+                    working_directory TEXT,
+                    parent_task_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (parent_task_id) REFERENCES tasks (id) ON DELETE CASCADE
+                )
+            """)
+            conn.execute("INSERT INTO tasks SELECT * FROM tasks_old")
+            conn.execute("DROP TABLE tasks_old")
+            conn.execute("PRAGMA legacy_alter_table = OFF")
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_context_store_task_id ON context_store(task_id)")

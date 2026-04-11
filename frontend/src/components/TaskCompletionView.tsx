@@ -8,6 +8,7 @@ interface TaskCompletionViewProps {
     artifact: ArtifactManifest | null
     goal: string | undefined
     subtasks: SubtaskState[]
+    criteria: string[] | null
     agentsExpanded: boolean
     onToggleAgents: () => void
 }
@@ -117,6 +118,7 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
     artifact,
     goal,
     subtasks,
+    criteria,
     agentsExpanded,
     onToggleAgents,
 }) => {
@@ -139,6 +141,24 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
                             <p className="text-gray-300 leading-relaxed whitespace-pre-wrap">
                                 {artifact.summary}
                             </p>
+
+                            {criteria && criteria.length > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Acceptance Criteria
+                                    </p>
+                                    <ul className="flex flex-col gap-1.5">
+                                        {criteria.map((item, i) => (
+                                            <li key={i} className="flex items-start gap-2 text-sm text-gray-300">
+                                                <svg className="mt-0.5 w-4 h-4 flex-shrink-0 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                                </svg>
+                                                {item}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
 
                             {artifact.artifacts.length > 0 && (
                                 <div className="space-y-2">

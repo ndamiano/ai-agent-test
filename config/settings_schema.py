@@ -22,5 +22,6 @@ class ClineSettings(BaseModel):
 class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline"]
     working_directory: Optional[str] = "outputs"
+    refine_before_execution: bool = False
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None

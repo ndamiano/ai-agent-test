@@ -10,6 +10,7 @@ export interface Subtask {
     position: number
     output_preview: string | null
     depends_on: string[]
+    child_task_id?: string | null
 }
 
 export interface TaskEvent {
@@ -20,18 +21,26 @@ export interface TaskEvent {
     created_at: string
 }
 
+export interface RefinementMessage {
+    role: 'user' | 'assistant'
+    content: string
+    timestamp: string
+}
+
 export interface Task {
     id: string
     goal: string
-    status: 'pending' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'archived'
+    status: 'pending' | 'refining' | 'synthesizing' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'archived'
     created_at: string
     updated_at: string
     subtasks: Subtask[]
+    parent_task_id?: string | null
 }
 
 export interface TaskDetail extends Task {
     events: TaskEvent[]
     context_keys: string[]
+    child_tasks: Task[]
 }
 
 export interface Agent {
@@ -86,6 +95,7 @@ export type WebSocketMessage =
     | { type: 'task_failed'; task_id: string; error: string }
     | { type: 'agent_message'; task_id: string; agent_id: string; phase: MaestroPhase; message: string; timestamp: string; subtask_id?: string }
     | { type: 'tool_usage'; task_id: string; subtask_id: string; tool_name: string; arguments: Record<string, any>; status: 'success' | 'failed'; timestamp: string }
+    | { type: 'refine_message'; task_id: string; messages: RefinementMessage[]; timestamp: string }
 
 export interface LMStudioSettings {
     base_url: string
@@ -104,6 +114,7 @@ export interface ClineSettings {
 export interface Settings {
     connector_type: string
     working_directory?: string
+    refine_before_execution?: boolean
     lmstudio?: LMStudioSettings
     cline?: ClineSettings
 }

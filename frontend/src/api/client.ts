@@ -1,4 +1,4 @@
-import type { Task, TaskDetail, AskResponse, SystemStatus, Settings } from '../types'
+import type { Task, TaskDetail, AskResponse, SystemStatus, Settings, RefinementMessage } from '../types'
 
 const base = '/api'
 
@@ -52,6 +52,12 @@ export const api = {
         fetch(`${base}/tasks/${id}`, { method: 'DELETE' }),
     retryTask: (id: string) =>
         request<Task>(`/tasks/${id}/retry`, { method: 'POST' }),
+    sendRefineMessage: (id: string, message: string) =>
+        request<{ messages: RefinementMessage[] }>(`/tasks/${id}/refine`, { method: 'POST', body: JSON.stringify({ message }) }),
+    synthesizeRefine: (id: string) =>
+        request<{ refined_goal: string; acceptance_criteria: string[] }>(`/tasks/${id}/synthesize`, { method: 'POST' }),
+    confirmRefine: (id: string, refined_goal?: string, acceptance_criteria?: string[]) =>
+        request<Task>(`/tasks/${id}/confirm`, { method: 'POST', body: JSON.stringify({ refined_goal, acceptance_criteria }) }),
 
     // System
     getStatus: () =>

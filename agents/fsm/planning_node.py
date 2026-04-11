@@ -71,8 +71,11 @@ class PlanningNode(StateNode):
                 try:
                     criteria = json.loads(criteria_raw)
                     lines.append("ACCEPTANCE CRITERIA (committed at start of task):")
-                    for c in criteria:
-                        lines.append(f"  [{c['id']}] {c['criterion']}")
+                    for i, c in enumerate(criteria):
+                        if isinstance(c, dict):
+                            lines.append(f"  [{c.get('id', i)}] {c.get('criterion', c.get('text', str(c)))}")
+                        else:
+                            lines.append(f"  [{i}] {c}")
                     lines.append("")
                 except Exception:
                     pass
@@ -102,11 +105,25 @@ class PlanningNode(StateNode):
                 n, d = s.get("name"), s.get("description")
                 if n or d:
                     name_desc = f" {n or ''}" + (f" — {d}" if d else "") + " |"
+
+                is_domain = s["agent_id"] == "maestro"
+                agent_label = "DOMAIN MAESTRO" if is_domain else s["agent_id"]
                 lines.append(
                     f"  [{s['status'].upper()}] {s['id'][:8]} |{name_desc} "
-                    f"agent={s['agent_id']} | pos={s['position']}{dep_str}"
+                    f"agent={agent_label} | pos={s['position']}{dep_str}"
                 )
-                if s.get("output"):
+                # For domain subtasks, show child task status
+                if is_domain and isinstance(s.get("input_context"), dict):
+                    child_task_id = s["input_context"].get("child_task_id")
+                    if child_task_id:
+                        try:
+                            child_task = context.task_store.get_task(child_task_id)
+                            child_subtasks = context.task_store.get_subtasks_for_task(child_task_id)
+                            done = sum(1 for cs in child_subtasks if cs["status"] == "completed")
+                            lines.append(f"    Child task status: {child_task['status']} ({done}/{len(child_subtasks)} subtasks done)")
+                        except Exception:
+                            pass
+                elif s.get("output"):
                     lines.append(f"    Output preview: {s['output'][:120].replace(chr(10), ' ')}...")
         lines.append("")
 

@@ -27,8 +27,10 @@ const TaskListPanel: React.FC<TaskListPanelProps> = ({ selectedTaskId, onSelectT
     const sortByNewest = (taskList: Task[]) =>
         [...taskList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-    const inProgress = sortByNewest(tasks.filter(t => t.status === 'pending' || t.status === 'planning' || t.status === 'in_progress'))
-    const completed = sortByNewest(tasks.filter(t => t.status === 'completed' || t.status === 'failed'))
+    // Only show root tasks — child tasks (spawned by spawn_domain) appear nested in the parent's detail view
+    const rootTasks = tasks.filter(t => !t.parent_task_id)
+    const inProgress = sortByNewest(rootTasks.filter(t => ['pending', 'refining', 'synthesizing', 'planning', 'in_progress'].includes(t.status)))
+    const completed = sortByNewest(rootTasks.filter(t => t.status === 'completed' || t.status === 'failed'))
 
     if (loading) return (
         <div className="h-full flex flex-col gap-4 p-4">

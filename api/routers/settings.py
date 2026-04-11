@@ -57,7 +57,8 @@ async def update_settings(request: Request, settings_request: UpdateSettingsRequ
 
         # Convert Pydantic models to dicts
         new_settings = {
-            "connector_type": settings_request.connector_type
+            "connector_type": settings_request.connector_type,
+            "refine_before_execution": settings_request.refine_before_execution,
         }
 
         if settings_request.working_directory:

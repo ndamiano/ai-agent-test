@@ -122,8 +122,29 @@ export default function SettingsPage() {
                 </div>
             )}
 
-            {/* Working Directory Section */}
+            {/* Behavior Section */}
             <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-white">Behavior</h3>
+                <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="relative mt-0.5 flex-shrink-0">
+                        <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={settings.refine_before_execution ?? false}
+                            onChange={e => setSettings(prev => prev ? { ...prev, refine_before_execution: e.target.checked } : null)}
+                        />
+                        <div className={`w-9 h-5 rounded-full transition-colors ${settings.refine_before_execution ? 'bg-blue-600' : 'bg-gray-600'}`} />
+                        <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${settings.refine_before_execution ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                    <div>
+                        <p className="text-sm text-white font-medium">Refine task before execution</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Converse with AI to clarify your goal and set acceptance criteria before agents start working.</p>
+                    </div>
+                </label>
+            </div>
+
+            {/* Working Directory Section */}
+            <div className="space-y-4 pt-4 border-t border-white/[0.06]">
                 <h3 className="text-lg font-semibold text-white">Working Directory</h3>
                 <div className="space-y-2">
                     <label className="block text-sm text-gray-400">Default working directory for tasks</label>

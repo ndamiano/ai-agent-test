@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { useTaskWebSocket } from '../contexts/WebSocketContext'
+import { useTaskWebSocket, useWebSocket } from '../contexts/WebSocketContext'
 import { api } from '../api/client'
-import type { TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest, MaestroPhase } from '../types'
+import type { Task, TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest, MaestroPhase } from '../types'
 
 export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 
@@ -14,6 +14,7 @@ export interface SubtaskState {
     status: SubtaskStatus
     outputPreview: string | null
     position: number
+    childTaskId?: string | null
 }
 
 export const VALID_SUBTASK_STATUSES: readonly SubtaskStatus[] = [
@@ -36,6 +37,7 @@ export function toSubtaskState(s: Subtask): SubtaskState {
         status: status as SubtaskStatus,
         outputPreview: s.output_preview,
         position: s.position,
+        childTaskId: s.child_task_id,
     }
 }
 
@@ -58,12 +60,14 @@ export const mergeSubtasks = (base: SubtaskState[], messages: WSMessage[]): Subt
     })
 }
 
-export type Phase = 'idle' | 'live' | 'completing' | 'done' | 'failed'
+export type Phase = 'idle' | 'refining' | 'synthesizing' | 'live' | 'completing' | 'done' | 'failed'
 
 export interface TaskStageState {
     task: TaskDetail | null
     subtasks: SubtaskState[]
+    childTasks: Task[]
     artifact: ArtifactManifest | null
+    criteria: string[] | null
     phase: Phase
     isPlanning: boolean
     loading: boolean
@@ -80,9 +84,12 @@ export interface TaskStageState {
 
 export function useTaskStage(taskId: string | null): TaskStageState {
     const { messages } = useTaskWebSocket(taskId)
+    const { subscribe } = useWebSocket()
     const [task, setTask] = useState<TaskDetail | null>(null)
+    const [childTasks, setChildTasks] = useState<Task[]>([])
     const [baseSubtasks, setBaseSubtasks] = useState<SubtaskState[]>([])
     const [artifact, setArtifact] = useState<ArtifactManifest | null>(null)
+    const [criteria, setCriteria] = useState<string[] | null>(null)
     const [phase, setPhase] = useState<Phase>('idle')
     const [loading, setLoading] = useState(false)
     const [agentsExpanded, setAgentsExpanded] = useState(false)
@@ -102,6 +109,28 @@ export function useTaskStage(taskId: string | null): TaskStageState {
 
     const subtasks = useMemo(() => mergeSubtasks(baseSubtasks, messages), [baseSubtasks, messages])
     const isPlanning = task?.status === 'planning' && subtasks.length === 0
+
+    const loadCriteria = useCallback(async (tid: string, contextKeys: string[]) => {
+        if (!contextKeys.includes('acceptance_criteria')) return
+        try {
+            const raw = await api.getContextValue(tid, 'acceptance_criteria')
+            const str = typeof raw === 'string' ? raw : JSON.stringify(raw)
+            const parsed = JSON.parse(str)
+            if (!Array.isArray(parsed)) return
+            // Normalize: maestro may store objects {id, criterion, rationale} or plain strings
+            const normalized: string[] = parsed.map((item: unknown) => {
+                if (typeof item === 'string') return item
+                if (item && typeof item === 'object') {
+                    const obj = item as Record<string, unknown>
+                    return String(obj.criterion ?? obj.text ?? obj.description ?? obj.name ?? JSON.stringify(item))
+                }
+                return String(item)
+            })
+            setCriteria(normalized)
+        } catch {
+            // criteria not yet available or invalid — leave as null
+        }
+    }, [])
 
     const loadArtifact = useCallback(async (tid: string, contextKeys: string[]) => {
         const targetKey = contextKeys.find(k => k === 'final_manifest') ?? contextKeys[contextKeys.length - 1]
@@ -137,8 +166,10 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     useEffect(() => {
         if (!taskId) {
             setTask(null)
+            setChildTasks([])
             setBaseSubtasks([])
             setArtifact(null)
+            setCriteria(null)
             setPhase('idle')
             setAgentsExpanded(false)
             setMaestroMessage(null)
@@ -152,6 +183,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
         if (prevTaskId.current !== taskId) {
             setPhase('idle')
             setArtifact(null)
+            setCriteria(null)
             setAgentsExpanded(false)
             prevTaskId.current = taskId
             processedCountRef.current = 0
@@ -161,9 +193,15 @@ export function useTaskStage(taskId: string | null): TaskStageState {
         api.getTask(taskId)
             .then(detail => {
                 setTask(detail)
+                setChildTasks(detail.child_tasks ?? [])
                 setBaseSubtasks(detail.subtasks.map(toSubtaskState))
+                loadCriteria(taskId, detail.context_keys)
 
-                if (detail.status === 'completed') {
+                if (detail.status === 'refining') {
+                    setPhase('refining')
+                } else if (detail.status === 'synthesizing') {
+                    setPhase('synthesizing')
+                } else if (detail.status === 'completed') {
                     if (detail.context_keys.length > 0) {
                         loadArtifact(taskId, detail.context_keys)
                     } else {
@@ -200,12 +238,21 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             api.getTask(taskId)
                 .then(detail => {
                     setTask(detail)
+                    setChildTasks(detail.child_tasks ?? [])
                     if (detail.subtasks.length > 0) {
                         setBaseSubtasks(detail.subtasks.map(toSubtaskState))
                     }
-                    if (phase === 'idle') setPhase('live')
+                    loadCriteria(taskId, detail.context_keys)
+                    if (detail.status === 'refining') setPhase('refining')
+                    else if (detail.status === 'synthesizing') setPhase('synthesizing')
+                    else if (phase === 'idle' || phase === 'refining' || phase === 'synthesizing') setPhase('live')
                 })
                 .catch(console.error)
+        }
+
+        if (latest.type === 'refine_message') {
+            // Stay in refining phase — RefinementChat will react to this via its own polling/WS
+            setPhase('refining')
         }
 
         if (latest.type === 'task_completed' || latest.type === 'task_failed') {
@@ -214,6 +261,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             api.getTask(taskId)
                 .then(detail => {
                     setTask(detail)
+                    setChildTasks(detail.child_tasks ?? [])
                     setBaseSubtasks(detail.subtasks.map(toSubtaskState))
 
                     if (detail.status === 'completed' && detail.context_keys.length > 0) {
@@ -226,7 +274,26 @@ export function useTaskStage(taskId: string | null): TaskStageState {
                 })
                 .catch(console.error)
         }
-    }, [messages, taskId, phase, loadArtifact])
+    }, [messages, taskId, phase, loadArtifact, loadCriteria])
+
+    // Subscribe to child task events so domain cards update live
+    const childTaskIds = childTasks.map(ct => ct.id).join(',')
+    useEffect(() => {
+        if (!taskId || !childTaskIds) return
+        const ids = childTaskIds.split(',')
+        const unsubscribes = ids.map(childId =>
+            subscribe(childId, () => {
+                api.getTask(taskId)
+                    .then(detail => {
+                        setChildTasks(detail.child_tasks ?? [])
+                        setBaseSubtasks(prev => detail.subtasks.length > 0 ? detail.subtasks.map(toSubtaskState) : prev)
+                    })
+                    .catch(() => {})
+            })
+        )
+        return () => { unsubscribes.forEach(u => u()) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [taskId, childTaskIds, subscribe])
 
     // Process tool_usage and agent_message events
     useEffect(() => {
@@ -294,7 +361,9 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     return {
         task,
         subtasks,
+        childTasks,
         artifact,
+        criteria,
         phase,
         isPlanning,
         loading,

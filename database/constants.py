@@ -3,6 +3,8 @@
 # Task statuses
 TASK_STATUSES = {
     "pending",
+    "refining",
+    "synthesizing",
     "planning",
     "in_progress",
     "completed",

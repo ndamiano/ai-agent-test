@@ -2,6 +2,7 @@ import React from 'react'
 import { useTaskStage } from '../hooks/useTaskStage'
 import TaskCompletionView from './TaskCompletionView'
 import TaskLiveView from './TaskLiveView'
+import RefinementChat from './RefinementChat'
 
 interface StagePanelProps {
     taskId: string | null
@@ -11,7 +12,9 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
     const {
         task,
         subtasks,
+        childTasks,
         artifact,
+        criteria,
         phase,
         isPlanning,
         loading,
@@ -46,11 +49,21 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
         )
     }
 
+    const refiningVisible = phase === 'refining' || phase === 'synthesizing'
     const liveVisible = phase === 'live' || phase === 'completing'
     const doneVisible = phase === 'done' || phase === 'failed'
 
     return (
         <div className="h-full flex flex-col overflow-y-auto">
+            {/* Refining / Synthesizing view */}
+            {refiningVisible && taskId && (
+                <RefinementChat
+                    taskId={taskId}
+                    isSynthesizing={phase === 'synthesizing'}
+                    goal={task?.goal ?? ''}
+                />
+            )}
+
             {/* Done / Failed view */}
             <div
                 className={`transition-all duration-500 ease-out ${doneVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'
@@ -63,6 +76,7 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                         artifact={artifact}
                         goal={task?.goal}
                         subtasks={subtasks}
+                        criteria={criteria}
                         agentsExpanded={agentsExpanded}
                         onToggleAgents={toggleAgents}
                     />
@@ -79,6 +93,8 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                     task={task}
                     isPlanning={isPlanning}
                     subtasks={subtasks}
+                    childTasks={childTasks}
+                    criteria={criteria}
                     maestroMessage={maestroMessage}
                     maestroExpanded={maestroExpanded}
                     expandedSubtasks={expandedSubtasks}

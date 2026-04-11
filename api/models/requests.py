@@ -36,5 +36,6 @@ class ClineSettingsRequest(BaseModel):
 class UpdateSettingsRequest(BaseModel):
     connector_type: str
     working_directory: Optional[str] = None
+    refine_before_execution: bool = False
     lmstudio: Optional[LMStudioSettingsRequest] = None
     cline: Optional[ClineSettingsRequest] = None

@@ -29,22 +29,24 @@ class TaskStore:
     # Tasks
     # -------------------------------------------------------------------------
 
-    def create_task(self, goal: str, execution_mode: str = "sequential", working_directory: Optional[str] = None) -> Dict:
+    def create_task(self, goal: str, execution_mode: str = "sequential", working_directory: Optional[str] = None,
+                    parent_task_id: Optional[str] = None) -> Dict:
         task_id, now = str(uuid.uuid4()), get_utc_timestamp()
         working_directory = working_directory or "outputs"
         with get_manager().transaction() as conn:
             conn.execute(
-                "INSERT INTO tasks (id, goal, status, execution_mode, working_directory, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                (task_id, goal, "pending", execution_mode, working_directory, now, now),
+                "INSERT INTO tasks (id, goal, status, execution_mode, working_directory, parent_task_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (task_id, goal, "pending", execution_mode, working_directory, parent_task_id, now, now),
             )
         return {"id": task_id, "goal": goal, "status": "pending",
-                "execution_mode": execution_mode, "working_directory": working_directory, "created_at": now, "updated_at": now}
+                "execution_mode": execution_mode, "working_directory": working_directory,
+                "parent_task_id": parent_task_id, "created_at": now, "updated_at": now}
 
     def get_task(self, task_id: str) -> Dict:
         conn = get_manager().acquire()
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, goal, status, execution_mode, working_directory, created_at, updated_at FROM tasks WHERE id = ?",
+            "SELECT id, goal, status, execution_mode, working_directory, parent_task_id, created_at, updated_at FROM tasks WHERE id = ?",
             (task_id,)
         ).fetchone()
         if row is None:
@@ -60,20 +62,37 @@ class TaskStore:
         with get_manager().transaction() as conn:
             conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE id=?", (status, get_utc_timestamp(), task_id))
 
-    def list_tasks(self, status: Optional[str] = None, offset: int = 0, limit: int = 100) -> List[Dict]:
+    def list_tasks(self, status: Optional[str] = None, offset: int = 0, limit: int = 100,
+                   root_only: bool = True) -> List[Dict]:
         conn = get_manager().acquire()
         conn.row_factory = sqlite3.Row
-        query = "SELECT id, goal, status, execution_mode, working_directory, created_at, updated_at FROM tasks"
+        query = "SELECT id, goal, status, execution_mode, working_directory, parent_task_id, created_at, updated_at FROM tasks"
+        conditions = []
+        params: tuple = ()
+        if root_only:
+            conditions.append("parent_task_id IS NULL")
         if status:
-            query += " WHERE status=?"
-            params: tuple = (status,)
-        else:
-            params = ()
+            conditions.append("status=?")
+            params = (status,)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params = params + (limit, offset)
         rows = conn.execute(query, params).fetchall()
         tasks = [dict(r) for r in rows]
-        # Default to "outputs" if working_directory is NULL (for backward compatibility)
+        for task in tasks:
+            if task.get("working_directory") is None:
+                task["working_directory"] = "outputs"
+        return tasks
+
+    def get_child_tasks(self, parent_task_id: str) -> List[Dict]:
+        conn = get_manager().acquire()
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, goal, status, execution_mode, working_directory, parent_task_id, created_at, updated_at FROM tasks WHERE parent_task_id=? ORDER BY created_at",
+            (parent_task_id,)
+        ).fetchall()
+        tasks = [dict(r) for r in rows]
         for task in tasks:
             if task.get("working_directory") is None:
                 task["working_directory"] = "outputs"
@@ -206,6 +225,26 @@ class TaskStore:
             "SELECT DISTINCT key FROM context_store WHERE task_id=?", (task_id,)
         ).fetchall()
         return [row[0] for row in rows]
+
+    def update_task_goal(self, task_id: str, goal: str) -> None:
+        with get_manager().transaction() as conn:
+            conn.execute("UPDATE tasks SET goal=?, updated_at=? WHERE id=?", (goal, get_utc_timestamp(), task_id))
+
+    # ── Refinement helpers ────────────────────────────────────────────────────
+
+    _REFINE_KEY = "refine_messages"
+
+    def get_refine_messages(self, task_id: str) -> List[Dict]:
+        raw = self.get_context(task_id, self._REFINE_KEY)
+        if not raw:
+            return []
+        try:
+            return json.loads(raw)
+        except Exception:
+            return []
+
+    def set_refine_messages(self, task_id: str, messages: List[Dict]) -> None:
+        self._store_context(task_id, self._REFINE_KEY, json.dumps(messages), None)
 
     # -------------------------------------------------------------------------
     # Events

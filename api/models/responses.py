@@ -21,6 +21,7 @@ class SubtaskResponse(BaseModel):
     depends_on: List[str]
     name: Optional[str] = None
     description: Optional[str] = None
+    child_task_id: Optional[str] = None
 
 class TaskResponse(BaseModel):
     id: str
@@ -28,6 +29,7 @@ class TaskResponse(BaseModel):
     status: str
     execution_mode: str
     working_directory: Optional[str] = None
+    parent_task_id: Optional[str] = None
     created_at: str
     created_at_relative: str
     updated_at: str
@@ -43,6 +45,7 @@ class EventResponse(BaseModel):
 class TaskDetailResponse(TaskResponse):
     events: List[EventResponse]
     context_keys: List[str]
+    child_tasks: List['TaskResponse'] = []
 
 class AskResponse(BaseModel):
     question: str
@@ -66,5 +69,6 @@ class AgentResponse(BaseModel):
 class SettingsResponse(BaseModel):
     connector_type: str
     working_directory: Optional[str] = None
+    refine_before_execution: bool = False
     lmstudio: Optional[Dict[str, Any]] = None
     cline: Optional[Dict[str, Any]] = None

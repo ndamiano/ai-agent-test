@@ -88,6 +88,59 @@ def _spawn_task(
     })
 
 
+def _spawn_domain(
+    task_id: str,
+    name: str,
+    goal: str,
+    description: Optional[str] = None,
+    depends_on=None,
+) -> str:
+    """
+    Spawn a sub-orchestrator (child maestro) that will independently plan and execute
+    a domain of work. The child maestro gets its own FSM cycle (plan → execute → validate → compile).
+    Returns subtask_id and child_task_id.
+    """
+    parent_task = task_store.get_task(task_id)
+
+    dep_ids = _parse_depends_on(depends_on)
+    dep_ids = _expand_dep_ids(task_id, dep_ids)
+    validate_dependencies(task_store, task_id, dep_ids)
+
+    # Create the child task linked to the parent
+    child_task = task_store.create_task(
+        goal=goal,
+        execution_mode=parent_task.get("execution_mode", "sequential"),
+        working_directory=parent_task.get("working_directory"),
+        parent_task_id=task_id,
+    )
+    child_task_id = child_task["id"]
+
+    # Create placeholder subtask in parent with maestro as agent
+    existing = task_store.get_subtasks_for_task(task_id)
+    position = max((s["position"] for s in existing), default=-1) + 1
+
+    subtask = task_store.create_subtask(
+        task_id=task_id,
+        agent_id="maestro",
+        goal=goal,
+        position=position,
+        depends_on=dep_ids if dep_ids else None,
+        name=name,
+        description=description,
+        input_context={"child_task_id": child_task_id},
+    )
+
+    logger.info(f"spawn_domain: created domain subtask {subtask['id']} → child task {child_task_id} (name={name})")
+
+    return json.dumps({
+        "subtask_id": subtask["id"],
+        "child_task_id": child_task_id,
+        "name": name,
+        "status": "pending",
+        "depends_on": dep_ids,
+    })
+
+
 def register_task_tools() -> None:
     tool_manager.register_tool(
         name="spawn_task",
@@ -136,4 +189,46 @@ def register_task_tools() -> None:
         auto_inject_context=True,
     )
 
-    logger.info("Task tools registered: spawn_task")
+    tool_manager.register_tool(
+        name="spawn_domain",
+        description=(
+            "Spawn a child maestro to independently plan and execute a self-contained domain of work. "
+            "Use this when a major area of the task (e.g. combat system, story, enemy roster, NPC dialogue) "
+            "is complex enough to need its own planning, multi-step execution, and validation cycle — "
+            "rather than a single worker subtask. "
+            "The child maestro will break its domain goal into subtasks, run them, and validate results. "
+            "Returns the subtask_id (for depends_on) and the child_task_id."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short human-readable name for this domain (e.g. 'Combat System', 'Enemy Roster').",
+                },
+                "goal": {
+                    "type": "string",
+                    "description": (
+                        "Full, self-contained description of what this domain must produce. "
+                        "Include: what to build, key design decisions, tech constraints, output format, "
+                        "and any specific requirements from the parent task's acceptance criteria that "
+                        "this domain is responsible for satisfying."
+                    ),
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One-line summary of this domain shown in the UI.",
+                },
+                "depends_on": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Subtask IDs (from this task) that must complete before this domain starts.",
+                },
+            },
+            "required": ["name", "goal"],
+        },
+        fn=_spawn_domain,
+        auto_inject_context=True,
+    )
+
+    logger.info("Task tools registered: spawn_task, spawn_domain")

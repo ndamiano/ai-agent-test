@@ -54,30 +54,18 @@ class ExecutingNode(StateNode):
                 "timestamp": get_utc_timestamp(),
             })
 
-            task = context.task_store.get_task(task_id)
-            working_directory = task.get("working_directory")
-
-            fresh = context.task_store.get_subtask(subtask_id)
-            context_text = self._build_context_for_subtask(task_id, fresh, context)
-
-            agent_id = fresh["agent_id"]
-            if not context.agent_store.exists(agent_id):
-                logger.warning(f"Agent '{agent_id}' not found, using 'worker'")
-                agent_id = "worker"
-
-            from agents.main_agent import MainAgent
-            agent = MainAgent(agent_id=agent_id)
-
-            from tools.execution_context import execution_context
-            with execution_context(task_id=task_id, subtask_id=subtask_id, working_directory=working_directory):
-                output = agent.chat(f"{context_text}\n\nTask: {fresh['goal']}")
+            # Domain subtasks (agent_id == "maestro") run a full child FSM
+            if subtask["agent_id"] == "maestro":
+                output = self._execute_domain(subtask, context)
+            else:
+                output = self._execute_worker(subtask, context)
 
             context.task_store.set_subtask_output(subtask_id, output)
             event_bus.publish_sync({
                 "type": "subtask_completed",
                 "task_id": task_id,
                 "subtask_id": subtask_id,
-                "agent_id": agent_id,
+                "agent_id": subtask["agent_id"],
                 "timestamp": get_utc_timestamp(),
             })
             return output
@@ -96,6 +84,73 @@ class ExecutingNode(StateNode):
                 "timestamp": get_utc_timestamp(),
             })
             raise
+
+    def _execute_domain(self, subtask: Dict, context: StateContext) -> str:
+        """Run a child maestro FSM for a domain subtask synchronously."""
+        import asyncio
+        from agents.fsm.state_node import StateContext as ChildContext
+        from agents.fsm.planning_node import PlanningNode
+        from agents.fsm.finished_node import FinishedNode
+
+        fresh = context.task_store.get_subtask(subtask["id"])
+        input_ctx = fresh.get("input_context") or {}
+        child_task_id = input_ctx.get("child_task_id")
+        if not child_task_id:
+            raise ValueError(f"Domain subtask {subtask['id']} missing child_task_id in input_context")
+
+        logger.info(f"Executing domain subtask {subtask['id']} → child task {child_task_id}")
+
+        context.task_store.update_task_status(child_task_id, "planning")
+        child_task = context.task_store.get_task(child_task_id)
+        event_bus.publish_sync({"type": "task_status", "task_id": child_task_id, "task": child_task})
+
+        child_context = ChildContext(
+            task_id=child_task_id,
+            task_store=context.task_store,
+            agent_store=context.agent_store,
+        )
+
+        async def _run_child_fsm():
+            node = PlanningNode()
+            first = True
+            while not isinstance(node, FinishedNode):
+                node = await node.execute_async(child_context)
+                if first:
+                    first = False
+                    context.task_store.update_task_status(child_task_id, "in_progress")
+                    t = context.task_store.get_task(child_task_id)
+                    event_bus.publish_sync({"type": "task_status", "task_id": child_task_id, "task": t})
+
+        asyncio.run(_run_child_fsm())
+
+        context.task_store.update_task_status(child_task_id, "completed")
+        event_bus.publish_sync({"type": "task_completed", "task_id": child_task_id})
+
+        # Use the child's final_output as this subtask's output
+        final = context.task_store.get_context(child_task_id, "final_output") or f"Domain '{subtask.get('name', child_task_id)}' completed."
+        return final
+
+    def _execute_worker(self, subtask: Dict, context: StateContext) -> str:
+        """Run a regular worker agent for a subtask."""
+        task_id = subtask["task_id"]
+        subtask_id = subtask["id"]
+        task = context.task_store.get_task(task_id)
+        working_directory = task.get("working_directory")
+
+        fresh = context.task_store.get_subtask(subtask_id)
+        context_text = self._build_context_for_subtask(task_id, fresh, context)
+
+        agent_id = fresh["agent_id"]
+        if not context.agent_store.exists(agent_id):
+            logger.warning(f"Agent '{agent_id}' not found, using 'worker'")
+            agent_id = "worker"
+
+        from agents.main_agent import MainAgent
+        agent = MainAgent(agent_id=agent_id)
+
+        from tools.execution_context import execution_context
+        with execution_context(task_id=task_id, subtask_id=subtask_id, working_directory=working_directory):
+            return agent.chat(f"{context_text}\n\nTask: {fresh['goal']}")
 
     def _build_context_for_subtask(self, task_id: str, subtask: Dict, context: StateContext) -> str:
         task = context.task_store.get_task(task_id)

@@ -1,0 +1,24 @@
+You are writing dialogue for a {genre} visual novel.
+
+Tone: {tone}
+Brief: {notes}
+
+Characters:
+{characters|json}
+
+Write dialogue for this scene:
+{scene|json}
+
+Write 4-6 lines. Each line needs:
+- character_id: must match a character id above, or null for narrator
+- text: what they say or what the narrator describes
+
+Output a single JSON object for this scene. Example format:
+{
+  "scene_id": "scene_01",
+  "setting_id": "bg_coffee_shop",
+  "lines": [
+    {"character_id": null, "text": "The cafe smells of rain and old books."},
+    {"character_id": "sarah", "text": "I wasn't sure you'd actually come."}
+  ]
+}

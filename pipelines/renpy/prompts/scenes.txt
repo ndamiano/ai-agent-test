@@ -1,0 +1,24 @@
+You are outlining scenes for a {genre} visual novel.
+
+Brief: {notes}
+Tone: {tone}
+
+Characters:
+{characters|json}
+
+Settings:
+{settings|json}
+
+Create 4-6 scenes that tell a complete story with a beginning, middle, and end.
+Each scene needs:
+- id: "scene_01", "scene_02", etc.
+- setting_id: must match one of the setting ids above
+- title: short scene title
+- summary: 1-2 sentences describing what happens
+
+Output a JSON object with a "scenes" array. Example format:
+{
+  "scenes": [
+    {"id": "scene_01", "setting_id": "bg_coffee_shop", "title": "Reunion", "summary": "They meet for the first time in five years. The conversation is awkward but warm."}
+  ]
+}

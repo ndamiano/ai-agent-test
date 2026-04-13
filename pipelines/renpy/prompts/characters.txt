@@ -1,0 +1,18 @@
+You are creating characters for a {genre} visual novel.
+
+Brief: {notes}
+Tone: {tone}
+Setting: {setting}
+
+Create 2-3 characters. Each needs:
+- id: lowercase, no spaces (e.g. "sarah")
+- name: display name (e.g. "Sarah")
+- color: hex color for their dialogue name (pick something fitting their personality)
+- description: 1 sentence about who they are
+
+Output a JSON object with a "characters" array. Example format:
+{
+  "characters": [
+    {"id": "sarah", "name": "Sarah", "color": "#c8ffc8", "description": "A florist who never left her hometown."}
+  ]
+}

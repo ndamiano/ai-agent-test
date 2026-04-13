@@ -30,3 +30,14 @@ data/
 
 # Outputs from our AI
 outputs/
+
+# RenPy compiled files
+*.rpyc
+*.rpyb
+
+# Pipeline run outputs (generated artifacts and distribution builds)
+runs/
+*-dists/
+
+# RenPy template binary assets (copy from any SDK-generated project)
+pipelines/*/renpy_templates/**/*.png

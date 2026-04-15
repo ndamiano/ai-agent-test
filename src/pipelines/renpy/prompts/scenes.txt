@@ -9,7 +9,7 @@ Characters:
 Settings:
 {settings|json}
 
-Create 4-6 scenes that tell a complete story with a beginning, middle, and end.
+Create {scene_count} scenes that tell a complete story with a beginning, middle, and end.
 Each scene needs:
 - id: "scene_01", "scene_02", etc.
 - setting_id: must match one of the setting ids above

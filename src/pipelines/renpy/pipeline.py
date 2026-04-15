@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from engine.pipeline_runner import Pipeline, Node, LLMStage, FnStage
-from pipelines.renpy.fns import dialogue, package, build
+from pipelines.renpy.fns import dialogue, package, generate_images, build
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -38,7 +38,7 @@ RENPY_PIPELINE = Pipeline(
             FnStage(
                 id="dialogue",
                 fn=dialogue,
-                inputs=["brief.json", "characters.json", "scenes.json"],
+                inputs=["brief.json", "characters.json", "settings.json", "scenes.json"],
                 output="dialogue.json",
             ),
         ]),
@@ -49,6 +49,15 @@ RENPY_PIPELINE = Pipeline(
                 fn=package,
                 inputs=["brief.json", "characters.json", "settings.json", "dialogue.json"],
                 output="game_definition.json",
+            ),
+        ]),
+
+        Node("images", [
+            FnStage(
+                id="images",
+                fn=generate_images,
+                inputs=["game_definition.json"],
+                output="images_result.json",
             ),
         ]),
 

@@ -6,10 +6,13 @@ Brief: {notes}
 Characters:
 {characters|json}
 
+Location:
+{setting|json}
+
 Write dialogue for this scene:
 {scene|json}
 
-Write 4-6 lines. Each line needs:
+Write {lines_per_scene} lines. Each line needs:
 - character_id: must match a character id above, or null for narrator
 - text: what they say or what the narrator describes
 

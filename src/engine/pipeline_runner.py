@@ -59,12 +59,15 @@ def render_template(template_path: Path, inputs: Dict) -> str:
         as_json = key.endswith("|json")
         if as_json:
             key = key[:-5].strip()
-        value = inputs.get(key, f"[MISSING:{key}]")
+        if key not in inputs:
+            logger.warning("render_template: missing key %r in template %s", key, template_path.name)
+            return "" if not as_json else "null"
+        value = inputs[key]
         if as_json or isinstance(value, (dict, list)):
             return json.dumps(value, indent=2)
         return str(value)
 
-    return re.sub(r"\{([^}]+)\}", replace, template_str)
+    return re.sub(r"\{([A-Za-z_][A-Za-z0-9_|]*)\}", replace, template_str)
 
 
 def strip_fences(content: str) -> str:

@@ -4,7 +4,7 @@ Brief: {notes}
 Tone: {tone}
 Setting: {setting}
 
-Create 2-3 characters. Each needs:
+Create {character_count} characters. Each needs:
 - id: lowercase, no spaces (e.g. "sarah")
 - name: display name (e.g. "Sarah")
 - color: hex color for their dialogue name (pick something fitting their personality)

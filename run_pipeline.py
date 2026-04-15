@@ -24,6 +24,18 @@ EXAMPLE_BRIEF = {
     "length": "short",
 }
 
+_LENGTH_CONFIG = {
+    "short":  {"character_count": "2",   "scene_count": "3-4",  "lines_per_scene": "3-4"},
+    "medium": {"character_count": "3",   "scene_count": "5-7",  "lines_per_scene": "5-7"},
+    "long":   {"character_count": "3-4", "scene_count": "8-12", "lines_per_scene": "6-10"},
+}
+
+
+def _enrich_brief(brief: dict) -> dict:
+    length = brief.get("length", "medium")
+    config = _LENGTH_CONFIG.get(length, _LENGTH_CONFIG["medium"])
+    return {**config, **brief}  # brief keys win so callers can override explicitly
+
 
 def main():
     args = sys.argv[1:]
@@ -46,6 +58,8 @@ def main():
     runner = PipelineRunner(working_dir=str(Path("runs") / safe_title))
 
     from_idx = args.index("--from") if "--from" in args else -1
+    brief = _enrich_brief(brief)
+
     if from_idx >= 0 and from_idx + 1 < len(args):
         node_id = args[from_idx + 1]
         print(f"[run_pipeline] Resuming from node: {node_id}")

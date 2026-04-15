@@ -23,5 +23,6 @@ class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline"]
     working_directory: Optional[str] = "outputs"
     refine_before_execution: bool = False
+    renpy_sdk_path: Optional[str] = None
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None

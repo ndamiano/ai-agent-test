@@ -7,9 +7,11 @@ from config.time_utils import get_utc_timestamp
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_STORE_DIR = pathlib.Path(__file__).parent.parent / "config" / "agents"
+
 
 class AgentStore:
-    def __init__(self, store_dir: str = "config/agents"):
+    def __init__(self, store_dir: pathlib.Path | str = _DEFAULT_STORE_DIR):
         self.store_dir = pathlib.Path(store_dir)
         self.store_dir.mkdir(parents=True, exist_ok=True)
 

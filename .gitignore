@@ -16,8 +16,8 @@ venv/
 .idea/
 
 # Config
-config/api_keys.py
-config/settings.json
+src/config/api_keys.py
+src/config/settings.json
 
 # Build data
 output/
@@ -40,4 +40,4 @@ runs/
 *-dists/
 
 # RenPy template binary assets (copy from any SDK-generated project)
-pipelines/*/renpy_templates/**/*.png
+src/pipelines/*/renpy_templates/**/*.png

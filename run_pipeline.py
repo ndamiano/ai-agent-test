@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
 from engine.pipeline_runner import PipelineRunner
 from pipelines.renpy.pipeline import RENPY_PIPELINE
 

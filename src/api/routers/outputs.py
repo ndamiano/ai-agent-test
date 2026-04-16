@@ -12,6 +12,9 @@ router = APIRouter()
 @router.get("/{file_path:path}")
 async def download_output_file(request: Request, file_path: str):
     """Download a file by exact absolute filesystem path."""
+    # Frontend strips the leading slash to avoid double-slash URLs; restore it.
+    if not file_path.startswith("/"):
+        file_path = "/" + file_path
     resolved = Path(file_path).resolve()
 
     if not resolved.exists():

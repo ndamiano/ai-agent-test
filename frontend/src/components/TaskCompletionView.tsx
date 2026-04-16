@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { FadeSlideIn } from './FadeSlideIn'
 import type { ArtifactManifest } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
@@ -47,11 +47,109 @@ function getFileIcon(path: string, type: string): string {
     return 'M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z'
 }
 
-/** Build the download URL for an artifact path. */
+/** Build the download URL for an artifact path. Strips leading slashes. */
 function downloadUrl(artifactPath: string): string {
-    // The backend strips the "outputs/" prefix automatically, so we can pass the path verbatim.
-    const encoded = artifactPath.split('/').map(encodeURIComponent).join('/')
+    const cleanPath = artifactPath.replace(/^\/+/, '')
+    const encoded = cleanPath.split('/').map(encodeURIComponent).join('/')
     return `/api/outputs/${encoded}`
+}
+
+/** Returns 'image', 'text', or null for non-viewable files. */
+function isViewable(path: string): 'image' | 'text' | null {
+    const ext = path.split('.').pop()?.toLowerCase() ?? ''
+    if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) return 'image'
+    if (['txt', 'md', 'rst', 'py', 'js', 'ts', 'tsx', 'jsx', 'sh', 'rb', 'go', 'rs',
+         'json', 'yaml', 'yml', 'toml', 'xml', 'csv', 'html', 'css'].includes(ext)) return 'text'
+    return null
+}
+
+// ── File Viewer Modal ──────────────────────────────────────────────────────
+
+interface ViewerFile {
+    path: string
+    label: string
+    type: string
+}
+
+const FileViewerModal: React.FC<{ file: ViewerFile; onClose: () => void }> = ({ file, onClose }) => {
+    const viewType = isViewable(file.path)
+    const url = downloadUrl(file.path)
+    const [textContent, setTextContent] = useState<string | null>(null)
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState(false)
+
+    useEffect(() => {
+        if (viewType === 'text') {
+            setLoading(true)
+            setError(false)
+            fetch(url)
+                .then(r => r.text())
+                .then(text => { setTextContent(text); setLoading(false) })
+                .catch(() => { setError(true); setLoading(false) })
+        }
+    }, [url, viewType])
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+    }, [onClose])
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            onClick={onClose}
+        >
+            <div
+                className="relative w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col bg-gray-900 border border-white/10 rounded-xl shadow-2xl"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 flex-shrink-0">
+                    <span className="text-sm text-gray-300 font-medium truncate">{file.label}</span>
+                    <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                        <a
+                            href={url}
+                            download
+                            className="text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/10"
+                        >
+                            Download
+                        </a>
+                        <button
+                            onClick={onClose}
+                            className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white transition-colors rounded hover:bg-white/10"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Content */}
+                <div className="overflow-auto flex-1 p-4">
+                    {viewType === 'image' && (
+                        <img
+                            src={url}
+                            alt={file.label}
+                            className="max-w-full max-h-full object-contain mx-auto block"
+                        />
+                    )}
+                    {viewType === 'text' && (
+                        loading ? (
+                            <p className="text-sm text-gray-500">Loading…</p>
+                        ) : error ? (
+                            <p className="text-sm text-red-400">Failed to load file.</p>
+                        ) : (
+                            <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap break-words leading-relaxed">
+                                {textContent}
+                            </pre>
+                        )
+                    )}
+                </div>
+            </div>
+        </div>
+    )
 }
 
 // ── Sub-component ──────────────────────────────────────────────────────────
@@ -60,50 +158,93 @@ interface ArtifactButtonProps {
     label: string
     path: string
     type: string
+    onView: () => void
 }
 
-const ArtifactButton: React.FC<ArtifactButtonProps> = ({ label, path, type }) => {
+const ArtifactButton: React.FC<ArtifactButtonProps> = ({ label, path, type, onView }) => {
     const href = downloadUrl(path)
     const iconPath = getFileIcon(path, type)
     const isZip = type === 'zip' || path.endsWith('.zip')
+    const viewable = isViewable(path)
 
+    const baseClass = [
+        'group inline-flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all duration-150',
+        isZip
+            ? 'bg-blue-500/10 border-blue-500/30 text-blue-300 hover:bg-blue-500/20 hover:border-blue-400/50 hover:text-blue-200'
+            : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:border-white/20 hover:text-white',
+    ].join(' ')
+
+    const iconClass = [
+        'w-4 h-4 flex-shrink-0 transition-transform duration-150 group-hover:scale-110',
+        isZip ? 'text-blue-400' : 'text-gray-400 group-hover:text-gray-300',
+    ].join(' ')
+
+    const fileIcon = (
+        <svg className={iconClass} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d={iconPath} />
+        </svg>
+    )
+
+    if (viewable) {
+        // Viewable: main button opens viewer; download icon for downloading
+        return (
+            <div className="inline-flex rounded-lg overflow-hidden border border-white/10">
+                <button
+                    onClick={(e) => { e.stopPropagation(); onView() }}
+                    className={[
+                        'group inline-flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium transition-all duration-150',
+                        isZip
+                            ? 'bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 hover:text-blue-200'
+                            : 'bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white',
+                    ].join(' ')}
+                    title={`View ${path}`}
+                >
+                    {fileIcon}
+                    <span className="truncate max-w-[180px]">{label}</span>
+                    {/* Eye icon */}
+                    <svg
+                        className="w-3.5 h-3.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-auto"
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                </button>
+                {/* Download button */}
+                <a
+                    href={href}
+                    download
+                    onClick={(e) => e.stopPropagation()}
+                    className={[
+                        'inline-flex items-center px-2.5 py-2.5 border-l transition-all duration-150',
+                        isZip
+                            ? 'border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-200'
+                            : 'border-white/10 bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300',
+                    ].join(' ')}
+                    title={`Download ${path}`}
+                >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                </a>
+            </div>
+        )
+    }
+
+    // Non-viewable: download on click
     return (
         <a
             href={href}
             download
             onClick={(e) => e.stopPropagation()}
-            className={[
-                'group inline-flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all duration-150',
-                isZip
-                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-300 hover:bg-blue-500/20 hover:border-blue-400/50 hover:text-blue-200'
-                    : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:border-white/20 hover:text-white',
-            ].join(' ')}
+            className={baseClass}
             title={`Download ${path}`}
         >
-            {/* File type icon */}
-            <svg
-                className={[
-                    'w-4 h-4 flex-shrink-0 transition-transform duration-150 group-hover:scale-110',
-                    isZip ? 'text-blue-400' : 'text-gray-400 group-hover:text-gray-300',
-                ].join(' ')}
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-            >
-                <path strokeLinecap="round" strokeLinejoin="round" d={iconPath} />
-            </svg>
-
-            {/* Label */}
+            {fileIcon}
             <span className="truncate max-w-[180px]">{label}</span>
-
-            {/* Download arrow — appears on hover */}
             <svg
                 className="w-3.5 h-3.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-auto"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
+                fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
             >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
@@ -122,8 +263,13 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
     agentsExpanded,
     onToggleAgents,
 }) => {
+    const [viewingFile, setViewingFile] = useState<ViewerFile | null>(null)
+
     return (
         <div className="transition-all duration-500 ease-out opacity-100 translate-y-0">
+            {viewingFile && (
+                <FileViewerModal file={viewingFile} onClose={() => setViewingFile(null)} />
+            )}
             {phase === 'done' && artifact ? (
                 <div className="border-b border-white/10">
                     <FadeSlideIn delay={0}>
@@ -172,6 +318,7 @@ const TaskCompletionView: React.FC<TaskCompletionViewProps> = ({
                                                 label={a.label}
                                                 path={a.path}
                                                 type={a.type}
+                                                onView={() => setViewingFile({ path: a.path, label: a.label, type: a.type })}
                                             />
                                         ))}
                                     </div>

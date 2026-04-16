@@ -87,16 +87,32 @@ def _lmstudio_get_loaded_model() -> Optional[str]:
         return None
 
 
-def _lmstudio_unload(model_id: str) -> bool:
-    """Unload a model from LM Studio. Returns True on success."""
+def _lmstudio_unload(model_id: str, wait_timeout: int = 30) -> bool:
+    """Unload a model from LM Studio and wait until it is no longer loaded."""
     try:
         base_url = _get_lmstudio_base_url()
         _http_post(f"{base_url}/api/v0/models/unload", {"identifier": model_id})
-        logger.info(f"LM Studio: unloaded {model_id}")
-        return True
+        logger.info(f"LM Studio: unload requested for {model_id}, waiting for VRAM release...")
     except Exception as e:
         logger.warning(f"LM Studio unload failed: {e}")
         return False
+
+    # Poll until model is no longer in loaded state
+    deadline = time.time() + wait_timeout
+    while time.time() < deadline:
+        try:
+            base_url = _get_lmstudio_base_url()
+            data = _http_get(f"{base_url}/api/v0/models")
+            loaded_ids = {m.get("id") for m in data.get("data", []) if m.get("state") == "loaded"}
+            if model_id not in loaded_ids:
+                logger.info(f"LM Studio: {model_id} confirmed unloaded")
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+
+    logger.warning(f"LM Studio: {model_id} did not confirm unload within {wait_timeout}s — proceeding anyway")
+    return False
 
 
 def _lmstudio_load(model_id: str) -> bool:
@@ -111,11 +127,12 @@ def _lmstudio_load(model_id: str) -> bool:
         return False
 
 
-def _comfyui_free_vram(endpoint: str) -> None:
-    """Ask ComfyUI to release models from VRAM."""
+def _comfyui_free_vram(endpoint: str, wait_secs: int = 5) -> None:
+    """Ask ComfyUI to release models from VRAM and wait for the release to settle."""
     try:
         _http_post(f"{endpoint}/free", {"unload_models": True, "free_memory": True})
-        logger.info("ComfyUI VRAM freed")
+        logger.info(f"ComfyUI VRAM freed, waiting {wait_secs}s for release to settle...")
+        time.sleep(wait_secs)
     except Exception as e:
         logger.warning(f"ComfyUI /free failed: {e}")
 

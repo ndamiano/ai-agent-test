@@ -12,5 +12,9 @@
     "model": "claude-sonnet-4-5",
     "temperature": 0.7,
     "max_tokens": 50000
+  },
+  "comfyui": {
+    "endpoint": "http://localhost:8188",
+    "vram_management": false
   }
 }

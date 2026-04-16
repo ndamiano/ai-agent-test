@@ -38,6 +38,7 @@ Plan:
 - **System**: execute_command (run shell commands)
 - **Web**: web_search (DuckDuckGo), web_fetch (get webpage content)
 - **Agent Management**: list_agents, request_agent
+- **Image Generation**: generate_image (create images from text descriptions via ComfyUI)
 
 ### Choosing the Right Tool
 - **Reading files**: Use read_file for any file type (code, config, text, etc.)

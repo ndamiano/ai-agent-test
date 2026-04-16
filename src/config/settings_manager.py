@@ -42,6 +42,10 @@ class SettingsManager:
                 "model": os.getenv("CLINE_MODEL", "claude-sonnet-4-5"),
                 "temperature": 0.7,
                 "max_tokens": 50000
+            },
+            "comfyui": {
+                "endpoint": os.getenv("COMFYUI_ENDPOINT", "http://localhost:8188"),
+                "vram_management": os.getenv("COMFYUI_VRAM_MANAGEMENT", "false").lower() == "true"
             }
         }
 

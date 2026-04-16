@@ -19,6 +19,11 @@ class ClineSettings(BaseModel):
     max_tokens: int = Field(50000, ge=1)
 
 
+class ComfyUISettings(BaseModel):
+    endpoint: str = Field("http://localhost:8188", min_length=1)
+    vram_management: bool = Field(False)
+
+
 class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline"]
     working_directory: Optional[str] = "outputs"
@@ -26,3 +31,4 @@ class AppSettings(BaseModel):
     renpy_sdk_path: Optional[str] = None
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None
+    comfyui: Optional[ComfyUISettings] = None

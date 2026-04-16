@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict
 
 from engine.pipeline_runner import render_template, strip_fences
+from llm_clients.message_builder import MessageBuilder
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -66,17 +67,15 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
         }
         prompt = render_template(template_path, scene_inputs)
 
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a precise creative writing assistant. Output only valid JSON. "
-                           "No markdown, no explanation, no code fences.",
-            },
-            {"role": "user", "content": prompt},
-        ]
+        _system = (
+            "You are a precise creative writing assistant. Output only valid JSON. "
+            "No markdown, no explanation, no code fences."
+        )
+        builder = MessageBuilder(_system).add_user(prompt)
 
         success = False
         for attempt in range(1, 4):
+            messages = builder.build()
             result = connector.generate_with_tools(messages, [])
             if "error" in result:
                 print(f"    [dialogue]  LLM error on attempt {attempt}: {result['error']}")
@@ -90,10 +89,9 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
                 break
             except json.JSONDecodeError:
                 print(f"    [dialogue]  invalid JSON on attempt {attempt}, sending correction...")
-                messages = messages + [
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": "Invalid JSON. Return only the JSON object, no other text."},
-                ]
+                builder.add_assistant(raw).add_user(
+                    "Invalid JSON. Return only the JSON object, no other text."
+                )
 
         if not success:
             raise RuntimeError(f"Failed to generate dialogue for scene: {label}")

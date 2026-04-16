@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from llm_clients.message_builder import MessageBuilder
+
 logger = logging.getLogger(__name__)
 
 
@@ -161,14 +163,10 @@ class PipelineRunner:
         inputs = self._load_all()
         prompt = render_template(pipeline.prompts_dir / stage.prompt_template, inputs)
 
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a precise assistant. Output only valid JSON. "
-                           "No markdown, no explanation, no code fences.",
-            },
-            {"role": "user", "content": prompt},
-        ]
+        messages = MessageBuilder(
+            "You are a precise assistant. Output only valid JSON. "
+            "No markdown, no explanation, no code fences."
+        ).add_user(prompt).build()
 
         result = self._get_connector().generate_with_tools(messages, [])
         if "error" in result:

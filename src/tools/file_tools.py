@@ -47,7 +47,25 @@ def read_file(
                 "file_path": str(path)
             }
 
-        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+        # Detect binary files by sniffing the first 8KB for null bytes
+        with open(path, 'rb') as fb:
+            chunk = fb.read(8192)
+        if b'\x00' in chunk:
+            import mimetypes
+            mime, _ = mimetypes.guess_type(str(path))
+            return {
+                "success": False,
+                "error": (
+                    f"File is binary ({mime or 'unknown type'}, {path.stat().st_size} bytes) "
+                    f"and cannot be read as text. Use a dedicated tool or download it directly."
+                ),
+                "file_path": str(path),
+                "is_binary": True,
+                "size_bytes": path.stat().st_size,
+                "mime_type": mime,
+            }
+
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
             if start_line is not None or end_line is not None:
                 lines = f.readlines()
                 start = (start_line - 1) if start_line else 0

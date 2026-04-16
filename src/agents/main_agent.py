@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 import json
 from llm_clients.connector_selector import get_connector
+from llm_clients.message_builder import MessageBuilder
 from tools.tool_manager import tool_manager
 from tools.execution_context import execution_context
 from config.agent_prompts import SYSTEM_PROMPT
@@ -158,13 +159,13 @@ class MainAgent:
             self.message_history = self.message_history[-self.max_history_length:]
 
     def chat(self, message: str) -> str:
-        self.message_history.append({"role": "user", "content": message})
+        self.message_history.append(MessageBuilder.user_msg(message))
 
         try:
             return self._agentic_loop_with_native_tools(message)
         except Exception as e:
             error_response = f"Sorry, I encountered an error: {str(e)}"
-            self.message_history.append({"role": "assistant", "content": error_response})
+            self.message_history.append(MessageBuilder.assistant_msg(error_response))
             return error_response
 
     def _agentic_loop_with_native_tools(self, user_message: str) -> str:
@@ -179,8 +180,7 @@ class MainAgent:
             if path:
                 system_content = f"{system_content}\n\nWorking Directory: {path}\nAll file operations use paths relative to this working directory unless you use absolute paths."
 
-            messages = [{"role": "system", "content": system_content}]
-            messages.extend(self.message_history)
+            messages = MessageBuilder(system_content).extend(self.message_history).build()
 
             response = self._get_response_with_tools(messages, self._tools_schema)
 
@@ -192,10 +192,9 @@ class MainAgent:
             content = message_response.get("content") or ""
             tool_calls = message_response.get("tool_calls", [])
 
-            assistant_message = {"role": "assistant", "content": content}
-            if tool_calls:
-                assistant_message["tool_calls"] = tool_calls
-            self.message_history.append(assistant_message)
+            self.message_history.append(
+                MessageBuilder.assistant_msg(content, tool_calls or None)
+            )
 
             if not tool_calls:
                 return content
@@ -219,21 +218,17 @@ class MainAgent:
 
                             self._broadcast_tool_usage(tool_name, arguments, 'success')
 
-                            self.message_history.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": str(result)
-                            })
+                            self.message_history.append(
+                                MessageBuilder.tool_msg(tool_call_id, str(result))
+                            )
 
                         except Exception as e:
 
                             self._broadcast_tool_usage(tool_name, arguments, 'failed')
 
-                            self.message_history.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "content": f"Tool '{tool_name}' failed: {str(e)}"
-                            })
+                            self.message_history.append(
+                                MessageBuilder.tool_msg(tool_call_id, f"Tool '{tool_name}' failed: {str(e)}")
+                            )
 
             iteration += 1
 

@@ -5,6 +5,7 @@ import logging
 from typing import List, Dict
 
 from llm_clients.connector_selector import get_connector
+from llm_clients.message_builder import MessageBuilder
 from config.time_utils import get_utc_timestamp
 
 logger = logging.getLogger(__name__)
@@ -75,11 +76,7 @@ class RefinerAgent:
         # Always anchor with the original goal as the first user turn, then the
         # conversation history. This ensures the message order is always valid
         # (system → user → assistant → user → ...) regardless of history state.
-        messages = [
-            {"role": "system", "content": _CHAT_SYSTEM_PROMPT},
-            {"role": "user", "content": goal},
-        ]
-        messages.extend(history)
+        messages = MessageBuilder(_CHAT_SYSTEM_PROMPT).add_user(goal).extend(history).build()
 
         try:
             result = connector.generate_with_tools(messages, [])
@@ -104,10 +101,7 @@ class RefinerAgent:
             role = "User" if msg["role"] == "user" else "Assistant"
             conversation_text += f"\n{role}: {msg['content']}"
 
-        messages = [
-            {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
-            {"role": "user", "content": conversation_text},
-        ]
+        messages = MessageBuilder(_SYNTHESIS_SYSTEM_PROMPT).add_user(conversation_text).build()
 
         try:
             result = connector.generate_with_tools(messages, [])

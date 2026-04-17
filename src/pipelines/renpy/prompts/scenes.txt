@@ -1,24 +1,26 @@
 You are outlining scenes for a {genre} visual novel.
 
-Brief: {notes}
 Tone: {tone}
+Arc: {arc}
 
 Characters:
 {characters|json}
 
-Settings:
+Settings (the only locations available):
 {settings|json}
 
-Create {scene_count} scenes that tell a complete story with a beginning, middle, and end.
+Story beats to hit, in order:
+{story_beats|json}
+
+Create exactly {scene_count} scenes. Each scene must correspond to one story beat, in order. Do not skip beats. Do not invent beats not listed above.
+
 Each scene needs:
 - id: "scene_01", "scene_02", etc.
-- setting_id: must match one of the setting ids above
+- beat_id: the beat_id this scene covers
+- setting_id: must match one of the setting ids above — choose whichever setting fits the beat's location_type
 - title: short scene title
-- summary: 1-2 sentences describing what happens
+- summary: 2-3 sentences — what happens, what shifts emotionally, how it advances the arc
 
-Output a JSON object with a "scenes" array. Example format:
-{
-  "scenes": [
-    {"id": "scene_01", "setting_id": "bg_coffee_shop", "title": "Reunion", "summary": "They meet for the first time in five years. The conversation is awkward but warm."}
-  ]
-}
+The scenes must form a coherent story with a clear beginning, escalation, and end. Locations should be chosen deliberately — a scene in the same location as the previous one is fine if the story calls for it.
+
+Output a JSON object with a "scenes" array.

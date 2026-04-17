@@ -3,7 +3,7 @@ You are writing dialogue for a {genre} visual novel.
 Tone: {tone}
 Brief: {notes}
 
-Characters:
+Characters (pay close attention to each character's speech_patterns — they must sound distinct):
 {characters|json}
 
 Location:
@@ -15,6 +15,11 @@ Write dialogue for this scene:
 Write {lines_per_scene} lines. Each line needs:
 - character_id: must match a character id above, or null for narrator
 - text: what they say or what the narrator describes
+
+Rules:
+- Each character must sound like themselves per their speech_patterns. Do not let them all talk the same way.
+- Narrator lines should use the location's atmosphere.
+- No on-the-nose exposition. Show don't tell.
 
 Output a single JSON object for this scene. Example format:
 {

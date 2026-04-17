@@ -251,6 +251,8 @@ def _find_sdk_python(sdk_path: str) -> str:
 def _write_script(game_dir: str, characters: list, images: list, scenes: list):
     lines = []
 
+    char_has_image = {c["id"] for c in characters if c.get("image_file")}
+
     # --- Character definitions ---
     lines.append("## Characters")
     for char in characters:
@@ -261,11 +263,13 @@ def _write_script(game_dir: str, characters: list, images: list, scenes: list):
     lines.append("")
 
     # --- Image definitions ---
-    if images:
-        lines.append("## Images")
-        for img in images:
-            lines.append(f'image {img["id"]} = "images/{img["file"]}"')
-        lines.append("")
+    lines.append("## Images")
+    for img in images:
+        lines.append(f'image {img["id"]} = "images/{img["file"]}"')
+    for char in characters:
+        if char.get("image_file"):
+            lines.append(f'image {char["id"]} = "images/{char["image_file"]}"')
+    lines.append("")
 
     # --- Title screen label ---
     lines.append("## Title screen")
@@ -282,8 +286,15 @@ def _write_script(game_dir: str, characters: list, images: list, scenes: list):
     lines.append("")
 
     # --- Scenes ---
+    shown_chars: set = set()
     for i, scene in enumerate(scenes):
         bg = scene.get("background")
+
+        # Hide sprites before scene transition
+        for cid in shown_chars:
+            lines.append(f"    hide {cid}")
+        shown_chars = set()
+
         if bg:
             if i == 0:
                 lines.append(f"    scene {bg}")
@@ -296,12 +307,19 @@ def _write_script(game_dir: str, characters: list, images: list, scenes: list):
         for line in scene.get("lines", []):
             who = line.get("who")
             say = line.get("say", "").replace('"', '\\"')
+            if who and who in char_has_image and who not in shown_chars:
+                lines.append(f"    show {who}")
+                shown_chars.add(who)
             if who:
                 lines.append(f'    {who} "{say}"')
             else:
                 lines.append(f'    "{say}"')
 
         lines.append("")
+
+    # Hide any remaining sprites before end
+    for cid in shown_chars:
+        lines.append(f"    hide {cid}")
 
     # --- End ---
     lines.append('    "The End."')

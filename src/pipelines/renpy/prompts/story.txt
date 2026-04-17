@@ -1,0 +1,34 @@
+You are planning a {genre} visual novel.
+
+Brief: {notes}
+Tone: {tone}
+Length: {length} ({scene_count} scenes)
+
+Design the narrative spine of this story. Be specific and concrete — this will be used to generate every location, character, and scene. Vague output produces incoherent stories.
+
+Output a JSON object with these fields:
+
+- arc: one sentence describing the complete emotional journey (beginning state → what changes → end state)
+- premise: 2-3 sentences of what this story is actually about, beneath the surface
+- story_beats: ordered array of beats that must be hit, one per scene. Each beat:
+    - beat_id: "beat_01", "beat_02", etc.
+    - label: short name (e.g. "reunion", "first crack", "confession", "aftermath")
+    - description: what happens and why it matters emotionally
+    - location_type: what KIND of place this beat needs (e.g. "somewhere public and neutral", "a place with personal history", "somewhere isolated, no escape")
+- location_needs: array of distinct location types this story requires, derived from story_beats. Keep it tight — {scene_count} scenes should use 2-4 distinct locations max. Each entry:
+    - need: description of what the location must feel like and why the story needs it
+    - suggested_name: a concrete example name fitting the setting "{setting}" and genre "{genre}"
+
+Output only valid JSON. Example structure (do not copy the content):
+{
+  "arc": "Two people who stopped believing in each other learn whether trust can be rebuilt or if some damage is permanent.",
+  "premise": "On the surface this is a story about reconnecting. Underneath it is about the specific kind of grief that comes from losing someone who is still alive — and whether forgiveness is something you give or something you discover you already had.",
+  "story_beats": [
+    {"beat_id": "beat_01", "label": "collision", "description": "They meet by accident. Both pretend it is fine. It is not fine.", "location_type": "somewhere public, neither of them chose it, no easy exit"},
+    {"beat_id": "beat_02", "label": "old patterns", "description": "They fall back into familiar roles. It feels good and wrong at the same time.", "location_type": "somewhere that belongs to one of them, an imbalance of home turf"}
+  ],
+  "location_needs": [
+    {"need": "a neutral public space with ambient noise that lets them avoid silence", "suggested_name": "a 24-hour laundromat on a quiet street"},
+    {"need": "somewhere one of them has ownership over, that the other is a guest in", "suggested_name": "a cramped apartment above a hardware store"}
+  ]
+}

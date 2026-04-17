@@ -27,6 +27,75 @@ def _get_connector():
     return _connector
 
 
+def _parse_count(val) -> int:
+    """Parse "2" or "3-4" → int, taking upper bound."""
+    s = str(val).strip()
+    if "-" in s:
+        return int(s.split("-")[-1])
+    return int(s)
+
+
+def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
+    connector = _get_connector()
+    template_path = _PROMPTS_DIR / "characters.txt"
+
+    brief = inputs.get("brief", {})
+
+    story = inputs.get("story", {})
+    if isinstance(story, dict) and "arc" not in story:
+        story = story.get("story", {})
+
+    settings = inputs.get("settings", [])
+    if isinstance(settings, dict):
+        settings = settings.get("settings", [])
+
+    total = _parse_count(brief.get("character_count", 2))
+    characters = []
+
+    for i in range(total):
+        label = f"{i + 1}/{total}"
+        print(f"    [characters]  generating character {label}")
+
+        ctx = {
+            **brief,
+            "index":               i + 1,
+            "total":               total,
+            "arc":                 story.get("arc", ""),
+            "premise":             story.get("premise", ""),
+            "story_beats":         story.get("story_beats", []),
+            "settings":            settings,
+            "existing_characters": characters,
+        }
+        prompt = render_template(template_path, ctx)
+        builder = MessageBuilder(
+            "You are a precise creative writing assistant. Output only valid JSON. "
+            "No markdown, no explanation, no code fences."
+        ).add_user(prompt)
+
+        success = False
+        for attempt in range(1, 4):
+            result = call_llm(connector, builder.build())
+            if "error" in result:
+                print(f"    [characters]  LLM error on attempt {attempt}: {result['error']}")
+                continue
+            raw = result["choices"][0]["message"]["content"].strip()
+            content = strip_fences(raw)
+            try:
+                char = json.loads(content)
+                characters.append(char)
+                success = True
+                break
+            except json.JSONDecodeError:
+                builder.add_assistant(raw).add_user(
+                    "Invalid JSON. Return only the JSON object, no other text."
+                )
+
+        if not success:
+            raise RuntimeError(f"Failed to generate character {label}")
+
+    return {"characters": characters}
+
+
 def dialogue(inputs: Dict, working_dir: Path) -> Dict:
     """One LLM call per scene to keep output size bounded and avoid truncation."""
     connector = _get_connector()
@@ -113,7 +182,7 @@ def package(inputs: Dict, working_dir: Path) -> Dict:
     dialogue_scenes = inputs.get("dialogue_scenes", [])
 
     builder_characters = [
-        {"id": c["id"], "name": c["name"], "color": c.get("color", "#ffffff")}
+        {"id": c["id"], "name": c["name"], "color": c.get("color", "#ffffff"), "image_file": f"{c['id']}.png"}
         for c in characters
     ]
 
@@ -165,6 +234,11 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         raw_settings = raw_settings.get("settings", [])
     settings_by_id = {s["id"]: s for s in raw_settings}
 
+    raw_characters = inputs.get("characters", [])
+    if isinstance(raw_characters, dict):
+        raw_characters = raw_characters.get("characters", [])
+    characters_by_id = {c["id"]: c for c in raw_characters}
+
     generated = []
     failed = []
     for img in game_def.get("images", []):
@@ -189,6 +263,35 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
             print(f"    [images]  failed ({error}), writing placeholder: {img['file']}")
             _write_solid_png(filepath, 1280, 720, (58, 58, 92))
             failed.append({"file": img["file"], "error": error})
+
+    for char in game_def.get("characters", []):
+        image_file = char.get("image_file")
+        if not image_file:
+            continue
+        filepath = images_dir / image_file
+        if filepath.exists():
+            print(f"    [images]  skip (exists): {image_file}")
+            continue
+
+        char_data = characters_by_id.get(char["id"], {})
+        appearance = char_data.get("appearance", f"A character named {char['name']}")
+        prompt = (
+            f"{char['name']}, {appearance}, "
+            "visual novel character portrait, full body, simple background, high quality, detailed"
+        )
+
+        print(f"    [images]  generating portrait: {image_file}")
+        result = generate_image(prompt)
+
+        if result.get("success") and result.get("saved_paths"):
+            shutil.copy2(result["saved_paths"][0], filepath)
+            generated.append(image_file)
+            print(f"    [images]  saved: {image_file}")
+        else:
+            error = result.get("error", "unknown error")
+            print(f"    [images]  portrait failed ({error}), writing placeholder: {image_file}")
+            _write_solid_png(filepath, 512, 768, (92, 58, 92))
+            failed.append({"file": image_file, "error": error})
 
     return {"status": "ok", "generated": generated, "failed": failed}
 

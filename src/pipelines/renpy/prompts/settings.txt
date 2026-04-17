@@ -1,18 +1,19 @@
-You are creating locations for a {genre} visual novel.
+You are creating locations for a {genre} visual novel set in {setting}.
 
 Brief: {notes}
 Tone: {tone}
-Setting: {setting}
 
-Create 3-5 locations where scenes will take place. Each needs:
-- id: lowercase with underscores, prefixed "bg_" (e.g. "bg_coffee_shop")
-- name: display name (e.g. "The Coffee Shop")
-- description: 1 sentence visual description
-- image_file: a filename for the background image (e.g. "coffee_shop.jpg")
+Story arc: {arc}
 
-Output a JSON object with a "settings" array. Example format:
-{
-  "settings": [
-    {"id": "bg_coffee_shop", "name": "The Coffee Shop", "description": "A warm, dimly lit cafe on a rainy street.", "image_file": "coffee_shop.jpg"}
-  ]
-}
+The story requires these specific location types — create one setting per need:
+{location_needs|json}
+
+For each location need above, create one setting. Do not invent extras.
+
+Each setting needs:
+- id: lowercase with underscores, prefixed "bg_" (e.g. "bg_laundromat")
+- name: display name (e.g. "The All-Night Laundromat")
+- description: 2-3 sentences of visual detail specific enough to generate a background image — lighting, colors, objects, atmosphere
+- image_file: filename for the background image (e.g. "laundromat.jpg")
+
+Output a JSON object with a "settings" array.

@@ -81,6 +81,24 @@ def strip_fences(content: str) -> str:
     return content.strip()
 
 
+def _enrich_inputs(inputs: dict) -> dict:
+    """Add slim reference lists derived from full objects, for prompts that don't need all fields."""
+    extra = {}
+    chars = inputs.get("characters", [])
+    if isinstance(chars, dict):
+        chars = chars.get("characters", [])
+    if chars:
+        extra["character_refs"] = [{"id": c.get("id"), "name": c.get("name"), "role": c.get("role")} for c in chars]
+
+    settings = inputs.get("settings", [])
+    if isinstance(settings, dict):
+        settings = settings.get("settings", [])
+    if settings:
+        extra["setting_refs"] = [{"id": s.get("id"), "name": s.get("name")} for s in settings]
+
+    return {**inputs, **extra}
+
+
 def call_llm(connector, messages: list) -> dict:
     """Call the connector with streaming if available, fall back to non-streaming."""
     if not hasattr(connector, "generate_with_tools_stream"):
@@ -101,6 +119,10 @@ def call_llm(connector, messages: list) -> dict:
                     accumulated += delta["content"]
     except Exception as e:
         logger.warning(f"Streaming error, falling back: {e}")
+        return connector.generate_with_tools(messages, [])
+
+    if not accumulated:
+        logger.warning("Streaming produced empty content, falling back to non-streaming")
         return connector.generate_with_tools(messages, [])
 
     return {
@@ -189,6 +211,7 @@ class PipelineRunner:
 
     def _run_llm_stage(self, pipeline: Pipeline, stage: LLMStage) -> Dict:
         inputs = self._load_all()
+        inputs = _enrich_inputs(inputs)
         prompt = render_template(pipeline.prompts_dir / stage.prompt_template, inputs)
 
         messages = MessageBuilder(

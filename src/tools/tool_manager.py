@@ -1,11 +1,59 @@
-from typing import Dict, List, Any, Callable, Optional
+from typing import Dict, List, Any, Callable, Optional, Union, get_type_hints
 import inspect
-from functools import wraps
-
 import logging
+
 from .execution_context import get_execution_context
 
 logger = logging.getLogger(__name__)
+
+_INJECTED_PARAMS = frozenset({'task_id', 'subtask_id'})
+
+_PY_TO_JSON = {
+    str: 'string',
+    int: 'integer',
+    float: 'number',
+    bool: 'boolean',
+    list: 'array',
+    dict: 'object',
+}
+
+
+def _schema_from_fn(fn: Callable, param_hints: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        hints = get_type_hints(fn)
+    except Exception:
+        hints = {}
+    sig = inspect.signature(fn)
+    properties = {}
+    required = []
+
+    for pname, param in sig.parameters.items():
+        if pname in _INJECTED_PARAMS:
+            continue
+
+        hint = param_hints.get(pname)
+        if isinstance(hint, dict):
+            properties[pname] = hint
+        else:
+            annotation = hints.get(pname, inspect.Parameter.empty)
+            origin = getattr(annotation, '__origin__', None)
+            args = getattr(annotation, '__args__', ())
+            if origin is Union and type(None) in args:
+                inner = next(a for a in args if a is not type(None))
+                json_type = _PY_TO_JSON.get(inner, 'string')
+            elif annotation not in (inspect.Parameter.empty, type(None)):
+                json_type = _PY_TO_JSON.get(annotation, 'string')
+            else:
+                json_type = 'string'
+            prop = {'type': json_type}
+            if isinstance(hint, str):
+                prop['description'] = hint
+            properties[pname] = prop
+
+        if param.default is inspect.Parameter.empty:
+            required.append(pname)
+
+    return {'type': 'object', 'properties': properties, 'required': required}
 
 
 class ToolManager:
@@ -18,9 +66,17 @@ class ToolManager:
             'description': description,
             'parameters': parameters,
             'function': fn,
-            'auto_inject_context': auto_inject_context
+            'auto_inject_context': auto_inject_context,
         }
-    
+
+    def tool(self, description: str, auto_inject_context: bool = True, param_hints: Dict[str, Any] = None, name: str = None):
+        def decorator(fn):
+            tool_name = name or fn.__name__
+            parameters = _schema_from_fn(fn, param_hints or {})
+            self.register_tool(tool_name, description, parameters, fn, auto_inject_context)
+            return fn
+        return decorator
+
     def getTools(self) -> List[Dict[str, Any]]:
         return list(self._tools_registry.values())
 
@@ -30,10 +86,8 @@ class ToolManager:
     def useTool(self, tool_name: str, **kwargs) -> Any:
         tool_info = self._tools_registry.get(tool_name)
         if not tool_info:
-            available = ", ".join(sorted(self._tools_registry.keys()))
-            error_msg = f"Tool '{tool_name}' not found. Available tools: {available}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            available = ', '.join(sorted(self._tools_registry.keys()))
+            raise ValueError(f"Tool '{tool_name}' not found. Available tools: {available}")
 
         fn = tool_info['function']
 
@@ -48,13 +102,10 @@ class ToolManager:
         validated_kwargs = self._validate_arguments(tool_info, kwargs)
 
         try:
-            result = fn(**validated_kwargs)
-            return result
+            return fn(**validated_kwargs)
         except Exception as e:
-            error_msg = f"Tool execution failed for '{tool_name}': {str(e)}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
-    
+            raise RuntimeError(f"Tool execution failed for '{tool_name}': {str(e)}")
+
     def _validate_arguments(self, tool_info: Dict[str, Any], provided_kwargs: Dict[str, Any]) -> Dict[str, Any]:
         parameters = tool_info['parameters'].get('properties', {})
         required_params = tool_info['parameters'].get('required', [])
@@ -66,36 +117,21 @@ class ToolManager:
 
         return {k: v for k, v in provided_kwargs.items() if k in parameters or k in fn_params}
 
-    @staticmethod
-    def tool(name: str, description: str, parameters: Dict[str, Any], auto_inject_context: bool = True):
-        def decorator(fn):
-            @wraps(fn)
-            def wrapper(*args, **kwargs):
-                return fn(*args, **kwargs)
-            tool_manager.register_tool(name, description, parameters, fn, auto_inject_context)
-            return wrapper
-        return decorator
-
 
 def build_openai_tool_schema(tool: dict) -> dict:
-    """
-    Convert a registered tool into OpenAI function-calling schema format.
-    """
     params_schema = tool['parameters']
-
     return {
-        "type": "function",
-        "function": {
-            "name": tool['name'],
-            "description": tool['description'],
-            "parameters": {
-                "type": "object",
-                "properties": params_schema.get('properties', {}),
-                "required": params_schema.get('required', []),
+        'type': 'function',
+        'function': {
+            'name': tool['name'],
+            'description': tool['description'],
+            'parameters': {
+                'type': 'object',
+                'properties': params_schema.get('properties', {}),
+                'required': params_schema.get('required', []),
             }
         }
     }
 
 
-# Global instance using module-level singleton pattern
 tool_manager = ToolManager()

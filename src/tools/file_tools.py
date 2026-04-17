@@ -7,6 +7,14 @@ logger = logging.getLogger(__name__)
 from tools.tool_manager import tool_manager
 
 
+@tool_manager.tool(
+    description="Read a file from the filesystem. Can optionally read specific line ranges. Works with any file type — code, text, config, etc.",
+    auto_inject_context=False,
+    param_hints={
+        "start_line": "Optional starting line number (1-indexed)",
+        "end_line": "Optional ending line number (1-indexed, inclusive)",
+    },
+)
 def read_file(
     file_path: str,
     start_line: Optional[int] = None,
@@ -80,6 +88,10 @@ def read_file(
         }
 
 
+@tool_manager.tool(
+    description="Write content to a file, creating it if it doesn't exist. Creates parent directories automatically. Use this for creating new files or completely replacing file contents.",
+    auto_inject_context=False,
+)
 def write_to_file(
     file_path: str,
     content: str,
@@ -95,13 +107,11 @@ def write_to_file(
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
 
-        result = {
+        return {
             "success": True,
             "file_path": str(path),
             "content_length": len(content)
         }
-
-        return result
 
     except Exception as e:
         error_msg = f"Failed to write to file {file_path}: {str(e)}"
@@ -113,6 +123,11 @@ def write_to_file(
         }
 
 
+@tool_manager.tool(
+    description="Edit a file by replacing specific text. Safer than rewriting entire files — just specify what to change. The old_text must appear exactly once in the file for safety.",
+    auto_inject_context=False,
+    param_hints={"old_text": "Text to find and replace (must match exactly and appear only once)"},
+)
 def edit_file(
     file_path: str,
     old_text: str,
@@ -172,6 +187,11 @@ def edit_file(
         }
 
 
+@tool_manager.tool(
+    description="List files and directories. Supports glob patterns and recursive listing. Use this to explore file structure.",
+    auto_inject_context=False,
+    param_hints={"pattern": "Optional glob pattern (e.g., '*.py', '**/*.js')"},
+)
 def list_files(
     directory: str = ".",
     pattern: Optional[str] = None,
@@ -236,7 +256,7 @@ def list_files(
         files.sort()
         dirs.sort()
 
-        result = {
+        return {
             "success": True,
             "directory": str(path),
             "files": files,
@@ -244,8 +264,6 @@ def list_files(
             "file_count": len(files),
             "directory_count": len(dirs),
         }
-
-        return result
 
     except Exception as e:
         error_msg = f"Failed to list directory {directory}: {str(e)}"
@@ -255,131 +273,3 @@ def list_files(
             "error": error_msg,
             "directory": directory
         }
-
-
-def register_file_tools():
-    tool_manager.register_tool(
-        name="read_file",
-        description=(
-            "Read a file from the filesystem. "
-            "Can optionally read specific line ranges. "
-            "Works with any file type - code, text, config, etc."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Path to the file (absolute or relative)"
-                },
-                "start_line": {
-                    "type": "integer",
-                    "description": "Optional starting line number (1-indexed)"
-                },
-                "end_line": {
-                    "type": "integer",
-                    "description": "Optional ending line number (1-indexed, inclusive)"
-                }
-            },
-            "required": ["file_path"]
-        },
-        fn=read_file,
-        auto_inject_context=False
-    )
-
-    tool_manager.register_tool(
-        name="write_to_file",
-        description=(
-            "Write content to a file, creating it if it doesn't exist. "
-            "Creates parent directories automatically. "
-            "Use this for creating new files or completely replacing file contents."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Path to the file (absolute or relative)"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to write to the file"
-                },
-                "create_dirs": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Whether to create parent directories if they don't exist"
-                }
-            },
-            "required": ["file_path", "content"]
-        },
-        fn=write_to_file,
-        auto_inject_context=False
-    )
-
-    tool_manager.register_tool(
-        name="edit_file",
-        description=(
-            "Edit a file by replacing specific text. "
-            "Safer than rewriting entire files - just specify what to change. "
-            "The old_text must appear exactly once in the file for safety."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Path to the file (absolute or relative)"
-                },
-                "old_text": {
-                    "type": "string",
-                    "description": "Text to find and replace (must match exactly and appear only once)"
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "Text to replace it with"
-                }
-            },
-            "required": ["file_path", "old_text", "new_text"]
-        },
-        fn=edit_file,
-        auto_inject_context=False
-    )
-
-    tool_manager.register_tool(
-        name="list_files",
-        description=(
-            "List files and directories. "
-            "Supports glob patterns and recursive listing. "
-            "Use this to explore file structure."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "directory": {
-                    "type": "string",
-                    "default": ".",
-                    "description": "Directory path (default: current directory)"
-                },
-                "pattern": {
-                    "type": "string",
-                    "description": "Optional glob pattern (e.g., '*.py', '**/*.js')"
-                },
-                "recursive": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Whether to search recursively"
-                },
-                "max_depth": {
-                    "type": "integer",
-                    "default": 3,
-                    "description": "Maximum depth for recursive search (default: 3)"
-                }
-            },
-            "required": []
-        },
-        fn=list_files,
-        auto_inject_context=False
-    )
-
-    logger.info("File tools registered: read_file, write_to_file, edit_file, list_files")

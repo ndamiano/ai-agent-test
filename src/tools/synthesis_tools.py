@@ -7,7 +7,12 @@ from database.task_store import task_store
 
 logger = logging.getLogger(__name__)
 
-def _list_subtasks(task_id: Optional[str] = None) -> str:
+
+@tool_manager.tool(
+    description="List all subtasks for the current task with status, agent, goal, and output preview.",
+    auto_inject_context=True,
+)
+def list_subtasks(task_id: Optional[str] = None) -> str:
     from tools.execution_context import resolve_task_id
     task_id = resolve_task_id(task_id)
     subtasks = task_store.get_subtasks_for_task(task_id)
@@ -25,14 +30,3 @@ def _list_subtasks(task_id: Optional[str] = None) -> str:
             "output_preview": output_preview,
         })
     return json.dumps({"task_id": task_id, "subtasks": summaries, "count": len(summaries)})
-
-def register_synthesis_tools() -> None:
-    tool_manager.register_tool(
-        name="list_subtasks",
-        description="List all subtasks for the current task with status, agent, goal, and output preview.",
-        parameters={"type": "object", "properties": {}, "required": []},
-        fn=_list_subtasks,
-        auto_inject_context=True,
-    )
-
-    logger.info("Synthesis tools registered: list_subtasks")

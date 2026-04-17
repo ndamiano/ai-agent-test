@@ -37,19 +37,13 @@ async def startup_event():
         await event_bus.start()
         logging.info("Event bus started")
 
-        # Register tools
-        from tools.task_tools import register_task_tools
-        from tools.file_tools import register_file_tools
-        from tools.system_tools import register_system_tools
-        from tools.synthesis_tools import register_synthesis_tools
-        from tools.orchestration_tools import register_orchestration_tools
-        from tools.comfyui_tools import register_comfyui_tools
-        register_task_tools()
-        register_file_tools()
-        register_system_tools()
-        register_synthesis_tools()
-        register_orchestration_tools()
-        register_comfyui_tools()
+        # Import tool modules — decorators register tools at import time
+        import tools.task_tools
+        import tools.file_tools
+        import tools.system_tools
+        import tools.synthesis_tools
+        import tools.orchestration_tools
+        import tools.comfyui_tools
         logging.info("Tools registered successfully")
 
     except Exception as e:

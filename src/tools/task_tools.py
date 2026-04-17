@@ -1,14 +1,15 @@
 import json
 import logging
-from typing import Optional, Union, List
+from typing import Optional
 
 from tools.tool_manager import tool_manager
 from database.validators import validate_dependencies
 from database.task_store import task_store
+
 logger = logging.getLogger(__name__)
 
 
-def _parse_depends_on(depends_on: Union[str, list, None]) -> list:
+def _parse_depends_on(depends_on) -> list:
     if not depends_on:
         return []
     if isinstance(depends_on, list):
@@ -44,7 +45,27 @@ def _expand_dep_ids(task_id: str, dep_ids: list) -> list:
     return expanded
 
 
-def _spawn_task(
+@tool_manager.tool(
+    description=(
+        "Create a new subtask assigned to a specific agent. "
+        "Use this to build or extend the execution plan. "
+        "Tasks whose dependencies are all completed will run automatically. "
+        "Returns the new subtask ID which can be used in future depends_on lists."
+    ),
+    auto_inject_context=True,
+    param_hints={
+        "goal": "The specific, self-contained instruction for the agent. Write this as if the agent has no prior context — include everything it needs.",
+        "name": "A short, human-readable name for this subtask (e.g. 'Write unit tests').",
+        "description": "A brief description of what this subtask does.",
+        "depends_on": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": 'Array of subtask IDs that must complete before this one runs. Example: ["abc-123"].',
+        },
+        "priority": '"normal" or "high". Defaults to "normal".',
+    },
+)
+def spawn_task(
     task_id: str,
     agent_id: str,
     goal: str,
@@ -83,25 +104,45 @@ def _spawn_task(
     })
 
 
-def _spawn_domain(
+@tool_manager.tool(
+    description=(
+        "Spawn a child maestro to independently plan and execute a self-contained domain of work. "
+        "Use this when a major area of the task (e.g. combat system, story, enemy roster, NPC dialogue) "
+        "is complex enough to need its own planning, multi-step execution, and validation cycle — "
+        "rather than a single worker subtask. "
+        "The child maestro will break its domain goal into subtasks, run them, and validate results. "
+        "Returns the subtask_id (for depends_on) and the child_task_id."
+    ),
+    auto_inject_context=True,
+    param_hints={
+        "name": "Short human-readable name for this domain (e.g. 'Combat System', 'Enemy Roster').",
+        "goal": (
+            "Full, self-contained description of what this domain must produce. "
+            "Include: what to build, key design decisions, tech constraints, output format, "
+            "and any specific requirements from the parent task's acceptance criteria that "
+            "this domain is responsible for satisfying."
+        ),
+        "description": "One-line summary of this domain shown in the UI.",
+        "depends_on": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Subtask IDs (from this task) that must complete before this domain starts.",
+        },
+    },
+)
+def spawn_domain(
     task_id: str,
     name: str,
     goal: str,
     description: Optional[str] = None,
     depends_on=None,
 ) -> str:
-    """
-    Spawn a sub-orchestrator (child maestro) that will independently plan and execute
-    a domain of work. The child maestro gets its own FSM cycle (plan → execute → validate → compile).
-    Returns subtask_id and child_task_id.
-    """
     parent_task = task_store.get_task(task_id)
 
     dep_ids = _parse_depends_on(depends_on)
     dep_ids = _expand_dep_ids(task_id, dep_ids)
     validate_dependencies(task_store, task_id, dep_ids)
 
-    # Create the child task linked to the parent
     child_task = task_store.create_task(
         goal=goal,
         execution_mode=parent_task.get("execution_mode", "sequential"),
@@ -110,7 +151,6 @@ def _spawn_domain(
     )
     child_task_id = child_task["id"]
 
-    # Create placeholder subtask in parent with maestro as agent
     existing = task_store.get_subtasks_for_task(task_id)
     position = max((s["position"] for s in existing), default=-1) + 1
 
@@ -134,96 +174,3 @@ def _spawn_domain(
         "status": "pending",
         "depends_on": dep_ids,
     })
-
-
-def register_task_tools() -> None:
-    tool_manager.register_tool(
-        name="spawn_task",
-        description=(
-            "Create a new subtask assigned to a specific agent. "
-            "Use this to build or extend the execution plan. "
-            "Tasks whose dependencies are all completed will run automatically. "
-            "Returns the new subtask ID which can be used in future depends_on lists."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "agent_id": {
-                    "type": "string",
-                    "description": "ID of the agent to assign this subtask to.",
-                },
-                "goal": {
-                    "type": "string",
-                    "description": (
-                        "The specific, self-contained instruction for the agent. "
-                        "Write this as if the agent has no prior context — "
-                        "include everything it needs."
-                    ),
-                },
-                "name": {
-                    "type": "string",
-                    "description": "A short, human-readable name for this subtask (e.g. 'Write unit tests').",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "A brief description of what this subtask does.",
-                },
-                "depends_on": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": 'Array of subtask IDs that must complete before this one runs. Example: ["abc-123"].',
-                },
-                "priority": {
-                    "type": "string",
-                    "description": '"normal" or "high". Defaults to "normal".',
-                },
-            },
-            "required": ["agent_id", "goal"],
-        },
-        fn=_spawn_task,
-        auto_inject_context=True,
-    )
-
-    tool_manager.register_tool(
-        name="spawn_domain",
-        description=(
-            "Spawn a child maestro to independently plan and execute a self-contained domain of work. "
-            "Use this when a major area of the task (e.g. combat system, story, enemy roster, NPC dialogue) "
-            "is complex enough to need its own planning, multi-step execution, and validation cycle — "
-            "rather than a single worker subtask. "
-            "The child maestro will break its domain goal into subtasks, run them, and validate results. "
-            "Returns the subtask_id (for depends_on) and the child_task_id."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Short human-readable name for this domain (e.g. 'Combat System', 'Enemy Roster').",
-                },
-                "goal": {
-                    "type": "string",
-                    "description": (
-                        "Full, self-contained description of what this domain must produce. "
-                        "Include: what to build, key design decisions, tech constraints, output format, "
-                        "and any specific requirements from the parent task's acceptance criteria that "
-                        "this domain is responsible for satisfying."
-                    ),
-                },
-                "description": {
-                    "type": "string",
-                    "description": "One-line summary of this domain shown in the UI.",
-                },
-                "depends_on": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Subtask IDs (from this task) that must complete before this domain starts.",
-                },
-            },
-            "required": ["name", "goal"],
-        },
-        fn=_spawn_domain,
-        auto_inject_context=True,
-    )
-
-    logger.info("Task tools registered: spawn_task, spawn_domain")

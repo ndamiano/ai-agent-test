@@ -11,6 +11,8 @@ import urllib.request
 import urllib.parse
 import urllib.error
 
+from tools.tool_manager import tool_manager
+
 logger = logging.getLogger(__name__)
 
 _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
@@ -162,16 +164,11 @@ def _save_images_to_working_dir(images: list, endpoint: str) -> list:
     return saved
 
 
+@tool_manager.tool(
+    description="Generate an image from a text prompt using ComfyUI. Returns URLs and filenames for the generated image(s). Use this when asked to create, draw, or visualize anything.",
+    auto_inject_context=False,
+)
 def generate_image(prompt: str) -> Dict[str, Any]:
-    """
-    Generate an image from a text prompt using ComfyUI.
-
-    Args:
-        prompt: Text description of the image to generate
-
-    Returns:
-        Dict with success status, saved file paths, and job metadata
-    """
     comfyui_settings = _get_comfyui_settings()
     vram_management = comfyui_settings.get("vram_management", False)
     endpoint = comfyui_settings.get("endpoint", "http://localhost:8188").rstrip("/")
@@ -262,28 +259,3 @@ def generate_image(prompt: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def register_comfyui_tools() -> None:
-    from tools.tool_manager import tool_manager
-
-    tool_manager.register_tool(
-        name="generate_image",
-        description=(
-            "Generate an image from a text prompt using ComfyUI. "
-            "Returns URLs and filenames for the generated image(s). "
-            "Use this when asked to create, draw, or visualize anything."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "Detailed text description of the image to generate"
-                }
-            },
-            "required": ["prompt"]
-        },
-        fn=generate_image,
-        auto_inject_context=False
-    )
-
-    logger.info("ComfyUI tools registered: generate_image")

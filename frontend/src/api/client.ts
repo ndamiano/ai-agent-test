@@ -63,6 +63,12 @@ export const api = {
     getStatus: () =>
         request<SystemStatus>('/system/status'),
 
+    // Chat
+    sendChatMessage: (message: string, session_id = 'default') =>
+        request<{ message: string; session_id: string }>('/chat', { method: 'POST', body: JSON.stringify({ message, session_id }) }),
+    clearChatSession: (session_id = 'default') =>
+        fetch(`${base}/chat/${session_id}`, { method: 'DELETE' }),
+
     // Settings
     getSettings: () =>
         request<Settings>('/settings'),

@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useState } from 'react'
 import TaskListPanel from './TaskListPanel'
 import StagePanel from './StagePanel'
 import CommandBar from './CommandBar'
+import ChatPanel from './ChatPanel'
 import type { Task } from '../types'
 
 interface LayoutProps {
@@ -25,13 +26,30 @@ const Layout: React.FC<LayoutProps> = ({
     tasksError,
     onRefreshTasks,
 }) => {
+    const [tab, setTab] = useState<'chat' | 'tasks'>('chat')
+
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
 
             {/* Header */}
             <div className="flex-shrink-0 border-b border-white/[0.06] px-4 py-2 flex items-center justify-between bg-[#0f0f0f]">
-                <div className="text-white font-semibold text-sm tracking-wide">
-                    AI Agent
+                <div className="flex items-center gap-4">
+                    <div className="text-white font-semibold text-sm tracking-wide">Maestro</div>
+                    <div className="flex gap-1">
+                        {(['chat', 'tasks'] as const).map(t => (
+                            <button
+                                key={t}
+                                onClick={() => setTab(t)}
+                                className={`px-3 py-1 rounded text-xs font-medium transition-colors capitalize ${
+                                    tab === t
+                                        ? 'bg-white/10 text-white'
+                                        : 'text-gray-500 hover:text-gray-300'
+                                }`}
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
                 </div>
                 <button
                     onClick={onSettingsClick}
@@ -45,32 +63,36 @@ const Layout: React.FC<LayoutProps> = ({
                 </button>
             </div>
 
-            {/* Command bar */}
-            <div className="flex-shrink-0">
-                <CommandBar onTaskCreate={onTaskCreate} />
-            </div>
-
-            {/* Two panel layout */}
-            <div className="flex-1 flex overflow-hidden">
-
-                {/* Left — task list */}
-                <div className="w-72 flex-shrink-0 border-r border-white/[0.06]">
-                    <TaskListPanel
-                        selectedTaskId={selectedTaskId}
-                        onSelectTask={setSelectedTaskId}
-                        tasks={tasks}
-                        loading={tasksLoading}
-                        error={tasksError}
-                        onRefresh={onRefreshTasks}
-                    />
+            {/* Chat tab */}
+            {tab === 'chat' && (
+                <div className="flex-1 overflow-hidden">
+                    <ChatPanel />
                 </div>
+            )}
 
-                {/* Right — stage */}
-                <div className="flex-1 min-w-0">
-                    <StagePanel taskId={selectedTaskId} />
-                </div>
-
-            </div>
+            {/* Tasks tab */}
+            {tab === 'tasks' && (
+                <>
+                    <div className="flex-shrink-0">
+                        <CommandBar onTaskCreate={onTaskCreate} />
+                    </div>
+                    <div className="flex-1 flex overflow-hidden">
+                        <div className="w-72 flex-shrink-0 border-r border-white/[0.06]">
+                            <TaskListPanel
+                                selectedTaskId={selectedTaskId}
+                                onSelectTask={setSelectedTaskId}
+                                tasks={tasks}
+                                loading={tasksLoading}
+                                error={tasksError}
+                                onRefresh={onRefreshTasks}
+                            />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <StagePanel taskId={selectedTaskId} />
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
     )
 }

@@ -22,12 +22,9 @@ class PlanningNode(StateNode):
         prompt = self._build_maestro_prompt(context, has_criteria=has_criteria)
 
         agent_data = context.agent_store.get("maestro")
-        rendered_system_prompt = agent_data["system_prompt"].replace(
-            "{{AGENT_ROSTER}}", self._build_agent_roster(context)
-        )
 
         from agents.main_agent import MainAgent
-        maestro = MainAgent(agent_id="maestro", system_prompt=rendered_system_prompt)
+        maestro = MainAgent(agent_id="maestro", system_prompt=agent_data["system_prompt"])
 
         task = context.task_store.get_task(context.task_id)
         working_directory = task.get("working_directory")
@@ -155,13 +152,3 @@ class PlanningNode(StateNode):
 
         return "\n".join(lines)
 
-    def _build_agent_roster(self, context: StateContext) -> str:
-        lines = []
-        for a in context.agent_store.list():
-            if a.get("id") == "maestro":
-                continue
-            tools = ", ".join(a.get("tools", [])) or "none"
-            lines.append(f"- {a['id']}: {a['name']}")
-            lines.append(f"  {a['description']}")
-            lines.append(f"  Tools: {tools}")
-        return "\n".join(lines)

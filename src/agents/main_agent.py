@@ -7,7 +7,6 @@ from llm_clients.connector_selector import get_connector
 from llm_clients.message_builder import MessageBuilder
 from tools.tool_manager import tool_manager
 from tools.execution_context import execution_context
-from config.agent_prompts import SYSTEM_PROMPT
 from config.time_utils import get_utc_timestamp
 from api.websocket.event_bus import event_bus
 from .agent_store import agent_store
@@ -17,7 +16,7 @@ class MainAgent:
 
     def __init__(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str,
         max_history_length: int = 20,
         system_prompt: Optional[str] = None,
     ):
@@ -25,17 +24,9 @@ class MainAgent:
         self.message_history: List[Dict[str, str]] = []
         self.max_history_length = max_history_length
 
-        if agent_id:
-            try:
-                agent_data = agent_store.get(agent_id)
-                self.system_context = agent_data["system_prompt"]
-                self._tools_schema = self._build_tools_schema(agent_data["tools"])
-            except KeyError:
-                self.system_context = SYSTEM_PROMPT
-                self._tools_schema = self._build_tools_schema()
-        else:
-            self.system_context = SYSTEM_PROMPT
-            self._tools_schema = self._build_tools_schema()
+        agent_data = agent_store.get(agent_id)
+        self.system_context = agent_data["system_prompt"]
+        self._tools_schema = self._build_tools_schema(agent_data["tools"])
 
         if system_prompt is not None:
             self.system_context = system_prompt

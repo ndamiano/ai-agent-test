@@ -81,6 +81,34 @@ def strip_fences(content: str) -> str:
     return content.strip()
 
 
+def call_llm(connector, messages: list) -> dict:
+    """Call the connector with streaming if available, fall back to non-streaming."""
+    if not hasattr(connector, "generate_with_tools_stream"):
+        return connector.generate_with_tools(messages, [])
+
+    accumulated = ""
+    envelope: dict = {}
+    try:
+        for chunk in connector.generate_with_tools_stream(messages, []):
+            if "error" in chunk:
+                logger.warning(f"Streaming failed, falling back: {chunk['error']}")
+                return connector.generate_with_tools(messages, [])
+            if not envelope:
+                envelope = {k: v for k, v in chunk.items() if k != "choices"}
+            for choice in chunk.get("choices", []):
+                delta = choice.get("delta", {})
+                if delta.get("content"):
+                    accumulated += delta["content"]
+    except Exception as e:
+        logger.warning(f"Streaming error, falling back: {e}")
+        return connector.generate_with_tools(messages, [])
+
+    return {
+        **envelope,
+        "choices": [{"message": {"role": "assistant", "content": accumulated}}],
+    }
+
+
 class PipelineRunner:
 
     def __init__(self, working_dir: str, connector=None):
@@ -168,7 +196,7 @@ class PipelineRunner:
             "No markdown, no explanation, no code fences."
         ).add_user(prompt).build()
 
-        result = self._get_connector().generate_with_tools(messages, [])
+        result = self._call_llm(messages)
         if "error" in result:
             raise RuntimeError(f"LLM error: {result['error']}")
 
@@ -178,6 +206,9 @@ class PipelineRunner:
             return json.loads(content)
         except json.JSONDecodeError as e:
             raise RuntimeError(f"LLM returned invalid JSON: {e}\n\nContent:\n{content}")
+
+    def _call_llm(self, messages: list) -> dict:
+        return call_llm(self._get_connector(), messages)
 
     def _run_fn_stage(self, stage: FnStage) -> Any:
         missing = [f for f in stage.inputs if not (self.working_dir / f).exists()]

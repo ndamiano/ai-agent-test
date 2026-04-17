@@ -6,7 +6,7 @@ import zlib
 from pathlib import Path
 from typing import Dict
 
-from engine.pipeline_runner import render_template, strip_fences
+from engine.pipeline_runner import render_template, strip_fences, call_llm
 from llm_clients.message_builder import MessageBuilder
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -76,7 +76,7 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
         success = False
         for attempt in range(1, 4):
             messages = builder.build()
-            result = connector.generate_with_tools(messages, [])
+            result = call_llm(connector, messages)
             if "error" in result:
                 print(f"    [dialogue]  LLM error on attempt {attempt}: {result['error']}")
                 continue
@@ -152,31 +152,45 @@ def package(inputs: Dict, working_dir: Path) -> Dict:
 
 
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
-    """Write solid-color placeholder PNGs for each background. Pure stdlib — no PIL needed."""
+    import shutil
+    from tools.comfyui_tools import generate_image
+
     game_def = inputs.get("game_definition", inputs)
     output_dir = Path(game_def.get("output_dir", str(working_dir / "game_output")))
     images_dir = output_dir / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    # Distinct muted palette so scenes feel visually different
-    palette = [
-        (58,  58,  92),   # twilight purple
-        (45,  74,  62),   # forest green
-        (74,  45,  58),   # dusty rose
-        (58,  74,  45),   # olive
-        (45,  58,  74),   # slate blue
-    ]
+    raw_settings = inputs.get("settings", [])
+    if isinstance(raw_settings, dict):
+        raw_settings = raw_settings.get("settings", [])
+    settings_by_id = {s["id"]: s for s in raw_settings}
 
     generated = []
-    for i, img in enumerate(game_def.get("images", [])):
+    failed = []
+    for img in game_def.get("images", []):
         filepath = images_dir / img["file"]
-        if not filepath.exists():
-            rgb = palette[i % len(palette)]
-            _write_solid_png(filepath, 1280, 720, rgb)
-            generated.append(img["file"])
-            print(f"    [images]  placeholder: {img['file']}")
+        if filepath.exists():
+            print(f"    [images]  skip (exists): {img['file']}")
+            continue
 
-    return {"status": "ok", "generated": generated}
+        setting = settings_by_id.get(img["id"], {})
+        description = setting.get("description", f"A scene called {img['id']}")
+        prompt = f"{description}, visual novel background, high quality, detailed"
+
+        print(f"    [images]  generating: {img['file']}")
+        result = generate_image(prompt)
+
+        if result.get("success") and result.get("saved_paths"):
+            shutil.copy2(result["saved_paths"][0], filepath)
+            generated.append(img["file"])
+            print(f"    [images]  saved: {img['file']}")
+        else:
+            error = result.get("error", "unknown error")
+            print(f"    [images]  failed ({error}), writing placeholder: {img['file']}")
+            _write_solid_png(filepath, 1280, 720, (58, 58, 92))
+            failed.append({"file": img["file"], "error": error})
+
+    return {"status": "ok", "generated": generated, "failed": failed}
 
 
 def _write_solid_png(path: Path, width: int, height: int, rgb: tuple):

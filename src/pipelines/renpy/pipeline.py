@@ -56,7 +56,7 @@ RENPY_PIPELINE = Pipeline(
             FnStage(
                 id="images",
                 fn=generate_images,
-                inputs=["game_definition.json"],
+                inputs=["game_definition.json", "settings.json"],
                 output="images_result.json",
             ),
         ]),

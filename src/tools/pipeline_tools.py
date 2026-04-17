@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from tools.tool_manager import tool_manager
-from tools.execution_context import execution_context
+from tools.execution_context import get_task_id, get_working_directory
 
 # Per-session queue: task_id → list of (pipeline_name, brief, working_dir)
 _queue: Dict[str, list] = {}
@@ -15,7 +15,7 @@ _queue_lock = threading.Lock()
 
 
 def _get_working_dir(pipeline_name: str) -> str:
-    base = execution_context.working_directory or "outputs"
+    base = get_working_directory() or "outputs"
     return str(Path(base) / "pipelines" / pipeline_name)
 
 
@@ -57,7 +57,7 @@ def queue_pipeline(name: str, brief: dict) -> str:
     if name not in registry:
         return json.dumps({"status": "error", "error": f"Unknown pipeline {name!r}. Available: {list(registry.keys())}"})
 
-    task_id = execution_context.task_id or "default"
+    task_id = get_task_id() or "default"
     working_dir = _get_working_dir(name)
 
     with _queue_lock:
@@ -77,7 +77,7 @@ def queue_pipeline(name: str, brief: dict) -> str:
 def run_queued_pipelines() -> str:
     from pipelines.registry import run_pipeline as _run
 
-    task_id = execution_context.task_id or "default"
+    task_id = get_task_id() or "default"
     with _queue_lock:
         items = _queue.pop(task_id, [])
 

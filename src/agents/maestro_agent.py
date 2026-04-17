@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
-from agents.agent_store import agent_store
+from agents.agent_store import AGENTS_DIR, get_agent
 from agents.main_agent import MainAgent
 from api.websocket.event_bus import event_bus
 from config.time_utils import get_utc_timestamp
@@ -24,7 +24,6 @@ class MaestroAgent:
 
     def __init__(self):
         self.task_store = task_store
-        self.agent_store = agent_store
         import os
         self._max_workers = int(os.getenv("MAX_PARALLEL_WORKERS", "2"))
 
@@ -86,7 +85,7 @@ class MaestroAgent:
         count_before = len(self.task_store.get_subtasks_for_task(task_id))
 
         prompt = self._build_maestro_prompt(task_id, has_criteria)
-        agent_data = self.agent_store.get("maestro")
+        agent_data = get_agent("maestro")
         task = self.task_store.get_task(task_id)
 
         from tools.execution_context import execution_context
@@ -290,9 +289,6 @@ class MaestroAgent:
         context_text = self._build_subtask_context(task_id, fresh)
 
         agent_id = fresh["agent_id"]
-        if not self.agent_store.exists(agent_id):
-            logger.warning(f"Agent '{agent_id}' not found, using 'worker'")
-            agent_id = "worker"
 
         from tools.execution_context import execution_context
         agent = MainAgent(agent_id=agent_id)
@@ -340,7 +336,7 @@ class MaestroAgent:
             "timestamp": get_utc_timestamp(),
         })
 
-        if not self.agent_store.exists("summarizer"):
+        if not (AGENTS_DIR / "summarizer.json").exists():
             logger.warning("No 'summarizer' agent — using fallback")
             self._fallback_compile(task_id)
             return

@@ -9,7 +9,7 @@ from tools.tool_manager import tool_manager
 from tools.execution_context import execution_context
 from config.time_utils import get_utc_timestamp
 from api.websocket.event_bus import event_bus
-from .agent_store import agent_store
+from .agent_store import get_agent
 
 
 class MainAgent:
@@ -24,7 +24,7 @@ class MainAgent:
         self.message_history: List[Dict[str, str]] = []
         self.max_history_length = max_history_length
 
-        agent_data = agent_store.get(agent_id)
+        agent_data = get_agent(agent_id)
         self.system_context = agent_data["system_prompt"]
         self._tools_schema = self._build_tools_schema(agent_data["tools"])
 

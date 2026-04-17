@@ -5,8 +5,6 @@ from typing import Optional, Union, List
 from tools.tool_manager import tool_manager
 from database.validators import validate_dependencies
 from database.task_store import task_store
-from agents.agent_store import agent_store
-
 logger = logging.getLogger(__name__)
 
 
@@ -55,9 +53,6 @@ def _spawn_task(
     name: Optional[str] = None,
     description: Optional[str] = None,
 ) -> str:
-    if not agent_store.exists(agent_id):
-        raise ValueError(f"Agent '{agent_id}' not found in agent store.")
-
     task_store.get_task(task_id)  # raises KeyError if missing
 
     dep_ids = _parse_depends_on(depends_on)

@@ -7,7 +7,9 @@ interface Message {
 }
 
 const ChatPanel: React.FC = () => {
-    const [messages, setMessages] = useState<Message[]>([])
+    const [messages, setMessages] = useState<Message[]>(() => {
+        try { return JSON.parse(localStorage.getItem('maestro_chat') || '[]') } catch { return [] }
+    })
     const [input, setInput] = useState('')
     const [loading, setLoading] = useState(false)
     const bottomRef = useRef<HTMLDivElement>(null)
@@ -16,6 +18,10 @@ const ChatPanel: React.FC = () => {
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, [messages, loading])
+
+    useEffect(() => {
+        localStorage.setItem('maestro_chat', JSON.stringify(messages))
+    }, [messages])
 
     useEffect(() => {
         const el = textareaRef.current
@@ -54,6 +60,16 @@ const ChatPanel: React.FC = () => {
                 {messages.length === 0 && (
                     <div className="flex items-center justify-center h-full">
                         <p className="text-gray-500 text-sm">Say something. Ask for anything.</p>
+                    </div>
+                )}
+                {messages.length > 0 && (
+                    <div className="flex justify-center">
+                        <button
+                            onClick={() => { setMessages([]); api.clearChatSession() }}
+                            className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                        >
+                            Clear conversation
+                        </button>
                     </div>
                 )}
                 {messages.map((msg, i) => (

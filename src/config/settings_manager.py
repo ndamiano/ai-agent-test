@@ -5,7 +5,7 @@ from typing import Dict, Any
 from threading import Lock
 import logging
 
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import ValidationError
 from config.settings_schema import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class SettingsManager:
     def _validate_settings(self, settings: Dict[str, Any]) -> None:
         try:
             AppSettings(**settings)
-        except PydanticValidationError as e:
+        except ValidationError as e:
             raise ValueError(str(e)) from e
 
     def get_connector_settings(self, connector_type: str) -> Dict[str, Any]:

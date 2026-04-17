@@ -48,7 +48,8 @@ def _http_post(url: str, data: dict) -> dict:
         headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+        body = resp.read()
+        return json.loads(body) if body else {}
 
 
 def _http_post_empty(url: str) -> None:
@@ -93,7 +94,7 @@ def _lmstudio_unload(model_id: str, wait_timeout: int = 30) -> bool:
     """Unload a model from LM Studio and wait until it is no longer loaded."""
     try:
         base_url = _get_lmstudio_base_url()
-        _http_post(f"{base_url}/api/v0/models/unload", {"identifier": model_id})
+        _http_post(f"{base_url}/api/v1/models/unload", {"instance_id": model_id})
         logger.info(f"LM Studio: unload requested for {model_id}, waiting for VRAM release...")
     except Exception as e:
         logger.warning(f"LM Studio unload failed: {e}")
@@ -121,7 +122,7 @@ def _lmstudio_load(model_id: str) -> bool:
     """Load a model into LM Studio. Returns True on success."""
     try:
         base_url = _get_lmstudio_base_url()
-        _http_post(f"{base_url}/api/v0/models/load", {"identifier": model_id})
+        _http_post(f"{base_url}/api/v1/models/load", {"model": model_id})
         logger.info(f"LM Studio: loaded {model_id}")
         return True
     except Exception as e:
@@ -129,14 +130,33 @@ def _lmstudio_load(model_id: str) -> bool:
         return False
 
 
-def _comfyui_free_vram(endpoint: str, wait_secs: int = 5) -> None:
-    """Ask ComfyUI to release models from VRAM and wait for the release to settle."""
+def _comfyui_free_vram(endpoint: str, timeout: int = 60) -> None:
+    """Ask ComfyUI to release models from VRAM, then poll until VRAM usage stabilizes."""
     try:
         _http_post(f"{endpoint}/free", {"unload_models": True, "free_memory": True})
-        logger.info(f"ComfyUI VRAM freed, waiting {wait_secs}s for release to settle...")
-        time.sleep(wait_secs)
     except Exception as e:
         logger.warning(f"ComfyUI /free failed: {e}")
+        return
+
+    # Poll /system_stats until torch_vram_free stabilizes (two consecutive equal readings)
+    deadline = time.time() + timeout
+    prev_free = None
+    while time.time() < deadline:
+        time.sleep(2)
+        try:
+            stats = _http_get(f"{endpoint}/system_stats")
+            devices = stats.get("devices", [])
+            if not devices:
+                break
+            vram_free = devices[0].get("torch_vram_free", 0)
+            if prev_free is not None and vram_free == prev_free:
+                logger.info(f"ComfyUI VRAM stabilized: {vram_free // 1024 // 1024} MiB free")
+                return
+            prev_free = vram_free
+        except Exception:
+            break
+
+    logger.warning("ComfyUI VRAM poll timed out or failed, proceeding anyway")
 
 
 def _save_images_to_working_dir(images: list, endpoint: str) -> list:

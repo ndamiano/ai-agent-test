@@ -42,14 +42,12 @@ async def startup_event():
         from tools.file_tools import register_file_tools
         from tools.system_tools import register_system_tools
         from tools.synthesis_tools import register_synthesis_tools
-        from tools.validation_tools import register_validation_tools
         from tools.orchestration_tools import register_orchestration_tools
         from tools.comfyui_tools import register_comfyui_tools
         register_task_tools()
         register_file_tools()
         register_system_tools()
         register_synthesis_tools()
-        register_validation_tools()
         register_orchestration_tools()
         register_comfyui_tools()
         logging.info("Tools registered successfully")

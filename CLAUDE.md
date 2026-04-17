@@ -4,22 +4,20 @@ An AI platform that makes things. The goal is simple: user says "make me a game"
 
 The north star is magical output. A novel that rivals Dostoevsky. A game worth sharing. Not "technically completed" — actually good.
 
-**MVP**: Maestro agent + Ren'Py pipeline + basic UI. See `ROADMAP.md` for the full plan.
+See `ROADMAP.md` for the full plan and current status.
 
 ---
 
 ## How it works
 
-The user talks to Maestro. Maestro figures out what to make and makes it — either directly via tools, or by firing pipelines that are specialized for specific tasks. Maestro doesn't need to know how a pipeline works internally. It fires `run_pipeline("renpy_game")`, eventually gets back a completed game. Pipelines feel like tool calls.
+The user talks to Maestro via a chat interface. Maestro figures out what to make and makes it — either directly via tools, or by firing pipelines that are specialized for specific tasks. Maestro doesn't need to know how a pipeline works internally. It fires `run_pipeline("renpy")`, eventually gets back a completed game. Pipelines feel like tool calls.
 
 **Pipelines are the key architectural idea.** They:
 - Limit what's in the main agent's context (it sees inputs and outputs, not every intermediate step)
 - Are specialized and optimized for their domain
 - Can call other pipelines
-- Can run in parallel when there are no dependencies between them (async — fire and eventually resolve)
+- Can run in parallel (queue + gather pattern)
 - Have strict dependency ordering when outputs feed into each other
-
-The agent itself is also effectively a pipeline — some things can be created upfront, some in parallel, some have strict dependencies.
 
 ---
 
@@ -28,25 +26,28 @@ The agent itself is also effectively a pipeline — some things can be created u
 ```
 src/
   agents/       MainAgent (agentic loop), MaestroAgent (wave orchestration), RefinerAgent
-  api/          FastAPI routers, websocket event bus, request/response models
-  config/       settings_schema.py (Pydantic), settings_manager.py (singleton), agents/*.json
+                chat.json / maestro.json / worker.json — agent configs + system prompts
+  api/          FastAPI routers (tasks, chat, settings, agents, outputs, websocket)
+  config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
   database/     task_store.py (SQLite)
   engine/       pipeline_runner.py — DAG executor for LLM + Fn stages
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
-  pipelines/    renpy/ — 8-node pipeline (story→settings→characters→scenes→dialogue→package→images→build)
-  tools/        tool_manager.py (decorator registration), orchestration_tools, system_tools
+  pipelines/    registry.py — pipeline registry
+                renpy/ — 8-node pipeline (story→settings→characters→scenes→dialogue→package→images→build)
+  tools/        tool_manager.py, orchestration_tools, system_tools, pipeline_tools
 ```
 
 **Inference path (agents)**: `MainAgent` → `MessageBuilder` → `get_connector()` → `OpenAICompatibleConnector`  
 **Inference path (pipeline)**: `PipelineRunner._call_llm` → `call_llm()` → connector directly  
-**Known gap**: pipeline bypasses MessageBuilder and rate limiter — unification is a tracked todo.
+**Known gap**: pipeline bypasses MessageBuilder + rate limiter — tracked in ROADMAP.md.
+
+**Adding a pipeline**: implement in `src/pipelines/<name>/`, register in `src/pipelines/registry.py`. No other changes needed.
 
 **Settings**: `src/config/settings.json` (gitignored). Copy from `settings.example.json`.  
 **Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `max_waves`, `use_json_mode`. Use `small` for local models.
 
 **Run backend**: `source venv/bin/activate && python run.py`  
 **Run frontend**: `cd frontend && npm run dev`  
-**Run pipeline directly**: `python run_pipeline.py`  
 **Run tests**: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
 
 ---
@@ -76,13 +77,5 @@ Small models aren't dumb — they're easily distracted. They follow the most rec
 
 1. **Sequential field groups over monolithic JSON** — split complex objects into 2-3 focused calls (e.g. character identity / appearance / voice), merge results. Each call = simpler schema, focused attention, higher reliability.
 2. **Output skeleton before field descriptions** — show exact JSON structure first, then explain fields. Model fills a skeleton rather than constructing from scratch.
-3. **Minimum injected context per stage** — trim `{story_beats|json}` etc. to only what the stage actually needs. Large blobs burn attention.
+3. **Minimum injected context per stage** — trim injected JSON to only what the stage actually needs. Large blobs burn attention.
 4. **Use `model_category: "small"`** in settings — enables tighter context budget, fewer iterations, JSON mode.
-
----
-
-## Open todos
-
-1. Unify pipeline inference path with agent inference path
-2. Break character generation into sequential field-group calls
-3. Tighten pipeline prompts (output skeleton + trim injected JSON)

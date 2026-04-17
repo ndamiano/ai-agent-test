@@ -7,14 +7,15 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 ## Current state
 
 - Maestro agent (wave orchestration) + Worker agents (tool execution)
+- Chat agent (conversational mode, persistent session, full tool access)
 - Ren'Py pipeline (8-node DAG: story → settings → characters → scenes → dialogue → package → images → build)
+- Pipeline registry + `run_pipeline` / `queue_pipeline` / `run_queued_pipelines` tools
+- Agents can fire pipelines directly — the two systems are connected
 - OpenAI-compatible connector (LMStudio, Cline, OpenRouter)
 - Tool manager (decorator-based, auto schema inference)
 - Task store (SQLite) + WebSocket event bus
 - Model category settings (large/medium/small)
-- Basic React frontend
-
-**Critical gap**: agents and pipelines are completely separate systems. No agent can fire a pipeline. The two biggest subsystems don't talk to each other.
+- React frontend: Chat tab + Tasks tab, branding as Maestro
 
 ---
 
@@ -24,26 +25,20 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 Pipelines are the key abstraction. They limit what's in the agent's context — it fires `run_pipeline("renpy_game")` and eventually gets back a completed game. It never sees intermediate steps. Pipelines are specialized, optimized, and composable.
 
 ### Pipeline execution model: queue + gather
-Three tools for pipeline execution:
-
 - **`run_pipeline(name, brief)`** — fire a single pipeline, block until done, return result
 - **`queue_pipeline(name, brief)`** — add a pipeline to the session queue (non-blocking)
-- **`run_queued_pipelines()`** — run all queued pipelines in parallel, block until all complete, return all results
-
-This gives the agent natural parallelism: queue independent work (characters, settings, music), then gather — without needing real async in the agent loop.
+- **`run_queued_pipelines()`** — run all queued pipelines in parallel, block until all complete
 
 ### Conversational mode
-A persistent chat agent with full tool access including pipeline tools. The "genie" interface — user talks, agent decides what to make and makes it. Simpler than Maestro; just MainAgent with the right tools and a long-lived session.
+Persistent chat agent (MainAgent + chat.json config) with full tool + pipeline access. The "genie" interface. Chat history persists in localStorage.
 
 ---
 
-## Phase 1 — Close the MVP gap
-*Blocking. Nothing else matters until this works end-to-end.*
-
-- [ ] **Pipeline registry** — named dict of available pipelines + what brief params they expect
-- [ ] **`run_pipeline` / `queue_pipeline` / `run_queued_pipelines` tools** — bridge between agents and pipelines
-- [ ] **Conversational agent mode** — persistent chat session with tool access; entry point for "man I'm bored" → game
-- [ ] **Inference path unification** — pipeline stages go through MessageBuilder + rate limiter, same as agents
+## Phase 1 — Close the MVP gap ✓
+- [x] Pipeline registry
+- [x] `run_pipeline` / `queue_pipeline` / `run_queued_pipelines` tools
+- [x] Conversational agent mode
+- [ ] **Inference path unification** — pipeline stages bypass MessageBuilder + rate limiter; should go through same path as agents
 
 ## Phase 2 — Output quality
 *Make it produce actually good output, especially on local/smaller models.*
@@ -53,16 +48,29 @@ A persistent chat agent with full tool access including pipeline tools. The "gen
 - [ ] **Pipeline retry with smarter re-prompting** — on JSON failure, retry with stricter corrective prompt rather than identical prompt
 - [ ] **Progress events from pipeline stages** — WebSocket updates so user knows what's happening mid-pipeline
 
-## Phase 3 — Composition and scale
-*Make it easy to build more complex things.*
+## Phase 3 — More pipelines
+*Coverage first. Every new pipeline makes Maestro feel more like a genie.*
+
+Priority order driven by impact and "magical moment" potential:
+
+- [ ] **Short story / creative writing pipeline** — prose output, chapter structure, character voices
+- [ ] **Music generation pipeline** — integrate with a music model (e.g. MusicGen, Suno API)
+- [ ] **Standalone character portrait pipeline** — character brief → multiple images (expressions, outfits)
+- [ ] **RPG asset pipeline** — tilesets, sprites, item icons for RPG Maker or similar
+- [ ] **More pipelines** — driven by user demand
+
+Each new pipeline should be registerable in `pipelines/registry.py` with no other changes required.
+
+## Phase 4 — Composition and scale
+*Make pipelines composable and the platform more powerful.*
 
 - [ ] **Pipelines calling pipelines** — formalize `run_pipeline` as callable from within FnStages
 - [ ] **Parallel pipeline execution** — queue/gather pattern available within pipelines too
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
-- [ ] **More pipelines** — music generation, creative writing, image workflows, etc.
+- [ ] **Automated prompt optimization** — evaluation suite + LLM-as-judge scorer + hill-climbing loop to improve stage prompts. Worthwhile once there are 3+ pipelines and a body of outputs to evaluate against.
 
-## Phase 4 — Accessibility
-*Once quality is there, make it easy for everyone.*
+## Phase 5 — Accessibility
+*Once quality and coverage are there, make it easy for everyone.*
 
 - [ ] Auto-install and manage ComfyUI / LMStudio
 - [ ] Model selection assistant (help user pick the right model)
@@ -71,8 +79,6 @@ A persistent chat agent with full tool access including pipeline tools. The "gen
 ---
 
 ## What doesn't need to change
-
-The following are solid and should not be refactored without a strong reason:
 
 - Tool manager decorator pattern + schema inference
 - MessageBuilder context budgeting and deduplication

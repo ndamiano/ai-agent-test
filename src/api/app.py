@@ -44,6 +44,7 @@ async def startup_event():
         import tools.synthesis_tools
         import tools.orchestration_tools
         import tools.comfyui_tools
+        import tools.pipeline_tools
         logging.info("Tools registered successfully")
 
     except Exception as e:

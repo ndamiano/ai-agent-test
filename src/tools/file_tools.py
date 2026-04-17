@@ -1,5 +1,3 @@
-"""File tools for reading, writing, editing, and searching files"""
-
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
@@ -14,21 +12,6 @@ def read_file(
     start_line: Optional[int] = None,
     end_line: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """
-    Read a file from the filesystem.
-
-    When executed within a task context with a working directory, relative paths
-    are automatically scoped to the working directory.
-    Absolute paths are never modified.
-
-    Args:
-        file_path: Path to the file (absolute or relative)
-        start_line: Optional starting line number (1-indexed)
-        end_line: Optional ending line number (1-indexed, inclusive)
-
-    Returns:
-        Dict containing success status, file path, and content
-    """
     try:
         from tools.execution_context import resolve_base_path
         path = resolve_base_path(file_path)
@@ -102,21 +85,6 @@ def write_to_file(
     content: str,
     create_dirs: bool = True,
 ) -> Dict[str, Any]:
-    """
-    Write content to a file, creating it if it doesn't exist.
-
-    When executed within a task context with a working directory, relative paths
-    are automatically scoped to the working directory.
-    Absolute paths are never modified.
-
-    Args:
-        file_path: Path to the file (absolute or relative)
-        content: Content to write to the file
-        create_dirs: Whether to create parent directories if they don't exist
-
-    Returns:
-        Dict containing success status and file path
-    """
     try:
         from tools.execution_context import resolve_base_path
         path = resolve_base_path(file_path)
@@ -150,23 +118,6 @@ def edit_file(
     old_text: str,
     new_text: str,
 ) -> Dict[str, Any]:
-    """
-    Edit a file by replacing old_text with new_text.
-
-    This is safer than rewriting entire files - just specify what to change.
-
-    When executed within a task context with a working directory, relative paths
-    are automatically scoped to the working directory.
-    Absolute paths are never modified.
-
-    Args:
-        file_path: Path to the file (absolute or relative)
-        old_text: Text to find and replace (must match exactly)
-        new_text: Text to replace it with
-
-    Returns:
-        Dict containing success status and details
-    """
     try:
         from tools.execution_context import resolve_base_path
         path = resolve_base_path(file_path)
@@ -227,22 +178,6 @@ def list_files(
     recursive: bool = False,
     max_depth: int = 3,
 ) -> Dict[str, Any]:
-    """
-    List files and directories.
-
-    When executed within a task context with a working directory, relative paths
-    are automatically scoped to the working directory.
-    Absolute paths are never modified.
-
-    Args:
-        directory: Directory path to list (default: current directory)
-        pattern: Optional glob pattern to filter results (e.g., "*.py", "**/*.js")
-        recursive: Whether to search recursively
-        max_depth: Maximum depth for recursive search (default: 3)
-
-    Returns:
-        Dict containing success status and list of files/directories
-    """
     try:
         from tools.execution_context import resolve_base_path
         path = resolve_base_path(directory)
@@ -321,63 +256,8 @@ def list_files(
             "directory": directory
         }
 
-def delete_file(
-    file_path: str
-) -> Dict[str, Any]:
-    """
-    Delete a file from the filesystem.
-
-    When executed within a task context with a working directory, relative paths
-    are automatically scoped to the working directory.
-    Absolute paths are never modified.
-
-    Args:
-        file_path: Path to the file (absolute or relative)
-
-    Returns:
-        Dict containing success status and file path
-    """
-    try:
-        from tools.execution_context import resolve_base_path
-        path = resolve_base_path(file_path)
-
-        if not path.exists():
-            return {
-                "success": False,
-                "error": f"File not found: {file_path}",
-                "file_path": str(path)
-            }
-
-        if not path.is_file():
-            return {
-                "success": False,
-                "error": f"Path is not a file: {file_path}",
-                "file_path": str(path)
-            }
-
-        path.unlink()
-
-        result = {
-            "success": True,
-            "file_path": str(path),
-            "message": f"File deleted successfully: {path}"
-        }
-
-        return result
-
-    except Exception as e:
-        error_msg = f"Failed to delete file {file_path}: {str(e)}"
-        logger.error(error_msg)
-        return {
-            "success": False,
-            "error": error_msg,
-            "file_path": file_path
-        }
-
 
 def register_file_tools():
-    """Register file tools with the tool manager"""
-
     tool_manager.register_tool(
         name="read_file",
         description=(
@@ -502,24 +382,4 @@ def register_file_tools():
         auto_inject_context=False
     )
 
-    tool_manager.register_tool(
-        name="delete_file",
-        description=(
-            "Delete a file from the filesystem. "
-            "Use with caution - this cannot be undone."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Path to the file to delete"
-                }
-            },
-            "required": ["file_path"]
-        },
-        fn=delete_file,
-        auto_inject_context=False
-    )
-
-    logger.info("File tools registered: read_file, write_to_file, edit_file, list_files, delete_file")
+    logger.info("File tools registered: read_file, write_to_file, edit_file, list_files")

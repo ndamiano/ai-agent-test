@@ -8,7 +8,6 @@
         "edit_file",
         "read_file",
         "list_files",
-        "delete_file",
         "execute_command",
         "web_search",
         "web_fetch",

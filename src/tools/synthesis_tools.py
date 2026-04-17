@@ -7,14 +7,6 @@ from database.task_store import task_store
 
 logger = logging.getLogger(__name__)
 
-
-def _list_context_keys(task_id: Optional[str] = None) -> str:
-    from tools.execution_context import resolve_task_id
-    task_id = resolve_task_id(task_id)
-    keys = list(task_store.get_all_context(task_id).keys())
-    return json.dumps({"task_id": task_id, "keys": keys, "count": len(keys)})
-
-
 def _list_subtasks(task_id: Optional[str] = None) -> str:
     from tools.execution_context import resolve_task_id
     task_id = resolve_task_id(task_id)
@@ -34,16 +26,7 @@ def _list_subtasks(task_id: Optional[str] = None) -> str:
         })
     return json.dumps({"task_id": task_id, "subtasks": summaries, "count": len(summaries)})
 
-
 def register_synthesis_tools() -> None:
-    tool_manager.register_tool(
-        name="list_context_keys",
-        description="List all context keys available for the current task.",
-        parameters={"type": "object", "properties": {}, "required": []},
-        fn=_list_context_keys,
-        auto_inject_context=True,
-    )
-
     tool_manager.register_tool(
         name="list_subtasks",
         description="List all subtasks for the current task with status, agent, goal, and output preview.",

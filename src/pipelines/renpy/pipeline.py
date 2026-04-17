@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from engine.pipeline_runner import Pipeline, Node, LLMStage, FnStage
+from pipelines.runner import Pipeline, Node, LLMStage, FnStage
 from pipelines.renpy.fns import dialogue, generate_characters, package, generate_images, build
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"

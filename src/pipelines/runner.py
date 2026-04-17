@@ -1,13 +1,12 @@
 import json
 import logging
 import re
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from llm_clients.message_builder import MessageBuilder
+from llm_clients.inference import PipelineAgent, strip_fences
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,6 @@ class Pipeline:
 
 
 def render_template(template_path: Path, inputs: Dict) -> str:
-    """
-    Substitute {variable} and {variable|json} tokens in a prompt template.
-    Missing keys render as [MISSING:key].
-    """
     if not template_path.exists():
         raise FileNotFoundError(f"Prompt template not found: {template_path}")
 
@@ -72,17 +67,8 @@ def render_template(template_path: Path, inputs: Dict) -> str:
     return re.sub(r"\{([A-Za-z_][A-Za-z0-9_|]*)\}", replace, template_str)
 
 
-def strip_fences(content: str) -> str:
-    """Strip markdown code fences that models occasionally emit despite instructions."""
-    if content.startswith("```"):
-        content = content.split("```")[1]
-        if content.startswith("json"):
-            content = content[4:]
-    return content.strip()
-
-
 def _enrich_inputs(inputs: dict) -> dict:
-    """Add slim reference lists derived from full objects, for prompts that don't need all fields."""
+    """Add slim reference lists so prompts can reference id/name/role without full objects."""
     extra = {}
     chars = inputs.get("characters", [])
     if isinstance(chars, dict):
@@ -99,44 +85,11 @@ def _enrich_inputs(inputs: dict) -> dict:
     return {**inputs, **extra}
 
 
-def call_llm(connector, messages: list) -> dict:
-    """Call the connector with streaming if available, fall back to non-streaming."""
-    if not hasattr(connector, "generate_with_tools_stream"):
-        return connector.generate_with_tools(messages, [])
-
-    accumulated = ""
-    envelope: dict = {}
-    try:
-        for chunk in connector.generate_with_tools_stream(messages, []):
-            if "error" in chunk:
-                logger.warning(f"Streaming failed, falling back: {chunk['error']}")
-                return connector.generate_with_tools(messages, [])
-            if not envelope:
-                envelope = {k: v for k, v in chunk.items() if k != "choices"}
-            for choice in chunk.get("choices", []):
-                delta = choice.get("delta", {})
-                if delta.get("content"):
-                    accumulated += delta["content"]
-    except Exception as e:
-        logger.warning(f"Streaming error, falling back: {e}")
-        return connector.generate_with_tools(messages, [])
-
-    if not accumulated:
-        logger.warning("Streaming produced empty content, falling back to non-streaming")
-        return connector.generate_with_tools(messages, [])
-
-    return {
-        **envelope,
-        "choices": [{"message": {"role": "assistant", "content": accumulated}}],
-    }
-
-
 class PipelineRunner:
 
-    def __init__(self, working_dir: str, connector=None):
+    def __init__(self, working_dir: str):
         self.working_dir = Path(working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
-        self._connector = connector
 
     def run(self, pipeline: Pipeline, brief: Dict[str, Any]) -> bool:
         self._write("brief.json", brief)
@@ -210,35 +163,29 @@ class PipelineRunner:
         return False
 
     def _run_llm_stage(self, pipeline: Pipeline, stage: LLMStage) -> Dict:
-        inputs = self._load_all()
-        inputs = _enrich_inputs(inputs)
+        inputs = _enrich_inputs(self._load_all())
         prompt = render_template(pipeline.prompts_dir / stage.prompt_template, inputs)
 
-        messages = MessageBuilder(
-            "You are a precise assistant. Output only valid JSON. "
-            "No markdown, no explanation, no code fences."
-        ).add_user(prompt).build()
+        agent = PipelineAgent()
+        content = strip_fences(agent.send(prompt))
 
-        result = self._call_llm(messages)
-        if "error" in result:
-            raise RuntimeError(f"LLM error: {result['error']}")
-
-        content = strip_fences(result["choices"][0]["message"]["content"].strip())
-
+        # One correction attempt before letting the outer retry loop handle it
         try:
             return json.loads(content)
-        except json.JSONDecodeError as e:
-            raise RuntimeError(f"LLM returned invalid JSON: {e}\n\nContent:\n{content}")
-
-    def _call_llm(self, messages: list) -> dict:
-        return call_llm(self._get_connector(), messages)
+        except json.JSONDecodeError:
+            content = strip_fences(agent.send(
+                "Invalid JSON. Return only the JSON object, no other text."
+            ))
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"LLM returned invalid JSON: {e}\n\nContent:\n{content}")
 
     def _run_fn_stage(self, stage: FnStage) -> Any:
         missing = [f for f in stage.inputs if not (self.working_dir / f).exists()]
         if missing:
             raise FileNotFoundError(f"Missing inputs for [{stage.id}]: {missing}")
-        inputs = self._load(stage.inputs)
-        return stage.fn(inputs, self.working_dir)
+        return stage.fn(self._load(stage.inputs), self.working_dir)
 
     def _validate(self, label: str, stage: Stage, data: Any) -> bool:
         if not isinstance(data, dict):
@@ -253,7 +200,6 @@ class PipelineRunner:
         return True
 
     def _load_all(self) -> Dict:
-        """Load every JSON file in the working dir, merging top-level keys so templates can reference them directly."""
         merged: Dict = {}
         for path in sorted(self.working_dir.glob("*.json")):
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -275,10 +221,3 @@ class PipelineRunner:
     def _write(self, filename: str, data: Any):
         path = self.working_dir / filename
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    def _get_connector(self):
-        if self._connector is None:
-            sys.path.insert(0, str(Path(__file__).parent.parent))
-            from llm_clients.connector_selector import get_connector
-            self._connector = get_connector()
-        return self._connector

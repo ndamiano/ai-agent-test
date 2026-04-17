@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
-from engine.pipeline_runner import Pipeline, PipelineRunner
+from pipelines.runner import Pipeline, PipelineRunner
 from config.settings_manager import settings_manager
 
 

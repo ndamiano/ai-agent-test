@@ -30,16 +30,16 @@ src/
   api/          FastAPI routers (tasks, chat, settings, agents, outputs, websocket)
   config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
   database/     task_store.py (SQLite)
-  engine/       pipeline_runner.py — DAG executor for LLM + Fn stages
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
-  pipelines/    registry.py — pipeline registry
+                inference.py — PipelineAgent, call_llm (shared inference primitives)
+  pipelines/    runner.py — DAG executor for LLM + Fn stages
+                registry.py — pipeline registry
                 renpy/ — 8-node pipeline (story→settings→characters→scenes→dialogue→package→images→build)
   tools/        tool_manager.py, orchestration_tools, system_tools, pipeline_tools
 ```
 
 **Inference path (agents)**: `MainAgent` → `MessageBuilder` → `get_connector()` → `OpenAICompatibleConnector`  
-**Inference path (pipeline)**: `PipelineRunner._call_llm` → `call_llm()` → connector directly  
-**Known gap**: pipeline bypasses MessageBuilder + rate limiter — tracked in ROADMAP.md.
+**Inference path (pipelines)**: `PipelineAgent.send()` → `MessageBuilder` → `call_llm()` → connector (same path, unified)
 
 **Adding a pipeline**: implement in `src/pipelines/<name>/`, register in `src/pipelines/registry.py`. No other changes needed.
 

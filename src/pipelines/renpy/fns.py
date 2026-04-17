@@ -6,29 +6,13 @@ import zlib
 from pathlib import Path
 from typing import Dict
 
-from engine.pipeline_runner import render_template, strip_fences, call_llm
-from llm_clients.message_builder import MessageBuilder
+from pipelines.runner import render_template
+from llm_clients.inference import PipelineAgent, strip_fences
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-# Module-level lazy connector — avoids repeated sys.path manipulation
-_src_dir = str(Path(__file__).parent.parent.parent)
-if _src_dir not in sys.path:
-    sys.path.insert(0, _src_dir)
-
-_connector = None
-
-
-def _get_connector():
-    global _connector
-    if _connector is None:
-        from llm_clients.connector_selector import get_connector
-        _connector = get_connector()
-    return _connector
-
 
 def _parse_count(val) -> int:
-    """Parse "2" or "3-4" → int, taking upper bound."""
     s = str(val).strip()
     if "-" in s:
         return int(s.split("-")[-1])
@@ -36,7 +20,6 @@ def _parse_count(val) -> int:
 
 
 def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
-    connector = _get_connector()
     template_path = _PROMPTS_DIR / "characters.txt"
 
     brief = inputs.get("brief", {})
@@ -67,28 +50,22 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
             "existing_characters": characters,
         }
         prompt = render_template(template_path, ctx)
-        builder = MessageBuilder(
+        agent = PipelineAgent(
             "You are a precise creative writing assistant. Output only valid JSON. "
             "No markdown, no explanation, no code fences."
-        ).add_user(prompt)
+        )
 
+        content = strip_fences(agent.send(prompt))
         success = False
-        for attempt in range(1, 4):
-            result = call_llm(connector, builder.build())
-            if "error" in result:
-                print(f"    [characters]  LLM error on attempt {attempt}: {result['error']}")
-                continue
-            raw = result["choices"][0]["message"]["content"].strip()
-            content = strip_fences(raw)
+        for _ in range(2):  # up to 2 correction attempts
             try:
-                char = json.loads(content)
-                characters.append(char)
+                characters.append(json.loads(content))
                 success = True
                 break
             except json.JSONDecodeError:
-                builder.add_assistant(raw).add_user(
+                content = strip_fences(agent.send(
                     "Invalid JSON. Return only the JSON object, no other text."
-                )
+                ))
 
         if not success:
             raise RuntimeError(f"Failed to generate character {label}")
@@ -97,8 +74,6 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
 
 
 def dialogue(inputs: Dict, working_dir: Path) -> Dict:
-    """One LLM call per scene to keep output size bounded and avoid truncation."""
-    connector = _get_connector()
     template_path = _PROMPTS_DIR / "dialogue.txt"
 
     scenes = inputs.get("scenes", [])
@@ -115,14 +90,15 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
     settings_by_id = {s["id"]: s for s in settings}
 
     brief = inputs.get("brief", {})
+    _system = (
+        "You are a precise creative writing assistant. Output only valid JSON. "
+        "No markdown, no explanation, no code fences."
+    )
 
     completed_scenes = []
     for i, scene in enumerate(scenes):
         label = scene.get("title", scene.get("id", str(i + 1)))
         print(f"    [dialogue]  scene {i + 1}/{len(scenes)}: {label}")
-
-        setting_id = scene.get("setting_id", "")
-        current_setting = settings_by_id.get(setting_id)
 
         scene_inputs = {
             "brief":           brief,
@@ -132,35 +108,23 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
             "lines_per_scene": brief.get("lines_per_scene", "4-6"),
             "characters":      characters,
             "scene":           scene,
-            "setting":         current_setting or {},
+            "setting":         settings_by_id.get(scene.get("setting_id", ""), {}),
         }
         prompt = render_template(template_path, scene_inputs)
+        agent = PipelineAgent(_system)
 
-        _system = (
-            "You are a precise creative writing assistant. Output only valid JSON. "
-            "No markdown, no explanation, no code fences."
-        )
-        builder = MessageBuilder(_system).add_user(prompt)
-
+        content = strip_fences(agent.send(prompt))
         success = False
-        for attempt in range(1, 4):
-            messages = builder.build()
-            result = call_llm(connector, messages)
-            if "error" in result:
-                print(f"    [dialogue]  LLM error on attempt {attempt}: {result['error']}")
-                continue
-
-            raw = result["choices"][0]["message"]["content"].strip()
-            content = strip_fences(raw)
+        for _ in range(2):
             try:
                 completed_scenes.append(json.loads(content))
                 success = True
                 break
             except json.JSONDecodeError:
-                print(f"    [dialogue]  invalid JSON on attempt {attempt}, sending correction...")
-                builder.add_assistant(raw).add_user(
+                print(f"    [dialogue]  invalid JSON, sending correction...")
+                content = strip_fences(agent.send(
                     "Invalid JSON. Return only the JSON object, no other text."
-                )
+                ))
 
         if not success:
             raise RuntimeError(f"Failed to generate dialogue for scene: {label}")
@@ -297,15 +261,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 
 
 def _write_solid_png(path: Path, width: int, height: int, rgb: tuple):
-    """Write a solid-color PNG using only stdlib (zlib + struct)."""
     def chunk(tag: bytes, data: bytes) -> bytes:
         body = tag + data
         return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
 
     ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    row = b"\x00" + bytes(rgb) * width  # filter byte + RGB pixels
+    row = b"\x00" + bytes(rgb) * width
     raw = row * height
-    idat_data = zlib.compress(raw, level=1)  # level=1 fast; solid color compresses well
+    idat_data = zlib.compress(raw, level=1)
 
     png = (
         b"\x89PNG\r\n\x1a\n"
@@ -317,7 +280,6 @@ def _write_solid_png(path: Path, width: int, height: int, rgb: tuple):
 
 
 def _get_sdk_path() -> str:
-    """Read RenPy SDK path from settings, fall back to RENPY_SDK env var."""
     try:
         from config.settings_manager import settings_manager
         sdk = settings_manager.get_settings().get("renpy_sdk_path") or ""

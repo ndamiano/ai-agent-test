@@ -38,7 +38,7 @@ Persistent chat agent (MainAgent + chat.json config) with full tool + pipeline a
 - [x] Pipeline registry
 - [x] `run_pipeline` / `queue_pipeline` / `run_queued_pipelines` tools
 - [x] Conversational agent mode
-- [ ] **Inference path unification** — pipeline stages bypass MessageBuilder + rate limiter; should go through same path as agents
+- [x] **Inference path unification** — `PipelineAgent` in `llm_clients/inference.py`; pipeline stages now go through MessageBuilder + same connector path as agents
 
 ## Phase 2 — Output quality
 *Make it produce actually good output, especially on local/smaller models.*

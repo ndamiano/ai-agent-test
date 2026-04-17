@@ -74,64 +74,6 @@ class OpenAICompatibleConnector(BaseConnector):
             return result["data"]
         return result
 
-    def generate(self, prompt: str, context: str) -> str:
-        rate_limiter = get_llm_rate_limiter()
-        if not rate_limiter.acquire(blocking=True, timeout=10):
-            error_msg = "Rate limit exceeded: too many LLM requests"
-            logger.warning(error_msg)
-            raise RuntimeError(error_msg)
-
-        if context.strip():
-            full_prompt = f"Context:\n{context}\n\nUser Request:\n{prompt}"
-        else:
-            full_prompt = prompt
-
-        payload = {
-            "model": self.model_name,
-            "messages": [
-                {"role": "user", "content": full_prompt}
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens
-        }
-
-        session = self._get_session()
-
-        # Log the request
-        _log_request_to_file(
-            payload=payload,
-            endpoint=self.api_endpoint,
-            metadata={"method": "generate", "model": self.model_name}
-        )
-
-        try:
-            response = session.post(
-                self.api_endpoint,
-                json=payload,
-                headers=self._prepare_headers(),
-                timeout=60
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                result = self._unwrap_response(result)
-                response_content = result["choices"][0]["message"]["content"]
-                self._log_llm(full_prompt, response_content)
-                return response_content
-            else:
-                error_msg = f"Error: API returned status {response.status_code}: {response.text}"
-                self._log_llm(full_prompt, None, error_msg)
-                return error_msg
-
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Error connecting to API: {str(e)}"
-            self._log_llm(full_prompt, None, error_msg)
-            raise RuntimeError(error_msg)
-        except (KeyError, json.JSONDecodeError) as e:
-            error_msg = f"Error parsing API response: {str(e)}"
-            self._log_llm(full_prompt, None, error_msg)
-            raise RuntimeError(error_msg)
-
     def generate_with_tools(self, messages: list, tools: list = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):

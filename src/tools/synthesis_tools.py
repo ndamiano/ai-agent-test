@@ -35,4 +35,4 @@ def register_synthesis_tools() -> None:
         auto_inject_context=True,
     )
 
-    logger.info("Synthesis tools registered: list_context_keys, list_subtasks")
+    logger.info("Synthesis tools registered: list_subtasks")

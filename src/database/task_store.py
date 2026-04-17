@@ -25,10 +25,6 @@ class TaskStore:
     def __init__(self):
         init_db(get_db_path())
 
-    # -------------------------------------------------------------------------
-    # Tasks
-    # -------------------------------------------------------------------------
-
     def create_task(self, goal: str, execution_mode: str = "sequential", working_directory: Optional[str] = None,
                     parent_task_id: Optional[str] = None) -> Dict:
         task_id, now = str(uuid.uuid4()), get_utc_timestamp()
@@ -98,10 +94,6 @@ class TaskStore:
                 task["working_directory"] = "outputs"
         return tasks
 
-    # -------------------------------------------------------------------------
-    # Subtasks
-    # -------------------------------------------------------------------------
-
     def create_subtask(self, task_id: str, agent_id: str, goal: str, position: int,
                        depends_on: Optional[List[str]] = None,
                        input_context: Optional[Dict] = None,
@@ -159,17 +151,6 @@ class TaskStore:
                 (get_utc_timestamp(), task_id),
             )
             return cur.rowcount
-
-    def update_subtask_depends_on(self, subtask_id: str, depends_on: List[str]) -> None:
-        with get_manager().transaction() as conn:
-            conn.execute("UPDATE subtasks SET depends_on=?, updated_at=? WHERE id=?",
-                         (json.dumps(depends_on), get_utc_timestamp(), subtask_id))
-
-    def update_subtask_name_description(self, subtask_id: str, name: Optional[str] = None,
-                                        description: Optional[str] = None) -> None:
-        with get_manager().transaction() as conn:
-            conn.execute("UPDATE subtasks SET name=?, description=?, updated_at=? WHERE id=?",
-                         (name, description, get_utc_timestamp(), subtask_id))
 
     def set_subtask_output(self, subtask_id: str, output: str) -> None:
         subtask = self.get_subtask(subtask_id)

@@ -1,6 +1,5 @@
 from typing import Dict, List, Any, Callable, Optional
 import inspect
-from threading import Lock
 from functools import wraps
 
 import logging
@@ -12,7 +11,6 @@ logger = logging.getLogger(__name__)
 class ToolManager:
     def __init__(self):
         self._tools_registry: Dict[str, Dict[str, Any]] = {}
-        self._lock = Lock()
 
     def register_tool(self, name: str, description: str, parameters: Dict[str, Any], fn: Callable, auto_inject_context: bool = True) -> None:
         self._tools_registry[name] = {

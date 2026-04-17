@@ -1,11 +1,5 @@
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-class HealthResponse(BaseModel):
-    status: str
-    server: str
-    database: str
-    lmstudio: str
-    embedding: str
 
 class ErrorResponse(BaseModel):
     detail: str
@@ -46,19 +40,6 @@ class TaskDetailResponse(TaskResponse):
     events: List[EventResponse]
     context_keys: List[str]
     child_tasks: List['TaskResponse'] = []
-
-class AskResponse(BaseModel):
-    question: str
-    answer: str
-    context_used: List[str]
-
-class SystemStatusResponse(BaseModel):
-    status: str
-    lmstudio_connected: bool
-    embedding_connected: bool
-    lmstudio_url: str
-    agent_count: int
-    task_count: int
 
 class AgentResponse(BaseModel):
     id: str

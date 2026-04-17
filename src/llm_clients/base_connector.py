@@ -19,51 +19,6 @@ class BaseConnector:
         self._session = None
         self._session_lock = Lock()
 
-    def contextualize(self, context_data: Union[Any, List[Any]]) -> str:
-        """
-        Flatten generic objects into a readable string context
-
-        Args:
-            context_data: Object(s) to convert to string context
-
-        Returns:
-            Formatted string representation of the data
-        """
-        if context_data is None:
-            return ""
-
-        if not isinstance(context_data, list):
-            context_data = [context_data]
-
-        context_parts = []
-
-        for item in context_data:
-            if hasattr(item, '__dict__'):
-                context_parts.append(self._format_dict(item.__dict__, item.__class__.__name__))
-            elif isinstance(item, dict):
-                context_parts.append(self._format_dict(item))
-            elif isinstance(item, (list, tuple)):
-                context_parts.append(f"List: {', '.join(str(x) for x in item)}")
-            else:
-                context_parts.append(str(item))
-
-        return "\n\n".join(context_parts)
-
-    def _format_dict(self, data: dict, type_name: str = "Data") -> str:
-        """Helper to format dictionaries nicely"""
-        lines = [f"{type_name}:"]
-        for key, value in data.items():
-            if isinstance(value, (list, tuple)) and value:
-                if len(value) <= 3:
-                    lines.append(f"  {key}: {', '.join(str(v) for v in value)}")
-                else:
-                    lines.append(f"  {key}: {', '.join(str(v) for v in value[:3])}... ({len(value)} total)")
-            elif isinstance(value, dict):
-                lines.append(f"  {key}: {json.dumps(value, indent=4)}")
-            else:
-                lines.append(f"  {key}: {value}")
-        return "\n".join(lines)
-
     def _get_session(self) -> requests.Session:
         """Get or create a connection-pooled session for better performance."""
         with self._session_lock:

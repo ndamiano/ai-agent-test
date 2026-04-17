@@ -11,16 +11,6 @@ class CreateTaskRequest(BaseModel):
     execution_mode: Optional[str] = None
     working_directory: Optional[str] = None
 
-class AskRequest(BaseModel):
-    question: str
-
-class CreateAgentRequest(BaseModel):
-    id: str
-    name: str
-    description: str
-    system_prompt: str
-    tools: List[str] = []
-
 class LMStudioSettingsRequest(BaseModel):
     base_url: str
     model: str

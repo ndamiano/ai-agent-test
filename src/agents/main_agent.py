@@ -1,5 +1,8 @@
 from typing import List, Dict, Any, Optional
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 from llm_clients.connector_selector import get_connector
 from llm_clients.message_builder import MessageBuilder
 from tools.tool_manager import tool_manager
@@ -53,66 +56,82 @@ class MainAgent:
     def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:
         if hasattr(self.connector, 'generate_with_tools_stream'):
             try:
-                accumulated_response = None
+                # Envelope fields from the first chunk (id, model, etc.)
+                envelope: Dict[str, Any] = {}
+                # One accumulated message per choice index.
+                acc_messages: Dict[int, Dict[str, Any]] = {}
+                # Finish reasons per choice index.
+                finish_reasons: Dict[int, Any] = {}
 
                 for chunk in self.connector.generate_with_tools_stream(messages, tools):
                     if "error" in chunk:
-                        import logging
                         logging.warning(f"Streaming failed, falling back to non-streaming: {chunk['error']}")
                         return self.connector.generate_with_tools(messages, tools)
 
-                    if accumulated_response is None:
-                        accumulated_response = chunk
-                    else:
-                        if "choices" in chunk:
-                            for i, choice in enumerate(chunk["choices"]):
-                                if "delta" in choice:
-                                    delta = choice["delta"]
-                                    acc_choice = accumulated_response["choices"][i]
-                                    acc_message = acc_choice.get("message", {})
+                    # Capture envelope fields once.
+                    if not envelope:
+                        envelope = {k: v for k, v in chunk.items() if k != "choices"}
 
-                                    if "content" in delta and delta["content"]:
-                                        content = acc_message.get("content", "")
-                                        acc_message["content"] = content + delta["content"]
+                    for choice in chunk.get("choices", []):
+                        i = choice.get("index", 0)
+                        if i not in acc_messages:
+                            acc_messages[i] = {"role": "assistant", "content": "", "tool_calls": []}
 
-                                    if "tool_calls" in delta:
-                                        if "tool_calls" not in acc_message:
-                                            acc_message["tool_calls"] = []
+                        acc_msg = acc_messages[i]
+                        delta = choice.get("delta", {})
 
-                                        for tool_call_delta in delta["tool_calls"]:
-                                            idx = tool_call_delta.get("index", 0)
+                        if delta.get("content"):
+                            acc_msg["content"] += delta["content"]
 
-                                            while len(acc_message["tool_calls"]) <= idx:
-                                                acc_message["tool_calls"].append({
-                                                    "id": "",
-                                                    "type": "function",
-                                                    "function": {"name": "", "arguments": ""}
-                                                })
+                        for tc_delta in delta.get("tool_calls", []):
+                            idx = tc_delta.get("index", 0)
+                            while len(acc_msg["tool_calls"]) <= idx:
+                                acc_msg["tool_calls"].append({
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                })
+                            acc_tc = acc_msg["tool_calls"][idx]
+                            if tc_delta.get("id"):
+                                acc_tc["id"] = tc_delta["id"]
+                            if tc_delta.get("type"):
+                                acc_tc["type"] = tc_delta["type"]
+                            fn_delta = tc_delta.get("function", {})
+                            if fn_delta.get("name"):
+                                acc_tc["function"]["name"] += fn_delta["name"]
+                            if fn_delta.get("arguments"):
+                                acc_tc["function"]["arguments"] += fn_delta["arguments"]
 
-                                            acc_tool_call = acc_message["tool_calls"][idx]
+                        if choice.get("finish_reason"):
+                            finish_reasons[i] = choice["finish_reason"]
 
-                                            if "id" in tool_call_delta:
-                                                acc_tool_call["id"] = tool_call_delta["id"]
+                if not acc_messages:
+                    return {"error": "Empty streaming response"}
 
-                                            if "type" in tool_call_delta:
-                                                acc_tool_call["type"] = tool_call_delta["type"]
+                # Reconstruct a non-streaming response shape.
+                choices = []
+                for i, msg in sorted(acc_messages.items()):
+                    if not msg["tool_calls"]:
+                        del msg["tool_calls"]
+                    choices.append({
+                        "index": i,
+                        "message": msg,
+                        "finish_reason": finish_reasons.get(i),
+                        "logprobs": None,
+                    })
 
-                                            if "function" in tool_call_delta:
-                                                func_delta = tool_call_delta["function"]
-                                                acc_func = acc_tool_call["function"]
+                assembled = {**envelope, "choices": choices}
 
-                                                if "name" in func_delta:
-                                                    acc_func["name"] += func_delta["name"]
+                from llm_clients.openai_compatible_connector import _log_response_to_file
+                _log_response_to_file(
+                    assembled,
+                    getattr(self.connector, 'api_endpoint', 'unknown'),
+                    {"method": "generate_with_tools_stream", "model": getattr(self.connector, 'model_name', 'unknown')},
+                )
 
-                                                if "arguments" in func_delta:
-                                                    acc_func["arguments"] += func_delta["arguments"]
-
-                                    acc_choice["message"] = acc_message
-
-                return accumulated_response if accumulated_response else {"error": "Empty streaming response"}
+                return assembled
 
             except Exception as e:
-                import logging
                 logging.warning(f"Streaming failed, falling back to non-streaming: {e}")
                 return self.connector.generate_with_tools(messages, tools)
         else:
@@ -192,11 +211,23 @@ class MainAgent:
             content = message_response.get("content") or ""
             tool_calls = message_response.get("tool_calls", [])
 
+            # Strip malformed tool calls (empty name) before storing — LM Studio 500s
+            # if these are sent back in subsequent requests.
+            valid_tool_calls = [
+                tc for tc in tool_calls
+                if tc.get("type") == "function" and tc.get("function", {}).get("name")
+            ]
+            if len(valid_tool_calls) < len(tool_calls):
+                logger.warning(
+                    "Dropped %d malformed tool call(s) with empty name.",
+                    len(tool_calls) - len(valid_tool_calls),
+                )
+
             self.message_history.append(
-                MessageBuilder.assistant_msg(content, tool_calls or None)
+                MessageBuilder.assistant_msg(content, valid_tool_calls or None)
             )
 
-            if not tool_calls:
+            if not valid_tool_calls:
                 return content
 
             from tools.execution_context import get_task_id, get_subtask_id
@@ -204,31 +235,40 @@ class MainAgent:
             ctx_subtask_id = get_subtask_id()
 
             with execution_context(task_id=ctx_task_id, subtask_id=ctx_subtask_id, working_directory=path):
-                for tool_call in tool_calls:
-                    if tool_call.get("type") == "function":
-                        function = tool_call.get("function", {})
-                        tool_name = function.get("name")
-                        tool_call_id = tool_call.get("id")
+                for tool_call in valid_tool_calls:
+                    function = tool_call.get("function", {})
+                    tool_name = function.get("name")
+                    tool_call_id = tool_call.get("id")
 
-                        arguments = {}
-                        try:
-                            arguments = json.loads(function.get("arguments", "{}"))
+                    arguments = {}
+                    try:
+                        raw_args = function.get("arguments") or "{}"
+                        # Some local models wrap args in markdown fences or emit bare "".
+                        raw_args = raw_args.strip()
+                        if raw_args.startswith("```"):
+                            raw_args = raw_args.split("```")[1]
+                            if raw_args.startswith("json"):
+                                raw_args = raw_args[4:]
+                            raw_args = raw_args.strip()
+                        if not raw_args:
+                            raw_args = "{}"
+                        arguments = json.loads(raw_args)
 
-                            result = tool_manager.useTool(tool_name, **arguments)
+                        result = tool_manager.useTool(tool_name, **arguments)
 
-                            self._broadcast_tool_usage(tool_name, arguments, 'success')
+                        self._broadcast_tool_usage(tool_name, arguments, 'success')
 
-                            self.message_history.append(
-                                MessageBuilder.tool_msg(tool_call_id, str(result))
-                            )
+                        self.message_history.append(
+                            MessageBuilder.tool_msg(tool_call_id, str(result))
+                        )
 
-                        except Exception as e:
+                    except Exception as e:
 
-                            self._broadcast_tool_usage(tool_name, arguments, 'failed')
+                        self._broadcast_tool_usage(tool_name, arguments, 'failed')
 
-                            self.message_history.append(
-                                MessageBuilder.tool_msg(tool_call_id, f"Tool '{tool_name}' failed: {str(e)}")
-                            )
+                        self.message_history.append(
+                            MessageBuilder.tool_msg(tool_call_id, f"Tool '{tool_name}' failed: {str(e)}")
+                        )
 
             iteration += 1
 

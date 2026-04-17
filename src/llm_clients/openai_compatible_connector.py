@@ -12,22 +12,31 @@ from llm_clients.rate_limiter import get_llm_rate_limiter
 logger = logging.getLogger(__name__)
 
 
-def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
-    log_file = "logs/llm_requests.log"
+def _write_log(log_file: str, entry: dict):
+    try:
+        with open(log_file, "a") as f:
+            f.write(json.dumps(entry, indent=2))
+            f.write("\n" + "="*80 + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to log to {log_file}: {e}")
 
-    log_entry = {
+
+def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
+    _write_log("logs/llm_requests.log", {
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint,
         "payload": payload["messages"],
         "metadata": metadata or {}
-    }
+    })
 
-    try:
-        with open(log_file, "a") as f:
-            f.write(json.dumps(log_entry, indent=2))
-            f.write("\n" + "="*80 + "\n")
-    except Exception as e:
-        logger.warning(f"Failed to log request to file: {e}")
+
+def _log_response_to_file(response: Any, endpoint: str, metadata: dict = None):
+    _write_log("logs/llm_responses.log", {
+        "timestamp": datetime.now().isoformat(),
+        "endpoint": endpoint,
+        "response": response,
+        "metadata": metadata or {}
+    })
 
 
 class OpenAICompatibleConnector(BaseConnector):
@@ -163,10 +172,12 @@ class OpenAICompatibleConnector(BaseConnector):
                 result = response.json()
                 result = self._unwrap_response(result)
                 self._log_llm(messages, result)
+                _log_response_to_file(result, self.api_endpoint, {"method": "generate_with_tools", "model": self.model_name})
                 return result
             else:
                 error_msg = f"Status {response.status_code}: {response.text}"
                 self._log_llm(messages, None, error_msg)
+                _log_response_to_file({"error": error_msg}, self.api_endpoint, {"method": "generate_with_tools", "model": self.model_name})
                 return {"error": error_msg}
 
         except requests.exceptions.RequestException as e:
@@ -213,6 +224,7 @@ class OpenAICompatibleConnector(BaseConnector):
             )
 
             if response.status_code == 200:
+                chunks = []
                 for line in response.iter_lines():
                     if not line:
                         continue
@@ -231,6 +243,7 @@ class OpenAICompatibleConnector(BaseConnector):
                         try:
                             chunk = json.loads(data_str)
                             chunk = self._unwrap_response(chunk)
+                            chunks.append(chunk)
                             yield chunk
 
                         except json.JSONDecodeError as e:
@@ -240,6 +253,7 @@ class OpenAICompatibleConnector(BaseConnector):
                 error_msg = f"Status {response.status_code}: {response.text}"
                 logger.error(f"API streaming error: {error_msg}")
                 self._log_llm(messages, None, error_msg)
+                _log_response_to_file({"error": error_msg}, self.api_endpoint, {"method": "generate_with_tools_stream", "model": self.model_name})
                 yield {"error": error_msg}
 
         except requests.exceptions.RequestException as e:

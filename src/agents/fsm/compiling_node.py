@@ -49,7 +49,11 @@ class CompilingNode(StateNode):
         )
 
         from agents.main_agent import MainAgent
-        output = MainAgent(agent_id=SYNTHESIS_AGENT_ID).chat(prompt)
+        from tools.execution_context import execution_context
+        task = context.task_store.get_task(context.task_id)
+        working_directory = task.get("working_directory")
+        with execution_context(task_id=context.task_id, subtask_id="summarizer", working_directory=working_directory):
+            output = MainAgent(agent_id=SYNTHESIS_AGENT_ID).chat(prompt)
 
         try:
             manifest = json.loads(output)

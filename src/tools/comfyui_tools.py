@@ -179,6 +179,10 @@ def generate_image(prompt: str) -> Dict[str, Any]:
     unloaded_model: Optional[str] = None
 
     try:
+        # Free ComfyUI VRAM from any previous run before starting
+        if vram_management:
+            _comfyui_free_vram(endpoint)
+
         # Free VRAM: unload LM Studio model before generating
         if vram_management:
             unloaded_model = _lmstudio_get_loaded_model()

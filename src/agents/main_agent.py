@@ -223,6 +223,12 @@ class MainAgent:
                     len(tool_calls) - len(valid_tool_calls),
                 )
 
+            # Normalize empty arguments string — LM Studio 500s if arguments is ""
+            for tc in valid_tool_calls:
+                fn = tc.get("function", {})
+                if not fn.get("arguments"):
+                    fn["arguments"] = "{}"
+
             self.message_history.append(
                 MessageBuilder.assistant_msg(content, valid_tool_calls or None)
             )

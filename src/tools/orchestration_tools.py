@@ -19,8 +19,22 @@ _CRITERIA_KEY = "acceptance_criteria"
 _CHECKLIST_KEY = "maestro_checklist"
 
 
-def _set_acceptance_criteria(task_id: str, criteria: list) -> str:
+def _set_acceptance_criteria(task_id: str, criteria) -> str:
     """Set the acceptance criteria for this task. Can only be called once."""
+    # Models sometimes pass criteria as a JSON string instead of a parsed array.
+    if isinstance(criteria, str):
+        try:
+            criteria = json.loads(criteria)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                import ast
+                criteria = ast.literal_eval(criteria)
+            except Exception:
+                return json.dumps({"error": f"criteria must be a list of objects, got unparseable string: {criteria[:100]}"})
+
+    if not isinstance(criteria, list):
+        return json.dumps({"error": f"criteria must be a list, got {type(criteria).__name__}"})
+
     existing = task_store.get_context(task_id, _CRITERIA_KEY)
     if existing is not None:
         return json.dumps({"error": "Acceptance criteria already set. Use read_plan to review them."})

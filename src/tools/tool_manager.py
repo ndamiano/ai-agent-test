@@ -32,7 +32,8 @@ class ToolManager:
     def useTool(self, tool_name: str, **kwargs) -> Any:
         tool_info = self._tools_registry.get(tool_name)
         if not tool_info:
-            error_msg = f"Tool '{tool_name}' not found"
+            available = ", ".join(sorted(self._tools_registry.keys()))
+            error_msg = f"Tool '{tool_name}' not found. Available tools: {available}"
             logger.error(error_msg)
             raise ValueError(error_msg)
 

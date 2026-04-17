@@ -179,7 +179,8 @@ class MainAgent:
             return error_response
 
     def _agentic_loop_with_native_tools(self, user_message: str) -> str:
-        max_iterations = 10
+        from config.settings_manager import settings_manager
+        max_iterations = settings_manager.get_category_settings().max_iterations
         iteration = 0
         content = ""
 

@@ -74,7 +74,7 @@ class OpenAICompatibleConnector(BaseConnector):
             return result["data"]
         return result
 
-    def generate_with_tools(self, messages: list, tools: list = None) -> dict:
+    def generate_with_tools(self, messages: list, tools: list = None, json_mode: bool = False) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -92,6 +92,9 @@ class OpenAICompatibleConnector(BaseConnector):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         session = self._get_session()
 

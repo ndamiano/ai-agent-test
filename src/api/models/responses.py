@@ -49,6 +49,7 @@ class AgentResponse(BaseModel):
 
 class SettingsResponse(BaseModel):
     connector_type: str
+    model_category: str = "large"
     working_directory: Optional[str] = None
     refine_before_execution: bool = False
     renpy_sdk_path: Optional[str] = None

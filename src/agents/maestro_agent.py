@@ -15,7 +15,6 @@ from database.task_store import task_store
 
 logger = logging.getLogger(__name__)
 
-MAX_WAVES = 20
 _CRITERIA_KEY = "acceptance_criteria"
 _CHECKLIST_KEY = "maestro_checklist"
 
@@ -44,12 +43,14 @@ class MaestroAgent:
             task = self.task_store.get_task(task_id)
             event_bus.publish_sync({"type": "task_status", "task_id": task_id, "task": task})
 
+            from config.settings_manager import settings_manager
+            max_waves = settings_manager.get_category_settings().max_waves
             wave = 0
             first = True
 
             while True:
-                if wave >= MAX_WAVES:
-                    raise RuntimeError(f"Task {task_id} exceeded maximum wave limit ({MAX_WAVES})")
+                if wave >= max_waves:
+                    raise RuntimeError(f"Task {task_id} exceeded maximum wave limit ({max_waves})")
 
                 spawned = await self._plan(task_id)
 

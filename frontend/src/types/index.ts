@@ -119,6 +119,7 @@ export interface ComfyUISettings {
 
 export interface Settings {
     connector_type: string
+    model_category?: 'large' | 'medium' | 'small'
     working_directory?: string
     refine_before_execution?: boolean
     renpy_sdk_path?: string

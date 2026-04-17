@@ -208,6 +208,19 @@ export default function SettingsPage() {
                         <option value="cline">Cline (Cloud)</option>
                     </select>
                 </div>
+                <div className="space-y-2">
+                    <label className="block text-sm text-gray-400">Model Category</label>
+                    <select
+                        value={settings.model_category || 'large'}
+                        onChange={(e) => setSettings(prev => prev ? { ...prev, model_category: e.target.value as 'large' | 'medium' | 'small' } : null)}
+                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                    >
+                        <option value="large">Large (30k ctx, 10 iter, 20 waves)</option>
+                        <option value="medium">Medium (20k ctx, 8 iter, 15 waves)</option>
+                        <option value="small">Small (12k ctx, 6 iter, 10 waves, JSON mode)</option>
+                    </select>
+                    <p className="text-xs text-gray-500">Match to your model's capability. Small enables JSON mode and tighter context limits.</p>
+                </div>
             </div>
 
             {/* LMStudio Settings Section */}

@@ -23,14 +23,11 @@ class MessageBuilder:
         messages = MessageBuilder(system_prompt).extend(history).build()
     """
 
-    # Max chars kept per tool result. Content over this is replaced with head + tail.
     TOOL_RESULT_MAX_CHARS: int = 8_000
 
-    # Total char budget for the history portion of the messages array.
-    # Oldest messages are dropped first when exceeded (system + last user msg always kept).
-    MESSAGE_BUDGET_CHARS: int = 30_000
-
     def __init__(self, system_prompt: str) -> None:
+        from config.settings_manager import settings_manager
+        self.MESSAGE_BUDGET_CHARS: int = settings_manager.get_category_settings().message_budget_chars
         self._system = system_prompt
         self._messages: List[Dict[str, Any]] = []
 

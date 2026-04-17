@@ -30,6 +30,7 @@ class ComfyUISettingsRequest(BaseModel):
 
 class UpdateSettingsRequest(BaseModel):
     connector_type: str
+    model_category: Optional[str] = "large"
     working_directory: Optional[str] = None
     refine_before_execution: bool = False
     renpy_sdk_path: Optional[str] = None

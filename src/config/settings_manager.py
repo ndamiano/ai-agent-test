@@ -110,6 +110,12 @@ class SettingsManager:
         with self._settings_lock:
             return self._settings.get(connector_type, {}).copy()
 
+    def get_category_settings(self):
+        from config.settings_schema import DEFAULT_MODEL_CATEGORIES, ModelCategorySettings
+        with self._settings_lock:
+            category = self._settings.get("model_category", "large")
+        return DEFAULT_MODEL_CATEGORIES.get(category, ModelCategorySettings())
+
 
 # Global singleton instance
 settings_manager = SettingsManager()

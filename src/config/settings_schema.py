@@ -1,7 +1,7 @@
 """Pydantic schemas for settings validation"""
 
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
 
 class LLMStudioSettings(BaseModel):
@@ -24,11 +24,26 @@ class ComfyUISettings(BaseModel):
     vram_management: bool = Field(False)
 
 
+class ModelCategorySettings(BaseModel):
+    message_budget_chars: int = Field(30000, ge=1000)
+    max_iterations: int = Field(10, ge=1)
+    max_waves: int = Field(20, ge=1)
+    use_json_mode: bool = Field(False)
+
+
+DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
+    "large":  ModelCategorySettings(message_budget_chars=30000, max_iterations=10, max_waves=20, use_json_mode=False),
+    "medium": ModelCategorySettings(message_budget_chars=20000, max_iterations=8,  max_waves=15, use_json_mode=False),
+    "small":  ModelCategorySettings(message_budget_chars=12000, max_iterations=6,  max_waves=10, use_json_mode=True),
+}
+
+
 class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline"]
     working_directory: Optional[str] = "outputs"
     refine_before_execution: bool = False
     renpy_sdk_path: Optional[str] = None
+    model_category: Literal["large", "medium", "small"] = "large"
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None
     comfyui: Optional[ComfyUISettings] = None

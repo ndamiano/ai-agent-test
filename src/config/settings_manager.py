@@ -88,11 +88,16 @@ class SettingsManager:
             return self._settings.copy()
 
     def update_settings(self, new_settings: Dict[str, Any]) -> Dict[str, Any]:
-        self._validate_settings(new_settings)
-
         with self._settings_lock:
-            self._settings = new_settings
-            self._save_settings(new_settings)
+            merged = dict(self._settings)
+            for key, value in new_settings.items():
+                if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                    merged[key] = {**merged[key], **value}
+                else:
+                    merged[key] = value
+            self._validate_settings(merged)
+            self._settings = merged
+            self._save_settings(merged)
             return self._settings.copy()
 
     def _validate_settings(self, settings: Dict[str, Any]) -> None:

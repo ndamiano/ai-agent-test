@@ -106,15 +106,23 @@ export interface LMStudioSettings {
 
 export interface ClineSettings {
     api_key: string
+    base_url?: string
     model: string
     temperature?: number
     max_tokens?: number
+}
+
+export interface ComfyUISettings {
+    endpoint: string
+    vram_management: boolean
 }
 
 export interface Settings {
     connector_type: string
     working_directory?: string
     refine_before_execution?: boolean
+    renpy_sdk_path?: string
     lmstudio?: LMStudioSettings
     cline?: ClineSettings
+    comfyui?: ComfyUISettings
 }

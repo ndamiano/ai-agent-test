@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
-import type { Settings, LMStudioSettings, ClineSettings } from '../types'
+import type { Settings, LMStudioSettings, ClineSettings, ComfyUISettings } from '../types'
 
 export default function SettingsPage() {
     const [settings, setSettings] = useState<Settings | null>(null)
@@ -30,9 +30,16 @@ export default function SettingsPage() {
             if (!data.cline) {
                 data.cline = {
                     api_key: '',
+                    base_url: 'https://api.cline.bot/api',
                     model: 'claude-sonnet-4-5',
                     temperature: 0.7,
                     max_tokens: 50000
+                }
+            }
+            if (!data.comfyui) {
+                data.comfyui = {
+                    endpoint: 'http://localhost:8188',
+                    vram_management: false
                 }
             }
             setSettings(data)
@@ -85,6 +92,18 @@ export default function SettingsPage() {
             ...settings,
             cline: {
                 ...settings.cline,
+                [key]: value
+            }
+        })
+    }
+
+    const updateComfyUISetting = (key: keyof ComfyUISettings, value: any) => {
+        if (!settings) return
+        setSettings({
+            ...settings,
+            comfyui: {
+                endpoint: settings.comfyui?.endpoint ?? 'http://localhost:8188',
+                vram_management: settings.comfyui?.vram_management ?? false,
                 [key]: value
             }
         })
@@ -156,6 +175,22 @@ export default function SettingsPage() {
                         className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500 font-mono text-sm"
                     />
                     <p className="text-xs text-gray-500">Must be an absolute path (e.g., /home/user/projects/outputs or C:\Users\Name\outputs)</p>
+                </div>
+            </div>
+
+            {/* RenPy SDK Section */}
+            <div className="space-y-4 pt-4 border-t border-white/[0.06]">
+                <h3 className="text-lg font-semibold text-white">RenPy</h3>
+                <div className="space-y-2">
+                    <label className="block text-sm text-gray-400">SDK Path</label>
+                    <input
+                        type="text"
+                        value={settings.renpy_sdk_path || ''}
+                        onChange={(e) => setSettings(prev => prev ? { ...prev, renpy_sdk_path: e.target.value || undefined } : null)}
+                        placeholder="/path/to/renpy-sdk"
+                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500 font-mono text-sm"
+                    />
+                    <p className="text-xs text-gray-500">Path to RenPy SDK root for building distributable games. Leave blank to skip distribution build.</p>
                 </div>
             </div>
 
@@ -240,6 +275,17 @@ export default function SettingsPage() {
                     <h3 className="text-lg font-semibold text-white">Cline Configuration</h3>
 
                     <div className="space-y-2">
+                        <label className="block text-sm text-gray-400">Base URL</label>
+                        <input
+                            type="text"
+                            value={settings.cline.base_url ?? 'https://api.cline.bot/api'}
+                            onChange={(e) => updateClineSetting('base_url', e.target.value)}
+                            placeholder="https://api.cline.bot/api"
+                            className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                        />
+                    </div>
+
+                    <div className="space-y-2">
                         <label className="block text-sm text-gray-400">API Key *</label>
                         <input
                             type="password"
@@ -293,6 +339,39 @@ export default function SettingsPage() {
                     </div>
                 </div>
             )}
+
+            {/* ComfyUI Section */}
+            <div className="space-y-4 pt-4 border-t border-white/[0.06]">
+                <h3 className="text-lg font-semibold text-white">ComfyUI</h3>
+
+                <div className="space-y-2">
+                    <label className="block text-sm text-gray-400">Endpoint</label>
+                    <input
+                        type="text"
+                        value={settings.comfyui?.endpoint ?? 'http://localhost:8188'}
+                        onChange={(e) => updateComfyUISetting('endpoint', e.target.value)}
+                        placeholder="http://localhost:8188"
+                        className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                    />
+                </div>
+
+                <label className="flex items-start gap-3 cursor-pointer group">
+                    <div className="relative mt-0.5 flex-shrink-0">
+                        <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={settings.comfyui?.vram_management ?? false}
+                            onChange={e => updateComfyUISetting('vram_management', e.target.checked)}
+                        />
+                        <div className={`w-9 h-5 rounded-full transition-colors ${settings.comfyui?.vram_management ? 'bg-blue-600' : 'bg-gray-600'}`} />
+                        <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${settings.comfyui?.vram_management ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </div>
+                    <div>
+                        <p className="text-sm text-white font-medium">VRAM management</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Wait for VRAM to free before generating images. Slower but prevents OOM errors on low-VRAM systems.</p>
+                    </div>
+                </label>
+            </div>
 
             {/* Save Button */}
             <div className="pt-4 border-t border-white/[0.06]">

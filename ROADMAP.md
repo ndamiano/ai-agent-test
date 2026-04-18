@@ -55,14 +55,10 @@ Decompose over one-shot. Every stage that produces a large output should loop (o
 - [x] Prompt tightening — skeleton-first format, minimum injected context per stage
 - [x] Pipeline retry with smarter re-prompting — PipelineAgent multi-turn correction on JSON failure
 
-## Phase 3 — More pipelines
-*Coverage first. Every new pipeline makes Maestro feel more like a genie.*
+## Phase 3 — More pipelines (standalone, no sub-pipeline support needed)
 
-- [ ] **Short story / creative writing pipeline** — prose output, chapter structure, character voices
-- [ ] **Music generation pipeline** — integrate with a music model (e.g. MusicGen, Suno API)
-- [ ] **Standalone character portrait pipeline** — character brief → multiple images (expressions, outfits)
-- [ ] **RPG asset pipeline** — tilesets, sprites, item icons for RPG Maker or similar
-- [ ] **More pipelines** — driven by user demand
+- [ ] **Character creation pipeline** — concept → personality → appearance → voice → portrait images. Standalone value for writers, game designers, TTRPG players.
+- [ ] **TTRPG campaign pipeline** — setting → factions → NPCs → encounters → plot hooks → printable campaign document.
 
 Each new pipeline should be registerable in `pipelines/registry.py` with no other changes required.
 
@@ -74,13 +70,51 @@ Each new pipeline should be registerable in `pipelines/registry.py` with no othe
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
 - [ ] **Automated prompt optimization** — evaluation suite + LLM-as-judge scorer + hill-climbing loop to improve stage prompts. Worthwhile once there are 3+ pipelines and a body of outputs to evaluate against.
 
-## Phase 5 — Accessibility
+## Phase 5 — Pipelines requiring composition
+
+These pipelines are architecturally dependent on sub-pipeline support from Phase 4.
+
+- [ ] **World building pipeline** — world bible → factions → nations/cities → characters. Eventual target: explorable artifact (VR world, interactive map). Each layer is its own sub-pipeline.
+- [ ] **Long-form fiction / novel pipeline** — outline → chapters → continuity tracking across generations.
+- [ ] **Comic / manga pipeline** — story → scenes → panels → dialogue + images per panel.
+- [ ] **Music generation pipeline** — integrate with a music model (MusicGen, Suno API).
+- [ ] **VR world pipeline** — see "North Star" section below.
+
+## Phase 6 — Accessibility
 *Once quality and coverage are there, make it easy for everyone.*
 
 - [ ] Auto-install and manage ComfyUI / LMStudio
 - [ ] Model selection assistant (help user pick the right model)
 - [ ] Plugin / contribution system for third-party pipelines and tools
 - [ ] Progress events from pipeline stages — WebSocket updates so user knows what's happening mid-pipeline
+
+---
+
+## North Star — VR World Generation
+
+*"I want to explore a world where magic is real in VR" → hours/days later, a playable world.*
+
+Full decomposition of what this requires:
+
+**Pipeline stages:**
+1. **World bible** (LLM) — magic system, history, factions, geography, tone, key locations
+2. **World layout** (LLM + procedural) — regions, cities, dungeons, roads, points of interest as structured data
+3. **NPC generation** (LLM, sub-pipeline) — who lives here, roles, dialogue trees, daily schedules
+4. **Quest / story generation** (LLM) — main quest, side quests, random encounters, magic interactions
+5. **Asset specification** (LLM) — enumerate every 3D asset needed: buildings, props, creatures, items
+6. **Asset generation** (3D model) — mesh + texture per asset
+7. **World assembly** (code generation) — Godot project files, scene layout, scripting, VR config
+8. **Build + export** — Godot CLI build to VR-ready binary
+
+**Hard dependencies:**
+- Sub-pipeline support (Phase 4) — NPC generation, world layout, asset generation are each their own pipelines
+- Text-to-3D model — current quality (TripoSR, Shap-E) is rough but improving fast; this is the main blocker
+- Godot integration — similar to Ren'Py but far more complex; scenes, scripts, assets must be assembled programmatically
+- VR headset build pipeline — OpenXR export via Godot CLI
+
+**What's achievable today:** world bible, NPC dialogue, quest outlines, asset specification — all LLM stages.
+**The blocker:** 3D asset quality. Text-to-3D models are improving fast; revisit when output is good enough to be usable.
+**Engine target:** Godot (open source, scriptable, OpenXR support, closest to Ren'Py in terms of programmatic project generation).
 
 ---
 

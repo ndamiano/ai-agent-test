@@ -119,6 +119,18 @@ class OpenAICompatibleConnector(BaseConnector):
                 self._log_llm(messages, result)
                 _log_response_to_file(result, self.api_endpoint, {"method": "generate_with_tools", "model": self.model_name})
                 return result
+            elif response.status_code == 400 and json_mode and "response_format" in response.text:
+                logger.warning("Endpoint does not support json_object mode, retrying without it")
+                payload.pop("response_format", None)
+                response = session.post(self.api_endpoint, json=payload, headers=self._prepare_headers(), timeout=300)
+                if response.status_code == 200:
+                    result = response.json()
+                    result = self._unwrap_response(result)
+                    self._log_llm(messages, result)
+                    return result
+                error_msg = f"Status {response.status_code}: {response.text}"
+                self._log_llm(messages, None, error_msg)
+                return {"error": error_msg}
             else:
                 error_msg = f"Status {response.status_code}: {response.text}"
                 self._log_llm(messages, None, error_msg)

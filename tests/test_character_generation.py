@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from pipelines.renpy.fns import generate_characters, _json_with_correction, _CHARACTER_SYSTEM
+from pipelines.renpy.fns import generate_characters, _json_with_correction, _SYSTEM as _CHARACTER_SYSTEM
 
 
 @pytest.fixture

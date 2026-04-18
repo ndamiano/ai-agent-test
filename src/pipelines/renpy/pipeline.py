@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from pipelines.runner import Pipeline, Node, LLMStage, FnStage
-from pipelines.renpy.fns import dialogue, generate_characters, package, generate_images, build
+from pipelines.renpy.fns import dialogue, generate_characters, generate_scenes, package, generate_images, build
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -38,11 +38,11 @@ RENPY_PIPELINE = Pipeline(
         ]),
 
         Node("scenes", [
-            LLMStage(
+            FnStage(
                 id="scenes",
-                prompt_template="scenes.txt",
+                fn=generate_scenes,
+                inputs=["brief.json", "story.json", "settings.json", "characters.json"],
                 output="scenes.json",
-                schema={"required": ["scenes"]},
             ),
         ]),
 

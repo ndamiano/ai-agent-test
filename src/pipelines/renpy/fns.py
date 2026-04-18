@@ -19,7 +19,7 @@ def _parse_count(val) -> int:
     return int(s)
 
 
-_CHARACTER_SYSTEM = (
+_SYSTEM = (
     "You are a precise creative writing assistant. Output only valid JSON. "
     "No markdown, no explanation, no code fences."
 )
@@ -78,7 +78,7 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
             "existing_characters": characters,
         }
         identity_prompt = render_template(_PROMPTS_DIR / "characters_identity.txt", ctx)
-        agent = PipelineAgent(_CHARACTER_SYSTEM)
+        agent = PipelineAgent(_SYSTEM)
 
         identity   = _json_with_correction(agent, identity_prompt,   f"character {label} identity")
         appearance = _json_with_correction(agent, _APPEARANCE_PROMPT, f"character {label} appearance")
@@ -87,6 +87,51 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
         characters.append({**identity, **appearance, **voice})
 
     return {"characters": characters}
+
+
+def generate_scenes(inputs: Dict, working_dir: Path) -> Dict:
+    brief = inputs.get("brief", {})
+
+    story = inputs.get("story", {})
+    if isinstance(story, dict) and "arc" not in story:
+        story = story.get("story", {})
+
+    characters = inputs.get("characters", [])
+    if isinstance(characters, dict):
+        characters = characters.get("characters", [])
+
+    settings = inputs.get("settings", [])
+    if isinstance(settings, dict):
+        settings = settings.get("settings", [])
+
+    beats = story.get("story_beats", [])
+    character_refs = [
+        {"id": c["id"], "name": c["name"], "role": c.get("role", ""),
+         "description": c.get("description", ""), "personality": c.get("personality", [])}
+        for c in characters
+    ]
+    setting_refs = [{"id": s["id"], "name": s["name"]} for s in settings]
+
+    scenes = []
+    for i, beat in enumerate(beats):
+        label = beat.get("label", beat.get("beat_id", str(i + 1)))
+        print(f"    [scenes]  generating scene {i + 1}/{len(beats)}: {label}")
+
+        ctx = {
+            **brief,
+            "arc":              story.get("arc", ""),
+            "premise":          story.get("premise", ""),
+            "character_refs":   character_refs,
+            "setting_refs":     setting_refs,
+            "beat":             beat,
+            "completed_scenes": scenes,
+        }
+        prompt = render_template(_PROMPTS_DIR / "scene.txt", ctx)
+        agent = PipelineAgent(_SYSTEM)
+        scene = _json_with_correction(agent, prompt, f"scene {i + 1}")
+        scenes.append(scene)
+
+    return {"scenes": scenes}
 
 
 def dialogue(inputs: Dict, working_dir: Path) -> Dict:

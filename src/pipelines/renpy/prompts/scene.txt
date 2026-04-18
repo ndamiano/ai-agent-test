@@ -1,4 +1,4 @@
-You are outlining scenes for a {genre} visual novel.
+You are outlining one scene for a {genre} visual novel.
 
 Tone: {tone}
 Arc: {arc}
@@ -10,12 +10,13 @@ Characters available (use ids exactly):
 Available settings (use setting ids exactly):
 {setting_refs|json}
 
-Story beats — create exactly one scene per beat, in order:
-{story_beats|json}
+Beat to cover:
+{beat|json}
 
-Output a JSON object with a "scenes" array. One scene per beat.
+Already planned scenes (for continuity — vary settings and character pairings):
+{completed_scenes|json}
 
-Each scene must follow this exact structure:
+Output a single JSON object for this scene:
 {
   "id": "scene_01",
   "beat_id": "beat_01",
@@ -34,7 +35,6 @@ Each scene must follow this exact structure:
 }
 
 Rules:
-- character_ids: 2-3 characters max per scene. Only include characters who are present.
-- character_states: only for characters listed in character_ids.
-- Each character should not appear in every scene — give the story room to breathe.
+- character_ids: 2-3 characters max. Only include characters who are present.
+- character_states: only for characters in character_ids.
 - setting_id must exactly match one of the available setting ids above.

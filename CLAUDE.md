@@ -78,7 +78,7 @@ Only validate at system boundaries (user input, external APIs, tool results). Do
 
 Small models aren't dumb — they're easily distracted. They follow the most recent, most concrete instruction in the context window. The pipeline architecture already helps by keeping intermediate steps out of the agent's context. Within pipelines and per-call prompts:
 
-1. **Sequential field groups over monolithic JSON** — split complex objects into 2-3 focused calls (e.g. character identity / appearance / voice), merge results. Each call = simpler schema, focused attention, higher reliability.
-2. **Output skeleton before field descriptions** — show exact JSON structure first, then explain fields. Model fills a skeleton rather than constructing from scratch.
-3. **Minimum injected context per stage** — trim injected JSON to only what the stage actually needs. Large blobs burn attention.
+1. **Decompose over one-shot** — any stage that produces N items should loop (one call per item) rather than generate everything at once. Prevents truncation, keeps each call focused. Applied to characters (3 calls: identity/appearance/voice) and scenes (1 call per beat).
+2. **Output skeleton before field descriptions** — show exact JSON structure first with inline comments, not a bullet list then a separate example. Model fills a skeleton rather than constructing from scratch.
+3. **Minimum injected context per stage** — each stage gets only what it actually needs. Characters in scene planning need role+personality, not appearance. Completed scenes for continuity need setting_id+character_ids, not full dramatic briefs.
 4. **Use `model_category: "small"`** in settings — enables tighter context budget, fewer iterations, JSON mode.

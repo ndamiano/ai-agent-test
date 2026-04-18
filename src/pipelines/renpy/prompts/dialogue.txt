@@ -3,30 +3,36 @@ You are writing dialogue for a {genre} visual novel.
 Tone: {tone}
 Brief: {notes}
 
-Characters (pay close attention to each character's speech_patterns — they must sound distinct):
+Characters in this scene (these are the only characters who appear):
 {characters|json}
 
-Location:
+Setting:
 {setting|json}
 
-Write dialogue for this scene:
+Scene:
 {scene|json}
 
-Write {lines_per_scene} lines. Each line needs:
-- character_id: must match a character id above, or null for narrator
+Write {lines_per_scene} lines of dialogue for this scene.
+
+Each line needs:
+- character_id: must exactly match a character id above, or null for narrator
 - text: what they say or what the narrator describes
 
 Rules:
-- Each character must sound like themselves per their speech_patterns. Do not let them all talk the same way.
-- Narrator lines should use the location's atmosphere.
-- No on-the-nose exposition. Show don't tell.
+- Honor each character's speech_patterns exactly. They must sound distinct — not interchangeable.
+- Honor setting_constraint hard. If the setting makes free conversation impossible, make it impossible.
+- Narrator lines should use the physical environment — sounds, light, sensation. Not feelings.
+- No on-the-nose exposition. Characters do not explain the plot to each other.
+- dramatic_question must be felt by the end, even if never spoken.
+- what_changes must have happened by the last line. The audience must feel the shift.
+- revelation, if not null, must land — but land obliquely. No character says it plainly.
 
-Output a single JSON object for this scene. Example format:
+Output a single JSON object:
 {
   "scene_id": "scene_01",
-  "setting_id": "bg_coffee_shop",
+  "setting_id": "bg_...",
   "lines": [
-    {"character_id": null, "text": "The cafe smells of rain and old books."},
-    {"character_id": "sarah", "text": "I wasn't sure you'd actually come."}
+    {"character_id": null, "text": "..."},
+    {"character_id": "char_id", "text": "..."}
   ]
 }

@@ -18,9 +18,9 @@ class PipelineDefinition:
 
 def _enrich_renpy_brief(brief: dict) -> dict:
     length_config = {
-        "short":  {"character_count": "2",   "scene_count": "3-4",  "lines_per_scene": "3-4"},
-        "medium": {"character_count": "3",   "scene_count": "5-7",  "lines_per_scene": "5-7"},
-        "long":   {"character_count": "3-4", "scene_count": "8-12", "lines_per_scene": "6-10"},
+        "short":  {"character_count": "2",   "scene_count": "3-4",  "lines_per_scene": "12-16"},
+        "medium": {"character_count": "3",   "scene_count": "5-7",  "lines_per_scene": "16-22"},
+        "long":   {"character_count": "3-4", "scene_count": "8-12", "lines_per_scene": "20-28"},
     }
     length = brief.get("length", "medium")
     config = length_config.get(length, length_config["medium"])

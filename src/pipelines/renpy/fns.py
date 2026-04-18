@@ -116,13 +116,16 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
         label = scene.get("title", scene.get("id", str(i + 1)))
         print(f"    [dialogue]  scene {i + 1}/{len(scenes)}: {label}")
 
+        character_ids = set(scene.get("character_ids", []))
+        scene_characters = [c for c in characters if c["id"] in character_ids] if character_ids else characters
+
         scene_inputs = {
             "brief":           brief,
             "genre":           brief.get("genre", ""),
             "tone":            brief.get("tone", ""),
             "notes":           brief.get("notes", ""),
-            "lines_per_scene": brief.get("lines_per_scene", "4-6"),
-            "characters":      characters,
+            "lines_per_scene": brief.get("lines_per_scene", "16-20"),
+            "characters":      scene_characters,
             "scene":           scene,
             "setting":         settings_by_id.get(scene.get("setting_id", ""), {}),
         }

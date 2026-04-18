@@ -74,7 +74,11 @@ def _enrich_inputs(inputs: dict) -> dict:
     if isinstance(chars, dict):
         chars = chars.get("characters", [])
     if chars:
-        extra["character_refs"] = [{"id": c.get("id"), "name": c.get("name"), "role": c.get("role")} for c in chars]
+        extra["character_refs"] = [
+            {"id": c.get("id"), "name": c.get("name"), "role": c.get("role"),
+             "description": c.get("description", ""), "personality": c.get("personality", [])}
+            for c in chars
+        ]
 
     settings = inputs.get("settings", [])
     if isinstance(settings, dict):

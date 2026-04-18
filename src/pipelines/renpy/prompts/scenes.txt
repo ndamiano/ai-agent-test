@@ -2,23 +2,39 @@ You are outlining scenes for a {genre} visual novel.
 
 Tone: {tone}
 Arc: {arc}
+Premise: {premise}
 
-Characters (id and role only):
+Characters available (use ids exactly):
 {character_refs|json}
 
-Available settings (use these ids exactly):
+Available settings (use setting ids exactly):
 {setting_refs|json}
 
-Story beats to cover, in order:
+Story beats — create exactly one scene per beat, in order:
 {story_beats|json}
 
-Create exactly {scene_count} scenes — one per beat, in order.
+Output a JSON object with a "scenes" array. One scene per beat.
 
-Each scene needs:
-- id: "scene_01", "scene_02", etc.
-- beat_id: the beat_id this scene covers
-- setting_id: must be one of the setting ids listed above
-- title: short scene title
-- summary: 2-3 sentences — what happens, what shifts emotionally, how it advances the arc
+Each scene must follow this exact structure:
+{
+  "id": "scene_01",
+  "beat_id": "beat_01",
+  "setting_id": "bg_...",
+  "title": "short scene title",
+  "summary": "2-3 sentences — what happens and why it matters to the arc",
+  "character_ids": ["id1", "id2"],
+  "character_states": {
+    "id1": "their emotional state and objective entering this scene",
+    "id2": "their emotional state and objective entering this scene"
+  },
+  "dramatic_question": "the single tension this scene is built around",
+  "revelation": "what truth is exposed in this scene, or null if none",
+  "what_changes": "what must be different by the end of this scene",
+  "setting_constraint": "what the setting demands of the characters — can they speak freely, are they exposed, under time pressure, observed?"
+}
 
-Output a single JSON object: {"scenes": [{"id": "scene_01", "beat_id": "...", "setting_id": "...", "title": "...", "summary": "..."}, ...]}
+Rules:
+- character_ids: 2-3 characters max per scene. Only include characters who are present.
+- character_states: only for characters listed in character_ids.
+- Each character should not appear in every scene — give the story room to breathe.
+- setting_id must exactly match one of the available setting ids above.

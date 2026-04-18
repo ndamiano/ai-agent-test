@@ -1,9 +1,8 @@
 You are writing dialogue for a {genre} visual novel.
 
 Tone: {tone}
-Brief: {notes}
 
-Characters in this scene (these are the only characters who appear):
+Characters in this scene:
 {characters|json}
 
 Setting:
@@ -12,20 +11,20 @@ Setting:
 Scene:
 {scene|json}
 
-Write {lines_per_scene} lines of dialogue for this scene.
+Write {lines_per_scene} lines.
 
-Each line needs:
-- character_id: must exactly match a character id above, or null for narrator
+Each line:
+- character_id: must match a character id above, or null for narrator
 - text: what they say or what the narrator describes
 
 Rules:
-- Honor each character's speech_patterns exactly. They must sound distinct — not interchangeable.
-- Honor setting_constraint hard. If the setting makes free conversation impossible, make it impossible.
-- Narrator lines should use the physical environment — sounds, light, sensation. Not feelings.
+- Each character must sound like themselves per speech_patterns. Not interchangeable.
+- Honor setting_constraint hard — if free conversation is impossible, make it impossible.
+- Narrator lines use physical environment — sounds, light, sensation. Not feelings.
 - No on-the-nose exposition. Characters do not explain the plot to each other.
 - dramatic_question must be felt by the end, even if never spoken.
-- what_changes must have happened by the last line. The audience must feel the shift.
-- revelation, if not null, must land — but land obliquely. No character says it plainly.
+- what_changes must have happened by the last line. Audience must feel the shift.
+- revelation, if not null, must land — but obliquely. No character says it plainly.
 
 Output a single JSON object:
 {

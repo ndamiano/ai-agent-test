@@ -2,29 +2,28 @@ You are creating character {index} of {total} for a {genre} visual novel.
 
 Brief: {notes}
 Tone: {tone}
-
-Story arc: {arc}
+Arc: {arc}
 Premise: {premise}
 
 Story beats:
 {story_beats|json}
 
 Settings:
-{settings|json}
+{setting_summaries|json}
 
 Already created characters:
 {existing_characters|json}
 
 Create one new character who belongs in this world. Make them distinct from existing characters — different role, different wound, different way of moving through the world.
 
-Output this exact JSON structure:
+Output this exact JSON:
 {
   "id": "lowercase_no_spaces",
   "name": "Display Name",
   "color": "#hexcolor",
-  "description": "One sentence: who they are and what they want.",
+  "description": "one sentence: who they are and what they want",
   "role": "protagonist|deuteragonist|antagonist|supporting",
   "personality": ["trait1", "trait2", "trait3"]
 }
 
-color should fit their personality. personality traits should create friction or chemistry with the story.
+color fits their personality. personality traits create friction or chemistry with the story.

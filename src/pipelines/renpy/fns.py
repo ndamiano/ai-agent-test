@@ -24,17 +24,19 @@ _SYSTEM = (
     "No markdown, no explanation, no code fences."
 )
 
+_DIALOGUE_FIELDS = {"id", "name", "description", "personality", "speech_patterns"}
+
 _APPEARANCE_PROMPT = (
-    'Now output the appearance field only — physical description specific enough to '
-    'generate a portrait: age, build, notable features, typical clothing. '
-    'Output exactly: {"appearance": "your description here"}'
+    'Output the appearance field: portrait description (age, build, features, clothing). '
+    'Exactly: {"appearance": "..."}'
 )
 
 _VOICE_PROMPT = (
-    'Now output the speech_patterns field only — concrete notes on how this character talks: '
-    'sentence length, vocabulary, habits, what they avoid saying. '
-    'Output exactly: {"speech_patterns": "your notes here"}'
+    'Output the speech_patterns field: how they talk (sentence length, vocabulary, habits, what they avoid). '
+    'Exactly: {"speech_patterns": "..."}'
 )
+
+_SCENE_DIALOGUE_FIELDS = {"id", "setting_id", "summary", "character_states", "dramatic_question", "revelation", "what_changes", "setting_constraint"}
 
 
 def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict:
@@ -74,8 +76,8 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
             "arc":                 story.get("arc", ""),
             "premise":             story.get("premise", ""),
             "story_beats":         story.get("story_beats", []),
-            "settings":            settings,
-            "existing_characters": characters,
+            "setting_summaries":   [{"id": s["id"], "name": s["name"], "description": s.get("description", "")} for s in settings],
+            "existing_characters": [{"id": c["id"], "name": c["name"], "role": c.get("role"), "description": c.get("description"), "personality": c.get("personality")} for c in characters],
         }
         identity_prompt = render_template(_PROMPTS_DIR / "characters_identity.txt", ctx)
         agent = PipelineAgent(_SYSTEM)
@@ -106,8 +108,7 @@ def generate_scenes(inputs: Dict, working_dir: Path) -> Dict:
 
     beats = story.get("story_beats", [])
     character_refs = [
-        {"id": c["id"], "name": c["name"], "role": c.get("role", ""),
-         "description": c.get("description", ""), "personality": c.get("personality", [])}
+        {"id": c["id"], "name": c["name"], "role": c.get("role", ""), "personality": c.get("personality", [])}
         for c in characters
     ]
     setting_refs = [{"id": s["id"], "name": s["name"]} for s in settings]
@@ -124,7 +125,7 @@ def generate_scenes(inputs: Dict, working_dir: Path) -> Dict:
             "character_refs":   character_refs,
             "setting_refs":     setting_refs,
             "beat":             beat,
-            "completed_scenes": scenes,
+            "completed_scenes": [{"id": s.get("id"), "setting_id": s.get("setting_id"), "character_ids": s.get("character_ids", [])} for s in scenes],
         }
         prompt = render_template(_PROMPTS_DIR / "scene.txt", ctx)
         agent = PipelineAgent(_SYSTEM)
@@ -151,31 +152,31 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
     settings_by_id = {s["id"]: s for s in settings}
 
     brief = inputs.get("brief", {})
-    _system = (
-        "You are a precise creative writing assistant. Output only valid JSON. "
-        "No markdown, no explanation, no code fences."
-    )
-
     completed_scenes = []
     for i, scene in enumerate(scenes):
         label = scene.get("title", scene.get("id", str(i + 1)))
         print(f"    [dialogue]  scene {i + 1}/{len(scenes)}: {label}")
 
         character_ids = set(scene.get("character_ids", []))
-        scene_characters = [c for c in characters if c["id"] in character_ids] if character_ids else characters
+        scene_characters = [
+            {k: v for k, v in c.items() if k in _DIALOGUE_FIELDS}
+            for c in characters if c["id"] in character_ids
+        ] if character_ids else [
+            {k: v for k, v in c.items() if k in _DIALOGUE_FIELDS}
+            for c in characters
+        ]
 
+        setting_full = settings_by_id.get(scene.get("setting_id", ""), {})
         scene_inputs = {
-            "brief":           brief,
             "genre":           brief.get("genre", ""),
             "tone":            brief.get("tone", ""),
-            "notes":           brief.get("notes", ""),
             "lines_per_scene": brief.get("lines_per_scene", "16-20"),
             "characters":      scene_characters,
-            "scene":           scene,
-            "setting":         settings_by_id.get(scene.get("setting_id", ""), {}),
+            "scene":           {k: v for k, v in scene.items() if k in _SCENE_DIALOGUE_FIELDS},
+            "setting":         {k: v for k, v in setting_full.items() if k != "image_file"},
         }
         prompt = render_template(template_path, scene_inputs)
-        agent = PipelineAgent(_system)
+        agent = PipelineAgent(_SYSTEM)
 
         content = strip_fences(agent.send(prompt))
         success = False

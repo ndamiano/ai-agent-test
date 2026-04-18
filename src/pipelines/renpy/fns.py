@@ -19,9 +19,37 @@ def _parse_count(val) -> int:
     return int(s)
 
 
-def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
-    template_path = _PROMPTS_DIR / "characters.txt"
+_CHARACTER_SYSTEM = (
+    "You are a precise creative writing assistant. Output only valid JSON. "
+    "No markdown, no explanation, no code fences."
+)
 
+_APPEARANCE_PROMPT = (
+    'Now output the appearance field only — physical description specific enough to '
+    'generate a portrait: age, build, notable features, typical clothing. '
+    'Output exactly: {"appearance": "your description here"}'
+)
+
+_VOICE_PROMPT = (
+    'Now output the speech_patterns field only — concrete notes on how this character talks: '
+    'sentence length, vocabulary, habits, what they avoid saying. '
+    'Output exactly: {"speech_patterns": "your notes here"}'
+)
+
+
+def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict:
+    content = strip_fences(agent.send(prompt))
+    for _ in range(2):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            content = strip_fences(agent.send(
+                "Invalid JSON. Return only the JSON object, no other text."
+            ))
+    raise RuntimeError(f"Failed to get valid JSON for {label}")
+
+
+def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
     brief = inputs.get("brief", {})
 
     story = inputs.get("story", {})
@@ -49,26 +77,14 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
             "settings":            settings,
             "existing_characters": characters,
         }
-        prompt = render_template(template_path, ctx)
-        agent = PipelineAgent(
-            "You are a precise creative writing assistant. Output only valid JSON. "
-            "No markdown, no explanation, no code fences."
-        )
+        identity_prompt = render_template(_PROMPTS_DIR / "characters_identity.txt", ctx)
+        agent = PipelineAgent(_CHARACTER_SYSTEM)
 
-        content = strip_fences(agent.send(prompt))
-        success = False
-        for _ in range(2):  # up to 2 correction attempts
-            try:
-                characters.append(json.loads(content))
-                success = True
-                break
-            except json.JSONDecodeError:
-                content = strip_fences(agent.send(
-                    "Invalid JSON. Return only the JSON object, no other text."
-                ))
+        identity   = _json_with_correction(agent, identity_prompt,   f"character {label} identity")
+        appearance = _json_with_correction(agent, _APPEARANCE_PROMPT, f"character {label} appearance")
+        voice      = _json_with_correction(agent, _VOICE_PROMPT,      f"character {label} voice")
 
-        if not success:
-            raise RuntimeError(f"Failed to generate character {label}")
+        characters.append({**identity, **appearance, **voice})
 
     return {"characters": characters}
 

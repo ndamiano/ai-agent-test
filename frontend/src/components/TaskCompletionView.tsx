@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { FadeSlideIn } from './FadeSlideIn'
 import type { ArtifactManifest } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
@@ -95,13 +96,13 @@ const FileViewerModal: React.FC<{ file: ViewerFile; onClose: () => void }> = ({ 
         return () => window.removeEventListener('keydown', onKey)
     }, [onClose])
 
-    return (
+    return createPortal(
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
             onClick={onClose}
         >
             <div
-                className="relative w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col bg-gray-900 border border-white/10 rounded-xl shadow-2xl"
+                className="relative w-[90vw] max-w-5xl max-h-[90vh] flex flex-col bg-gray-900 border border-white/10 rounded-xl shadow-2xl"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
@@ -148,7 +149,8 @@ const FileViewerModal: React.FC<{ file: ViewerFile; onClose: () => void }> = ({ 
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     )
 }
 

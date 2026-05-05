@@ -103,14 +103,3 @@ def run_queued_pipelines() -> str:
     return json.dumps({"completed": results, "failed": errors})
 
 
-@tool_manager.tool(
-    description="List all available pipelines and the brief parameters they require.",
-)
-def list_pipelines() -> str:
-    from pipelines.registry import get_registry
-    registry = get_registry()
-    summary = {
-        name: {"description": defn.description, "brief_schema": defn.brief_schema}
-        for name, defn in registry.items()
-    }
-    return json.dumps(summary, indent=2)

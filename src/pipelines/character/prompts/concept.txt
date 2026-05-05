@@ -1,0 +1,20 @@
+You are designing a character.
+
+Concept: {concept}
+Setting: {setting}
+Tone: {tone}
+Role needed: {role}
+{notes}
+
+Expand into a precise character brief. Be specific — vague descriptions produce flat characters.
+
+Output this exact JSON:
+{
+  "name": "full name",
+  "role": "narrative function (hero / villain / mentor / rival / foil / etc.)",
+  "archetype": "one word",
+  "backstory_hook": "2-3 sentences: the formative experience that made them who they are",
+  "goal": "what they want above all else — concrete and specific",
+  "flaw": "the specific wound or blind spot that creates conflict",
+  "setting_context": "how they fit — occupation, status, key relationships"
+}

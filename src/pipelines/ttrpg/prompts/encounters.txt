@@ -1,0 +1,28 @@
+You are designing encounters for {title}.
+
+World: {overview}
+Genre: {genre}
+Tone: {tone}
+Factions: {faction_summaries|json}
+NPCs: {npc_summaries|json}
+Scale: {scale} — target {encounter_count} encounters
+
+Design a varied mix of combat, social, and exploration encounters. Each should connect to factions or NPCs — disconnected random encounters produce forgettable sessions.
+
+Output this exact JSON:
+{
+  "encounters": [
+    {
+      "id": "snake_case_id",
+      "title": "short memorable name",
+      "type": "combat | social | exploration | mixed",
+      "setup": "what is happening when players arrive — the immediate situation",
+      "stakes": "what players stand to gain or lose",
+      "twist": "the complication that makes this memorable",
+      "faction_id": "faction involved, or null",
+      "npc_ids": ["ids of NPCs present"]
+    }
+  ]
+}
+
+{encounter_count} encounters total. Mix types.

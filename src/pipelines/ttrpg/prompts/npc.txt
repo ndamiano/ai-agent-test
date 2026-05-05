@@ -1,0 +1,22 @@
+You are creating NPC {index} of {total} for {title}.
+
+World: {overview}
+Genre: {genre}
+Tone: {tone}
+Factions: {faction_summaries|json}
+Already created NPCs: {existing_npcs|json}
+
+Create one NPC who matters — someone players will remember. Give them a clear role, a reason to interact with players, and a secret that changes things if revealed. Make them distinct from existing NPCs.
+
+Output this exact JSON:
+{
+  "id": "snake_case_id",
+  "name": "full name",
+  "faction_id": "faction id they belong to, or null",
+  "role": "function in the campaign (quest giver / villain / ally / merchant / informant / etc.)",
+  "description": "one sentence: who they are",
+  "personality": ["trait_1", "trait_2"],
+  "motivation": "what they want right now",
+  "secret": "what they are hiding — even from allies",
+  "dialogue_hook": "the first thing they say or do when meeting players"
+}

@@ -86,11 +86,10 @@ class MaestroAgent:
         count_before = len(self.task_store.get_subtasks_for_task(task_id))
 
         prompt = self._build_maestro_prompt(task_id, has_criteria)
-        agent_data = get_agent("maestro")
         task = self.task_store.get_task(task_id)
 
         from tools.execution_context import execution_context
-        maestro = MainAgent(agent_id="maestro", system_prompt=agent_data["system_prompt"])
+        maestro = MainAgent(agent_id="maestro")
         with execution_context(task_id=task_id, subtask_id="maestro", working_directory=task.get("working_directory")):
             response = maestro.chat(prompt) or ""
 

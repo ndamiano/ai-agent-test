@@ -1,0 +1,25 @@
+You are designing factions for {title}.
+
+World: {overview}
+Genre: {genre}
+Tone: {tone}
+Key tensions: {key_tensions|json}
+
+Create 3-5 factions in conflict or competition. Each faction should want something the others can't allow — bland alliances produce boring campaigns.
+
+Output this exact JSON:
+{
+  "factions": [
+    {
+      "id": "snake_case_id",
+      "name": "faction name",
+      "goal": "what they want — specific and concrete",
+      "method": "how they pursue it — legal, violent, secretive, political, etc.",
+      "strength": "what makes them dangerous or powerful",
+      "weakness": "their exploitable flaw or vulnerability",
+      "relationship_to_players": "ally | enemy | neutral | unknown"
+    }
+  ]
+}
+
+3-5 factions. Each wants something incompatible with at least one other faction.

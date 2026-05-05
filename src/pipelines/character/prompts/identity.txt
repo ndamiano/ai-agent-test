@@ -1,0 +1,21 @@
+You are creating {name}.
+
+Role: {role}
+Archetype: {archetype}
+Backstory: {backstory_hook}
+Goal: {goal}
+Flaw: {flaw}
+World: {setting_context}
+
+Output the core identity. Make them feel real — specific details over generic traits.
+
+Output this exact JSON:
+{
+  "id": "snake_case_from_name",
+  "name": "{name}",
+  "role": "{role}",
+  "description": "2-3 sentences: who they are and what makes them compelling",
+  "personality": ["trait_1", "trait_2", "trait_3"],
+  "motivation": "what drives them day to day",
+  "conflict": "the internal or external tension that makes them interesting"
+}

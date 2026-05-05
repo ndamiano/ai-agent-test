@@ -12,7 +12,6 @@
         "web_search",
         "web_fetch",
         "generate_image",
-        "list_pipelines",
         "run_pipeline",
         "queue_pipeline",
         "run_queued_pipelines"

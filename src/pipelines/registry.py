@@ -27,8 +27,37 @@ def _enrich_renpy_brief(brief: dict) -> dict:
     return {**config, **brief}
 
 
+def _enrich_character_brief(brief: dict) -> dict:
+    return {
+        "tone":    "balanced — neither too dark nor too light",
+        "role":    "unspecified",
+        "setting": "unspecified",
+        "notes":   "",
+        **brief,
+    }
+
+
+def _enrich_ttrpg_brief(brief: dict) -> dict:
+    scale_config = {
+        "one-shot": {"npc_count": "4", "encounter_count": "3"},
+        "short":    {"npc_count": "6", "encounter_count": "5"},
+        "campaign": {"npc_count": "10", "encounter_count": "8"},
+    }
+    scale = brief.get("scale", "short")
+    config = scale_config.get(scale, scale_config["short"])
+    return {
+        "scale":        scale,
+        "player_count": "4",
+        "notes":        "",
+        **config,
+        **brief,
+    }
+
+
 def _build_registry() -> Dict[str, PipelineDefinition]:
     from pipelines.renpy.pipeline import RENPY_PIPELINE
+    from pipelines.character.pipeline import CHARACTER_PIPELINE
+    from pipelines.ttrpg.pipeline import TTRPG_PIPELINE
     return {
         "renpy": PipelineDefinition(
             name="renpy",
@@ -44,6 +73,36 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
                 },
             },
             enrich_brief=_enrich_renpy_brief,
+        ),
+        "character": PipelineDefinition(
+            name="character",
+            description="Generate a richly detailed character — identity, personality, appearance, voice, and portrait image.",
+            pipeline=CHARACTER_PIPELINE,
+            brief_schema={
+                "required": ["concept"],
+                "optional": {
+                    "tone":    "emotional register (default: balanced)",
+                    "role":    "narrative function hint — hero, villain, mentor, etc.",
+                    "setting": "world or genre context",
+                    "notes":   "additional constraints or details",
+                },
+            },
+            enrich_brief=_enrich_character_brief,
+        ),
+        "ttrpg": PipelineDefinition(
+            name="ttrpg",
+            description="Generate a complete TTRPG campaign — world, factions, NPCs, encounters, plot hooks, and a printable campaign document.",
+            pipeline=TTRPG_PIPELINE,
+            brief_schema={
+                "required": ["title", "genre", "tone", "premise"],
+                "optional": {
+                    "scale":        "one-shot | short | campaign (default: short)",
+                    "npc_count":    "overrides scale default",
+                    "player_count": "number of players (default: 4)",
+                    "notes":        "additional constraints or themes",
+                },
+            },
+            enrich_brief=_enrich_ttrpg_brief,
         ),
     }
 

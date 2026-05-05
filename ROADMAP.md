@@ -55,12 +55,12 @@ Decompose over one-shot. Every stage that produces a large output should loop (o
 - [x] Prompt tightening — skeleton-first format, minimum injected context per stage
 - [x] Pipeline retry with smarter re-prompting — PipelineAgent multi-turn correction on JSON failure
 
-## Phase 3 — More pipelines (standalone, no sub-pipeline support needed)
+## Phase 3 — More pipelines (standalone, no sub-pipeline support needed) ✓
 
-- [ ] **Character creation pipeline** — concept → personality → appearance → voice → portrait images. Standalone value for writers, game designers, TTRPG players.
-- [ ] **TTRPG campaign pipeline** — setting → factions → NPCs → encounters → plot hooks → printable campaign document.
+- [x] **Character creation pipeline** — concept → identity/appearance/voice (3-call decomposition) → portrait image. Brief: `concept` (required), `tone`/`role`/`setting`/`notes` (optional).
+- [x] **TTRPG campaign pipeline** — setting → factions → NPCs (1 call per NPC loop) → encounters → plot_hooks → campaign document (markdown). Brief: `title`/`genre`/`tone`/`premise` (required), `scale`/`npc_count`/`player_count`/`notes` (optional). Scale drives NPC and encounter counts.
 
-Each new pipeline should be registerable in `pipelines/registry.py` with no other changes required.
+Each new pipeline is registerable in `pipelines/registry.py` with no other changes required.
 
 ## Phase 4 — Composition and scale
 *Make pipelines composable and the platform more powerful.*

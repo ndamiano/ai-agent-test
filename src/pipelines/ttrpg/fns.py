@@ -177,9 +177,12 @@ def assemble_document(inputs: Dict, working_dir: Path) -> Dict:
     if random_hooks:
         lines += ["## Random Hooks", ""] + [f"- {h}" for h in random_hooks] + [""]
 
+    from tools.execution_context import track_written_file
+
     doc = "\n".join(lines)
     doc_path = working_dir / "campaign.md"
     doc_path.write_text(doc, encoding="utf-8")
+    track_written_file(str(doc_path))
 
     print(f"    [document]  wrote {doc_path.name} ({len(doc)} chars)")
     return {"status": "ok", "file": str(doc_path), "title": title}

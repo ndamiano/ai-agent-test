@@ -268,14 +268,12 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         raw_characters = raw_characters.get("characters", [])
     characters_by_id = {c["id"]: c for c in raw_characters}
 
+    from tools.execution_context import track_written_file
+
     generated = []
     failed = []
     for img in game_def.get("images", []):
         filepath = images_dir / img["file"]
-        if filepath.exists():
-            print(f"    [images]  skip (exists): {img['file']}")
-            continue
-
         setting = settings_by_id.get(img["id"], {})
         description = setting.get("description", f"A scene called {img['id']}")
         prompt = f"{description}, visual novel background, high quality, detailed"
@@ -285,12 +283,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 
         if result.get("success") and result.get("saved_paths"):
             shutil.copy2(result["saved_paths"][0], filepath)
+            track_written_file(str(filepath))
             generated.append(img["file"])
             print(f"    [images]  saved: {img['file']}")
         else:
             error = result.get("error", "unknown error")
             print(f"    [images]  failed ({error}), writing placeholder: {img['file']}")
             _write_solid_png(filepath, 1280, 720, (58, 58, 92))
+            track_written_file(str(filepath))
             failed.append({"file": img["file"], "error": error})
 
     for char in game_def.get("characters", []):
@@ -298,10 +298,6 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         if not image_file:
             continue
         filepath = images_dir / image_file
-        if filepath.exists():
-            print(f"    [images]  skip (exists): {image_file}")
-            continue
-
         char_data = characters_by_id.get(char["id"], {})
         appearance = char_data.get("appearance", f"A character named {char['name']}")
         prompt = (
@@ -314,12 +310,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 
         if result.get("success") and result.get("saved_paths"):
             shutil.copy2(result["saved_paths"][0], filepath)
+            track_written_file(str(filepath))
             generated.append(image_file)
             print(f"    [images]  saved: {image_file}")
         else:
             error = result.get("error", "unknown error")
             print(f"    [images]  portrait failed ({error}), writing placeholder: {image_file}")
             _write_solid_png(filepath, 512, 768, (92, 58, 92))
+            track_written_file(str(filepath))
             failed.append({"file": image_file, "error": error})
 
     return {"status": "ok", "generated": generated, "failed": failed}

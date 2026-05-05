@@ -96,6 +96,11 @@ class PipelineRunner:
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self, pipeline: Pipeline, brief: Dict[str, Any]) -> bool:
+        import shutil
+        if self.working_dir.exists():
+            shutil.rmtree(self.working_dir)
+        self.working_dir.mkdir(parents=True, exist_ok=True)
+
         self._write("brief.json", brief)
 
         print(f"\n{'='*60}")
@@ -223,5 +228,7 @@ class PipelineRunner:
         return merged
 
     def _write(self, filename: str, data: Any):
+        from tools.execution_context import track_written_file
         path = self.working_dir / filename
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        track_written_file(str(path))

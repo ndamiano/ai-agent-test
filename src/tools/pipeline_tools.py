@@ -15,8 +15,10 @@ _queue_lock = threading.Lock()
 
 
 def _get_working_dir(pipeline_name: str) -> str:
+    from datetime import datetime
     base = get_working_directory() or "outputs"
-    return str(Path(base) / "pipelines" / pipeline_name)
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return str(Path(base) / "pipelines" / pipeline_name / run_id)
 
 
 @tool_manager.tool(

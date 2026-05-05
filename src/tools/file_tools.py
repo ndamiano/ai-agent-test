@@ -98,14 +98,26 @@ def write_to_file(
     create_dirs: bool = True,
 ) -> Dict[str, Any]:
     try:
-        from tools.execution_context import resolve_base_path
+        from tools.execution_context import resolve_base_path, track_written_file
+        base_dir = resolve_base_path()
         path = resolve_base_path(file_path)
+
+        try:
+            path.relative_to(base_dir)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Path escapes working directory ({base_dir}). Use a relative path or a path within the working directory.",
+                "file_path": file_path,
+            }
 
         if create_dirs:
             path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
+
+        track_written_file(str(path))
 
         return {
             "success": True,
@@ -134,8 +146,18 @@ def edit_file(
     new_text: str,
 ) -> Dict[str, Any]:
     try:
-        from tools.execution_context import resolve_base_path
+        from tools.execution_context import resolve_base_path, track_written_file
+        base_dir = resolve_base_path()
         path = resolve_base_path(file_path)
+
+        try:
+            path.relative_to(base_dir)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Path escapes working directory ({base_dir}). Use a relative path or a path within the working directory.",
+                "file_path": file_path,
+            }
 
         if not path.exists():
             return {
@@ -168,6 +190,8 @@ def edit_file(
 
         with open(path, 'w', encoding='utf-8') as f:
             f.write(new_content)
+
+        track_written_file(str(path))
 
         return {
             "success": True,

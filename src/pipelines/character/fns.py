@@ -65,6 +65,7 @@ def generate_character(inputs: Dict, working_dir: Path) -> Dict:
 def generate_portrait(inputs: Dict, working_dir: Path) -> Dict:
     import shutil
     from tools.comfyui_tools import generate_image
+    from tools.execution_context import track_written_file
 
     character = inputs.get("character", inputs)
     name = character.get("name", "character")
@@ -84,12 +85,14 @@ def generate_portrait(inputs: Dict, working_dir: Path) -> Dict:
 
     if result.get("success") and result.get("saved_paths"):
         shutil.copy2(result["saved_paths"][0], filepath)
+        track_written_file(str(filepath))
         print(f"    [portrait]  saved: {filepath.name}")
         return {"status": "ok", "file": str(filepath)}
 
     error = result.get("error", "unknown error")
     print(f"    [portrait]  failed ({error}), writing placeholder")
     _write_placeholder_png(filepath, 512, 768, (92, 58, 92))
+    track_written_file(str(filepath))
     return {"status": "placeholder", "file": str(filepath), "error": error}
 
 

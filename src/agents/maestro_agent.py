@@ -341,18 +341,35 @@ class MaestroAgent:
             self._fallback_compile(task_id)
             return
 
+        from tools.execution_context import get_written_files
         task = self.task_store.get_task(task_id)
         subtasks = self.task_store.get_subtasks_for_task(task_id)
         completed = [s for s in subtasks if s["status"] == "completed"]
+        written_files = get_written_files(task_id)
 
         prompt = f"ORIGINAL GOAL: {task['goal']}\n\nCOMPLETED SUBTASKS ({len(completed)}):\n"
         for s in completed:
             preview = (s["output"][:120].replace("\n", " ") + "...") if s.get("output") else "(no output)"
             prompt += f"  - {s['id'][:8]} | agent={s['agent_id']} | {s['goal'][:80]}\n    Preview: {preview}\n"
+
+        if written_files:
+            prompt += f"\nFILES WRITTEN THIS RUN ({len(written_files)}):\n"
+            for f in written_files:
+                prompt += f"  - {f}\n"
+            prompt += (
+                "\nReturn a JSON manifest. artifacts must use ONLY the files listed above — "
+                "do not scan for others.\n"
+                "Output only the JSON — no other text.\n"
+            )
+        else:
+            prompt += (
+                "\nUse list_files and list_subtasks to see what was produced. "
+                "Then return a JSON manifest. Output only the JSON — no other text.\n"
+            )
+
         prompt += (
-            "\nUse list_files and list_subtasks to see what was produced. "
-            "Then return a JSON manifest with 'summary' and 'artifacts' fields. "
-            "Output only the JSON — no other text."
+            '\nManifest schema: {"summary": "1-3 sentences", '
+            '"artifacts": [{"label": "human name", "path": "/absolute/path/to/file", "type": "file|zip|image"}]}'
         )
 
         from tools.execution_context import execution_context

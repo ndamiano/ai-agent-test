@@ -15,7 +15,19 @@ CHARACTER_PIPELINE = Pipeline(
                 id="concept",
                 prompt_template="concept.txt",
                 output="concept.json",
-                schema={"required": ["name", "role", "backstory_hook", "goal", "flaw"]},
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "name":            {"type": "string"},
+                        "role":            {"type": "string"},
+                        "archetype":       {"type": "string"},
+                        "backstory_hook":  {"type": "string"},
+                        "goal":            {"type": "string"},
+                        "flaw":            {"type": "string"},
+                        "setting_context": {"type": "string"},
+                    },
+                    "required": ["name", "role", "archetype", "backstory_hook", "goal", "flaw", "setting_context"],
+                },
             ),
         ]),
 

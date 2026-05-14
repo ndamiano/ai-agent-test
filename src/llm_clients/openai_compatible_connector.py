@@ -4,6 +4,7 @@ import logging
 import requests
 import json
 import os
+import uuid
 from typing import Any, Union, List, Dict, Optional
 from datetime import datetime
 from llm_clients.base_connector import BaseConnector
@@ -21,8 +22,9 @@ def _write_log(log_file: str, entry: dict):
         logger.warning(f"Failed to log to {log_file}: {e}")
 
 
-def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
+def _log_request_to_file(payload: dict, endpoint: str, request_id: str, metadata: dict = None):
     _write_log("logs/llm_requests.log", {
+        "request_id": request_id,
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint,
         "payload": payload["messages"],
@@ -30,8 +32,9 @@ def _log_request_to_file(payload: dict, endpoint: str, metadata: dict = None):
     })
 
 
-def _log_response_to_file(response: Any, endpoint: str, metadata: dict = None):
+def _log_response_to_file(response: Any, endpoint: str, request_id: str, metadata: dict = None):
     _write_log("logs/llm_responses.log", {
+        "request_id": request_id,
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint,
         "response": response,
@@ -43,14 +46,18 @@ class OpenAICompatibleConnector(BaseConnector):
     connector_name = "openai_compatible"
 
     def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "default",
-                 temperature: float = 0.7, max_tokens: int = 50000):
+                 temperature: float = 0.7, max_tokens: int = 50000,
+                 frequency_penalty: float = 0.5, pipeline_max_tokens: int = 4096):
         super().__init__()
-        
+
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
         self.model_name = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.frequency_penalty = frequency_penalty
+        self.pipeline_max_tokens = pipeline_max_tokens
+        self._response_format_supported = True
         
         if self._is_versioned_path(self.base_url):
              self.api_endpoint = f"{self.base_url}/chat/completions"
@@ -74,34 +81,37 @@ class OpenAICompatibleConnector(BaseConnector):
             return result["data"]
         return result
 
-    def generate_with_tools(self, messages: list, tools: list = None, json_mode: bool = False) -> dict:
+    def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
             logger.warning(error_msg)
             return {"error": error_msg}
 
+        request_id = str(uuid.uuid4())
+        max_tokens = self.pipeline_max_tokens if response_format else self.max_tokens
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "stream": False
+            "max_tokens": max_tokens,
+            "frequency_penalty": self.frequency_penalty,
+            "stream": False,
         }
 
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
+        if response_format and getattr(self, "_response_format_supported", True):
+            payload["response_format"] = response_format
 
         session = self._get_session()
 
-        # Log the request
         _log_request_to_file(
             payload=payload,
             endpoint=self.api_endpoint,
+            request_id=request_id,
             metadata={"method": "generate_with_tools", "model": self.model_name, "has_tools": bool(tools)}
         )
 
@@ -117,16 +127,18 @@ class OpenAICompatibleConnector(BaseConnector):
                 result = response.json()
                 result = self._unwrap_response(result)
                 self._log_llm(messages, result)
-                _log_response_to_file(result, self.api_endpoint, {"method": "generate_with_tools", "model": self.model_name})
+                _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
                 return result
-            elif response.status_code == 400 and json_mode and "response_format" in response.text:
-                logger.warning("Endpoint does not support json_object mode, retrying without it")
+            elif response.status_code == 400 and response_format and "response_format" in response.text:
+                logger.warning("Endpoint does not support response_format, retrying without it")
+                self._response_format_supported = False
                 payload.pop("response_format", None)
                 response = session.post(self.api_endpoint, json=payload, headers=self._prepare_headers(), timeout=300)
                 if response.status_code == 200:
                     result = response.json()
                     result = self._unwrap_response(result)
                     self._log_llm(messages, result)
+                    _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
                     return result
                 error_msg = f"Status {response.status_code}: {response.text}"
                 self._log_llm(messages, None, error_msg)
@@ -134,7 +146,7 @@ class OpenAICompatibleConnector(BaseConnector):
             else:
                 error_msg = f"Status {response.status_code}: {response.text}"
                 self._log_llm(messages, None, error_msg)
-                _log_response_to_file({"error": error_msg}, self.api_endpoint, {"method": "generate_with_tools", "model": self.model_name})
+                _log_response_to_file({"error": error_msg}, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
                 return {"error": error_msg}
 
         except requests.exceptions.RequestException as e:
@@ -150,12 +162,14 @@ class OpenAICompatibleConnector(BaseConnector):
             yield {"error": error_msg}
             return
 
+        request_id = str(uuid.uuid4())
         payload = {
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "stream": True
+            "frequency_penalty": self.frequency_penalty,
+            "stream": True,
         }
 
         if tools:
@@ -164,10 +178,10 @@ class OpenAICompatibleConnector(BaseConnector):
 
         session = self._get_session()
 
-        # Log the request
         _log_request_to_file(
             payload=payload,
             endpoint=self.api_endpoint,
+            request_id=request_id,
             metadata={"method": "generate_with_tools_stream", "model": self.model_name, "has_tools": bool(tools), "streaming": True}
         )
 
@@ -210,7 +224,7 @@ class OpenAICompatibleConnector(BaseConnector):
                 error_msg = f"Status {response.status_code}: {response.text}"
                 logger.error(f"API streaming error: {error_msg}")
                 self._log_llm(messages, None, error_msg)
-                _log_response_to_file({"error": error_msg}, self.api_endpoint, {"method": "generate_with_tools_stream", "model": self.model_name})
+                _log_response_to_file({"error": error_msg}, self.api_endpoint, request_id, {"method": "generate_with_tools_stream", "model": self.model_name})
                 yield {"error": error_msg}
 
         except requests.exceptions.RequestException as e:

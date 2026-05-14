@@ -9,6 +9,8 @@ class LLMStudioSettings(BaseModel):
     model: str = Field(..., min_length=1)
     temperature: float = Field(0.7, ge=0, le=2)
     max_tokens: int = Field(50000, ge=1)
+    frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
+    pipeline_max_tokens: int = Field(4096, ge=256)
 
 
 class ClineSettings(BaseModel):
@@ -17,6 +19,8 @@ class ClineSettings(BaseModel):
     model: str = Field(..., min_length=1)
     temperature: float = Field(0.7, ge=0, le=2)
     max_tokens: int = Field(50000, ge=1)
+    frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
+    pipeline_max_tokens: int = Field(4096, ge=256)
 
 
 class ComfyUISettings(BaseModel):

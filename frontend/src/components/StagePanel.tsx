@@ -15,6 +15,7 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
         childTasks,
         artifact,
         criteria,
+        pipelineEvents,
         phase,
         isPlanning,
         loading,
@@ -95,6 +96,7 @@ const StagePanel: React.FC<StagePanelProps> = ({ taskId }) => {
                     subtasks={subtasks}
                     childTasks={childTasks}
                     criteria={criteria}
+                    pipelineEvents={pipelineEvents}
                     maestroMessage={maestroMessage}
                     maestroExpanded={maestroExpanded}
                     expandedSubtasks={expandedSubtasks}

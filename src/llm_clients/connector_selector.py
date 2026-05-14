@@ -46,7 +46,9 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
         api_key=api_key,
         model=settings.get("model", "default"),
         temperature=settings.get("temperature", 0.7),
-        max_tokens=settings.get("max_tokens", 50000)
+        max_tokens=settings.get("max_tokens", 50000),
+        frequency_penalty=settings.get("frequency_penalty", 0.5),
+        pipeline_max_tokens=settings.get("pipeline_max_tokens", 4096),
     )
     _cached_settings_hash = settings_hash
 

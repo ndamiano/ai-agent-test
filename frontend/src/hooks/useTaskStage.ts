@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useTaskWebSocket, useWebSocket } from '../contexts/WebSocketContext'
 import { api } from '../api/client'
-import type { Task, TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest, MaestroPhase } from '../types'
+import type { Task, TaskDetail, Subtask, ToolUsage, AgentMessage, ArtifactManifest, MaestroPhase, PipelineEvent, PipelineEventType } from '../types'
 
 export type SubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 
@@ -68,6 +68,7 @@ export interface TaskStageState {
     childTasks: Task[]
     artifact: ArtifactManifest | null
     criteria: string[] | null
+    pipelineEvents: PipelineEvent[]
     phase: Phase
     isPlanning: boolean
     loading: boolean
@@ -90,6 +91,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
     const [baseSubtasks, setBaseSubtasks] = useState<SubtaskState[]>([])
     const [artifact, setArtifact] = useState<ArtifactManifest | null>(null)
     const [criteria, setCriteria] = useState<string[] | null>(null)
+    const [pipelineEvents, setPipelineEvents] = useState<PipelineEvent[]>([])
     const [phase, setPhase] = useState<Phase>('idle')
     const [loading, setLoading] = useState(false)
     const [agentsExpanded, setAgentsExpanded] = useState(false)
@@ -170,6 +172,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             setBaseSubtasks([])
             setArtifact(null)
             setCriteria(null)
+            setPipelineEvents([])
             setPhase('idle')
             setAgentsExpanded(false)
             setMaestroMessage(null)
@@ -184,6 +187,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
             setPhase('idle')
             setArtifact(null)
             setCriteria(null)
+            setPipelineEvents([])
             setAgentsExpanded(false)
             prevTaskId.current = taskId
             processedCountRef.current = 0
@@ -338,6 +342,23 @@ export function useTaskStage(taskId: string | null): TaskStageState {
         setAgentMessagesBySubtask(agentMsgs)
     }, [messages])
 
+    useEffect(() => {
+        const pipelineTypes = new Set<PipelineEventType>([
+            'pipeline_started',
+            'pipeline_node_started',
+            'pipeline_node_completed',
+            'pipeline_node_failed',
+            'pipeline_stage_started',
+            'pipeline_stage_completed',
+            'pipeline_stage_retrying',
+            'pipeline_stage_failed',
+            'pipeline_completed',
+            'pipeline_failed',
+        ])
+
+        setPipelineEvents(messages.filter((msg): msg is PipelineEvent => pipelineTypes.has(msg.type as PipelineEventType)))
+    }, [messages])
+
     const toggleSubtask = useCallback((id: string) => {
         setExpandedSubtasks(prev => {
             const next = new Set(prev)
@@ -364,6 +385,7 @@ export function useTaskStage(taskId: string | null): TaskStageState {
         childTasks,
         artifact,
         criteria,
+        pipelineEvents,
         phase,
         isPlanning,
         loading,

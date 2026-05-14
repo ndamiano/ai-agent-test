@@ -51,7 +51,66 @@ def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict
     raise RuntimeError(f"Failed to get valid JSON for {label}")
 
 
+_CHARACTER_COLORS = [
+    "#c8ffc8",
+    "#c8c8ff",
+    "#ffc8c8",
+    "#ffe0a3",
+    "#d8b4ff",
+    "#a7f3d0",
+]
+
+
+def _renpy_character_concept(
+    brief: Dict,
+    story: Dict,
+    settings: list,
+    existing_characters: list,
+    index: int,
+    total: int,
+) -> str:
+    setting_summaries = [
+        f"{s.get('name', s.get('id', 'setting'))}: {s.get('description', '')}"
+        for s in settings
+    ]
+    existing = [
+        f"{c.get('name')} ({c.get('role', 'unknown role')}): {c.get('description', '')}"
+        for c in existing_characters
+    ]
+
+    return "\n".join([
+        f"Create character {index} of {total} for a {brief.get('genre', '')} Ren'Py visual novel.",
+        f"Tone: {brief.get('tone', '')}",
+        f"Premise: {story.get('premise', '')}",
+        f"Arc: {story.get('arc', '')}",
+        f"Story beats: {json.dumps(story.get('story_beats', []), ensure_ascii=False)}",
+        f"Settings: {' | '.join(setting_summaries)}",
+        f"Existing characters: {' | '.join(existing) if existing else 'none yet'}",
+        f"User notes: {brief.get('notes', '')}",
+        "Make this character distinct from the existing cast and useful for the story's conflicts.",
+    ])
+
+
+def _normalize_renpy_character(character: Dict, index: int, portrait_file: str = "") -> Dict:
+    char = dict(character)
+    if not char.get("id") and char.get("name"):
+        char["id"] = str(char["name"]).lower().replace(" ", "_")
+    char.setdefault("name", f"Character {index}")
+    char.setdefault("id", f"character_{index}")
+    char.setdefault("role", "supporting")
+    char.setdefault("description", "")
+    char.setdefault("personality", [])
+    char.setdefault("appearance", char.get("description", ""))
+    char.setdefault("speech_patterns", "")
+    char.setdefault("color", _CHARACTER_COLORS[(index - 1) % len(_CHARACTER_COLORS)])
+    if portrait_file:
+        char["portrait_file"] = portrait_file
+    return char
+
+
 def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
+    from pipelines.registry import run_subpipeline
+
     brief = inputs.get("brief", {})
 
     story = inputs.get("story", {})
@@ -67,26 +126,26 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
 
     for i in range(total):
         label = f"{i + 1}/{total}"
-        print(f"    [characters]  generating character {label}")
+        print(f"    [characters]  generating character subpipeline {label}")
 
-        ctx = {
-            **brief,
-            "index":               i + 1,
-            "total":               total,
-            "arc":                 story.get("arc", ""),
-            "premise":             story.get("premise", ""),
-            "story_beats":         story.get("story_beats", []),
-            "setting_summaries":   [{"id": s["id"], "name": s["name"], "description": s.get("description", "")} for s in settings],
-            "existing_characters": [{"id": c["id"], "name": c["name"], "role": c.get("role"), "description": c.get("description"), "personality": c.get("personality")} for c in characters],
-        }
-        identity_prompt = render_template(_PROMPTS_DIR / "characters_identity.txt", ctx)
-        agent = PipelineAgent(_SYSTEM)
+        concept = _renpy_character_concept(brief, story, settings, characters, i + 1, total)
+        sub_result = run_subpipeline(
+            working_dir,
+            "character",
+            {
+                "concept": concept,
+                "tone": brief.get("tone", "balanced"),
+                "role": "visual novel cast member",
+                "setting": brief.get("setting", brief.get("genre", "")),
+                "notes": brief.get("notes", ""),
+            },
+            run_id=f"character_{i + 1}",
+        )
 
-        identity   = _json_with_correction(agent, identity_prompt,   f"character {label} identity")
-        appearance = _json_with_correction(agent, _APPEARANCE_PROMPT, f"character {label} appearance")
-        voice      = _json_with_correction(agent, _VOICE_PROMPT,      f"character {label} voice")
-
-        characters.append({**identity, **appearance, **voice})
+        generated = sub_result.get("outputs", {}).get("character", {})
+        portrait = sub_result.get("outputs", {}).get("portrait_result", {})
+        portrait_file = portrait.get("file") if isinstance(portrait, dict) else ""
+        characters.append(_normalize_renpy_character(generated, i + 1, portrait_file or ""))
 
     return {"characters": characters}
 
@@ -135,6 +194,82 @@ def generate_scenes(inputs: Dict, working_dir: Path) -> Dict:
     return {"scenes": scenes}
 
 
+def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3) -> Dict:
+    last_error = ""
+    for attempt in range(1, max_attempts + 1):
+        agent = PipelineAgent(_SYSTEM)
+        content = strip_fences(agent.send(prompt))
+
+        for correction_attempt in range(2):
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as e:
+                last_error = str(e)
+                if correction_attempt == 1:
+                    break
+                print(f"    [dialogue]  invalid JSON for {label}, sending correction...")
+                content = strip_fences(agent.send(
+                    "Invalid JSON. Return only the JSON object, no other text."
+                ))
+
+        if attempt < max_attempts:
+            print(f"    [dialogue]  retrying {label} ({attempt + 1}/{max_attempts})")
+
+    raise RuntimeError(f"Failed to generate dialogue JSON for {label} ({last_error})")
+
+
+def _dialogue_chunk_prompt(scene_inputs: Dict, previous_lines: list, line_count: int, chunk_index: int, chunk_total: int) -> str:
+    return "\n".join([
+        f"You are writing a small chunk of dialogue for a {scene_inputs['genre']} visual novel.",
+        f"Tone: {scene_inputs['tone']}",
+        "",
+        "Characters in this scene:",
+        json.dumps(scene_inputs["characters"], indent=2, ensure_ascii=False),
+        "",
+        "Setting:",
+        json.dumps(scene_inputs["setting"], indent=2, ensure_ascii=False),
+        "",
+        "Scene:",
+        json.dumps(scene_inputs["scene"], indent=2, ensure_ascii=False),
+        "",
+        f"Previously written lines for this scene ({len(previous_lines)}):",
+        json.dumps(previous_lines, indent=2, ensure_ascii=False),
+        "",
+        f"Write the next {line_count} lines only. This is chunk {chunk_index} of {chunk_total}.",
+        "Each line must have character_id and text. character_id must match a character id above, or null for narrator.",
+        "Keep each text value concise enough for a visual novel dialogue box.",
+        "Do not repeat previous lines.",
+        "Maintain continuity from previous_lines.",
+        "If this is the final chunk, make what_changes felt by the final line.",
+        "",
+        'Output exactly: {"lines": [{"character_id": null, "text": "..."}, {"character_id": "char_id", "text": "..."}]}',
+    ])
+
+
+def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int = 3) -> Dict:
+    target_lines = max(1, _parse_count(scene_inputs.get("lines_per_scene", "16")))
+    chunk_size = 4
+    lines = []
+    chunk_total = (target_lines + chunk_size - 1) // chunk_size
+
+    for chunk_index in range(1, chunk_total + 1):
+        remaining = target_lines - len(lines)
+        count = min(chunk_size, remaining)
+        prompt = _dialogue_chunk_prompt(scene_inputs, lines, count, chunk_index, chunk_total)
+        chunk = _generate_dialogue_json(prompt, f"{label} chunk {chunk_index}", max_attempts=max_attempts)
+        chunk_lines = chunk.get("lines")
+        if not isinstance(chunk_lines, list) or not chunk_lines:
+            raise RuntimeError(f"Dialogue chunk for {label} did not return lines")
+        lines.extend(chunk_lines[:count])
+
+    scene = scene_inputs["scene"]
+    return {
+        "scene_id": scene.get("id", label),
+        "setting_id": scene.get("setting_id", ""),
+        "lines": lines[:target_lines],
+    }
+
+
 def dialogue(inputs: Dict, working_dir: Path) -> Dict:
     template_path = _PROMPTS_DIR / "dialogue.txt"
 
@@ -175,24 +310,7 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
             "scene":           {k: v for k, v in scene.items() if k in _SCENE_DIALOGUE_FIELDS},
             "setting":         {k: v for k, v in setting_full.items() if k != "image_file"},
         }
-        prompt = render_template(template_path, scene_inputs)
-        agent = PipelineAgent(_SYSTEM)
-
-        content = strip_fences(agent.send(prompt))
-        success = False
-        for _ in range(2):
-            try:
-                completed_scenes.append(json.loads(content))
-                success = True
-                break
-            except json.JSONDecodeError:
-                print(f"    [dialogue]  invalid JSON, sending correction...")
-                content = strip_fences(agent.send(
-                    "Invalid JSON. Return only the JSON object, no other text."
-                ))
-
-        if not success:
-            raise RuntimeError(f"Failed to generate dialogue for scene: {label}")
+        completed_scenes.append(_generate_dialogue_scene(scene_inputs, label))
 
     return {"dialogue_scenes": completed_scenes}
 
@@ -306,6 +424,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         )
 
         print(f"    [images]  generating portrait: {image_file}")
+        portrait_file = char_data.get("portrait_file")
+        if portrait_file and Path(portrait_file).exists():
+            shutil.copy2(portrait_file, filepath)
+            track_written_file(str(filepath))
+            generated.append(image_file)
+            print(f"    [images]  copied portrait: {image_file}")
+            continue
+
         result = generate_image(prompt)
 
         if result.get("success") and result.get("saved_paths"):

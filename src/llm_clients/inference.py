@@ -1,7 +1,8 @@
 """Shared inference primitives for pipeline stages."""
 
 import logging
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 from llm_clients.message_builder import MessageBuilder
 from llm_clients.connector_selector import get_connector
@@ -18,10 +19,46 @@ def strip_fences(content: str) -> str:
     return content.strip()
 
 
-def call_llm(connector, messages: list, json_mode: bool = False) -> dict:
+_REPETITION_RE = re.compile(r'(.{3,20})\1{8,}')
+
+
+def _is_repetitive(content: str) -> bool:
+    return bool(_REPETITION_RE.search(content))
+
+
+def make_response_format(name: str, schema: dict) -> dict:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": "true",
+            "schema": schema,
+        },
+    }
+
+
+def safe_history_content(content: str) -> str:
+    """
+    Keep provider/internal channel tags out of subsequent LLM requests.
+
+    Some local endpoints reject messages containing raw strings such as
+    <|channel>thought. Pipeline stages still receive the original content so
+    they can attempt JSON parsing/correction, but history stores a harmless
+    placeholder instead of echoing malformed channel markup back to the API.
+    """
+    if "<|channel>" in content or "<|start_header_id|>" in content:
+        if "<|channel>final" in content:
+            return content.split("<|channel>final", 1)[1].strip()
+        return "[previous response omitted: invalid provider channel markup]"
+    return content
+
+
+def call_llm(connector, messages: list, response_format: Optional[dict] = None) -> dict:
     """Call connector with streaming if available, fall back to non-streaming."""
-    if not hasattr(connector, "generate_with_tools_stream"):
-        return connector.generate_with_tools(messages, [], json_mode=json_mode)
+    if (response_format
+            or not hasattr(connector, "generate_with_tools_stream")
+            or not getattr(connector, "_streaming_works", True)):
+        return connector.generate_with_tools(messages, [], response_format=response_format)
 
     accumulated = ""
     envelope: dict = {}
@@ -29,20 +66,21 @@ def call_llm(connector, messages: list, json_mode: bool = False) -> dict:
         for chunk in connector.generate_with_tools_stream(messages, []):
             if "error" in chunk:
                 logger.warning(f"Streaming failed, falling back: {chunk['error']}")
-                return connector.generate_with_tools(messages, [], json_mode=json_mode)
+                return connector.generate_with_tools(messages, [], response_format=response_format)
             if not envelope:
                 envelope = {k: v for k, v in chunk.items() if k != "choices"}
             for choice in chunk.get("choices", []):
-                delta = choice.get("delta", {})
+                delta = choice.get("delta") or choice.get("message", {})
                 if delta.get("content"):
                     accumulated += delta["content"]
     except Exception as e:
         logger.warning(f"Streaming error, falling back: {e}")
-        return connector.generate_with_tools(messages, [], json_mode=json_mode)
+        return connector.generate_with_tools(messages, [], response_format=response_format)
 
     if not accumulated:
         logger.warning("Streaming produced empty content, falling back to non-streaming")
-        return connector.generate_with_tools(messages, [], json_mode=json_mode)
+        connector._streaming_works = False
+        return connector.generate_with_tools(messages, [], response_format=response_format)
 
     return {
         **envelope,
@@ -57,9 +95,9 @@ class PipelineAgent:
 
     Usage:
         agent = PipelineAgent()
-        content = agent.send("generate character as JSON")
+        content = agent.send("generate character as JSON", response_format=MY_SCHEMA)
         # on bad output:
-        content = agent.send("Invalid JSON. Return only the JSON object.")
+        content = agent.send("Invalid JSON. Return only the JSON object.", response_format=MY_SCHEMA)
     """
 
     DEFAULT_SYSTEM = (
@@ -71,18 +109,17 @@ class PipelineAgent:
         self._system = system_prompt
         self._history: List[Dict[str, Any]] = []
 
-    def send(self, message: str) -> str:
-        from config.settings_manager import settings_manager
-        json_mode = settings_manager.get_category_settings().use_json_mode
-
+    def send(self, message: str, response_format: Optional[dict] = None) -> str:
         self._history.append(MessageBuilder.user_msg(message))
         messages = MessageBuilder(self._system).extend(self._history).build()
 
-        result = call_llm(get_connector(), messages, json_mode=json_mode)
+        result = call_llm(get_connector(), messages, response_format=response_format)
 
         if "error" in result:
             raise RuntimeError(f"LLM error: {result['error']}")
 
         content = result["choices"][0]["message"]["content"].strip()
-        self._history.append(MessageBuilder.assistant_msg(content))
+        if _is_repetitive(content):
+            raise RuntimeError("Model output detected as repetitive — retrying with fresh context")
+        self._history.append(MessageBuilder.assistant_msg(safe_history_content(content)))
         return content

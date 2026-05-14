@@ -84,6 +84,38 @@ export interface AgentMessage {
     timestamp: string
 }
 
+export type PipelineEventType =
+    | 'pipeline_started'
+    | 'pipeline_node_started'
+    | 'pipeline_node_completed'
+    | 'pipeline_node_failed'
+    | 'pipeline_stage_started'
+    | 'pipeline_stage_completed'
+    | 'pipeline_stage_retrying'
+    | 'pipeline_stage_failed'
+    | 'pipeline_completed'
+    | 'pipeline_failed'
+
+export interface PipelineEvent {
+    type: PipelineEventType
+    task_id: string
+    subtask_id?: string | null
+    pipeline: string
+    pipeline_path?: string[]
+    parent_pipeline?: string | null
+    working_dir: string
+    timestamp: string
+    node_count?: number
+    node_id?: string
+    stage_count?: number
+    stage_id?: string
+    stage_type?: 'llm' | 'function'
+    attempt?: number
+    max_attempts?: number
+    output?: string
+    error?: string
+}
+
 export type WebSocketMessage =
     | { type: 'connected'; timestamp: string }
     | { type: 'task_created'; task_id: string; goal: string; timestamp: string }
@@ -96,6 +128,7 @@ export type WebSocketMessage =
     | { type: 'agent_message'; task_id: string; agent_id: string; phase: MaestroPhase; message: string; timestamp: string; subtask_id?: string }
     | { type: 'tool_usage'; task_id: string; subtask_id: string; tool_name: string; arguments: Record<string, any>; status: 'success' | 'failed'; timestamp: string }
     | { type: 'refine_message'; task_id: string; messages: RefinementMessage[]; timestamp: string }
+    | PipelineEvent
 
 export interface LMStudioSettings {
     base_url: string

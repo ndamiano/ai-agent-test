@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
+from pathlib import Path
+import uuid
 
 from pipelines.runner import Pipeline, PipelineRunner
 from config.settings_manager import settings_manager
@@ -118,6 +120,18 @@ def get_registry() -> Dict[str, PipelineDefinition]:
     return _registry
 
 
+def _load_json_outputs(working_dir: str) -> dict:
+    # Return all JSON outputs from the working dir
+    import json
+    outputs = {}
+    for path in sorted(Path(working_dir).glob("*.json")):
+        try:
+            outputs[path.stem] = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return outputs
+
+
 def run_pipeline(name: str, brief: dict, working_dir: str) -> dict:
     """Run a named pipeline synchronously. Returns the final output files as a dict."""
     registry = get_registry()
@@ -134,13 +148,43 @@ def run_pipeline(name: str, brief: dict, working_dir: str) -> dict:
     if not success:
         raise RuntimeError(f"Pipeline {name!r} failed.")
 
-    # Return all JSON outputs from the working dir
-    import json
-    from pathlib import Path
-    outputs = {}
-    for path in sorted(Path(working_dir).glob("*.json")):
-        try:
-            outputs[path.stem] = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return outputs
+    return _load_json_outputs(working_dir)
+
+
+def run_subpipeline(
+    parent_working_dir: Path | str,
+    name: str,
+    brief: dict,
+    run_id: Optional[str] = None,
+    failure_policy: str = "raise",
+) -> dict:
+    """
+    Run a pipeline from inside another pipeline stage.
+
+    Returns a structured record with child working_dir and JSON outputs. By default
+    child failure raises so the parent stage fails and retries normally.
+    """
+    if failure_policy not in {"raise", "return"}:
+        raise ValueError("failure_policy must be 'raise' or 'return'")
+
+    run_id = run_id or uuid.uuid4().hex[:12]
+    working_dir = Path(parent_working_dir) / "subpipelines" / name / run_id
+
+    try:
+        outputs = run_pipeline(name, brief, str(working_dir))
+        return {
+            "status": "completed",
+            "pipeline": name,
+            "working_dir": str(working_dir),
+            "outputs": outputs,
+        }
+    except Exception as e:
+        if failure_policy == "return":
+            return {
+                "status": "failed",
+                "pipeline": name,
+                "working_dir": str(working_dir),
+                "error": str(e),
+                "outputs": _load_json_outputs(str(working_dir)),
+            }
+        raise

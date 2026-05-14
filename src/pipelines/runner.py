@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import contextvars
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,29 +93,78 @@ def _enrich_inputs(inputs: dict) -> dict:
 class PipelineRunner:
 
     def __init__(self, working_dir: str):
+        from tools.execution_context import get_pipeline_path, get_subtask_id, get_task_id
+
         self.working_dir = Path(working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
+        self.task_id = get_task_id()
+        self.subtask_id = get_subtask_id()
+        self.parent_pipeline_path = get_pipeline_path()
+        self.pipeline_path: List[str] = []
+
+    def _publish_progress(
+        self,
+        event_type: str,
+        pipeline_name: str,
+        **payload: Any,
+    ) -> None:
+        if not self.task_id:
+            return
+
+        from api.websocket.event_bus import event_bus
+        from config.time_utils import get_utc_timestamp
+
+        event = {
+            "type": event_type,
+            "task_id": self.task_id,
+            "subtask_id": self.subtask_id,
+            "pipeline": pipeline_name,
+            "pipeline_path": self.pipeline_path or [pipeline_name],
+            "parent_pipeline": self.parent_pipeline_path[-1] if self.parent_pipeline_path else None,
+            "working_dir": str(self.working_dir),
+            "timestamp": get_utc_timestamp(),
+            **payload,
+        }
+        event_bus.publish_sync(event)
 
     def run(self, pipeline: Pipeline, brief: Dict[str, Any]) -> bool:
+        from tools.execution_context import pipeline_context
+
+        self.pipeline_path = [*self.parent_pipeline_path, pipeline.name]
+
         import shutil
         if self.working_dir.exists():
             shutil.rmtree(self.working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-        self._write("brief.json", brief)
+        with pipeline_context(self.pipeline_path):
+            self._write("brief.json", brief)
 
-        print(f"\n{'='*60}")
-        print(f"Pipeline: {pipeline.name}  ({len(pipeline.nodes)} nodes)")
-        print(f"Working dir: {self.working_dir.resolve()}")
-        print(f"{'='*60}\n")
+            print(f"\n{'='*60}")
+            print(f"Pipeline: {pipeline.name}  ({len(pipeline.nodes)} nodes)")
+            print(f"Working dir: {self.working_dir.resolve()}")
+            print(f"{'='*60}\n")
 
-        for node in pipeline.nodes:
-            if not self._run_node(pipeline, node):
-                print(f"\n  Pipeline failed at node: [{node.id}]")
-                return False
+            self._publish_progress(
+                "pipeline_started",
+                pipeline.name,
+                node_count=len(pipeline.nodes),
+            )
 
-        print("\n  Pipeline complete")
-        return True
+            for node in pipeline.nodes:
+                if not self._run_node(pipeline, node):
+                    print(f"\n  Pipeline failed at node: [{node.id}]")
+                    self._publish_progress(
+                        "pipeline_failed",
+                        pipeline.name,
+                        node_id=node.id,
+                        error=f"Pipeline failed at node: {node.id}",
+                    )
+                    return False
+
+            print("\n  Pipeline complete")
+            self._publish_progress("pipeline_completed", pipeline.name)
+            return True
 
     def run_from(self, pipeline: Pipeline, brief: Dict[str, Any], node_id: str) -> bool:
         start = next((i for i, n in enumerate(pipeline.nodes) if n.id == node_id), None)
@@ -126,13 +176,28 @@ class PipelineRunner:
     def _run_node(self, pipeline: Pipeline, node: Node) -> bool:
         n = len(node.stages)
         print(f"  Node [{node.id}]  ({n} stage{'s' if n > 1 else ''})")
+        self._publish_progress(
+            "pipeline_node_started",
+            pipeline.name,
+            node_id=node.id,
+            stage_count=n,
+        )
 
         if n == 1:
-            return self._run_stage(pipeline, node.stages[0])
+            ok = self._run_stage(pipeline, node.stages[0], node.id)
+            self._publish_progress(
+                "pipeline_node_completed" if ok else "pipeline_node_failed",
+                pipeline.name,
+                node_id=node.id,
+            )
+            return ok
 
         results: Dict[str, bool] = {}
         with ThreadPoolExecutor(max_workers=n) as executor:
-            futures = {executor.submit(self._run_stage, pipeline, s): s for s in node.stages}
+            futures = {
+                executor.submit(contextvars.copy_context().run, self._run_stage, pipeline, s, node.id): s
+                for s in node.stages
+            }
             for future in as_completed(futures):
                 stage = futures[future]
                 try:
@@ -141,12 +206,27 @@ class PipelineRunner:
                     logger.exception(f"Stage {stage.id} raised an unhandled exception")
                     results[stage.id] = False
 
-        return all(results.values())
+        ok = all(results.values())
+        self._publish_progress(
+            "pipeline_node_completed" if ok else "pipeline_node_failed",
+            pipeline.name,
+            node_id=node.id,
+        )
+        return ok
 
-    def _run_stage(self, pipeline: Pipeline, stage: Stage) -> bool:
+    def _run_stage(self, pipeline: Pipeline, stage: Stage, node_id: str) -> bool:
         label = f"[{stage.id}]"
 
         for attempt in range(1, stage.retries + 2):
+            self._publish_progress(
+                "pipeline_stage_started",
+                pipeline.name,
+                node_id=node_id,
+                stage_id=stage.id,
+                stage_type="llm" if isinstance(stage, LLMStage) else "function",
+                attempt=attempt,
+                max_attempts=stage.retries + 1,
+            )
             try:
                 if isinstance(stage, LLMStage):
                     output_data = self._run_llm_stage(pipeline, stage)
@@ -158,17 +238,49 @@ class PipelineRunner:
                 if self._validate(label, stage, output_data):
                     self._write(stage.output, output_data)
                     print(f"    {label}  wrote {stage.output}")
+                    self._publish_progress(
+                        "pipeline_stage_completed",
+                        pipeline.name,
+                        node_id=node_id,
+                        stage_id=stage.id,
+                        output=stage.output,
+                        attempt=attempt,
+                    )
                     return True
 
                 print(f"    {label}  validation failed (attempt {attempt})")
+                if attempt <= stage.retries:
+                    self._publish_progress(
+                        "pipeline_stage_retrying",
+                        pipeline.name,
+                        node_id=node_id,
+                        stage_id=stage.id,
+                        attempt=attempt,
+                        error="Validation failed",
+                    )
 
             except Exception as e:
                 print(f"    {label}  error on attempt {attempt}: {e}")
                 logger.exception(f"Stage {stage.id} attempt {attempt}")
+                if attempt <= stage.retries:
+                    self._publish_progress(
+                        "pipeline_stage_retrying",
+                        pipeline.name,
+                        node_id=node_id,
+                        stage_id=stage.id,
+                        attempt=attempt,
+                        error=str(e),
+                    )
 
             if attempt <= stage.retries:
                 print(f"    {label}  retrying...")
 
+        self._publish_progress(
+            "pipeline_stage_failed",
+            pipeline.name,
+            node_id=node_id,
+            stage_id=stage.id,
+        )
         return False
 
     def _run_llm_stage(self, pipeline: Pipeline, stage: LLMStage) -> Dict:

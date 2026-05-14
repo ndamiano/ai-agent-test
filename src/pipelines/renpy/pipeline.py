@@ -15,7 +15,38 @@ RENPY_PIPELINE = Pipeline(
                 id="story",
                 prompt_template="story.txt",
                 output="story.json",
-                schema={"required": ["arc", "story_beats", "location_needs"]},
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "arc":          {"type": "string"},
+                        "premise":      {"type": "string"},
+                        "story_beats":  {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "beat_id":       {"type": "string"},
+                                    "label":         {"type": "string"},
+                                    "description":   {"type": "string"},
+                                    "location_type": {"type": "string"},
+                                },
+                                "required": ["beat_id", "label", "description", "location_type"],
+                            },
+                        },
+                        "location_needs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "need":           {"type": "string"},
+                                    "suggested_name": {"type": "string"},
+                                },
+                                "required": ["need", "suggested_name"],
+                            },
+                        },
+                    },
+                    "required": ["arc", "premise", "story_beats", "location_needs"],
+                },
             ),
         ]),
 
@@ -24,7 +55,25 @@ RENPY_PIPELINE = Pipeline(
                 id="settings",
                 prompt_template="settings.txt",
                 output="settings.json",
-                schema={"required": ["settings"]},
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "settings": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id":          {"type": "string"},
+                                    "name":        {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "image_file":  {"type": "string"},
+                                },
+                                "required": ["id", "name", "description", "image_file"],
+                            },
+                        },
+                    },
+                    "required": ["settings"],
+                },
             ),
         ]),
 

@@ -9,18 +9,24 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 - Maestro agent (wave orchestration) + Worker agents (tool execution)
 - Chat agent (conversational mode, persistent session, full tool access)
 - Ren'Py pipeline (8-node DAG: story → settings → characters → scenes → dialogue → package → images → build)
-  - Characters: 3 sequential calls per character (identity / appearance / voice)
-  - Scenes: 1 call per beat — no truncation, full dramatic brief per scene (character_states, dramatic_question, revelation, what_changes, setting_constraint)
-  - Dialogue: receives only characters present in the scene, slimmed to fields relevant to writing
+  - Characters: generated via `run_subpipeline("character", ...)` — full character pipeline per cast member, portrait reused if already generated
+  - Scenes: 1 call per beat — full dramatic brief per scene (character_states, dramatic_question, revelation, what_changes, setting_constraint)
+  - Dialogue: chunked generation (4 lines/chunk) with continuity from previous lines, per-attempt retry with fresh agent
   - All prompts tightened: skeleton-first format, minimum injected context per stage
-- Pipeline registry + `run_pipeline` / `queue_pipeline` / `run_queued_pipelines` tools
+- Pipeline registry + `run_pipeline` / `run_subpipeline` / `queue_pipeline` / `run_queued_pipelines` tools
+- `run_subpipeline` — pipelines can call other pipelines; child runs in isolated working dir, returns structured result
 - Agents can fire pipelines directly — the two systems are connected
 - Unified inference path: `PipelineAgent` → `MessageBuilder` → connector (same path as agents)
-- OpenAI-compatible connector (LMStudio, Cline, OpenRouter) with streaming + json_mode fallback
+- OpenAI-compatible connector with streaming + structured JSON schema output (`response_format: json_schema`), graceful fallback if unsupported
+- `frequency_penalty` (default 0.5) + separate `pipeline_max_tokens` (default 4096) per connector setting
+- Repetition detection in `PipelineAgent` — raises on looping output before it poisons history
+- `safe_history_content()` strips local model channel markup (`<|channel>`, `<|start_header_id|>`) from history
+- All pipeline schemas upgraded to full JSON Schema (`type` + `properties`) for structured output
+- Pipeline progress WebSocket events — every node/stage lifecycle emitted to frontend; `PipelineProgress` UI component shows live status, progress bars, retry errors
 - Tool manager (decorator-based, auto schema inference)
 - Task store (SQLite) + WebSocket event bus
 - Model category settings (large/medium/small)
-- React frontend: Chat tab + Tasks tab, branding as Maestro
+- React frontend: Chat tab + Tasks tab, pipeline progress panel, branding as Maestro
 
 ---
 
@@ -29,8 +35,9 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 ### Pipelines as tool calls
 Pipelines are the key abstraction. They limit what's in the agent's context — it fires `run_pipeline("renpy")` and eventually gets back a completed game. It never sees intermediate steps. Pipelines are specialized, optimized, and composable.
 
-### Pipeline execution model: queue + gather
+### Pipeline execution model: queue + gather + compose
 - **`run_pipeline(name, brief)`** — fire a single pipeline, block until done, return result
+- **`run_subpipeline(parent_dir, name, brief)`** — call a pipeline from within a pipeline stage; child working dir is isolated under parent, returns `{status, pipeline, working_dir, outputs}`
 - **`queue_pipeline(name, brief)`** — add a pipeline to the session queue (non-blocking)
 - **`run_queued_pipelines()`** — run all queued pipelines in parallel, block until all complete
 
@@ -65,8 +72,8 @@ Each new pipeline is registerable in `pipelines/registry.py` with no other chang
 ## Phase 4 — Composition and scale
 *Make pipelines composable and the platform more powerful.*
 
-- [ ] **Pipelines calling pipelines** — formalize `run_pipeline` as callable from within FnStages
-- [ ] **Parallel pipeline execution** — queue/gather pattern available within pipelines too
+- [x] **Pipelines calling pipelines** — `run_subpipeline()` in `registry.py`; Ren'Py character generation uses it. Child working dir isolated, structured result returned.
+- [ ] **Parallel pipeline execution** — queue/gather pattern available within pipelines too (currently sequential)
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
 - [ ] **Automated prompt optimization** — evaluation suite + LLM-as-judge scorer + hill-climbing loop to improve stage prompts. Worthwhile once there are 3+ pipelines and a body of outputs to evaluate against.
 
@@ -86,7 +93,7 @@ These pipelines are architecturally dependent on sub-pipeline support from Phase
 - [ ] Auto-install and manage ComfyUI / LMStudio
 - [ ] Model selection assistant (help user pick the right model)
 - [ ] Plugin / contribution system for third-party pipelines and tools
-- [ ] Progress events from pipeline stages — WebSocket updates so user knows what's happening mid-pipeline
+- [x] Progress events from pipeline stages — WebSocket events at every node/stage lifecycle; `PipelineProgress` UI component with live status, progress bars, retry errors
 
 ---
 

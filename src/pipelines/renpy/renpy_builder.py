@@ -306,7 +306,15 @@ def _write_script(game_dir: str, characters: list, images: list, scenes: list):
 
         for line in scene.get("lines", []):
             who = line.get("who")
-            say = line.get("say", "").replace('"', '\\"')
+            say = (line.get("say", "")
+                   .replace("\\", "\\\\")
+                   .replace('"', '\\"')
+                   .replace("[", "[[")
+                   .replace("]", "]]")
+                   .replace("{", "{{")
+                   .replace("}", "}}")
+                   .replace("\r", "")
+                   .replace("\n", " "))
             if who and who in char_has_image and who not in shown_chars:
                 lines.append(f"    show {who}")
                 shown_chars.add(who)

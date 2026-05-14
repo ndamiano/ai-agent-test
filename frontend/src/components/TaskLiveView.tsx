@@ -2,7 +2,7 @@ import React from 'react'
 import AgentCard from './AgentCard'
 import MaestroCard from './MaestroCard'
 import BounceDots from './BounceDots'
-import type { Task, ToolUsage, AgentMessage, MaestroPhase } from '../types'
+import type { Task, ToolUsage, AgentMessage, MaestroPhase, PipelineEvent } from '../types'
 import type { SubtaskState } from '../hooks/useTaskStage'
 
 interface TaskLiveViewProps {
@@ -11,6 +11,7 @@ interface TaskLiveViewProps {
     subtasks: SubtaskState[]
     childTasks: Task[]
     criteria: string[] | null
+    pipelineEvents: PipelineEvent[]
     maestroMessage: { phase: MaestroPhase; message: string; timestamp: string } | null
     maestroExpanded: boolean
     expandedSubtasks: Set<string>
@@ -34,6 +35,113 @@ const statusLabel: Record<string, string> = {
     in_progress: 'Running',
     completed: 'Done',
     failed: 'Failed',
+}
+
+const pipelineEventLabel: Record<PipelineEvent['type'], string> = {
+    pipeline_started: 'Started',
+    pipeline_node_started: 'Node started',
+    pipeline_node_completed: 'Node complete',
+    pipeline_node_failed: 'Node failed',
+    pipeline_stage_started: 'Stage started',
+    pipeline_stage_completed: 'Stage complete',
+    pipeline_stage_retrying: 'Retrying',
+    pipeline_stage_failed: 'Stage failed',
+    pipeline_completed: 'Complete',
+    pipeline_failed: 'Failed',
+}
+
+interface PipelineRun {
+    key: string
+    name: string
+    workingDir: string
+    latest: PipelineEvent
+    events: PipelineEvent[]
+    completedStages: number
+    knownStages: Set<string>
+}
+
+function groupPipelineRuns(events: PipelineEvent[]): PipelineRun[] {
+    const runs = new Map<string, PipelineRun>()
+
+    for (const event of events) {
+        const key = event.working_dir || `${event.pipeline}:${event.subtask_id ?? 'task'}`
+        const existing = runs.get(key)
+        const run = existing ?? {
+            key,
+            name: event.pipeline,
+            workingDir: event.working_dir,
+            latest: event,
+            events: [],
+            completedStages: 0,
+            knownStages: new Set<string>(),
+        }
+
+        run.events.push(event)
+        run.latest = event
+        if (event.stage_id) {
+            run.knownStages.add(`${event.node_id ?? 'node'}:${event.stage_id}`)
+        }
+        if (event.type === 'pipeline_stage_completed') {
+            run.completedStages += 1
+        }
+        runs.set(key, run)
+    }
+
+    return [...runs.values()].sort((a, b) => a.events[0].timestamp.localeCompare(b.events[0].timestamp))
+}
+
+const PipelineProgress: React.FC<{ events: PipelineEvent[] }> = ({ events }) => {
+    const runs = groupPipelineRuns(events)
+    if (runs.length === 0) return null
+
+    return (
+        <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-3">Pipelines</p>
+            <div className="flex flex-col gap-3">
+                {runs.map(run => {
+                    const latest = run.latest
+                    const failed = latest.type === 'pipeline_failed' || latest.type === 'pipeline_node_failed' || latest.type === 'pipeline_stage_failed'
+                    const done = latest.type === 'pipeline_completed'
+                    const active = !failed && !done
+                    const stageTotal = Math.max(run.knownStages.size, latest.stage_count ?? 0)
+                    const label = latest.pipeline_path?.join(' / ') ?? run.name
+                    const detail = latest.stage_id
+                        ? `${latest.node_id ?? 'node'} / ${latest.stage_id}${latest.attempt ? ` (attempt ${latest.attempt}${latest.max_attempts ? `/${latest.max_attempts}` : ''})` : ''}`
+                        : latest.node_id ?? latest.working_dir
+
+                    return (
+                        <div key={run.key} className="rounded-md bg-white/[0.03] border border-white/[0.05] px-3 py-2">
+                            <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                    failed ? 'bg-red-500' : done ? 'bg-green-500' : 'bg-blue-500 animate-pulse'
+                                }`} />
+                                <span className="text-sm font-medium text-white">{label}</span>
+                                <span className={`text-xs ml-auto ${
+                                    failed ? 'text-red-400' : done ? 'text-green-400' : 'text-blue-400'
+                                }`}>
+                                    {pipelineEventLabel[latest.type]}
+                                </span>
+                            </div>
+                            <div className="mt-1 pl-4 text-xs text-gray-500 truncate">{detail}</div>
+                            {stageTotal > 0 && (
+                                <div className="mt-2 pl-4">
+                                    <div className="h-1.5 rounded-full overflow-hidden bg-white/5">
+                                        <div
+                                            className={`h-full ${failed ? 'bg-red-500' : done ? 'bg-green-500' : 'bg-blue-500'}`}
+                                            style={{ width: `${Math.min(100, Math.round((run.completedStages / stageTotal) * 100))}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                            {active && latest.type === 'pipeline_stage_retrying' && latest.error && (
+                                <div className="mt-1 pl-4 text-xs text-yellow-500 truncate">{latest.error}</div>
+                            )}
+                        </div>
+                    )
+                })}
+            </div>
+        </div>
+    )
 }
 
 interface DomainCardProps {
@@ -96,6 +204,7 @@ const TaskLiveView: React.FC<TaskLiveViewProps> = ({
     subtasks,
     childTasks,
     criteria,
+    pipelineEvents,
     maestroMessage,
     maestroExpanded,
     expandedSubtasks,
@@ -128,6 +237,8 @@ const TaskLiveView: React.FC<TaskLiveViewProps> = ({
                     </ul>
                 </div>
             )}
+
+            <PipelineProgress events={pipelineEvents} />
 
             {isPlanning && (
                 <div className="flex items-center gap-3 py-2">

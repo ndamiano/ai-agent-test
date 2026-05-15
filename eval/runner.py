@@ -3,8 +3,10 @@ _src = _pl.Path(__file__).resolve().parent.parent / "src"
 if str(_src) not in _sys.path:
     _sys.path.insert(0, str(_src))
 
+import io
 import json
 import logging
+import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
@@ -12,6 +14,24 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+class _Tee:
+    """Write to both original stdout and a capture buffer simultaneously."""
+    def __init__(self):
+        self._orig = sys.stdout
+        self._buf = io.StringIO()
+
+    def write(self, s: str) -> int:
+        self._orig.write(s)
+        self._buf.write(s)
+        return len(s)
+
+    def flush(self):
+        self._orig.flush()
+
+    def getvalue(self) -> str:
+        return self._buf.getvalue()
 
 
 def _get_pipeline_stage(pipeline_name: str, stage_id: str):
@@ -50,8 +70,13 @@ class StageRunner:
         runner = PipelineRunner(str(tmp_dir))
         runner.task_id = None  # suppress WebSocket events
 
+        tee = _Tee()
         t0 = time.monotonic()
-        ok = runner._run_stage(self._pipeline, self._stage, self._node.id)
+        sys.stdout = tee
+        try:
+            ok = runner._run_stage(self._pipeline, self._stage, self._node.id)
+        finally:
+            sys.stdout = tee._orig
         elapsed = time.monotonic() - t0
 
         output = None
@@ -60,7 +85,7 @@ class StageRunner:
             if out_path.exists():
                 output = json.loads(out_path.read_text(encoding="utf-8"))
 
-        return {"ok": ok, "output": output, "elapsed": elapsed}
+        return {"ok": ok, "output": output, "elapsed": elapsed, "log": tee.getvalue()}
 
     def run_timed(
         self,
@@ -82,7 +107,7 @@ class StageRunner:
                         try:
                             result = future.result(timeout=per_run_timeout)
                         except _FuturesTimeout:
-                            result = {"ok": False, "output": None,
+                            result = {"ok": False, "output": None, "log": "",
                                       "elapsed": time.monotonic() - t0, "error": "timeout"}
                 else:
                     result = self._run_once(tmp_path)

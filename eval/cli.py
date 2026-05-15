@@ -59,6 +59,7 @@ def cmd_capture(args):
 
 
 def cmd_score_stage(args):
+    from eval.failures import print_analysis as print_failure_analysis
     from eval.fixtures import load as load_fixtures
     from eval.judge import Judge
     from eval.report import summarize, save, print_summary
@@ -73,6 +74,7 @@ def cmd_score_stage(args):
     print(f"Scoring {args.target}  brief={args.brief}  budget={args.time}s"
           + (f"  per-run-timeout={args.per_run_timeout}s" if args.per_run_timeout else ""))
     results = runner.run_timed(args.time, max_n=args.max_n, per_run_timeout=args.per_run_timeout)
+    print_failure_analysis(results)
     scored  = [
         judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
         for r in results

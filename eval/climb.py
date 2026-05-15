@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
+from eval.failures import print_analysis as print_failure_analysis
 from eval.fixtures import load as load_fixtures
 from eval.judge import Judge
 from eval.report import summarize, save, print_summary, print_diff
@@ -80,6 +81,7 @@ def hill_climb(
     timeout_str = f"  per-run-timeout={per_run_timeout:.0f}s" if per_run_timeout else ""
     print(f"\n[baseline] {pipeline_name}/{stage_id}  budget={time_per_run:.0f}s{timeout_str}")
     baseline_results = runner.run_timed(time_per_run, per_run_timeout=per_run_timeout)
+    print_failure_analysis(baseline_results)
     baseline_scored  = _score_run(baseline_results, stage_id, rubric, judge)
     baseline_summary = summarize(baseline_results, baseline_scored, rubric)
     print_summary(baseline_summary, "Baseline")
@@ -118,6 +120,7 @@ def hill_climb(
             print(f"\n  [mutation {j+1}/{len(mutations)}]  running for {mutation_budget:.0f}s")
             with _prompt_override(prompt_path, mutation):
                 results = runner.run_timed(mutation_budget, per_run_timeout=per_run_timeout)
+            print_failure_analysis(results)
             scored  = _score_run(results, stage_id, rubric, judge)
             summary = summarize(results, scored, rubric)
 

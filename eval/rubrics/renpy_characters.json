@@ -1,0 +1,26 @@
+{
+  "stage": "characters",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "distinctiveness",
+      "description": "Each character has a specific combination of traits that makes them feel like a real individual, not a generic archetype. No two characters feel interchangeable.",
+      "weight": 1.5
+    },
+    {
+      "name": "internal_consistency",
+      "description": "Each character's role, backstory, goal, and flaw are coherent — they fit together and no element contradicts another.",
+      "weight": 1.0
+    },
+    {
+      "name": "dramatic_utility",
+      "description": "Characters' flaws and goals would generate interesting conflict and story moments. None are passive or consequence-free.",
+      "weight": 1.5
+    },
+    {
+      "name": "voice_specificity",
+      "description": "Speech patterns and personality traits are concrete enough that a writer could produce distinct dialogue for each character without guessing.",
+      "weight": 1.0
+    }
+  ]
+}

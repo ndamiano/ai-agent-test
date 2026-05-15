@@ -41,3 +41,7 @@ runs/
 
 # RenPy template binary assets (copy from any SDK-generated project)
 src/pipelines/*/renpy_templates/**/*.png
+
+# Eval system — generated artifacts, not source
+eval/fixtures/
+eval/results/

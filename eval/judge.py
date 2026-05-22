@@ -15,8 +15,13 @@ logger = logging.getLogger(__name__)
 
 _SCORE_SYSTEM = (
     "You evaluate AI-generated creative content against a rubric. "
-    "Be critical and precise. 5/5 means exceptional — would impress a professional. "
-    "3/5 means adequate but unremarkable. 1/5 means seriously flawed. "
+    "Score each criterion 0–100 (floats allowed). "
+    "90–100: exceptional, would impress a professional. "
+    "60–75: adequate but unremarkable. "
+    "30–59: noticeably weak, needs improvement. "
+    "0–29: seriously flawed or missing. "
+    "Use the full range. Avoid clustering near 70–80. Be critical — "
+    "most AI output is adequate at best, not exceptional. "
     "Return only valid JSON, no other text."
 )
 
@@ -34,10 +39,10 @@ def _score_prompt(stage_id: str, output: dict, rubric: dict) -> str:
         for c in rubric["criteria"]
     )
     score_schema = {
-        c["name"]: {"score": "float 1.0–5.0", "reasoning": "one sentence"}
+        c["name"]: {"score": "float 0–100", "reasoning": "one sentence citing specific evidence from the output"}
         for c in rubric["criteria"]
     }
-    score_schema["overall"] = "float 1.0–5.0 (weighted average across criteria)"
+    score_schema["overall"] = "float 0–100 (weighted average across criteria)"
     return "\n".join([
         f"Stage: {stage_id}",
         "",

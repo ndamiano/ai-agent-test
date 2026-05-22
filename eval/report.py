@@ -91,6 +91,35 @@ def print_summary(summary: dict, label: str = ""):
                 print(f"  {name:32s}  mean={dist.get('mean','—')}  p25={dist.get('p25','—')}  p75={dist.get('p75','—')}")
 
 
+def print_review(run_num: int, output: dict, scored: dict, rubric: dict):
+    """Print one run's output + judge reasoning for quick human spot-check."""
+    print(f"\n{'━'*55}")
+    print(f"  Run {run_num}  — output")
+    print(f"{'━'*55}")
+    for key, val in output.items():
+        if isinstance(val, list):
+            print(f"  {key}:")
+            for item in val:
+                if isinstance(item, dict):
+                    first_val = next(iter(item.values()), "")
+                    rest = {k: v for k, v in list(item.items())[1:]}
+                    print(f"    • {first_val}")
+                    for k, v in rest.items():
+                        print(f"        {k}: {v}")
+                else:
+                    print(f"    • {item}")
+        else:
+            print(f"  {key}: {val}")
+
+    print(f"\n  — judge  (overall {scored.get('overall', '?')})")
+    for c in rubric.get("criteria", []):
+        name = c["name"]
+        s = scored.get("scores", {}).get(name, {})
+        score = s.get("score", "?")
+        reason = s.get("reasoning", "")
+        print(f"  {name:<22} {score:>6}   {reason}")
+
+
 def print_diff(summary_a: dict, summary_b: dict, label_a: str = "A", label_b: str = "B"):
     col = 32
     print(f"\n{'Criterion':{col}}  {label_a+' p25':>9}  {label_b+' p25':>9}  {'Δp25':>7}  {label_a+' mean':>10}  {label_b+' mean':>10}  {'Δmean':>7}")

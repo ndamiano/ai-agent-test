@@ -108,6 +108,107 @@ def _normalize_renpy_character(character: Dict, index: int, portrait_file: str =
     return char
 
 
+def generate_story(inputs: Dict, working_dir: Path) -> Dict:
+    brief = inputs.get("brief", {})
+    genre    = brief.get("genre", "")
+    tone     = brief.get("tone", "")
+    premise  = brief.get("premise", "")
+    notes    = brief.get("notes", "")
+    n_beats  = _parse_count(brief.get("scene_count", "3"))
+
+    # Call 1: arc + premise
+    print(f"    [story]  generating arc + premise")
+    arc_prompt = "\n".join([
+        f"Write a story arc for a {genre} visual novel.",
+        f"Tone: {tone}",
+        f"Premise: {premise}",
+        f"Notes: {notes}",
+        "",
+        'Output exactly: {"arc": "Drive to X → Realization that Y → Permanent state of Z", "premise": "one sentence central paradox"}',
+    ])
+    agent = PipelineAgent(_SYSTEM)
+    result = _json_with_correction(agent, arc_prompt, "story arc")
+    arc            = result.get("arc", "")
+    story_premise  = result.get("premise", premise)
+
+    # Calls 2..n+1: one beat per scene
+    beats = []
+    for i in range(n_beats):
+        beat_id = f"beat_{i + 1:02d}"
+        print(f"    [story]  generating beat {i + 1}/{n_beats}")
+        beat_prompt = "\n".join([
+            f"Write story beat {i + 1} of {n_beats} for a {genre} visual novel.",
+            f"Tone: {tone}",
+            f"Arc: {arc}",
+            f"Premise: {story_premise}",
+            f"Previous beats: {json.dumps([b.get('label', '') for b in beats])}",
+            "",
+            f'Output exactly: {{"beat_id": "{beat_id}", "label": "short evocative name", '
+            f'"description": "one sentence: the contradiction and its cost", '
+            f'"location_type": "scent + sensation, 10 words max"}}',
+        ])
+        agent = PipelineAgent(_SYSTEM)
+        beat = _json_with_correction(agent, beat_prompt, beat_id)
+        beat.setdefault("beat_id", beat_id)
+        beats.append(beat)
+
+    # Final call: location needs
+    print(f"    [story]  generating location needs")
+    beats_summary = ", ".join(f"{b.get('beat_id')}: {b.get('label', '')}" for b in beats)
+    loc_prompt = "\n".join([
+        f"Specify 2-3 distinct locations for a {n_beats}-beat {genre} visual novel.",
+        f"Arc: {arc}",
+        f"Beats: {beats_summary}",
+        "",
+        'Output exactly: {"location_needs": [{"need": "one phrase", "suggested_name": "concrete name"}]}',
+        "Two or three locations max. Each location should serve multiple beats.",
+    ])
+    agent = PipelineAgent(_SYSTEM)
+    loc_result = _json_with_correction(agent, loc_prompt, "location needs")
+
+    return {
+        "arc":            arc,
+        "premise":        story_premise,
+        "story_beats":    beats,
+        "location_needs": loc_result.get("location_needs", []),
+    }
+
+
+def generate_settings(inputs: Dict, working_dir: Path) -> Dict:
+    brief  = inputs.get("brief", {})
+    genre  = brief.get("genre", "")
+    tone   = brief.get("tone", "")
+    setting = brief.get("setting", "")
+
+    story = inputs.get("story", {})
+    if isinstance(story, dict) and "arc" not in story:
+        story = story.get("story", {})
+    location_needs = story.get("location_needs", [])
+
+    settings = []
+    for i, need in enumerate(location_needs):
+        label = need.get("suggested_name", f"location {i + 1}")
+        print(f"    [settings]  generating setting {i + 1}/{len(location_needs)}: {label}")
+        prompt = "\n".join([
+            f"Create one visual novel background for a {genre} story.",
+            f"Tone: {tone}",
+            f"World: {setting}",
+            f"Location needed: {need.get('need', '')}",
+            f"Suggested name: {label}",
+            "",
+            'Output exactly: {"id": "bg_snake_case", "name": "Display Name", '
+            '"description": "2-3 sentences: lighting, colors, objects, atmosphere for image generation", '
+            '"image_file": "name.jpg"}',
+        ])
+        agent = PipelineAgent(_SYSTEM)
+        s = _json_with_correction(agent, prompt, f"setting {i + 1}")
+        if not s.get("id", "").startswith("bg_"):
+            s["id"] = "bg_" + s.get("id", f"location_{i + 1}").lstrip("bg_")
+        settings.append(s)
+
+    return {"settings": settings}
+
+
 def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
     from pipelines.registry import run_subpipeline
 

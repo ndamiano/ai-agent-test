@@ -10,12 +10,13 @@ from collections import Counter, defaultdict
 
 # Ordered — first match wins
 _PATTERNS = [
-    ("timeout",      r""),                          # set by runner, not log
-    ("repetition",   r"repetiti(ve|on)|looping"),
-    ("json_error",   r"invalid json|jsondecode|failed to get valid json|return only the json"),
-    ("validation",   r"validation failed|missing required keys|output is not a dict"),
-    ("llm_error",    r"llm error:|status [45]\d\d|rate limit|connection"),
-    ("empty_output", r"empty content|streaming produced empty"),
+    ("timeout",        r""),                          # set by runner, not log
+    ("empty_content",  r"column 1 \(char 0\)|content:\s*\n|empty content|streaming produced empty"),
+    ("repetition",     r"repetiti(ve|on)|looping"),
+    ("json_error",     r"invalid json|jsondecode|failed to get valid json|return only the json"),
+    ("validation",     r"validation failed|missing required keys|output is not a dict"),
+    ("llm_error",      r"llm error:|status [45]\d\d|rate limit|connection"),
+    ("format_error",   r"does not support response_format|does not support json"),
 ]
 
 _FIX_HINTS = {
@@ -51,11 +52,20 @@ LLM connector error (network, auth, rate limit, or bad endpoint).
   • Inspect logs/llm_requests.log and logs/llm_responses.log for the raw error
   • If rate-limited: add a delay or reduce parallelism""",
 
-    "empty_output": """\
-Streaming returned empty content.
-  • connector._streaming_works flag should auto-disable streaming, but resets between runs
-  • Try disabling streaming in settings or switching to a non-streaming endpoint
-  • Check model server logs for connection resets mid-stream""",
+    "empty_content": """\
+Model returned empty content (blank response, not a JSON parse failure on real text).
+  • Most common with local models: context window exceeded, model server crash, or OOM
+  • Check model server logs for errors during this run
+  • Reduce pipeline_max_tokens in settings.json — model may be hitting its context limit
+  • connector._streaming_works auto-disables streaming after empty result, but resets each eval run
+  • Try setting streaming: false in settings or switching to a non-streaming endpoint""",
+
+    "format_error": """\
+Model endpoint does not support response_format / json_schema.
+  • Retry-without-format fallback fires automatically, but adds latency and reduces reliability
+  • Switch to a model that supports structured output, or use model_category: "small" in settings
+    (small mode uses manual JSON extraction instead of response_format)
+  • Check that the endpoint URL points to a model that accepts the OpenAI response_format field""",
 
     "unknown": """\
 Failure cause unclear from log output.

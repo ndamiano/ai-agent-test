@@ -13,7 +13,7 @@ Output this exact JSON:
   "name": "full name",
   "role": "narrative function (hero / villain / mentor / rival / foil / etc.)",
   "archetype": "one word",
-  "backstory_hook": "2-3 sentences: the formative experience that made them who they are",
+  "backstory_hook": "one sentence: the formative experience that defines them",
   "goal": "what they want above all else — concrete and specific",
   "flaw": "the specific wound or blind spot that creates conflict",
   "setting_context": "how they fit — occupation, status, key relationships"

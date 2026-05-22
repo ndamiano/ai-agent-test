@@ -22,7 +22,7 @@ Output a single JSON object:
   "beat_id": "beat_01",
   "setting_id": "bg_...",
   "title": "short scene title",
-  "summary": "2-3 sentences — what happens and why it matters to the arc",
+  "summary": "one sentence — what happens and why it matters",
   "character_ids": ["id1", "id2"],
   "character_states": {
     "id1": "emotional state and objective entering this scene",

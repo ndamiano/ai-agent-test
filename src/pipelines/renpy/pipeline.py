@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from pipelines.runner import Pipeline, Node, LLMStage, FnStage
-from pipelines.renpy.fns import dialogue, generate_characters, generate_scenes, package, generate_images, build
+from pipelines.runner import Pipeline, Node, FnStage
+from pipelines.renpy.fns import dialogue, generate_characters, generate_scenes, generate_settings, generate_story, package, generate_images, build
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -11,69 +11,20 @@ RENPY_PIPELINE = Pipeline(
     nodes=[
 
         Node("story", [
-            LLMStage(
+            FnStage(
                 id="story",
-                prompt_template="story.txt",
+                fn=generate_story,
+                inputs=["brief.json"],
                 output="story.json",
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "arc":          {"type": "string"},
-                        "premise":      {"type": "string"},
-                        "story_beats":  {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "beat_id":       {"type": "string"},
-                                    "label":         {"type": "string"},
-                                    "description":   {"type": "string"},
-                                    "location_type": {"type": "string"},
-                                },
-                                "required": ["beat_id", "label", "description", "location_type"],
-                            },
-                        },
-                        "location_needs": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "need":           {"type": "string"},
-                                    "suggested_name": {"type": "string"},
-                                },
-                                "required": ["need", "suggested_name"],
-                            },
-                        },
-                    },
-                    "required": ["arc", "premise", "story_beats", "location_needs"],
-                },
             ),
         ]),
 
         Node("settings", [
-            LLMStage(
+            FnStage(
                 id="settings",
-                prompt_template="settings.txt",
+                fn=generate_settings,
+                inputs=["brief.json", "story.json"],
                 output="settings.json",
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "settings": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id":          {"type": "string"},
-                                    "name":        {"type": "string"},
-                                    "description": {"type": "string"},
-                                    "image_file":  {"type": "string"},
-                                },
-                                "required": ["id", "name", "description", "image_file"],
-                            },
-                        },
-                    },
-                    "required": ["settings"],
-                },
             ),
         ]),
 

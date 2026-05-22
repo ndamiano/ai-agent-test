@@ -62,7 +62,7 @@ def cmd_score_stage(args):
     from eval.failures import print_analysis as print_failure_analysis
     from eval.fixtures import load as load_fixtures
     from eval.judge import Judge
-    from eval.report import summarize, save, print_summary
+    from eval.report import summarize, save, print_summary, print_review
     from eval.runner import StageRunner
 
     pipeline_name, stage_id = args.target.split("/", 1)
@@ -79,6 +79,12 @@ def cmd_score_stage(args):
         judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
         for r in results
     ]
+
+    if args.show_reasoning:
+        for i, (r, s) in enumerate(zip(results, scored)):
+            if r["ok"] and r["output"] and s:
+                print_review(i + 1, r["output"], s, rubric)
+
     summary = summarize(results, scored, rubric)
     print_summary(summary, f"{args.target} / {args.brief}")
 
@@ -185,6 +191,8 @@ def main():
     p_stage.add_argument("--per-run-timeout", type=float, default=None, dest="per_run_timeout",
                          help="Seconds before a single run is counted as failed (default: none)")
     p_stage.add_argument("--no-save", action="store_true", dest="no_save")
+    p_stage.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
+                         help="Print each run's output + judge reasoning for spot-checking")
 
     p_pipe = score_sub.add_parser("pipeline", help="Score full pipeline end-to-end")
     p_pipe.add_argument("pipeline")

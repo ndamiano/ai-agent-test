@@ -6,6 +6,7 @@ if str(_src) not in _sys.path:
 import io
 import json
 import logging
+import queue
 import sys
 import tempfile
 import time
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_WATCHED_LOGGERS = ["pipelines", "llm_clients"]
 
 
 class _Tee:
@@ -32,6 +35,29 @@ class _Tee:
 
     def getvalue(self) -> str:
         return self._buf.getvalue()
+
+
+class _QueueHandler(logging.Handler):
+    """Logging handler that accumulates records into a thread-safe queue."""
+    def __init__(self, q: queue.Queue):
+        super().__init__()
+        self._q = q
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            self._q.put_nowait(self.format(record))
+        except Exception:
+            self.handleError(record)
+
+
+def _drain(q: queue.Queue) -> str:
+    lines = []
+    while True:
+        try:
+            lines.append(q.get_nowait())
+        except queue.Empty:
+            break
+    return "\n".join(lines)
 
 
 def _get_pipeline_stage(pipeline_name: str, stage_id: str):
@@ -70,6 +96,13 @@ class StageRunner:
         runner = PipelineRunner(str(tmp_dir))
         runner.task_id = None  # suppress WebSocket events
 
+        log_q: queue.Queue = queue.Queue()
+        handler = _QueueHandler(log_q)
+        handler.setFormatter(logging.Formatter("%(name)s %(levelname)s: %(message)s"))
+        watched = [logging.getLogger(n) for n in _WATCHED_LOGGERS]
+        for lgr in watched:
+            lgr.addHandler(handler)
+
         tee = _Tee()
         t0 = time.monotonic()
         sys.stdout = tee
@@ -77,7 +110,14 @@ class StageRunner:
             ok = runner._run_stage(self._pipeline, self._stage, self._node.id)
         finally:
             sys.stdout = tee._orig
+            for lgr in watched:
+                lgr.removeHandler(handler)
+
         elapsed = time.monotonic() - t0
+
+        stdout_log = tee.getvalue()
+        logger_log = _drain(log_q)
+        combined = "\n".join(s for s in [stdout_log, logger_log] if s.strip())
 
         output = None
         if ok:
@@ -85,7 +125,7 @@ class StageRunner:
             if out_path.exists():
                 output = json.loads(out_path.read_text(encoding="utf-8"))
 
-        return {"ok": ok, "output": output, "elapsed": elapsed, "log": tee.getvalue()}
+        return {"ok": ok, "output": output, "elapsed": elapsed, "log": combined}
 
     def run_timed(
         self,
@@ -102,13 +142,26 @@ class StageRunner:
                 tmp_path = Path(tmp)
                 t0 = time.monotonic()
                 if per_run_timeout is not None:
+                    timed_out = False
                     with ThreadPoolExecutor(max_workers=1) as ex:
                         future = ex.submit(self._run_once, tmp_path)
                         try:
                             result = future.result(timeout=per_run_timeout)
                         except _FuturesTimeout:
-                            result = {"ok": False, "output": None, "log": "",
-                                      "elapsed": time.monotonic() - t0, "error": "timeout"}
+                            timed_out = True
+                    # ThreadPoolExecutor.__exit__ calls shutdown(wait=True) —
+                    # the thread has completed by the time we reach here.
+                    if timed_out:
+                        try:
+                            thread_result = future.result()
+                            result = {**thread_result, "ok": False, "error": "timeout"}
+                        except Exception as exc:
+                            result = {
+                                "ok": False, "output": None,
+                                "log": f"exception in thread: {exc}",
+                                "elapsed": time.monotonic() - t0,
+                                "error": "timeout",
+                            }
                 else:
                     result = self._run_once(tmp_path)
 

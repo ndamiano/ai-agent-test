@@ -1,7 +1,28 @@
-Write story beat {beat_index} of {beat_total} for a {genre} visual novel.
-Tone: {tone}
-Arc: {arc}
-Premise: {premise}
-Previous beats: {previous_beat_labels|json}
+Analyze the preceding narrative sequence to write story beat {beat_index} of {beat_total} for a {genre} visual novel. Your primary objective is strict structural continuity: you must execute a seamless transition from the state established in {previous_beat_labels|json} toward the resolution defined in the "{arc}" arc.
 
-Output exactly: {"beat_id": "{beat_id}", "label": "short evocative name", "description": "one sentence: the contradiction and its cost", "location_type": "scent + sensation, 10 words max"}
+Structural Logic & Chain of Causality:
+1. Causal Derivation: Every element of this beat must be a direct logical consequence of the preceding event. Use an [Action $\rightarrow$ Reaction] framework: Identify the specific unresolved tension or action from {previous_beat_labels|json} and resolve it by introducing a new, higher-stakes complication.
+2. Arc-Specific Escalation: You must adhere to the structural phase dictated by your current position in the arc:
+    - Early Phase (Setup/Inciting Incident): Introduce a disruption that breaks the existing status quo.
+    - Mid Phase (Rising Action/Complication): Increase pressure by narrowing the protagonist's viable options or escalating the frequency of obstacles.
+    - Late Phase (Crisis/Climax): Force an irreversible, high-stakes decision where every choice carries a heavy, permanent cost.
+3. Momentum Maintenance: Do not allow for narrative stagnation. Each beat must move the "tension meter" upward by either increasing character vulnerability or intensifying external environmental threats.
+4. Concrete Conflict Mechanics: Anchor the structural tension in a clash between a specific internal impulse (character's need) and an identifiable external pressure (the obstacle). Avoid abstract stakes; define exactly what named entity, treaty, person, or object is at risk of being lost/destroyed.
+
+Constraints:
+- Anti-Trope: Replace all generic descriptors with unique, named entities (specific characters, artifacts, or locations). 
+- Precision: Eliminate placeholder language; if a character reacts, the reaction must be specific to their established personality and the immediate physical context.
+
+Contextual Data:
+Tone: {tone}
+Arc Trajectory: {arc}
+Premise: {premise}
+Narrative History: {previous_beat_labels|json}
+
+Output exactly:
+{
+  "beat_id": "{beat_id}",
+  "label": "a concrete, noun-heavy title naming the specific character and the event",
+  "description": "one sentence detailing [Character Name]'s precise internal motivation clashing with a named external obstacle and the exact, quantifiable cost of failure",
+  "location_type": "sensory anchor: one specific scent + one tactile sensation (e.g., 'acrid sulfur and slick grease'), 10 words max"
+}

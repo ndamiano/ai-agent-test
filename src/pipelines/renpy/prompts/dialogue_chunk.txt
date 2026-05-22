@@ -1,0 +1,23 @@
+You are writing dialogue for a {genre} visual novel.
+Tone: {tone}
+
+Characters in this scene:
+{characters|json}
+
+Setting:
+{setting|json}
+
+Scene:
+{scene|json}
+
+Previously written lines ({previous_line_count}):
+{previous_lines|json}
+
+Write the next {line_count} lines. This is chunk {chunk_index} of {chunk_total}.
+Each line must have character_id and text. character_id must match a character id above, or null for narrator.
+Keep each text value concise enough for a visual novel dialogue box.
+Do not repeat previous lines.
+Maintain continuity from the lines above.
+{final_chunk_note}
+
+Output exactly: {"lines": [{"character_id": null, "text": "..."}, {"character_id": "char_id", "text": "..."}]}

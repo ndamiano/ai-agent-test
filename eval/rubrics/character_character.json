@@ -1,0 +1,26 @@
+{
+  "stage": "character",
+  "pipeline": "character",
+  "criteria": [
+    {
+      "name": "specificity",
+      "description": "The character has concrete, named details — specific motivation, named flaw, distinct personality traits. Not archetype placeholders or generic descriptors.",
+      "weight": 1.5
+    },
+    {
+      "name": "internal_consistency",
+      "description": "description, personality, motivation, and conflict are coherent — the character's flaw creates the conflict, the motivation explains the goal. No contradictions.",
+      "weight": 1.0
+    },
+    {
+      "name": "visual_distinctness",
+      "description": "The appearance is specific enough to generate a recognizable portrait — age, build, distinctive features, clothing style. Not a stock description.",
+      "weight": 1.0
+    },
+    {
+      "name": "voice_specificity",
+      "description": "speech_patterns describe how this specific person talks — not just 'formal' or 'casual'. Sentence rhythm, vocabulary range, verbal habits, what they avoid.",
+      "weight": 1.0
+    }
+  ]
+}

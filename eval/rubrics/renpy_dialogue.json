@@ -1,0 +1,26 @@
+{
+  "stage": "dialogue",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "voice_distinctness",
+      "description": "Each character sounds like themselves — vocabulary, sentence length, habits match their speech_patterns. Lines are not interchangeable between characters.",
+      "weight": 1.5
+    },
+    {
+      "name": "dramatic_payoff",
+      "description": "The dramatic_question is felt by the end. what_changes has happened. Any revelation lands obliquely — no character says the theme plainly.",
+      "weight": 1.5
+    },
+    {
+      "name": "subtext",
+      "description": "Characters don't explain the plot to each other. Meaning lives beneath the surface — in what's avoided, deflected, or said sideways.",
+      "weight": 1.0
+    },
+    {
+      "name": "setting_constraint",
+      "description": "If the setting_constraint restricts speech (observed, interrupted, formal), those restrictions are honored in what characters say and how.",
+      "weight": 1.0
+    }
+  ]
+}

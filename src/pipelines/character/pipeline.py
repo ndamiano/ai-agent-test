@@ -37,6 +37,7 @@ CHARACTER_PIPELINE = Pipeline(
                 fn=generate_character,
                 inputs=["brief.json", "concept.json"],
                 output="character.json",
+                prompt_file="identity.txt",
             ),
         ]),
 

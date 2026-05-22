@@ -1,0 +1,7 @@
+Write story beat {beat_index} of {beat_total} for a {genre} visual novel.
+Tone: {tone}
+Arc: {arc}
+Premise: {premise}
+Previous beats: {previous_beat_labels|json}
+
+Output exactly: {"beat_id": "{beat_id}", "label": "short evocative name", "description": "one sentence: the contradiction and its cost", "location_type": "scent + sensation, 10 words max"}

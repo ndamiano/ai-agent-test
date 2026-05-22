@@ -19,15 +19,20 @@ logger = logging.getLogger(__name__)
 
 def _find_prompt_path(pipeline_name: str, stage_id: str) -> Path:
     from pipelines.registry import get_registry
-    from pipelines.runner import LLMStage
+    from pipelines.runner import LLMStage, FnStage
 
     pipeline = get_registry()[pipeline_name].pipeline
     for node in pipeline.nodes:
         for stage in node.stages:
             if stage.id == stage_id:
-                if not isinstance(stage, LLMStage):
-                    raise TypeError(f"Stage {stage_id!r} is a FnStage — no prompt to hill-climb")
-                return pipeline.prompts_dir / stage.prompt_template
+                if isinstance(stage, LLMStage):
+                    return pipeline.prompts_dir / stage.prompt_template
+                if isinstance(stage, FnStage) and stage.prompt_file:
+                    return pipeline.prompts_dir / stage.prompt_file
+                raise TypeError(
+                    f"Stage {stage_id!r} is a FnStage without prompt_file — not hill-climbable. "
+                    "Set prompt_file on the FnStage to enable climbing."
+                )
     raise ValueError(f"Stage {stage_id!r} not found in {pipeline_name!r}")
 
 

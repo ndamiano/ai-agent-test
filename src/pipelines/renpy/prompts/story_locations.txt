@@ -1,0 +1,6 @@
+Specify 2-3 distinct locations for a {beat_total}-beat {genre} visual novel.
+Arc: {arc}
+Beats: {beats_summary}
+
+Output exactly: {"location_needs": [{"need": "one phrase", "suggested_name": "concrete name"}]}
+Two or three locations max. Each location should serve multiple beats.

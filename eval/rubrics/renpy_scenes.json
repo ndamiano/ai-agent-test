@@ -1,0 +1,26 @@
+{
+  "stage": "scenes",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "dramatic_tension",
+      "description": "Each scene has a clear dramatic_question that creates real stakes. The tension is specific — not just conflict for its own sake but a question the reader wants answered.",
+      "weight": 1.5
+    },
+    {
+      "name": "character_specificity",
+      "description": "character_states describe concrete emotional positions and objectives entering the scene, not vague moods. Each character's state is distinct from the others.",
+      "weight": 1.0
+    },
+    {
+      "name": "structural_progression",
+      "description": "what_changes is concrete and meaningful — something genuinely shifts by scene's end. The revelation (if any) would land if dramatized. Scenes escalate appropriately across the story arc.",
+      "weight": 1.5
+    },
+    {
+      "name": "downstream_utility",
+      "description": "All required fields are populated with usable content. setting_id matches an available setting. character_ids are valid and appropriate. A dialogue writer could use this scene spec directly.",
+      "weight": 1.0
+    }
+  ]
+}

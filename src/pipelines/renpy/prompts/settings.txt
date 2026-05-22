@@ -1,0 +1,7 @@
+Create one visual novel background for a {genre} story.
+Tone: {tone}
+World: {setting}
+Location needed: {location_need}
+Suggested name: {location_name}
+
+Output exactly: {"id": "bg_snake_case", "name": "Display Name", "description": "2-3 sentences: lighting, colors, objects, atmosphere for image generation", "image_file": "name.jpg"}

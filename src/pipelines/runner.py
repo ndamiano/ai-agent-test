@@ -28,6 +28,7 @@ class FnStage:
     inputs: List[str]
     output: str
     retries: int = 2
+    prompt_file: Optional[str] = None
 
 
 Stage = Union[LLMStage, FnStage]

@@ -1,0 +1,6 @@
+Write a story arc for a {genre} visual novel.
+Tone: {tone}
+Premise: {premise}
+Notes: {notes}
+
+Output exactly: {"arc": "Drive to X → Realization that Y → Permanent state of Z", "premise": "one sentence central paradox"}

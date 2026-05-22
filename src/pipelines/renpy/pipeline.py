@@ -16,6 +16,7 @@ RENPY_PIPELINE = Pipeline(
                 fn=generate_story,
                 inputs=["brief.json"],
                 output="story.json",
+                prompt_file="story_beat.txt",
             ),
         ]),
 
@@ -25,6 +26,7 @@ RENPY_PIPELINE = Pipeline(
                 fn=generate_settings,
                 inputs=["brief.json", "story.json"],
                 output="settings.json",
+                prompt_file="settings.txt",
             ),
         ]),
 
@@ -43,6 +45,7 @@ RENPY_PIPELINE = Pipeline(
                 fn=generate_scenes,
                 inputs=["brief.json", "story.json", "settings.json", "characters.json"],
                 output="scenes.json",
+                prompt_file="scene.txt",
             ),
         ]),
 
@@ -52,6 +55,7 @@ RENPY_PIPELINE = Pipeline(
                 fn=dialogue,
                 inputs=["brief.json", "characters.json", "settings.json", "scenes.json"],
                 output="dialogue.json",
+                prompt_file="dialogue_chunk.txt",
             ),
         ]),
 

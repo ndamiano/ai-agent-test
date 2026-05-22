@@ -116,53 +116,42 @@ def generate_story(inputs: Dict, working_dir: Path) -> Dict:
     notes    = brief.get("notes", "")
     n_beats  = _parse_count(brief.get("scene_count", "3"))
 
-    # Call 1: arc + premise
     print(f"    [story]  generating arc + premise")
-    arc_prompt = "\n".join([
-        f"Write a story arc for a {genre} visual novel.",
-        f"Tone: {tone}",
-        f"Premise: {premise}",
-        f"Notes: {notes}",
-        "",
-        'Output exactly: {"arc": "Drive to X → Realization that Y → Permanent state of Z", "premise": "one sentence central paradox"}',
-    ])
+    arc_prompt = render_template(_PROMPTS_DIR / "story_arc.txt", {
+        "genre": genre, "tone": tone, "premise": premise, "notes": notes,
+    })
     agent = PipelineAgent(_SYSTEM)
     result = _json_with_correction(agent, arc_prompt, "story arc")
-    arc            = result.get("arc", "")
-    story_premise  = result.get("premise", premise)
+    arc           = result.get("arc", "")
+    story_premise = result.get("premise", premise)
 
-    # Calls 2..n+1: one beat per scene
     beats = []
     for i in range(n_beats):
         beat_id = f"beat_{i + 1:02d}"
         print(f"    [story]  generating beat {i + 1}/{n_beats}")
-        beat_prompt = "\n".join([
-            f"Write story beat {i + 1} of {n_beats} for a {genre} visual novel.",
-            f"Tone: {tone}",
-            f"Arc: {arc}",
-            f"Premise: {story_premise}",
-            f"Previous beats: {json.dumps([b.get('label', '') for b in beats])}",
-            "",
-            f'Output exactly: {{"beat_id": "{beat_id}", "label": "short evocative name", '
-            f'"description": "one sentence: the contradiction and its cost", '
-            f'"location_type": "scent + sensation, 10 words max"}}',
-        ])
+        beat_prompt = render_template(_PROMPTS_DIR / "story_beat.txt", {
+            "beat_index": i + 1,
+            "beat_total": n_beats,
+            "genre": genre,
+            "tone": tone,
+            "arc": arc,
+            "premise": story_premise,
+            "previous_beat_labels": [b.get("label", "") for b in beats],
+            "beat_id": beat_id,
+        })
         agent = PipelineAgent(_SYSTEM)
         beat = _json_with_correction(agent, beat_prompt, beat_id)
         beat.setdefault("beat_id", beat_id)
         beats.append(beat)
 
-    # Final call: location needs
     print(f"    [story]  generating location needs")
     beats_summary = ", ".join(f"{b.get('beat_id')}: {b.get('label', '')}" for b in beats)
-    loc_prompt = "\n".join([
-        f"Specify 2-3 distinct locations for a {n_beats}-beat {genre} visual novel.",
-        f"Arc: {arc}",
-        f"Beats: {beats_summary}",
-        "",
-        'Output exactly: {"location_needs": [{"need": "one phrase", "suggested_name": "concrete name"}]}',
-        "Two or three locations max. Each location should serve multiple beats.",
-    ])
+    loc_prompt = render_template(_PROMPTS_DIR / "story_locations.txt", {
+        "beat_total": n_beats,
+        "genre": genre,
+        "arc": arc,
+        "beats_summary": beats_summary,
+    })
     agent = PipelineAgent(_SYSTEM)
     loc_result = _json_with_correction(agent, loc_prompt, "location needs")
 
@@ -189,17 +178,13 @@ def generate_settings(inputs: Dict, working_dir: Path) -> Dict:
     for i, need in enumerate(location_needs):
         label = need.get("suggested_name", f"location {i + 1}")
         print(f"    [settings]  generating setting {i + 1}/{len(location_needs)}: {label}")
-        prompt = "\n".join([
-            f"Create one visual novel background for a {genre} story.",
-            f"Tone: {tone}",
-            f"World: {setting}",
-            f"Location needed: {need.get('need', '')}",
-            f"Suggested name: {label}",
-            "",
-            'Output exactly: {"id": "bg_snake_case", "name": "Display Name", '
-            '"description": "2-3 sentences: lighting, colors, objects, atmosphere for image generation", '
-            '"image_file": "name.jpg"}',
-        ])
+        prompt = render_template(_PROMPTS_DIR / "settings.txt", {
+            "genre": genre,
+            "tone": tone,
+            "setting": setting,
+            "location_need": need.get("need", ""),
+            "location_name": label,
+        })
         agent = PipelineAgent(_SYSTEM)
         s = _json_with_correction(agent, prompt, f"setting {i + 1}")
         if not s.get("id", "").startswith("bg_"):
@@ -320,31 +305,20 @@ def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3) -> D
 
 
 def _dialogue_chunk_prompt(scene_inputs: Dict, previous_lines: list, line_count: int, chunk_index: int, chunk_total: int) -> str:
-    return "\n".join([
-        f"You are writing a small chunk of dialogue for a {scene_inputs['genre']} visual novel.",
-        f"Tone: {scene_inputs['tone']}",
-        "",
-        "Characters in this scene:",
-        json.dumps(scene_inputs["characters"], indent=2, ensure_ascii=False),
-        "",
-        "Setting:",
-        json.dumps(scene_inputs["setting"], indent=2, ensure_ascii=False),
-        "",
-        "Scene:",
-        json.dumps(scene_inputs["scene"], indent=2, ensure_ascii=False),
-        "",
-        f"Previously written lines for this scene ({len(previous_lines)}):",
-        json.dumps(previous_lines, indent=2, ensure_ascii=False),
-        "",
-        f"Write the next {line_count} lines only. This is chunk {chunk_index} of {chunk_total}.",
-        "Each line must have character_id and text. character_id must match a character id above, or null for narrator.",
-        "Keep each text value concise enough for a visual novel dialogue box.",
-        "Do not repeat previous lines.",
-        "Maintain continuity from previous_lines.",
-        "If this is the final chunk, make what_changes felt by the final line.",
-        "",
-        'Output exactly: {"lines": [{"character_id": null, "text": "..."}, {"character_id": "char_id", "text": "..."}]}',
-    ])
+    context_lines = previous_lines[-6:] if len(previous_lines) > 6 else previous_lines
+    return render_template(_PROMPTS_DIR / "dialogue_chunk.txt", {
+        "genre": scene_inputs["genre"],
+        "tone": scene_inputs["tone"],
+        "characters": scene_inputs["characters"],
+        "setting": scene_inputs["setting"],
+        "scene": scene_inputs["scene"],
+        "previous_line_count": len(previous_lines),
+        "previous_lines": context_lines,
+        "line_count": line_count,
+        "chunk_index": chunk_index,
+        "chunk_total": chunk_total,
+        "final_chunk_note": "This is the final chunk. Make what_changes felt in the last line." if chunk_index == chunk_total else "",
+    })
 
 
 def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int = 3) -> Dict:
@@ -372,8 +346,6 @@ def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int =
 
 
 def dialogue(inputs: Dict, working_dir: Path) -> Dict:
-    template_path = _PROMPTS_DIR / "dialogue.txt"
-
     scenes = inputs.get("scenes", [])
     if isinstance(scenes, dict):
         scenes = scenes.get("scenes", [])

@@ -1,4 +1,6 @@
-You are outlining one scene for a {genre} visual novel.
+You are a narrative architect specializing in high-tension, structural storytelling for {genre} visual novels. Your goal is to outline a single, pivotal scene that ensures measurable structural progression within the {arc}. 
+
+A successful scene must not merely move characters from point A to point B; it must fundamentally disrupt their status quo. Every scene you design must leave the characters in an irreversible state of change compared to where they began.
 
 Tone: {tone}
 Arc: {arc}
@@ -13,7 +15,7 @@ Available settings (use ids exactly):
 Beat to cover:
 {beat|json}
 
-Already planned scenes (vary settings and character pairings):
+Already planned scenes (The Baseline Tension):
 {completed_scenes|json}
 
 Output a single JSON object:
@@ -22,19 +24,23 @@ Output a single JSON object:
   "beat_id": "beat_01",
   "setting_id": "bg_...",
   "title": "short scene title",
-  "summary": "one sentence — what happens and why it matters",
+  "summary": "A high-impact sentence describing the specific action that forces a change in the characters' trajectory.",
   "character_ids": ["id1", "id2"],
   "character_states": {
-    "id1": "emotional state and objective entering this scene",
-    "id2": "emotional state and objective entering this scene"
+    "id1": "Their concrete, actionable objective for this specific scene and their measurable level of power/leverage (e.g., 'Attempting to force a confession through intimidation' or 'Defensively concealing information while maintaining social grace'). Do not use vague moods.",
+    "id2": "Their concrete, actionable objective for this specific scene and their measurable level of power/leverage (e.g., 'Seeking to extract an apology via guilt-tripping' or 'Observing silently to gather leverage'). Do not use vague moods."
   },
-  "dramatic_question": "the single tension this scene is built around",
-  "revelation": "what truth is exposed, or null",
-  "what_changes": "what must be different by the end",
-  "setting_constraint": "what the setting demands — can they speak freely, are they observed, under pressure?"
+  "dramatic_question": "The specific, high-stakes obstacle that makes achieving the characters' objectives difficult or dangerous in this moment.",
+  "revelation": "A dramatic discovery or unmasked truth. This must be an 'irreversible insight'—information or a realization that renders the characters' previous strategies obsolete.",
+  "what_changes": "The measurable Delta of the scene. You must use the format: 'From [Initial State/Power Dynamic/Knowledge] to [New State/Power Dynamic/Knowledge]'. This must represent a permanent shift in tension, trust, or information asymmetry.",
+  "setting_constraint": "An environmental pressure (e.g., social surveillance, physical entrapment, time limit) that actively prevents the characters from resolving the dramatic question through easy means."
 }
 
-Rules:
-- character_ids: 2-3 max. Only characters who are present.
-- character_states: only for characters in character_ids.
-- setting_id must exactly match one of the available ids above.
+Structural Mandates:
+- character_states: Prohibit all vague emotional descriptors (e.g., 'tense', 'mysterious', 'unhappy'). Each character must have a unique, actionable psychological posture and a distinct power dynamic relative to others in the scene. Every state must describe what the character is *doing* or *trying to achieve* via their emotion, not just how they feel. No two characters should share the same tactical role (e.g., if one is 'interrogating', the other cannot simply be 'reacting'; they must be 'deceiving' or 'deflecting').
+- structural_progression: You are prohibited from designing 'filler' scenes. If a scene does not result in an irreversible shift in character knowledge, relationship status, or power dynamics, it has failed. 
+- what_changes: This is the most critical field. Avoid qualitative descriptors like 'they become closer'. Use quantitative/structural shifts: e.g., 'From allies to mutual suspects' or 'From total ignorance of the betrayal to certain knowledge of the motive'.
+- escalation: Analyze {completed_scenes|json}. Your new scene must introduce a higher level of complexity, risk, or emotional volatility than any previously recorded scene. If the previous scene was a disagreement, this scene must be a confrontation; if it was an investigation, this scene must be a discovery.
+- revelation: A revelation is not just 'new info'; it is a narrative catalyst. It should function as a wrench in the characters' plans, forcing them to pivot their strategy for the remainder of the {arc}.
+- character_ids: 2-3 max. Only characters present in the scene.
+- setting_id: Must exactly match one of the provided IDs.

@@ -133,7 +133,6 @@ export type WebSocketMessage =
 export interface LMStudioSettings {
     base_url: string
     model: string
-    temperature?: number
     max_tokens?: number
 }
 
@@ -141,7 +140,6 @@ export interface ClineSettings {
     api_key: string
     base_url?: string
     model: string
-    temperature?: number
     max_tokens?: number
 }
 

@@ -14,14 +14,12 @@ class CreateTaskRequest(BaseModel):
 class LMStudioSettingsRequest(BaseModel):
     base_url: str
     model: str
-    temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 50000
 
 class ClineSettingsRequest(BaseModel):
     api_key: str
     base_url: str = "https://api.cline.bot/api"
     model: str
-    temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 50000
 
 class ComfyUISettingsRequest(BaseModel):

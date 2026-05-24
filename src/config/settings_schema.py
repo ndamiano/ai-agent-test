@@ -7,20 +7,16 @@ from typing import Dict, Literal, Optional
 class LLMStudioSettings(BaseModel):
     base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
-    temperature: float = Field(0.7, ge=0, le=2)
     max_tokens: int = Field(50000, ge=1)
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
-    pipeline_max_tokens: int = Field(4096, ge=256)
 
 
 class ClineSettings(BaseModel):
     api_key: str
     base_url: str = Field("https://api.cline.bot/api")
     model: str = Field(..., min_length=1)
-    temperature: float = Field(0.7, ge=0, le=2)
     max_tokens: int = Field(50000, ge=1)
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
-    pipeline_max_tokens: int = Field(4096, ge=256)
 
 
 class ComfyUISettings(BaseModel):

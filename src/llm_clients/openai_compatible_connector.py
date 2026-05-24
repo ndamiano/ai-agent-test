@@ -46,17 +46,14 @@ class OpenAICompatibleConnector(BaseConnector):
     connector_name = "openai_compatible"
 
     def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "default",
-                 temperature: float = 0.7, max_tokens: int = 50000,
-                 frequency_penalty: float = 0.5, pipeline_max_tokens: int = 4096):
+                 max_tokens: int = 50000, frequency_penalty: float = 0.5):
         super().__init__()
 
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
         self.model_name = model
-        self.temperature = temperature
         self.max_tokens = max_tokens
         self.frequency_penalty = frequency_penalty
-        self.pipeline_max_tokens = pipeline_max_tokens
         self._response_format_supported = True
         
         if self._is_versioned_path(self.base_url):
@@ -81,7 +78,7 @@ class OpenAICompatibleConnector(BaseConnector):
             return result["data"]
         return result
 
-    def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None) -> dict:
+    def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None, max_tokens: int = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -89,12 +86,11 @@ class OpenAICompatibleConnector(BaseConnector):
             return {"error": error_msg}
 
         request_id = str(uuid.uuid4())
-        max_tokens = self.pipeline_max_tokens if response_format else self.max_tokens
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": max_tokens,
+            "temperature": 0.7,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "frequency_penalty": self.frequency_penalty,
             "stream": False,
         }
@@ -166,7 +162,7 @@ class OpenAICompatibleConnector(BaseConnector):
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": self.temperature,
+            "temperature": 0.7,
             "max_tokens": self.max_tokens,
             "frequency_penalty": self.frequency_penalty,
             "stream": True,

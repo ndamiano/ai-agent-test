@@ -46,6 +46,7 @@ RENPY_PIPELINE = Pipeline(
                 inputs=["brief.json", "story.json", "settings.json", "characters.json"],
                 output="scenes.json",
                 prompt_file="scene.txt",
+                max_tokens=8000,
             ),
         ]),
 

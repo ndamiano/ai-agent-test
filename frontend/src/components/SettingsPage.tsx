@@ -23,7 +23,6 @@ export default function SettingsPage() {
                 data.lmstudio = {
                     base_url: 'http://localhost:1234',
                     model: 'local-model',
-                    temperature: 0.7,
                     max_tokens: 50000
                 }
             }
@@ -32,7 +31,6 @@ export default function SettingsPage() {
                     api_key: '',
                     base_url: 'https://api.cline.bot/api',
                     model: 'claude-sonnet-4-5',
-                    temperature: 0.7,
                     max_tokens: 50000
                 }
             }
@@ -250,34 +248,17 @@ export default function SettingsPage() {
                         />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <label className="block text-sm text-gray-400">Temperature</label>
-                            <input
-                                type="number"
-                                value={settings.lmstudio.temperature ?? 0.7}
-                                onChange={(e) => updateLMStudioSetting('temperature', parseFloat(e.target.value))}
-                                min="0"
-                                max="2"
-                                step="0.1"
-                                placeholder="0.7"
-                                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
-                            />
-                            <p className="text-xs text-gray-500">Range: 0-2</p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-sm text-gray-400">Max Tokens</label>
-                            <input
-                                type="number"
-                                value={settings.lmstudio.max_tokens ?? 50000}
-                                onChange={(e) => updateLMStudioSetting('max_tokens', parseInt(e.target.value))}
-                                min="1"
-                                placeholder="50000"
-                                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
-                            />
-                            <p className="text-xs text-gray-500">Minimum: 1</p>
-                        </div>
+                    <div className="space-y-2">
+                        <label className="block text-sm text-gray-400">Max Tokens</label>
+                        <input
+                            type="number"
+                            value={settings.lmstudio.max_tokens ?? 50000}
+                            onChange={(e) => updateLMStudioSetting('max_tokens', parseInt(e.target.value))}
+                            min="1"
+                            placeholder="50000"
+                            className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                        />
+                        <p className="text-xs text-gray-500">Minimum: 1</p>
                     </div>
                 </div>
             )}
@@ -321,34 +302,17 @@ export default function SettingsPage() {
                         />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <label className="block text-sm text-gray-400">Temperature</label>
-                            <input
-                                type="number"
-                                value={settings.cline.temperature ?? 0.7}
-                                onChange={(e) => updateClineSetting('temperature', parseFloat(e.target.value))}
-                                min="0"
-                                max="2"
-                                step="0.1"
-                                placeholder="0.7"
-                                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
-                            />
-                            <p className="text-xs text-gray-500">Range: 0-2</p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="block text-sm text-gray-400">Max Tokens</label>
-                            <input
-                                type="number"
-                                value={settings.cline.max_tokens ?? 50000}
-                                onChange={(e) => updateClineSetting('max_tokens', parseInt(e.target.value))}
-                                min="1"
-                                placeholder="50000"
-                                className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
-                            />
-                            <p className="text-xs text-gray-500">Minimum: 1</p>
-                        </div>
+                    <div className="space-y-2">
+                        <label className="block text-sm text-gray-400">Max Tokens</label>
+                        <input
+                            type="number"
+                            value={settings.cline.max_tokens ?? 50000}
+                            onChange={(e) => updateClineSetting('max_tokens', parseInt(e.target.value))}
+                            min="1"
+                            placeholder="50000"
+                            className="w-full bg-gray-700 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                        />
+                        <p className="text-xs text-gray-500">Minimum: 1</p>
                     </div>
                 </div>
             )}

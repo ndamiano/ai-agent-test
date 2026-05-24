@@ -236,7 +236,7 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
     return {"characters": characters}
 
 
-def generate_scenes(inputs: Dict, working_dir: Path) -> Dict:
+def generate_scenes(inputs: Dict, working_dir: Path, max_tokens: int = 2500) -> Dict:
     brief = inputs.get("brief", {})
 
     story = inputs.get("story", {})
@@ -273,8 +273,16 @@ def generate_scenes(inputs: Dict, working_dir: Path) -> Dict:
             "completed_scenes": [{"id": s.get("id"), "setting_id": s.get("setting_id"), "character_ids": s.get("character_ids", [])} for s in scenes],
         }
         prompt = render_template(_PROMPTS_DIR / "scene.txt", ctx)
-        agent = PipelineAgent(_SYSTEM)
-        scene = _json_with_correction(agent, prompt, f"scene {i + 1}")
+
+        for attempt in range(1, 4):
+            try:
+                agent = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
+                scene = _json_with_correction(agent, prompt, f"scene {i + 1}")
+                break
+            except RuntimeError:
+                if attempt == 3:
+                    raise
+                print(f"    [scenes]  retrying scene {i + 1} (attempt {attempt + 1}/3)")
         scenes.append(scene)
 
     return {"scenes": scenes}

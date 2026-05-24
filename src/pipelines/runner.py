@@ -19,6 +19,7 @@ class LLMStage:
     output: str
     schema: Optional[Dict] = None
     retries: int = 2
+    max_tokens: Optional[int] = None
 
 
 @dataclass
@@ -29,6 +30,7 @@ class FnStage:
     output: str
     retries: int = 2
     prompt_file: Optional[str] = None
+    max_tokens: Optional[int] = None
 
 
 Stage = Union[LLMStage, FnStage]
@@ -288,7 +290,7 @@ class PipelineRunner:
         inputs = _enrich_inputs(self._load_all())
         prompt = render_template(pipeline.prompts_dir / stage.prompt_template, inputs)
 
-        agent = PipelineAgent()
+        agent = PipelineAgent(max_tokens=stage.max_tokens) if stage.max_tokens else PipelineAgent()
         content = strip_fences(agent.send(prompt))
 
         # One correction attempt before letting the outer retry loop handle it
@@ -307,7 +309,10 @@ class PipelineRunner:
         missing = [f for f in stage.inputs if not (self.working_dir / f).exists()]
         if missing:
             raise FileNotFoundError(f"Missing inputs for [{stage.id}]: {missing}")
-        return stage.fn(self._load(stage.inputs), self.working_dir)
+        kwargs = {}
+        if stage.max_tokens is not None:
+            kwargs["max_tokens"] = stage.max_tokens
+        return stage.fn(self._load(stage.inputs), self.working_dir, **kwargs)
 
     def _validate(self, label: str, stage: Stage, data: Any) -> bool:
         if not isinstance(data, dict):

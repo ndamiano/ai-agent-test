@@ -13,13 +13,11 @@ class TestSettingsSchema(unittest.TestCase):
             "lmstudio": {
                 "base_url": "http://localhost:1234",
                 "model": "local-model",
-                "temperature": 0.7,
                 "max_tokens": 50000,
             },
             "cline": {
                 "api_key": "",
                 "model": "claude-sonnet-4-5",
-                "temperature": 0.7,
                 "max_tokens": 50000,
             },
         }
@@ -39,7 +37,6 @@ class TestSettingsSchema(unittest.TestCase):
             },
         }
         settings = AppSettings(**minimal)
-        self.assertEqual(settings.lmstudio.temperature, 0.7)
         self.assertEqual(settings.lmstudio.max_tokens, 50000)
 
     def test_missing_connector_type(self):
@@ -84,30 +81,6 @@ class TestSettingsSchema(unittest.TestCase):
         with self.assertRaises(ValidationError):
             AppSettings(**settings)
 
-    def test_temperature_below_zero(self):
-        settings = self.valid_settings.copy()
-        settings["lmstudio"]["temperature"] = -0.1
-        with self.assertRaises(ValidationError):
-            AppSettings(**settings)
-
-    def test_temperature_above_two(self):
-        settings = self.valid_settings.copy()
-        settings["lmstudio"]["temperature"] = 2.1
-        with self.assertRaises(ValidationError):
-            AppSettings(**settings)
-
-    def test_temperature_boundary_zero(self):
-        settings = self.valid_settings.copy()
-        settings["lmstudio"]["temperature"] = 0
-        result = AppSettings(**settings)
-        self.assertEqual(result.lmstudio.temperature, 0)
-
-    def test_temperature_boundary_two(self):
-        settings = self.valid_settings.copy()
-        settings["lmstudio"]["temperature"] = 2
-        result = AppSettings(**settings)
-        self.assertEqual(result.lmstudio.temperature, 2)
-
     def test_max_tokens_zero(self):
         settings = self.valid_settings.copy()
         settings["lmstudio"]["max_tokens"] = 0
@@ -135,12 +108,6 @@ class TestSettingsSchema(unittest.TestCase):
     def test_empty_cline_model(self):
         settings = self.valid_settings.copy()
         settings["cline"]["model"] = ""
-        with self.assertRaises(ValidationError):
-            AppSettings(**settings)
-
-    def test_cline_temperature_out_of_range(self):
-        settings = self.valid_settings.copy()
-        settings["cline"]["temperature"] = 3.0
         with self.assertRaises(ValidationError):
             AppSettings(**settings)
 

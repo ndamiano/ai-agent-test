@@ -53,12 +53,12 @@ def safe_history_content(content: str) -> str:
     return content
 
 
-def call_llm(connector, messages: list, response_format: Optional[dict] = None) -> dict:
+def call_llm(connector, messages: list, response_format: Optional[dict] = None, max_tokens: Optional[int] = None) -> dict:
     """Call connector with streaming if available, fall back to non-streaming."""
     if (response_format
             or not hasattr(connector, "generate_with_tools_stream")
             or not getattr(connector, "_streaming_works", True)):
-        return connector.generate_with_tools(messages, [], response_format=response_format)
+        return connector.generate_with_tools(messages, [], response_format=response_format, max_tokens=max_tokens)
 
     accumulated = ""
     envelope: dict = {}
@@ -66,7 +66,7 @@ def call_llm(connector, messages: list, response_format: Optional[dict] = None) 
         for chunk in connector.generate_with_tools_stream(messages, []):
             if "error" in chunk:
                 logger.warning(f"Streaming failed, falling back: {chunk['error']}")
-                return connector.generate_with_tools(messages, [], response_format=response_format)
+                return connector.generate_with_tools(messages, [], response_format=response_format, max_tokens=max_tokens)
             if not envelope:
                 envelope = {k: v for k, v in chunk.items() if k != "choices"}
             for choice in chunk.get("choices", []):
@@ -75,12 +75,12 @@ def call_llm(connector, messages: list, response_format: Optional[dict] = None) 
                     accumulated += delta["content"]
     except Exception as e:
         logger.warning(f"Streaming error, falling back: {e}")
-        return connector.generate_with_tools(messages, [], response_format=response_format)
+        return connector.generate_with_tools(messages, [], response_format=response_format, max_tokens=max_tokens)
 
     if not accumulated:
         logger.warning("Streaming produced empty content, falling back to non-streaming")
         connector._streaming_works = False
-        return connector.generate_with_tools(messages, [], response_format=response_format)
+        return connector.generate_with_tools(messages, [], response_format=response_format, max_tokens=max_tokens)
 
     return {
         **envelope,
@@ -105,15 +105,16 @@ class PipelineAgent:
         "No markdown, no explanation, no code fences."
     )
 
-    def __init__(self, system_prompt: str = DEFAULT_SYSTEM):
+    def __init__(self, system_prompt: str = DEFAULT_SYSTEM, max_tokens: int = 2500):
         self._system = system_prompt
+        self._max_tokens = max_tokens
         self._history: List[Dict[str, Any]] = []
 
     def send(self, message: str, response_format: Optional[dict] = None) -> str:
         self._history.append(MessageBuilder.user_msg(message))
         messages = MessageBuilder(self._system).extend(self._history).build()
 
-        result = call_llm(get_connector(), messages, response_format=response_format)
+        result = call_llm(get_connector(), messages, response_format=response_format, max_tokens=self._max_tokens)
 
         if "error" in result:
             raise RuntimeError(f"LLM error: {result['error']}")
@@ -121,5 +122,6 @@ class PipelineAgent:
         content = result["choices"][0]["message"]["content"].strip()
         if _is_repetitive(content):
             raise RuntimeError("Model output detected as repetitive — retrying with fresh context")
-        self._history.append(MessageBuilder.assistant_msg(safe_history_content(content)))
+        if content:
+            self._history.append(MessageBuilder.assistant_msg(safe_history_content(content)))
         return content

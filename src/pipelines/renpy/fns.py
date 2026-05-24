@@ -288,10 +288,10 @@ def generate_scenes(inputs: Dict, working_dir: Path, max_tokens: int = 2500) -> 
     return {"scenes": scenes}
 
 
-def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3) -> Dict:
+def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3, max_tokens: int = 2500) -> Dict:
     last_error = ""
     for attempt in range(1, max_attempts + 1):
-        agent = PipelineAgent(_SYSTEM)
+        agent = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
         content = strip_fences(agent.send(prompt))
 
         for correction_attempt in range(2):
@@ -312,48 +312,20 @@ def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3) -> D
     raise RuntimeError(f"Failed to generate dialogue JSON for {label} ({last_error})")
 
 
-def _dialogue_chunk_prompt(scene_inputs: Dict, previous_lines: list, line_count: int, chunk_index: int, chunk_total: int) -> str:
-    context_lines = previous_lines[-6:] if len(previous_lines) > 6 else previous_lines
-    return render_template(_PROMPTS_DIR / "dialogue_chunk.txt", {
-        "genre": scene_inputs["genre"],
-        "tone": scene_inputs["tone"],
-        "characters": scene_inputs["characters"],
-        "setting": scene_inputs["setting"],
-        "scene": scene_inputs["scene"],
-        "previous_line_count": len(previous_lines),
-        "previous_lines": context_lines,
-        "line_count": line_count,
-        "chunk_index": chunk_index,
-        "chunk_total": chunk_total,
-        "final_chunk_note": "This is the final chunk. Make what_changes felt in the last line." if chunk_index == chunk_total else "",
-    })
-
-
-def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int = 3) -> Dict:
-    target_lines = max(1, _parse_count(scene_inputs.get("lines_per_scene", "16")))
-    chunk_size = 4
-    lines = []
-    chunk_total = (target_lines + chunk_size - 1) // chunk_size
-
-    for chunk_index in range(1, chunk_total + 1):
-        remaining = target_lines - len(lines)
-        count = min(chunk_size, remaining)
-        prompt = _dialogue_chunk_prompt(scene_inputs, lines, count, chunk_index, chunk_total)
-        chunk = _generate_dialogue_json(prompt, f"{label} chunk {chunk_index}", max_attempts=max_attempts)
-        chunk_lines = chunk.get("lines")
-        if not isinstance(chunk_lines, list) or not chunk_lines:
-            raise RuntimeError(f"Dialogue chunk for {label} did not return lines")
-        lines.extend(chunk_lines[:count])
-
+def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int = 3, max_tokens: int = 2500) -> Dict:
+    prompt = render_template(_PROMPTS_DIR / "dialogue.txt", scene_inputs)
+    result = _generate_dialogue_json(prompt, label, max_attempts=max_attempts, max_tokens=max_tokens)
+    if not isinstance(result.get("lines"), list) or not result["lines"]:
+        raise RuntimeError(f"Dialogue for {label} did not return lines")
     scene = scene_inputs["scene"]
     return {
         "scene_id": scene.get("id", label),
         "setting_id": scene.get("setting_id", ""),
-        "lines": lines[:target_lines],
+        "lines": result["lines"],
     }
 
 
-def dialogue(inputs: Dict, working_dir: Path) -> Dict:
+def dialogue(inputs: Dict, working_dir: Path, max_tokens: int = 2500) -> Dict:
     scenes = inputs.get("scenes", [])
     if isinstance(scenes, dict):
         scenes = scenes.get("scenes", [])
@@ -391,7 +363,7 @@ def dialogue(inputs: Dict, working_dir: Path) -> Dict:
             "scene":           {k: v for k, v in scene.items() if k in _SCENE_DIALOGUE_FIELDS},
             "setting":         {k: v for k, v in setting_full.items() if k != "image_file"},
         }
-        completed_scenes.append(_generate_dialogue_scene(scene_inputs, label))
+        completed_scenes.append(_generate_dialogue_scene(scene_inputs, label, max_tokens=max_tokens))
 
     return {"dialogue_scenes": completed_scenes}
 

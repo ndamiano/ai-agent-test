@@ -145,28 +145,6 @@ class TestDialogueGeneration:
         assert len(result["lines"]) == 2
         assert MockAgent.call_count == 2
 
-    def test_dialogue_scene_generates_small_chunks(self):
-        scene_inputs = {
-            "genre": "romance",
-            "tone": "warm",
-            "lines_per_scene": "5",
-            "characters": [{"id": "elias", "name": "Elias"}],
-            "setting": {"id": "s1", "name": "Station"},
-            "scene": {"id": "scene_1", "setting_id": "s1", "what_changes": "They reconnect."},
-        }
-
-        with patch("pipelines.renpy.fns.PipelineAgent") as MockAgent:
-            first = MagicMock()
-            first.send.return_value = '{"lines": [{"character_id": null, "text": "one"}, {"character_id": "elias", "text": "two"}, {"character_id": null, "text": "three"}, {"character_id": "elias", "text": "four"}]}'
-            second = MagicMock()
-            second.send.return_value = '{"lines": [{"character_id": null, "text": "five"}]}'
-            MockAgent.side_effect = [first, second]
-
-            result = _generate_dialogue_scene(scene_inputs, "Scene 1")
-
-        assert len(result["lines"]) == 5
-        assert MockAgent.call_count == 2
-
     def test_dialogue_preserves_successful_scenes_when_later_scene_retries(self, tmp_path):
         inputs = {
             "brief": {"genre": "romance", "tone": "warm", "lines_per_scene": "2"},

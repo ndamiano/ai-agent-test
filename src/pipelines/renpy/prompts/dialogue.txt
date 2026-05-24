@@ -27,11 +27,4 @@ Rules:
 - revelation, if not null, must land — but obliquely. No character says it plainly.
 
 Output a single JSON object:
-{
-  "scene_id": "scene_01",
-  "setting_id": "bg_...",
-  "lines": [
-    {"character_id": null, "text": "..."},
-    {"character_id": "char_id", "text": "..."}
-  ]
-}
+{"lines": [{"character_id": null, "text": "..."}, {"character_id": "char_id", "text": "..."}]}

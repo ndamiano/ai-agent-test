@@ -39,6 +39,13 @@ _VOICE_PROMPT = (
 _SCENE_DIALOGUE_FIELDS = {"id", "setting_id", "summary", "character_states", "dramatic_question", "revelation", "what_changes", "setting_constraint"}
 
 
+def _unwrap(result, list_key: str) -> dict:
+    """Model sometimes returns a bare list instead of {list_key: [...]}. Wrap it."""
+    if isinstance(result, list):
+        return {list_key: result}
+    return result
+
+
 def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict:
     content = strip_fences(agent.send(prompt))
     for _ in range(2):
@@ -139,8 +146,15 @@ def generate_story(inputs: Dict, working_dir: Path) -> Dict:
             "previous_beat_labels": [b.get("label", "") for b in beats],
             "beat_id": beat_id,
         })
-        agent = PipelineAgent(_SYSTEM)
-        beat = _json_with_correction(agent, beat_prompt, beat_id)
+        for attempt in range(1, 4):
+            try:
+                agent = PipelineAgent(_SYSTEM)
+                beat = _json_with_correction(agent, beat_prompt, beat_id)
+                break
+            except RuntimeError:
+                if attempt == 3:
+                    raise
+                print(f"    [story]  retrying beat {i + 1} (attempt {attempt + 1}/3)")
         beat.setdefault("beat_id", beat_id)
         beats.append(beat)
 
@@ -152,8 +166,15 @@ def generate_story(inputs: Dict, working_dir: Path) -> Dict:
         "arc": arc,
         "beats_summary": beats_summary,
     })
-    agent = PipelineAgent(_SYSTEM)
-    loc_result = _json_with_correction(agent, loc_prompt, "location needs")
+    for attempt in range(1, 4):
+        try:
+            agent = PipelineAgent(_SYSTEM)
+            loc_result = _unwrap(_json_with_correction(agent, loc_prompt, "location needs"), "location_needs")
+            break
+        except RuntimeError:
+            if attempt == 3:
+                raise
+            print(f"    [story]  retrying location needs (attempt {attempt + 1}/3)")
 
     return {
         "arc":            arc,
@@ -185,8 +206,15 @@ def generate_settings(inputs: Dict, working_dir: Path) -> Dict:
             "location_need": need.get("need", ""),
             "location_name": label,
         })
-        agent = PipelineAgent(_SYSTEM)
-        s = _json_with_correction(agent, prompt, f"setting {i + 1}")
+        for attempt in range(1, 4):
+            try:
+                agent = PipelineAgent(_SYSTEM)
+                s = _json_with_correction(agent, prompt, f"setting {i + 1}")
+                break
+            except RuntimeError:
+                if attempt == 3:
+                    raise
+                print(f"    [settings]  retrying setting {i + 1} (attempt {attempt + 1}/3)")
         if not s.get("id", "").startswith("bg_"):
             s["id"] = "bg_" + s.get("id", f"location_{i + 1}").lstrip("bg_")
         settings.append(s)
@@ -215,18 +243,25 @@ def generate_characters(inputs: Dict, working_dir: Path) -> Dict:
         print(f"    [characters]  generating character subpipeline {label}")
 
         concept = _renpy_character_concept(brief, story, settings, characters, i + 1, total)
-        sub_result = run_subpipeline(
-            working_dir,
-            "character",
-            {
-                "concept": concept,
-                "tone": brief.get("tone", "balanced"),
-                "role": "visual novel cast member",
-                "setting": brief.get("setting", brief.get("genre", "")),
-                "notes": brief.get("notes", ""),
-            },
-            run_id=f"character_{i + 1}",
-        )
+        for attempt in range(1, 4):
+            try:
+                sub_result = run_subpipeline(
+                    working_dir,
+                    "character",
+                    {
+                        "concept": concept,
+                        "tone": brief.get("tone", "balanced"),
+                        "role": "visual novel cast member",
+                        "setting": brief.get("setting", brief.get("genre", "")),
+                        "notes": brief.get("notes", ""),
+                    },
+                    run_id=f"character_{i + 1}_attempt{attempt}",
+                )
+                break
+            except Exception:
+                if attempt == 3:
+                    raise
+                print(f"    [characters]  retrying character {i + 1} (attempt {attempt + 1}/3)")
 
         generated = sub_result.get("outputs", {}).get("character", {})
         portrait = sub_result.get("outputs", {}).get("portrait_result", {})
@@ -314,7 +349,7 @@ def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3, max_
 
 def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int = 3, max_tokens: int = 2500) -> Dict:
     prompt = render_template(_PROMPTS_DIR / "dialogue.txt", scene_inputs)
-    result = _generate_dialogue_json(prompt, label, max_attempts=max_attempts, max_tokens=max_tokens)
+    result = _unwrap(_generate_dialogue_json(prompt, label, max_attempts=max_attempts, max_tokens=max_tokens), "lines")
     if not isinstance(result.get("lines"), list) or not result["lines"]:
         raise RuntimeError(f"Dialogue for {label} did not return lines")
     scene = scene_inputs["scene"]

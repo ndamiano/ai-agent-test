@@ -89,7 +89,7 @@ def cmd_score_stage(args):
     print_summary(summary, f"{args.target} / {args.brief}")
 
     if not args.no_save:
-        save(pipeline_name, stage_id, args.brief, summary)
+        save(pipeline_name, stage_id, args.brief, summary, run_results=results)
 
 
 def cmd_score_pipeline(args):
@@ -145,6 +145,44 @@ def cmd_climb(args):
         iterations=args.iterations,
         n_mutations=args.mutations,
     )
+
+
+def cmd_rescore(args):
+    from eval.judge import Judge
+    from eval.report import summarize, save, print_summary, print_diff
+    from llm_clients.connector_selector import get_connector
+
+    run_dir = Path(args.run_dir)
+    outputs_path = run_dir / "outputs.json"
+    summary_path = run_dir / "summary.json"
+
+    if not outputs_path.exists():
+        sys.exit(f"No outputs.json in {run_dir} — run was saved before output persistence was added.")
+
+    outputs = json.loads(outputs_path.read_text(encoding="utf-8"))
+    pipeline_name, stage_id = args.target.split("/", 1)
+    rubric = _load_rubric(pipeline_name, stage_id)
+
+    connector = get_connector(connector_type=args.connector) if args.connector else get_connector()
+    judge = Judge(connector=connector)
+
+    print(f"Rescoring {len(outputs)} outputs from {run_dir.name}"
+          + (f"  connector={args.connector}" if args.connector else ""))
+
+    scored = [
+        judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
+        for r in outputs
+    ]
+    run_results = [{"ok": r["ok"], "output": r["output"], "elapsed": 0} for r in outputs]
+    summary = summarize(run_results, scored, rubric)
+    print_summary(summary, f"{args.target} rescore")
+
+    if args.compare and summary_path.exists():
+        original = json.loads(summary_path.read_text(encoding="utf-8"))
+        print_diff(original, summary, "original", "rescore")
+
+    label = f"rescore_{args.connector}" if args.connector else "rescore"
+    save(pipeline_name, stage_id, run_dir.parent.name, summary, label=label)
 
 
 def cmd_report(args):
@@ -214,6 +252,15 @@ def main():
     p.add_argument("--iterations", type=int, default=10)
     p.add_argument("--mutations",  type=int, default=3, help="Mutations to test per iteration (default: 3)")
 
+    # rescore
+    p = sub.add_parser("rescore", help="Re-score saved outputs with a different judge connector")
+    p.add_argument("run_dir", help="Path to a result run directory containing outputs.json")
+    p.add_argument("target",  help="pipeline/stage_id (e.g. renpy/dialogue)")
+    p.add_argument("--connector", default=None,
+                   help="Connector type to use for judging (e.g. cline, lmstudio). Defaults to active connector.")
+    p.add_argument("--compare", action="store_true",
+                   help="Diff rescore against the original summary.json in the same run dir")
+
     # report
     p = sub.add_parser("report", help="Print a saved result summary")
     p.add_argument("summary", help="Path to summary.json")
@@ -225,6 +272,7 @@ def main():
         "capture": cmd_capture,
         "score":   lambda a: cmd_score_stage(a) if a.score_target == "stage" else cmd_score_pipeline(a),
         "climb":   cmd_climb,
+        "rescore": cmd_rescore,
         "report":  cmd_report,
     }
     dispatch[args.command](args)

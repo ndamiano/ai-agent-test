@@ -57,12 +57,16 @@ def summarize(run_results: list, scored: list, rubric: dict) -> dict:
     }
 
 
-def save(pipeline: str, stage: str, brief: str, summary: dict, label: str = "") -> Path:
+def save(pipeline: str, stage: str, brief: str, summary: dict, label: str = "",
+         run_results: list = None) -> Path:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     run_id = f"{label}_{ts}_{uuid.uuid4().hex[:6]}" if label else f"{ts}_{uuid.uuid4().hex[:6]}"
     out_dir = RESULTS_DIR / pipeline / stage / brief / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    if run_results is not None:
+        outputs = [{"output": r.get("output"), "ok": r.get("ok", False)} for r in run_results]
+        (out_dir / "outputs.json").write_text(json.dumps(outputs, indent=2), encoding="utf-8")
     print(f"Saved → {out_dir.relative_to(RESULTS_DIR.parent)}/summary.json")
     return out_dir
 

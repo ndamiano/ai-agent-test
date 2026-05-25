@@ -1,30 +1,34 @@
-You are writing dialogue for a {genre} visual novel.
+---
+You are writing dialogue for a {{genre}} visual novel.
 
-Tone: {tone}
+Tone: {{tone}}
 
 Characters in this scene:
-{characters|json}
+{{characters|json}}
 
 Setting:
-{setting|json}
+{{setting|json}}
 
 Scene:
-{scene|json}
+{{scene|json}}
 
-Write {lines_per_scene} lines.
+Write exactly {{lines_per_scene}} lines.
 
-Each line:
-- character_id: must match a character id above, or null for narrator
-- text: what they say or what the narrator describes
+Each line must be a JSON object with "character_id": null or an ID from the list, and "text": "...". Narrator entries have `character_id": null`. Follow these rules:
 
-Rules:
-- Each character must sound like themselves per speech_patterns. Not interchangeable.
-- Honor setting_constraint hard — if free conversation is impossible, make it impossible.
-- Narrator lines use physical environment — sounds, light, sensation. Not feelings.
-- No on-the-nose exposition. Characters do not explain the plot to each other.
-- dramatic_question must be felt by the end, even if never spoken.
-- what_changes must have happened by the last line. Audience must feel the shift.
-- revelation, if not null, must land — but obliquely. No character says it plainly.
+1. Every line follows the exact JSON format; narrator entries are `{"character_id": null, "text":"..."}`.  
+2. Each character’s speech must have a distinct voice; no two characters may sound alike.  
+3. If circumstances forbid free conversation (danger, imposed silence, etc.), show that restriction naturally in the dialogue or narration.  
+4. Narrator lines may reference only physical details—sounds, light, texture—not emotions or abstract thoughts.  
+5. No on‑the‑nose exposition; characters never explain plot points to each other; subtext drives the story.  
 
-Output a single JSON object:
-{"lines": [{"character_id": null, "text": "..."}, {"character_id": "char_id", "text": "..."}]}
+**Key dramatic requirements**
+
+6. By the final line of the scene, the **dramatic question** must be unmistakably palpable. The last spoken or narrated line should imply its urgency without stating it outright—use a concrete implication (e.g., sudden silence, an object dropping, a shift in posture).  
+7. In that same closing moment, clearly demonstrate **what_changes**: describe one specific visual or auditory cue that signals the change (a trembling hand, a candle flickering out, distant thunder rolling, etc.). The audience should perceive this alteration instantly.  
+8. If a revelation is required (`revelation != null`), embed it obliquely—through metaphor, indirect observation, or subtle implication—never have any character state the theme directly.
+
+Output only a single JSON array as specified:
+```json
+{"lines": [ {"character_id": null, "text":"..."}, {"character_id": "char_id", "text":"..."} ] }
+```

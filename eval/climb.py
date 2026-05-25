@@ -90,7 +90,8 @@ def hill_climb(
     baseline_scored  = _score_run(baseline_results, stage_id, rubric, judge)
     baseline_summary = summarize(baseline_results, baseline_scored, rubric)
     print_summary(baseline_summary, "Baseline")
-    save(pipeline_name, stage_id, brief_name, baseline_summary, label="baseline")
+    save(pipeline_name, stage_id, brief_name, baseline_summary, label="baseline",
+         run_results=baseline_results)
 
     current_prompt  = prompt_path.read_text(encoding="utf-8")
     current_summary = baseline_summary
@@ -146,7 +147,8 @@ def hill_climb(
             print_diff(current_summary, best_summary, "before", "after")
             current_prompt  = best_mutation
             current_summary = best_summary
-            save(pipeline_name, stage_id, brief_name, current_summary, label=f"iter{i+1:02d}_accepted")
+            save(pipeline_name, stage_id, brief_name, current_summary, label=f"iter{i+1:02d}_accepted",
+                 run_results=results)
         else:
             print("  rejected — no improvement")
 

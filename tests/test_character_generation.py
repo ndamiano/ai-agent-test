@@ -116,8 +116,8 @@ class TestGenerateCharacters:
             result = generate_characters(inputs, tmp_path)
 
         assert mock_run.call_count == 2
-        assert mock_run.call_args_list[0].kwargs["run_id"] == "character_1"
-        assert mock_run.call_args_list[1].kwargs["run_id"] == "character_2"
+        assert mock_run.call_args_list[0].kwargs["run_id"] == "character_1_attempt1"
+        assert mock_run.call_args_list[1].kwargs["run_id"] == "character_2_attempt1"
         assert len(result["characters"]) == 2
 
 

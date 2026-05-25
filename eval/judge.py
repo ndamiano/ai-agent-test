@@ -87,7 +87,7 @@ def _weighted_average(scores: dict, rubric: dict) -> float:
     if not total_weight:
         return 0.0
     weighted = sum(
-        scores.get(c["name"], {}).get("score", 0) * c.get("weight", 1.0)
+        float(scores.get(c["name"], {}).get("score", 0)) * c.get("weight", 1.0)
         for c in rubric["criteria"]
         if c["name"] in scores
     )

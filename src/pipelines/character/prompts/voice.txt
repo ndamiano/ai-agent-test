@@ -1,0 +1,2 @@
+Output the speech_patterns field: how they talk (sentence length, vocabulary, habits, what they avoid).
+Exactly: {"speech_patterns": "..."}

@@ -26,16 +26,6 @@ _SYSTEM = (
 
 _DIALOGUE_FIELDS = {"id", "name", "description", "personality", "speech_patterns"}
 
-_APPEARANCE_PROMPT = (
-    'Output the appearance field: portrait description (age, build, features, clothing). '
-    'Exactly: {"appearance": "..."}'
-)
-
-_VOICE_PROMPT = (
-    'Output the speech_patterns field: how they talk (sentence length, vocabulary, habits, what they avoid). '
-    'Exactly: {"speech_patterns": "..."}'
-)
-
 _SCENE_DIALOGUE_FIELDS = {"id", "setting_id", "summary", "character_states", "dramatic_question", "revelation", "what_changes", "setting_constraint"}
 
 

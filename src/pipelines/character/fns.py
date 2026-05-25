@@ -14,16 +14,6 @@ _SYSTEM = (
     "No markdown, no explanation, no code fences."
 )
 
-_APPEARANCE_PROMPT = (
-    "Output the appearance field: portrait description (age, build, features, clothing). "
-    'Exactly: {"appearance": "..."}'
-)
-
-_VOICE_PROMPT = (
-    "Output the speech_patterns field: how they talk (sentence length, vocabulary, habits, what they avoid). "
-    'Exactly: {"speech_patterns": "..."}'
-)
-
 
 def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict:
     content = strip_fences(agent.send(prompt))
@@ -52,12 +42,14 @@ def generate_character(inputs: Dict, working_dir: Path) -> Dict:
         "setting_context": concept.get("setting_context", ""),
     }
 
-    identity_prompt = render_template(_PROMPTS_DIR / "identity.txt", ctx)
+    identity_prompt   = render_template(_PROMPTS_DIR / "identity.txt",   ctx)
+    appearance_prompt = (_PROMPTS_DIR / "appearance.txt").read_text(encoding="utf-8")
+    voice_prompt      = (_PROMPTS_DIR / "voice.txt").read_text(encoding="utf-8")
     agent = PipelineAgent(_SYSTEM)
 
-    identity   = _json_with_correction(agent, identity_prompt,    "character identity")
-    appearance = _json_with_correction(agent, _APPEARANCE_PROMPT, "character appearance")
-    voice      = _json_with_correction(agent, _VOICE_PROMPT,      "character voice")
+    identity   = _json_with_correction(agent, identity_prompt,   "character identity")
+    appearance = _json_with_correction(agent, appearance_prompt, "character appearance")
+    voice      = _json_with_correction(agent, voice_prompt,      "character voice")
 
     return {**identity, **appearance, **voice}
 

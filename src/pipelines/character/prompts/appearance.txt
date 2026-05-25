@@ -1,0 +1,2 @@
+Output the appearance field: portrait description (age, build, features, clothing).
+Exactly: {"appearance": "..."}

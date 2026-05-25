@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from pipelines.runner import Pipeline, Node, FnStage
-from pipelines.renpy.fns import dialogue, generate_characters, generate_scenes, generate_settings, generate_story, package, generate_images, build
+from pipelines.renpy.fns import (
+    generate_story_arc, generate_story_beats, generate_story_locations, assemble_story,
+    generate_settings, generate_characters, generate_scenes, dialogue,
+    package, generate_images, build,
+)
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -10,13 +14,42 @@ RENPY_PIPELINE = Pipeline(
     prompts_dir=_PROMPTS_DIR,
     nodes=[
 
+        Node("story_arc", [
+            FnStage(
+                id="story_arc",
+                fn=generate_story_arc,
+                inputs=["brief.json"],
+                output="story_arc.json",
+                prompt_file="story_arc.txt",
+            ),
+        ]),
+
+        Node("story_beats", [
+            FnStage(
+                id="story_beats",
+                fn=generate_story_beats,
+                inputs=["brief.json", "story_arc.json"],
+                output="story_beats.json",
+                prompt_file="story_beat.txt",
+            ),
+        ]),
+
+        Node("story_locations", [
+            FnStage(
+                id="story_locations",
+                fn=generate_story_locations,
+                inputs=["brief.json", "story_arc.json", "story_beats.json"],
+                output="story_locations.json",
+                prompt_file="story_locations.txt",
+            ),
+        ]),
+
         Node("story", [
             FnStage(
                 id="story",
-                fn=generate_story,
-                inputs=["brief.json"],
+                fn=assemble_story,
+                inputs=["story_arc.json", "story_beats.json", "story_locations.json"],
                 output="story.json",
-                prompt_file="story_beat.txt",
             ),
         ]),
 

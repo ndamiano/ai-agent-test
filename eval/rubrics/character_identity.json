@@ -1,0 +1,21 @@
+{
+  "stage": "identity",
+  "pipeline": "character",
+  "criteria": [
+    {
+      "name": "personality_depth",
+      "description": "personality traits describe behaviors, not just adjectives. 'Gets competitive when overlooked' is a behavior. 'Competitive' is a label. Labels alone tell a writer nothing about how the character will act in a scene. Test: could a writer predict how this character behaves in a tense moment from the personality list alone? If personality is a list of adjectives with no behavioral specificity, score 0–40. If at least two traits describe patterns of behavior rather than labels, score 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "motivation_specificity",
+      "description": "motivation is concrete and rooted in this specific character's situation, not a genre placeholder. 'Wants connection' or 'seeks closure' are genre-level goals that could apply to any character in any melancholic romance. Test: could this motivation belong to any sad character in this genre, or is it specific to who this person is and what they've lived? Generic genre goals score 0–40. A motivation tied to a specific relationship, loss, or circumstance scores 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "field_coherence",
+      "description": "description, personality, motivation, and conflict don't contradict each other — the personality is reflected in the description, the motivation connects to who they are, the conflict follows from their traits. Test: does the personality list match the description? Does the motivation follow from who they are? Any direct contradiction between fields scores 0–35. Full coherence where each field reinforces the others scores 70+.",
+      "weight": 0.75
+    }
+  ]
+}

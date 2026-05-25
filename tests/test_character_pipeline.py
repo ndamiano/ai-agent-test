@@ -5,7 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pipelines.character.fns import generate_character, generate_portrait, _json_with_correction, _SYSTEM
+from pipelines.character.fns import (
+    generate_identity, generate_appearance, generate_voice,
+    assemble_character, generate_portrait, _json_with_correction, _SYSTEM,
+)
 
 
 def _mock_agent(responses):
@@ -31,10 +34,10 @@ class TestJsonWithCorrection:
             _json_with_correction(agent, "p", "label")
 
 
-class TestGenerateCharacter:
+class TestGenerateIdentity:
     def _make_inputs(self):
         return {
-            "brief": {"concept": "a disgraced knight", "tone": "dark", "setting": "medieval"},
+            "brief": {"tone": "dark", "setting": "medieval"},
             "concept": {
                 "name": "Sir Roland",
                 "role": "anti-hero",
@@ -46,36 +49,125 @@ class TestGenerateCharacter:
             },
         }
 
-    def test_makes_three_calls(self, tmp_path):
-        identity   = {"id": "sir_roland", "name": "Sir Roland", "role": "anti-hero", "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"}
+    def test_makes_one_call(self, tmp_path):
+        identity = {"id": "sir_roland", "name": "Sir Roland", "role": "anti-hero",
+                    "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"}
+
+        with patch("pipelines.character.fns.PipelineAgent") as MockAgent:
+            mock_agent = MagicMock()
+            mock_agent.send.return_value = json.dumps(identity)
+            MockAgent.return_value = mock_agent
+
+            result = generate_identity(self._make_inputs(), tmp_path)
+
+        assert mock_agent.send.call_count == 1
+        assert result["id"] == "sir_roland"
+        assert result["name"] == "Sir Roland"
+
+
+class TestGenerateAppearance:
+    def _make_inputs(self):
+        return {
+            "brief": {"tone": "dark", "setting": "medieval"},
+            "identity": {
+                "name": "Sir Roland",
+                "description": "A disgraced knight.",
+                "personality": ["proud", "bitter"],
+                "motivation": "Reclaim honor",
+                "conflict": "Cannot let go of pride",
+            },
+        }
+
+    def test_makes_one_call_with_identity_context(self, tmp_path):
         appearance = {"appearance": "Weathered face, scarred cheek, battered plate armour."}
-        voice      = {"speech_patterns": "Formal. Never uses contractions. Pauses before answering."}
 
         with patch("pipelines.character.fns.PipelineAgent") as MockAgent:
             mock_agent = MagicMock()
-            mock_agent.send.side_effect = [json.dumps(identity), json.dumps(appearance), json.dumps(voice)]
+            mock_agent.send.return_value = json.dumps(appearance)
             MockAgent.return_value = mock_agent
 
-            result = generate_character(self._make_inputs(), tmp_path)
+            result = generate_appearance(self._make_inputs(), tmp_path)
 
-        assert mock_agent.send.call_count == 3
-        MockAgent.assert_called_once_with(_SYSTEM)
+        assert mock_agent.send.call_count == 1
+        assert result["appearance"] == "Weathered face, scarred cheek, battered plate armour."
 
-    def test_merges_all_field_groups(self, tmp_path):
-        identity   = {"id": "sir_roland", "name": "Sir Roland", "role": "anti-hero", "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"}
-        appearance = {"appearance": "Weathered."}
-        voice      = {"speech_patterns": "Formal."}
+    def test_passes_identity_to_prompt(self, tmp_path):
+        appearance = {"appearance": "Tall."}
 
         with patch("pipelines.character.fns.PipelineAgent") as MockAgent:
             mock_agent = MagicMock()
-            mock_agent.send.side_effect = [json.dumps(identity), json.dumps(appearance), json.dumps(voice)]
+            mock_agent.send.return_value = json.dumps(appearance)
             MockAgent.return_value = mock_agent
 
-            result = generate_character(self._make_inputs(), tmp_path)
+            generate_appearance(self._make_inputs(), tmp_path)
 
+        prompt_sent = mock_agent.send.call_args[0][0]
+        assert "Sir Roland" in prompt_sent
+        assert "A disgraced knight." in prompt_sent
+
+
+class TestGenerateVoice:
+    def _make_inputs(self):
+        return {
+            "brief": {"tone": "dark"},
+            "identity": {
+                "name": "Sir Roland",
+                "description": "A disgraced knight.",
+                "personality": ["proud", "bitter"],
+                "motivation": "Reclaim honor",
+                "conflict": "Cannot let go of pride",
+            },
+        }
+
+    def test_makes_one_call_with_identity_context(self, tmp_path):
+        voice = {"speech_patterns": "Formal. Never uses contractions. Pauses before answering."}
+
+        with patch("pipelines.character.fns.PipelineAgent") as MockAgent:
+            mock_agent = MagicMock()
+            mock_agent.send.return_value = json.dumps(voice)
+            MockAgent.return_value = mock_agent
+
+            result = generate_voice(self._make_inputs(), tmp_path)
+
+        assert mock_agent.send.call_count == 1
+        assert result["speech_patterns"] == "Formal. Never uses contractions. Pauses before answering."
+
+    def test_passes_identity_to_prompt(self, tmp_path):
+        voice = {"speech_patterns": "Formal."}
+
+        with patch("pipelines.character.fns.PipelineAgent") as MockAgent:
+            mock_agent = MagicMock()
+            mock_agent.send.return_value = json.dumps(voice)
+            MockAgent.return_value = mock_agent
+
+            generate_voice(self._make_inputs(), tmp_path)
+
+        prompt_sent = mock_agent.send.call_args[0][0]
+        assert "Sir Roland" in prompt_sent
+        assert "Reclaim honor" in prompt_sent
+
+
+class TestAssembleCharacter:
+    def test_merges_all_fields(self, tmp_path):
+        inputs = {
+            "identity":   {"id": "sir_roland", "name": "Sir Roland", "role": "anti-hero",
+                           "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"},
+            "appearance": {"appearance": "Weathered."},
+            "voice":      {"speech_patterns": "Formal."},
+        }
+        result = assemble_character(inputs, tmp_path)
         assert result["id"] == "sir_roland"
         assert result["appearance"] == "Weathered."
         assert result["speech_patterns"] == "Formal."
+
+    def test_later_fields_overwrite_earlier(self, tmp_path):
+        inputs = {
+            "identity":   {"name": "A"},
+            "appearance": {"name": "B"},
+            "voice":      {},
+        }
+        result = assemble_character(inputs, tmp_path)
+        assert result["name"] == "B"
 
 
 class TestGeneratePortrait:

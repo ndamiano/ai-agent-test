@@ -1,0 +1,16 @@
+{
+  "stage": "story_locations",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "story_fit",
+      "description": "each location serves the arc and beats — its atmosphere, constraints, or associations make it the right place for the emotional work that happens there. A location that could be swapped for any other without loss scores low. Test: does each location's description imply something about the kind of scene that will happen there? Generic 'nice place' descriptions score 0–35. Locations where the setting creates pressure or meaning score 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "distinctiveness",
+      "description": "locations are meaningfully different from each other — different atmosphere, different constraints, different emotional register. Two locations that feel like variations of the same place score low. Test: could any two locations be swapped without affecting the story? If yes, score 0–40. If each location has a unique quality that makes it irreplaceable, score 65+.",
+      "weight": 1.0
+    }
+  ]
+}

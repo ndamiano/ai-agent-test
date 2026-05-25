@@ -105,36 +105,45 @@ def _normalize_renpy_character(character: Dict, index: int, portrait_file: str =
     return char
 
 
-def generate_story(inputs: Dict, working_dir: Path) -> Dict:
+def generate_story_arc(inputs: Dict, working_dir: Path) -> Dict:
     brief = inputs.get("brief", {})
-    genre    = brief.get("genre", "")
-    tone     = brief.get("tone", "")
-    premise  = brief.get("premise", "")
-    notes    = brief.get("notes", "")
-    n_beats  = _parse_count(brief.get("scene_count", "3"))
-
-    print(f"    [story]  generating arc + premise")
-    arc_prompt = render_template(_PROMPTS_DIR / "story_arc.txt", {
-        "genre": genre, "tone": tone, "premise": premise, "notes": notes,
+    prompt = render_template(_PROMPTS_DIR / "story_arc.txt", {
+        "genre":   brief.get("genre", ""),
+        "tone":    brief.get("tone", ""),
+        "premise": brief.get("premise", ""),
+        "notes":   brief.get("notes", ""),
     })
+    print(f"    [story]  generating arc + premise")
     agent = PipelineAgent(_SYSTEM)
-    result = _json_with_correction(agent, arc_prompt, "story arc")
-    arc           = result.get("arc", "")
-    story_premise = result.get("premise", premise)
+    result = _json_with_correction(agent, prompt, "story arc")
+    return {
+        "arc":     result.get("arc", ""),
+        "premise": result.get("premise", brief.get("premise", "")),
+    }
+
+
+def generate_story_beats(inputs: Dict, working_dir: Path) -> Dict:
+    brief     = inputs.get("brief", {})
+    story_arc = inputs.get("story_arc", {})
+    genre         = brief.get("genre", "")
+    tone          = brief.get("tone", "")
+    arc           = story_arc.get("arc", "")
+    story_premise = story_arc.get("premise", brief.get("premise", ""))
+    n_beats       = _parse_count(brief.get("scene_count", "3"))
 
     beats = []
     for i in range(n_beats):
         beat_id = f"beat_{i + 1:02d}"
         print(f"    [story]  generating beat {i + 1}/{n_beats}")
         beat_prompt = render_template(_PROMPTS_DIR / "story_beat.txt", {
-            "beat_index": i + 1,
-            "beat_total": n_beats,
-            "genre": genre,
-            "tone": tone,
-            "arc": arc,
-            "premise": story_premise,
+            "beat_index":           i + 1,
+            "beat_total":           n_beats,
+            "genre":                genre,
+            "tone":                 tone,
+            "arc":                  arc,
+            "premise":              story_premise,
             "previous_beat_labels": [b.get("label", "") for b in beats],
-            "beat_id": beat_id,
+            "beat_id":              beat_id,
         })
         for attempt in range(1, 4):
             try:
@@ -148,29 +157,45 @@ def generate_story(inputs: Dict, working_dir: Path) -> Dict:
         beat.setdefault("beat_id", beat_id)
         beats.append(beat)
 
-    print(f"    [story]  generating location needs")
+    return {"story_beats": beats}
+
+
+def generate_story_locations(inputs: Dict, working_dir: Path) -> Dict:
+    brief       = inputs.get("brief", {})
+    story_arc   = inputs.get("story_arc", {})
+    story_beats = inputs.get("story_beats", {})
+    beats        = story_beats.get("story_beats", [])
     beats_summary = ", ".join(f"{b.get('beat_id')}: {b.get('label', '')}" for b in beats)
+
+    print(f"    [story]  generating location needs")
     loc_prompt = render_template(_PROMPTS_DIR / "story_locations.txt", {
-        "beat_total": n_beats,
-        "genre": genre,
-        "arc": arc,
+        "beat_total":    len(beats),
+        "genre":         brief.get("genre", ""),
+        "arc":           story_arc.get("arc", ""),
         "beats_summary": beats_summary,
     })
     for attempt in range(1, 4):
         try:
             agent = PipelineAgent(_SYSTEM)
-            loc_result = _unwrap(_json_with_correction(agent, loc_prompt, "location needs"), "location_needs")
+            result = _unwrap(_json_with_correction(agent, loc_prompt, "location needs"), "location_needs")
             break
         except RuntimeError:
             if attempt == 3:
                 raise
             print(f"    [story]  retrying location needs (attempt {attempt + 1}/3)")
 
+    return {"location_needs": result.get("location_needs", [])}
+
+
+def assemble_story(inputs: Dict, working_dir: Path) -> Dict:
+    story_arc       = inputs.get("story_arc", {})
+    story_beats     = inputs.get("story_beats", {})
+    story_locations = inputs.get("story_locations", {})
     return {
-        "arc":            arc,
-        "premise":        story_premise,
-        "story_beats":    beats,
-        "location_needs": loc_result.get("location_needs", []),
+        "arc":            story_arc.get("arc", ""),
+        "premise":        story_arc.get("premise", ""),
+        "story_beats":    story_beats.get("story_beats", []),
+        "location_needs": story_locations.get("location_needs", []),
     }
 
 

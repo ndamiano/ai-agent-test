@@ -27,10 +27,9 @@ def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict
     raise RuntimeError(f"Failed to get valid JSON for {label}")
 
 
-def generate_character(inputs: Dict, working_dir: Path) -> Dict:
+def generate_identity(inputs: Dict, working_dir: Path) -> Dict:
     brief = inputs.get("brief", {})
     concept = inputs.get("concept", {})
-
     ctx = {
         **brief,
         "name":            concept.get("name", ""),
@@ -41,16 +40,44 @@ def generate_character(inputs: Dict, working_dir: Path) -> Dict:
         "flaw":            concept.get("flaw", ""),
         "setting_context": concept.get("setting_context", ""),
     }
-
-    identity_prompt   = render_template(_PROMPTS_DIR / "identity.txt",   ctx)
-    appearance_prompt = (_PROMPTS_DIR / "appearance.txt").read_text(encoding="utf-8")
-    voice_prompt      = (_PROMPTS_DIR / "voice.txt").read_text(encoding="utf-8")
+    prompt = render_template(_PROMPTS_DIR / "identity.txt", ctx)
     agent = PipelineAgent(_SYSTEM)
+    return _json_with_correction(agent, prompt, "character identity")
 
-    identity   = _json_with_correction(agent, identity_prompt,   "character identity")
-    appearance = _json_with_correction(agent, appearance_prompt, "character appearance")
-    voice      = _json_with_correction(agent, voice_prompt,      "character voice")
 
+def generate_appearance(inputs: Dict, working_dir: Path) -> Dict:
+    identity = inputs.get("identity", {})
+    brief = inputs.get("brief", {})
+    ctx = {
+        "name":        identity.get("name", ""),
+        "description": identity.get("description", ""),
+        "personality": json.dumps(identity.get("personality", [])),
+        "setting":     brief.get("setting", ""),
+        "tone":        brief.get("tone", ""),
+    }
+    prompt = render_template(_PROMPTS_DIR / "appearance.txt", ctx)
+    agent = PipelineAgent(_SYSTEM)
+    return _json_with_correction(agent, prompt, "character appearance")
+
+
+def generate_voice(inputs: Dict, working_dir: Path) -> Dict:
+    identity = inputs.get("identity", {})
+    ctx = {
+        "name":        identity.get("name", ""),
+        "description": identity.get("description", ""),
+        "personality": json.dumps(identity.get("personality", [])),
+        "motivation":  identity.get("motivation", ""),
+        "conflict":    identity.get("conflict", ""),
+    }
+    prompt = render_template(_PROMPTS_DIR / "voice.txt", ctx)
+    agent = PipelineAgent(_SYSTEM)
+    return _json_with_correction(agent, prompt, "character voice")
+
+
+def assemble_character(inputs: Dict, working_dir: Path) -> Dict:
+    identity   = inputs.get("identity", {})
+    appearance = inputs.get("appearance", {})
+    voice      = inputs.get("voice", {})
     return {**identity, **appearance, **voice}
 
 

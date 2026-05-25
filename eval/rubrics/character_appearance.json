@@ -1,0 +1,16 @@
+{
+  "stage": "appearance",
+  "pipeline": "character",
+  "criteria": [
+    {
+      "name": "visual_completeness",
+      "description": "appearance provides everything a portrait generator needs — age, build, hair, eyes, at least one distinctive feature, clothing style — and each detail is concrete enough to render. Vague inventory scores low even if complete. Test: does appearance have age, build, hair, eyes, a distinguishing feature, and clothing? If any are missing or described with placeholders ('medium height', 'dark hair', 'casual clothes'), score 0–40. Concrete on all fields scores 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "character_revealing",
+      "description": "at least one visual detail reveals something about who this person is, not just what they look like. Ink-stained fingers, a too-careful posture, clothes that used to fit better — these imply history or habit. Pure inventory (hair color, height) is necessary but not sufficient. Test: is every appearance detail interchangeable with any other person in this genre, or does at least one detail make this person specifically visible? Pure inventory scores 0–35. One character-revealing detail scores 60+.",
+      "weight": 1.0
+    }
+  ]
+}

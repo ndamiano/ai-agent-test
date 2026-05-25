@@ -1,2 +1,8 @@
-Output the speech_patterns field: how they talk (sentence length, vocabulary, habits, what they avoid).
+Character: {name}
+Description: {description}
+Personality: {personality}
+Motivation: {motivation}
+Conflict: {conflict}
+
+Output the speech_patterns field: how this specific person talks — sentence length, vocabulary range, at least one unique verbal habit or tic, what they reach for under pressure, what they never say.
 Exactly: {"speech_patterns": "..."}

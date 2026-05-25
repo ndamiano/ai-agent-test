@@ -1,7 +1,10 @@
 from pathlib import Path
 
 from pipelines.runner import Pipeline, Node, LLMStage, FnStage
-from pipelines.character.fns import generate_character, generate_portrait
+from pipelines.character.fns import (
+    generate_identity, generate_appearance, generate_voice,
+    assemble_character, generate_portrait,
+)
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -31,13 +34,42 @@ CHARACTER_PIPELINE = Pipeline(
             ),
         ]),
 
+        Node("identity", [
+            FnStage(
+                id="identity",
+                fn=generate_identity,
+                inputs=["brief.json", "concept.json"],
+                output="identity.json",
+                prompt_file="identity.txt",
+            ),
+        ]),
+
+        Node("appearance", [
+            FnStage(
+                id="appearance",
+                fn=generate_appearance,
+                inputs=["brief.json", "identity.json"],
+                output="appearance.json",
+                prompt_file="appearance.txt",
+            ),
+        ]),
+
+        Node("voice", [
+            FnStage(
+                id="voice",
+                fn=generate_voice,
+                inputs=["brief.json", "identity.json"],
+                output="voice.json",
+                prompt_file="voice.txt",
+            ),
+        ]),
+
         Node("character", [
             FnStage(
                 id="character",
-                fn=generate_character,
-                inputs=["brief.json", "concept.json"],
+                fn=assemble_character,
+                inputs=["identity.json", "appearance.json", "voice.json"],
                 output="character.json",
-                prompt_file="identity.txt",
             ),
         ]),
 

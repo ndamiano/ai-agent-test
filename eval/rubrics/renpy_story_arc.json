@@ -1,0 +1,16 @@
+{
+  "stage": "story_arc",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "arc_shape",
+      "description": "the arc describes a genuine transformation — a starting state, a realization or turning point, and a changed end state. Not a plot summary. Test: does the arc read as 'Drive to X → Realization that Y → Permanent state of Z'? If the three stages are vague or all describe the same emotional state, score 0–40. If each stage is distinct and the progression is irreversible, score 70+.",
+      "weight": 1.5
+    },
+    {
+      "name": "premise_specificity",
+      "description": "the premise captures a specific paradox or tension unique to this story, not a genre platitude. 'Love is hard' is a platitude. 'They are most connected when remembering who they were, and most alone when looking at who they have become' is specific. Test: could this premise describe any story in this genre, or does it name something particular about these characters' situation? Genre platitudes score 0–35. A premise that couldn't belong to another story scores 65+.",
+      "weight": 1.5
+    }
+  ]
+}

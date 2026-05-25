@@ -1,2 +1,8 @@
-Output the appearance field: portrait description (age, build, features, clothing).
+Character: {name}
+Description: {description}
+Personality: {personality}
+Setting: {setting}
+Tone: {tone}
+
+Output the appearance field: concrete portrait description covering age, build, hair, eyes, at least one distinctive feature, and clothing style. Make at least one visual detail reveal something about who this person is, not just what they look like.
 Exactly: {"appearance": "..."}

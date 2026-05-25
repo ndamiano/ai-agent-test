@@ -1,0 +1,11 @@
+{
+  "stage": "voice",
+  "pipeline": "character",
+  "criteria": [
+    {
+      "name": "voice_specificity",
+      "description": "speech_patterns describe how this specific person talks — not a register category but actual verbal habits: what they reach for under pressure, a tic, how they deflect, what they never say. Test: could a writer produce a line of dialogue that could ONLY be this character, not just 'someone quiet and polite'? If speech_patterns is entirely hedging qualifiers and avoidance strategies with no unique habit, score 0–45. If a writer could write 5 distinct lines from speech_patterns alone without guessing, score 70+.",
+      "weight": 2.0
+    }
+  ]
+}

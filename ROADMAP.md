@@ -66,6 +66,7 @@ Small local models fail in specific, detectable ways: repetition loops, channel 
 - [ ] **Parallel subpipelines** — `run_subpipeline` currently sequential; queue/gather pattern within FnStages
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
 - [ ] **Automated prompt optimization** — evaluation suite + LLM-as-judge scorer + hill-climbing loop. Worthwhile once there's a body of outputs to score against.
+- [ ] **Per-character dialogue agents** — replace single dialogue call with an orchestrator + one agent per character. Each agent holds only their character's context. Long-term: try different models per character to match voice/capability to role. Validate via eval before/after comparison.
 
 ## Pipelines requiring composition
 

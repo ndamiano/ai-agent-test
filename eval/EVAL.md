@@ -95,6 +95,93 @@ Feeds the judge a known-good and a deliberately bad output. Expect > 15-point de
 
 Understanding the internals matters because the system has real failure modes.
 
+### Flow diagrams
+
+**Scoring a stage:**
+
+```
+cli.py score stage renpy/dialogue --brief renpy_romance
+        │
+        ├─ load brief JSON          (eval/briefs/renpy_romance.json)
+        ├─ load rubric JSON         (eval/rubrics/renpy_dialogue.json)
+        └─ load fixtures            (eval/fixtures/renpy/renpy_romance/*.json)
+                │
+                ▼
+        StageRunner.run_timed(budget)
+          ┌─────────────────────────────────────────────┐
+          │  write fixture files → temp working dir      │
+          │  call stage fn / LLM stage with those files  │  × N times until budget exhausted
+          │  record {ok, output, elapsed}                │
+          └─────────────────────────────────────────────┘
+                │
+                ▼
+        Judge.score(output, rubric)  ← LLM call (same model by default)
+          returns {scores: {criterion: {score, reasoning}}, overall}
+                │
+                ▼
+        summarize(run_results, scored, rubric)
+          builds distributions (mean, p25, p75, …) for overall + each criterion
+                │
+                ├─ print_summary()
+                └─ save()  →  eval/results/.../summary.json
+                             eval/results/.../outputs.json
+```
+
+**Hill climbing a stage:**
+
+```
+cli.py climb renpy/dialogue --brief renpy_romance --iterations 5 --mutations 3
+        │
+        ▼
+  [baseline]  score current prompt  (same flow as above)
+  current_p25 = baseline p25
+        │
+        └─ for each iteration:
+                │
+                ├─ Judge.propose_mutation(current_prompt, summary, rubric)
+                │     finds weakest criterion (lowest p25)
+                │     asks LLM to rewrite prompt targeting that criterion
+                │     × n_mutations times  →  [mut_1, mut_2, mut_3]
+                │
+                └─ for each mutation:
+                        │
+                        ├─ write mutation text to prompt .txt file
+                        ├─ StageRunner.run_timed(mutation_budget)
+                        ├─ Judge.score() each output
+                        ├─ summarize()  →  candidate_p25
+                        └─ restore original .txt file
+                                │
+                                ▼
+                        best_mutation = highest candidate_p25
+                                │
+                        ┌───────┴────────┐
+                   best_p25          best_p25
+                   > current_p25     ≤ current_p25
+                        │                │
+                   ACCEPT               REJECT
+                   update current        keep current
+                   prompt + summary      prompt + summary
+                        │
+                        ▼ (after all iterations)
+                write current_prompt back to .txt file
+```
+
+**Rescore flow (cross-check with different model):**
+
+```
+cli.py rescore eval/results/.../run_dir/ renpy/dialogue --connector cline --compare
+        │
+        ├─ load outputs.json from run_dir   (saved by score/climb)
+        ├─ load rubric
+        └─ Judge(connector=cline).score() each output
+                │
+                ▼
+        summarize + print_summary
+                │
+        --compare: print_diff(original summary.json, new summary)
+                   shows Δp25 / Δmean per criterion
+```
+
 ### Fixtures and isolation
 
 `capture` runs the full pipeline and saves each stage's output JSON into `eval/fixtures/<pipeline>/<brief>/`. When scoring, `StageRunner` writes those files into a temp working directory before running the stage. The stage reads from disk as normal — it doesn't know it's in eval.
@@ -124,6 +211,8 @@ Why p25 and not mean? A high mean with a low floor means the stage produces grea
 **Limitation:** With only 1–2 runs per candidate (typical with short time budgets), p25 = the single run's score. The ranking is noisy. Use longer `--time-per-run` budgets if you're seeing iterations that alternate between accepting and rejecting.
 
 ### Time budgets and run counts
+
+**TODO: `--time` as a scoring interface feels wrong.** Specifying a wall-clock budget to control run count is indirect — you have to know roughly how long a stage takes to pick a meaningful number, and results across sessions aren't comparable because stage latency varies. A `--n` flag (explicit run count) would be cleaner and more predictable. Revisit this.
 
 `runner.run_timed(budget)` runs the stage in a loop until wall-clock time exceeds `budget`. The number of runs is not fixed — it depends on how long each run takes. A stage that takes 40s per run on one day might take 90s on another (model load, LM Studio queue, etc.). This means p25 estimates from different sessions aren't directly comparable.
 

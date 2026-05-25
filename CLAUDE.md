@@ -74,6 +74,30 @@ Only validate at system boundaries (user input, external APIs, tool results). Do
 
 ---
 
+## Making pipelines hill-climbable
+
+Hill climbing requires every LLM call prompt to be in a `.txt` file the eval system can swap. Follow this checklist when building or modifying a pipeline:
+
+1. **One `.txt` file per LLM call.** Never inline prompt strings in Python (`_SOME_PROMPT = "..."`). Every call gets its own file under `pipelines/<name>/prompts/`.
+
+2. **Wire `prompt_file` on every FnStage that makes an LLM call.** `prompt_file` tells the climb tool which file to swap. Set it in `pipeline.py`:
+   ```python
+   FnStage(id="my_stage", fn=my_fn, ..., prompt_file="my_prompt.txt")
+   ```
+
+3. **Load prompts via `render_template` in the function.** The file name in `prompt_file` and the file loaded in the function must match:
+   ```python
+   prompt = render_template(_PROMPTS_DIR / "my_prompt.txt", ctx)
+   ```
+
+4. **One LLM call per stage.** A FnStage that makes multiple LLM calls has only one `prompt_file` slot — only the registered file is climbable. If you need all calls independently tunable, split into separate nodes/stages. `story` currently violates this (arc, beat, locations in one stage) — tracked as a TODO.
+
+5. **`LLMStage` is automatic.** Use `prompt_template=` instead of `prompt_file=` — the runner handles loading and swapping.
+
+6. **System prompts.** Hardcoded `_SYSTEM` strings are not climbable. If a system prompt is load-bearing for quality, move it to a `system.txt` file and load it at call time.
+
+---
+
 ## Small model strategy
 
 Small models aren't dumb — they're easily distracted. They follow the most recent, most concrete instruction in the context window. The pipeline architecture already helps by keeping intermediate steps out of the agent's context. Within pipelines and per-call prompts:

@@ -31,13 +31,13 @@ def _distribution(values: list) -> dict:
 
 
 def summarize(run_results: list, scored: list, rubric: dict) -> dict:
-    overall_scores = [s["overall"] for s in scored if s is not None]
+    overall_scores = [float(s["overall"]) for s in scored if s is not None]
 
     by_criterion = {}
     for c in rubric.get("criteria", []):
         name = c["name"]
         vals = [
-            s["scores"][name]["score"]
+            float(s["scores"][name]["score"])
             for s in scored
             if s is not None and name in s.get("scores", {})
         ]

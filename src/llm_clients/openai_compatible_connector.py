@@ -125,7 +125,7 @@ class OpenAICompatibleConnector(BaseConnector):
                 self._log_llm(messages, result)
                 _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
                 return result
-            elif response.status_code == 400 and response_format and "response_format" in response.text:
+            elif response_format and "response_format" in response.text:
                 logger.warning("Endpoint does not support response_format, retrying without it")
                 self._response_format_supported = False
                 payload.pop("response_format", None)

@@ -174,6 +174,13 @@ def cmd_rescore(args):
         for r in outputs
     ]
     run_results = [{"ok": r["ok"], "output": r["output"], "elapsed": 0} for r in outputs]
+
+    if getattr(args, "show_reasoning", False):
+        from eval.report import print_review
+        for i, (r, s) in enumerate(zip(outputs, scored)):
+            if r["ok"] and r["output"] and s:
+                print_review(i + 1, r["output"], s, rubric)
+
     summary = summarize(run_results, scored, rubric)
     print_summary(summary, f"{args.target} rescore")
 
@@ -260,6 +267,8 @@ def main():
                    help="Connector type to use for judging (e.g. cline, lmstudio). Defaults to active connector.")
     p.add_argument("--compare", action="store_true",
                    help="Diff rescore against the original summary.json in the same run dir")
+    p.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
+                   help="Print judge reasoning for each output")
 
     # report
     p = sub.add_parser("report", help="Print a saved result summary")

@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 
 _SCORE_SYSTEM = (
     "You evaluate AI-generated creative content against a rubric. "
-    "Score each criterion 0–100 (floats allowed). "
+    "Score each criterion 0–100 to one decimal place.  "
     "90–100: exceptional, would impress a professional. "
-    "60–75: adequate but unremarkable. "
+    "60–89: adequate but unremarkable. "
     "30–59: noticeably weak, needs improvement. "
     "0–29: seriously flawed or missing. "
-    "Use the full range. Avoid clustering near 70–80. Be critical — "
-    "most AI output is adequate at best, not exceptional. "
+    "most AI output is mediocre. A score above 60 requires specific evidence from the output. "
+    "If a criterion is clearly failing, score it 20–40 regardless of other strengths. "
     "Return only valid JSON, no other text."
 )
 

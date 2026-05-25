@@ -3,24 +3,29 @@
   "pipeline": "character",
   "criteria": [
     {
-      "name": "specificity",
-      "description": "The character has concrete, named details — specific motivation, named flaw, distinct personality traits. Not archetype placeholders or generic descriptors.",
+      "name": "voice_specificity",
+      "description": "speech_patterns describe how this specific person talks — not a register category but actual verbal habits: what they reach for under pressure, a tic, how they deflect, what they never say. Test: could a writer produce a line of dialogue that could ONLY be this character, not just 'someone quiet and polite'? If speech_patterns is entirely hedging qualifiers and avoidance strategies with no unique habit, score 0–45. If a writer could write 5 distinct lines from speech_patterns alone without guessing, score 70+.",
       "weight": 1.5
     },
     {
-      "name": "internal_consistency",
-      "description": "description, personality, motivation, and conflict are coherent — the character's flaw creates the conflict, the motivation explains the goal. No contradictions.",
+      "name": "visual_completeness",
+      "description": "appearance provides everything a portrait generator needs — age, build, hair, eyes, at least one distinctive feature, clothing style — and each detail is concrete enough to render. Vague inventory scores low even if complete. Test: does appearance have age, build, hair, eyes, a distinguishing feature, and clothing? If any are missing or described with placeholders ('medium height', 'dark hair', 'casual clothes'), score 0–40. Concrete on all fields scores 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "personality_depth",
+      "description": "personality traits describe behaviors, not just adjectives. 'Gets competitive when overlooked' is a behavior. 'Competitive' is a label. Labels alone tell a writer nothing about how the character will act in a scene. Test: could a writer predict how this character behaves in a tense moment from the personality list alone? If personality is a list of adjectives with no behavioral specificity, score 0–40. If at least two traits describe patterns of behavior rather than labels, score 65+.",
       "weight": 1.0
     },
     {
-      "name": "visual_distinctness",
-      "description": "The appearance is specific enough to generate a recognizable portrait — age, build, distinctive features, clothing style. Not a stock description.",
+      "name": "motivation_specificity",
+      "description": "motivation is concrete and rooted in this specific character's situation, not a genre placeholder. 'Wants connection' or 'seeks closure' are genre-level goals that could apply to any character in any melancholic romance. Test: could this motivation belong to any sad character in this genre, or is it specific to who this person is and what they've lived? Generic genre goals score 0–40. A motivation tied to a specific relationship, loss, or circumstance scores 65+.",
       "weight": 1.0
     },
     {
-      "name": "voice_specificity",
-      "description": "speech_patterns describe how this specific person talks — not just 'formal' or 'casual'. Sentence rhythm, vocabulary range, verbal habits, what they avoid.",
-      "weight": 1.0
+      "name": "field_coherence",
+      "description": "personality, motivation, conflict, and speech_patterns don't contradict each other — the personality is reflected in how they speak, the motivation connects to who they are, the conflict follows from their traits. Test: does personality match speech_patterns? Does motivation follow from description and role? Any direct contradiction between fields scores 0–35. Full coherence where each field reinforces the others scores 70+.",
+      "weight": 0.5
     }
   ]
 }

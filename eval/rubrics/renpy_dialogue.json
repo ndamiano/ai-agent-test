@@ -3,24 +3,29 @@
   "pipeline": "renpy",
   "criteria": [
     {
-      "name": "voice_distinctness",
-      "description": "Each character sounds like themselves — vocabulary, sentence length, habits match their speech_patterns. Lines are not interchangeable between characters.",
-      "weight": 1.5
+      "name": "voice_authenticity",
+      "description": "Each character has a distinct voice that sounds like a real, multidimensional person — not a walking theme or vocabulary set. Distinctness comes from how they think and what they reach for when under pressure, not just their subject matter. Lines vary in length and register within a character; they can be inarticulate, deflect, or surprise you. Test: if you can predict every line a character will say from knowing their one defining trait (the craftsman, the scientist), score 0–35. If characters are distinct but feel like symbols rather than people — every line perfectly on-theme, no variation, nothing unexpected — score 30–55. If characters are distinct AND feel like real people capable of going off-script when emotional, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "turn_responsiveness",
+      "description": "Character B's line is a direct response to what A just said — it reacts to, builds on, or pushes back against A's specific words. The conversation has momentum: each exchange moves something forward rather than two characters taking turns delivering their own speeches. Test: could B's line appear anywhere else in the scene without losing meaning? If yes, score 0–40. If characters are delivering parallel monologues that happen to alternate, score 0–30.",
+      "weight": 2.0
     },
     {
       "name": "dramatic_payoff",
-      "description": "The dramatic_question is felt by the end. what_changes has happened. Any revelation lands obliquely — no character says the theme plainly.",
+      "description": "The scene accomplishes something — emotional state shifts, a revelation lands, the relationship changes in some legible way. The dramatic question is felt by the end. Revelations arrive obliquely; no character states the theme or their emotional state plainly. Test: if the scene ends in the same emotional place it began with nothing shifted, score 0–40. If a character explains the meaning out loud ('I realize now that we've grown apart', 'I still love you'), score 0–30 regardless of other qualities.",
       "weight": 1.5
     },
     {
-      "name": "subtext",
-      "description": "Characters don't explain the plot to each other. Meaning lives beneath the surface — in what's avoided, deflected, or said sideways.",
-      "weight": 1.0
+      "name": "emotional_layering",
+      "description": "The scene has emotional depth beyond what is explicitly stated — some meaning lives in implication, deflection, or what goes unsaid. Characters are not required to be oblique; a single direct moment of vulnerability is human and fine. The problem is a scene where every feeling is named and nothing is implied. Test: if every emotional beat in the scene is stated outright with nothing left for the reader to infer, score 0–40. If at least some meaning must be read between the lines, score 60+.",
+      "weight": 0.75
     },
     {
-      "name": "setting_constraint",
-      "description": "If the setting_constraint restricts speech (observed, interrupted, formal), those restrictions are honored in what characters say and how.",
-      "weight": 1.0
+      "name": "environmental_presence",
+      "description": "The setting has some effect on the scene — characters notice the space, are shaped by its mood, or their dialogue is colored by where they are. Even an unconstrained private setting should feel distinct from any other room. Test: if the dialogue is completely setting-agnostic and could occur identically in any location, score 0–30. If the setting creates at least one moment of specificity that couldn't exist elsewhere, score 60+.",
+      "weight": 0.5
     }
   ]
 }

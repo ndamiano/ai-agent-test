@@ -10,9 +10,7 @@ import queue
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +73,7 @@ def _get_pipeline_stage(pipeline_name: str, stage_id: str):
 
 class StageRunner:
     """
-    Runs a single pipeline stage in isolation, repeatedly within a time budget.
+    Runs a single pipeline stage in isolation, N times.
 
     Fixtures (the JSON files prior stages would have written) must be supplied
     up front so the stage can read its inputs without running the full pipeline.
@@ -127,98 +125,37 @@ class StageRunner:
 
         return {"ok": ok, "output": output, "elapsed": elapsed, "log": combined}
 
-    def run_timed(
-        self,
-        time_budget: float,
-        max_n: Optional[int] = None,
-        per_run_timeout: Optional[float] = None,
-    ) -> list:
+    def run_n(self, n: int) -> list:
         results = []
-        deadline = time.monotonic() + time_budget
-        i = 0
-
-        while time.monotonic() < deadline and (max_n is None or i < max_n):
+        for i in range(n):
             with tempfile.TemporaryDirectory() as tmp:
-                tmp_path = Path(tmp)
-                t0 = time.monotonic()
-                if per_run_timeout is not None:
-                    timed_out = False
-                    with ThreadPoolExecutor(max_workers=1) as ex:
-                        future = ex.submit(self._run_once, tmp_path)
-                        try:
-                            result = future.result(timeout=per_run_timeout)
-                        except _FuturesTimeout:
-                            timed_out = True
-                    # ThreadPoolExecutor.__exit__ calls shutdown(wait=True) —
-                    # the thread has completed by the time we reach here.
-                    if timed_out:
-                        try:
-                            thread_result = future.result()
-                            result = {**thread_result, "ok": False, "error": "timeout"}
-                        except Exception as exc:
-                            result = {
-                                "ok": False, "output": None,
-                                "log": f"exception in thread: {exc}",
-                                "elapsed": time.monotonic() - t0,
-                                "error": "timeout",
-                            }
-                else:
-                    result = self._run_once(tmp_path)
-
+                result = self._run_once(Path(tmp))
             results.append(result)
-            i += 1
-            remaining = max(0.0, deadline - time.monotonic())
-            tag = f"TIMEOUT" if result.get("error") == "timeout" else ("ok  " if result["ok"] else "FAIL")
-            print(f"  run {i:3d}  {tag}  {result['elapsed']:.1f}s  ({remaining:.0f}s remaining)")
-
+            tag = "ok  " if result["ok"] else "FAIL"
+            print(f"  run {i+1:3d}/{n}  {tag}  {result['elapsed']:.1f}s")
         return results
 
 
 class PipelineEvalRunner:
-    """Runs a full pipeline end-to-end repeatedly within a time budget."""
+    """Runs a full pipeline end-to-end N times."""
 
     def __init__(self, pipeline_name: str, brief: dict):
         self.pipeline_name = pipeline_name
         self.brief = brief
 
-    def run_timed(
-        self,
-        time_budget: float,
-        max_n: Optional[int] = None,
-        per_run_timeout: Optional[float] = None,
-    ) -> list:
+    def run_n(self, n: int) -> list:
         from pipelines.registry import run_pipeline
 
-        def _run(tmp: str) -> dict:
-            t0 = time.monotonic()
-            try:
-                outputs = run_pipeline(self.pipeline_name, self.brief, tmp)
-                return {"ok": True, "outputs": outputs, "elapsed": time.monotonic() - t0}
-            except Exception as e:
-                return {"ok": False, "error": str(e), "elapsed": time.monotonic() - t0}
-
         results = []
-        deadline = time.monotonic() + time_budget
-        i = 0
-
-        while time.monotonic() < deadline and (max_n is None or i < max_n):
+        for i in range(n):
             with tempfile.TemporaryDirectory() as tmp:
                 t0 = time.monotonic()
-                if per_run_timeout is not None:
-                    with ThreadPoolExecutor(max_workers=1) as ex:
-                        future = ex.submit(_run, tmp)
-                        try:
-                            result = future.result(timeout=per_run_timeout)
-                        except _FuturesTimeout:
-                            result = {"ok": False, "outputs": {},
-                                      "elapsed": time.monotonic() - t0, "error": "timeout"}
-                else:
-                    result = _run(tmp)
-
+                try:
+                    outputs = run_pipeline(self.pipeline_name, self.brief, tmp)
+                    result = {"ok": True, "outputs": outputs, "elapsed": time.monotonic() - t0}
+                except Exception as e:
+                    result = {"ok": False, "error": str(e), "elapsed": time.monotonic() - t0}
             results.append(result)
-            i += 1
-            remaining = max(0.0, deadline - time.monotonic())
-            tag = "TIMEOUT" if result.get("error") == "timeout" else ("ok  " if result["ok"] else "FAIL")
-            print(f"  run {i:3d}  {tag}  {result['elapsed']:.1f}s  ({remaining:.0f}s remaining)")
-
+            tag = "ok  " if result["ok"] else "FAIL"
+            print(f"  run {i+1:3d}/{n}  {tag}  {result['elapsed']:.1f}s")
         return results

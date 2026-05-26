@@ -71,9 +71,8 @@ def cmd_score_stage(args):
     runner   = StageRunner(pipeline_name, stage_id, fixtures)
     judge    = Judge()
 
-    print(f"Scoring {args.target}  brief={args.brief}  budget={args.time}s"
-          + (f"  per-run-timeout={args.per_run_timeout}s" if args.per_run_timeout else ""))
-    results = runner.run_timed(args.time, max_n=args.max_n, per_run_timeout=args.per_run_timeout)
+    print(f"Scoring {args.target}  brief={args.brief}  n={args.n}")
+    results = runner.run_n(args.n)
     print_failure_analysis(results)
     scored  = [
         judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
@@ -101,9 +100,8 @@ def cmd_score_pipeline(args):
     runner = PipelineEvalRunner(args.pipeline, brief)
     judge  = Judge()
 
-    print(f"Scoring pipeline {args.pipeline}  brief={args.brief}  budget={args.time}s"
-          + (f"  per-run-timeout={args.per_run_timeout}s" if args.per_run_timeout else ""))
-    results = runner.run_timed(args.time, max_n=args.max_n, per_run_timeout=args.per_run_timeout)
+    print(f"Scoring pipeline {args.pipeline}  brief={args.brief}  n={args.n}")
+    results = runner.run_n(args.n)
 
     rubric_path = RUBRICS_DIR / f"{args.pipeline}_e2e.json"
     if rubric_path.exists():
@@ -115,11 +113,11 @@ def cmd_score_pipeline(args):
         summary = summarize(results, scored, rubric)
     else:
         print(f"(no e2e rubric at {rubric_path.name} — reporting timing/success only)")
-        n = len(results)
+        n_runs = len(results)
         summary = {
-            "n": n,
-            "success_rate": round(sum(1 for r in results if r["ok"]) / n, 3) if n else 0.0,
-            "elapsed_mean": round(sum(r["elapsed"] for r in results) / n, 1) if n else 0.0,
+            "n": n_runs,
+            "success_rate": round(sum(1 for r in results if r["ok"]) / n_runs, 3) if n_runs else 0.0,
+            "elapsed_mean": round(sum(r["elapsed"] for r in results) / n_runs, 1) if n_runs else 0.0,
             "elapsed_total": round(sum(r["elapsed"] for r in results), 1),
             "overall": {},
             "by_criterion": {},
@@ -140,8 +138,7 @@ def cmd_climb(args):
         stage_id=stage_id,
         brief_name=args.brief,
         rubric=rubric,
-        time_per_run=args.time_per_run,
-        per_run_timeout=args.per_run_timeout,
+        n=args.n,
         iterations=args.iterations,
         n_mutations=args.mutations,
     )
@@ -231,10 +228,7 @@ def main():
     p_stage = score_sub.add_parser("stage", help="Score a single stage (e.g. renpy/story)")
     p_stage.add_argument("target", help="pipeline/stage_id")
     p_stage.add_argument("--brief", required=True)
-    p_stage.add_argument("--time",  type=float, default=300, help="Time budget in seconds (default: 300)")
-    p_stage.add_argument("--max-n", type=int,   default=None, dest="max_n", help="Hard cap on run count")
-    p_stage.add_argument("--per-run-timeout", type=float, default=None, dest="per_run_timeout",
-                         help="Seconds before a single run is counted as failed (default: none)")
+    p_stage.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
     p_stage.add_argument("--no-save", action="store_true", dest="no_save")
     p_stage.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
                          help="Print each run's output + judge reasoning for spot-checking")
@@ -242,22 +236,16 @@ def main():
     p_pipe = score_sub.add_parser("pipeline", help="Score full pipeline end-to-end")
     p_pipe.add_argument("pipeline")
     p_pipe.add_argument("--brief", required=True)
-    p_pipe.add_argument("--time",  type=float, default=1800, help="Time budget in seconds (default: 1800)")
-    p_pipe.add_argument("--max-n", type=int,   default=None, dest="max_n")
-    p_pipe.add_argument("--per-run-timeout", type=float, default=None, dest="per_run_timeout",
-                        help="Seconds before a single pipeline run is counted as failed (default: none)")
+    p_pipe.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
     p_pipe.add_argument("--no-save", action="store_true", dest="no_save")
 
     # climb
     p = sub.add_parser("climb", help="Hill-climb a stage's prompt template")
     p.add_argument("target", help="pipeline/stage_id (e.g. renpy/story)")
     p.add_argument("--brief", required=True)
-    p.add_argument("--time-per-run", type=float, default=120, dest="time_per_run",
-                   help="Time budget per scoring run in seconds (default: 120)")
-    p.add_argument("--per-run-timeout", type=float, default=None, dest="per_run_timeout",
-                   help="Seconds before a single run is counted as failed (default: none)")
-    p.add_argument("--iterations", type=int, default=10)
-    p.add_argument("--mutations",  type=int, default=3, help="Mutations to test per iteration (default: 3)")
+    p.add_argument("--n",          type=int, default=5, help="Runs per evaluation slot (default: 5)")
+    p.add_argument("--iterations", type=int, default=5, help="Hill-climb iterations (default: 5)")
+    p.add_argument("--mutations",  type=int, default=5, help="Mutations per iteration (default: 5)")
 
     # rescore
     p = sub.add_parser("rescore", help="Re-score saved outputs with a different judge connector")

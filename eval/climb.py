@@ -4,9 +4,9 @@ if str(_src) not in _sys.path:
     _sys.path.insert(0, str(_src))
 
 import logging
+import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
 
 from eval.failures import print_analysis as print_failure_analysis
 from eval.fixtures import load as load_fixtures
@@ -62,17 +62,16 @@ def hill_climb(
     stage_id: str,
     brief_name: str,
     rubric: dict,
-    time_per_run: float = 120.0,
-    per_run_timeout: Optional[float] = None,
-    iterations: int = 10,
-    n_mutations: int = 3,
+    n: int = 5,
+    iterations: int = 5,
+    n_mutations: int = 5,
 ) -> tuple:
     """
     Hill-climb the prompt for a single LLM stage.
 
     Each iteration:
       1. Propose n_mutations rewrites targeting the weakest criterion
-      2. Score each with time_per_run / n_mutations second timebox
+      2. Score each with n runs
       3. Accept the best mutation if it improves p25 vs current best
       4. Write the final best prompt back to the template file
 
@@ -83,9 +82,12 @@ def hill_climb(
     fixtures = load_fixtures(pipeline_name, brief_name)
     runner = StageRunner(pipeline_name, stage_id, fixtures)
 
-    timeout_str = f"  per-run-timeout={per_run_timeout:.0f}s" if per_run_timeout else ""
-    print(f"\n[baseline] {pipeline_name}/{stage_id}  budget={time_per_run:.0f}s{timeout_str}")
-    baseline_results = runner.run_timed(time_per_run, per_run_timeout=per_run_timeout)
+    print(f"\n[baseline] {pipeline_name}/{stage_id}  n={n}")
+    baseline_t0 = time.monotonic()
+    baseline_results = runner.run_n(n)
+    baseline_elapsed = time.monotonic() - baseline_t0
+    baseline_run_mean = sum(r["elapsed"] for r in baseline_results) / len(baseline_results) if baseline_results else 0.0
+    print(f"  baseline done  {baseline_elapsed:.0f}s total  run mean={baseline_run_mean:.1f}s")
     print_failure_analysis(baseline_results)
     baseline_scored  = _score_run(baseline_results, stage_id, rubric, judge)
     baseline_summary = summarize(baseline_results, baseline_scored, rubric)
@@ -96,11 +98,10 @@ def hill_climb(
     current_prompt  = prompt_path.read_text(encoding="utf-8")
     current_summary = baseline_summary
 
-    mutation_budget = max(20.0, time_per_run / n_mutations)
-
     for i in range(iterations):
+        iter_t0 = time.monotonic()
         print(f"\n{'─'*55}")
-        print(f"Iteration {i+1}/{iterations}  (mutation budget={mutation_budget:.0f}s each)")
+        print(f"Iteration {i+1}/{iterations}  ({n_mutations} mutations × {n} runs each)")
 
         # Sync file to current best before proposing/testing mutations
         prompt_path.write_text(current_prompt, encoding="utf-8")
@@ -123,9 +124,14 @@ def hill_climb(
         best_summary  = None
 
         for j, mutation in enumerate(mutations):
-            print(f"\n  [mutation {j+1}/{len(mutations)}]  running for {mutation_budget:.0f}s")
+            mut_t0 = time.monotonic()
+            print(f"\n  [mutation {j+1}/{len(mutations)}]")
             with _prompt_override(prompt_path, mutation):
-                results = runner.run_timed(mutation_budget, per_run_timeout=per_run_timeout)
+                results = runner.run_n(n)
+            mut_elapsed = time.monotonic() - mut_t0
+            run_times = [r["elapsed"] for r in results]
+            run_mean = sum(run_times) / len(run_times) if run_times else 0.0
+            print(f"  mutation done  {mut_elapsed:.0f}s total  run mean={run_mean:.1f}s")
             print_failure_analysis(results)
             scored  = _score_run(results, stage_id, rubric, judge)
             summary = summarize(results, scored, rubric)
@@ -136,10 +142,11 @@ def hill_climb(
                 best_mutation = mutation
                 best_summary  = summary
 
+        iter_elapsed = time.monotonic() - iter_t0
         current_p25 = current_summary.get("overall", {}).get("p25", 0.0) or 0.0
         best_p25    = best_summary.get("overall", {}).get("p25", 0.0) if best_summary else 0.0
 
-        print(f"\n  best candidate p25={best_p25:.2f}  current p25={current_p25:.2f}")
+        print(f"\n  iteration done  {iter_elapsed:.0f}s  best candidate p25={best_p25:.2f}  current p25={current_p25:.2f}")
 
         if best_summary and best_p25 > current_p25:
             delta = best_p25 - current_p25

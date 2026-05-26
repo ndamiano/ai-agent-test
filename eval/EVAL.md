@@ -31,8 +31,7 @@ Re-run this whenever the pipeline structure changes significantly or you want fr
 ```bash
 python eval/cli.py score stage renpy/dialogue \
   --brief renpy_romance \
-  --time 300 \
-  --max-n 10 \
+  --n 5 \
   --show-reasoning
 ```
 
@@ -45,17 +44,17 @@ Check `success_rate` first — if below 80%, fix failures before scoring. Hill c
 ```bash
 python eval/cli.py climb renpy/dialogue \
   --brief renpy_romance \
-  --time-per-run 120 \
+  --n 5 \
   --iterations 5 \
-  --mutations 3
+  --mutations 5
 ```
 
-Each iteration: proposes 3 prompt mutations → scores each → accepts the best if it beats current p25. The winning prompt is written back to the `.txt` file at the end.
+Each iteration: proposes 5 prompt mutations → scores each (5 runs each) → accepts the best if it beats current p25. The winning prompt is written back to the `.txt` file at the end.
 
 **Tuning knobs:**
-- `--time-per-run` — total scoring budget per candidate. With a 120s budget and a stage that takes ~60s per run, you get ~2 runs per candidate. More runs = more reliable p25 estimate.
-- `--mutations` — more mutations per iteration covers more of the search space but costs more time.
-- `--iterations` — more iterations means more refinement, but returns diminish. 5–10 is usually enough.
+- `--n` — runs per evaluation slot (baseline + each mutation). More = more reliable p25. Start with 1 to estimate how long a full climb takes, then scale up.
+- `--mutations` — more mutations per iteration covers more of the search space but costs more runs.
+- `--iterations` — more iterations means more refinement, but returns diminish. 5 is usually enough.
 
 If every iteration rejects ("no improvement"), the mutation proposals are off. Usually means rubric criteria are vague — the judge doesn't know what to optimize for, so mutations are random.
 
@@ -107,10 +106,10 @@ cli.py score stage renpy/dialogue --brief renpy_romance
         └─ load fixtures            (eval/fixtures/renpy/renpy_romance/*.json)
                 │
                 ▼
-        StageRunner.run_timed(budget)
+        StageRunner.run_n(n)
           ┌─────────────────────────────────────────────┐
           │  write fixture files → temp working dir      │
-          │  call stage fn / LLM stage with those files  │  × N times until budget exhausted
+          │  call stage fn / LLM stage with those files  │  × n times
           │  record {ok, output, elapsed}                │
           └─────────────────────────────────────────────┘
                 │
@@ -130,7 +129,7 @@ cli.py score stage renpy/dialogue --brief renpy_romance
 **Hill climbing a stage:**
 
 ```
-cli.py climb renpy/dialogue --brief renpy_romance --iterations 5 --mutations 3
+cli.py climb renpy/dialogue --brief renpy_romance --n 5 --iterations 5 --mutations 5
         │
         ▼
   [baseline]  score current prompt  (same flow as above)
@@ -146,7 +145,7 @@ cli.py climb renpy/dialogue --brief renpy_romance --iterations 5 --mutations 3
                 └─ for each mutation:
                         │
                         ├─ write mutation text to prompt .txt file
-                        ├─ StageRunner.run_timed(mutation_budget)
+                        ├─ StageRunner.run_n(n)
                         ├─ Judge.score() each output
                         ├─ summarize()  →  candidate_p25
                         └─ restore original .txt file
@@ -208,15 +207,7 @@ p25 is the 25th percentile of overall scores across all runs in a scoring window
 
 Why p25 and not mean? A high mean with a low floor means the stage produces great output sometimes and broken output unpredictably. Optimizing the floor produces more consistent pipelines. Mean is still reported — if p25 goes up but mean drops, the prompt got more consistent but less ambitious.
 
-**Limitation:** With only 1–2 runs per candidate (typical with short time budgets), p25 = the single run's score. The ranking is noisy. Use longer `--time-per-run` budgets if you're seeing iterations that alternate between accepting and rejecting.
-
-### Time budgets and run counts
-
-**TODO: `--time` as a scoring interface feels wrong.** Specifying a wall-clock budget to control run count is indirect — you have to know roughly how long a stage takes to pick a meaningful number, and results across sessions aren't comparable because stage latency varies. A `--n` flag (explicit run count) would be cleaner and more predictable. Revisit this.
-
-`runner.run_timed(budget)` runs the stage in a loop until wall-clock time exceeds `budget`. The number of runs is not fixed — it depends on how long each run takes. A stage that takes 40s per run on one day might take 90s on another (model load, LM Studio queue, etc.). This means p25 estimates from different sessions aren't directly comparable.
-
-`--per-run-timeout` marks a run as failed if it exceeds the timeout. Useful when a stuck LLM call would eat the entire budget.
+**Limitation:** With only 1 run per candidate (`--n 1`), p25 = the single run's score — noisy. Use `--n 1` to estimate duration, then scale up to `--n 5` or more for reliable results.
 
 ### FnStage vs LLMStage hill climbing
 

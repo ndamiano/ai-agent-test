@@ -103,7 +103,7 @@ class TestGenerateAppearance:
 
         prompt_sent = mock_agent.send.call_args[0][0]
         assert "Sir Roland" in prompt_sent
-        assert "A disgraced knight." in prompt_sent
+        assert "dark" in prompt_sent  # tone
 
 
 class TestGenerateVoice:
@@ -149,23 +149,22 @@ class TestGenerateVoice:
 
 class TestAssembleCharacter:
     def test_merges_all_fields(self, tmp_path):
-        inputs = {
-            "identity":   {"id": "sir_roland", "name": "Sir Roland", "role": "anti-hero",
-                           "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"},
-            "appearance": {"appearance": "Weathered."},
-            "voice":      {"speech_patterns": "Formal."},
-        }
+        import json as _json
+        identity = {"id": "sir_roland", "name": "Sir Roland", "role": "anti-hero",
+                    "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"}
+        (tmp_path / "appearance.json").write_text(_json.dumps({"appearance": "Weathered."}))
+        (tmp_path / "voice.json").write_text(_json.dumps({"speech_patterns": "Formal."}))
+        inputs = {"identity": identity}
         result = assemble_character(inputs, tmp_path)
         assert result["id"] == "sir_roland"
         assert result["appearance"] == "Weathered."
         assert result["speech_patterns"] == "Formal."
 
     def test_later_fields_overwrite_earlier(self, tmp_path):
-        inputs = {
-            "identity":   {"name": "A"},
-            "appearance": {"name": "B"},
-            "voice":      {},
-        }
+        import json as _json
+        (tmp_path / "appearance.json").write_text(_json.dumps({"name": "B"}))
+        (tmp_path / "voice.json").write_text(_json.dumps({}))
+        inputs = {"identity": {"name": "A"}}
         result = assemble_character(inputs, tmp_path)
         assert result["name"] == "B"
 

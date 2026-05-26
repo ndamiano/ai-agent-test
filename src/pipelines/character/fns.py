@@ -75,9 +75,12 @@ def generate_voice(inputs: Dict, working_dir: Path) -> Dict:
 
 
 def assemble_character(inputs: Dict, working_dir: Path) -> Dict:
-    identity   = inputs.get("identity", {})
-    appearance = inputs.get("appearance", {})
-    voice      = inputs.get("voice", {})
+    identity = inputs.get("identity", {})
+    # _load overwrites stem-keyed entry when file contains a same-named top-level key
+    # (e.g. appearance.json = {"appearance": "..."} → inputs["appearance"] = "string")
+    # Read directly to get the full dicts.
+    appearance = json.loads((working_dir / "appearance.json").read_text())
+    voice = json.loads((working_dir / "voice.json").read_text())
     return {**identity, **appearance, **voice}
 
 

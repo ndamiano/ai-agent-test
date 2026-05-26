@@ -329,20 +329,28 @@ class PipelineRunner:
     def _load_all(self) -> Dict:
         merged: Dict = {}
         for path in sorted(self.working_dir.glob("*.json")):
+            stem = path.stem
             data = json.loads(path.read_text(encoding="utf-8"))
-            merged[path.stem] = data
+            merged[stem] = data
             if isinstance(data, dict):
-                merged.update(data)
+                # Don't overwrite the stem key — file named foo.json with top-level key "foo"
+                # should stay accessible as inputs["foo"] = the full dict, not the inner value.
+                for k, v in data.items():
+                    if k != stem:
+                        merged[k] = v
         return merged
 
     def _load(self, filenames: List[str]) -> Dict:
         merged: Dict = {}
         for filename in filenames:
+            stem = Path(filename).stem
             path = self.working_dir / filename
             data = json.loads(path.read_text(encoding="utf-8"))
-            merged[Path(filename).stem] = data
+            merged[stem] = data
             if isinstance(data, dict):
-                merged.update(data)
+                for k, v in data.items():
+                    if k != stem:
+                        merged[k] = v
         return merged
 
     def _write(self, filename: str, data: Any):

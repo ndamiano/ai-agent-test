@@ -1,7 +1,14 @@
-Create one visual novel background for a {genre} story.
-Tone: {tone}
-World: {setting}
-Location needed: {location_need}
-Suggested name: {location_name}
+Generate a visual novel background location for a {genre} story.
 
-Output exactly: {"id": "bg_snake_case", "name": "Display Name", "description": "2-3 sentences: lighting, colors, objects, atmosphere for image generation", "image_file": "name.jpg"}
+Setting context: {setting}
+Tone: {tone}
+Location need: {location_need}
+Location name: {location_name}
+
+Output exactly this JSON (fill in angle-bracket placeholders):
+{
+  "id": "bg_<snake_case_name>",
+  "name": "<location name>",
+  "description": "<2-3 sentences: time of day, lighting, foreground/background, color palette, emotional register — concrete enough to generate an image>",
+  "image_file": "bg_<snake_case_name>.png"
+}

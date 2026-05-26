@@ -1,20 +1,22 @@
-Write story beat {beat_index} of {beat_total} for a {genre} visual novel.
+---
+Craft a distinct beat {beat_index}/{beat_total} for a {genre} visual novel sequence.
 
 Tone: {tone}
-Arc: {arc}
-Premise: {premise}
-Previous beats: {previous_beat_labels|json}
+Arc stage: {arc}
+Core premise: {premise}
+Prior beats summary (JSON): {previous_beat_labels|json}
 
-Rules:
-1. Causal continuity: this beat must be the direct consequence of the preceding events. Identify the unresolved tension from previous beats and escalate it — do not reset.
-2. Arc position: early beats introduce disruptions that break the status quo; mid beats narrow options and raise pressure; late beats force irreversible high-stakes decisions.
-3. Concrete conflict: anchor the beat in a clash between a specific character's internal need and a named external obstacle. State exactly what named entity or relationship is at risk.
-4. No generic tropes: replace all placeholder language with specific names, places, or artifacts.
+Guidelines:
+1. Tension lock – this beat must amplify an unresolved tension from earlier scenes; no narrative resets.
+2. Arc placement – early beats break routine, mid beats compress choices and raise stakes, climax forces a point‑of‑no‑return decision.
+3. Precise clash – pair one character’s inner drive with a concrete external barrier (name the obstacle) and state the exact loss if it fails.
+4. Anti‑cliché rule – replace all generic terms with specific nouns (character name, object, location), avoid stock phrases, and embed at least one surprising sensory pairing for the setting (max ten words).
 
-Output only valid JSON — no preamble, no explanation:
+JSON output only:
 {
   "beat_id": "{beat_id}",
-  "label": "noun-heavy title naming the specific character and event",
-  "description": "one sentence: [Character Name]'s internal motivation clashing with a named external obstacle and the exact cost of failure",
-  "location_type": "one scent + one tactile sensation, 10 words max"
+  "label": "{noun phrase naming character + event}",
+  "description": "[Character]’s {internal drive} collides with {named obstacle}, risking {specific loss}",
+  "location_type": "sensory detail ≤10 words (e.g. damp concrete and diesel, warm tatami and cedar)"
 }
+---

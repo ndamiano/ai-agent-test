@@ -89,8 +89,7 @@ RENPY_PIPELINE = Pipeline(
                 fn=dialogue,
                 inputs=["brief.json", "characters.json", "settings.json", "scenes.json"],
                 output="dialogue.json",
-                prompt_file="dialogue.txt",
-                max_tokens=25000,
+                prompt_file="dialogue_turn.txt",
             ),
         ]),
 

@@ -122,30 +122,48 @@ class TestGenerateCharacters:
 
 
 class TestDialogueGeneration:
-    def test_retries_dialogue_scene_with_fresh_agent(self):
-        scene_inputs = {
+    def _make_scene_inputs(self, n_lines="2", characters=None):
+        return {
             "genre": "romance",
             "tone": "warm",
-            "lines_per_scene": "2",
-            "characters": [{"id": "elias", "name": "Elias"}],
-            "setting": {"id": "s1", "name": "Station"},
-            "scene": {"id": "scene_1", "setting_id": "s1", "what_changes": "They reconnect."},
+            "lines_per_scene": n_lines,
+            "characters": characters or [
+                {"id": "elias", "name": "Elias", "description": "quiet man", "personality": ["reserved"], "speech_patterns": "speaks slowly"},
+                {"id": "yui",   "name": "Yui",   "description": "sharp woman", "personality": ["direct"], "speech_patterns": "clipped sentences"},
+            ],
+            "setting": {"id": "s1", "name": "Station", "description": "old platform"},
+            "scene": {"id": "scene_1", "setting_id": "s1", "summary": "reunion", "what_changes": "they reconnect", "revelation": None},
         }
 
+    def test_produces_correct_number_of_lines(self):
         with patch("pipelines.renpy.fns.PipelineAgent") as MockAgent:
-            bad_agent = MagicMock()
-            bad_agent.send.side_effect = ["not json", "still not json"]
-            good_agent = MagicMock()
-            good_agent.send.return_value = '{"lines": [{"character_id": null, "text": "The platform clock clicked."}, {"character_id": "elias", "text": "I remember this place."}]}'
-            MockAgent.side_effect = [bad_agent, good_agent]
+            MockAgent.return_value.send.return_value = "Hello."
+            result = _generate_dialogue_scene(self._make_scene_inputs("4"), "s1")
+        assert len(result["lines"]) == 4
 
-            result = _generate_dialogue_scene(scene_inputs, "Scene 1", max_attempts=2)
+    def test_alternates_characters(self):
+        with patch("pipelines.renpy.fns.PipelineAgent") as MockAgent:
+            MockAgent.return_value.send.return_value = "Hello."
+            result = _generate_dialogue_scene(self._make_scene_inputs("4"), "s1")
+        ids = [l["character_id"] for l in result["lines"]]
+        assert ids == ["elias", "yui", "elias", "yui"]
 
+    def test_strips_name_prefix(self):
+        with patch("pipelines.renpy.fns.PipelineAgent") as MockAgent:
+            MockAgent.return_value.send.return_value = "Elias: I remember this place."
+            result = _generate_dialogue_scene(self._make_scene_inputs("1"), "s1")
+        assert result["lines"][0]["text"] == "I remember this place."
+
+    def test_output_format(self):
+        with patch("pipelines.renpy.fns.PipelineAgent") as MockAgent:
+            MockAgent.return_value.send.return_value = "A line."
+            result = _generate_dialogue_scene(self._make_scene_inputs("2"), "s1")
         assert result["scene_id"] == "scene_1"
-        assert len(result["lines"]) == 2
-        assert MockAgent.call_count == 2
+        assert result["setting_id"] == "s1"
+        for line in result["lines"]:
+            assert set(line.keys()) == {"character_id", "text"}
 
-    def test_dialogue_preserves_successful_scenes_when_later_scene_retries(self, tmp_path):
+    def test_dialogue_processes_all_scenes(self, tmp_path):
         inputs = {
             "brief": {"genre": "romance", "tone": "warm", "lines_per_scene": "2"},
             "characters": {"characters": [
@@ -156,19 +174,10 @@ class TestDialogueGeneration:
             ]},
             "scenes": {"scenes": [
                 {"id": "scene_1", "title": "Arrival", "setting_id": "station", "character_ids": ["elias"]},
-                {"id": "scene_2", "title": "Cafe", "setting_id": "station", "character_ids": ["elias"]},
+                {"id": "scene_2", "title": "Cafe",    "setting_id": "station", "character_ids": ["elias"]},
             ]},
         }
-
         with patch("pipelines.renpy.fns.PipelineAgent") as MockAgent:
-            scene_1 = MagicMock()
-            scene_1.send.return_value = '{"lines": [{"character_id": null, "text": "arrival"}, {"character_id": "elias", "text": "home"}]}'
-            scene_2_bad = MagicMock()
-            scene_2_bad.send.side_effect = ["bad", "bad"]
-            scene_2_good = MagicMock()
-            scene_2_good.send.return_value = '{"lines": [{"character_id": null, "text": "cafe"}, {"character_id": "elias", "text": "coffee"}]}'
-            MockAgent.side_effect = [scene_1, scene_2_bad, scene_2_good]
-
+            MockAgent.return_value.send.return_value = "A line."
             result = dialogue(inputs, tmp_path)
-
         assert [s["scene_id"] for s in result["dialogue_scenes"]] == ["scene_1", "scene_2"]

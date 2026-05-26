@@ -338,44 +338,77 @@ def generate_scenes(inputs: Dict, working_dir: Path, max_tokens: int = 2500) -> 
     return {"scenes": scenes}
 
 
-def _generate_dialogue_json(prompt: str, label: str, max_attempts: int = 3, max_tokens: int = 2500) -> Dict:
-    last_error = ""
-    for attempt in range(1, max_attempts + 1):
-        agent = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
-        content = strip_fences(agent.send(prompt))
-
-        for correction_attempt in range(2):
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError as e:
-                last_error = str(e)
-                if correction_attempt == 1:
-                    break
-                print(f"    [dialogue]  invalid JSON for {label}, sending correction...")
-                content = strip_fences(agent.send(
-                    "Invalid JSON. Return only the JSON object, no other text."
-                ))
-
-        if attempt < max_attempts:
-            print(f"    [dialogue]  retrying {label} ({attempt + 1}/{max_attempts})")
-
-    raise RuntimeError(f"Failed to generate dialogue JSON for {label} ({last_error})")
+_DIALOGUE_SYSTEM_FILE = _PROMPTS_DIR / "dialogue_system.txt"
+_DIALOGUE_TURN_FILE   = _PROMPTS_DIR / "dialogue_turn.txt"
 
 
-def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_attempts: int = 3, max_tokens: int = 2500) -> Dict:
-    prompt = render_template(_PROMPTS_DIR / "dialogue.txt", scene_inputs)
-    result = _unwrap(_generate_dialogue_json(prompt, label, max_attempts=max_attempts, max_tokens=max_tokens), "lines")
-    if not isinstance(result.get("lines"), list) or not result["lines"]:
-        raise RuntimeError(f"Dialogue for {label} did not return lines")
-    scene = scene_inputs["scene"]
+def _generate_dialogue_scene(scene_inputs: Dict, label: str, max_tokens: int = 150) -> Dict:
+    characters   = scene_inputs["characters"]
+    scene        = scene_inputs["scene"]
+    setting      = scene_inputs["setting"]
+    n_lines      = _parse_count(str(scene_inputs.get("lines_per_scene", "16")))
+    char_by_id   = {c["id"]: c for c in characters}
+    char_ids     = [c["id"] for c in characters]
+
+    revelation = scene.get("revelation") or ""
+    revelation_line = f"Revelation to embed obliquely: {revelation}" if revelation else ""
+
+    scene_ctx = {
+        "summary":             scene.get("summary", ""),
+        "setting_name":        setting.get("name", ""),
+        "setting_description": setting.get("description", ""),
+        "tone":                scene_inputs.get("tone", ""),
+        "what_changes":        scene.get("what_changes", ""),
+        "revelation_line":     revelation_line,
+    }
+
+    conversation: list = []
+
+    for i in range(n_lines):
+        speaker_id = char_ids[i % len(char_ids)]
+        speaker    = char_by_id[speaker_id]
+
+        system = render_template(_DIALOGUE_SYSTEM_FILE, {
+            "name":            speaker.get("name", ""),
+            "description":     speaker.get("description", ""),
+            "personality":     ", ".join(speaker.get("personality", [])),
+            "speech_patterns": speaker.get("speech_patterns", ""),
+        })
+
+        recent  = conversation[-8:]
+        history = "\n".join(
+            f"{l['character_name']}: {l['text']}" for l in recent
+        ) if recent else "(scene just started)"
+
+        turn_prompt = render_template(_DIALOGUE_TURN_FILE, {
+            **scene_ctx,
+            "history": history,
+            "speaker": speaker.get("name", ""),
+        })
+
+        agent     = PipelineAgent(system, max_tokens=max_tokens)
+        raw       = strip_fences(agent.send(turn_prompt)).strip()
+        # Strip any "Name: " prefix the model might add
+        if ":" in raw and raw.index(":") < 30:
+            raw = raw.split(":", 1)[1].strip()
+
+        conversation.append({
+            "character_id":   speaker_id,
+            "character_name": speaker.get("name", ""),
+            "text":           raw,
+        })
+
     return {
-        "scene_id": scene.get("id", label),
+        "scene_id":   scene.get("id", label),
         "setting_id": scene.get("setting_id", ""),
-        "lines": result["lines"],
+        "lines": [
+            {"character_id": l["character_id"], "text": l["text"]}
+            for l in conversation
+        ],
     }
 
 
-def dialogue(inputs: Dict, working_dir: Path, max_tokens: int = 2500) -> Dict:
+def dialogue(inputs: Dict, working_dir: Path) -> Dict:
     scenes = inputs.get("scenes", [])
     if isinstance(scenes, dict):
         scenes = scenes.get("scenes", [])
@@ -413,7 +446,7 @@ def dialogue(inputs: Dict, working_dir: Path, max_tokens: int = 2500) -> Dict:
             "scene":           {k: v for k, v in scene.items() if k in _SCENE_DIALOGUE_FIELDS},
             "setting":         {k: v for k, v in setting_full.items() if k != "image_file"},
         }
-        completed_scenes.append(_generate_dialogue_scene(scene_inputs, label, max_tokens=max_tokens))
+        completed_scenes.append(_generate_dialogue_scene(scene_inputs, label))
 
     return {"dialogue_scenes": completed_scenes}
 

@@ -1,6 +1,9 @@
-Write a story arc for a {genre} visual novel.
+---
+Write a story arc for a {genre} visual novel.  
 Tone: {tone}
-Premise: {premise}
+
+Premise: Write a single sentence that defines an intimate, character‑specific paradox — describe how these characters feel most connected when recalling the exact shared memory of their first promise (including the precise setting and detail) and most alone while confronting who they have become in the present after the transformation described in {notes}. Do not use generic statements such as “love is hard.”  
+
 Notes: {notes}
 
 Output exactly: {"arc": "Drive to X → Realization that Y → Permanent state of Z", "premise": "one sentence central paradox"}

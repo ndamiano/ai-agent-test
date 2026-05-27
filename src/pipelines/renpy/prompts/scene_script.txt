@@ -16,7 +16,9 @@ Background id: {background_id}
 ## Ren'Py Syntax Reference
 label scene_id:                      — first line of every scene (required)
     scene bg_id with dissolve        — set background (omit "with dissolve" for very first scene)
-    show char_id                     — show character sprite
+    show char_id at left             — show character on left side
+    show char_id at right            — show character on right side
+    show char_id at center           — show character centered (use only when alone)
     hide char_id                     — hide character sprite
     "Narrator text."                 — narration, no character prefix
     char_id "Dialogue line."         — character speaks (use the id, not the name)

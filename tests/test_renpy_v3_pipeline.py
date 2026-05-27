@@ -228,7 +228,8 @@ def test_stitch_script_structure():
     assert 'define alex = Character("Alex Crane"' in stitched
     assert 'define mira = Character("Mira Voss"' in stitched
     assert 'image bg_office = "images/office.png"' in stitched
-    assert 'image alex = "images/alex.png"' in stitched
+    assert 'image alex:' in stitched
+    assert '"images/alex.png"' in stitched
     assert "label splashscreen:" in stitched
     assert "label main_menu:" in stitched
     assert "label start:" in stitched

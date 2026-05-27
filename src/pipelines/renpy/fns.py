@@ -655,7 +655,18 @@ def _stitch_script(
     for char in manifest.get("characters", []):
         cid      = char["id"]
         img_file = char.get("image_file", f"{cid}.png")
-        lines.append(f'image {cid} = "images/{img_file}"')
+        lines.append(f'image {cid}:')
+        lines.append(f'    "images/{img_file}"')
+        lines.append(f'    zoom 0.55')
+    lines.append("")
+
+    lines.append("## Override built-in positions so sprites sit at screen bottom with padding")
+    lines.append("transform left:")
+    lines.append("    xalign 0.15 yalign 1.0")
+    lines.append("transform center:")
+    lines.append("    xalign 0.5 yalign 1.0")
+    lines.append("transform right:")
+    lines.append("    xalign 0.85 yalign 1.0")
     lines.append("")
 
     lines.append("label splashscreen:")

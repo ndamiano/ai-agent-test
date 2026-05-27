@@ -20,7 +20,7 @@ label scene_id:                      — first line of every scene (required)
     show char_id at right            — show character on right side
     show char_id at center           — show character centered (use only when alone)
     hide char_id                     — hide character sprite
-    "Narrator text."                 — narration, no character prefix
+    "Narrator text."                 — narration, no character prefix (never write Narrator "text" — Narrator is not defined)
     char_id "Dialogue line."         — character speaks (use the id, not the name)
     menu:                            — player choice (only when scene has choices)
         "Choice text A":

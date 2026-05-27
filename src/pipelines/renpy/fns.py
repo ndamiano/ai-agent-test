@@ -577,6 +577,7 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
 
     for sid in scene_ids:
         if scripts.get(sid):
+            scripts[sid] = _fix_narrator_lines(scripts[sid])
             scripts[sid] = _inject_speaker_highlighting(scripts[sid], valid_characters)
 
     full_script = _stitch_script(title, bible, manifest, scripts, scene_ids)
@@ -586,7 +587,13 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
     os.makedirs(game_dir, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
 
-    _write_options_rpy(game_dir, title)
+    bgs = manifest.get("backgrounds", [])
+    first_bg_file = ""
+    if bgs:
+        first_bg = bgs[0]
+        first_bg_id   = first_bg["id"]
+        first_bg_file = first_bg.get("image_file", first_bg_id[3:] + ".png" if first_bg_id.startswith("bg_") else first_bg_id + ".png")
+    _write_options_rpy(game_dir, title, main_menu_bg_file=first_bg_file)
     script_path = os.path.join(game_dir, "script.rpy")
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(full_script)
@@ -658,9 +665,10 @@ def _parse_lint_errors(lint_output: str) -> List[Tuple[int, str]]:
     results = []
     lines   = lint_output.splitlines()
     for i, line in enumerate(lines):
-        m = re.search(r'[Ll]ine\s+(\d+)', line)
+        # Ren'Py lint format: "game/script.rpy:254 message" or "line N"
+        m = re.search(r'\.rpy:(\d+)|[Ll]ine\s+(\d+)', line)
         if m:
-            lineno  = int(m.group(1))
+            lineno  = int(m.group(1) or m.group(2))
             context = " ".join(lines[i:i + 3]).strip()
             results.append((lineno, context))
     return results
@@ -716,6 +724,11 @@ def _repair_broken_scene(
     agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=25000)
     raw   = strip_fences(agent.send(prompt)).strip()
     return raw if raw else script
+
+
+def _fix_narrator_lines(script: str) -> str:
+    """Strip `Narrator "text"` → bare `"text"`. Neither Narrator nor narrator is defined; use bare quotes."""
+    return re.sub(r'^(\s*)Narrator\s+(")', r'\1\2', script, flags=re.MULTILINE)  
 
 
 def _inject_speaker_highlighting(script: str, valid_characters: set) -> str:
@@ -791,13 +804,6 @@ def _stitch_script(
         lines.append('    zoom 0.55')
     lines.append("")
 
-    if bgs:
-        first_bg = bgs[0]
-        first_bg_id   = first_bg["id"]
-        first_bg_file = first_bg.get("image_file", first_bg_id[3:] + ".png" if first_bg_id.startswith("bg_") else first_bg_id + ".png")
-        lines.append(f'define gui.main_menu_background = "images/{first_bg_file}"')
-        lines.append("")
-
     lines.append("## Override built-in positions so sprites sit at screen bottom with padding")
     lines.append("transform left:")
     lines.append("    xalign 0.15 yalign 1.0")
@@ -831,7 +837,7 @@ def _stitch_script(
     return "\n".join(lines)
 
 
-def _write_options_rpy(game_dir: str, title: str):
+def _write_options_rpy(game_dir: str, title: str, main_menu_bg_file: str = ""):
     safe = re.sub(r"[^A-Za-z0-9_]", "", title.replace(" ", "_")) or "UntitledGame"
     content = (
         f'define config.name = "{title}"\n'
@@ -844,6 +850,8 @@ def _write_options_rpy(game_dir: str, title: str):
         f'    build.executable_name = "{safe}"\n'
         f'    build.directory_name = "{safe}-1.0"\n'
     )
+    if main_menu_bg_file:
+        content += f'define gui.main_menu_background = "images/{main_menu_bg_file}"\n'
     with open(os.path.join(game_dir, "options.rpy"), "w", encoding="utf-8") as f:
         f.write(content)
 

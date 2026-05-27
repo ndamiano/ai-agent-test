@@ -11,10 +11,12 @@ from pipelines.renpy.fns import (
     _validate_brief,
     _validate_scene_script,
     _find_script_issues,
+    _fix_narrator_lines,
     _parse_lint_errors,
     _scene_id_at_line,
     _stitch_script,
     _scenes_for_character,
+    _write_options_rpy,
 )
 from pipelines.registry import get_registry
 
@@ -323,8 +325,55 @@ def test_stitch_script_structure():
     assert '"images/alex.png"' in stitched
     assert "label splashscreen:" in stitched
     assert "label main_menu:" not in stitched  # screen from screens.rpy used instead
-    assert 'define gui.main_menu_background = "images/office.png"' in stitched
+    assert 'define gui.main_menu_background' not in stitched  # lives in options.rpy now
     assert "label start:" in stitched
     assert "jump scene_001" in stitched
     assert "label scene_001:" in stitched
     assert "label scene_002:" in stitched
+
+
+def test_write_options_rpy_main_menu_bg(tmp_path):
+    _write_options_rpy(str(tmp_path), "My Game", main_menu_bg_file="office.png")
+    content = (tmp_path / "options.rpy").read_text()
+    assert 'define gui.main_menu_background = "images/office.png"' in content
+    assert 'define config.name = "My Game"' in content
+
+
+def test_write_options_rpy_no_bg(tmp_path):
+    _write_options_rpy(str(tmp_path), "My Game")
+    content = (tmp_path / "options.rpy").read_text()
+    assert "main_menu_background" not in content
+
+
+def test_fix_narrator_lines():
+    script = (
+        'label scene_001:\n'
+        '    Narrator "The rain fell."\n'
+        '    alex "Hello."\n'
+        '    Narrator "She turned away."\n'
+    )
+    fixed = _fix_narrator_lines(script)
+    assert '    "The rain fell."' in fixed
+    assert '    "She turned away."' in fixed
+    assert 'alex "Hello."' in fixed
+    assert 'Narrator' not in fixed
+
+
+def test_parse_lint_errors_rpy_format():
+    lint_output = (
+        "game/script.rpy:254 Could not evaluate 'Narrator' in the who part of a say statement.\n"
+        "Perhaps you forgot to define a character?\n"
+        "\n"
+        "game/script.rpy:261 Could not evaluate 'Narrator' in the who part of a say statement.\n"
+    )
+    errors = _parse_lint_errors(lint_output)
+    assert len(errors) == 2
+    assert errors[0][0] == 254
+    assert errors[1][0] == 261
+
+
+def test_parse_lint_errors_line_format():
+    lint_output = "Error at line 42: something went wrong\n"
+    errors = _parse_lint_errors(lint_output)
+    assert len(errors) == 1
+    assert errors[0][0] == 42

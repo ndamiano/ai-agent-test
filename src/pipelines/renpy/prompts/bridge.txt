@@ -1,7 +1,7 @@
-The following Ren'Py scene has broken references that must be fixed.
+The following Ren'Py scene has errors. Fix them.
 
 Scene id: {scene_id}
-Problem: {issue}
+Errors: {issue}
 
 Current script:
 {script}
@@ -10,6 +10,10 @@ Valid scene labels: {available_labels}
 Valid background ids: {available_backgrounds}
 Valid character ids: {available_characters}
 
-Fix only the broken references. Replace unknown labels, backgrounds, and character ids with valid ones from the lists above. Do not change dialogue content.
+Fix all errors. Common causes:
+- Unknown jump target: replace with a label from the valid list
+- Unknown background: replace scene bg_xxx with a valid background id
+- Unknown character in show: replace with a valid character id
+- Sayer not defined: the sayer name has extra text — write `char_id "dialogue"` with nothing between the id and the quote
 
 Output the corrected Ren'Py script only. No explanation.

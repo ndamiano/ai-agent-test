@@ -596,9 +596,34 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
 
     print(f"    [build]  project written to: {output_dir}")
 
-    result = {"project_dir": os.path.abspath(output_dir)}
+    result   = {"project_dir": os.path.abspath(output_dir)}
     sdk_path = _get_sdk_path()
     if sdk_path:
+        lint_output = _run_renpy_lint(output_dir, sdk_path)
+        if lint_output:
+            lint_errors = _parse_lint_errors(lint_output)
+            if lint_errors:
+                print(f"    [build]  lint: {len(lint_errors)} issue(s) — attempting repair")
+                # Group errors by scene
+                errors_by_scene: Dict[str, List[str]] = {}
+                for lineno, context in lint_errors:
+                    sid = _scene_id_at_line(full_script, lineno)
+                    if sid and sid in scripts:
+                        errors_by_scene.setdefault(sid, []).append(context)
+                if errors_by_scene:
+                    for sid, errs in errors_by_scene.items():
+                        issue = "; ".join(errs[:5])
+                        print(f"    [build]  lint repair: {sid}")
+                        scripts[sid] = _repair_broken_scene(
+                            sid, scripts[sid], issue,
+                            valid_labels, valid_backgrounds, valid_characters,
+                        )
+                    full_script = _stitch_script(title, bible, manifest, scripts, scene_ids)
+                    with open(script_path, "w", encoding="utf-8") as f:
+                        f.write(full_script)
+                    track_written_file(script_path)
+                    print(f"    [build]  rebuilt after lint repair")
+
         import sys
         builder_dir = str(Path(__file__).parent)
         if builder_dir not in sys.path:
@@ -607,6 +632,50 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
         result.update(_distribute(output_dir, sdk_path))
 
     return {"status": "built", "output_dir": output_dir, **result}
+
+
+def _run_renpy_lint(output_dir: str, sdk_path: str) -> str:
+    """Run renpy lint; return raw output text. Empty string if SDK unavailable."""
+    import platform
+    import subprocess
+    sdk_path = os.path.abspath(sdk_path)
+    renpy_bin = os.path.join(sdk_path, "renpy.exe" if platform.system() == "Windows" else "renpy.sh")
+    if not os.path.exists(renpy_bin):
+        return ""
+    try:
+        proc = subprocess.run(
+            [renpy_bin, os.path.abspath(output_dir), "lint"],
+            capture_output=True, text=True, timeout=120,
+        )
+        return proc.stdout + proc.stderr
+    except Exception as e:
+        print(f"    [build]  lint error: {e}")
+        return ""
+
+
+def _parse_lint_errors(lint_output: str) -> List[Tuple[int, str]]:
+    """Extract (line_number, error_message) pairs from renpy lint output."""
+    results = []
+    lines   = lint_output.splitlines()
+    for i, line in enumerate(lines):
+        m = re.search(r'[Ll]ine\s+(\d+)', line)
+        if m:
+            lineno  = int(m.group(1))
+            context = " ".join(lines[i:i + 3]).strip()
+            results.append((lineno, context))
+    return results
+
+
+def _scene_id_at_line(stitched_script: str, target_lineno: int) -> str | None:
+    """Return the scene label that contains target_lineno in the stitched script."""
+    current = None
+    for lineno, line in enumerate(stitched_script.splitlines(), 1):
+        m = re.match(r'^label\s+(\w+)\s*:', line)
+        if m:
+            current = m.group(1)
+        if lineno == target_lineno:
+            return current
+    return current
 
 
 def _find_script_issues(

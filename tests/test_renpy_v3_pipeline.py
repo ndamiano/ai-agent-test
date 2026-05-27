@@ -11,6 +11,8 @@ from pipelines.renpy.fns import (
     _validate_brief,
     _validate_scene_script,
     _find_script_issues,
+    _parse_lint_errors,
+    _scene_id_at_line,
     _stitch_script,
     _scenes_for_character,
 )
@@ -271,6 +273,44 @@ def test_scene_script_prompt_has_opening_hint_placeholder():
     prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
     content = prompt_file.read_text()
     assert "{opening_hint}" in content
+
+
+# ---------------------------------------------------------------------------
+# Lint helpers
+# ---------------------------------------------------------------------------
+
+def test_parse_lint_errors_extracts_line_and_context():
+    output = (
+        "I'm sorry, but an error occurred.\n"
+        "  File \"game/script.rpy\", line 42, in script\n"
+        "    amnesiac (softly) \"text\"\n"
+        "Exception: Sayer 'amnesiac (softly)' is not defined.\n"
+    )
+    errors = _parse_lint_errors(output)
+    assert len(errors) == 1
+    lineno, context = errors[0]
+    assert lineno == 42
+    assert "Sayer" in context or "softly" in context
+
+
+def test_parse_lint_errors_empty_output():
+    assert _parse_lint_errors("") == []
+    assert _parse_lint_errors("No issues found.") == []
+
+
+def test_scene_id_at_line_finds_label():
+    script = (
+        "define alex = Character(\"Alex\")\n"  # line 1
+        "\n"                                     # line 2
+        "label scene_001:\n"                     # line 3
+        "    scene bg_office\n"                  # line 4
+        "    alex \"Hello.\"\n"                  # line 5
+        "label scene_002:\n"                     # line 6
+        "    alex \"Goodbye.\"\n"                # line 7
+    )
+    assert _scene_id_at_line(script, 5) == "scene_001"
+    assert _scene_id_at_line(script, 7) == "scene_002"
+    assert _scene_id_at_line(script, 1) is None  # before any label
 
 
 def test_stitch_script_structure():

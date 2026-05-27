@@ -471,7 +471,7 @@ def continuity_pass(inputs: Dict, working_dir: Path) -> Dict:
 # ---------------------------------------------------------------------------
 
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
-    from tools.comfyui_tools import generate_image
+    from tools.comfyui_tools import build_character_job, build_background_job, generate_images_batch
     from tools.execution_context import track_written_file
 
     bible    = _get_bible(inputs)
@@ -482,51 +482,44 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     images_dir.mkdir(parents=True, exist_ok=True)
 
     bible_chars = {c["id"]: c for c in bible.get("characters", [])}
-    generated: List[str] = []
-    failed:    List[Dict] = []
+
+    # Build job list with destination metadata, then generate all at once
+    # (single LLM unload/reload for the entire batch)
+    job_meta: List[Dict] = []
+    jobs:     List[Dict] = []
 
     for bg in manifest.get("backgrounds", []):
         bg_id   = bg["id"]
         bg_file = bg_id[3:] + ".png" if bg_id.startswith("bg_") else bg_id + ".png"
         bg["image_file"] = bg_file
-        filepath = images_dir / bg_file
-        prompt   = (
-            f"{bg.get('description', bg.get('name', bg_id))}, "
-            "visual novel background, wide shot, high quality, detailed"
-        )
-        print(f"    [images]  background: {bg_file}")
-        result = generate_image(prompt)
-        if result.get("success") and result.get("saved_paths"):
-            shutil.copy2(result["saved_paths"][0], filepath)
-            track_written_file(str(filepath))
-            generated.append(bg_file)
-        else:
-            error = result.get("error", "unknown")
-            print(f"    [images]  background failed ({error}), placeholder: {bg_file}")
-            _write_solid_png(filepath, 1280, 720, (58, 58, 92))
-            track_written_file(str(filepath))
-            failed.append({"file": bg_file, "error": error})
+        job_meta.append({"file": bg_file, "dest": images_dir / bg_file, "kind": "bg"})
+        jobs.append(build_background_job(bg.get("description", bg.get("name", bg_id))))
 
     for char in manifest.get("characters", []):
         char_id  = char["id"]
         img_file = char.get("image_file", f"{char_id}.png")
-        filepath = images_dir / img_file
-        char_data  = bible_chars.get(char_id, {})
-        appearance = char_data.get("appearance", f"a character named {char['name']}")
-        prompt = (
-            f"{char['name']}, {appearance}, "
-            "visual novel character portrait, full body, simple background, high quality"
-        )
-        print(f"    [images]  portrait: {img_file}")
-        result = generate_image(prompt)
+        job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "char"})
+        jobs.append(build_character_job(bible_chars.get(char_id, {})))
+
+    print(f"    [images]  generating {len(jobs)} image(s)")
+    results  = generate_images_batch(jobs)
+    generated: List[str] = []
+    failed:    List[Dict] = []
+
+    for meta, result in zip(job_meta, results):
+        filepath = meta["dest"]
+        img_file = meta["file"]
         if result.get("success") and result.get("saved_paths"):
             shutil.copy2(result["saved_paths"][0], filepath)
             track_written_file(str(filepath))
             generated.append(img_file)
+            print(f"    [images]  ok: {img_file}")
         else:
             error = result.get("error", "unknown")
-            print(f"    [images]  portrait failed ({error}), placeholder: {img_file}")
-            _write_solid_png(filepath, 512, 768, (92, 58, 92))
+            print(f"    [images]  failed ({error}), placeholder: {img_file}")
+            w, h = (1280, 720) if meta["kind"] == "bg" else (512, 768)
+            color = (58, 58, 92) if meta["kind"] == "bg" else (92, 58, 92)
+            _write_solid_png(filepath, w, h, color)
             track_written_file(str(filepath))
             failed.append({"file": img_file, "error": error})
 
@@ -631,7 +624,7 @@ def _repair_broken_scene(
         "available_backgrounds": sorted(valid_backgrounds),
         "available_characters":  sorted(valid_characters),
     })
-    agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=8000)
+    agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=25000)
     raw   = strip_fences(agent.send(prompt)).strip()
     return raw if raw else script
 

@@ -20,14 +20,14 @@ def _agent_to_response(agent: Dict) -> AgentResponse:
 
 
 @router.get("/", response_model=List[AgentResponse])
-async def list_agents(request: Request):
+async def _list_agents(request: Request):
     """List all available agents."""
     agents = await asyncio.to_thread(list_agents)
     return [_agent_to_response(a) for a in agents]
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-async def get_agent(request: Request, agent_id: str):
+async def _get_agent(request: Request, agent_id: str):
     """Get a specific agent by ID."""
     try:
         agent = await asyncio.to_thread(get_agent, agent_id)

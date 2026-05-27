@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
-import subprocess
 
 logger = logging.getLogger(__name__)
 from tools.tool_manager import tool_manager
@@ -172,7 +171,7 @@ def edit_file(
         if old_text not in content:
             return {
                 "success": False,
-                "error": f"Text to replace not found in file",
+                "error": "Text to replace not found in file",
                 "file_path": str(path),
                 "old_text": old_text[:100] + "..." if len(old_text) > 100 else old_text
             }

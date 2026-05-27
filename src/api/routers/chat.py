@@ -4,7 +4,6 @@ import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

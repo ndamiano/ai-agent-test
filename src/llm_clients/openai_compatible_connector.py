@@ -3,9 +3,8 @@
 import logging
 import requests
 import json
-import os
 import uuid
-from typing import Any, Union, List, Dict, Optional
+from typing import Any, Dict, Optional
 from datetime import datetime
 from llm_clients.base_connector import BaseConnector
 from llm_clients.rate_limiter import get_llm_rate_limiter

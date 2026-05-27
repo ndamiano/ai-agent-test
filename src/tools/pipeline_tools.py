@@ -4,7 +4,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 from tools.tool_manager import tool_manager
 from tools.execution_context import get_pipeline_path, get_subtask_id, get_task_id, get_working_directory
@@ -33,7 +33,7 @@ def _get_working_dir(pipeline_name: str) -> str:
     },
 )
 def run_pipeline(name: str, brief: dict) -> str:
-    from pipelines.registry import run_pipeline as _run, get_registry
+    from pipelines.registry import run_pipeline as _run
     working_dir = _get_working_dir(name)
     try:
         outputs = _run(name, brief, working_dir)

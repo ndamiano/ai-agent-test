@@ -6,7 +6,6 @@ from typing import List, Dict
 
 from llm_clients.connector_selector import get_connector
 from llm_clients.message_builder import MessageBuilder
-from config.time_utils import get_utc_timestamp
 
 logger = logging.getLogger(__name__)
 

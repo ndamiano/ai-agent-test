@@ -1,0 +1,9 @@
+[tool.ruff]
+src = ["src"]
+
+[tool.ruff.lint]
+ignore = ["E402"]  # intentional: logger setup before project imports
+
+[tool.vulture]
+min_confidence = 80  # 60% hits are all FastAPI routes / tool_manager registrations — dynamic dispatch, not dead code
+paths = ["src"]

@@ -6,7 +6,7 @@ import re
 from typing import Dict, List, Optional
 
 from .schema import init_db, get_db_path
-from .connection import get_manager, close_connection
+from .connection import get_manager
 from .constants import TASK_STATUSES, SUBTASK_STATUSES
 from config.time_utils import get_utc_timestamp
 

@@ -5,9 +5,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
-from agents.agent_store import AGENTS_DIR, get_agent
+from agents.agent_store import AGENTS_DIR
 from agents.main_agent import MainAgent
 from api.websocket.event_bus import event_bus
 from config.time_utils import get_utc_timestamp

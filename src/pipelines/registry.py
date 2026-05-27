@@ -1,12 +1,11 @@
 """Pipeline registry — single source of truth for available pipelines."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 from pathlib import Path
 import uuid
 
 from pipelines.runner import Pipeline, PipelineRunner
-from config.settings_manager import settings_manager
 
 
 @dataclass

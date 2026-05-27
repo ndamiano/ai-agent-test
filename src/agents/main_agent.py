@@ -192,7 +192,7 @@ class MainAgent:
             self.message_history.append(MessageBuilder.assistant_msg(error_response))
             return error_response
 
-    def _agentic_loop_with_native_tools(self, user_message: str) -> str:
+    def _agentic_loop_with_native_tools(self) -> str:
         from config.settings_manager import settings_manager
         max_iterations = settings_manager.get_category_settings().max_iterations
         iteration = 0

@@ -70,7 +70,6 @@ def spawn_task(
     agent_id: str,
     goal: str,
     depends_on=None,
-    priority: str = "normal",
     name: Optional[str] = None,
     description: Optional[str] = None,
 ) -> str:

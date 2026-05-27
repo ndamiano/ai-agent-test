@@ -164,7 +164,7 @@ def _copy_templates(game_dir: str):
         if os.path.exists(gui_dst):
             shutil.rmtree(gui_dst)
         shutil.copytree(gui_src, gui_dst)
-        print(f"[renpy_builder]   copied gui/")
+        print("[renpy_builder]   copied gui/")
     else:
         missing.append(gui_src)
 
@@ -207,7 +207,7 @@ def _distribute(project_dir: str, sdk_path: str) -> dict:
             return {"dist_error": f"renpy.sh not found in SDK: {sdk_path}"}
         cmd = [renpy_sh, launcher_dir, "distribute", os.path.abspath(project_dir)]
 
-    print(f"[renpy_builder] Building distribution...")
+    print("[renpy_builder] Building distribution...")
     print(f"  SDK:     {sdk_path}")
     print(f"  Project: {os.path.abspath(project_dir)}")
     print(f"  Command: {' '.join(cmd)}")

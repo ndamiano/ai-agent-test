@@ -702,7 +702,7 @@ def _stitch_script(
         img_file = char.get("image_file", f"{cid}.png")
         lines.append(f'image {cid}:')
         lines.append(f'    "images/{img_file}"')
-        lines.append(f'    zoom 0.55')
+        lines.append('    zoom 0.55')
     lines.append("")
 
     lines.append("## Override built-in positions so sprites sit at screen bottom with padding")

@@ -3,8 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import logging
 from database.schema import init_db
-from llm_clients.connector_selector import get_connector, reset_connector_cache
-from config.settings_manager import settings_manager
+from llm_clients.connector_selector import reset_connector_cache
 
 # Create FastAPI app
 app = FastAPI(
@@ -38,13 +37,13 @@ async def startup_event():
         logging.info("Event bus started")
 
         # Import tool modules — decorators register tools at import time
-        import tools.task_tools
-        import tools.file_tools
-        import tools.system_tools
-        import tools.synthesis_tools
-        import tools.orchestration_tools
-        import tools.comfyui_tools
-        import tools.pipeline_tools
+        import tools.task_tools  # noqa: F401
+        import tools.file_tools  # noqa: F401
+        import tools.system_tools  # noqa: F401
+        import tools.synthesis_tools  # noqa: F401
+        import tools.orchestration_tools  # noqa: F401
+        import tools.comfyui_tools  # noqa: F401
+        import tools.pipeline_tools  # noqa: F401
         logging.info("Tools registered successfully")
 
     except Exception as e:

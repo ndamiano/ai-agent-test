@@ -6,7 +6,7 @@ runner. We classify failures by pattern-matching that log, then surface fix hint
 """
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 # Ordered — first match wins
 _PATTERNS = [
@@ -129,7 +129,7 @@ def print_analysis(results: list):
 
         hint = _FIX_HINTS.get(cls, "")
         if hint:
-            print(f"\n  fix hints:")
+            print("\n  fix hints:")
             for line in hint.splitlines():
                 print(f"    {line}")
 

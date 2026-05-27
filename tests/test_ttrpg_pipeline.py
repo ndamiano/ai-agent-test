@@ -3,9 +3,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
-from pipelines.ttrpg.fns import generate_npcs, assemble_document, _json_with_correction, _SYSTEM
+from pipelines.ttrpg.fns import generate_npcs, assemble_document
 
 
 def _mock_agent(responses):
@@ -81,8 +80,6 @@ class TestGenerateNpcs:
     def test_passes_existing_npcs_as_context(self, tmp_path):
         npc1 = self._npc(1)
         npc2 = self._npc(2)
-
-        captured_prompts = []
 
         with patch("pipelines.ttrpg.fns.PipelineAgent") as MockAgent:
             with patch("pipelines.ttrpg.fns.render_template") as mock_render:

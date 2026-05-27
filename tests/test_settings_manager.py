@@ -1,7 +1,7 @@
 """Tests for SettingsManager validation with Pydantic schema"""
 
 import unittest
-from config.settings_schema import AppSettings, LLMStudioSettings, ClineSettings
+from config.settings_schema import AppSettings
 from pydantic import ValidationError
 
 

@@ -7,7 +7,7 @@ import pytest
 
 from pipelines.character.fns import (
     generate_identity, generate_appearance, generate_voice,
-    assemble_character, generate_portrait, _json_with_correction, _SYSTEM,
+    assemble_character, generate_portrait, _json_with_correction,
 )
 
 

@@ -3,7 +3,6 @@ import statistics
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from eval._paths import RESULTS_DIR
 

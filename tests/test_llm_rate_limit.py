@@ -1,6 +1,5 @@
 """Test LLM API rate limiting"""
 
-import pytest
 import time
 from llm_clients.rate_limiter import LLMRateLimiter
 

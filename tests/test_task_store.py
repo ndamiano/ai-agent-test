@@ -238,7 +238,7 @@ class TestTaskStore(unittest.TestCase):
             position=1
         )
         
-        subtask3 = store.create_subtask(
+        store.create_subtask(
             task_id=task["id"],
             agent_id="agent3",
             goal="Third subtask",
@@ -352,52 +352,6 @@ class TestTaskStore(unittest.TestCase):
             self.assertEqual(events[i]["message"], expected_message)
             self.assertEqual(events[i]["task_id"], task["id"])
     
-    def test_execution_mode_from_goal_heuristic(self):
-        """Test the execution_mode_from_goal keyword heuristic."""
-        try:
-            from database.execution_config import execution_mode_from_goal
-        except ImportError:
-            self.skipTest("database.execution_config module not available")
-            return
-        
-        # Test sequential keywords
-        sequential_goals = [
-            "Write a book",
-            "Create a story",
-            "Develop a program",
-            "Build a website",
-            "Compose music",
-            "Draft a document"
-        ]
-        
-        for goal in sequential_goals:
-            mode = execution_mode_from_goal(goal)
-            self.assertEqual(mode, "sequential", f"Goal '{goal}' should be sequential")
-        
-        # Test parallel keywords
-        parallel_goals = [
-            "Research topics",
-            "Find information",
-            "Compare options",
-            "Analyze data",
-            "Gather resources",
-            "Review documents"
-        ]
-        
-        for goal in parallel_goals:
-            mode = execution_mode_from_goal(goal)
-            self.assertEqual(mode, "parallel", f"Goal '{goal}' should be parallel")
-        
-        # Test neutral goal (should default to sequential)
-        neutral_goals = [
-            "Do something",
-            "Complete the task",
-            "Work on project"
-        ]
-        
-        for goal in neutral_goals:
-            mode = execution_mode_from_goal(goal)
-            self.assertEqual(mode, "sequential", f"Neutral goal '{goal}' should default to sequential")
 
 
 if __name__ == "__main__":

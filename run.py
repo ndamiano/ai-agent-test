@@ -3,7 +3,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 import uvicorn
-import logging
 
 if __name__ == "__main__":
     # Configure uvicorn's logging to include our application loggers

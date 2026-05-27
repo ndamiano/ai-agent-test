@@ -1,10 +1,8 @@
 """Tests for file write tracking and path containment."""
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 
 # ── Path containment ──────────────────────────────────────────────────────────

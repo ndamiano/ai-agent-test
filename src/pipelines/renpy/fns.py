@@ -54,8 +54,16 @@ _SCRIPT_SYSTEM = (
     "No JSON, no markdown fences, no explanation."
 )
 
+_REQUIRED_BRIEF_FIELDS = ("genre", "tone", "setting")
+
 # Keys that are unique to the bible output (not in other stage outputs)
 _BIBLE_KEYS = {"premise", "tone_directives", "setting", "themes"}
+
+
+def _validate_brief(brief: Dict) -> None:
+    missing = [f for f in _REQUIRED_BRIEF_FIELDS if not brief.get(f)]
+    if missing:
+        raise ValueError(f"Brief missing required fields: {missing}")
 
 
 def _get_bible(inputs: Dict) -> Dict:
@@ -123,6 +131,7 @@ def _parse_count(val) -> int:
 
 def generate_bible(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
     brief           = inputs.get("brief", {})
+    _validate_brief(brief)
     character_count = _parse_count(brief.get("character_count", 4))
 
     prompt = render_template(_PROMPTS_DIR / "bible.txt", {
@@ -352,6 +361,12 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
         loc_id       = scene.get("location_id", "")
         background_id = f"bg_{loc_id}" if loc_id and not loc_id.startswith("bg_") else loc_id
 
+        opening_hint = (
+            "Opening scene: begin with 2-4 narration lines establishing atmosphere and "
+            "hooking the player before any characters appear or speak."
+            if i == 0 else ""
+        )
+
         prompt = render_template(_PROMPTS_DIR / "scene_script.txt", {
             "bible_summary":  bible_sum,
             "scene":          scene_ctx,
@@ -360,6 +375,7 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
             "expressions":    expressions.get(sid, {}),
             "prev_summary":   prev_summary,
             "character_vars": char_vars,
+            "opening_hint":   opening_hint,
         })
 
         script = None

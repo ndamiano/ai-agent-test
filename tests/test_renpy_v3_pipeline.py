@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from pipelines.renpy.fns import (
     _bible_summary,
     _character_vars_block,
+    _validate_brief,
     _validate_scene_script,
     _find_script_issues,
     _stitch_script,
@@ -216,6 +217,60 @@ SAMPLE_SCRIPTS = {
     "scene_001": 'label scene_001:\n    scene bg_office with dissolve\n    alex "We meet."\n    jump scene_002\n',
     "scene_002": 'label scene_002:\n    mira "We do."\n    "The End."\n    return\n',
 }
+
+
+# ---------------------------------------------------------------------------
+# Brief validation
+# ---------------------------------------------------------------------------
+
+def test_validate_brief_passes_valid():
+    _validate_brief({"genre": "romance", "tone": "tender", "setting": "Tokyo"})
+
+
+def test_validate_brief_raises_on_missing_genre():
+    import pytest
+    with pytest.raises(ValueError, match="genre"):
+        _validate_brief({"tone": "dark", "setting": "Tokyo"})
+
+
+def test_validate_brief_raises_on_missing_tone():
+    import pytest
+    with pytest.raises(ValueError, match="tone"):
+        _validate_brief({"genre": "horror", "setting": "forest"})
+
+
+def test_validate_brief_raises_on_missing_setting():
+    import pytest
+    with pytest.raises(ValueError, match="setting"):
+        _validate_brief({"genre": "sci-fi", "tone": "epic"})
+
+
+def test_validate_brief_raises_on_empty_brief():
+    import pytest
+    with pytest.raises(ValueError):
+        _validate_brief({})
+
+
+# ---------------------------------------------------------------------------
+# scene_script.txt prompt content
+# ---------------------------------------------------------------------------
+
+def test_scene_script_prompt_has_narrator_guidance():
+    prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
+    content = prompt_file.read_text()
+    assert "narration" in content.lower() or "narrator" in content.lower()
+
+
+def test_scene_script_prompt_has_multiline_guidance():
+    prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
+    content = prompt_file.read_text()
+    assert "consecutive" in content or "alternation" in content
+
+
+def test_scene_script_prompt_has_opening_hint_placeholder():
+    prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
+    content = prompt_file.read_text()
+    assert "{opening_hint}" in content
 
 
 def test_stitch_script_structure():

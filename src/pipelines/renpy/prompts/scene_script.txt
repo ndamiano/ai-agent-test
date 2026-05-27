@@ -37,6 +37,8 @@ Write the complete Ren'Py script for this scene.
 - Show the background and relevant character sprites
 - Write 12-20 dialogue lines that dramatize the scene's summary and emotional_beat
 - Use each character's speech_pattern from the bible — make them sound distinct
+- Use narration lines ("...") freely — establish atmosphere, convey inner thoughts, mark time passing, punctuate silences
+- A character may speak consecutive lines when the dramatic moment calls for it; do not force strict alternation
 - End with a jump (or menu if choices exist, or "The End." + return if last scene)
-
+{opening_hint}
 Output ONLY the raw Ren'Py script. No JSON. No markdown. No explanation.

@@ -25,6 +25,7 @@ RENPY_V3_PIPELINE = Pipeline(
                 inputs=["brief.json"],
                 output="bible.json",
                 prompt_file="bible.txt",
+                max_tokens=16000,
             ),
         ]),
 
@@ -35,7 +36,7 @@ RENPY_V3_PIPELINE = Pipeline(
                 inputs=["brief.json", "bible.json"],
                 output="scene_plan.json",
                 prompt_file="scene_plan.txt",
-                max_tokens=8000,
+                max_tokens=32000,
             ),
         ]),
 
@@ -46,6 +47,7 @@ RENPY_V3_PIPELINE = Pipeline(
                 inputs=["bible.json", "scene_plan.json"],
                 output="asset_manifest.json",
                 prompt_file="asset_manifest.txt",
+                max_tokens=8000,
             ),
         ]),
 
@@ -56,6 +58,7 @@ RENPY_V3_PIPELINE = Pipeline(
                 inputs=["brief.json", "bible.json", "scene_plan.json", "asset_manifest.json"],
                 output="scene_scripts.json",
                 prompt_file="scene_script.txt",
+                max_tokens=16000,
             ),
         ]),
 
@@ -66,6 +69,7 @@ RENPY_V3_PIPELINE = Pipeline(
                 inputs=["bible.json", "scene_scripts.json"],
                 output="scene_scripts_revised.json",
                 prompt_file="continuity_check.txt",
+                max_tokens=16000,
             ),
         ]),
 

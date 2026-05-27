@@ -121,7 +121,7 @@ def _parse_count(val) -> int:
 # Stage 1: Bible
 # ---------------------------------------------------------------------------
 
-def generate_bible(inputs: Dict, working_dir: Path) -> Dict:
+def generate_bible(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
     brief           = inputs.get("brief", {})
     character_count = _parse_count(brief.get("character_count", 4))
 
@@ -134,7 +134,7 @@ def generate_bible(inputs: Dict, working_dir: Path) -> Dict:
     })
 
     print("    [bible]  generating story bible")
-    agent  = PipelineAgent(_SYSTEM)
+    agent  = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
     result = _json_with_correction(agent, prompt, "bible")
 
     chars = result.get("characters", [])
@@ -194,7 +194,7 @@ _BEAT_TO_EXPRESSION = {
 }
 
 
-def generate_asset_manifest(inputs: Dict, working_dir: Path) -> Dict:
+def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
     bible      = _get_bible(inputs)
     scene_plan = _get_scene_plan(inputs)
     scenes     = scene_plan.get("scenes", [])
@@ -238,7 +238,7 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path) -> Dict:
     bg_by_id: Dict[str, Dict] = {}
     for attempt in range(1, 4):
         try:
-            agent  = PipelineAgent(_SYSTEM)
+            agent  = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
             result = _json_with_correction(agent, prompt, "asset manifest")
             bg_by_id = {b["id"]: b for b in result.get("backgrounds", [])}
             break
@@ -315,7 +315,7 @@ def _validate_scene_script(scene_id: str, script: str) -> Tuple[bool, str]:
     return True, ""
 
 
-def write_scene_scripts(inputs: Dict, working_dir: Path) -> Dict:
+def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
     bible      = _get_bible(inputs)
     scene_plan = _get_scene_plan(inputs)
     manifest   = _get_manifest(inputs)
@@ -363,7 +363,7 @@ def write_scene_scripts(inputs: Dict, working_dir: Path) -> Dict:
         })
 
         script = None
-        agent  = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=10000)
+        agent  = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=max_tokens)
         raw    = strip_fences(agent.send(prompt)).strip()
 
         valid, error = _validate_scene_script(sid, raw)
@@ -413,7 +413,7 @@ def _scenes_for_character(char_id: str, scripts: Dict[str, str]) -> List[Dict]:
     ]
 
 
-def continuity_pass(inputs: Dict, working_dir: Path) -> Dict:
+def continuity_pass(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
     bible        = _get_bible(inputs)
     scripts_data = _get_scene_scripts(inputs)
     scripts      = scripts_data.get("scripts", {})
@@ -448,7 +448,7 @@ def continuity_pass(inputs: Dict, working_dir: Path) -> Dict:
         })
 
         try:
-            agent  = PipelineAgent(_SYSTEM)
+            agent  = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
             result = _json_with_correction(agent, prompt, f"continuity {char_id}")
         except RuntimeError:
             print(f"    [continuity]  {char_name}: check failed, skipping")

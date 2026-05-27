@@ -1,0 +1,26 @@
+{
+  "stage": "scene_plan",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "narrative_arc",
+      "description": "Scenes escalate meaningfully: early scenes establish the world and stakes, middle scenes complicate and raise pressure, the final scene resolves the premise. The arc has a legible shape. Test: if scenes could be reordered without changing anything important, score 0–35. If removing the middle third would make the ending feel unearned, score 65+.",
+      "weight": 2.0
+    },
+    {
+      "name": "scene_necessity",
+      "description": "Each scene exists because something specific happens in it that changes the story's state. what_player_learns is concrete information, not atmosphere. Test: if a scene's summary is 'characters talk about the situation' with no new information or relationship change, score that scene 0–35. Judge the weakest scene — if even that one does something specific, score 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "emotional_variety",
+      "description": "Emotional beats vary across scenes. The sequence doesn't stay in the same register for more than two consecutive scenes. A tense scene is followed by something different — revelatory, tender, melancholic. Test: if more than half the scenes share the same emotional_beat value, score 0–45.",
+      "weight": 1.0
+    },
+    {
+      "name": "premise_resolution",
+      "description": "The final scene's summary describes a concrete resolution of the premise stated in the bible. Not a fade-to-black or 'characters part ways' — something that addresses the specific question the premise raised. Test: read the premise and the final scene summary. If the final scene could occur in a different story with no edits, score 0–40.",
+      "weight": 1.5
+    }
+  ]
+}

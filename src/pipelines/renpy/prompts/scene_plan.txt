@@ -25,7 +25,8 @@ Rules:
 - No prose, no dialogue — structure only
 - choices: empty array [] if no player choice in this scene
 - location_id: snake_case, 2-4 distinct locations total (e.g. "library", "rooftop", "office") — reuse across scenes
-- characters_present: 2-3 per scene max, use exact ids from the bible
+- characters_present: 1-3 per scene; use exactly 1 character for solo reflection or monologue scenes (1-2 such scenes per story)
+- Include 1-2 monologue scenes: one character alone — interior conflict, a realization, grief, resolve, or speaking aloud to no one
 - Each scene's events must make the next scene possible
 - Escalate stakes across the sequence — early scenes establish, middle scenes complicate, final scene resolves
 - The final scene must resolve the premise from the bible

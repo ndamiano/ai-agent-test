@@ -322,7 +322,8 @@ def test_stitch_script_structure():
     assert 'image alex:' in stitched
     assert '"images/alex.png"' in stitched
     assert "label splashscreen:" in stitched
-    assert "label main_menu:" in stitched
+    assert "label main_menu:" not in stitched  # screen from screens.rpy used instead
+    assert 'define gui.main_menu_background = "images/office.png"' in stitched
     assert "label start:" in stitched
     assert "jump scene_001" in stitched
     assert "label scene_001:" in stitched

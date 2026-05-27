@@ -778,7 +778,8 @@ def _stitch_script(
     lines.append("")
 
     lines.append("## Images")
-    for bg in manifest.get("backgrounds", []):
+    bgs = manifest.get("backgrounds", [])
+    for bg in bgs:
         bg_id   = bg["id"]
         bg_file = bg.get("image_file", bg_id[3:] + ".png" if bg_id.startswith("bg_") else bg_id + ".png")
         lines.append(f'image {bg_id} = "images/{bg_file}"')
@@ -789,6 +790,13 @@ def _stitch_script(
         lines.append(f'    "images/{img_file}"')
         lines.append('    zoom 0.55')
     lines.append("")
+
+    if bgs:
+        first_bg = bgs[0]
+        first_bg_id   = first_bg["id"]
+        first_bg_file = first_bg.get("image_file", first_bg_id[3:] + ".png" if first_bg_id.startswith("bg_") else first_bg_id + ".png")
+        lines.append(f'define gui.main_menu_background = "images/{first_bg_file}"')
+        lines.append("")
 
     lines.append("## Override built-in positions so sprites sit at screen bottom with padding")
     lines.append("transform left:")
@@ -804,9 +812,6 @@ def _stitch_script(
     lines.append("")
 
     lines.append("label splashscreen:")
-    lines.append("    return")
-    lines.append("")
-    lines.append("label main_menu:")
     lines.append("    return")
     lines.append("")
 

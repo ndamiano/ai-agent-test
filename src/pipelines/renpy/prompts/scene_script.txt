@@ -40,6 +40,7 @@ Write the complete Ren'Py script for this scene.
 - Write dialogue as `char_id "text"` — never add stage directions to the sayer: `alex (softly) "text"` is invalid Ren'Py syntax
 - Use narration lines ("...") freely — establish atmosphere, convey inner thoughts, mark time passing, punctuate silences
 - A character may speak consecutive lines when the dramatic moment calls for it; do not force strict alternation
+- If characters_present has exactly 1 character, this is a monologue scene: lean on narration and inner voice; the character may speak aloud, think out loud, or address someone absent — avoid forced back-and-forth
 - End with a jump (or menu if choices exist, or "The End." + return if last scene)
 {opening_hint}
 Output ONLY the raw Ren'Py script. No JSON. No markdown. No explanation.

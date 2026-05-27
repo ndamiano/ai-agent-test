@@ -105,10 +105,10 @@ class PipelineAgent:
         "No markdown, no explanation, no code fences."
     )
 
-    def __init__(self, system_prompt: str = DEFAULT_SYSTEM, max_tokens: int = 2500):
+    def __init__(self, system_prompt: str = DEFAULT_SYSTEM, max_tokens: int = 2500, history: Optional[List[Dict[str, Any]]] = None):
         self._system = system_prompt
         self._max_tokens = max_tokens
-        self._history: List[Dict[str, Any]] = []
+        self._history: List[Dict[str, Any]] = list(history) if history else []
 
     def send(self, message: str, response_format: Optional[dict] = None) -> str:
         self._history.append(MessageBuilder.user_msg(message))

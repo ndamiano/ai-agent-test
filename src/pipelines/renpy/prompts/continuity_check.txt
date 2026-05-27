@@ -1,0 +1,32 @@
+Story context:
+{bible_summary}
+
+Character: {character_name} (id: {character_id})
+Role: {character_role}
+Secret: {character_secret}
+Speech pattern: {character_speech}
+
+All scenes involving this character (in story order):
+{character_scenes}
+
+Review this character's lines for consistency. Check for:
+1. Knowledge violations — does the character know something before it is revealed in an earlier scene?
+2. Personality drift — does their behavior contradict their established role or speech_pattern?
+3. Speech violations — does their dialogue break from the documented speech_pattern?
+
+Output exactly:
+{
+  "character_id": "id_here",
+  "issues_found": false,
+  "corrections": [
+    {
+      "scene_id": "scene_id_here",
+      "original_line": "exact Ren'Py line to replace — must match character exactly",
+      "corrected_line": "corrected Ren'Py line",
+      "reason": "brief explanation"
+    }
+  ]
+}
+
+If no issues found, output corrections as an empty array [].
+Only correct genuine consistency violations — do not rewrite for style.

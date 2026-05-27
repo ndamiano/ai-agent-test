@@ -1,0 +1,40 @@
+You are developing a {genre} visual novel.
+Tone: {tone}
+Setting concept: {setting}
+Vision: {notes}
+
+Generate the story bible. This is the single source of truth. Keep the total output under 800 tokens.
+
+Output exactly this JSON:
+{
+  "premise": "one gripping paragraph: the hook, what is at stake, and why it must be resolved now",
+  "tone_directives": [
+    {"adjective": "word", "explanation": "brief clarification e.g. 'melancholic, not hopeless'"}
+  ],
+  "setting": {
+    "name": "location name",
+    "physical_description": "2-3 sentences: what the world looks like",
+    "rules": "1-2 sentences: what makes this world strange or constrained",
+    "atmosphere": "sensory details that define the mood"
+  },
+  "characters": [
+    {
+      "id": "snake_case_id",
+      "name": "Full Name",
+      "role": "protagonist|antagonist|love_interest|mentor|rival|confidante",
+      "secret": "one sentence: what they are hiding and why",
+      "speech_pattern": "one sentence: how they talk — rhythm, vocabulary, distinctive tells",
+      "appearance": "2-3 sentences for portrait generation"
+    }
+  ],
+  "themes": [
+    "A thematic question the story asks — phrased as a question"
+  ]
+}
+
+Rules:
+- {character_count} characters exactly (4-6 is ideal)
+- tone_directives: 3-5 entries
+- themes: 2-3 questions
+- Each character must be narratively necessary — no interchangeable roles
+- Each character's secret must create potential conflict with at least one other character

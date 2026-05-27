@@ -4,5 +4,7 @@ Personality: {personality}
 Motivation: {motivation}
 Conflict: {conflict}
 
-Output the speech_patterns field: how this specific person talks — sentence length, vocabulary range, at least one unique verbal habit or tic, what they reach for under pressure, what they never say.
+Output the speech_patterns field: describe how this character communicates.
+Cover: sentence length and rhythm, vocabulary range (formal/casual/blunt/literary), what topics or deflections they reach for under pressure, what they never say directly.
+Do NOT list filler words or repeated verbal tics — describe communication style and tendency, not a phrase to repeat.
 Exactly: {"speech_patterns": "..."}

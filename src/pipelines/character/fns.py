@@ -74,14 +74,30 @@ def generate_voice(inputs: Dict, working_dir: Path) -> Dict:
     return _json_with_correction(agent, prompt, "character voice")
 
 
+def generate_examples(inputs: Dict, working_dir: Path) -> Dict:
+    identity = inputs.get("identity", {})
+    voice    = inputs.get("voice", {})
+    brief    = inputs.get("brief", {})
+    ctx = {
+        "name":            identity.get("name", ""),
+        "description":     identity.get("description", ""),
+        "personality":     json.dumps(identity.get("personality", [])),
+        "speech_patterns": voice.get("speech_patterns", ""),
+        "tone":            brief.get("tone", "balanced"),
+    }
+    prompt = render_template(_PROMPTS_DIR / "examples.txt", ctx)
+    agent  = PipelineAgent(_SYSTEM)
+    result = _json_with_correction(agent, prompt, "character examples")
+    return {"example_dialogue": result.get("example_dialogue", [])}
+
+
 def assemble_character(inputs: Dict, working_dir: Path) -> Dict:
     identity = inputs.get("identity", {})
-    # _load overwrites stem-keyed entry when file contains a same-named top-level key
-    # (e.g. appearance.json = {"appearance": "..."} → inputs["appearance"] = "string")
-    # Read directly to get the full dicts.
+    # Read directly to avoid _load stem-key collision
     appearance = json.loads((working_dir / "appearance.json").read_text())
-    voice = json.loads((working_dir / "voice.json").read_text())
-    return {**identity, **appearance, **voice}
+    voice      = json.loads((working_dir / "voice.json").read_text())
+    examples   = json.loads((working_dir / "examples.json").read_text())
+    return {**identity, **appearance, **voice, **examples}
 
 
 def generate_portrait(inputs: Dict, working_dir: Path) -> Dict:

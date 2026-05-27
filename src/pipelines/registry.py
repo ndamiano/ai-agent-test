@@ -57,21 +57,20 @@ def _enrich_ttrpg_brief(brief: dict) -> dict:
 
 
 def _build_registry() -> Dict[str, PipelineDefinition]:
-    from pipelines.renpy.pipeline import RENPY_PIPELINE
+    from pipelines.renpy.pipeline import RENPY_V3_PIPELINE as RENPY_PIPELINE
     from pipelines.character.pipeline import CHARACTER_PIPELINE
     from pipelines.ttrpg.pipeline import TTRPG_PIPELINE
     return {
         "renpy": PipelineDefinition(
             name="renpy",
-            description="Generate a complete Ren'Py visual novel — story, characters, dialogue, background images, and a playable build.",
+            description="Generate a complete Ren'Py visual novel — bible-first, raw Ren'Py scene writing, continuity pass per character.",
             pipeline=RENPY_PIPELINE,
             brief_schema={
                 "required": ["title", "genre", "tone", "setting", "notes"],
                 "optional": {
                     "length": "short | medium | long (default: medium)",
-                    "character_count": "overrides length default",
+                    "character_count": "overrides length default (4-6 recommended)",
                     "scene_count": "overrides length default",
-                    "lines_per_scene": "overrides length default",
                 },
             },
             enrich_brief=_enrich_renpy_brief,

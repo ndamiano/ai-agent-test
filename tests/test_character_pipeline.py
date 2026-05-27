@@ -154,6 +154,7 @@ class TestAssembleCharacter:
                     "description": "d", "personality": ["proud"], "motivation": "m", "conflict": "c"}
         (tmp_path / "appearance.json").write_text(_json.dumps({"appearance": "Weathered."}))
         (tmp_path / "voice.json").write_text(_json.dumps({"speech_patterns": "Formal."}))
+        (tmp_path / "examples.json").write_text(_json.dumps({"example_dialogue": []}))
         inputs = {"identity": identity}
         result = assemble_character(inputs, tmp_path)
         assert result["id"] == "sir_roland"
@@ -164,6 +165,7 @@ class TestAssembleCharacter:
         import json as _json
         (tmp_path / "appearance.json").write_text(_json.dumps({"name": "B"}))
         (tmp_path / "voice.json").write_text(_json.dumps({}))
+        (tmp_path / "examples.json").write_text(_json.dumps({}))
         inputs = {"identity": {"name": "A"}}
         result = assemble_character(inputs, tmp_path)
         assert result["name"] == "B"

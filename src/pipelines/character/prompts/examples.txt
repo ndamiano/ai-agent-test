@@ -1,0 +1,16 @@
+Character: {name}
+Who they are: {description}
+Personality: {personality}
+How they speak: {speech_patterns}
+Tone: {tone}
+
+Generate 3 dialogue exchanges that show exactly how {name} speaks. Each exchange is one line from another person and one line from {name} in response. Make {name}'s lines feel like something a real person would actually say — concrete and in-the-moment, not poetic. No filler words repeated across responses. Show variety: one casual moment, one emotionally loaded moment, one evasion or deflection.
+
+Output exactly:
+{
+  "example_dialogue": [
+    {"prompt": "what the other person says", "response": "what {name} says back"},
+    {"prompt": "...", "response": "..."},
+    {"prompt": "...", "response": "..."}
+  ]
+}

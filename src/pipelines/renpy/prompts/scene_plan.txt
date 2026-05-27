@@ -1,0 +1,32 @@
+Story bible:
+{bible|json}
+
+Plan the scene structure. Target {scene_count} scenes.
+
+Output exactly:
+{
+  "scenes": [
+    {
+      "id": "scene_001",
+      "title": "short title",
+      "location_id": "snake_case_location",
+      "characters_present": ["character_id"],
+      "what_player_learns": "one sentence: new information revealed in this scene",
+      "choices": [
+        {"text": "player-facing choice label", "leads_to": "scene_id"}
+      ],
+      "emotional_beat": "tense|melancholic|revelatory|hopeful|confrontational|tender|ominous",
+      "summary": "one sentence: what concretely happens and what changes as a result"
+    }
+  ]
+}
+
+Rules:
+- No prose, no dialogue — structure only
+- choices: empty array [] if no player choice in this scene
+- location_id: snake_case, 2-4 distinct locations total (e.g. "library", "rooftop", "office") — reuse across scenes
+- characters_present: 2-3 per scene max, use exact ids from the bible
+- Each scene's events must make the next scene possible
+- Escalate stakes across the sequence — early scenes establish, middle scenes complicate, final scene resolves
+- The final scene must resolve the premise from the bible
+- All "leads_to" values must be valid scene ids in this plan

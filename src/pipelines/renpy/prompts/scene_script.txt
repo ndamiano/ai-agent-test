@@ -1,0 +1,40 @@
+## Story Context
+{bible_summary}
+
+## This Scene
+{scene|json}
+
+## Setting
+Background id: {background_id}
+
+## Previous Scene
+{prev_summary}
+
+## Character Variables (use these ids exactly in dialogue lines)
+{character_vars}
+
+## Ren'Py Syntax Reference
+label scene_id:                      — first line of every scene (required)
+    scene bg_id with dissolve        — set background (omit "with dissolve" for very first scene)
+    show char_id                     — show character sprite
+    hide char_id                     — hide character sprite
+    "Narrator text."                 — narration, no character prefix
+    char_id "Dialogue line."         — character speaks (use the id, not the name)
+    menu:                            — player choice (only when scene has choices)
+        "Choice text A":
+            jump scene_id_a
+        "Choice text B":
+            jump scene_id_b
+    jump scene_id                    — go to next scene (use when no choices)
+    "The End."                       — only in the final scene
+    return                           — only in the final scene, after "The End."
+
+## Task
+Write the complete Ren'Py script for this scene.
+- Start with: label {scene_id}:
+- Show the background and relevant character sprites
+- Write 8-16 dialogue lines that dramatize the scene's summary and emotional_beat
+- Use each character's speech_pattern from the bible — make them sound distinct
+- End with a jump (or menu if choices exist, or "The End." + return if last scene)
+
+Output ONLY the raw Ren'Py script. No JSON. No markdown. No explanation.

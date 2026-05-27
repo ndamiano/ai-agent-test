@@ -1,0 +1,15 @@
+The following Ren'Py scene has broken references that must be fixed.
+
+Scene id: {scene_id}
+Problem: {issue}
+
+Current script:
+{script}
+
+Valid scene labels: {available_labels}
+Valid background ids: {available_backgrounds}
+Valid character ids: {available_characters}
+
+Fix only the broken references. Replace unknown labels, backgrounds, and character ids with valid ones from the lists above. Do not change dialogue content.
+
+Output the corrected Ren'Py script only. No explanation.

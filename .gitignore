@@ -39,6 +39,9 @@ outputs/
 runs/
 *-dists/
 
+# Pipeline dev inputs (local test data, not source)
+pipeline_inputs/
+
 # RenPy template binary assets (copy from any SDK-generated project)
 src/pipelines/*/renpy_templates/**/*.png
 

@@ -153,7 +153,7 @@ def generate_bible(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> 
 def generate_scene_plan(inputs: Dict, working_dir: Path, max_tokens: int = 32000) -> Dict:
     brief       = inputs.get("brief", {})
     bible       = _get_bible(inputs)
-    scene_count = _parse_count(brief.get("scene_count", "10"))
+    scene_count = _parse_count(brief.get("scene_count", "15"))
 
     prompt = render_template(_PROMPTS_DIR / "scene_plan.txt", {
         "bible":       bible,
@@ -559,6 +559,10 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
                 sid, script, issues, valid_labels, valid_backgrounds, valid_characters
             )
 
+    for sid in scene_ids:
+        if scripts.get(sid):
+            scripts[sid] = _inject_speaker_highlighting(scripts[sid], valid_characters)
+
     full_script = _stitch_script(title, bible, manifest, scripts, scene_ids)
 
     game_dir   = os.path.join(output_dir, "game")
@@ -629,6 +633,47 @@ def _repair_broken_scene(
     return raw if raw else script
 
 
+def _inject_speaker_highlighting(script: str, valid_characters: set) -> str:
+    """Dim non-speaking characters and brighten the speaker on each dialogue line."""
+    result = []
+    shown = {}  # cid -> last position string
+
+    for line in script.split("\n"):
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+
+        show_m = re.match(r'show\s+(\w+)(?:\s+at\s+(\w+))?', stripped)
+        if show_m:
+            cid, pos = show_m.group(1), show_m.group(2) or "center"
+            if cid in valid_characters:
+                shown[cid] = pos
+            result.append(line)
+            continue
+
+        hide_m = re.match(r'hide\s+(\w+)', stripped)
+        if hide_m:
+            shown.pop(hide_m.group(1), None)
+            result.append(line)
+            continue
+
+        if stripped.startswith("scene "):
+            shown.clear()
+            result.append(line)
+            continue
+
+        dialogue_m = re.match(r'(\w+)\s+"', stripped)
+        if dialogue_m and len(shown) > 1:
+            speaker = dialogue_m.group(1)
+            if speaker in valid_characters and speaker in shown:
+                for cid, pos in shown.items():
+                    t = "speaking" if cid == speaker else "not_speaking"
+                    result.append(f"{indent}show {cid} at {pos}, {t}")
+
+        result.append(line)
+
+    return "\n".join(result)
+
+
 def _stitch_script(
     title: str,
     bible: Dict,
@@ -667,6 +712,10 @@ def _stitch_script(
     lines.append("    xalign 0.5 yalign 1.0")
     lines.append("transform right:")
     lines.append("    xalign 0.85 yalign 1.0")
+    lines.append("transform speaking:")
+    lines.append("    alpha 1.0")
+    lines.append("transform not_speaking:")
+    lines.append("    alpha 0.5")
     lines.append("")
 
     lines.append("label splashscreen:")

@@ -35,7 +35,7 @@ label scene_id:                      — first line of every scene (required)
 Write the complete Ren'Py script for this scene.
 - Start with: label {scene_id}:
 - Show the background and relevant character sprites
-- Write 8-16 dialogue lines that dramatize the scene's summary and emotional_beat
+- Write 12-20 dialogue lines that dramatize the scene's summary and emotional_beat
 - Use each character's speech_pattern from the bible — make them sound distinct
 - End with a jump (or menu if choices exist, or "The End." + return if last scene)
 

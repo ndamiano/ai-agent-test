@@ -1,9 +1,12 @@
+Title: {title}
+Premise: {premise}
 Setting: {setting_name}
 World description: {setting_description}
 Atmosphere: {setting_atmosphere}
 Tone: {tone}
+Key characters: {characters}
 
-Write a vivid visual description for each location. Descriptions are used for image generation — be specific about lighting, colors, key visual elements, and mood.
+Write vivid visual descriptions for each location. Also write a title card description for the main menu. All descriptions are used for image generation — be specific about lighting, colors, key visual elements, and mood.
 
 Locations:
 {location_list}
@@ -16,7 +19,10 @@ Output exactly:
       "name": "Human-readable name",
       "description": "Vivid visual description for image generation"
     }
-  ]
+  ],
+  "title_card": {
+    "description": "Wide cinematic title card for the main menu. Key characters and setting composed like a book cover or movie poster. No text in the image."
+  }
 }
 
-One entry per location. id must be exactly "bg_" + the location_id provided.
+One background entry per location. id must be exactly "bg_" + the location_id provided.

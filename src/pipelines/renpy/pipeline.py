@@ -44,7 +44,7 @@ RENPY_V3_PIPELINE = Pipeline(
             FnStage(
                 id="asset_manifest",
                 fn=generate_asset_manifest,
-                inputs=["bible.json", "scene_plan.json"],
+                inputs=["brief.json", "bible.json", "scene_plan.json"],
                 output="asset_manifest.json",
                 prompt_file="asset_manifest.txt",
                 max_tokens=8000,

@@ -93,7 +93,7 @@ def _get_manifest(inputs: Dict) -> Dict:
     """Get asset_manifest dict — handles nested and flat."""
     m = inputs.get("asset_manifest", {})
     if not m and "backgrounds" in inputs:
-        m = {k: inputs[k] for k in ("backgrounds", "character_expressions", "music_cues") if k in inputs}
+        m = {k: inputs[k] for k in ("backgrounds", "character_expressions", "music_cues", "cgs", "title_card") if k in inputs}
         # Reconstruct manifest characters from bible when flat-merged
         if "characters" not in m:
             bible = _get_bible(inputs)
@@ -202,8 +202,8 @@ _BEAT_TO_EXPRESSION = {
     "ominous":         "scared",
 }
 
-
 def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
+    brief      = inputs.get("brief", {})
     bible      = _get_bible(inputs)
     scene_plan = _get_scene_plan(inputs)
     scenes     = scene_plan.get("scenes", [])
@@ -228,28 +228,36 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
         char_expressions[sid] = {c: expr for c in scene.get("characters_present", [])}
         music_cues[sid]        = beat
 
-    # LLM: focused call — background descriptions only (small, reliable output)
-    location_list = "\n".join(
+    location_list   = "\n".join(
         f"- {loc}: {'bg_' + loc if not loc.startswith('bg_') else loc}"
         for loc in location_ids
     )
     tone_directives = ", ".join(d.get("adjective", "") for d in bible.get("tone_directives", []))
+    char_summary    = ", ".join(
+        f"{c['name']} ({c.get('role', '')})"
+        for c in bible.get("characters", [])
+    )
 
-    print("    [asset_manifest]  generating background descriptions")
+    print("    [asset_manifest]  generating background and title card descriptions")
     prompt = render_template(_PROMPTS_DIR / "asset_manifest.txt", {
+        "title":               brief.get("title", "Untitled"),
+        "premise":             bible.get("premise", ""),
         "setting_name":        setting.get("name", ""),
         "setting_description": setting.get("physical_description", ""),
         "setting_atmosphere":  setting.get("atmosphere", ""),
         "tone":                tone_directives,
+        "characters":          char_summary,
         "location_list":       location_list,
     })
 
-    bg_by_id: Dict[str, Dict] = {}
+    bg_by_id:   Dict[str, Dict] = {}
+    title_card: Dict            = {}
     for attempt in range(1, 4):
         try:
             agent  = PipelineAgent(_SYSTEM, max_tokens=max_tokens)
             result = _json_with_correction(agent, prompt, "asset manifest")
-            bg_by_id = {b["id"]: b for b in result.get("backgrounds", [])}
+            bg_by_id   = {b["id"]: b for b in result.get("backgrounds", [])}
+            title_card = result.get("title_card", {})
             break
         except RuntimeError:
             if attempt == 3:
@@ -271,6 +279,31 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
                 ).strip(),
             }
 
+    if title_card:
+        title_card["image_file"] = "title_card.png"
+    else:
+        char_desc  = ", ".join(c.get("name", "") for c in bible.get("characters", [])[:3])
+        title_card = {
+            "image_file":  "title_card.png",
+            "description": (
+                f"Wide cinematic visual novel title card. "
+                f"{setting.get('physical_description', '')} "
+                f"Characters: {char_desc}. Mood: {tone_directives}. Atmospheric, detailed."
+            ),
+        }
+
+    # CGs: collected from scene_plan — the scene planner annotated peak moments with cg_description
+    cgs = []
+    for scene in scenes:
+        if scene.get("cg_description"):
+            cg_id = f"cg_{scene['id']}"
+            cgs.append({
+                "id":          cg_id,
+                "image_file":  f"{cg_id}.png",
+                "description": scene["cg_description"],
+            })
+    cgs = cgs[:4]  # guard against over-generation
+
     return {
         "backgrounds":           list(bg_by_id.values()),
         "characters":            [
@@ -285,6 +318,8 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
         ],
         "character_expressions": char_expressions,
         "music_cues":            music_cues,
+        "cgs":                   cgs,
+        "title_card":            title_card,
     }
 
 
@@ -316,6 +351,16 @@ def _character_vars_block(bible: Dict) -> str:
     )
 
 
+def _build_cg_block(cg_id: str, background_id: str) -> str:
+    return (
+        f"\n## CG Illustration\n"
+        f"This scene has a full-screen CG. Place it at the emotional peak.\n"
+        f"The 'scene' command clears all sprites automatically — no need to hide them before the CG.\n"
+        f"Sequence: scene {cg_id} with dissolve, then 1-3 climactic lines, "
+        f"then scene {background_id} with dissolve, then re-show characters with show/at before continuing.\n"
+    )
+
+
 def _validate_scene_script(scene_id: str, script: str) -> Tuple[bool, str]:
     if not re.search(rf'\blabel\s+{re.escape(scene_id)}\s*:', script):
         return False, f"Missing 'label {scene_id}:'"
@@ -332,6 +377,11 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
     scenes      = scene_plan.get("scenes", [])
     expressions = manifest.get("character_expressions", {})
     scene_ids   = [s["id"] for s in scenes]
+
+    cg_scene_ids: set = {
+        cg["id"][3:] for cg in manifest.get("cgs", [])
+        if cg.get("id", "").startswith("cg_")
+    }
 
     bible_sum = _bible_summary(bible)
     char_vars = _character_vars_block(bible)
@@ -367,6 +417,8 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
             if i == 0 else ""
         )
 
+        cg_block = _build_cg_block(f"cg_{sid}", background_id) if sid in cg_scene_ids else ""
+
         prompt = render_template(_PROMPTS_DIR / "scene_script.txt", {
             "bible_summary":  bible_sum,
             "scene":          scene_ctx,
@@ -376,6 +428,7 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
             "prev_summary":   prev_summary,
             "character_vars": char_vars,
             "opening_hint":   opening_hint,
+            "cg_block":       cg_block,
         })
 
         script = None
@@ -487,7 +540,11 @@ def continuity_pass(inputs: Dict, working_dir: Path, max_tokens: int = 16000) ->
 # ---------------------------------------------------------------------------
 
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
-    from tools.comfyui_tools import build_character_job, build_background_job, generate_images_batch
+    from tools.comfyui_tools import (
+        build_character_job, build_background_job,
+        build_cg_job, build_title_card_job,
+        generate_images_batch,
+    )
     from tools.execution_context import track_written_file
 
     bible    = _get_bible(inputs)
@@ -517,6 +574,18 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "char"})
         jobs.append(build_character_job(bible_chars.get(char_id, {})))
 
+    for cg in manifest.get("cgs", []):
+        cg_id    = cg["id"]
+        img_file = cg.get("image_file", f"{cg_id}.png")
+        job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "cg"})
+        jobs.append(build_cg_job(cg.get("description", cg_id)))
+
+    title_card = manifest.get("title_card", {})
+    if title_card.get("description"):
+        tc_file = title_card.get("image_file", "title_card.png")
+        job_meta.append({"file": tc_file, "dest": images_dir / tc_file, "kind": "title_card"})
+        jobs.append(build_title_card_job(title_card["description"]))
+
     print(f"    [images]  generating {len(jobs)} image(s)")
     results  = generate_images_batch(jobs)
     generated: List[str] = []
@@ -533,8 +602,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         else:
             error = result.get("error", "unknown")
             print(f"    [images]  failed ({error}), placeholder: {img_file}")
-            w, h = (1280, 720) if meta["kind"] == "bg" else (512, 768)
-            color = (58, 58, 92) if meta["kind"] == "bg" else (92, 58, 92)
+            if meta["kind"] == "char":
+                w, h, color = 512, 768, (92, 58, 92)
+            elif meta["kind"] == "cg":
+                w, h, color = 1280, 720, (40, 20, 60)
+            elif meta["kind"] == "title_card":
+                w, h, color = 1280, 720, (20, 30, 60)
+            else:
+                w, h, color = 1280, 720, (58, 58, 92)
             _write_solid_png(filepath, w, h, color)
             track_written_file(str(filepath))
             failed.append({"file": img_file, "error": error})
@@ -561,6 +636,7 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
 
     valid_backgrounds = {bg["id"] for bg in manifest.get("backgrounds", [])}
     valid_characters  = {c["id"] for c in manifest.get("characters", [])}
+    valid_cgs         = {cg["id"] for cg in manifest.get("cgs", [])}
     valid_labels      = set(scene_ids) | {"start", "splashscreen", "main_menu"}
 
     # Validate and repair
@@ -568,16 +644,17 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
         script = scripts.get(sid, "")
         if not script:
             continue
-        issues = _find_script_issues(script, valid_labels, valid_backgrounds, valid_characters)
+        issues = _find_script_issues(script, valid_labels, valid_backgrounds, valid_characters, valid_cgs)
         if issues:
             print(f"    [build]  repairing {sid}: {issues}")
             scripts[sid] = _repair_broken_scene(
-                sid, script, issues, valid_labels, valid_backgrounds, valid_characters
+                sid, script, issues, valid_labels, valid_backgrounds, valid_characters, valid_cgs
             )
 
     for sid in scene_ids:
         if scripts.get(sid):
             scripts[sid] = _fix_narrator_lines(scripts[sid])
+            scripts[sid] = _fix_indentation(scripts[sid])
             scripts[sid] = _inject_speaker_highlighting(scripts[sid], valid_characters)
 
     full_script = _stitch_script(title, bible, manifest, scripts, scene_ids)
@@ -590,10 +667,11 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
     bgs = manifest.get("backgrounds", [])
     first_bg_file = ""
     if bgs:
-        first_bg = bgs[0]
+        first_bg      = bgs[0]
         first_bg_id   = first_bg["id"]
         first_bg_file = first_bg.get("image_file", first_bg_id[3:] + ".png" if first_bg_id.startswith("bg_") else first_bg_id + ".png")
-    _write_options_rpy(game_dir, title, main_menu_bg_file=first_bg_file)
+    title_card_file = manifest.get("title_card", {}).get("image_file", "")
+    _write_options_rpy(game_dir, title, main_menu_bg_file=title_card_file or first_bg_file)
     script_path = os.path.join(game_dir, "script.rpy")
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(full_script)
@@ -623,7 +701,7 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
                         print(f"    [build]  lint repair: {sid}")
                         scripts[sid] = _repair_broken_scene(
                             sid, scripts[sid], issue,
-                            valid_labels, valid_backgrounds, valid_characters,
+                            valid_labels, valid_backgrounds, valid_characters, valid_cgs,
                         )
                     full_script = _stitch_script(title, bible, manifest, scripts, scene_ids)
                     with open(script_path, "w", encoding="utf-8") as f:
@@ -691,15 +769,20 @@ def _find_script_issues(
     valid_labels: set,
     valid_backgrounds: set,
     valid_characters: set,
+    valid_cgs: set = None,
 ) -> str:
+    valid_scenes = valid_backgrounds | (valid_cgs or set()) | {"black"}
     parts = []
     broken_jumps = set(re.findall(r'\bjump\s+(\w+)', script)) - valid_labels
-    broken_bgs   = set(re.findall(r'\bscene\s+(bg_\w+)', script)) - valid_backgrounds - {"black"}
+    broken_bgs   = set(re.findall(r'\bscene\s+(bg_\w+)', script)) - valid_scenes
+    broken_cgs   = set(re.findall(r'\bscene\s+(cg_\w+)', script)) - valid_scenes
     broken_chars = set(re.findall(r'\bshow\s+(\w+)', script)) - valid_characters
     if broken_jumps:
         parts.append(f"unknown jump targets: {sorted(broken_jumps)}")
     if broken_bgs:
         parts.append(f"unknown backgrounds: {sorted(broken_bgs)}")
+    if broken_cgs:
+        parts.append(f"unknown CG ids: {sorted(broken_cgs)}")
     if broken_chars:
         parts.append(f"unknown characters: {sorted(broken_chars)}")
     return "; ".join(parts)
@@ -712,13 +795,15 @@ def _repair_broken_scene(
     valid_labels: set,
     valid_backgrounds: set,
     valid_characters: set,
+    valid_cgs: set = None,
 ) -> str:
+    valid_scenes = sorted(valid_backgrounds | (valid_cgs or set()))
     prompt = render_template(_PROMPTS_DIR / "bridge.txt", {
         "scene_id":              scene_id,
         "issue":                 issue,
         "script":                script,
         "available_labels":      sorted(valid_labels),
-        "available_backgrounds": sorted(valid_backgrounds),
+        "available_backgrounds": valid_scenes,
         "available_characters":  sorted(valid_characters),
     })
     agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=25000)
@@ -728,7 +813,40 @@ def _repair_broken_scene(
 
 def _fix_narrator_lines(script: str) -> str:
     """Strip `Narrator "text"` → bare `"text"`. Neither Narrator nor narrator is defined; use bare quotes."""
-    return re.sub(r'^(\s*)Narrator\s+(")', r'\1\2', script, flags=re.MULTILINE)  
+    return re.sub(r'^(\s*)Narrator\s+(")', r'\1\2', script, flags=re.MULTILINE)
+
+
+def _fix_indentation(script: str) -> str:
+    """
+    Fix over-indented lines in Ren'Py script.
+
+    Ren'Py rule: only lines ending with ':' open a block. scene/show/hide/
+    dialogue/narration never do. If the previous executable line doesn't end
+    with ':' and the current line is indented more, collapse it to the same
+    indent level as the previous line.
+    """
+    lines = script.split("\n")
+    result = []
+    prev_expects_block = False
+    prev_indent = 0
+
+    for line in lines:
+        stripped = line.lstrip()
+        if not stripped:
+            result.append(line)
+            continue
+
+        indent = len(line) - len(stripped)
+
+        if not prev_expects_block and indent > prev_indent and prev_indent > 0:
+            line = " " * prev_indent + stripped
+            indent = prev_indent
+
+        result.append(line)
+        prev_expects_block = stripped.rstrip().endswith(":")
+        prev_indent = indent
+
+    return "\n".join(result)
 
 
 def _inject_speaker_highlighting(script: str, valid_characters: set) -> str:
@@ -796,6 +914,10 @@ def _stitch_script(
         bg_id   = bg["id"]
         bg_file = bg.get("image_file", bg_id[3:] + ".png" if bg_id.startswith("bg_") else bg_id + ".png")
         lines.append(f'image {bg_id} = "images/{bg_file}"')
+    for cg in manifest.get("cgs", []):
+        cg_id    = cg["id"]
+        img_file = cg.get("image_file", f"{cg_id}.png")
+        lines.append(f'image {cg_id} = "images/{img_file}"')
     for char in manifest.get("characters", []):
         cid      = char["id"]
         img_file = char.get("image_file", f"{cid}.png")

@@ -50,6 +50,17 @@ _BG_NEGATIVE = (
     "anime style, cartoon"
 )
 
+_CG_NEGATIVE = (
+    "worst quality, low quality, score_1, score_2, score_3, "
+    "blurry, jpeg artifacts, white background, simple background, "
+    "sprite style, isolated character, no background"
+)
+
+_TITLE_CARD_NEGATIVE = (
+    "worst quality, low quality, score_1, score_2, score_3, "
+    "blurry, jpeg artifacts, text, watermark, signature, ui elements, hud"
+)
+
 
 def _build_character_prompt(char_data: dict) -> tuple[str, str]:
     tags = char_data.get("appearance_tags", {})
@@ -110,6 +121,31 @@ def build_background_job(description: str) -> dict:
         "prompt": description,
         "workflow_override": _build_background_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), description, _BG_NEGATIVE),
     }
+
+
+def build_cg_job(description: str) -> dict:
+    """Return a {prompt, workflow_override} job dict for a full-screen CG illustration."""
+    positive = (
+        f"{_QUALITY}, {_STYLE_LOCK}, "
+        f"anime visual novel CG illustration, full scene, characters in environment, "
+        f"dynamic composition, dramatic lighting, detailed background, {description}"
+    )
+    wf = _build_background_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _CG_NEGATIVE)
+    wf["19"]["inputs"]["cfg"] = 7.0
+    wf["19"]["inputs"]["steps"] = 35
+    return {"prompt": positive, "workflow_override": wf}
+
+
+def build_title_card_job(description: str) -> dict:
+    """Return a {prompt, workflow_override} job dict for the game title card."""
+    positive = (
+        f"{_QUALITY}, {_STYLE_LOCK}, "
+        f"visual novel title card, wide cinematic composition, key visual, atmospheric, {description}"
+    )
+    wf = _build_background_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _TITLE_CARD_NEGATIVE)
+    wf["19"]["inputs"]["cfg"] = 7.0
+    wf["19"]["inputs"]["steps"] = 35
+    return {"prompt": positive, "workflow_override": wf}
 
 
 def _load_workflow(path: Path) -> dict:

@@ -186,7 +186,7 @@ class MainAgent:
         self.message_history.append(MessageBuilder.user_msg(message))
 
         try:
-            return self._agentic_loop_with_native_tools(message)
+            return self._agentic_loop_with_native_tools()
         except Exception as e:
             error_response = f"Sorry, I encountered an error: {str(e)}"
             self.message_history.append(MessageBuilder.assistant_msg(error_response))

@@ -16,7 +16,8 @@ Output exactly:
         {"text": "player-facing choice label", "leads_to": "scene_id"}
       ],
       "emotional_beat": "tense|melancholic|revelatory|hopeful|confrontational|tender|ominous",
-      "summary": "one sentence: what concretely happens and what changes as a result"
+      "summary": "one sentence: what concretely happens and what changes as a result",
+      "cg_description": "OPTIONAL — only for 2-3 scenes with the highest visual and dramatic impact: vivid art direction for a full-screen illustration of this scene's key moment (characters, action, setting, lighting, composition). Omit this field entirely for all other scenes."
     }
   ]
 }

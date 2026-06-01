@@ -13,7 +13,7 @@ from eval.failures import print_analysis as print_failure_analysis
 from eval.fixtures import load as load_fixtures
 from eval.judge import Judge
 from eval.report import summarize, save, print_summary, print_diff
-from eval.runner import StageRunner
+from eval.runner import StageRunner, PipelineEvalRunner
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +48,15 @@ def _prompt_override(prompt_path: Path, new_text: str):
         prompt_path.write_text(original, encoding="utf-8")
 
 
-def _score_run(results: list, stage_id: str, rubric: dict, judge: Judge) -> list:
+def _score_run(results: list, stage_id: str, rubric: dict, judge: Judge, e2e: bool = False) -> list:
     scored = []
     for r in results:
-        if r["ok"] and r["output"]:
-            scored.append(judge.score(stage_id, r["output"], rubric))
-        else:
-            scored.append(None)
+        if r["ok"]:
+            payload = r.get("outputs", {}) if e2e else r.get("output")
+            if payload:
+                scored.append(judge.score(stage_id, payload, rubric))
+                continue
+        scored.append(None)
     return scored
 
 
@@ -66,6 +68,10 @@ def hill_climb(
     n: int = 5,
     iterations: int = 5,
     n_mutations: int = 5,
+    judge_connector: str | None = None,
+    end_to_end: bool = False,
+    brief: dict | None = None,
+    briefs: list | None = None,
 ) -> tuple:
     """
     Hill-climb the prompt for a single LLM stage.
@@ -77,20 +83,41 @@ def hill_climb(
       4. Write the final best prompt back to the template file
 
     Returns (final_prompt_text, final_summary).
-    """
-    judge = Judge()
-    prompt_path = _find_prompt_path(pipeline_name, stage_id)
-    fixtures = load_fixtures(pipeline_name, brief_name)
-    runner = StageRunner(pipeline_name, stage_id, fixtures)
 
-    print(f"\n[baseline] {pipeline_name}/{stage_id}  n={n}")
+    judge_connector: connector type for scoring/mutation ("cline", "openrouter", etc).
+      Defaults to the configured connector (same as pipeline). Pass "cline" to grade
+      with Claude while the pipeline runs on the local model.
+
+    end_to_end: run the full pipeline per trial instead of just the target stage.
+      Scores the final combined output against the rubric (typically renpy_e2e.json).
+      Requires brief or briefs to be passed in.
+
+    briefs: list of brief dicts for e2e mode. A random brief is chosen per run.
+      Takes precedence over brief when provided.
+    """
+    from llm_clients.connector_selector import get_connector as _get_connector
+    judge = Judge(_get_connector(judge_connector) if judge_connector else None)
+    prompt_path = _find_prompt_path(pipeline_name, stage_id)
+
+    if end_to_end:
+        brief_pool = briefs or ([brief] if brief else None)
+        if not brief_pool:
+            raise ValueError("end_to_end=True requires brief or briefs")
+        runner = PipelineEvalRunner(pipeline_name, brief_pool)
+        score_stage_id = "e2e"
+    else:
+        fixtures = load_fixtures(pipeline_name, brief_name)
+        runner = StageRunner(pipeline_name, stage_id, fixtures)
+        score_stage_id = stage_id
+
+    print(f"\n[baseline] {pipeline_name}/{stage_id}  n={n}{'  (end-to-end)' if end_to_end else ''}")
     baseline_t0 = time.monotonic()
     baseline_results = runner.run_n(n)
     baseline_elapsed = time.monotonic() - baseline_t0
     baseline_run_mean = sum(r["elapsed"] for r in baseline_results) / len(baseline_results) if baseline_results else 0.0
     print(f"  baseline done  {baseline_elapsed:.0f}s total  run mean={baseline_run_mean:.1f}s")
     print_failure_analysis(baseline_results)
-    baseline_scored  = _score_run(baseline_results, stage_id, rubric, judge)
+    baseline_scored  = _score_run(baseline_results, score_stage_id, rubric, judge, e2e=end_to_end)
     baseline_summary = summarize(baseline_results, baseline_scored, rubric)
     print_summary(baseline_summary, "Baseline")
     save(pipeline_name, stage_id, brief_name, baseline_summary, label="baseline",
@@ -98,6 +125,7 @@ def hill_climb(
 
     current_prompt  = prompt_path.read_text(encoding="utf-8")
     current_summary = baseline_summary
+    current_scored  = baseline_scored
 
     for i in range(iterations):
         iter_t0 = time.monotonic()
@@ -112,7 +140,7 @@ def hill_climb(
         for m in range(n_mutations):
             print(f"  proposing mutation {m+1}/{n_mutations}...")
             try:
-                mutations.append(judge.propose_mutation(current_prompt, current_summary, rubric))
+                mutations.append(judge.propose_mutation(current_prompt, current_summary, rubric, current_scored))
             except Exception as e:
                 logger.warning(f"Mutation proposal {m+1} failed: {e}")
 
@@ -123,6 +151,7 @@ def hill_climb(
         # Evaluate mutations, pick best by p25
         best_mutation = None
         best_summary  = None
+        best_scored   = None
 
         for j, mutation in enumerate(mutations):
             mut_t0 = time.monotonic()
@@ -134,7 +163,7 @@ def hill_climb(
             run_mean = sum(run_times) / len(run_times) if run_times else 0.0
             print(f"  mutation done  {mut_elapsed:.0f}s total  run mean={run_mean:.1f}s")
             print_failure_analysis(results)
-            scored  = _score_run(results, stage_id, rubric, judge)
+            scored  = _score_run(results, score_stage_id, rubric, judge, e2e=end_to_end)
             summary = summarize(results, scored, rubric)
 
             candidate_p25 = summary.get("overall", {}).get("p25", 0.0) or 0.0
@@ -142,6 +171,7 @@ def hill_climb(
             if candidate_p25 > best_p25:
                 best_mutation = mutation
                 best_summary  = summary
+                best_scored   = scored
 
         iter_elapsed = time.monotonic() - iter_t0
         current_p25 = current_summary.get("overall", {}).get("p25", 0.0) or 0.0
@@ -155,6 +185,7 @@ def hill_climb(
             print_diff(current_summary, best_summary, "before", "after")
             current_prompt  = best_mutation
             current_summary = best_summary
+            current_scored  = best_scored
             save(pipeline_name, stage_id, brief_name, current_summary, label=f"iter{i+1:02d}_accepted",
                  run_results=results)
         else:

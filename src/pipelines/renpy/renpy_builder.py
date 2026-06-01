@@ -213,13 +213,16 @@ def _distribute(project_dir: str, sdk_path: str) -> dict:
     print(f"  Command: {' '.join(cmd)}")
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.stdout:
-            print(proc.stdout)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=60,
+        )
         if proc.returncode == 0:
             print("[renpy_builder] Distribution built successfully.")
         else:
             print(f"[renpy_builder] Distribution build failed (exit {proc.returncode}).")
+            if proc.stdout:
+                print(proc.stdout)
             if proc.stderr:
                 print(proc.stderr, file=sys.stderr)
         return {
@@ -227,6 +230,9 @@ def _distribute(project_dir: str, sdk_path: str) -> dict:
             "dist_stdout":     proc.stdout,
             "dist_stderr":     proc.stderr,
         }
+    except subprocess.TimeoutExpired as e:
+        print(f"[renpy_builder] ERROR: SDK timed out after {e.timeout}s (likely waiting for input).")
+        return {"dist_returncode": -1, "dist_error": f"timeout after {e.timeout}s"}
     except Exception as e:
         print(f"[renpy_builder] ERROR running SDK: {e}")
         return {"dist_error": str(e)}

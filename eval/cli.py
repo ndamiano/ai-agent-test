@@ -132,15 +132,51 @@ def cmd_climb(args):
     from eval.climb import hill_climb
 
     pipeline_name, stage_id = args.target.split("/", 1)
-    rubric = _load_rubric(pipeline_name, stage_id)
+    end_to_end = getattr(args, "e2e", False)
+    brief_pool_names = getattr(args, "brief_pool", None) or []
+
+    if end_to_end:
+        rubric = _load_rubric(pipeline_name, "e2e")
+        if brief_pool_names:
+            briefs = [_load_brief(n) for n in brief_pool_names]
+            brief  = None
+            brief_name = "pool"
+        elif args.brief:
+            briefs = None
+            brief  = _load_brief(args.brief)
+            brief_name = args.brief
+        else:
+            # Auto-discover all renpy briefs
+            all_briefs = [
+                p.stem for p in BRIEFS_DIR.glob("*.json")
+                if not p.stem.startswith("character_")
+            ]
+            if not all_briefs:
+                sys.exit("No briefs found in eval/briefs/")
+            print(f"e2e pool: {all_briefs}")
+            briefs = [_load_brief(n) for n in all_briefs]
+            brief  = None
+            brief_name = "pool"
+    else:
+        if not args.brief:
+            sys.exit("--brief is required for stage climbing")
+        rubric = _load_rubric(pipeline_name, stage_id)
+        briefs = None
+        brief  = None
+        brief_name = args.brief
+
     hill_climb(
         pipeline_name=pipeline_name,
         stage_id=stage_id,
-        brief_name=args.brief,
+        brief_name=brief_name,
         rubric=rubric,
         n=args.n,
         iterations=args.iterations,
         n_mutations=args.mutations,
+        judge_connector=getattr(args, "judge_connector", None),
+        end_to_end=end_to_end,
+        brief=brief,
+        briefs=briefs,
     )
 
 
@@ -241,11 +277,19 @@ def main():
 
     # climb
     p = sub.add_parser("climb", help="Hill-climb a stage's prompt template")
-    p.add_argument("target", help="pipeline/stage_id (e.g. renpy/story)")
-    p.add_argument("--brief", required=True)
+    p.add_argument("target", help="pipeline/stage_id (e.g. renpy/bible)")
+    p.add_argument("--brief", default=None,
+                   help="Brief name for stage climbing (required) or single-brief e2e mode")
+    p.add_argument("--brief-pool", nargs="+", dest="brief_pool", default=None,
+                   help="Multiple brief names for e2e mode; a random one is picked per run. "
+                        "If omitted in e2e mode, all available briefs are used.")
     p.add_argument("--n",          type=int, default=5, help="Runs per evaluation slot (default: 5)")
     p.add_argument("--iterations", type=int, default=5, help="Hill-climb iterations (default: 5)")
     p.add_argument("--mutations",  type=int, default=5, help="Mutations per iteration (default: 5)")
+    p.add_argument("--e2e", action="store_true",
+                   help="Run full pipeline per trial; score final output against renpy_e2e rubric")
+    p.add_argument("--judge-connector", default=None, dest="judge_connector",
+                   help="Connector for judge scoring/mutation (e.g. cline). Defaults to active connector.")
 
     # rescore
     p = sub.add_parser("rescore", help="Re-score saved outputs with a different judge connector")

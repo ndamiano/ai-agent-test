@@ -1,0 +1,26 @@
+{
+  "stage": "asset_manifest",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "background_evocativeness",
+      "description": "Each background description is specific enough to generate a distinct image — it names concrete visual elements (colors, light quality, objects, textures) rather than vague adjectives. Test: could two different backgrounds be illustrated identically from these descriptions? If yes, score 0–40. If each background is unambiguously distinct and atmospheric, score 70+.",
+      "weight": 1.5
+    },
+    {
+      "name": "tone_consistency",
+      "description": "Background and title card descriptions match the story's established tone and setting. A melancholic romance doesn't have bright cheerful backgrounds; a tense thriller doesn't have cozy warm ones. Test: read the descriptions without knowing the story — could you infer the genre and mood? If tone is absent or contradicts the premise, score 0–40. If descriptions reinforce the story's atmosphere, score 70+.",
+      "weight": 1.5
+    },
+    {
+      "name": "title_card_quality",
+      "description": "The title card description captures the story's core premise or emotional stakes in a single cinematic image. It is specific enough to be illustrated — not a generic landscape or character lineup. Test: if the title card description could apply to any visual novel, score 0–40. If it captures something unique to this specific story, score 70+.",
+      "weight": 1.0
+    },
+    {
+      "name": "cg_moment_selection",
+      "description": "CG illustrations are assigned to the most dramatically charged scenes. A CG marks a turning point, revelation, or climactic moment — not filler or transitional scenes. Test: read each CG description and ask whether it depicts a moment the player would remember. If CGs are assigned to mundane or early-game scenes with no stakes, score 0–45. If each CG marks a clear story peak, score 70+.",
+      "weight": 1.0
+    }
+  ]
+}

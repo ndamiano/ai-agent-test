@@ -5,13 +5,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pipelines.renpy.fns import (
+from pipelines.renpy.fns import _validate_brief
+from pipelines.renpy._script import (
     _bible_summary,
     _character_vars_block,
-    _validate_brief,
     _validate_scene_script,
     _find_script_issues,
-    _fix_narrator_lines,
+    _postprocess_script,
     _parse_lint_errors,
     _scene_id_at_line,
     _stitch_script,
@@ -198,9 +198,9 @@ def test_scenes_for_character():
     mira_scenes  = _scenes_for_character("mira", scripts)
     other_scenes = _scenes_for_character("ghost", scripts)
 
-    assert {s["scene_id"] for s in alex_scenes}  == {"scene_001", "scene_003"}
-    assert {s["scene_id"] for s in mira_scenes}  == {"scene_002"}
-    assert other_scenes == []
+    assert set(alex_scenes.keys())  == {"scene_001", "scene_003"}
+    assert set(mira_scenes.keys())  == {"scene_002"}
+    assert other_scenes == {}
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ def test_scene_id_at_line_finds_label():
 
 
 def test_stitch_script_structure():
-    stitched = _stitch_script("Test Game", SAMPLE_BIBLE, SAMPLE_MANIFEST, SAMPLE_SCRIPTS, ["scene_001", "scene_002"])
+    stitched = _stitch_script(SAMPLE_BIBLE, SAMPLE_MANIFEST, SAMPLE_SCRIPTS, ["scene_001", "scene_002"])
 
     assert 'define alex = Character("Alex Crane"' in stitched
     assert 'define mira = Character("Mira Voss"' in stitched
@@ -345,14 +345,14 @@ def test_write_options_rpy_no_bg(tmp_path):
     assert "main_menu_background" not in content
 
 
-def test_fix_narrator_lines():
+def test_postprocess_strips_narrator_lines():
     script = (
         'label scene_001:\n'
         '    Narrator "The rain fell."\n'
         '    alex "Hello."\n'
         '    Narrator "She turned away."\n'
     )
-    fixed = _fix_narrator_lines(script)
+    fixed = _postprocess_script(script, valid_characters={"alex"})
     assert '    "The rain fell."' in fixed
     assert '    "She turned away."' in fixed
     assert 'alex "Hello."' in fixed

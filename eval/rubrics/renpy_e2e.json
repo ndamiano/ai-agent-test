@@ -1,0 +1,31 @@
+{
+  "stage": "e2e",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "story_coherence",
+      "description": "The game tells a complete story with a beginning, middle, and end. Scenes connect causally — what happens in scene N affects scene N+1 in a legible way. Characters pursue goals that were established early and resolved by the end. Test: if scenes could be shuffled without the player noticing, score 0–35. If the ending feels earned by what came before, score 70+. If the story just stops rather than resolves, score 0–40.",
+      "weight": 2.0
+    },
+    {
+      "name": "character_consistency",
+      "description": "Characters behave the same way across scenes — same voice, same priorities, same speech patterns. A character who is cold in scene 1 doesn't become warm in scene 3 without a reason shown in the script. Test: pick any character and read only their lines across all scenes. Do they sound like the same person? Inconsistency in voice or behavior across scenes scores 0–45. Characters who feel identical across all scenes (consistent but flat) score 40–60. Consistent AND distinct scores 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "dramatic_arc",
+      "description": "The story builds toward something. Tension increases, stakes escalate, or emotional stakes deepen as the game progresses. The final scenes feel more charged than the opening scenes. Test: does the middle sag — scenes that feel like filler between setup and payoff? If yes, score 0–50. If every scene advances the arc in a legible way and the climax lands with weight, score 75+.",
+      "weight": 1.5
+    },
+    {
+      "name": "dialogue_quality",
+      "description": "Across the full game, dialogue sounds like real people talking — not AI-generated filler, not exposition dumps, not characters stating their feelings directly. Lines respond to what was just said. Characters have distinct voices. Test: if any character delivers a speech explaining the theme or their inner state plainly ('I realize now that I was afraid of...'), score 0–40 regardless of other quality. If dialogue is bland but functional, score 40–60. If dialogue is sharp, specific, and shows rather than tells, score 75+.",
+      "weight": 2.0
+    },
+    {
+      "name": "renpy_playability",
+      "description": "The game compiled and is playable from start to finish. The outputs dict includes build_result.lint.error_count — use it as your primary signal. If error_count is 0: the game compiled clean; evaluate scene reachability from the script text and score 75–100 based on whether jumps form a connected path. If error_count is 1–3: score 30–60 regardless of other quality. If error_count is >3: score 0–30. If error_count is null (SDK not configured): judge purely from script text — every scene must have a valid label and end with jump or return; undefined character ids or broken jumps score 0–40.",
+      "weight": 1.5
+    }
+  ]
+}

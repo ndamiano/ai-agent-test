@@ -8,9 +8,12 @@ import io
 import json
 import logging
 import queue
+import random
+import shutil
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -138,25 +141,48 @@ class StageRunner:
 
 
 class PipelineEvalRunner:
-    """Runs a full pipeline end-to-end N times."""
+    """Runs a full pipeline end-to-end N times.
 
-    def __init__(self, pipeline_name: str, brief: dict):
+    briefs: list of brief dicts. If more than one, a random brief is picked per run.
+    """
+
+    def __init__(self, pipeline_name: str, briefs: list[dict]):
         self.pipeline_name = pipeline_name
-        self.brief = brief
+        self.briefs = briefs if isinstance(briefs, list) else [briefs]
 
     def run_n(self, n: int) -> list:
         from pipelines.registry import run_pipeline
+        from eval._paths import GAMES_DIR
 
         results = []
         for i in range(n):
+            brief = random.choice(self.briefs)
             with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
                 t0 = time.monotonic()
                 try:
-                    outputs = run_pipeline(self.pipeline_name, self.brief, tmp)
-                    result = {"ok": True, "outputs": outputs, "elapsed": time.monotonic() - t0}
+                    outputs = run_pipeline(self.pipeline_name, brief, tmp)
+                    elapsed = time.monotonic() - t0
+                    game_dir = self._save_game(tmp_path, brief)
+                    result = {"ok": True, "outputs": outputs, "elapsed": elapsed, "game_dir": game_dir}
                 except Exception as e:
                     result = {"ok": False, "error": str(e), "elapsed": time.monotonic() - t0}
             results.append(result)
             tag = "ok  " if result["ok"] else "FAIL"
-            print(f"  run {i+1:3d}/{n}  {tag}  {result['elapsed']:.1f}s")
+            brief_tag = brief.get("genre", "?")
+            game_note = f"  → {result['game_dir']}" if result.get("game_dir") else ""
+            print(f"  run {i+1:3d}/{n}  {tag}  {result['elapsed']:.1f}s  [{brief_tag}]{game_note}")
         return results
+
+    def _save_game(self, tmp_path: Path, brief: dict) -> str | None:
+        from eval._paths import GAMES_DIR
+
+        game_src = tmp_path / "game_output"
+        if not game_src.exists():
+            return None
+        genre = brief.get("genre", "unknown").replace(" ", "_")[:20]
+        uid = uuid.uuid4().hex[:8]
+        dest = GAMES_DIR / f"{self.pipeline_name}_{genre}_{uid}"
+        GAMES_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(game_src, dest)
+        return str(dest)

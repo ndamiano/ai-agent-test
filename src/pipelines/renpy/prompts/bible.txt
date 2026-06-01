@@ -1,30 +1,44 @@
-You are developing a {genre} visual novel.
-Tone: {tone}
-Setting concept: {setting}
-Vision: {notes}
+You are developing a {{genre}} visual novel.
+Tone: {{tone}}
+Setting concept: {{setting}}
+Vision: {{notes}}
 
-Generate the story bible. This is the single source of truth. Keep the total output under 800 tokens.
+Generate a story bible as a single JSON object that will serve as the absolute source of truth for every line of dialogue. Every character, secret, and speech pattern must force natural, subtext‑driven conversation — never exposition, never direct statements of feeling or theme.
 
-Output exactly this JSON:
+**Speech pattern mandate:**
+- Each character gets: one subtle verbal tic, one word or phrase they never say, and one non‑verbal behaviour
+- No two characters may share the same tic or prohibited phrase
+- Tics must be subtle and situational — not something said on every line
+- Speech patterns must be grounded in concrete habits (e.g., "fills silences with 'right?'") — never "talks poetically" or "speaks with deep emotion"
+
+**Secret mandate:**
+- Secrets must be concrete facts — a past action, a hidden relationship, withheld information
+- Bad: "She is secretly afraid of commitment." Good: "She locked her brother in the basement during a panic attack."
+- Must create tension when hinted at, but never be confessed outright
+
+**Output exactly this JSON:**
+
 {
-  "premise": "one gripping paragraph: the hook, what is at stake, and why it must be resolved now",
+  "premise": "one gripping paragraph: the hook, what concrete action is at stake, and why it must be resolved now — no abstract emotional language",
   "tone_directives": [
-    {"adjective": "word", "explanation": "brief clarification e.g. 'melancholic, not hopeless'"}
+    {"adjective": "word", "explanation": "brief clarification that ties to dialogue subtext — e.g. 'paranoid: characters speak warily, trail off mid‑sentence, or repeat questions'"}
   ],
   "setting": {
     "name": "location name",
-    "physical_description": "2-3 sentences: what the world looks like",
-    "rules": "1-2 sentences: what makes this world strange or constrained",
-    "atmosphere": "sensory details that define the mood"
+    "physical_description": "2–3 sentences: what the world looks like — include sensory details that could influence how characters talk (e.g., noisy market forces shouting, hushed library encourages whispers)",
+    "rules": "1–2 sentences: what makes this world strange or constrained — must create concrete obstacles that cause subtext in dialogue",
+    "atmosphere": "sensory details that define the mood — avoid abstract feelings; use sounds, smells, light, temperature etc."
   },
   "characters": [
     {
       "id": "snake_case_id",
       "name": "Full Name",
       "role": "protagonist|antagonist|love_interest|mentor|rival|confidante",
-      "secret": "one sentence: what they are hiding and why",
-      "speech_pattern": "one sentence: how they talk — rhythm, vocabulary, distinctive tells",
-      "appearance": "2-3 sentences describing this character for storytelling context",
+      "secret": "one sentence: a concrete fact they are hiding — never an emotional state",
+      "verbal_tic": "one short phrase or habit they use when speaking — e.g. 'trails off with …you know?' or 'starts sentences with Look, when pressured' — must be situational, not used on every line",
+      "forbidden_word": "one word or short phrase they never say, and why — e.g. 'never says yes because it gives certainty'",
+      "nonverbal": "one physical behaviour — e.g. 'taps wristwatch when uncomfortable'",
+      "appearance": "2–3 sentences — focus on details that could be referenced in dialogue (e.g. 'a scar on their left hand that they touch when lying')",
       "appearance_tags": {
         "hair": "color, length, style",
         "eyes": "color and shape",
@@ -35,13 +49,13 @@ Output exactly this JSON:
     }
   ],
   "themes": [
-    "A thematic question the story asks — phrased as a question"
+    "A thematic question the story asks — phrased as a concrete, action‑driven question (e.g. 'What would you trade to protect the truth?') — never abstract"
   ]
 }
 
-Rules:
-- {character_count} characters exactly (4-6 is ideal)
-- tone_directives: 3-5 entries
-- themes: 2-3 questions
+**Rules:**
+- {{character_count}} characters exactly
+- tone_directives: 3–5 entries
+- themes: 2–3 questions
 - Each character must be narratively necessary — no interchangeable roles
-- Each character's secret must create potential conflict with at least one other character
+- All secrets must be facts that create subtext when mentioned naturally — never a confession of inner feeling

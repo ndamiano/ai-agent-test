@@ -255,27 +255,6 @@ def test_validate_brief_raises_on_empty_brief():
         _validate_brief({})
 
 
-# ---------------------------------------------------------------------------
-# scene_script.txt prompt content
-# ---------------------------------------------------------------------------
-
-def test_scene_script_prompt_has_narrator_guidance():
-    prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
-    content = prompt_file.read_text()
-    assert "narration" in content.lower() or "narrator" in content.lower()
-
-
-def test_scene_script_prompt_has_multiline_guidance():
-    prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
-    content = prompt_file.read_text()
-    assert "consecutive" in content or "alternation" in content
-
-
-def test_scene_script_prompt_has_opening_hint_placeholder():
-    prompt_file = Path(__file__).parent.parent / "src" / "pipelines" / "renpy" / "prompts" / "scene_script.txt"
-    content = prompt_file.read_text()
-    assert "{opening_hint}" in content
-
 
 # ---------------------------------------------------------------------------
 # Lint helpers

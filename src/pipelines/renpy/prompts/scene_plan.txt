@@ -1,5 +1,5 @@
 Story bible:
-{bible|json}
+{bible_slim|json}
 
 Plan the scene structure. Target {scene_count} scenes.
 
@@ -11,20 +11,21 @@ Output exactly:
       "title": "short title",
       "location_id": "snake_case_location",
       "characters_present": ["character_id"],
-      "what_player_learns": "one sentence: new information revealed in this scene",
+      "purpose": "one sentence: why this scene must exist — what it establishes, reveals, or changes that the story cannot work without. If you can remove it without affecting any other scene, rewrite or cut it.",
       "choices": [
+        {"text": "player-facing choice label", "leads_to": "scene_id"},
         {"text": "player-facing choice label", "leads_to": "scene_id"}
       ],
       "emotional_beat": "tense|melancholic|revelatory|hopeful|confrontational|tender|ominous",
-      "summary": "one sentence: what concretely happens and what changes as a result",
-      "cg_description": "OPTIONAL — only for 2-3 scenes with the highest visual and dramatic impact: vivid art direction for a full-screen illustration of this scene's key moment (characters, action, setting, lighting, composition). Omit this field entirely for all other scenes."
+      "summary": "one sentence: what concretely happens in this scene",
+      "has_cg": true
     }
   ]
 }
 
 Rules:
 - No prose, no dialogue — structure only
-- choices: empty array [] if no player choice in this scene
+- choices: if the scene has a real player decision, provide exactly 2 options leading to different scene_ids; otherwise use empty array [] — never a single-option menu
 - location_id: snake_case, 2-4 distinct locations total (e.g. "library", "rooftop", "office") — reuse across scenes
 - characters_present: 1-3 per scene; use exactly 1 character for solo reflection or monologue scenes (1-2 such scenes per story)
 - Include 1-2 monologue scenes: one character alone — interior conflict, a realization, grief, resolve, or speaking aloud to no one
@@ -32,3 +33,4 @@ Rules:
 - Escalate stakes across the sequence — early scenes establish, middle scenes complicate, final scene resolves
 - The final scene must resolve the premise from the bible
 - All "leads_to" values must be valid scene ids in this plan
+- has_cg: true only for 2-3 scenes with the highest visual and dramatic impact — false for all others

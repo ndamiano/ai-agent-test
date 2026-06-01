@@ -105,18 +105,20 @@ def _call_json(prompt: str, label: str, max_tokens: int, attempts: int = 1) -> d
 # Stage 1: Bible
 # ---------------------------------------------------------------------------
 
-def generate_bible(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
-    brief           = inputs.get("brief", {})
-    _validate_brief(brief)
-    character_count = _parse_count(brief.get("character_count", 4))
-
-    prompt = render_template(_PROMPTS_DIR / "bible.txt", {
+def _build_bible_prompt(brief: Dict) -> str:
+    return render_template(_PROMPTS_DIR / "bible.txt", {
         "genre":           brief.get("genre", ""),
         "tone":            brief.get("tone", ""),
         "setting":         brief.get("setting", ""),
         "notes":           brief.get("notes", ""),
-        "character_count": character_count,
+        "character_count": _parse_count(brief.get("character_count", 4)),
     })
+
+
+def generate_bible(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
+    brief = inputs.get("brief", {})
+    _validate_brief(brief)
+    prompt = _build_bible_prompt(brief)
 
     print("    [bible]  generating story bible")
     result = _call_json(prompt, "bible", max_tokens)
@@ -134,15 +136,29 @@ def generate_bible(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> 
 # Stage 2: Scene Plan
 # ---------------------------------------------------------------------------
 
-def generate_scene_plan(inputs: Dict, working_dir: Path, max_tokens: int = 32000) -> Dict:
-    brief       = inputs.get("brief", {})
-    bible       = inputs.get("bible", {})
-    scene_count = _parse_count(brief.get("scene_count", "15"))
-
-    prompt = render_template(_PROMPTS_DIR / "scene_plan.txt", {
-        "bible":       bible,
-        "scene_count": scene_count,
+def _build_scene_plan_prompt(brief: Dict, bible: Dict) -> str:
+    bible_slim = {
+        "premise": bible.get("premise", ""),
+        "tone": [d.get("adjective", "") for d in bible.get("tone_directives", [])],
+        "setting": {
+            "name":  bible.get("setting", {}).get("name", ""),
+            "rules": bible.get("setting", {}).get("rules", ""),
+        },
+        "characters": [
+            {"id": c["id"], "name": c["name"], "role": c.get("role", ""), "secret": c.get("secret", "")}
+            for c in bible.get("characters", [])
+        ],
+    }
+    return render_template(_PROMPTS_DIR / "scene_plan.txt", {
+        "bible_slim":  bible_slim,
+        "scene_count": _parse_count(brief.get("scene_count", "15")),
     })
+
+
+def generate_scene_plan(inputs: Dict, working_dir: Path, max_tokens: int = 32000) -> Dict:
+    brief  = inputs.get("brief", {})
+    bible  = inputs.get("bible", {})
+    prompt = _build_scene_plan_prompt(brief, bible)
 
     print("    [scene_plan]  planning scene structure")
     result = _call_json(prompt, "scene plan", max_tokens, attempts=3)
@@ -159,6 +175,48 @@ def generate_scene_plan(inputs: Dict, working_dir: Path, max_tokens: int = 32000
 # Stage 3: Asset Manifest
 # ---------------------------------------------------------------------------
 
+def _build_asset_manifest_prompt(brief: Dict, bible: Dict, scene_plan: Dict) -> str:
+    scenes   = scene_plan.get("scenes", [])
+    setting  = bible.get("setting", {})
+    location_ids = [
+        loc for loc in dict.fromkeys(s.get("location_id", "") for s in scenes) if loc
+    ]
+    tone = ", ".join(d.get("adjective", "") for d in bible.get("tone_directives", []))
+
+    location_scene_map: Dict[str, list] = {}
+    for loc in location_ids:
+        location_scene_map[loc] = [
+            s.get("summary", "") for s in scenes if s.get("location_id") == loc and s.get("summary")
+        ]
+    location_list = "\n".join(
+        f"- {loc} (id: {_ensure_bg_prefix(loc)})\n  " + "; ".join(summaries[:3])
+        for loc, summaries in location_scene_map.items()
+    )
+
+    cg_scenes_text = "\n".join(
+        f"- {s['id']}: {s.get('summary', '')} (beat: {s.get('emotional_beat', '')})"
+        for s in scenes if s.get("has_cg")
+    ) or "(none)"
+
+    character_list = "\n".join(
+        f"  {c['name']} ({c.get('role', '')}): {c.get('appearance', '')}"
+        for c in bible.get("characters", [])
+    )
+
+    return render_template(_PROMPTS_DIR / "asset_manifest.txt", {
+        "title":               brief.get("title", "Untitled"),
+        "premise":             bible.get("premise", ""),
+        "setting_name":        setting.get("name", ""),
+        "setting_description": setting.get("physical_description", ""),
+        "setting_rules":       setting.get("rules", ""),
+        "setting_atmosphere":  setting.get("atmosphere", ""),
+        "tone":                tone,
+        "character_list":      character_list,
+        "location_list":       location_list,
+        "cg_scenes":           cg_scenes_text,
+    })
+
+
 def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
     brief      = inputs.get("brief", {})
     bible      = inputs.get("bible", {})
@@ -167,8 +225,7 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
     setting    = bible.get("setting", {})
 
     location_ids = [
-        loc for loc in dict.fromkeys(s.get("location_id", "") for s in scenes)
-        if loc
+        loc for loc in dict.fromkeys(s.get("location_id", "") for s in scenes) if loc
     ]
 
     char_expressions: Dict[str, Dict] = {}
@@ -179,26 +236,20 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
         char_expressions[sid] = {c: _BEAT_TO_EXPRESSION.get(beat, "neutral") for c in scene.get("characters_present", [])}
         music_cues[sid]        = beat
 
-    tone_directives = ", ".join(d.get("adjective", "") for d in bible.get("tone_directives", []))
+    cg_scene_list = [s for s in scenes if s.get("has_cg")]
+    prompt = _build_asset_manifest_prompt(brief, bible, scene_plan)
 
-    prompt = render_template(_PROMPTS_DIR / "asset_manifest.txt", {
-        "title":               brief.get("title", "Untitled"),
-        "premise":             bible.get("premise", ""),
-        "setting_name":        setting.get("name", ""),
-        "setting_description": setting.get("physical_description", ""),
-        "setting_atmosphere":  setting.get("atmosphere", ""),
-        "tone":                tone_directives,
-        "characters":          ", ".join(f"{c['name']} ({c.get('role', '')})" for c in bible.get("characters", [])),
-        "location_list":       "\n".join(f"- {loc}: {_ensure_bg_prefix(loc)}" for loc in location_ids),
-    })
-
-    print("    [asset_manifest]  generating background and title card descriptions")
-    bg_by_id:   Dict[str, Dict] = {}
-    title_card: Dict            = {}
+    print("    [asset_manifest]  generating art direction, backgrounds, and title card")
+    bg_by_id:      Dict[str, Dict] = {}
+    title_card:    Dict            = {}
+    art_direction: Dict            = {}
+    cg_results:    list            = []
     try:
-        result     = _call_json(prompt, "asset manifest", max_tokens, attempts=3)
-        bg_by_id   = {b["id"]: b for b in result.get("backgrounds", [])}
-        title_card = result.get("title_card", {})
+        result        = _call_json(prompt, "asset manifest", max_tokens, attempts=3)
+        bg_by_id      = {b["id"]: b for b in result.get("backgrounds", [])}
+        title_card    = result.get("title_card", {})
+        art_direction = result.get("art_direction", {})
+        cg_results    = result.get("cgs", [])
     except RuntimeError:
         print("    [asset_manifest]  LLM failed, using code-derived descriptions")
 
@@ -228,16 +279,18 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
             ),
         }
 
+    cg_desc_by_scene = {c["scene_id"]: c["description"] for c in cg_results if c.get("scene_id") and c.get("description")}
     cgs = [
         {
-            "id":          f"cg_{scene['id']}",
-            "image_file":  f"cg_{scene['id']}.png",
-            "description": scene["cg_description"],
+            "id":          f"cg_{s['id']}",
+            "image_file":  f"cg_{s['id']}.png",
+            "description": cg_desc_by_scene.get(s["id"], f"{s.get('summary', '')} — {s.get('emotional_beat', '')} moment"),
         }
-        for scene in scenes if scene.get("cg_description")
+        for s in cg_scene_list
     ][:4]
 
     return {
+        "art_direction":         art_direction,
         "backgrounds":           list(bg_by_id.values()),
         "characters":            [
             {
@@ -260,27 +313,23 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
 # Stage 4: Scene Scripts
 # ---------------------------------------------------------------------------
 
-def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
-    bible      = inputs.get("bible", {})
-    scene_plan = inputs.get("scene_plan", {})
-    manifest   = inputs.get("asset_manifest", {})
-
+def _build_scene_script_prompts(bible: Dict, scene_plan: Dict, manifest: Dict):
+    """Yield (scene_id, system_prompt, user_prompt) for each scene."""
     scenes      = scene_plan.get("scenes", [])
     expressions = manifest.get("character_expressions", {})
     scene_ids   = [s["id"] for s in scenes]
-
-    cg_scene_ids: set = {
-        cg["id"][3:] for cg in manifest.get("cgs", [])
-        if cg.get("id", "").startswith("cg_")
-    }
-
-    bible_sum = _bible_summary(bible)
-    char_vars = _character_vars_block(bible)
-    scripts: Dict[str, str] = {}
-
+    cg_scene_ids: set = (
+        {s["id"] for s in scenes if s.get("has_cg")}
+        or {cg["id"][3:] for cg in manifest.get("cgs", []) if cg.get("id", "").startswith("cg_")}
+    )
     for i, scene in enumerate(scenes):
-        sid   = scene["id"]
-        print(f"    [scene_scripts]  {i + 1}/{len(scenes)}: {scene.get('title', sid)}")
+        sid              = scene["id"]
+        chars_present    = scene.get("characters_present", [])
+        bible_sum = _bible_summary(bible, chars_present)
+        char_vars = _character_vars_block(bible, chars_present)
+        next_sid      = scene_ids[i + 1] if i + 1 < len(scene_ids) else None
+        loc_id        = scene.get("location_id", "")
+        background_id = _ensure_bg_prefix(loc_id) if loc_id else ""
 
         prev_parts = []
         if i > 1:
@@ -289,11 +338,7 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
             prev_parts.append(f"Previous scene: {scenes[i - 1].get('summary', '')}")
         prev_summary = "\n".join(prev_parts) if prev_parts else "(story begins)"
 
-        next_sid      = scene_ids[i + 1] if i + 1 < len(scene_ids) else None
-        loc_id        = scene.get("location_id", "")
-        background_id = _ensure_bg_prefix(loc_id) if loc_id else ""
-
-        scene_ctx = dict(scene)
+        scene_ctx = {k: v for k, v in scene.items() if k not in ("purpose", "has_cg")}
         scene_ctx["scene_id"]      = sid
         scene_ctx["is_last_scene"] = (i + 1 == len(scenes))
         if next_sid and not scene.get("choices"):
@@ -314,6 +359,20 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
             ),
             "cg_block": _build_cg_block(f"cg_{sid}", background_id) if sid in cg_scene_ids else "",
         })
+        yield sid, _SCRIPT_SYSTEM, prompt
+
+
+def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -> Dict:
+    bible      = inputs.get("bible", {})
+    scene_plan = inputs.get("scene_plan", {})
+    manifest   = inputs.get("asset_manifest", {})
+    scenes     = scene_plan.get("scenes", [])
+    scene_ids  = [s["id"] for s in scenes]
+    scripts: Dict[str, str] = {}
+
+    for i, (sid, _, prompt) in enumerate(_build_scene_script_prompts(bible, scene_plan, manifest)):
+        scene = scenes[i]
+        print(f"    [scene_scripts]  {i + 1}/{len(scenes)}: {scene.get('title', sid)}")
 
         script = None
         agent  = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=max_tokens)
@@ -337,7 +396,9 @@ def write_scene_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 16000
 
         if script is None:
             print(f"    [scene_scripts]  {sid} using fallback")
-            end_line = f"    jump {next_sid}" if next_sid else '    "The End."\n    return'
+            next_sid      = scene_ids[i + 1] if i + 1 < len(scene_ids) else None
+            background_id = _ensure_bg_prefix(scene.get("location_id", ""))
+            end_line      = f"    jump {next_sid}" if next_sid else '    "The End."\n    return'
             script = (
                 f"label {sid}:\n"
                 f"    scene {background_id} with dissolve\n"

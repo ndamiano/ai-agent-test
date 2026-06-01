@@ -21,15 +21,25 @@ _SCRIPT_SYSTEM = (
 # Scene writing helpers
 # ---------------------------------------------------------------------------
 
-def _bible_summary(bible: Dict) -> str:
+def _bible_summary(bible: Dict, characters_present: list | None = None) -> str:
     chars = bible.get("characters", [])
+    if characters_present:
+        chars = [c for c in chars if c.get("id") in characters_present]
     char_lines = "\n".join(
         f"  {c['name']} (id={c['id']}, {c.get('role', '')}): "
-        f"speech={c.get('speech_pattern', '')} | secret={c.get('secret', '')}"
+        f"verbal_tic={c.get('verbal_tic') or c.get('speech_pattern', '')} | "
+        f"forbidden_word={c.get('forbidden_word', '')} | "
+        f"nonverbal={c.get('nonverbal', '')} | "
+        f"secret={c.get('secret', '')}"
         for c in chars
     )
     setting = bible.get("setting", {})
-    tone    = ", ".join(d.get("adjective", "") for d in bible.get("tone_directives", []))
+    tone_parts = [
+        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
+        for d in bible.get("tone_directives", [])
+        if d.get("adjective")
+    ]
+    tone = "; ".join(tone_parts)
     return (
         f"Premise: {bible.get('premise', '')}\n"
         f"Tone: {tone}\n"
@@ -38,10 +48,13 @@ def _bible_summary(bible: Dict) -> str:
     )
 
 
-def _character_vars_block(bible: Dict) -> str:
+def _character_vars_block(bible: Dict, characters_present: list | None = None) -> str:
+    chars = bible.get("characters", [])
+    if characters_present:
+        chars = [c for c in chars if c.get("id") in characters_present]
     return "\n".join(
         f"  {c['id']} — {c['name']} ({c.get('role', '')})"
-        for c in bible.get("characters", [])
+        for c in chars
     )
 
 

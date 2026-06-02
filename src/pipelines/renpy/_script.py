@@ -16,7 +16,6 @@ _SCRIPT_SYSTEM = (
     "No JSON, no markdown fences, no explanation."
 )
 
-
 # ---------------------------------------------------------------------------
 # Scene writing helpers
 # ---------------------------------------------------------------------------
@@ -263,6 +262,7 @@ def _stitch_script(
 
 def _write_options_rpy(game_dir: str, title: str, main_menu_bg_file: str = "") -> None:
     safe = re.sub(r"[^A-Za-z0-9_]", "", title.replace(" ", "_")) or "UntitledGame"
+    bg_line = f'\n    gui.main_menu_background = "images/{main_menu_bg_file}"' if main_menu_bg_file else ""
     content = (
         f'define config.name = "{title}"\n'
         f'define config.version = "1.0"\n'
@@ -272,10 +272,9 @@ def _write_options_rpy(game_dir: str, title: str, main_menu_bg_file: str = "") -
         f'init python:\n'
         f'    build.name = "{safe}"\n'
         f'    build.executable_name = "{safe}"\n'
-        f'    build.directory_name = "{safe}-1.0"\n'
+        f'    build.directory_name = "{safe}-1.0"'
+        f'{bg_line}\n'
     )
-    if main_menu_bg_file:
-        content += f'define gui.main_menu_background = "images/{main_menu_bg_file}"\n'
     with open(os.path.join(game_dir, "options.rpy"), "w", encoding="utf-8") as f:
         f.write(content)
 
@@ -302,46 +301,6 @@ def _validate_and_repair(
             scripts[sid] = _repair_broken_scene(
                 sid, script, issues, valid_labels, valid_backgrounds, valid_characters, valid_cgs
             )
-
-
-def _lint_and_repair(
-    output_dir: str,
-    full_script: str,
-    scripts: Dict[str, str],
-    scene_ids: List[str],
-    bible: Dict,
-    manifest: Dict,
-    valid_labels: Set[str],
-    valid_backgrounds: Set[str],
-    valid_characters: Set[str],
-    valid_cgs: Set[str],
-    sdk_path: str,
-) -> str | None:
-    """Run lint; repair scenes with errors. Returns updated stitched script, or None if no repairs."""
-    lint_output = _run_renpy_lint(output_dir, sdk_path)
-    if not lint_output:
-        return None
-    lint_errors = _parse_lint_errors(lint_output)
-    if not lint_errors:
-        return None
-
-    print(f"    [build]  lint: {len(lint_errors)} issue(s) — attempting repair")
-    errors_by_scene: Dict[str, List[str]] = {}
-    for lineno, context in lint_errors:
-        sid = _scene_id_at_line(full_script, lineno)
-        if sid and sid in scripts:
-            errors_by_scene.setdefault(sid, []).append(context)
-    if not errors_by_scene:
-        return None
-
-    for sid, errs in errors_by_scene.items():
-        issue = "; ".join(errs[:5])
-        print(f"    [build]  lint repair: {sid}")
-        scripts[sid] = _repair_broken_scene(
-            sid, scripts[sid], issue,
-            valid_labels, valid_backgrounds, valid_characters, valid_cgs,
-        )
-    return _stitch_script(bible, manifest, scripts, scene_ids)
 
 
 # ---------------------------------------------------------------------------

@@ -132,6 +132,7 @@ class PipelineRunner:
 
     def run(self, pipeline: Pipeline, brief: Dict[str, Any]) -> bool:
         from tools.execution_context import pipeline_context
+        from llm_clients.log_context import set_log_dir
 
         self.pipeline_path = [*self.parent_pipeline_path, pipeline.name]
 
@@ -140,34 +141,41 @@ class PipelineRunner:
             shutil.rmtree(self.working_dir)
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
-        with pipeline_context(self.pipeline_path):
-            self._write("brief.json", brief)
+        log_dir = self.working_dir / "llm_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        token = set_log_dir(str(log_dir))
+        try:
+            with pipeline_context(self.pipeline_path):
+                self._write("brief.json", brief)
 
-            print(f"\n{'='*60}")
-            print(f"Pipeline: {pipeline.name}  ({len(pipeline.nodes)} nodes)")
-            print(f"Working dir: {self.working_dir.resolve()}")
-            print(f"{'='*60}\n")
+                print(f"\n{'='*60}")
+                print(f"Pipeline: {pipeline.name}  ({len(pipeline.nodes)} nodes)")
+                print(f"Working dir: {self.working_dir.resolve()}")
+                print(f"{'='*60}\n")
 
-            self._publish_progress(
-                "pipeline_started",
-                pipeline.name,
-                node_count=len(pipeline.nodes),
-            )
+                self._publish_progress(
+                    "pipeline_started",
+                    pipeline.name,
+                    node_count=len(pipeline.nodes),
+                )
 
-            for node in pipeline.nodes:
-                if not self._run_node(pipeline, node):
-                    print(f"\n  Pipeline failed at node: [{node.id}]")
-                    self._publish_progress(
-                        "pipeline_failed",
-                        pipeline.name,
-                        node_id=node.id,
-                        error=f"Pipeline failed at node: {node.id}",
-                    )
-                    return False
+                for node in pipeline.nodes:
+                    if not self._run_node(pipeline, node):
+                        print(f"\n  Pipeline failed at node: [{node.id}]")
+                        self._publish_progress(
+                            "pipeline_failed",
+                            pipeline.name,
+                            node_id=node.id,
+                            error=f"Pipeline failed at node: {node.id}",
+                        )
+                        return False
 
-            print("\n  Pipeline complete")
-            self._publish_progress("pipeline_completed", pipeline.name)
-            return True
+                print("\n  Pipeline complete")
+                self._publish_progress("pipeline_completed", pipeline.name)
+                return True
+        finally:
+            from llm_clients.log_context import reset_log_dir
+            reset_log_dir(token)
 
     def run_from(self, pipeline: Pipeline, brief: Dict[str, Any], node_id: str) -> bool:
         start = next((i for i, n in enumerate(pipeline.nodes) if n.id == node_id), None)

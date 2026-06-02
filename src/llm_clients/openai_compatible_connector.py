@@ -12,6 +12,14 @@ from llm_clients.rate_limiter import get_llm_rate_limiter
 logger = logging.getLogger(__name__)
 
 
+def _get_log_path(filename: str) -> str:
+    from llm_clients.log_context import get_log_dir
+    import os
+    log_dir = get_log_dir() or "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, filename)
+
+
 def _write_log(log_file: str, entry: dict):
     try:
         with open(log_file, "a") as f:
@@ -22,7 +30,7 @@ def _write_log(log_file: str, entry: dict):
 
 
 def _log_request_to_file(payload: dict, endpoint: str, request_id: str, metadata: dict = None):
-    _write_log("logs/llm_requests.log", {
+    _write_log(_get_log_path("llm_requests.log"), {
         "request_id": request_id,
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint,
@@ -32,7 +40,7 @@ def _log_request_to_file(payload: dict, endpoint: str, request_id: str, metadata
 
 
 def _log_response_to_file(response: Any, endpoint: str, request_id: str, metadata: dict = None):
-    _write_log("logs/llm_responses.log", {
+    _write_log(_get_log_path("llm_responses.log"), {
         "request_id": request_id,
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint,

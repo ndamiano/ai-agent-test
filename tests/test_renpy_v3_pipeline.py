@@ -314,7 +314,7 @@ def test_stitch_script_structure():
 def test_write_options_rpy_main_menu_bg(tmp_path):
     _write_options_rpy(str(tmp_path), "My Game", main_menu_bg_file="office.png")
     content = (tmp_path / "options.rpy").read_text()
-    assert 'define gui.main_menu_background = "images/office.png"' in content
+    assert 'gui.main_menu_background = "images/office.png"' in content
     assert 'define config.name = "My Game"' in content
 
 

@@ -13,7 +13,6 @@ from pipelines.renpy._script import (
     _validate_scene_script,
     _postprocess_script,
     _validate_and_repair,
-    _lint_and_repair,
     _stitch_script,
     _write_options_rpy,
     _SCRIPT_SYSTEM,
@@ -79,13 +78,27 @@ def _get_sdk_path() -> str:
 # Stage 1: Graph (no LLM)
 # ---------------------------------------------------------------------------
 
+def _to_int(val, default: int) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_float(val, default: float) -> float:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
 def generate_graph(inputs: Dict, working_dir: Path) -> Dict:
     brief = inputs.get("brief", {})
     return _graph.generate_dag(
-        num_endings=int(brief.get("num_endings", 4)),
-        depth=int(brief.get("depth", 6)),
-        min_good_endings=int(brief.get("min_good_endings", 2)),
-        merge_probability=float(brief.get("merge_probability", 0.3)),
+        num_endings=_to_int(brief.get("num_endings", 4), 4),
+        depth=_to_int(brief.get("depth", 6), 6),
+        min_good_endings=_to_int(brief.get("min_good_endings", 2), 2),
+        merge_probability=_to_float(brief.get("merge_probability", 0.3), 0.3),
         seed=brief.get("seed"),
     )
 
@@ -463,17 +476,6 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
     sdk_path = _get_sdk_path()
 
     if sdk_path:
-        repaired = _lint_and_repair(
-            output_dir, full_script, scripts, node_ids,
-            premise, manifest,
-            valid_labels, valid_backgrounds, valid_characters, valid_cgs,
-            sdk_path,
-        )
-        if repaired is not None:
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(repaired)
-            track_written_file(script_path)
-            print("    [build]  rebuilt after lint repair")
         lint_summary = run_final_lint(output_dir, sdk_path)
         result["lint"] = lint_summary
         print(f"    [build]  final lint: {lint_summary['error_count']} error(s)")

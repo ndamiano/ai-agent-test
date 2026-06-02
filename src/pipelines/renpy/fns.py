@@ -14,7 +14,6 @@ from pipelines.renpy._script import (
     _scenes_for_character,
     _postprocess_script,
     _validate_and_repair,
-    _lint_and_repair,
     _stitch_script,
     _write_options_rpy,
     run_final_lint,
@@ -592,17 +591,6 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
     result   = {"project_dir": os.path.abspath(output_dir)}
     sdk_path = _get_sdk_path()
     if sdk_path:
-        repaired = _lint_and_repair(
-            output_dir, full_script, scripts, scene_ids,
-            bible, manifest,
-            valid_labels, valid_backgrounds, valid_characters, valid_cgs,
-            sdk_path,
-        )
-        if repaired is not None:
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(repaired)
-            track_written_file(script_path)
-            print("    [build]  rebuilt after lint repair")
         lint_summary = run_final_lint(output_dir, sdk_path)
         result["lint"] = lint_summary
         print(f"    [build]  final lint: {lint_summary['error_count']} error(s)")

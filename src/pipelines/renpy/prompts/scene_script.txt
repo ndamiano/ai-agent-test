@@ -31,6 +31,31 @@ label scene_id:                      — first line of every scene (required)
     "The End."                       — only in the final scene
     return                           — only in the final scene, after "The End."
 
+## Common mistakes — NEVER do these
+
+BAD:  She adjusts the brim of her cap.
+GOOD: "She adjusts the brim of her cap."
+
+BAD:  *She presses her lower lip.*
+GOOD: "She presses her lower lip."
+
+BAD:  "char_id" "Dialogue here."
+GOOD: char_id "Dialogue here."
+
+BAD:  char_id Dialogue without quotes.
+GOOD: char_id "Dialogue without quotes."
+
+BAD:  char_id "Dialogue," she said.
+GOOD: char_id "Dialogue."
+
+BAD:  The End.
+GOOD: "The End."
+
+BAD:  "scene bg_lab with dissolve"
+GOOD: scene bg_lab with dissolve
+
+Every line inside a label block MUST be: a quoted string, char_id "text", a Ren'Py keyword, or a menu option. Bare prose and asterisks are syntax errors.
+
 {cg_block}
 ## Task
 Write the complete Ren'Py script for this scene.

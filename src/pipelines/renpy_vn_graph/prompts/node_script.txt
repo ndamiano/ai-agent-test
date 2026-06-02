@@ -1,6 +1,3 @@
-## Story Context
-{bible_summary}
-
 ## This Beat
 {beat|json}
 
@@ -15,40 +12,10 @@ background: {background_id}
 ## What comes next
 {next_info}
 
-## Ren'Py Syntax Reference
-label node_id:                       — first line (required, use exactly: label {node_id}:)
-    scene bg_id with dissolve        — set background
-    show char_id at left             — show character left
-    show char_id at right            — show character right
-    show char_id at center           — show character centered (only when alone)
-    hide char_id                     — hide character sprite
-    "Narrator text."                 — narration (never write: Narrator "text")
-    char_id "Dialogue line."         — character speaks (use the id, not the name)
-    menu:                            — player choice (branch nodes only)
-        "Choice text A":
-            jump target_node_id_a
-        "Choice text B":
-            jump target_node_id_b
-    jump next_node_id                — proceed to next node (beat/root nodes)
-    "The End."                       — ending nodes only
-    return                           — ending nodes only, after "The End."
-
-Every line inside a label block MUST be: a quoted string, char_id "text", a Ren'Py keyword, or a menu option. Bare prose and asterisks are syntax errors.
-Do not write show char_id at pos, speaking or show char_id at pos, not_speaking — speaker highlighting is injected automatically.
-
-## Task
 Write the complete Ren'Py script for this node.
 - Start with exactly: label {node_id}:
 - Show the background and character sprites
-- Write 8-14 lines total (dialogue + narration combined) that dramatize the beat's summary and emotional_tone
-- Each spoken line must directly respond to what was just said — characters react to each other, not deliver independent statements
-- Write each character's dialogue in their established voice — personality and speech patterns are in the story context
-- Write dialogue as char_id "text" — never add stage directions: char_id (softly) "text" is invalid
-- Dialogue is words spoken aloud — thoughts, feelings, and atmosphere go in narration lines
-- Use narration freely — atmosphere, inner thoughts, silences, physical actions
-- If only one character is present: lean on narration, cap spoken lines at 4
+- Write 8-14 lines total (dialogue + narration combined)
 
 End correctly:
 {end_instruction}
-
-Output ONLY raw Ren'Py script. No JSON. No markdown. No explanation.

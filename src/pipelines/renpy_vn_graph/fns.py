@@ -8,14 +8,12 @@ from pipelines.runner import render_template
 from llm_clients.inference import PipelineAgent, strip_fences
 from pipelines.renpy_vn_graph import graph as _graph
 from pipelines.renpy._script import (
-    _bible_summary,
     _character_vars_block,
     _validate_scene_script,
     _postprocess_script,
     _validate_and_repair,
     _stitch_script,
     _write_options_rpy,
-    _SCRIPT_SYSTEM,
     run_final_lint,
 )
 from pipelines.renpy.renpy_builder import _copy_templates, _distribute
@@ -26,6 +24,29 @@ _JSON_SYSTEM = (
     "You are a precise creative writing assistant. Output only valid JSON. "
     "No markdown, no explanation, no code fences."
 )
+
+
+def _build_node_script_system(premise: Dict) -> str:
+    chars = premise.get("characters", [])
+    char_profiles = "\n\n".join(
+        f"{c['name']} (id={c['id']}, {c.get('role', '')}):\n"
+        f"  personality: {c.get('personality', '')}\n"
+        f"  voice: {c.get('voice', '')}"
+        for c in chars
+    )
+    tone_parts = [
+        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
+        for d in premise.get("tone_directives", [])
+        if d.get("adjective")
+    ]
+    setting = premise.get("setting", {})
+    return render_template(_PROMPTS_DIR / "node_script_system.txt", {
+        "premise":             premise.get("premise", ""),
+        "tone":                "; ".join(tone_parts),
+        "setting_name":        setting.get("name", ""),
+        "setting_description": setting.get("physical_description", ""),
+        "character_profiles":  char_profiles,
+    })
 
 _CHARACTER_COLORS = [
     "#c8ffc8", "#c8c8ff", "#ffc8c8", "#ffe0a3", "#d8b4ff", "#a7f3d0",
@@ -222,8 +243,9 @@ def backward_fill(inputs: Dict, working_dir: Path, max_tokens: int = 4000) -> Di
 
 def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
     """Yield (node_id, system_prompt, user_prompt) for every node. Used by dev_utils."""
-    nodes = dag.get("nodes", {})
-    topo  = dag.get("topological_order", [])
+    system = _build_node_script_system(premise)
+    nodes  = dag.get("nodes", {})
+    topo   = dag.get("topological_order", [])
     for nid in topo:
         node = nodes.get(nid)
         if not node:
@@ -235,8 +257,7 @@ def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
         node_type     = node["type"]
         children      = node["child_ids"]
         choice_labels = beat.get("choice_labels", [])
-        bible_sum     = _bible_summary(premise, chars_present)
-        char_vars     = _character_vars_block(premise, chars_present)
+        char_vars = _character_vars_block(premise, chars_present)
 
         if node_type == "branch":
             choices = [
@@ -261,7 +282,6 @@ def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
             end_instruction = f"  jump {next_id}" if next_id else '  "The End."\n  return'
 
         user_prompt = render_template(_PROMPTS_DIR / "node_script.txt", {
-            "bible_summary":   bible_sum,
             "beat":            beat,
             "node_id":         nid,
             "node_type":       node_type,
@@ -270,7 +290,7 @@ def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
             "next_info":       next_info,
             "end_instruction": end_instruction,
         })
-        yield (nid, _SCRIPT_SYSTEM, user_prompt)
+        yield (nid, system, user_prompt)
 
 
 def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
@@ -291,7 +311,7 @@ def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) 
         children      = node.get("child_ids", [])
 
         print(f"    [node_scripts]  {nid} ({node_type})")
-        agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=max_tokens)
+        agent = PipelineAgent(system, max_tokens=max_tokens)
         raw   = strip_fences(agent.send(prompt)).strip()
 
         valid, error = _validate_scene_script(nid, raw)

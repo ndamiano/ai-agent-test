@@ -72,6 +72,53 @@ def _validate_scene_script(scene_id: str, script: str) -> Tuple[bool, str]:
         return False, f"Missing 'label {scene_id}:'"
     if len(script.strip()) < 30:
         return False, "Script too short"
+
+    errors = []
+    in_label = False
+    prev_line_is_say = False
+    for line in script.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            prev_line_is_say = False
+            continue
+
+        if re.match(r'label\s+\w+\s*:', stripped):
+            in_label = True
+            prev_line_is_say = False
+            continue
+
+        if not in_label:
+            prev_line_is_say = False
+            continue
+
+        # Bare prose: not a quoted string, not a keyword, not char_id "text"
+        is_keyword = re.match(
+            r'(scene|show|hide|jump|return|menu|call|pause|with|$|play|stop|queue|voice|nvl|window|center|left|right|image|define|transform|init|python)\b',
+            stripped,
+        )
+        is_quoted  = stripped.startswith('"') or stripped.startswith("'")
+        is_char_dialogue = re.match(r'\w+\s+"', stripped)
+        is_menu_option   = re.match(r'"[^"]+"\s*:', stripped)
+        is_indent_block  = re.match(r'(jump|return|pass)\b', stripped)
+
+        if prev_line_is_say and stripped and not stripped.startswith('"') and not is_keyword and not is_char_dialogue:
+            errors.append(f"Line after say statement is unexpectedly indented or invalid: {stripped[:60]!r}")
+
+        if not (is_keyword or is_quoted or is_char_dialogue or is_menu_option or stripped == ""):
+            # Colon-speaker: `Name: "text"` or `Name: text`
+            if re.match(r'\w[\w\s]*:\s+"', stripped) or re.match(r'\w[\w\s]*:\s+\w', stripped):
+                errors.append(f"Invalid colon-speaker syntax (use char_id \"text\" instead): {stripped[:60]!r}")
+            # Asterisk action: *text*
+            elif stripped.startswith("*"):
+                errors.append(f"Asterisk action must be a quoted narration string: {stripped[:60]!r}")
+            # Unquoted char dialogue: word word word (looks like prose)
+            elif re.match(r'^[A-Z][a-z]', stripped) or re.match(r'^\w+ \w+ \w+', stripped):
+                errors.append(f"Bare prose must be a quoted narration string: {stripped[:60]!r}")
+
+        prev_line_is_say = bool(is_quoted or is_char_dialogue)
+
+    if errors:
+        return False, "; ".join(errors[:3])
     return True, ""
 
 
@@ -98,9 +145,9 @@ def _postprocess_script(script: str, valid_characters: set) -> str:
             result.append(line)
             continue
 
-        # Strip erroneous Narrator speaker
-        if re.match(r'Narrator\s+"', stripped):
-            line = re.sub(r'^(\s*)Narrator\s+(")', r'\1\2', line)
+        # Strip erroneous Narrator / narrator speaker
+        if re.match(r'[Nn]arrator\s+"', stripped):
+            line = re.sub(r'^(\s*)[Nn]arrator\s+(")', r'\1\2', line)
             stripped = line.lstrip()
 
         # Collapse over-indentation
@@ -130,6 +177,10 @@ def _postprocess_script(script: str, valid_characters: set) -> str:
                         t = "speaking" if cid == speaker else "not_speaking"
                         result.append(f"{pad}show {cid} at {pos}, {t}")
 
+        # Escape bare % in quoted strings so Ren'Py doesn't treat them as format specs
+        if "%" in line and '%%' not in line:
+            line = re.sub(r'("(?:[^"\\]|\\.)*")', lambda m: m.group(0).replace("%", "%%"), line)
+
         result.append(line)
         prev_expects_block = stripped.rstrip().endswith(":")
         prev_indent = indent
@@ -154,6 +205,12 @@ def _find_script_issues(
     broken_bgs   = set(re.findall(r'\bscene\s+(bg_\w+)', script)) - valid_scenes
     broken_cgs   = set(re.findall(r'\bscene\s+(cg_\w+)', script)) - valid_scenes
     broken_chars = set(re.findall(r'\bshow\s+(\w+)', script)) - valid_characters
+    # Dialogue speakers: lines of the form `word "text"` where word is not a keyword
+    _RENPY_KEYWORDS = {"scene", "show", "hide", "jump", "return", "menu", "call",
+                       "pause", "play", "stop", "queue", "voice", "nvl", "window",
+                       "image", "define", "transform", "init", "python", "label", "with"}
+    dialogue_speakers = set(re.findall(r'^[ \t]*(\w+)\s+"', script, re.MULTILINE))
+    broken_speakers = dialogue_speakers - valid_characters - _RENPY_KEYWORDS
     if broken_jumps:
         parts.append(f"unknown jump targets: {sorted(broken_jumps)}")
     if broken_bgs:
@@ -161,7 +218,9 @@ def _find_script_issues(
     if broken_cgs:
         parts.append(f"unknown CG ids: {sorted(broken_cgs)}")
     if broken_chars:
-        parts.append(f"unknown characters: {sorted(broken_chars)}")
+        parts.append(f"unknown characters in show: {sorted(broken_chars)}")
+    if broken_speakers:
+        parts.append(f"unknown dialogue speakers (not defined as Character): {sorted(broken_speakers)}")
     return "; ".join(parts)
 
 
@@ -262,7 +321,6 @@ def _stitch_script(
 
 def _write_options_rpy(game_dir: str, title: str, main_menu_bg_file: str = "") -> None:
     safe = re.sub(r"[^A-Za-z0-9_]", "", title.replace(" ", "_")) or "UntitledGame"
-    bg_line = f'\n    gui.main_menu_background = "images/{main_menu_bg_file}"' if main_menu_bg_file else ""
     content = (
         f'define config.name = "{title}"\n'
         f'define config.version = "1.0"\n'
@@ -272,8 +330,7 @@ def _write_options_rpy(game_dir: str, title: str, main_menu_bg_file: str = "") -
         f'init python:\n'
         f'    build.name = "{safe}"\n'
         f'    build.executable_name = "{safe}"\n'
-        f'    build.directory_name = "{safe}-1.0"'
-        f'{bg_line}\n'
+        f'    build.directory_name = "{safe}-1.0"\n'
     )
     with open(os.path.join(game_dir, "options.rpy"), "w", encoding="utf-8") as f:
         f.write(content)

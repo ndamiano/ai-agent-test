@@ -149,6 +149,59 @@ def test_validate_scene_script_too_short():
     assert not valid
 
 
+def test_validate_scene_script_bare_prose():
+    script = (
+        'label scene_001:\n'
+        '    scene bg_office with dissolve\n'
+        '    She adjusts her glasses and looks away.\n'
+        '    alex "Hello."\n'
+        '    jump scene_002\n'
+    )
+    valid, err = _validate_scene_script("scene_001", script)
+    assert not valid
+    assert "prose" in err.lower() or "bare" in err.lower()
+
+
+def test_validate_scene_script_asterisk_action():
+    script = (
+        'label scene_001:\n'
+        '    scene bg_office with dissolve\n'
+        '    *She presses her lower lip.*\n'
+        '    alex "Hello."\n'
+        '    jump scene_002\n'
+    )
+    valid, err = _validate_scene_script("scene_001", script)
+    assert not valid
+    assert "asterisk" in err.lower()
+
+
+def test_validate_scene_script_colon_speaker():
+    script = (
+        'label scene_001:\n'
+        '    scene bg_office with dissolve\n'
+        '    Alex: "This is wrong syntax."\n'
+        '    jump scene_002\n'
+    )
+    valid, err = _validate_scene_script("scene_001", script)
+    assert not valid
+    assert "colon" in err.lower()
+
+
+def test_validate_scene_script_valid_menu():
+    script = (
+        'label branch_001:\n'
+        '    scene bg_office with dissolve\n'
+        '    alex "Make your choice."\n'
+        '    menu:\n'
+        '        "Go left":\n'
+        '            jump scene_002\n'
+        '        "Go right":\n'
+        '            jump scene_003\n'
+    )
+    valid, err = _validate_scene_script("branch_001", script)
+    assert valid, err
+
+
 def test_find_script_issues_clean():
     script = (
         'label scene_001:\n'
@@ -186,6 +239,17 @@ def test_find_script_issues_detects_unknown_bg():
         valid_characters={"alex"},
     )
     assert "bg_nonexistent" in issues
+
+
+def test_find_script_issues_detects_unknown_dialogue_speaker():
+    script = 'label scene_001:\n    scene bg_office with dissolve\n    ghost_char "Hello."\n    jump scene_002\n'
+    issues = _find_script_issues(
+        script,
+        valid_labels={"scene_001", "scene_002"},
+        valid_backgrounds={"bg_office"},
+        valid_characters={"alex"},
+    )
+    assert "ghost_char" in issues
 
 
 def test_scenes_for_character():
@@ -312,9 +376,10 @@ def test_stitch_script_structure():
 
 
 def test_write_options_rpy_main_menu_bg(tmp_path):
+    # main_menu_bg_file is accepted but ignored — gui.rpy already defines this
     _write_options_rpy(str(tmp_path), "My Game", main_menu_bg_file="office.png")
     content = (tmp_path / "options.rpy").read_text()
-    assert 'gui.main_menu_background = "images/office.png"' in content
+    assert "main_menu_background" not in content
     assert 'define config.name = "My Game"' in content
 
 
@@ -329,13 +394,27 @@ def test_postprocess_strips_narrator_lines():
         'label scene_001:\n'
         '    Narrator "The rain fell."\n'
         '    alex "Hello."\n'
-        '    Narrator "She turned away."\n'
+        '    narrator "She turned away."\n'
     )
     fixed = _postprocess_script(script, valid_characters={"alex"})
     assert '    "The rain fell."' in fixed
     assert '    "She turned away."' in fixed
     assert 'alex "Hello."' in fixed
     assert 'Narrator' not in fixed
+    assert 'narrator' not in fixed
+
+
+def test_postprocess_escapes_percent():
+    script = (
+        'label scene_001:\n'
+        '    alex "She gave 50% of her share."\n'
+        '    "The tank was 80% full."\n'
+        '    jump scene_002\n'
+    )
+    fixed = _postprocess_script(script, valid_characters={"alex"})
+    assert '50%%' in fixed
+    assert '80%%' in fixed
+    assert '50%"' not in fixed
 
 
 def test_parse_lint_errors_rpy_format():

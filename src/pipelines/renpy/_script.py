@@ -26,10 +26,8 @@ def _bible_summary(bible: Dict, characters_present: list | None = None) -> str:
         chars = [c for c in chars if c.get("id") in characters_present]
     char_lines = "\n".join(
         f"  {c['name']} (id={c['id']}, {c.get('role', '')}): "
-        f"verbal_tic={c.get('verbal_tic') or c.get('speech_pattern', '')} | "
-        f"forbidden_word={c.get('forbidden_word', '')} | "
-        f"nonverbal={c.get('nonverbal', '')} | "
-        f"secret={c.get('secret', '')}"
+        f"personality={c.get('personality', '')} | "
+        f"voice={c.get('voice', '')}"
         for c in chars
     )
     setting = bible.get("setting", {})

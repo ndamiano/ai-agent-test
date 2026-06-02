@@ -220,32 +220,24 @@ def backward_fill(inputs: Dict, working_dir: Path, max_tokens: int = 4000) -> Di
 # Stage 5: Node scripts (LLM — one call per node)
 # ---------------------------------------------------------------------------
 
-def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
-    premise  = inputs.get("premise", {})
-    dag      = inputs.get("graph", {})
-    beat_map = inputs.get("beat_map", {}).get("beat_map", {})
-    nodes    = dag.get("nodes", {})
-    topo     = dag.get("topological_order", [])
-
-    scripts: Dict[str, str] = {}
-
+def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
+    """Yield (node_id, system_prompt, user_prompt) for every node. Used by dev_utils."""
+    nodes = dag.get("nodes", {})
+    topo  = dag.get("topological_order", [])
     for nid in topo:
         node = nodes.get(nid)
         if not node:
             continue
+        beat          = beat_map.get(nid, {})
+        chars_present = beat.get("characters_present", [])
+        location_id   = beat.get("location_id", "")
+        background_id = _bg_id(location_id) if location_id else "bg_location"
+        node_type     = node["type"]
+        children      = node["child_ids"]
+        choice_labels = beat.get("choice_labels", [])
+        bible_sum     = _bible_summary(premise, chars_present)
+        char_vars     = _character_vars_block(premise, chars_present)
 
-        beat              = beat_map.get(nid, {})
-        chars_present     = beat.get("characters_present", [])
-        location_id       = beat.get("location_id", "")
-        background_id     = _bg_id(location_id) if location_id else "bg_location"
-        node_type         = node["type"]
-        children          = node["child_ids"]
-        choice_labels     = beat.get("choice_labels", [])
-
-        bible_sum  = _bible_summary(premise, chars_present)
-        char_vars  = _character_vars_block(premise, chars_present)
-
-        # Build next_info block for the prompt
         if node_type == "branch":
             choices = [
                 {"label": choice_labels[i] if i < len(choice_labels) else f"Choice {i+1}", "jump": cid}
@@ -257,21 +249,18 @@ def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) 
             )
             end_instruction = (
                 "  menu:\n" +
-                "\n".join(
-                    f'      "{c["label"]}":\n          jump {c["jump"]}'
-                    for c in choices
-                )
+                "\n".join(f'      "{c["label"]}":\n          jump {c["jump"]}' for c in choices)
             )
         elif node_type == "ending":
-            next_info     = 'This is an ending. End with "The End." then return.'
+            next_info       = 'This is an ending. End with "The End." then return.'
             end_instruction = '  "The End."\n  return'
         else:
-            next_id       = children[0] if children else None
-            next_beat     = beat_map.get(next_id, {}) if next_id else {}
-            next_info     = f"Next node: {next_id} — {next_beat.get('summary', '')}" if next_id else "This is the final node."
+            next_id         = children[0] if children else None
+            next_beat       = beat_map.get(next_id, {}) if next_id else {}
+            next_info       = f"Next node: {next_id} — {next_beat.get('summary', '')}" if next_id else "This is the final node."
             end_instruction = f"  jump {next_id}" if next_id else '  "The End."\n  return'
 
-        prompt = render_template(_PROMPTS_DIR / "node_script.txt", {
+        user_prompt = render_template(_PROMPTS_DIR / "node_script.txt", {
             "bible_summary":   bible_sum,
             "beat":            beat,
             "node_id":         nid,
@@ -281,6 +270,25 @@ def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) 
             "next_info":       next_info,
             "end_instruction": end_instruction,
         })
+        yield (nid, _SCRIPT_SYSTEM, user_prompt)
+
+
+def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
+    premise  = inputs.get("premise", {})
+    dag      = inputs.get("graph", {})
+    beat_map = inputs.get("beat_map", {}).get("beat_map", {})
+    nodes    = dag.get("nodes", {})
+    topo     = dag.get("topological_order", [])
+
+    scripts: Dict[str, str] = {}
+
+    for nid, system, prompt in _build_node_script_prompts(premise, dag, beat_map):
+        node      = nodes.get(nid, {})
+        node_type = node.get("type", "")
+        beat      = beat_map.get(nid, {})
+        location_id   = beat.get("location_id", "")
+        background_id = _bg_id(location_id) if location_id else "bg_location"
+        children      = node.get("child_ids", [])
 
         print(f"    [node_scripts]  {nid} ({node_type})")
         agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=max_tokens)
@@ -301,11 +309,17 @@ def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) 
 
         if not valid:
             print(f"    [node_scripts]  {nid} using fallback")
+            if node_type == "ending":
+                fallback_end = '    "The End."\n    return'
+            elif children:
+                fallback_end = f"    jump {children[0]}"
+            else:
+                fallback_end = '    "The End."\n    return'
             raw = (
                 f"label {nid}:\n"
                 f"    scene {background_id} with dissolve\n"
                 f'    "{beat.get("summary", "...")}"\n'
-                f"    {end_instruction}\n"
+                f"{fallback_end}\n"
             )
 
         scripts[nid] = raw
@@ -470,6 +484,13 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
         f.write(full_script)
     track_written_file(script_path)
     _copy_templates(game_dir)
+
+    # Overwrite placeholder main menu background with generated title card
+    title_card_src = os.path.join(game_dir, "images", "title_card.png")
+    gui_main_menu  = os.path.join(game_dir, "gui", "main_menu.png")
+    if os.path.exists(title_card_src) and os.path.exists(os.path.dirname(gui_main_menu)):
+        shutil.copy2(title_card_src, gui_main_menu)
+        print("    [build]  title card → gui/main_menu.png")
 
     print(f"    [build]  project written to: {output_dir}")
     result   = {"project_dir": os.path.abspath(output_dir)}

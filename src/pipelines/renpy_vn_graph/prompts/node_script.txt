@@ -33,59 +33,20 @@ label node_id:                       — first line (required, use exactly: labe
     "The End."                       — ending nodes only
     return                           — ending nodes only, after "The End."
 
-## Common mistakes — NEVER do these
-
-BAD:  She adjusts the brim of her cap.
-GOOD: "She adjusts the brim of her cap."
-
-BAD:  *She presses her lower lip.*
-GOOD: "She presses her lower lip."
-
-BAD:  "char_id" "Dialogue here."
-GOOD: char_id "Dialogue here."
-
-BAD:  char_id Dialogue without quotes.
-GOOD: char_id "Dialogue without quotes."
-
-BAD:  char_id "Dialogue," she said.
-GOOD: char_id "Dialogue."
-
-BAD:  The End.
-GOOD: "The End."
-
-BAD:  "scene bg_lab with dissolve"
-GOOD: scene bg_lab with dissolve
-
 Every line inside a label block MUST be: a quoted string, char_id "text", a Ren'Py keyword, or a menu option. Bare prose and asterisks are syntax errors.
+Do not write show char_id at pos, speaking or show char_id at pos, not_speaking — speaker highlighting is injected automatically.
 
 ## Task
 Write the complete Ren'Py script for this node.
-
 - Start with exactly: label {node_id}:
 - Show the background and character sprites
-- Write 12-18 lines total (dialogue + narration combined)
-
-**Ground the dialogue in the beat:**
-The beat has a `summary` and `dramatic_purpose`. Every line of dialogue must be about the specific situation described there — the actual conflict, object, person, or decision at stake. If none of the dialogue references what is described in the beat summary, it is wrong.
-
-**Characters must react to each other:**
-Each spoken line is a response to what was just said or done. No character delivers a line into the void. If Alex says something urgent, Mara reacts to it — agrees, pushes back, deflects, or reveals something new.
-
-**Verbal tic rule — this is critical:**
-A verbal tic is a nervous slip embedded WITHIN a real line of dialogue, not a standalone utterance. It appears ONCE per scene, only at a moment of stress or evasion.
-- BAD: `arin_voss "Just a moment."` (tic used as an entire line — wrong)
-- GOOD: `arin_voss "Just a moment — those readings don't match what Taro sent."` (tic leads into real content)
-The character speaks normally in every other line. The tic is a tell, not their personality.
-
-**Nonverbal rule:**
-Describe nonverbal behaviour in ONE narration line at a moment of tension. It should feel specific to this scene — not the same phrase repeated across every scene. `"She adjusts her glasses, buying a second to think."` is better than `"She adjusts her glasses with both hands before speaking."` (mechanical).
-
-**Other rules:**
-- Write dialogue as char_id "text" — never add stage directions to the speaker: char_id (softly) "text" is invalid
-- Use narration freely — atmosphere, inner thoughts, silences, the physical world
-- Dialogue is words spoken aloud — thoughts, feelings, and sensations go in narration
+- Write 8-14 lines total (dialogue + narration combined) that dramatize the beat's summary and emotional_tone
+- Each spoken line must directly respond to what was just said — characters react to each other, not deliver independent statements
+- Write each character's dialogue in their established voice — personality and speech patterns are in the story context
+- Write dialogue as char_id "text" — never add stage directions: char_id (softly) "text" is invalid
+- Dialogue is words spoken aloud — thoughts, feelings, and atmosphere go in narration lines
+- Use narration freely — atmosphere, inner thoughts, silences, physical actions
 - If only one character is present: lean on narration, cap spoken lines at 4
-- forbidden_word: never let the character say it under any circumstances
 
 End correctly:
 {end_instruction}

@@ -62,14 +62,12 @@ Write the complete Ren'Py script for this scene.
 - Start with: label {scene_id}:
 - Show the background and relevant character sprites
 - Write 8-14 lines total (dialogue + narration combined) that dramatize the scene's summary and emotional_beat
-- Each character has a verbal_tic, forbidden_word, and nonverbal behaviour in the story context — use these to make characters sound distinct
-- verbal_tic: use it once per scene, not on the first line — let it land at a moment of stress or evasion
-- forbidden_word: never let the character say it under any circumstances
-- nonverbal: describe it in a plain narration line at a tense moment — e.g. `"She presses her lower lip, holding something back."` — never write "Narration:" as a prefix, never attach it to a dialogue line
+- Each spoken line must directly respond to what was just said — characters react to each other, not deliver independent statements
+- Write each character's dialogue in their established voice — personality and speech patterns are in the story context
 - Write dialogue as `char_id "text"` — never add stage directions to the sayer: `alex (softly) "text"` is invalid Ren'Py syntax
-- Use narration lines ("...") freely — establish atmosphere, convey inner thoughts, mark time passing, punctuate silences
-- Dialogue is words characters actually say aloud — physical sensations, internal thoughts, and feelings belong in narration lines, not spoken dialogue
-- If characters_present has exactly 1 character, this is a monologue scene: lean on narration; the character speaks aloud only for lines they would genuinely say out loud — cap spoken lines at 4
+- Use narration lines freely — atmosphere, inner thoughts, silences, physical actions
+- Dialogue is words characters actually say aloud — physical sensations, internal thoughts, and feelings belong in narration
+- If characters_present has exactly 1 character, this is a monologue scene: lean on narration
 - End with a jump (or menu if choices exist, or "The End." + return if last scene)
 {opening_hint}
 Output ONLY the raw Ren'Py script. No JSON. No markdown. No explanation.

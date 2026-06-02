@@ -16,17 +16,24 @@ Immediately after this node, the story continues to:
 {child_beats|json}
 
 Write a beat description for {node_id}. The beat must:
-- Make sense as a step toward the reachable endings listed above
-- Set up the transition(s) to its children naturally
-- NOT resolve or spoil the endings yet — leave them reachable
-- Feel like a distinct dramatic moment, not a neutral connector
+- Be a specific dramatic confrontation, revelation, or decision — not a vague "they discuss X"
+- Name what one character wants and what stands in the way
+- Make sense as a step toward the reachable endings
+- Set up the transition(s) to children naturally
+- NOT resolve or spoil the endings — leave them reachable
 
-If is_branch is true, you must also write a choice_labels array with one short player-facing label per child node, in the same order as child_ids. Labels should feel like real decisions, not summaries.
+The summary must describe what HAPPENS, not what characters discuss:
+- BAD: "Renn and Sera discuss whether to trust the evacuation orders"
+- GOOD: "Renn demands Sera's credentials; Sera refuses to answer while the evacuation timer hits zero"
+
+The dramatic_purpose must answer: what does the player now know or suspect that they didn't before this beat?
+
+If is_branch is true, write a choice_labels array — one short player-facing label per child, in the same order as child_ids. Labels should feel like real decisions with stakes, not scene summaries.
 
 Output exactly:
 {
-  "summary": "one sentence: what concretely happens here",
-  "dramatic_purpose": "one sentence: why this beat must exist — what it changes or reveals",
+  "summary": "one sentence: what concretely happens — who does what to whom, with what at stake",
+  "dramatic_purpose": "one sentence: what this beat reveals or changes that the player didn't know before",
   "location_id": "snake_case_location_name",
   "emotional_tone": "tense|melancholic|revelatory|hopeful|confrontational|tender|ominous",
   "characters_present": ["char_id"],

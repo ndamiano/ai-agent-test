@@ -586,6 +586,13 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
     track_written_file(script_path)
     _copy_templates(game_dir)
 
+    # Overwrite placeholder main menu background with generated title card
+    title_card_src = os.path.join(game_dir, "images", "title_card.png")
+    gui_main_menu  = os.path.join(game_dir, "gui", "main_menu.png")
+    if os.path.exists(title_card_src) and os.path.exists(os.path.dirname(gui_main_menu)):
+        shutil.copy2(title_card_src, gui_main_menu)
+        print("    [build]  title card → gui/main_menu.png")
+
     print(f"    [build]  project written to: {output_dir}")
 
     result   = {"project_dir": os.path.abspath(output_dir)}

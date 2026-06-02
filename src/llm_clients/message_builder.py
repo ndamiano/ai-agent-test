@@ -27,7 +27,16 @@ class MessageBuilder:
 
     def __init__(self, system_prompt: str) -> None:
         from config.settings_manager import settings_manager
-        self.MESSAGE_BUDGET_CHARS: int = settings_manager.get_category_settings().message_budget_chars
+        budget = settings_manager.get_category_settings().message_budget_chars
+        try:
+            from llm_clients.connector_selector import get_connector
+            ctx_len = get_connector().get_context_length()
+            if ctx_len:
+                # 50% of context window in characters (~4 chars/token)
+                budget = (ctx_len * 4) // 2
+        except Exception:
+            pass
+        self.MESSAGE_BUDGET_CHARS: int = budget
         self._system = system_prompt
         self._messages: List[Dict[str, Any]] = []
 

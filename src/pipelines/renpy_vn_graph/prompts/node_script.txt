@@ -1,0 +1,49 @@
+## Story Context
+{bible_summary}
+
+## This Beat
+{beat|json}
+
+## Node
+id: {node_id}
+type: {node_type}
+background: {background_id}
+
+## Characters in this scene
+{character_vars}
+
+## What comes next
+{next_info}
+
+## Ren'Py Syntax Reference
+label node_id:                       — first line (required, use exactly: label {node_id}:)
+    scene bg_id with dissolve        — set background
+    show char_id at left             — show character left
+    show char_id at right            — show character right
+    show char_id at center           — show character centered (only when alone)
+    hide char_id                     — hide character sprite
+    "Narrator text."                 — narration (never write: Narrator "text")
+    char_id "Dialogue line."         — character speaks (use the id, not the name)
+    menu:                            — player choice (branch nodes only)
+        "Choice text A":
+            jump target_node_id_a
+        "Choice text B":
+            jump target_node_id_b
+    jump next_node_id                — proceed to next node (beat/root nodes)
+    "The End."                       — ending nodes only
+    return                           — ending nodes only, after "The End."
+
+## Task
+Write the complete Ren'Py script for this node.
+
+- Start with exactly: label {node_id}:
+- Show the background and character sprites
+- Write 8-14 lines total (dialogue + narration combined)
+- Use each character's verbal_tic once — at a moment of stress or evasion, not the first line
+- Never let a character say their forbidden_word
+- Describe nonverbal behaviours in plain narration lines (e.g. "She presses her lower lip.")
+- Dialogue is words spoken aloud — internal thoughts and sensations go in narration
+- End correctly:
+{end_instruction}
+
+Output ONLY raw Ren'Py script. No JSON. No markdown. No explanation.

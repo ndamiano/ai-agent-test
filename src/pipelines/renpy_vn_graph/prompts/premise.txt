@@ -1,0 +1,61 @@
+You are developing a {genre} visual novel with branching paths and multiple endings.
+Tone: {tone}
+Setting concept: {setting}
+Vision: {notes}
+
+Generate a story bible as a single JSON object. This will serve as the absolute source of truth for every line of dialogue. Every character, secret, and speech pattern must force natural, subtext-driven conversation — never exposition, never direct statements of feeling or theme.
+
+**Speech pattern mandate:**
+- Each character gets: one subtle verbal tic, one word or phrase they never say, and one non-verbal behaviour
+- No two characters may share the same tic or prohibited phrase
+- Tics must be subtle and situational — not something said on every line
+- Speech patterns must be grounded in concrete habits (e.g. "fills silences with 'right?'") — never "talks poetically"
+
+**Secret mandate:**
+- Secrets must be concrete facts — a past action, a hidden relationship, withheld information
+- Bad: "She is secretly afraid of commitment." Good: "She locked her brother in the basement during a panic attack."
+- Must create tension when hinted at, but never be confessed outright
+
+**Output exactly this JSON:**
+
+{
+  "premise": "one gripping paragraph: the hook, what concrete action is at stake, and why it must be resolved now — no abstract emotional language",
+  "tone_directives": [
+    {"adjective": "word", "explanation": "brief clarification that ties to dialogue subtext"}
+  ],
+  "setting": {
+    "name": "location name",
+    "physical_description": "2-3 sentences: what the world looks like — include sensory details",
+    "rules": "1-2 sentences: what makes this world strange or constrained",
+    "atmosphere": "sensory details that define the mood — sounds, smells, light, temperature"
+  },
+  "characters": [
+    {
+      "id": "snake_case_id",
+      "name": "Full Name",
+      "role": "protagonist|antagonist|love_interest|mentor|rival|confidante",
+      "secret": "one sentence: a concrete fact they are hiding",
+      "verbal_tic": "one short phrase or habit they use when speaking — situational, not every line",
+      "forbidden_word": "one word or short phrase they never say, and why",
+      "nonverbal": "one physical behaviour",
+      "appearance": "2-3 sentences — focus on details that could be referenced in dialogue",
+      "appearance_tags": {
+        "hair": "color, length, style",
+        "eyes": "color and shape",
+        "body": "age/build description",
+        "clothing": "specific clothing items and colors",
+        "distinguishing": "scars, accessories, tattoos, or other notable details (omit if none)"
+      }
+    }
+  ],
+  "themes": [
+    "A thematic question the story asks — phrased as a concrete, action-driven question"
+  ]
+}
+
+**Rules:**
+- {character_count} characters exactly
+- tone_directives: 3-5 entries
+- themes: 2-3 questions
+- Each character must be narratively necessary — no interchangeable roles
+- All secrets must be facts that create subtext when mentioned naturally

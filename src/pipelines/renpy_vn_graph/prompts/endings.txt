@@ -1,0 +1,36 @@
+You are writing the endings for a branching visual novel.
+
+Story premise:
+{premise}
+
+Characters:
+{characters|json}
+
+The story has {ending_count} endings. Each has a type (good / neutral / bad) that constrains the emotional outcome — good endings don't have to be happy, just resolved with agency; bad endings involve loss or failure; neutral endings are ambiguous.
+
+Ending slots:
+{endings|json}
+
+For each slot write a distinct ending. Endings must be meaningfully different from each other — not the same scene with a different survivor. Think: different locations, different relationships resolved, different emotional registers.
+
+Output exactly:
+{
+  "endings": [
+    {
+      "id": "ending_001",
+      "end_type": "good",
+      "title": "short poetic title",
+      "summary": "2-3 sentences: what concretely happens, who is there, how it resolves",
+      "tone": "one word emotional register",
+      "location_id": "snake_case_location_name",
+      "characters_present": ["char_id"],
+      "key_image_moment": "one sentence: the single most visually striking moment — describe it like a film still"
+    }
+  ]
+}
+
+Rules:
+- location_id: snake_case, no spaces, no bg_ prefix
+- characters_present: 1-3 characters by id
+- Every ending must feel earned — no deus ex machina
+- Endings of the same type may still be very different from each other

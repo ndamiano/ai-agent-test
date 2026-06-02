@@ -54,11 +54,41 @@ class OpenAICompatibleConnector(BaseConnector):
         self.max_tokens = max_tokens
         self.frequency_penalty = frequency_penalty
         self._response_format_supported = True
+        self._context_length: Optional[int] = None
         
         if self._is_versioned_path(self.base_url):
              self.api_endpoint = f"{self.base_url}/chat/completions"
         else:
              self.api_endpoint = f"{self.base_url}/v1/chat/completions"
+
+    def get_context_length(self) -> Optional[int]:
+        """Return the loaded model's context window size by querying /v1/models.
+
+        Result is cached on the instance. Falls back to None if the endpoint
+        is unreachable or doesn't return context_length.
+        """
+        if self._context_length is not None:
+            return self._context_length
+        try:
+            response = self._get_session().get(
+                f"{self.base_url}/v1/models",
+                headers=self._prepare_headers(),
+                timeout=5,
+            )
+            if response.status_code == 200:
+                models = response.json().get("data", [])
+                match = next(
+                    (m for m in models if m.get("id") == self.model_name),
+                    models[0] if models else None,
+                )
+                if match:
+                    ctx = match.get("context_length")
+                    if ctx:
+                        self._context_length = int(ctx)
+                        return self._context_length
+        except Exception:
+            pass
+        return None
 
     def _is_versioned_path(self, url: str) -> bool:
         path = url.split('?')[0]

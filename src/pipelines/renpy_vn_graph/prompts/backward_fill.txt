@@ -1,0 +1,39 @@
+You are planning a single story beat in a branching visual novel, working backwards from the endings.
+
+Story premise:
+{premise_summary}
+
+Available characters: {available_characters|json}
+
+Node: {node_id}
+Type: {node_type}
+Is a player choice point: {is_branch}
+
+This node can still lead to these endings:
+{reachable_endings|json}
+
+Immediately after this node, the story continues to:
+{child_beats|json}
+
+Write a beat description for {node_id}. The beat must:
+- Make sense as a step toward the reachable endings listed above
+- Set up the transition(s) to its children naturally
+- NOT resolve or spoil the endings yet — leave them reachable
+- Feel like a distinct dramatic moment, not a neutral connector
+
+If is_branch is true, you must also write a choice_labels array with one short player-facing label per child node, in the same order as child_ids. Labels should feel like real decisions, not summaries.
+
+Output exactly:
+{
+  "summary": "one sentence: what concretely happens here",
+  "dramatic_purpose": "one sentence: why this beat must exist — what it changes or reveals",
+  "location_id": "snake_case_location_name",
+  "emotional_tone": "tense|melancholic|revelatory|hopeful|confrontational|tender|ominous",
+  "characters_present": ["char_id"],
+  "choice_labels": ["Label for child 1", "Label for child 2"]
+}
+
+Rules:
+- location_id: snake_case, no spaces, no bg_ prefix — reuse locations from children when possible
+- characters_present: 1-3 character ids from the available list
+- choice_labels: required if is_branch is true, must have exactly {child_count} entries; use [] if not a branch

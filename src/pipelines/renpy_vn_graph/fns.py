@@ -62,11 +62,14 @@ _BEAT_TO_EXPRESSION = {
     "ominous":         "scared",
 }
 
+def _call_llm(system_prompt: str, user_prompt: str, max_tokens: int = 50000) -> str:
+    agent = PipelineAgent(system_prompt, max_tokens=max_tokens)
+    return strip_fences(agent.send(user_prompt))
+
 
 def _call_json(prompt: str, label: str, max_tokens: int, attempts: int = 3) -> dict:
     for _ in range(attempts):
-        agent = PipelineAgent(_JSON_SYSTEM, max_tokens=max_tokens)
-        content = strip_fences(agent.send(prompt))
+        content = _call_llm(_JSON_SYSTEM, prompt, max_tokens)
         try:
             return json.loads(content)
         except json.JSONDecodeError:

@@ -1,0 +1,26 @@
+{
+  "stage": "endings",
+  "pipeline": "renpy_vn_graph",
+  "criteria": [
+    {
+      "name": "ending_differentiation",
+      "description": "Endings are meaningfully distinct — different locations, different characters present, different relationships resolved, different emotional registers. Test: if two endings are the same scene with different survivors, score 0–35. If each ending feels like a different story could have been told to reach it, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "earned_resolution",
+      "description": "Each ending feels like a plausible consequence of the premise — no deus ex machina, no externally introduced resolution not set up by the story. Test: if an ending introduces a new element not present in the premise or characters, score 0–40. If the outcome follows clearly from the characters' motivations and the world's rules, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "type_fidelity",
+      "description": "Good endings show agency or resolution even if painful; bad endings involve loss or failure with weight; neutral endings are genuinely ambiguous with no clear moral valence. Test: if a 'good' ending is just 'everyone survives' or a 'bad' ending is just 'someone dies' without dramatic weight, score 0–40. If each type delivers its emotional register distinctly, score 70+.",
+      "weight": 1.5
+    },
+    {
+      "name": "visual_specificity",
+      "description": "key_image_moment descriptions are specific film-still instructions — a composition, not a summary. They name who is present, their position or action, and at least one environmental detail. Test: if key_image_moment is 'the characters reconcile' or 'the city burns,' score 0–35. If it is 'Lena hands Mira the unsigned document across the collapsed bridge, smoke rising behind them,' score 70+.",
+      "weight": 1.0
+    }
+  ]
+}

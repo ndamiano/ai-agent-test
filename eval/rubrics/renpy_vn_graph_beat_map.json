@@ -1,0 +1,26 @@
+{
+  "stage": "beat_map",
+  "pipeline": "renpy_vn_graph",
+  "criteria": [
+    {
+      "name": "dramatic_specificity",
+      "description": "The beat summary names what one character wants and what concretely stands in the way — not 'they discuss X' but 'A demands B do Y; B refuses because Z.' Test: if the summary describes a conversation topic rather than a specific action and obstacle, score 0–35. If the beat could not happen with any other characters or at any other moment, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "causal_coherence",
+      "description": "The beat makes sense as a step toward its reachable endings. The dramatic_purpose reveals something the player didn't know before — a fact, a betrayal, a changed power dynamic. Test: if the beat could be removed from the chain without affecting any ending, score 0–35. If the player's understanding of the situation is demonstrably different after this beat, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "choice_stakes",
+      "description": "For branch nodes, choice_labels describe real decisions with consequences — not scene summaries or dialogue excerpts. Each label implies a different future, not just a different next scene. Test: if labels are 'Option A' / 'Option B' or summarize what happens next, score 0–30. If labels present a genuine moral or strategic dilemma the player must weigh, score 70+. (Non-branch nodes: score this criterion 75 by default — not applicable.)",
+      "weight": 1.5
+    },
+    {
+      "name": "forward_momentum",
+      "description": "The beat sets up its children naturally — the transition to each child follows from what happened here. emotional_tone matches the summary content. Characters present are the ones who would logically be in this scene given the story's flow.",
+      "weight": 1.0
+    }
+  ]
+}

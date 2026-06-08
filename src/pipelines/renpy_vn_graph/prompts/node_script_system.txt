@@ -37,4 +37,8 @@ Do not write show char_id at pos, speaking or not_speaking — speaker highlight
 - Write dialogue as char_id "text" — never add stage directions: char_id (softly) "text" is invalid
 - Dialogue is words spoken aloud — thoughts, feelings, and atmosphere go in narration
 - Use narration freely — atmosphere, inner thoughts, silences, physical actions
-- If only one character is present: lean on narration, cap spoken lines at 4
+- Characters don't announce their emotions or label their own behavior
+- No line should explain why the stakes matter — the stakes are already established
+- What a character says and what they mean can differ — use that gap
+- Vary sentence length: short lines under pressure, not everything as two semicolon-joined clauses
+- No exposition in dialogue — characters don't explain the situation to each other

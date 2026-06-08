@@ -1,0 +1,31 @@
+{
+  "stage": "premise",
+  "pipeline": "renpy_vn_graph",
+  "criteria": [
+    {
+      "name": "premise_urgency",
+      "description": "The premise names a specific inciting event that forces action NOW — not a situation that could sit unresolved. Test: if the premise could be summarized as 'characters exist in a setting' with no pressure forcing a decision, score 0–35. If there is a threshold just crossed, a countdown, or an event that makes inaction impossible, score 65+.",
+      "weight": 2.0
+    },
+    {
+      "name": "character_distinctness",
+      "description": "Each character has a specific, non-interchangeable role. Their personality and conflict potential are concrete — not 'she is kind' but 'she agrees publicly then undermines privately.' Test: if two characters could swap roles without changing the story, score 0–40. If each character creates a pressure the others can't, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "voice_specificity",
+      "description": "Voice descriptions are concrete enough that a writer could imitate the character cold, without reading their dialogue. They must include vocabulary level, sentence length, formality, and at least one stress pattern (what the character does when nervous, evasive, or angry). Test: if voice is described only as 'speaks softly' or 'uses technical jargon,' score 0–40. If a writer could generate three plausible lines in that character's voice from the description alone, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "world_constraint",
+      "description": "The setting's rules actively constrain what characters can do — not just atmosphere. The physical description is specific enough to generate consistent images. Test: if the setting is generic enough for any story in the genre, score 0–35. If the world's specific rules create at least one story problem that wouldn't exist in another setting, score 65+.",
+      "weight": 1.5
+    },
+    {
+      "name": "downstream_utility",
+      "description": "All fields populated with specific, usable content. appearance_tags have concrete values (not 'unknown'). tone_directives each tie to a specific dialogue behavior. themes are phrased as questions with no obvious answer, not moral statements. No vague placeholder content anywhere.",
+      "weight": 1.0
+    }
+  ]
+}

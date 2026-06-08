@@ -1,0 +1,26 @@
+{
+  "stage": "node_scripts",
+  "pipeline": "renpy_vn_graph",
+  "criteria": [
+    {
+      "name": "voice_distinctness",
+      "description": "Each character's lines could only have been spoken by that character — vocabulary, sentence length, formality, and stress patterns are consistent with their voice description from the premise. Swap two characters' lines: if they still work, the voices are not distinct. Test: if all characters speak in the same register (same sentence length, same vocabulary level, same emotional temperature), score 0–35. If covering the speaker labels and still knowing who said each line is possible, score 75+.",
+      "weight": 2.0
+    },
+    {
+      "name": "scene_economy",
+      "description": "Every line does dramatic work — advances tension, reveals character, or moves the situation forward. No filler exchanges ('Oh, I see.' / 'Yes, exactly.'). 8–14 lines total means each one must carry weight. Test: if lines could be cut without changing what the player knows or feels after the scene, score 0–40. If removing any line would lose something, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "subtext",
+      "description": "Characters don't announce their emotional state or intentions directly. Meaning is conveyed through what they choose to say, avoid, or deflect. Test: if characters say 'I feel betrayed' or 'I want you to trust me,' score 0–40. If emotional states are legible through behavior and word choice without being stated, score 70+.",
+      "weight": 1.5
+    },
+    {
+      "name": "beat_fidelity",
+      "description": "The script delivers what the beat summary promised — the specific confrontation, revelation, or decision described in beat_map. The location and characters present match. The script ends correctly per the node type (choice menu for branches, jump for linear nodes).",
+      "weight": 1.5
+    }
+  ]
+}

@@ -48,6 +48,7 @@ Tip: pipe output into the next stage's input file:
     parser.add_argument("--stage", "-s", help="Stage id to run")
     parser.add_argument("--list", "-l", action="store_true", help="List stages and their inputs")
     parser.add_argument("--runs", "-n", type=int, default=1, help="Run N times (default: 1)")
+    parser.add_argument("--workdir", "-w", default=None, help="Working directory for stage (persists after run, useful for build)")
     args, remaining = parser.parse_known_args()
     args.input = remaining[0] if remaining else None
 
@@ -93,8 +94,12 @@ Tip: pipe output into the next stage's input file:
         t0 = time.time()
         sys.stdout = sys.stderr
         try:
-            with tempfile.TemporaryDirectory() as tmp:
-                result = stage.fn(inputs, Path(tmp), **kwargs)
+            if args.workdir:
+                Path(args.workdir).mkdir(parents=True, exist_ok=True)
+                result = stage.fn(inputs, Path(args.workdir), **kwargs)
+            else:
+                with tempfile.TemporaryDirectory() as tmp:
+                    result = stage.fn(inputs, Path(tmp), **kwargs)
         finally:
             sys.stdout = sys.__stdout__
         elapsed = time.time() - t0

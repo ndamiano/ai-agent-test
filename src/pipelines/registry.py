@@ -17,17 +17,6 @@ class PipelineDefinition:
     enrich_brief: Optional[Callable[[dict], dict]] = None
 
 
-def _enrich_renpy_brief(brief: dict) -> dict:
-    length_config = {
-        "short":  {"character_count": "2",   "scene_count": "3-4",  "lines_per_scene": "12-16"},
-        "medium": {"character_count": "3",   "scene_count": "5-7",  "lines_per_scene": "16-22"},
-        "long":   {"character_count": "3-4", "scene_count": "8-12", "lines_per_scene": "20-28"},
-    }
-    length = brief.get("length", "medium")
-    config = length_config.get(length, length_config["medium"])
-    return {**config, **brief}
-
-
 def _enrich_character_brief(brief: dict) -> dict:
     return {
         "tone":    "balanced — neither too dark nor too light",
@@ -68,25 +57,10 @@ def _enrich_vn_graph_brief(brief: dict) -> dict:
 
 
 def _build_registry() -> Dict[str, PipelineDefinition]:
-    from pipelines.renpy.pipeline import RENPY_V3_PIPELINE as RENPY_PIPELINE
     from pipelines.character.pipeline import CHARACTER_PIPELINE
     from pipelines.ttrpg.pipeline import TTRPG_PIPELINE
     from pipelines.renpy_vn_graph.pipeline import RENPY_VN_GRAPH_PIPELINE
     return {
-        "renpy": PipelineDefinition(
-            name="renpy",
-            description="Generate a complete Ren'Py visual novel — bible-first, raw Ren'Py scene writing, continuity pass per character.",
-            pipeline=RENPY_PIPELINE,
-            brief_schema={
-                "required": ["title", "genre", "tone", "setting", "notes"],
-                "optional": {
-                    "length": "short | medium | long (default: medium)",
-                    "character_count": "overrides length default (4-6 recommended)",
-                    "scene_count": "overrides length default",
-                },
-            },
-            enrich_brief=_enrich_renpy_brief,
-        ),
         "character": PipelineDefinition(
             name="character",
             description="Generate a richly detailed character — identity, personality, appearance, voice, and portrait image.",

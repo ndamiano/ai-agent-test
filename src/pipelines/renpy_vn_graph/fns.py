@@ -9,7 +9,7 @@ from typing import Dict, List
 from pipelines.runner import render_template
 from llm_clients.inference import PipelineAgent, strip_fences
 from pipelines.renpy_vn_graph import graph as _graph
-from pipelines.renpy._script import (
+from pipelines.renpy_vn_graph._script import (
     _character_vars_block,
     _validate_scene_script,
     _postprocess_script,
@@ -18,7 +18,7 @@ from pipelines.renpy._script import (
     _write_options_rpy,
     run_final_lint,
 )
-from pipelines.renpy.renpy_builder import _copy_templates, _distribute
+from pipelines.renpy_vn_graph.renpy_builder import _copy_templates, _distribute
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 

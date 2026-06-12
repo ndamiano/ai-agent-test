@@ -67,7 +67,7 @@ RENPY_VN_GRAPH_PIPELINE = Pipeline(
                 fn=write_node_scripts,
                 inputs=["premise.json", "graph.json", "beat_map.json"],
                 output="node_scripts.json",
-                prompt_file="node_script.txt",
+                prompt_file="character_line.txt",
                 max_tokens=50000,
             ),
         ]),

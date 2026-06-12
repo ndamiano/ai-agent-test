@@ -259,6 +259,7 @@ def _stitch_script(
     chars = bible.get("characters", [])
 
     lines.append("## Characters")
+    lines.append('define act = Character(None, what_italic=True, what_color="#a0a0a0")')
     for char in chars:
         cid   = char["id"]
         name  = char["name"]

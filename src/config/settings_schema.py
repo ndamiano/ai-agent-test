@@ -34,7 +34,7 @@ class ModelCategorySettings(BaseModel):
 DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
     "large":  ModelCategorySettings(message_budget_chars=30000, max_iterations=10, max_waves=20, use_json_mode=False),
     "medium": ModelCategorySettings(message_budget_chars=20000, max_iterations=8,  max_waves=15, use_json_mode=False),
-    "small":  ModelCategorySettings(message_budget_chars=12000, max_iterations=6,  max_waves=10, use_json_mode=True),
+    "small":  ModelCategorySettings(message_budget_chars=250000, max_iterations=6,  max_waves=10, use_json_mode=True),
 }
 
 

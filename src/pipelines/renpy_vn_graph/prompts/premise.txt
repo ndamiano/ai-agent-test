@@ -27,7 +27,9 @@ Characters must be distinct enough that their dialogue sounds different without 
       "name": "Full Name",
       "role": "protagonist|antagonist|love_interest|mentor|rival|confidante",
       "personality": "how they think, what drives them, how they behave under pressure — be specific and concrete, not abstract",
-      "voice": "how they speak — vocabulary level, sentence length, formality, rhythm, what patterns emerge when stressed or evasive",
+      "voice_mechanics": "Multi-paragraph voice sheet. Must contain exactly these sections:\n\n1. One paragraph: core speech pattern — sentence structure, vocabulary level, rhythm, what breaks under pressure.\n\n2. Emotional state modifiers — one line each:\n   When excited: [how speech changes]\n   When afraid: [how speech changes]\n   When lying or deflecting: [what they pivot to, what verbal tic appears]\n\n3. Signature register — one paragraph: the domain, metaphors, or vocabulary this character reaches for emotionally. What does distance/silence/a wrong answer mean in their idiom?\n\n4. CORRECT — [brief label]:\n   [1-4 lines of dialogue that sound unmistakably like this character]\n\n   CORRECT — [brief label]:\n   [another example, different emotional state]\n\n5. WRONG — [brief label]:\n   [dialogue that sounds wrong — wrong register, wrong rhythm, wrong emotional move]\n\n   WRONG — [brief label]:\n   [second wrong example]",
+      "immediate_goal": "what this character wants in every scene — their core drive, the thing they're always pushing toward or protecting",
+      "subtext": "what they never say directly — the fear, shame, or desire that colors everything they do",
       "appearance": "2-3 sentences — focus on details that could be referenced in dialogue",
       "appearance_tags": {
         "hair": "color, length, style",

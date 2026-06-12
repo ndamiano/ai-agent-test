@@ -1,5 +1,7 @@
 import json
 import os
+import random
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, List
@@ -296,56 +298,326 @@ def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
         yield (nid, system, user_prompt)
 
 
+_SLOT_NARRATION_PROB = 0.20
+_SLOT_TARGET_MIN    = 8
+_SLOT_TARGET_MAX    = 14
+_POSITIONS          = ["left", "right", "center"]
+
+
+def _find_protagonist_id(premise: Dict) -> str:
+    for c in premise.get("characters", []):
+        if c.get("role") == "protagonist":
+            return c["id"]
+    chars = premise.get("characters", [])
+    return chars[0]["id"] if chars else ""
+
+
+def _generate_slots(chars_present: List[str], protagonist_id: str) -> List[dict]:
+    target = random.randint(_SLOT_TARGET_MIN, _SLOT_TARGET_MAX)
+    weighted = []
+    for cid in chars_present:
+        weighted.append(cid)
+        if cid == protagonist_id:
+            weighted.append(cid)
+
+    slots = []
+    last_speaker = None
+    for _ in range(target):
+        if not weighted or random.random() < _SLOT_NARRATION_PROB:
+            slots.append({"type": "narration"})
+            last_speaker = None
+        else:
+            # Prevent consecutive lines from the same speaker
+            candidates = [c for c in weighted if c != last_speaker] or weighted
+            speaker = random.choice(candidates)
+            slots.append({"type": "line", "speaker": speaker})
+            last_speaker = speaker
+    return slots
+
+
+def _char_system_cache(premise: Dict) -> Dict[str, str]:
+    tone_parts = [
+        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
+        for d in premise.get("tone_directives", [])
+        if d.get("adjective")
+    ]
+    tone    = "; ".join(tone_parts)
+    setting = premise.get("setting", {})
+    chars   = premise.get("characters", [])
+
+    cache = {}
+    for char in chars:
+        others = "\n".join(
+            f"  {c['name']} ({c.get('role', '')})"
+            for c in chars if c["id"] != char["id"]
+        )
+        cache[char["id"]] = render_template(_PROMPTS_DIR / "character_line_system.txt", {
+            "char_name":           char.get("name", char["id"]),
+            "voice_mechanics":     char.get("voice_mechanics", ""),
+            "char_immediate_goal": char.get("immediate_goal", ""),
+            "char_subtext":        char.get("subtext", ""),
+            "premise":             premise.get("premise", ""),
+            "tone":                tone,
+            "setting_name":        setting.get("name", ""),
+            "others":              others or "(none)",
+        })
+    return cache
+
+
+def _narration_system(premise: Dict) -> str:
+    tone_parts = [
+        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
+        for d in premise.get("tone_directives", [])
+        if d.get("adjective")
+    ]
+    setting = premise.get("setting", {})
+    return render_template(_PROMPTS_DIR / "narration_system.txt", {
+        "premise":            premise.get("premise", ""),
+        "tone":               "; ".join(tone_parts),
+        "setting_name":       setting.get("name", ""),
+        "setting_atmosphere": setting.get("atmosphere", ""),
+    })
+
+
+def _history_str(history: List[dict], last_n: int = 10) -> str:
+    if not history:
+        return "(scene just started)"
+    recent = history[-last_n:]
+    lines = []
+    for h in recent:
+        if h["type"] == "narration":
+            lines.append(f"[narration]: {h['text']}")
+        else:
+            lines.append(f"{h['speaker']}: {h['text']}")
+    return "\n".join(lines)
+
+
+def _char_name_for(premise: Dict, char_id: str) -> str:
+    for c in premise.get("characters", []):
+        if c["id"] == char_id:
+            return c.get("name", char_id)
+    return char_id
+
+
+_MAX_LINE_CHARS = 240
+_SENT_RE = re.compile(r'(?<=[.!?])\s+')
+
+
+def _split_dialogue(text: str) -> List[str]:
+    """Split at sentence boundaries so no single box exceeds _MAX_LINE_CHARS."""
+    if len(text) <= _MAX_LINE_CHARS:
+        return [text]
+    sentences = _SENT_RE.split(text)
+    boxes: List[str] = []
+    current = ""
+    for sent in sentences:
+        candidate = (current + " " + sent).strip() if current else sent
+        if current and len(candidate) > _MAX_LINE_CHARS:
+            boxes.append(current)
+            current = sent
+        else:
+            current = candidate
+    if current:
+        boxes.append(current)
+    return boxes or [text]
+
+
+_SEG_RE = re.compile(r'(\*[^*]+\*)')
+
+
+def _parse_char_output(raw: str, cid: str) -> tuple:
+    raw = raw.strip()
+    if ":" in raw[:40]:
+        parts = raw.split(":", 1)
+        if len(parts) == 2 and len(parts[0].split()) <= 3:
+            raw = parts[1].strip()
+
+    # Strip any tilde emphasis markers (not supported)
+    raw = re.sub(r'~([^~]+)~', r'\1', raw)
+
+    segments = _SEG_RE.split(raw)
+    content_lines: List[str] = []
+    history_parts: List[str] = []
+    speech_buf = ""
+
+    def _flush_speech():
+        nonlocal speech_buf
+        text = speech_buf.strip().strip('"').strip("'").strip().replace('"', "'")
+        if text:
+            for box in _split_dialogue(text):
+                content_lines.append(f'    {cid} "{box}"')
+            history_parts.append(text)
+        speech_buf = ""
+
+    for seg in segments:
+        if not seg:
+            continue
+        if seg.startswith('*') and seg.endswith('*') and len(seg) > 2:
+            _flush_speech()
+            action = seg[1:-1].strip().replace('"', "'")
+            if action:
+                history_parts.append(f"*{action}*")
+                for box in _split_dialogue(action):
+                    content_lines.append(f'    act "{box}"')
+        else:
+            speech_buf += seg
+
+    _flush_speech()
+    return content_lines, " ".join(history_parts)
+
+
+def _call_line(system: str, user_prompt: str) -> str:
+    """Narration: returns plain text (no segment parsing needed)."""
+    agent = PipelineAgent(system, max_tokens=200)
+    raw = agent.send(user_prompt).strip()
+    raw = raw.strip('"').strip("'")
+    if ":" in raw[:40]:
+        parts = raw.split(":", 1)
+        if len(parts) == 2 and len(parts[0].split()) <= 3:
+            raw = parts[1].strip().strip('"').strip("'")
+    return raw
+
+
+def _call_char_line(system: str, user_prompt: str) -> str:
+    """Character dialogue: returns raw text for segment parsing."""
+    agent = PipelineAgent(system, max_tokens=300)
+    raw = agent.send(user_prompt).strip()
+    if ":" in raw[:40]:
+        parts = raw.split(":", 1)
+        if len(parts) == 2 and len(parts[0].split()) <= 3:
+            raw = parts[1].strip()
+    return raw
+
+
+def _generate_node_by_slots(
+    node_id: str,
+    node_type: str,
+    beat: dict,
+    chars_present: List[str],
+    children: List[str],
+    choice_labels: List[str],
+    protagonist_id: str,
+    char_systems: Dict[str, str],
+    narration_sys: str,
+    premise: Dict,
+    story_so_far: str = "",
+) -> str:
+    location_id    = beat.get("location_id", "location")
+    background_id  = _bg_id(location_id)
+    beat_summary   = beat.get("summary", "")
+    emotional_tone = beat.get("emotional_tone", "")
+
+    slots   = _generate_slots(chars_present, protagonist_id)
+    history: List[dict] = []
+    content_lines: List[str] = []
+
+    for slot in slots:
+        hist_str = _history_str(history)
+
+        if slot["type"] == "narration":
+            user_p = render_template(_PROMPTS_DIR / "narration.txt", {
+                "beat_summary":   beat_summary,
+                "emotional_tone": emotional_tone,
+                "history":        hist_str,
+                "story_so_far":   story_so_far,
+            })
+            text = _call_line(narration_sys, user_p)
+            if text:
+                history.append({"type": "narration", "text": text})
+                content_lines.append(f'    "{text}"')
+
+        else:
+            cid       = slot["speaker"]
+            char_name = _char_name_for(premise, cid)
+            system    = char_systems.get(cid)
+            if not system:
+                continue
+            user_p = render_template(_PROMPTS_DIR / "character_line.txt", {
+                "char_name":      char_name,
+                "beat_summary":   beat_summary,
+                "emotional_tone": emotional_tone,
+                "scene_objective": beat.get("dramatic_purpose", ""),
+                "history":        hist_str,
+                "story_so_far":   story_so_far,
+            })
+            raw = _call_char_line(system, user_p)
+            if raw:
+                lines, hist_text = _parse_char_output(raw, cid)
+                if lines:
+                    history.append({"type": "line", "speaker": cid, "text": hist_text})
+                    content_lines.extend(lines)
+
+    parts = [f"label {node_id}:"]
+    parts.append(f"    scene {background_id} with dissolve")
+
+    n = len(chars_present)
+    for i, cid in enumerate(chars_present[:3]):
+        pos = "center" if n == 1 else _POSITIONS[i]
+        parts.append(f"    show {cid} at {pos}")
+
+    parts.extend(content_lines)
+
+    if node_type == "ending":
+        parts.append('    "The End."')
+        parts.append("    return")
+    elif node_type == "branch" and children:
+        parts.append("    menu:")
+        for i, cid in enumerate(children):
+            label = choice_labels[i] if i < len(choice_labels) else f"Choice {i+1}"
+            parts.append(f'        "{label}":')
+            parts.append(f"            jump {cid}")
+    elif children:
+        parts.append(f"    jump {children[0]}")
+    else:
+        parts.append('    "The End."')
+        parts.append("    return")
+
+    return "\n".join(parts) + "\n"
+
+
 def write_node_scripts(inputs: Dict, working_dir: Path, max_tokens: int = 8000) -> Dict:
-    premise  = inputs.get("premise", {})
-    dag      = inputs.get("graph", {})
-    beat_map = inputs.get("beat_map", {}).get("beat_map", {})
-    nodes    = dag.get("nodes", {})
-    topo     = dag.get("topological_order", [])
+    premise        = inputs.get("premise", {})
+    dag            = inputs.get("graph", {})
+    beat_map       = inputs.get("beat_map", {}).get("beat_map", {})
+    nodes          = dag.get("nodes", {})
+    topo           = dag.get("topological_order", [])
+    protagonist_id = _find_protagonist_id(premise)
+    char_systems   = _char_system_cache(premise)
+    narration_sys  = _narration_system(premise)
 
     scripts: Dict[str, str] = {}
+    story_beats: List[str] = []
 
-    for nid, system, prompt in _build_node_script_prompts(premise, dag, beat_map):
-        node      = nodes.get(nid, {})
-        node_type = node.get("type", "")
-        beat      = beat_map.get(nid, {})
-        location_id   = beat.get("location_id", "")
-        background_id = _bg_id(location_id) if location_id else "bg_location"
+    for nid in topo:
+        node = nodes.get(nid)
+        if not node:
+            continue
+
+        node_type     = node["type"]
+        beat          = beat_map.get(nid, {})
+        chars_present = beat.get("characters_present", [])
         children      = node.get("child_ids", [])
+        choice_labels = beat.get("choice_labels", [])
+        story_so_far  = "\n".join(f"- {s}" for s in story_beats[-8:]) or "(story just beginning)"
 
         print(f"    [node_scripts]  {nid} ({node_type})")
-        agent = PipelineAgent(system, max_tokens=max_tokens)
-        raw   = strip_fences(agent.send(prompt)).strip()
-
-        valid, error = _validate_scene_script(nid, raw)
-        if not valid:
-            for attempt in range(1, 3):
-                print(f"    [node_scripts]  {nid} retry {attempt}: {error}")
-                raw = strip_fences(agent.send(
-                    f"Error: {error}\n"
-                    f"Rewrite the script. It must start with 'label {nid}:'. "
-                    "Output only Ren'Py script."
-                )).strip()
-                valid, error = _validate_scene_script(nid, raw)
-                if valid:
-                    break
-
-        if not valid:
-            print(f"    [node_scripts]  {nid} using fallback")
-            if node_type == "ending":
-                fallback_end = '    "The End."\n    return'
-            elif children:
-                fallback_end = f"    jump {children[0]}"
-            else:
-                fallback_end = '    "The End."\n    return'
-            raw = (
-                f"label {nid}:\n"
-                f"    scene {background_id} with dissolve\n"
-                f'    "{beat.get("summary", "...")}"\n'
-                f"{fallback_end}\n"
-            )
-
+        raw = _generate_node_by_slots(
+            node_id=nid,
+            node_type=node_type,
+            beat=beat,
+            chars_present=chars_present,
+            children=children,
+            choice_labels=choice_labels,
+            protagonist_id=protagonist_id,
+            char_systems=char_systems,
+            narration_sys=narration_sys,
+            premise=premise,
+            story_so_far=story_so_far,
+        )
         scripts[nid] = raw
+
+        if beat.get("summary"):
+            story_beats.append(beat["summary"])
 
     return {"scripts": scripts, "node_ids": topo}
 
@@ -481,7 +753,7 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
     output_dir = str(working_dir / "game_output")
 
     valid_backgrounds = {bg["id"] for bg in manifest.get("backgrounds", [])}
-    valid_characters  = {c["id"] for c in manifest.get("characters", [])}
+    valid_characters  = {c["id"] for c in manifest.get("characters", [])} | {"act"}
     valid_cgs         = {cg["id"] for cg in manifest.get("cgs", [])}
     valid_labels      = set(node_ids) | {"start", "splashscreen", "main_menu"}
 

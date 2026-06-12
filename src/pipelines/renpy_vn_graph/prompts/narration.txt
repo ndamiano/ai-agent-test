@@ -1,0 +1,9 @@
+## Story so far
+{story_so_far}
+
+## Recent lines
+{history}
+
+Tone: {emotional_tone}
+
+Write one line of narration reacting to the last spoken line.

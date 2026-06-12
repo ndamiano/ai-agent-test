@@ -1,0 +1,12 @@
+## Story so far
+{story_so_far}
+
+## This scene
+{beat_summary}
+Tone: {emotional_tone}
+Objective: {scene_objective}
+
+## Last few lines
+{history}
+
+{char_name}'s next line:

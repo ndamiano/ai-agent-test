@@ -1,6 +1,6 @@
 {
   "stage": "endings",
-  "pipeline": "renpy_vn_graph",
+  "pipeline": "renpy",
   "criteria": [
     {
       "name": "ending_differentiation",

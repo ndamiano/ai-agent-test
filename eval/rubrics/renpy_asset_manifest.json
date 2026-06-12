@@ -3,23 +3,23 @@
   "pipeline": "renpy",
   "criteria": [
     {
-      "name": "background_evocativeness",
-      "description": "Each background description is specific enough to generate a distinct image — it names concrete visual elements (colors, light quality, objects, textures) rather than vague adjectives. Test: could two different backgrounds be illustrated identically from these descriptions? If yes, score 0–40. If each background is unambiguously distinct and atmospheric, score 70+.",
-      "weight": 1.5
+      "name": "prompt_completeness",
+      "description": "Every image description is self-contained — style, palette, and lighting from art_direction are embedded inline in each background and CG description. A description that just says 'foggy dock at night' without style/palette/lighting is not usable. Test: if descriptions require cross-referencing art_direction to be actionable for an image gen model, score 0–40. If each description could be copy-pasted directly to Stable Diffusion and produce a consistent result, score 70+.",
+      "weight": 2.0
     },
     {
-      "name": "tone_consistency",
-      "description": "Background and title card descriptions match the story's established tone and setting. A melancholic romance doesn't have bright cheerful backgrounds; a tense thriller doesn't have cozy warm ones. Test: read the descriptions without knowing the story — could you infer the genre and mood? If tone is absent or contradicts the premise, score 0–40. If descriptions reinforce the story's atmosphere, score 70+.",
-      "weight": 1.5
+      "name": "visual_specificity",
+      "description": "Descriptions are specific compositions, not mood summaries. They name objects, spatial relationships, and at least one concrete detail a generic image of the same location wouldn't have. Test: if a background description is 'a dark hallway, mysterious atmosphere, dramatic lighting,' score 0–35. If it is 'a narrow maintenance corridor, exposed pipes overhead, one flickering fluorescent tube, green emergency exit light casting long shadows on the floor,' score 70+.",
+      "weight": 2.0
     },
     {
-      "name": "title_card_quality",
-      "description": "The title card description captures the story's core premise or emotional stakes in a single cinematic image. It is specific enough to be illustrated — not a generic landscape or character lineup. Test: if the title card description could apply to any visual novel, score 0–40. If it captures something unique to this specific story, score 70+.",
-      "weight": 1.0
+      "name": "coverage",
+      "description": "All unique location_ids from the story have a corresponding background entry (prefixed with bg_). All endings have a CG entry. No location or ending is skipped. Test: count location_ids from beat_map against backgrounds, and endings against CGs. Any missing entry brings score below 50.",
+      "weight": 2.0
     },
     {
-      "name": "cg_moment_selection",
-      "description": "CG illustrations are assigned to the most dramatically charged scenes. A CG marks a turning point, revelation, or climactic moment — not filler or transitional scenes. Test: read each CG description and ask whether it depicts a moment the player would remember. If CGs are assigned to mundane or early-game scenes with no stakes, score 0–45. If each CG marks a clear story peak, score 70+.",
+      "name": "tonal_consistency",
+      "description": "art_direction style, palette, and lighting choices are coherent — they could all be screenshots of the same game. Character appearance descriptions in backgrounds and CGs match the premise's appearance_tags. Test: if backgrounds mix anime flat color with realistic photography styles, score 0–35. If all assets read as the same visual world, score 70+.",
       "weight": 1.0
     }
   ]

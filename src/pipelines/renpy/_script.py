@@ -16,66 +16,6 @@ _SCRIPT_SYSTEM = (
 )
 
 
-def _character_vars_block(bible: Dict, characters_present: list | None = None) -> str:
-    chars = bible.get("characters", [])
-    if characters_present:
-        chars = [c for c in chars if c.get("id") in characters_present]
-    return "\n".join(
-        f"  {c['id']} — {c['name']} ({c.get('role', '')})"
-        for c in chars
-    )
-
-
-def _validate_scene_script(scene_id: str, script: str) -> Tuple[bool, str]:
-    if not re.search(rf'\blabel\s+{re.escape(scene_id)}\s*:', script):
-        return False, f"Missing 'label {scene_id}:'"
-    if len(script.strip()) < 30:
-        return False, "Script too short"
-
-    errors = []
-    in_label = False
-    prev_line_is_say = False
-    for line in script.splitlines():
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#"):
-            prev_line_is_say = False
-            continue
-
-        if re.match(r'label\s+\w+\s*:', stripped):
-            in_label = True
-            prev_line_is_say = False
-            continue
-
-        if not in_label:
-            prev_line_is_say = False
-            continue
-
-        is_keyword = re.match(
-            r'(scene|show|hide|jump|return|menu|call|pause|with|$|play|stop|queue|voice|nvl|window|center|left|right|image|define|transform|init|python)\b',
-            stripped,
-        )
-        is_quoted        = stripped.startswith('"') or stripped.startswith("'")
-        is_char_dialogue = re.match(r'\w+\s+"', stripped)
-        is_menu_option   = re.match(r'"[^"]+"\s*:', stripped)
-
-        if prev_line_is_say and stripped and not stripped.startswith('"') and not is_keyword and not is_char_dialogue:
-            errors.append(f"Line after say statement is unexpectedly indented or invalid: {stripped[:60]!r}")
-
-        if not (is_keyword or is_quoted or is_char_dialogue or is_menu_option or stripped == ""):
-            if re.match(r'\w[\w\s]*:\s+"', stripped) or re.match(r'\w[\w\s]*:\s+\w', stripped):
-                errors.append(f"Invalid colon-speaker syntax (use char_id \"text\" instead): {stripped[:60]!r}")
-            elif stripped.startswith("*"):
-                errors.append(f"Asterisk action must be a quoted narration string: {stripped[:60]!r}")
-            elif re.match(r'^[A-Z][a-z]', stripped) or re.match(r'^\w+ \w+ \w+', stripped):
-                errors.append(f"Bare prose must be a quoted narration string: {stripped[:60]!r}")
-
-        prev_line_is_say = bool(is_quoted or is_char_dialogue)
-
-    if errors:
-        return False, "; ".join(errors[:3])
-    return True, ""
-
-
 def _postprocess_script(script: str, valid_characters: set) -> str:
     lines = script.split("\n")
     result = []

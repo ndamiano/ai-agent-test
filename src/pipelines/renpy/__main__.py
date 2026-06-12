@@ -2,12 +2,12 @@
 Quick DAG visualiser.
 
 Usage (from src/):
-    python3 -m pipelines.renpy_vn_graph
-    python3 -m pipelines.renpy_vn_graph --endings 4 --depth 7 --seed 42
+    python3 -m pipelines.renpy
+    python3 -m pipelines.renpy --endings 4 --depth 7 --seed 42
 """
 
 import argparse
-from pipelines.renpy_vn_graph.graph import generate_dag
+from pipelines.renpy.graph import generate_dag
 
 
 def _print_tree(nid: str, nodes: dict, indent: int = 0, visited: set = None) -> None:
@@ -57,7 +57,7 @@ def main() -> None:
     for n in nodes.values():
         by_type.setdefault(n["type"], []).append(n["id"])
 
-    print(f"\nSummary")
+    print("\nSummary")
     for t in ("root", "beat", "branch", "ending"):
         ids = by_type.get(t, [])
         print(f"  {t:<8} {len(ids):>2}  {ids}")

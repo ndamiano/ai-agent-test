@@ -12,10 +12,11 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 - Agents fire pipelines as tool calls — sees inputs and outputs, never intermediate steps
 
 **Pipelines**
-- Ren'Py visual novel (8-node DAG: story → settings → characters → scenes → dialogue → package → images → build)
-  - Characters: one `run_subpipeline("character")` call per cast member; portrait reused if already generated
-  - Scenes: 1 call per beat with full dramatic brief (character_states, dramatic_question, revelation, what_changes, setting_constraint)
-  - Dialogue: chunked generation (4 lines/chunk), continuity from prior lines, per-attempt retry with fresh agent
+- Ren'Py branching visual novel (`renpy`, 8 stages: graph → premise → endings → beat_map → node_scripts → asset_manifest → images → build)
+  - Graph: procedural DAG built backwards from endings (branch/beat/merge nodes, reachable-endings tracking)
+  - Beats: endings written first, then backward fill — one LLM call per node, children's beats as context
+  - Scripts: per-slot generation — Python owns all Ren'Py syntax; one LLM call per dialogue/narration line with per-character system prompts
+  - See `src/pipelines/renpy/STAGES.md` for full stage reference
 - Character creation (concept → identity/appearance/voice → portrait image)
 - TTRPG campaign (setting → factions → NPCs → encounters → plot_hooks → campaign document)
 - Pipeline registry — add a pipeline in `pipelines/<name>/`, register in `registry.py`, done

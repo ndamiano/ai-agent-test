@@ -89,7 +89,7 @@ def hill_climb(
       with Claude while the pipeline runs on the local model.
 
     end_to_end: run the full pipeline per trial instead of just the target stage.
-      Scores the final combined output against the rubric (typically renpy_e2e.json).
+      Scores the final combined output against the rubric (the <pipeline>_e2e.json rubric).
       Requires brief or briefs to be passed in.
 
     briefs: list of brief dicts for e2e mode. A random brief is chosen per run.

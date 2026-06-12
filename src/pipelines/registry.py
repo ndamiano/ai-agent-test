@@ -44,7 +44,7 @@ def _enrich_ttrpg_brief(brief: dict) -> dict:
     }
 
 
-def _enrich_vn_graph_brief(brief: dict) -> dict:
+def _enrich_renpy_brief(brief: dict) -> dict:
     return {
         "character_count": 3,
         "num_endings":     4,
@@ -59,7 +59,7 @@ def _enrich_vn_graph_brief(brief: dict) -> dict:
 def _build_registry() -> Dict[str, PipelineDefinition]:
     from pipelines.character.pipeline import CHARACTER_PIPELINE
     from pipelines.ttrpg.pipeline import TTRPG_PIPELINE
-    from pipelines.renpy_vn_graph.pipeline import RENPY_VN_GRAPH_PIPELINE
+    from pipelines.renpy.pipeline import RENPY_PIPELINE
     return {
         "character": PipelineDefinition(
             name="character",
@@ -91,10 +91,10 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
             },
             enrich_brief=_enrich_ttrpg_brief,
         ),
-        "renpy_vn_graph": PipelineDefinition(
-            name="renpy_vn_graph",
+        "renpy": PipelineDefinition(
+            name="renpy",
             description="Generate a branching Ren'Py visual novel with a procedural DAG — multiple paths, diverse endings.",
-            pipeline=RENPY_VN_GRAPH_PIPELINE,
+            pipeline=RENPY_PIPELINE,
             brief_schema={
                 "required": ["title", "genre", "tone", "setting"],
                 "optional": {
@@ -107,7 +107,7 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
                     "seed":             "RNG seed for reproducible graph shape",
                 },
             },
-            enrich_brief=_enrich_vn_graph_brief,
+            enrich_brief=_enrich_renpy_brief,
         ),
     }
 

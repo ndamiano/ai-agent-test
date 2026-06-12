@@ -1,28 +1,10 @@
-import json
 from pathlib import Path
 from typing import Dict
 
 from pipelines.runner import render_template
-from llm_clients.inference import PipelineAgent, strip_fences
+from llm_clients.inference import PipelineAgent, JSON_SYSTEM as _SYSTEM, json_with_correction as _json_with_correction
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
-
-_SYSTEM = (
-    "You are a precise creative writing assistant. Output only valid JSON. "
-    "No markdown, no explanation, no code fences."
-)
-
-
-def _json_with_correction(agent: PipelineAgent, prompt: str, label: str) -> dict:
-    content = strip_fences(agent.send(prompt))
-    for _ in range(2):
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            content = strip_fences(agent.send(
-                "Invalid JSON. Return only the JSON object, no other text."
-            ))
-    raise RuntimeError(f"Failed to get valid JSON for {label}")
 
 
 def generate_npcs(inputs: Dict, working_dir: Path) -> Dict:

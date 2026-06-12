@@ -19,10 +19,10 @@ Commands:
 
 Examples:
   python eval/cli.py capture renpy --brief renpy_romance
-  python eval/cli.py score stage renpy/story --brief renpy_romance --time 300
+  python eval/cli.py score stage renpy/premise --brief renpy_romance --time 300
   python eval/cli.py score pipeline renpy --brief renpy_romance --time 1800
-  python eval/cli.py climb renpy/story --brief renpy_romance --time-per-run 120 --iterations 10
-  python eval/cli.py report eval/results/renpy/story/renpy_romance/<run>/summary.json
+  python eval/cli.py climb renpy/premise --brief renpy_romance --time-per-run 120 --iterations 10
+  python eval/cli.py report eval/results/renpy/premise/renpy_romance/<run>/summary.json
   python eval/cli.py report <path_a> --compare <path_b>
 """
 
@@ -146,7 +146,7 @@ def cmd_climb(args):
             brief  = _load_brief(args.brief)
             brief_name = args.brief
         else:
-            # Auto-discover all renpy briefs
+            # Auto-discover all non-character briefs
             all_briefs = [
                 p.stem for p in BRIEFS_DIR.glob("*.json")
                 if not p.stem.startswith("character_")
@@ -261,7 +261,7 @@ def main():
     p_score = sub.add_parser("score", help="Score a stage or full pipeline within a time budget")
     score_sub = p_score.add_subparsers(dest="score_target", required=True)
 
-    p_stage = score_sub.add_parser("stage", help="Score a single stage (e.g. renpy/story)")
+    p_stage = score_sub.add_parser("stage", help="Score a single stage (e.g. renpy/premise)")
     p_stage.add_argument("target", help="pipeline/stage_id")
     p_stage.add_argument("--brief", required=True)
     p_stage.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
@@ -277,7 +277,7 @@ def main():
 
     # climb
     p = sub.add_parser("climb", help="Hill-climb a stage's prompt template")
-    p.add_argument("target", help="pipeline/stage_id (e.g. renpy/bible)")
+    p.add_argument("target", help="pipeline/stage_id (e.g. renpy/premise)")
     p.add_argument("--brief", default=None,
                    help="Brief name for stage climbing (required) or single-brief e2e mode")
     p.add_argument("--brief-pool", nargs="+", dest="brief_pool", default=None,
@@ -287,14 +287,14 @@ def main():
     p.add_argument("--iterations", type=int, default=5, help="Hill-climb iterations (default: 5)")
     p.add_argument("--mutations",  type=int, default=5, help="Mutations per iteration (default: 5)")
     p.add_argument("--e2e", action="store_true",
-                   help="Run full pipeline per trial; score final output against renpy_e2e rubric")
+                   help="Run full pipeline per trial; score final output against the <pipeline>_e2e rubric")
     p.add_argument("--judge-connector", default=None, dest="judge_connector",
                    help="Connector for judge scoring/mutation (e.g. cline). Defaults to active connector.")
 
     # rescore
     p = sub.add_parser("rescore", help="Re-score saved outputs with a different judge connector")
     p.add_argument("run_dir", help="Path to a result run directory containing outputs.json")
-    p.add_argument("target",  help="pipeline/stage_id (e.g. renpy/dialogue)")
+    p.add_argument("target",  help="pipeline/stage_id (e.g. renpy/node_scripts)")
     p.add_argument("--connector", default=None,
                    help="Connector type to use for judging (e.g. cline, lmstudio). Defaults to active connector.")
     p.add_argument("--compare", action="store_true",

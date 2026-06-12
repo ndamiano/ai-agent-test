@@ -31,10 +31,12 @@ src/
   config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
   database/     task_store.py (SQLite)
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
-                inference.py — PipelineAgent, call_llm (shared inference primitives)
+                inference.py — PipelineAgent, call_llm, json_with_correction (shared inference primitives)
   pipelines/    runner.py — DAG executor for LLM + Fn stages
                 registry.py — pipeline registry
-                renpy/ — 8-node pipeline (story→settings→characters→scenes→dialogue→package→images→build)
+                renpy/ — 8-stage branching VN pipeline (graph→premise→endings→beat_map→node_scripts→asset_manifest→images→build), see its STAGES.md
+                character/ — character pipeline (concept→identity/appearance/voice→portrait)
+                ttrpg/ — campaign pipeline (setting→factions→npcs→encounters→plot_hooks→document)
   tools/        tool_manager.py, orchestration_tools, system_tools, pipeline_tools
 ```
 
@@ -90,7 +92,7 @@ Hill climbing requires every LLM call prompt to be in a `.txt` file the eval sys
    prompt = render_template(_PROMPTS_DIR / "my_prompt.txt", ctx)
    ```
 
-4. **One LLM call per stage.** A FnStage that makes multiple LLM calls has only one `prompt_file` slot — only the registered file is climbable. If you need all calls independently tunable, split into separate nodes/stages. `story` currently violates this (arc, beat, locations in one stage) — tracked as a TODO.
+4. **One LLM call per stage.** A FnStage that makes multiple LLM calls has only one `prompt_file` slot — only the registered file is climbable. If you need all calls independently tunable, split into separate nodes/stages. `node_scripts` currently violates this (character_line + narration prompts in one stage; only `character_line.txt` is registered).
 
 5. **`LLMStage` is automatic.** Use `prompt_template=` instead of `prompt_file=` — the runner handles loading and swapping.
 

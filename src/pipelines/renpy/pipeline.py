@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from pipelines.runner import Pipeline, Node, FnStage
-from pipelines.renpy_vn_graph.fns import (
+from pipelines.renpy.fns import (
     generate_graph,
     generate_premise,
     generate_endings,
@@ -14,8 +14,8 @@ from pipelines.renpy_vn_graph.fns import (
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
-RENPY_VN_GRAPH_PIPELINE = Pipeline(
-    name="renpy_vn_graph",
+RENPY_PIPELINE = Pipeline(
+    name="renpy",
     prompts_dir=_PROMPTS_DIR,
     nodes=[
 

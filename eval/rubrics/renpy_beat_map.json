@@ -1,6 +1,6 @@
 {
   "stage": "beat_map",
-  "pipeline": "renpy_vn_graph",
+  "pipeline": "renpy",
   "criteria": [
     {
       "name": "dramatic_specificity",

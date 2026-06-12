@@ -152,7 +152,6 @@ class PipelineEvalRunner:
 
     def run_n(self, n: int) -> list:
         from pipelines.registry import run_pipeline
-        from eval._paths import GAMES_DIR
 
         results = []
         for i in range(n):

@@ -1,6 +1,6 @@
 {
   "stage": "node_scripts",
-  "pipeline": "renpy_vn_graph",
+  "pipeline": "renpy",
   "criteria": [
     {
       "name": "voice_distinctness",

@@ -1,5 +1,6 @@
 """Shared inference primitives for pipeline stages."""
 
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -17,6 +18,12 @@ def strip_fences(content: str) -> str:
         if content.startswith("json"):
             content = content[4:]
     return content.strip()
+
+
+JSON_SYSTEM = (
+    "You are a precise creative writing assistant. Output only valid JSON. "
+    "No markdown, no explanation, no code fences."
+)
 
 
 _REPETITION_RE = re.compile(r'(.{3,20})\1{8,}')
@@ -86,6 +93,19 @@ def call_llm(connector, messages: list, response_format: Optional[dict] = None, 
         **envelope,
         "choices": [{"message": {"role": "assistant", "content": accumulated}}],
     }
+
+
+def json_with_correction(agent: "PipelineAgent", prompt: str, label: str, attempts: int = 2) -> dict:
+    """Send a prompt expecting JSON; on parse failure, ask the agent to correct itself."""
+    content = strip_fences(agent.send(prompt))
+    for _ in range(attempts):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            content = strip_fences(agent.send(
+                "Invalid JSON. Return only the JSON object, no other text."
+            ))
+    raise RuntimeError(f"Failed to get valid JSON for {label}")
 
 
 class PipelineAgent:

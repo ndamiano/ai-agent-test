@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Quick discrimination test for the judge.
-Scores a known-good story and a deliberately bad story, prints side-by-side.
+Scores a known-good premise and a deliberately bad one, prints side-by-side.
+Requires fixtures: python eval/cli.py capture renpy --brief renpy_romance
 Usage: python eval/judge_test.py
 """
 import sys
@@ -15,28 +16,30 @@ import json
 from eval.judge import Judge
 from eval._paths import RUBRICS_DIR, FIXTURES_DIR
 
-GOOD = json.loads((FIXTURES_DIR / "renpy/renpy_romance/story.json").read_text())
+_good_path = FIXTURES_DIR / "renpy/renpy_romance/premise.json"
+if not _good_path.exists():
+    sys.exit(f"Missing fixture {_good_path}.\nRun: python eval/cli.py capture renpy --brief renpy_romance")
+GOOD = json.loads(_good_path.read_text())
 
 BAD = {
-    "arc": "character does things and stuff happens",
-    "premise": "two people meet and talk",
-    "story_beats": [
-        {"beat_id": "beat_01", "label": "scene 1", "description": "they talk", "location_type": "a place"},
-        {"beat_id": "beat_02", "label": "scene 2", "description": "more talking", "location_type": "another place"},
-        {"beat_id": "beat_03", "label": "scene 3", "description": "the end", "location_type": "somewhere"},
-    ],
-    "location_needs": [
-        {"need": "a location", "suggested_name": "place"},
+    "premise": "two people meet and talk and stuff happens",
+    "setting": {"name": "a place", "physical_description": "somewhere", "atmosphere": "normal"},
+    "tone_directives": [{"adjective": "fine", "explanation": "it is fine"}],
+    "characters": [
+        {"id": "person_a", "name": "Person A", "role": "protagonist", "personality": "nice",
+         "voice": "talks normally", "appearance": "a person", "immediate_goal": "talk", "subtext": "none"},
+        {"id": "person_b", "name": "Person B", "role": "other", "personality": "also nice",
+         "voice": "talks normally too", "appearance": "another person", "immediate_goal": "talk back", "subtext": "none"},
     ],
 }
 
-rubric = json.loads((RUBRICS_DIR / "renpy_story.json").read_text())
+rubric = json.loads((RUBRICS_DIR / "renpy_premise.json").read_text())
 judge = Judge()
 
-print("Scoring GOOD story...")
-good_result = judge.score("story", GOOD, rubric)
-print("Scoring BAD story...")
-bad_result  = judge.score("story", BAD,  rubric)
+print("Scoring GOOD premise...")
+good_result = judge.score("premise", GOOD, rubric)
+print("Scoring BAD premise...")
+bad_result  = judge.score("premise", BAD,  rubric)
 
 def fmt(result, label):
     if not result:

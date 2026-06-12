@@ -1,4 +1,3 @@
-import json
 import os
 import random
 import re
@@ -7,82 +6,36 @@ from pathlib import Path
 from typing import Dict, List
 
 from pipelines.runner import render_template
-from llm_clients.inference import PipelineAgent, strip_fences
-from pipelines.renpy_vn_graph import graph as _graph
-from pipelines.renpy_vn_graph._script import (
-    _character_vars_block,
-    _validate_scene_script,
+from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
+from pipelines.renpy import graph as _graph
+from pipelines.renpy._script import (
     _postprocess_script,
     _validate_and_repair,
     _stitch_script,
     _write_options_rpy,
     run_final_lint,
 )
-from pipelines.renpy_vn_graph.renpy_builder import _copy_templates, _distribute
+from pipelines.renpy.renpy_builder import _copy_templates, _distribute
+from utils.image import write_solid_png
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
-
-_JSON_SYSTEM = (
-    "You are a precise creative writing assistant. Output only valid JSON. "
-    "No markdown, no explanation, no code fences."
-)
-
-
-def _build_node_script_system(premise: Dict) -> str:
-    chars = premise.get("characters", [])
-    char_profiles = "\n\n".join(
-        f"{c['name']} (id={c['id']}, {c.get('role', '')}):\n"
-        f"  personality: {c.get('personality', '')}\n"
-        f"  voice: {c.get('voice', '')}"
-        for c in chars
-    )
-    tone_parts = [
-        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
-        for d in premise.get("tone_directives", [])
-        if d.get("adjective")
-    ]
-    setting = premise.get("setting", {})
-    return render_template(_PROMPTS_DIR / "node_script_system.txt", {
-        "premise":             premise.get("premise", ""),
-        "tone":                "; ".join(tone_parts),
-        "setting_name":        setting.get("name", ""),
-        "setting_description": setting.get("physical_description", ""),
-        "character_profiles":  char_profiles,
-    })
 
 _CHARACTER_COLORS = [
     "#c8ffc8", "#c8c8ff", "#ffc8c8", "#ffe0a3", "#d8b4ff", "#a7f3d0",
 ]
 
-_BEAT_TO_EXPRESSION = {
-    "tense":           "worried",
-    "confrontational": "angry",
-    "melancholic":     "sad",
-    "revelatory":      "surprised",
-    "hopeful":         "happy",
-    "tender":          "happy",
-    "ominous":         "scared",
-}
-
-def _call_llm(system_prompt: str, user_prompt: str, max_tokens: int = 50000) -> str:
-    agent = PipelineAgent(system_prompt, max_tokens=max_tokens)
-    return strip_fences(agent.send(user_prompt))
-
 
 def _call_json(prompt: str, label: str, max_tokens: int, attempts: int = 3) -> dict:
-    for _ in range(attempts):
-        content = _call_llm(_JSON_SYSTEM, prompt, max_tokens)
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            content = strip_fences(agent.send(
-                "Invalid JSON. Return only the JSON object, no other text."
-            ))
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                pass
-    raise RuntimeError(f"Failed to get valid JSON for {label}")
+    agent = PipelineAgent(JSON_SYSTEM, max_tokens=max_tokens)
+    return json_with_correction(agent, prompt, label, attempts=attempts)
+
+
+def _tone_str(premise: Dict) -> str:
+    return "; ".join(
+        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
+        for d in premise.get("tone_directives", [])
+        if d.get("adjective")
+    )
 
 
 def _bg_id(location_id: str) -> str:
@@ -230,7 +183,7 @@ def backward_fill(inputs: Dict, working_dir: Path, max_tokens: int = 4000) -> Di
             result = _call_json(prompt, f"backward_fill {nid}", max_tokens)
         except RuntimeError:
             result = {
-                "summary":          f"A story beat leading toward the ending.",
+                "summary":          "A story beat leading toward the ending.",
                 "dramatic_purpose": "Advances the plot.",
                 "location_id":      child_beats[0].get("location_id", "location") if child_beats else "location",
                 "emotional_tone":   "tense",
@@ -243,60 +196,8 @@ def backward_fill(inputs: Dict, working_dir: Path, max_tokens: int = 4000) -> Di
 
 
 # ---------------------------------------------------------------------------
-# Stage 5: Node scripts (LLM — one call per node)
+# Stage 5: Node scripts (LLM — one call per dialogue slot)
 # ---------------------------------------------------------------------------
-
-def _build_node_script_prompts(premise: Dict, dag: Dict, beat_map: Dict):
-    """Yield (node_id, system_prompt, user_prompt) for every node. Used by dev_utils."""
-    system = _build_node_script_system(premise)
-    nodes  = dag.get("nodes", {})
-    topo   = dag.get("topological_order", [])
-    for nid in topo:
-        node = nodes.get(nid)
-        if not node:
-            continue
-        beat          = beat_map.get(nid, {})
-        chars_present = beat.get("characters_present", [])
-        location_id   = beat.get("location_id", "")
-        background_id = _bg_id(location_id) if location_id else "bg_location"
-        node_type     = node["type"]
-        children      = node["child_ids"]
-        choice_labels = beat.get("choice_labels", [])
-        char_vars = _character_vars_block(premise, chars_present)
-
-        if node_type == "branch":
-            choices = [
-                {"label": choice_labels[i] if i < len(choice_labels) else f"Choice {i+1}", "jump": cid}
-                for i, cid in enumerate(children)
-            ]
-            next_info = "This is a choice point. Use a menu: block.\n" + "\n".join(
-                f"  menu option {i+1}: \"{c['label']}\" → jump {c['jump']}"
-                for i, c in enumerate(choices)
-            )
-            end_instruction = (
-                "  menu:\n" +
-                "\n".join(f'      "{c["label"]}":\n          jump {c["jump"]}' for c in choices)
-            )
-        elif node_type == "ending":
-            next_info       = 'This is an ending. End with "The End." then return.'
-            end_instruction = '  "The End."\n  return'
-        else:
-            next_id         = children[0] if children else None
-            next_beat       = beat_map.get(next_id, {}) if next_id else {}
-            next_info       = f"Next node: {next_id} — {next_beat.get('summary', '')}" if next_id else "This is the final node."
-            end_instruction = f"  jump {next_id}" if next_id else '  "The End."\n  return'
-
-        user_prompt = render_template(_PROMPTS_DIR / "node_script.txt", {
-            "beat":            beat,
-            "node_id":         nid,
-            "node_type":       node_type,
-            "background_id":   background_id,
-            "character_vars":  char_vars,
-            "next_info":       next_info,
-            "end_instruction": end_instruction,
-        })
-        yield (nid, system, user_prompt)
-
 
 _SLOT_NARRATION_PROB = 0.20
 _SLOT_TARGET_MIN    = 8
@@ -336,12 +237,7 @@ def _generate_slots(chars_present: List[str], protagonist_id: str) -> List[dict]
 
 
 def _char_system_cache(premise: Dict) -> Dict[str, str]:
-    tone_parts = [
-        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
-        for d in premise.get("tone_directives", [])
-        if d.get("adjective")
-    ]
-    tone    = "; ".join(tone_parts)
+    tone    = _tone_str(premise)
     setting = premise.get("setting", {})
     chars   = premise.get("characters", [])
 
@@ -365,15 +261,10 @@ def _char_system_cache(premise: Dict) -> Dict[str, str]:
 
 
 def _narration_system(premise: Dict) -> str:
-    tone_parts = [
-        f"{d.get('adjective', '')} ({d.get('explanation', '')})"
-        for d in premise.get("tone_directives", [])
-        if d.get("adjective")
-    ]
     setting = premise.get("setting", {})
     return render_template(_PROMPTS_DIR / "narration_system.txt", {
         "premise":            premise.get("premise", ""),
-        "tone":               "; ".join(tone_parts),
+        "tone":               _tone_str(premise),
         "setting_name":       setting.get("name", ""),
         "setting_atmosphere": setting.get("atmosphere", ""),
     })
@@ -425,12 +316,17 @@ def _split_dialogue(text: str) -> List[str]:
 _SEG_RE = re.compile(r'(\*[^*]+\*)')
 
 
-def _parse_char_output(raw: str, cid: str) -> tuple:
-    raw = raw.strip()
+def _strip_speaker_prefix(raw: str) -> str:
+    """Drop a leading 'Name:' the model sometimes prepends despite instructions."""
     if ":" in raw[:40]:
         parts = raw.split(":", 1)
         if len(parts) == 2 and len(parts[0].split()) <= 3:
-            raw = parts[1].strip()
+            return parts[1].strip()
+    return raw
+
+
+def _parse_char_output(raw: str, cid: str) -> tuple:
+    raw = _strip_speaker_prefix(raw.strip())
 
     # Strip any tilde emphasis markers (not supported)
     raw = re.sub(r'~([^~]+)~', r'\1', raw)
@@ -469,24 +365,14 @@ def _parse_char_output(raw: str, cid: str) -> tuple:
 def _call_line(system: str, user_prompt: str) -> str:
     """Narration: returns plain text (no segment parsing needed)."""
     agent = PipelineAgent(system, max_tokens=200)
-    raw = agent.send(user_prompt).strip()
-    raw = raw.strip('"').strip("'")
-    if ":" in raw[:40]:
-        parts = raw.split(":", 1)
-        if len(parts) == 2 and len(parts[0].split()) <= 3:
-            raw = parts[1].strip().strip('"').strip("'")
-    return raw
+    raw = agent.send(user_prompt).strip().strip('"').strip("'")
+    return _strip_speaker_prefix(raw).strip('"').strip("'")
 
 
 def _call_char_line(system: str, user_prompt: str) -> str:
     """Character dialogue: returns raw text for segment parsing."""
     agent = PipelineAgent(system, max_tokens=300)
-    raw = agent.send(user_prompt).strip()
-    if ":" in raw[:40]:
-        parts = raw.split(":", 1)
-        if len(parts) == 2 and len(parts[0].split()) <= 3:
-            raw = parts[1].strip()
-    return raw
+    return _strip_speaker_prefix(agent.send(user_prompt).strip())
 
 
 def _generate_node_by_slots(
@@ -730,9 +616,72 @@ def generate_asset_manifest(inputs: Dict, working_dir: Path, max_tokens: int = 8
 # ---------------------------------------------------------------------------
 
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
-    from pipelines.renpy.fns import generate_images as _gen
-    # renpy.fns expects inputs["bible"] — adapt
-    return _gen({**inputs, "bible": inputs.get("premise", {})}, working_dir)
+    from tools.comfyui_tools import (
+        build_character_job, build_background_job,
+        build_cg_job, build_title_card_job,
+        generate_images_batch,
+    )
+    from tools.execution_context import track_written_file
+
+    premise  = inputs.get("premise", {})
+    manifest = inputs.get("asset_manifest", {})
+
+    images_dir = working_dir / "game_output" / "game" / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    premise_chars = {c["id"]: c for c in premise.get("characters", [])}
+    job_meta: List[Dict] = []
+    jobs:     List[Dict] = []
+
+    for bg in manifest.get("backgrounds", []):
+        bg_file = bg["image_file"]
+        job_meta.append({"file": bg_file, "dest": images_dir / bg_file, "kind": "bg"})
+        jobs.append(build_background_job(bg.get("description", bg.get("name", bg["id"]))))
+
+    for char in manifest.get("characters", []):
+        img_file = char.get("image_file", f"{char['id']}.png")
+        job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "char"})
+        jobs.append(build_character_job(premise_chars.get(char["id"], char)))
+
+    for cg in manifest.get("cgs", []):
+        img_file = cg.get("image_file", f"{cg['id']}.png")
+        job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "cg"})
+        jobs.append(build_cg_job(cg.get("description", cg["id"])))
+
+    title_card = manifest.get("title_card", {})
+    if title_card.get("description"):
+        tc_file = title_card.get("image_file", "title_card.png")
+        job_meta.append({"file": tc_file, "dest": images_dir / tc_file, "kind": "title_card"})
+        jobs.append(build_title_card_job(title_card["description"]))
+
+    print(f"    [images]  generating {len(jobs)} image(s)")
+    results   = generate_images_batch(jobs)
+    generated: List[str] = []
+    failed:    List[Dict] = []
+
+    for meta, result in zip(job_meta, results):
+        filepath = meta["dest"]
+        img_file = meta["file"]
+        if result.get("success") and result.get("saved_paths"):
+            shutil.copy2(result["saved_paths"][0], filepath)
+            track_written_file(str(filepath))
+            generated.append(img_file)
+            print(f"    [images]  ok: {img_file}")
+        else:
+            error = result.get("error", "unknown")
+            print(f"    [images]  failed ({error}), placeholder: {img_file}")
+            kind = meta["kind"]
+            if kind == "char":
+                w, h, color = 512, 768, (92, 58, 92)
+            elif kind in ("cg", "title_card"):
+                w, h, color = 1280, 720, (40, 20, 60) if kind == "cg" else (20, 30, 60)
+            else:
+                w, h, color = 1280, 720, (58, 58, 92)
+            write_solid_png(filepath, w, h, color)
+            track_written_file(str(filepath))
+            failed.append({"file": img_file, "error": error})
+
+    return {"status": "ok", "generated": generated, "failed": failed}
 
 
 # ---------------------------------------------------------------------------

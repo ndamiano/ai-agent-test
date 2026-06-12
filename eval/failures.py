@@ -98,7 +98,7 @@ def analyze(results: list) -> dict:
         if cls != "ok" and cls not in examples:
             log = r.get("log", "").strip()
             # Keep the most informative lines (error lines near the end)
-            lines = [l for l in log.splitlines() if l.strip()]
+            lines = [ln for ln in log.splitlines() if ln.strip()]
             examples[cls] = "\n".join(lines[-6:]) if lines else "(no log captured)"
     return {
         "total": len(results),

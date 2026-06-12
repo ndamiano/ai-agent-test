@@ -1,6 +1,6 @@
-# renpy_vn_graph — Stage Reference
+# renpy — Stage Reference
 
-This pipeline produces a complete branching Ren'Py visual novel from a one-paragraph user brief. Eight stages run in dependency order; all LLM calls use a shared `_call_json` helper with a 3-attempt retry loop.
+This pipeline produces a complete branching Ren'Py visual novel from a one-paragraph user brief. Eight stages run in dependency order. JSON-producing stages use a shared `_call_json` helper with retry-and-correct; `node_scripts` makes one plain-text LLM call per dialogue slot.
 
 ---
 
@@ -124,30 +124,22 @@ Walks the DAG in reverse topological order (endings → root). For each non-endi
 
 ---
 
-## Stage 5: `node_scripts` — Write Ren'Py Scripts (LLM, one call per node)
+## Stage 5: `node_scripts` — Write Ren'Py Scripts (LLM, one call per dialogue slot)
 
 **File:** `fns.py` → `write_node_scripts()`  
 **Inputs:** `premise.json`, `graph.json`, `beat_map.json`  
 **Output:** `node_scripts.json`  
-**Prompts:** `prompts/node_script.txt` (user), `prompts/node_script_system.txt` (system)
+**Prompts:** `prompts/character_line.txt` + `prompts/character_line_system.txt` (dialogue), `prompts/narration.txt` + `prompts/narration_system.txt` (narration)
 
-For every node in topological order, writes the actual Ren'Py script: background commands, character show/hide, narration, dialogue, and the correct ending instruction (jump / menu / return).
+For every node in topological order, generates the scene content slot by slot. Python owns all Ren'Py syntax (label, scene, show, menu, jump); the LLM only ever writes a single line of dialogue or narration per call.
 
-**System prompt** (`node_script_system.txt`) contains the full story premise, tone directives, setting, and character profiles (personality + voice). This is injected once per node via a `PipelineAgent` (not shared across nodes — each node gets a fresh agent).
+**Slot generation:** Each node gets 8–14 randomly assigned slots — ~20% narration, the rest character lines. The protagonist is weighted double; the same character never speaks twice in a row.
 
-**User prompt** (`node_script.txt`) contains:
-- The beat description from beat_map
-- The node id, type, and background id
-- Character variable declarations (`define char_id = Character(...)`)
-- What comes next (jump target, menu options, or return)
+**Character lines:** Each character gets a cached system prompt (`character_line_system.txt`) holding their voice mechanics, immediate goal, subtext, the premise, tone, and the other cast members. The per-slot user prompt (`character_line.txt`) carries the beat summary, emotional tone, scene objective, recent dialogue history (last 10 entries), and a story-so-far recap. `*asterisk*` segments in the response become italic `act` action lines; speech is split at sentence boundaries so no text box exceeds 240 characters.
 
-**Output:** Valid Ren'Py script starting with `label {node_id}:`, 8-14 lines, ending with the correct instruction.
+**Narration:** Same pattern via `narration_system.txt` / `narration.txt`.
 
-**Validation loop:** After generation, `_validate_scene_script` checks the script. On failure, the agent is prompted to retry up to 2 times with the error message. If still invalid, a minimal fallback script is inserted.
-
-**Branch nodes:** The prompt specifies the menu structure; the LLM writes `menu:` with the player-facing labels and jumps to the correct child IDs.
-
-**Ending nodes:** Prompt instructs `"The End."\n    return`.
+**Assembly (Python, no LLM):** `label {node_id}:`, `scene bg_x with dissolve`, `show` for up to 3 present characters, then the generated lines, then the ending instruction — `menu:` with choice labels for branch nodes, `jump` for linear nodes, `"The End." / return` for endings.
 
 ---
 
@@ -187,7 +179,7 @@ Produces image generation prompts for every visual asset the game needs: backgro
 **Inputs:** `premise.json`, `asset_manifest.json`  
 **Output:** `images_result.json`
 
-Delegates to the existing `renpy` pipeline's image generation function. Calls an image generation API (Stable Diffusion / similar) for each asset in the manifest. The descriptions written in stage 6 become the image prompts.
+Builds one ComfyUI job per asset in the manifest (backgrounds, character sprites, CGs, title card) and runs them as a batch. The descriptions written in stage 6 become the image prompts. Failed generations fall back to solid-color placeholder PNGs so the build never blocks on image errors.
 
 ---
 
@@ -244,8 +236,8 @@ brief + premise + asset_manifest + node_scripts ──→ [build]     → game o
 | premise | `prompts/premise.txt` |
 | endings | `prompts/endings.txt` |
 | beat_map | `prompts/backward_fill.txt` |
-| node_scripts | `prompts/node_script.txt` + `prompts/node_script_system.txt` |
+| node_scripts | `prompts/character_line.txt` (registered) + `character_line_system.txt`, `narration.txt`, `narration_system.txt` |
 | asset_manifest | `prompts/asset_manifest.txt` |
 | graph | no prompt (procedural) |
-| images | no prompt (uses renpy pipeline) |
+| images | no prompt (ComfyUI jobs) |
 | build | no prompt (assembly) |

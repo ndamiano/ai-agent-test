@@ -18,7 +18,7 @@ The other use case is **diagnosis**: run `score stage --show-reasoning` before c
 
 ### Setup — capture fixtures first
 
-Fixtures are the intermediate JSON files a stage receives from prior stages (e.g. `scenes.json`, `characters.json`). They let you run one stage in isolation without re-running the whole pipeline each time.
+Fixtures are the intermediate JSON files a stage receives from prior stages (e.g. `premise.json`, `graph.json`). They let you run one stage in isolation without re-running the whole pipeline each time.
 
 ```bash
 python eval/cli.py capture renpy --brief renpy_romance
@@ -29,7 +29,7 @@ Re-run this whenever the pipeline structure changes significantly or you want fr
 ### Score a stage to get a baseline
 
 ```bash
-python eval/cli.py score stage renpy/dialogue \
+python eval/cli.py score stage renpy/premise \
   --brief renpy_romance \
   --n 5 \
   --show-reasoning
@@ -42,7 +42,7 @@ Check `success_rate` first — if below 80%, fix failures before scoring. Hill c
 ### Hill climb
 
 ```bash
-python eval/cli.py climb renpy/dialogue \
+python eval/cli.py climb renpy/node_scripts \
   --brief renpy_romance \
   --n 5 \
   --iterations 5 \
@@ -65,8 +65,8 @@ Climb and score runs now save `outputs.json` alongside `summary.json`. You can r
 ```bash
 # Set cline.model to claude-opus-4-5 in settings first
 python eval/cli.py rescore \
-  eval/results/renpy/dialogue/renpy_romance/<run_dir>/ \
-  renpy/dialogue \
+  eval/results/renpy/node_scripts/renpy_romance/<run_dir>/ \
+  renpy/node_scripts \
   --connector cline \
   --compare
 ```
@@ -76,7 +76,7 @@ python eval/cli.py rescore \
 ### Report / diff two runs
 
 ```bash
-python eval/cli.py report eval/results/renpy/story/renpy_romance/<run>/summary.json
+python eval/cli.py report eval/results/renpy/premise/renpy_romance/<run>/summary.json
 python eval/cli.py report <path_a> --compare <path_b>
 ```
 
@@ -99,10 +99,10 @@ Understanding the internals matters because the system has real failure modes.
 **Scoring a stage:**
 
 ```
-cli.py score stage renpy/dialogue --brief renpy_romance
+cli.py score stage renpy/premise --brief renpy_romance
         │
         ├─ load brief JSON          (eval/briefs/renpy_romance.json)
-        ├─ load rubric JSON         (eval/rubrics/renpy_dialogue.json)
+        ├─ load rubric JSON         (eval/rubrics/renpy_premise.json)
         └─ load fixtures            (eval/fixtures/renpy/renpy_romance/*.json)
                 │
                 ▼
@@ -129,7 +129,7 @@ cli.py score stage renpy/dialogue --brief renpy_romance
 **Hill climbing a stage:**
 
 ```
-cli.py climb renpy/dialogue --brief renpy_romance --n 5 --iterations 5 --mutations 5
+cli.py climb renpy/node_scripts --brief renpy_romance --n 5 --iterations 5 --mutations 5
         │
         ▼
   [baseline]  score current prompt  (same flow as above)
@@ -168,7 +168,7 @@ cli.py climb renpy/dialogue --brief renpy_romance --n 5 --iterations 5 --mutatio
 **Rescore flow (cross-check with different model):**
 
 ```
-cli.py rescore eval/results/.../run_dir/ renpy/dialogue --connector cline --compare
+cli.py rescore eval/results/.../run_dir/ renpy/node_scripts --connector cline --compare
         │
         ├─ load outputs.json from run_dir   (saved by score/climb)
         ├─ load rubric
@@ -255,7 +255,7 @@ eval/
 
 ```json
 {
-  "stage": "dialogue",
+  "stage": "node_scripts",
   "pipeline": "renpy",
   "criteria": [
     {

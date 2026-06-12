@@ -1,10 +1,10 @@
-"""Tests for renpy_vn_graph dialogue parsing helpers (no LLM calls)."""
+"""Tests for renpy dialogue parsing helpers (no LLM calls)."""
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from pipelines.renpy_vn_graph.fns import _parse_char_output, _split_dialogue, _MAX_LINE_CHARS
+from pipelines.renpy.fns import _parse_char_output, _split_dialogue, _MAX_LINE_CHARS
 
 
 # ---------------------------------------------------------------------------
@@ -122,3 +122,37 @@ def test_empty_input():
     lines, hist = _parse_char_output("", "elena")
     assert lines == []
     assert hist.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# generate_images — placeholder fallback when ComfyUI fails
+# ---------------------------------------------------------------------------
+
+def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
+    import tools.comfyui_tools as comfyui_tools
+    from pipelines.renpy.fns import generate_images
+
+    monkeypatch.setattr(
+        comfyui_tools, "generate_images_batch",
+        lambda jobs: [{"success": False, "error": "no comfyui"} for _ in jobs],
+    )
+
+    inputs = {
+        "premise": {"characters": [{"id": "alex", "name": "Alex", "appearance": "tall"}]},
+        "asset_manifest": {
+            "backgrounds": [{"id": "bg_dock", "image_file": "dock.png", "description": "a dock"}],
+            "characters":  [{"id": "alex", "name": "Alex", "image_file": "alex.png"}],
+            "cgs":         [{"id": "cg_finale", "image_file": "cg_finale.png", "description": "finale"}],
+            "title_card":  {"image_file": "title_card.png", "description": "title"},
+        },
+    }
+
+    result = generate_images(inputs, tmp_path)
+
+    assert result["status"] == "ok"
+    assert result["generated"] == []
+    assert {f["file"] for f in result["failed"]} == {"dock.png", "alex.png", "cg_finale.png", "title_card.png"}
+    images_dir = tmp_path / "game_output" / "game" / "images"
+    for name in ("dock.png", "alex.png", "cg_finale.png", "title_card.png"):
+        png = (images_dir / name).read_bytes()
+        assert png.startswith(b"\x89PNG")

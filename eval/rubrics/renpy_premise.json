@@ -1,6 +1,6 @@
 {
   "stage": "premise",
-  "pipeline": "renpy_vn_graph",
+  "pipeline": "renpy",
   "criteria": [
     {
       "name": "premise_urgency",

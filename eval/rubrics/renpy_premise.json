@@ -9,7 +9,7 @@
     },
     {
       "name": "central_question",
-      "description": "The central_question is a values tension with at least two defensible answers — not a logistics problem. Test: 'can she finish in time?' has one good answer, score 0–35. 'Is holding the family together worth pretending nothing is changing?' can be honestly answered both ways — score 70+. The question must also be one this premise's situation actually argues, not a bolted-on abstraction.",
+      "description": "The central_question is a collision between two things the protagonist genuinely values and cannot have at once — X or Y, where a thoughtful person could want either. Not a logistics problem (settled by competence or effort) and not a proposition with one obvious answer (where the losing side is undefendable). Test: 'Can she finish in time?' fails (0–35) — effort settles it, no values are in tension. 'Should she save the kids?' fails (0–35) — only a monster picks the other pole. 'Does the knight honor the oracle's acceptance of death, or fight for a life she has already surrendered?' passes (70+) — her agency and her life are both worth wanting, and reasonable people would split. The question must be one this premise's situation actually argues, not a bolted-on abstraction.",
       "weight": 2.0
     },
     {
@@ -19,12 +19,12 @@
     },
     {
       "name": "voice_specificity",
-      "description": "Voice descriptions are concrete enough that a writer could imitate the character cold. They must include vocabulary level, sentence length or rhythm, and what breaks under pressure. Test: if voice is only 'speaks softly' or 'uses technical jargon,' score 0–40. If a writer could generate three plausible lines in that character's voice from the description alone, score 70+. Voices must differ from each other.",
+      "description": "Voice descriptions name concrete, imitable mechanics a writer could use to impersonate the character cold — vocabulary level, sentence length and rhythm, and what changes under pressure. Adjectives are not mechanics. Test: 'speaks softly,' 'blunt,' 'uses technical jargon' score 0–40 — these are labels, not instructions a writer can type from. 'Clipped, verbless fragments that grow longer and more formal when he is cornered' scores 70+ — a writer knows exactly what to produce. Distinctness between characters is NOT required and must not be scored: two characters may legitimately share a similar voice (siblings, same upbringing). Judge each voice solely on whether it is concrete enough to imitate.",
       "weight": 1.5
     },
     {
       "name": "downstream_utility",
-      "description": "All fields populated with specific, usable content. protagonist_id matches a character. appearance_tags have concrete values (not 'unknown'). tone_directives each tie to a specific dialogue behavior. The setting's physical description is specific enough to generate consistent images. No vague placeholder content anywhere.",
+      "description": "Downstream stages can consume the premise without hitting a broken reference or a placeholder. protagonist_id resolves to a character in the list. appearance_tags have concrete values, not 'unknown' or empty. Each tone_directive ties to a specific dialogue behavior, not just a mood word. The setting's physical_description is concrete enough to generate consistent images. Test: any unresolved id, placeholder value, or mood-word-without-behavior brings the score below 50; a premise where every field is directly usable by the next stage scores 70+.",
       "weight": 1.0
     }
   ]

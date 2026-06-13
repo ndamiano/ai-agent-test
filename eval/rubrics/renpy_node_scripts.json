@@ -4,7 +4,7 @@
   "criteria": [
     {
       "name": "voice_distinctness",
-      "description": "Each character's lines could only have been spoken by that character — vocabulary, sentence length, formality, and stress patterns are consistent with their voice description from the premise. Swap two characters' lines: if they still work, the voices are not distinct. Test: if all characters speak in the same register (same sentence length, same vocabulary level, same emotional temperature), score 0–35. If covering the speaker labels and still knowing who said each line is possible, score 75+.",
+      "description": "No two characters need distinct voices, but the whole cast must not collapse into one. Test: if every character speaks in the same register — same sentence length, vocabulary, emotional temperature, so the scene reads as one voice with different names — score 0–35. If characters who should differ (a terse teen vs. a careful parent) audibly do, score 75+. Do not penalize two characters who legitimately share a voice (siblings, same upbringing).",
       "weight": 2.0
     },
     {
@@ -14,7 +14,7 @@
     },
     {
       "name": "naturalism",
-      "description": "Read each spoken line aloud — would a human actually say it in conversation? Lines must be plain spoken language by default; figurative language is rare and only where emotion justifies it. Test: if more than one line per scene uses a metaphor or simile, or any line reads as written prose rather than speech ('let's keep our shoulders touching as we walk', 'your eyes are as sharp as a balance sheet'), score 0–40. If every line passes the say-it-aloud test and imagery appears at most once per scene on an emotionally charged line, score 75+.",
+      "description": "Read each spoken line aloud — would a real person say it that way in conversation? Lines must be plain spoken language by default. Three failure modes drag a scene into the uncanny: (a) figurative overshoot — a metaphor or simile where a person would speak plainly ('I'll let my pencil ride the wind like a kite across a blank page'); (b) a recurring image the same character keeps reaching for, so their speech reads as themed rather than spoken ('our bond is a ticket that never expires', 'keep our family's ticket from tearing in half'); (c) abstract interiority spoken aloud — narrating an inner state or idea instead of talking ('The carousel is just a space for what I see inside', 'The park's noise feels louder when they're apart'). Test: if a scene shows any of these more than once, score 0–40. If every line passes the say-it-aloud test and figurative language appears at most once, only on an emotionally charged line, score 75+.",
       "weight": 2.0
     },
     {

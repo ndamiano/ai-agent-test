@@ -340,6 +340,34 @@ def test_find_protagonist_uses_premise_field():
     assert _find_protagonist_id({"protagonist_id": "ghost", "characters": [{"id": "alpha"}]}) == "alpha"
 
 
+def test_generate_premise_backfills_missing_protagonist_id(monkeypatch):
+    from pipelines.renpy import fns as F
+
+    # Model omits protagonist_id entirely
+    monkeypatch.setattr(F, "_call_json", lambda *a, **k: {
+        "premise": "p", "central_question": "q",
+        "characters": [{"id": "mara", "name": "Mara"}, {"id": "kai", "name": "Kai"}],
+    })
+    monkeypatch.setattr(F, "_generate_voice_sheets", lambda *a, **k: None)
+
+    result = F.generate_premise({"brief": {"genre": "drama"}}, Path("/tmp"))
+    assert result["protagonist_id"] == "mara"
+
+
+def test_generate_premise_repairs_unresolved_protagonist_id(monkeypatch):
+    from pipelines.renpy import fns as F
+
+    # Model emits an id that matches no character
+    monkeypatch.setattr(F, "_call_json", lambda *a, **k: {
+        "premise": "p", "protagonist_id": "ghost",
+        "characters": [{"id": "mara", "name": "Mara"}],
+    })
+    monkeypatch.setattr(F, "_generate_voice_sheets", lambda *a, **k: None)
+
+    result = F.generate_premise({"brief": {}}, Path("/tmp"))
+    assert result["protagonist_id"] == "mara"
+
+
 # ---------------------------------------------------------------------------
 # _guaranteed_ancestors — story-so-far must exclude sibling branches
 # ---------------------------------------------------------------------------

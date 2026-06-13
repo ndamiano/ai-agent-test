@@ -82,6 +82,10 @@ def generate_premise(inputs: Dict, working_dir: Path, max_tokens: int = 16000) -
             char["id"] = char["name"].lower().replace(" ", "_").replace("-", "_")
         char.setdefault("color", _CHARACTER_COLORS[i % len(_CHARACTER_COLORS)])
 
+    # The model intermittently omits protagonist_id; backfill so the artifact
+    # always carries a resolving reference for downstream stages.
+    result["protagonist_id"] = _find_protagonist_id(result)
+
     _generate_voice_sheets(result)
     return result
 

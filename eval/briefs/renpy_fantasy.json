@@ -1,9 +1,11 @@
 {
+  "title": "The Oracle Road",
   "genre": "dark fantasy",
   "tone": "weary and morally ambiguous",
-  "premise": "A disgraced knight is hired to escort a young oracle to a city that wants her dead — and begins to suspect she already knows she won't survive.",
-  "notes": "No exposition dumps. World-building through what characters take for granted. The knight is pragmatic, the oracle is calm in a way that unsettles. Ending should feel inevitable, not triumphant.",
-  "character_count": "3",
-  "scene_count": "3",
-  "setting": "a dying empire's borderlands, late winter"
+  "setting": "a dying empire's borderlands, late winter",
+  "notes": "A disgraced knight is hired to escort a young oracle to a city that wants her dead — and begins to suspect she already knows she won't survive. No exposition dumps. World-building through what characters take for granted. The knight is pragmatic, the oracle is calm in a way that unsettles. Ending should feel inevitable, not triumphant.",
+  "character_count": 3,
+  "num_endings": 3,
+  "depth": 8,
+  "min_good_endings": 1
 }

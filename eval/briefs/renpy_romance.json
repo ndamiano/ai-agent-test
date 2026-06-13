@@ -1,9 +1,11 @@
 {
+  "title": "Platform Eight",
   "genre": "romance",
   "tone": "warm and melancholic",
-  "premise": "Two childhood friends reunite at a train station after ten years apart.",
-  "notes": "Focus on unspoken feelings and missed opportunities. Neither character says what they mean directly.",
-  "character_count": "3",
-  "scene_count": "3",
-  "setting": "contemporary Japan, early autumn"
+  "setting": "contemporary Japan, early autumn",
+  "notes": "Two childhood friends reunite at a train station after ten years apart. Focus on unspoken feelings and missed opportunities. Neither character says what they mean directly.",
+  "character_count": 3,
+  "num_endings": 3,
+  "depth": 5,
+  "min_good_endings": 1
 }

@@ -1,9 +1,11 @@
 {
+  "title": "One Owner Only",
   "genre": "comedy",
   "tone": "dry and farcical",
-  "premise": "A small-town mayor must convince two feuding families to share their competing museum claims over a single ancient artifact — before the national press arrives tomorrow.",
-  "notes": "Characters should be convinced they are being entirely reasonable. Comedy from escalating misunderstandings, not jokes. Each scene should make things worse while everyone believes they are fixing it.",
-  "character_count": "3",
-  "scene_count": "3",
-  "setting": "a tiny museum in a rural English village, present day"
+  "setting": "a tiny museum in a rural English village, present day",
+  "notes": "A small-town mayor must convince two feuding families to share their competing museum claims over a single ancient artifact — before the national press arrives tomorrow. Characters should be convinced they are being entirely reasonable. Comedy from escalating misunderstandings, not jokes. Each scene should make things worse while everyone believes they are fixing it.",
+  "character_count": 4,
+  "num_endings": 4,
+  "depth": 6,
+  "min_good_endings": 2
 }

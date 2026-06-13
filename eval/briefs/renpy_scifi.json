@@ -1,9 +1,11 @@
 {
+  "title": "Manifest Discrepancy",
   "genre": "science fiction",
   "tone": "clinical and quietly desperate",
-  "premise": "The last two crew members awake on a generation ship realize the mission log has been falsified — and that someone else is still aboard.",
-  "notes": "Dialogue should feel functional, like people trained to suppress panic. Mystery unfolds through what the ship's systems report, not through exposition. Leave the ending ambiguous.",
-  "character_count": "3",
-  "scene_count": "3",
-  "setting": "a generation ship in deep space, 200 years from Earth"
+  "setting": "a generation ship in deep space, 200 years from Earth",
+  "notes": "The last two crew members awake on a generation ship realize the mission log has been falsified — and that someone else is still aboard. Dialogue should feel functional, like people trained to suppress panic. Mystery unfolds through what the ship's systems report, not through exposition. Leave the ending ambiguous.",
+  "character_count": 3,
+  "num_endings": 2,
+  "depth": 6,
+  "min_good_endings": 1
 }

@@ -23,13 +23,15 @@ GOOD = json.loads(_good_path.read_text())
 
 BAD = {
     "premise": "two people meet and talk and stuff happens",
+    "central_question": "will things work out?",
+    "protagonist_id": "person_a",
     "setting": {"name": "a place", "physical_description": "somewhere", "atmosphere": "normal"},
     "tone_directives": [{"adjective": "fine", "explanation": "it is fine"}],
     "characters": [
-        {"id": "person_a", "name": "Person A", "role": "protagonist", "personality": "nice",
-         "voice": "talks normally", "appearance": "a person", "immediate_goal": "talk", "subtext": "none"},
-        {"id": "person_b", "name": "Person B", "role": "other", "personality": "also nice",
-         "voice": "talks normally too", "appearance": "another person", "immediate_goal": "talk back", "subtext": "none"},
+        {"id": "person_a", "name": "Person A", "identity": "a person", "situation": "exists",
+         "charge": "wants things", "voice": "talks normally", "appearance": "a person"},
+        {"id": "person_b", "name": "Person B", "identity": "another person", "situation": "also exists",
+         "charge": "none really", "voice": "talks normally too", "appearance": "another person"},
     ],
 }
 

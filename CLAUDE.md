@@ -34,7 +34,7 @@ src/
                 inference.py — PipelineAgent, call_llm, json_with_correction (shared inference primitives)
   pipelines/    runner.py — DAG executor for LLM + Fn stages
                 registry.py — pipeline registry
-                renpy/ — 8-stage branching VN pipeline (graph→premise→endings→beat_map→node_scripts→asset_manifest→images→build), see its STAGES.md
+                renpy/ — 8-stage branching VN pipeline (premise→story→graph→beat_map→node_scripts→asset_manifest→images→build), see its STAGES.md
                 character/ — character pipeline (concept→identity/appearance/voice→portrait)
                 ttrpg/ — campaign pipeline (setting→factions→npcs→encounters→plot_hooks→document)
   tools/        tool_manager.py, orchestration_tools, system_tools, pipeline_tools
@@ -92,7 +92,7 @@ Hill climbing requires every LLM call prompt to be in a `.txt` file the eval sys
    prompt = render_template(_PROMPTS_DIR / "my_prompt.txt", ctx)
    ```
 
-4. **One LLM call per stage.** A FnStage that makes multiple LLM calls has only one `prompt_file` slot — only the registered file is climbable. If you need all calls independently tunable, split into separate nodes/stages. `node_scripts` currently violates this (character_line + narration prompts in one stage; only `character_line.txt` is registered).
+4. **Stages with multiple LLM calls: one `.txt` per call, register the primary.** The stage's `prompt_file` is the default climb target; any other prompt file in the pipeline's prompts dir climbs via `eval/cli.py climb ... --prompt-file <name>.txt` (e.g. `node_scripts` registers `character_line.txt`; `scene_sketch.txt` and `narration.txt` climb via the flag).
 
 5. **`LLMStage` is automatic.** Use `prompt_template=` instead of `prompt_file=` — the runner handles loading and swapping.
 

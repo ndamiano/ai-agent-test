@@ -36,9 +36,9 @@ def main():
         epilog="""
 Input JSON keys must match what the stage reads via inputs.get(...).
 
-  graph:    {"brief": {"num_endings": 4, "depth": 6, "seed": 42}}
   premise:  {"brief": {"genre": "...", "tone": "...", "setting": "...", "notes": "..."}}
-  endings:  {"premise": {...}, "graph": {...}}
+  story:    {"brief": {"num_endings": 4, "depth": 6}, "premise": {...}}
+  graph:    {"story": {...}}
 
 Tip: pipe output into the next stage's input file:
   python pipeline.py renpy -s premise inputs/brief.json > inputs/premise_out.json

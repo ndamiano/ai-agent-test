@@ -177,6 +177,7 @@ def cmd_climb(args):
         end_to_end=end_to_end,
         brief=brief,
         briefs=briefs,
+        prompt_file=getattr(args, "prompt_file", None),
     )
 
 
@@ -288,6 +289,9 @@ def main():
     p.add_argument("--mutations",  type=int, default=5, help="Mutations per iteration (default: 5)")
     p.add_argument("--e2e", action="store_true",
                    help="Run full pipeline per trial; score final output against the <pipeline>_e2e rubric")
+    p.add_argument("--prompt-file", default=None, dest="prompt_file",
+                   help="Climb a specific .txt file in the pipeline's prompts dir instead of the "
+                        "stage's registered prompt (e.g. scene_sketch.txt for renpy/node_scripts)")
     p.add_argument("--judge-connector", default=None, dest="judge_connector",
                    help="Connector for judge scoring/mutation (e.g. cline). Defaults to active connector.")
 

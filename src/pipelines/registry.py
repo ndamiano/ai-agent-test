@@ -50,7 +50,6 @@ def _enrich_renpy_brief(brief: dict) -> dict:
         "num_endings":     4,
         "depth":           6,
         "min_good_endings": 2,
-        "merge_probability": 0.3,
         "notes":           "",
         **brief,
     }
@@ -93,7 +92,7 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
         ),
         "renpy": PipelineDefinition(
             name="renpy",
-            description="Generate a branching Ren'Py visual novel with a procedural DAG — multiple paths, diverse endings.",
+            description="Generate a branching Ren'Py visual novel — a story outlined top-down with meaningful choices and distinct endings.",
             pipeline=RENPY_PIPELINE,
             brief_schema={
                 "required": ["title", "genre", "tone", "setting"],
@@ -103,8 +102,6 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
                     "num_endings":      "number of endings (default: 4)",
                     "depth":            "approximate beats root→ending (default: 6)",
                     "min_good_endings": "minimum good endings (default: 2)",
-                    "merge_probability": "0.0–1.0 chance paths reconverge (default: 0.3)",
-                    "seed":             "RNG seed for reproducible graph shape",
                 },
             },
             enrich_brief=_enrich_renpy_brief,

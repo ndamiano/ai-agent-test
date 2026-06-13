@@ -6,8 +6,36 @@ import sys
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates")
 
+# Ships with every SDK; its gui.rpy/screens.rpy/gui/ are the stock 1280x720 set
+_SDK_TEMPLATE_PROJECT = "the_question"
 
-def _copy_templates(game_dir: str):
+
+def _seed_templates_from_sdk(sdk_path: str):
+    """Populate missing template assets from the SDK's stock project.
+    The binary gui/ assets are gitignored, so fresh checkouts need this."""
+    src_game = os.path.join(os.path.abspath(sdk_path), _SDK_TEMPLATE_PROJECT, "game")
+    if not os.path.isdir(src_game):
+        return
+    os.makedirs(TEMPLATES_DIR, exist_ok=True)
+
+    for filename in ("screens.rpy", "gui.rpy"):
+        dst = os.path.join(TEMPLATES_DIR, filename)
+        src = os.path.join(src_game, filename)
+        if not os.path.exists(dst) and os.path.exists(src):
+            shutil.copy2(src, dst)
+            print(f"[renpy_builder]   seeded {filename} from SDK")
+
+    gui_dst = os.path.join(TEMPLATES_DIR, "gui")
+    gui_src = os.path.join(src_game, "gui")
+    if not os.path.isdir(gui_dst) and os.path.isdir(gui_src):
+        shutil.copytree(gui_src, gui_dst)
+        print("[renpy_builder]   seeded gui/ from SDK")
+
+
+def _copy_templates(game_dir: str, sdk_path: str = ""):
+    if sdk_path:
+        _seed_templates_from_sdk(sdk_path)
+
     required_files = ["screens.rpy", "gui.rpy"]
     missing = []
 

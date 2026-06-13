@@ -1,219 +1,166 @@
 """
-Procedural DAG generator for branching visual novels.
+Assemble the story DAG from a top-down story outline.
 
-Builds a directed acyclic graph (root → ... → endings) with no LLM involvement.
-The shape is determined entirely by parameters; story content is filled in later.
+The outline (story.json) is written by the LLM with full visibility of the
+whole story: endings first, then a trunk, then one arm per commitment-choice
+option. This module deterministically converts that outline into the graph
+and beat_map shapes the downstream stages consume.
+
+Topology is branch-and-bottleneck:
+
+    root → beat … → branch (commitment) → arm scenes … → [branch (crisis) →] endings
 
 Node types:
-  root    — single entry point
-  beat    — linear scene, one child (no player choice)
-  branch  — choice point, two or more children
-  ending  — leaf node, game-over scene
+  root    — first scene, single entry point
+  beat    — linear scene, one child
+  branch  — choice scene, ends in a menu
+  ending  — leaf scene
 """
 
-import random
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
-@dataclass
-class VNNode:
-    id: str
-    type: str                          # root | beat | branch | ending
-    end_type: Optional[str]            # good | bad | neutral  (endings only)
-    parent_ids: List[str] = field(default_factory=list)
-    child_ids: List[str] = field(default_factory=list)
-    reachable_endings: List[str] = field(default_factory=list)
+def _propagate_reachable(nodes: Dict[str, dict], topo: List[str]) -> None:
+    for nid in reversed(topo):
+        node = nodes[nid]
+        if node["type"] == "ending":
+            node["reachable_endings"] = [nid]
+            continue
+        reach: List[str] = []
+        for cid in node["child_ids"]:
+            for eid in nodes[cid]["reachable_endings"]:
+                if eid not in reach:
+                    reach.append(eid)
+        node["reachable_endings"] = reach
 
 
-def _assign_end_types(num_endings: int, min_good: int) -> List[str]:
-    if min_good > num_endings:
-        raise ValueError("min_good_endings cannot exceed num_endings")
-    types = ["good"] * min_good
-    pool = ["good", "neutral", "bad"]
-    for _ in range(num_endings - min_good):
-        types.append(random.choice(pool))
-    random.shuffle(types)
-    return types
+def assemble_story(story: dict) -> dict:
+    """Convert a story outline into {"graph": ..., "beat_map": ...}."""
+    endings = story.get("endings", [])
+    trunk   = story.get("trunk", [])
+    arms    = story.get("arms", [])
 
+    if len(trunk) < 2:
+        raise ValueError("story trunk needs at least 2 scenes (opening + commitment choice)")
+    if len(arms) < 2:
+        raise ValueError("story needs at least 2 arms")
+    if not endings:
+        raise ValueError("story has no endings")
 
-def _topological_sort(nodes: Dict[str, VNNode]) -> List[str]:
-    """Kahn's algorithm — returns nodes from root to endings."""
-    in_degree = {nid: len(n.parent_ids) for nid, n in nodes.items()}
-    queue = [nid for nid, d in in_degree.items() if d == 0]
+    nodes: Dict[str, dict] = {}
+    beat_map: Dict[str, dict] = {}
     order: List[str] = []
-    while queue:
-        nid = queue.pop(0)
+    beat_counter = [0]
+    branch_counter = [0]
+
+    def _add(nid: str, ntype: str, scene: dict, end_type: str | None = None) -> str:
+        nodes[nid] = {
+            "id": nid, "type": ntype, "end_type": end_type,
+            "parent_ids": [], "child_ids": [],
+            "reachable_endings": [], "content": None,
+        }
+        beat_map[nid] = scene
         order.append(nid)
-        for child_id in nodes[nid].child_ids:
-            in_degree[child_id] -= 1
-            if in_degree[child_id] == 0:
-                queue.append(child_id)
-    return order
+        return nid
 
+    def _beat_id() -> str:
+        beat_counter[0] += 1
+        return f"beat_{beat_counter[0]:03d}"
 
-def _merge_pair(
-    nodes: Dict[str, VNNode],
-    left_id: str,
-    right_id: str,
-    counter: List[int],
-) -> str:
-    """Create a branch node that is the parent of left and right."""
-    counter[0] += 1
-    nid = f"branch_{counter[0]:03d}"
-    reach = nodes[left_id].reachable_endings + nodes[right_id].reachable_endings
-    node = VNNode(
-        id=nid, type="branch", end_type=None,
-        child_ids=[left_id, right_id],
-        reachable_endings=reach,
-    )
-    nodes[nid] = node
-    nodes[left_id].parent_ids.append(nid)
-    nodes[right_id].parent_ids.append(nid)
-    return nid
+    def _branch_id() -> str:
+        branch_counter[0] += 1
+        return f"branch_{branch_counter[0]:03d}"
 
+    def _link(parent: str, child: str) -> None:
+        nodes[parent]["child_ids"].append(child)
+        nodes[child]["parent_ids"].append(parent)
 
-def _linear_beat(
-    nodes: Dict[str, VNNode],
-    child_id: str,
-    counter: List[int],
-) -> str:
-    """Create a beat node that is the linear parent of child."""
-    counter[0] += 1
-    nid = f"beat_{counter[0]:03d}"
-    node = VNNode(
-        id=nid, type="beat", end_type=None,
-        child_ids=[child_id],
-        reachable_endings=nodes[child_id].reachable_endings[:],
-    )
-    nodes[nid] = node
-    nodes[child_id].parent_ids.append(nid)
-    return nid
+    def _scene_beat(scene: dict, choice_labels: List[str] | None = None) -> dict:
+        return {
+            "summary":            scene.get("summary", ""),
+            "dramatic_purpose":   scene.get("whats_new", ""),
+            "scene_type":         scene.get("scene_type", ""),
+            "when":               scene.get("when", ""),
+            "location_id":        scene.get("location_id", "location"),
+            "emotional_tone":     scene.get("emotional_tone", "tense"),
+            "characters_present": scene.get("characters_present", []),
+            "choice_labels":      choice_labels or [],
+        }
 
+    # --- trunk: root → beats → commitment branch -----------------------
+    options = story.get("commitment_choice", {}).get("options", [])
+    commitment_labels = [o.get("label", f"Path {i+1}") for i, o in enumerate(options)]
 
-def _collapse_frontier(
-    nodes: Dict[str, VNNode],
-    frontier: List[str],
-    counter: List[int],
-) -> List[str]:
-    """Merge adjacent pairs until frontier is half the size (or 1)."""
-    next_f: List[str] = []
-    for i in range(0, len(frontier), 2):
-        if i + 1 < len(frontier):
-            nid = _merge_pair(nodes, frontier[i], frontier[i + 1], counter)
-            next_f.append(nid)
+    trunk_ids: List[str] = []
+    for i, scene in enumerate(trunk):
+        is_last = i == len(trunk) - 1
+        if i == 0 and not is_last:
+            nid = _add("root", "root", _scene_beat(scene))
+        elif is_last:
+            nid = _add(_branch_id(), "branch", _scene_beat(scene, commitment_labels))
         else:
-            next_f.append(frontier[i])
-    return next_f
+            nid = _add(_beat_id(), "beat", _scene_beat(scene))
+        if trunk_ids:
+            _link(trunk_ids[-1], nid)
+        trunk_ids.append(nid)
+    commitment_id = trunk_ids[-1]
 
-
-def generate_dag(
-    num_endings: int = 4,
-    depth: int = 6,
-    min_good_endings: int = 2,
-    merge_probability: float = 0.3,
-    seed: Optional[int] = None,
-) -> dict:
-    """
-    Build a story DAG and return a serialisable dict.
-
-    Parameters
-    ----------
-    num_endings        : number of leaf (ending) nodes
-    depth              : approximate number of layers root→ending
-    min_good_endings   : guaranteed minimum "good" endings
-    merge_probability  : per-layer probability that adjacent paths reconverge
-    seed               : optional RNG seed for reproducibility
-
-    Returns
-    -------
-    {
-      nodes: {id: {id, type, end_type, parent_ids, child_ids, reachable_endings, content}},
-      edges: [{from, to, label}],
-      topological_order: [id, ...],
-      ending_ids: [id, ...],
-      root_id: "root",
-    }
-    """
-    if seed is not None:
-        random.seed(seed)
-
-    nodes: Dict[str, VNNode] = {}
-    counter = [0]
-
-    # --- endings -------------------------------------------------------
-    end_types = _assign_end_types(num_endings, min_good_endings)
+    # --- endings (nodes created up front so arms can link to them) -----
     ending_ids: List[str] = []
-    for et in end_types:
-        counter[0] += 1
-        nid = f"ending_{counter[0]:03d}"
-        node = VNNode(id=nid, type="ending", end_type=et, reachable_endings=[nid])
-        nodes[nid] = node
-        ending_ids.append(nid)
+    for e in endings:
+        eid = e.get("id") or f"ending_{len(ending_ids)+1:03d}"
+        nodes[eid] = {
+            "id": eid, "type": "ending", "end_type": e.get("end_type", "neutral"),
+            "parent_ids": [], "child_ids": [],
+            "reachable_endings": [], "content": None,
+        }
+        beat_map[eid] = e
+        ending_ids.append(eid)
+    ending_set = set(ending_ids)
 
-    # --- build backwards: endings → root -------------------------------
-    # frontier = the "current generation" being connected to new parents
-    frontier = list(ending_ids)
-    target_layers = max(depth - 1, 1)  # -1 reserves one slot for root
+    # --- arms -----------------------------------------------------------
+    arm_order: List[str] = []
+    for arm in arms:
+        arm_endings = [eid for eid in arm.get("ending_ids", []) if eid in ending_set]
+        if not arm_endings:
+            raise ValueError("arm has no valid ending_ids")
+        scenes = arm.get("scenes", [])
+        crisis_labels = arm.get("crisis_labels") or [
+            beat_map[eid].get("title", f"Choice {i+1}") for i, eid in enumerate(arm_endings)
+        ]
 
-    for layer_idx in range(target_layers):
-        layers_left = target_layers - layer_idx
-        must_converge = len(frontier) > layers_left
-
-        next_frontier: List[str] = []
-        i = 0
-        while i < len(frontier):
-            if (
-                i + 1 < len(frontier)
-                and (must_converge or random.random() < merge_probability)
-            ):
-                nid = _merge_pair(nodes, frontier[i], frontier[i + 1], counter)
-                next_frontier.append(nid)
-                i += 2
+        prev = commitment_id
+        for i, scene in enumerate(scenes):
+            is_last = i == len(scenes) - 1
+            if is_last and len(arm_endings) > 1:
+                nid = _add(_branch_id(), "branch", _scene_beat(scene, crisis_labels))
             else:
-                nid = _linear_beat(nodes, frontier[i], counter)
-                next_frontier.append(nid)
-                i += 1
+                nid = _add(_beat_id(), "beat", _scene_beat(scene))
+            _link(prev, nid)
+            arm_order.append(nid)
+            prev = nid
 
-        frontier = next_frontier
+        if prev == commitment_id:
+            raise ValueError("arm has no scenes")
+        if len(arm_endings) > 1:
+            for eid in arm_endings:
+                _link(prev, eid)
+        else:
+            _link(prev, arm_endings[0])
 
-    # --- final collapse to single root child ---------------------------
-    while len(frontier) > 1:
-        frontier = _collapse_frontier(nodes, frontier, counter)
+    topo = trunk_ids + arm_order + ending_ids
+    _propagate_reachable(nodes, topo)
 
-    # --- root node -----------------------------------------------------
-    root_child = frontier[0]
-    root = VNNode(
-        id="root", type="root", end_type=None,
-        child_ids=[root_child],
-        reachable_endings=nodes[root_child].reachable_endings[:],
-    )
-    nodes["root"] = root
-    nodes[root_child].parent_ids.append("root")
-
-    # --- serialise -----------------------------------------------------
-    topo = _topological_sort(nodes)
     edges = [
-        {"from": n.id, "to": cid, "label": ""}
-        for n in nodes.values()
-        for cid in n.child_ids
+        {"from": n["id"], "to": cid, "label": ""}
+        for nid in topo for n in [nodes[nid]] for cid in n["child_ids"]
     ]
 
-    return {
-        "nodes": {
-            nid: {
-                "id": nid,
-                "type": n.type,
-                "end_type": n.end_type,
-                "parent_ids": n.parent_ids,
-                "child_ids": n.child_ids,
-                "reachable_endings": n.reachable_endings,
-                "content": None,
-            }
-            for nid, n in nodes.items()
-        },
+    graph = {
+        "nodes": {nid: nodes[nid] for nid in topo},
         "edges": edges,
         "topological_order": topo,
         "ending_ids": ending_ids,
-        "root_id": "root",
+        "root_id": topo[0],
     }
+    return {"graph": graph, "beat_map": beat_map}

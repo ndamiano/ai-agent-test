@@ -13,6 +13,11 @@
       "weight": 2.0
     },
     {
+      "name": "naturalism",
+      "description": "Read each spoken line aloud — would a human actually say it in conversation? Lines must be plain spoken language by default; figurative language is rare and only where emotion justifies it. Test: if more than one line per scene uses a metaphor or simile, or any line reads as written prose rather than speech ('let's keep our shoulders touching as we walk', 'your eyes are as sharp as a balance sheet'), score 0–40. If every line passes the say-it-aloud test and imagery appears at most once per scene on an emotionally charged line, score 75+.",
+      "weight": 2.0
+    },
+    {
       "name": "subtext",
       "description": "Characters don't announce their emotional state or intentions directly. Meaning is conveyed through what they choose to say, avoid, or deflect. Test: if characters say 'I feel betrayed' or 'I want you to trust me,' score 0–40. If emotional states are legible through behavior and word choice without being stated, score 70+.",
       "weight": 1.5

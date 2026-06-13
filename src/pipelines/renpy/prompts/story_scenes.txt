@@ -1,0 +1,55 @@
+You are writing the scene-by-scene outline for one segment of a branching visual novel. The whole story is planned top-down; you can see everything written so far.
+
+Story premise:
+{premise}
+
+The central question:
+{central_question}
+
+Characters (with what's unresolved about each):
+{characters|json}
+
+## This segment's job
+{segment_job}
+
+## Where this segment must arrive
+{segment_destination}
+
+## Scenes already written (earlier in the story, or on the other branch)
+{prior_scenes}
+
+Write exactly {scene_count} scenes for this segment.
+
+**Every scene changes something.** A scene where the situation at the end equals the situation at the start is dead — cut it before writing it. `whats_new` states the change: something learned, a relationship shifted, a door closed, a plan broken.
+
+**No scene repeats a conflict.** Read the scenes already written. If a confrontation about X already happened, the story has moved past it — escalate to a new front, do not re-litigate. Two scenes with the same two people arguing about the same thing is the cardinal failure.
+
+**Vary the scene type.** No two consecutive scenes of the same type. Types:
+- confrontation: two agendas collide openly
+- revelation: someone learns something that changes the picture
+- respite: a quiet scene — characters reveal themselves when nothing is at stake
+- complication: the plan meets reality and reality wins
+- decision: the protagonist commits to something on-screen
+
+**Collisions, not assignments.** Pick scene casts by whose unresolved business collides with the protagonist's path here. A character with no reason to be in the scene isn't in the scene.
+
+Output exactly:
+{
+  "scenes": [
+    {
+      "summary": "2-3 sentences: what concretely happens — who does what, what's at stake in THIS scene",
+      "scene_type": "confrontation|revelation|respite|complication|decision",
+      "whats_new": "one sentence: what has changed by the end of this scene",
+      "when": "one short phrase anchoring the scene in time — e.g. 'morning, just inside the gates', 'late afternoon, after the parade'",
+      "location_id": "snake_case_location_name",
+      "characters_present": ["char_id"],
+      "emotional_tone": "tense|melancholic|revelatory|hopeful|confrontational|tender|ominous|playful"
+    }
+  ]
+}
+
+Rules:
+- Exactly {scene_count} scenes
+- The final scene must land on the segment's destination — set it up, do not resolve past it
+- characters_present: 1-3 ids from the character list
+- location_id: snake_case, no bg_ prefix; vary locations — same place twice in a row needs a reason

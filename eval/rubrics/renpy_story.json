@@ -1,0 +1,31 @@
+{
+  "stage": "story",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "endings_answer_differently",
+      "description": "Each ending's 'answer' field takes a genuinely different position on the central question, and the summary delivers that position through a choice the protagonist makes. Test: if two endings give the same answer with different outcomes (both 'she chooses the family' but one happy, one sad), score 0–40. If covering the answer fields and re-deriving them from the summaries alone is possible, and they all differ, score 75+.",
+      "weight": 2.0
+    },
+    {
+      "name": "no_repeated_conflicts",
+      "description": "Across trunk and arms, no two scenes stage the same confrontation between the same people about the same thing. Each scene's whats_new states a real change (something learned, a relationship shifted, a door closed) — not 'tension increases.' Test: if any scene could be deleted and the chain of whats_new still holds, score 0–45. If every scene moves the situation somewhere it hasn't been, score 70+.",
+      "weight": 2.0
+    },
+    {
+      "name": "choice_quality",
+      "description": "The commitment choice and crisis choices are dilemmas a reasonable player could defend either way, written as concrete protagonist actions with visible cost — pulling toward different answers to the central question. Test: 'be honest / lie' or 'go left / go right' scores 0–40. If both options are defensible strategies and a player would hesitate, score 70+. The two arm strategies must be genuinely different approaches, not the same plan with different moods.",
+      "weight": 1.5
+    },
+    {
+      "name": "scene_variety",
+      "description": "scene_type varies — no two consecutive scenes of the same type within a segment, and the story is not wall-to-wall confrontation. At least one respite or revelation scene exists. Locations vary. Scene casts follow from whose unresolved business collides with the protagonist's path, not from putting everyone in every scene.",
+      "weight": 1.0
+    },
+    {
+      "name": "arc_coherence",
+      "description": "The trunk escalates believably from opening to the commitment choice; each arm plays out its stated strategy meeting reality; final scenes set up their endings without resolving past them. Arms feel like consequences of the choice that opened them, not interchangeable continuations.",
+      "weight": 1.5
+    }
+  ]
+}

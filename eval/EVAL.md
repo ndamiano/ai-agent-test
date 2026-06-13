@@ -58,6 +58,26 @@ Each iteration: proposes 5 prompt mutations → scores each (5 runs each) → ac
 
 If every iteration rejects ("no improvement"), the mutation proposals are off. Usually means rubric criteria are vague — the judge doesn't know what to optimize for, so mutations are random.
 
+**Stages with multiple prompt files** (e.g. `renpy/node_scripts` uses `scene_sketch.txt`, `character_line.txt`, `narration.txt`) climb the registered file by default. Target any other file with `--prompt-file`:
+
+```bash
+python eval/cli.py climb renpy/node_scripts --brief renpy_romance --prompt-file scene_sketch.txt
+```
+
+### Hill climb end-to-end
+
+Per-stage climbing can't catch cross-stage regressions — a better dialogue prompt might produce output a later stage handles worse. E2e mode runs the **full pipeline** per trial and scores the combined outputs against `rubrics/<pipeline>_e2e.json`:
+
+```bash
+# climb one prompt, score the whole game it produces
+python eval/cli.py climb renpy/node_scripts --e2e --prompt-file scene_sketch.txt
+
+# single brief instead of the auto-discovered pool
+python eval/cli.py climb renpy/premise --e2e --brief renpy_romance
+```
+
+Without `--brief`/`--brief-pool`, all non-character briefs are pooled and one is picked at random per run — this prevents overfitting the prompt to one genre. Each successful run also copies the built game to `eval/games/` for manual play-testing. E2e runs are slow (full pipeline × n × mutations × iterations); start with `--n 1 --iterations 1` to estimate duration.
+
 ### Re-score saved outputs with a different judge model
 
 Climb and score runs now save `outputs.json` alongside `summary.json`. You can re-judge those outputs with a different model (e.g. Opus via Cline) to cross-check whether your local model's scores are meaningful:
@@ -213,9 +233,9 @@ Why p25 and not mean? A high mean with a low floor means the stage produces grea
 
 `LLMStage` stages have a `prompt_template` field pointing directly to a `.txt` file. Hill climbing swaps that file contents temporarily using `_prompt_override` (a context manager that restores the original on exit).
 
-`FnStage` stages (most of the renpy pipeline) don't have a prompt field in the stage config — they build prompts in Python code. Hill climbing only works on FnStages that have `prompt_file` set. That field is metadata: it tells the climb tool which `.txt` file the function uses. The function has to actually use `render_template(_PROMPTS_DIR / stage.prompt_file, ...)` for the swap to have any effect.
+`FnStage` stages (most of the renpy pipeline) don't have a prompt field in the stage config — they build prompts in Python code. Hill climbing uses the stage's `prompt_file` by default. That field is metadata: it tells the climb tool which `.txt` file the function uses. The function has to actually use `render_template(_PROMPTS_DIR / stage.prompt_file, ...)` for the swap to have any effect.
 
-If a FnStage function hardcodes its prompt inline rather than loading from a file, it is not hill-climbable.
+Stages that make several kinds of LLM calls load several `.txt` files; `--prompt-file <name>.txt` climbs any file in the pipeline's prompts dir. If a FnStage function hardcodes its prompt inline rather than loading from a file, it is not hill-climbable.
 
 ### Acceptance criterion and iteration state
 

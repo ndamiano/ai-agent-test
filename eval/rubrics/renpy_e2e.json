@@ -1,0 +1,31 @@
+{
+  "stage": "e2e",
+  "pipeline": "renpy",
+  "criteria": [
+    {
+      "name": "dialogue_craft",
+      "description": "Read the scripts in node_scripts. Each character's lines could only have been spoken by that character — vocabulary, rhythm, and register match their voice sheet from the premise. Characters convey emotion through what they say, avoid, or deflect, never by announcing it ('I feel betrayed' scores 0-40). Conversations have real turn-taking: questions get answered or pointedly dodged, lines react to the line before them. If covering speaker labels and still identifying who speaks is possible, and no exchange is filler, score 75+.",
+      "weight": 2.0
+    },
+    {
+      "name": "path_coherence",
+      "description": "Trace at least two distinct root-to-ending paths through the scripts using the graph's jumps and menus. Every event a character references actually happened earlier ON THAT PATH — dialogue that assumes events from a sibling branch the player never visited scores 0-35. Scene-to-scene transitions make causal sense, and merged paths read coherently regardless of which branch led in.",
+      "weight": 2.0
+    },
+    {
+      "name": "choice_stakes",
+      "description": "Menu choice labels read as real decisions with visible stakes and tension between options — not scene summaries or interchangeable flavors ('Go left' / 'Go right' scores 0-40). The dialogue immediately before each menu builds toward the decision so the choice feels urgent rather than bolted on.",
+      "weight": 1.0
+    },
+    {
+      "name": "story_arc",
+      "description": "The premise states a central question; scenes escalate it and each ending answers it differently through a distinct protagonist choice (check premise and story against the scripts). Endings of the same type are fundamentally different decisions, feel earned by the path that reaches them, and final scenes land with finality rather than trailing off.",
+      "weight": 1.5
+    },
+    {
+      "name": "technical_validity",
+      "description": "Scripts are well-formed Ren'Py: every jump target is a defined label, branch nodes end in a menu with one option per child, endings return, speakers and backgrounds reference defined ids. build_result reports a successful build and zero lint errors. Any broken jump, empty scene, or lint error scores 0-40.",
+      "weight": 1.0
+    }
+  ]
+}

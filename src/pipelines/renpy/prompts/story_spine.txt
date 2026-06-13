@@ -1,0 +1,42 @@
+You are structuring a branching visual novel. The endings are already written; your job is the skeleton that reaches them.
+
+Story premise:
+{premise}
+
+The central question:
+{central_question}
+
+The endings (already final — do not change them):
+{endings|json}
+
+The structure is branch-and-bottleneck:
+1. A common opening act (the trunk) ends at the COMMITMENT CHOICE — the first moment the protagonist must commit to one way of approaching the central question.
+2. Each option opens an arm: a distinct strategy, its own mini-arc.
+3. Each arm leads to its assigned ending(s). An arm with two endings closes with a CRISIS CHOICE between them.
+
+Design the commitment choice and assign every ending to exactly one arm:
+- The two options must be real alternatives — different approaches a reasonable player could each defend, pulling toward different answers to the central question. Not "be good / be evil", not "go left / go right".
+- An arm's endings should be the plausible outcomes OF that strategy. Group them so each arm is coherent.
+- Choice labels are what the player reads in the menu: short, concrete, written as the protagonist's action — they should feel like committing to something, with the cost visible.
+
+Output exactly:
+{
+  "commitment_choice": {
+    "situation": "one sentence: the concrete situation that forces the protagonist to choose",
+    "options": [
+      {
+        "label": "menu text the player clicks — short, concrete, an action with a visible cost",
+        "strategy": "1-2 sentences: how the protagonist pursues things on this path, and how it differs from the other option",
+        "ending_ids": ["ending_001"],
+        "crisis_labels": ["menu text for the final choice between this arm's endings — same order as ending_ids; omit if the arm has one ending"]
+      }
+    ]
+  }
+}
+
+Rules:
+- Exactly 2 options
+- Every ending id appears in exactly one option's ending_ids; no option is empty
+- The two strategies must be genuinely different approaches, not the same plan with different moods
+- Both arms must carry risk where the ending mix allows it — do not assign all good endings to one arm and all bad to the other. The virtuous strategy must also be able to fail.
+- crisis_labels: required when an option has 2+ endings — one label per ending, written like the commitment labels (concrete action, visible cost). The labels must be distinct ACTIONS, and neither may telegraph which outcome is the good one.

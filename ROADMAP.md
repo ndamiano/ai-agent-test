@@ -12,10 +12,12 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 - Agents fire pipelines as tool calls — sees inputs and outputs, never intermediate steps
 
 **Pipelines**
-- Ren'Py branching visual novel (`renpy`, 8 stages: graph → premise → endings → beat_map → node_scripts → asset_manifest → images → build)
-  - Graph: procedural DAG built backwards from endings (branch/beat/merge nodes, reachable-endings tracking)
-  - Beats: endings written first, then backward fill — one LLM call per node, children's beats as context
-  - Scripts: per-slot generation — Python owns all Ren'Py syntax; one LLM call per dialogue/narration line with per-character system prompts
+- Ren'Py branching visual novel (`renpy`, 8 stages: premise → story → graph → beat_map → node_scripts → asset_manifest → images → build)
+  - Premise: binding brief, a central question (values tension the endings answer differently), characters from interiority (identity/situation/charge, Grimgong test) — no role enum
+  - Story: top-down outline in branch-and-bottleneck shape — endings first (each a distinct answer), then the commitment choice + arm assignment, then scenes trunk-first with all prior scenes in view (scene_type variety, whats_new per scene, no repeated conflicts)
+  - Graph: assembled deterministically from the outline — structure follows story
+  - Scripts: scene sketch plans each node (speaker order, per-line intent, per-scene character objectives), then per-slot generation — Python owns all Ren'Py syntax; one LLM call per dialogue/narration line with per-character voice-sheet system prompts; story-so-far uses guaranteed ancestors only (no sibling-branch bleed); final lines funnel into the node's exit (choice/jump/ending)
+  - Voice sheets: one plain-text call per character expands a one-line seed into a full impersonation sheet
   - See `src/pipelines/renpy/STAGES.md` for full stage reference
 - Character creation (concept → identity/appearance/voice → portrait image)
 - TTRPG campaign (setting → factions → NPCs → encounters → plot_hooks → campaign document)
@@ -66,7 +68,7 @@ Small local models fail in specific, detectable ways: repetition loops, channel 
 
 - [ ] **Parallel subpipelines** — `run_subpipeline` currently sequential; queue/gather pattern within FnStages
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
-- [ ] **Automated prompt optimization** — evaluation suite + LLM-as-judge scorer + hill-climbing loop. Worthwhile once there's a body of outputs to score against.
+- [x] **Automated prompt optimization** — eval suite + LLM-as-judge scorer + hill-climbing loop (`eval/`); per-stage and end-to-end climbing (e2e rubric + `--prompt-file` for multi-prompt stages)
 - [ ] **Per-character dialogue agents** — replace single dialogue call with an orchestrator + one agent per character. Each agent holds only their character's context. Long-term: try different models per character to match voice/capability to role. Validate via eval before/after comparison.
 
 ## Pipelines requiring composition

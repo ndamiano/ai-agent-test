@@ -2,10 +2,10 @@ from pathlib import Path
 
 from pipelines.runner import Pipeline, Node, FnStage
 from pipelines.renpy.fns import (
-    generate_graph,
     generate_premise,
-    generate_endings,
-    backward_fill,
+    generate_story,
+    graph_from_story,
+    beat_map_from_story,
     write_node_scripts,
     generate_asset_manifest,
     generate_images,
@@ -19,15 +19,6 @@ RENPY_PIPELINE = Pipeline(
     prompts_dir=_PROMPTS_DIR,
     nodes=[
 
-        Node("graph", [
-            FnStage(
-                id="graph",
-                fn=generate_graph,
-                inputs=["brief.json"],
-                output="graph.json",
-            ),
-        ]),
-
         Node("premise", [
             FnStage(
                 id="premise",
@@ -39,25 +30,32 @@ RENPY_PIPELINE = Pipeline(
             ),
         ]),
 
-        Node("endings", [
+        Node("story", [
             FnStage(
-                id="endings",
-                fn=generate_endings,
-                inputs=["premise.json", "graph.json"],
-                output="endings.json",
-                prompt_file="endings.txt",
+                id="story",
+                fn=generate_story,
+                inputs=["brief.json", "premise.json"],
+                output="story.json",
+                prompt_file="story_scenes.txt",
                 max_tokens=50000,
+            ),
+        ]),
+
+        Node("graph", [
+            FnStage(
+                id="graph",
+                fn=graph_from_story,
+                inputs=["story.json"],
+                output="graph.json",
             ),
         ]),
 
         Node("beat_map", [
             FnStage(
                 id="beat_map",
-                fn=backward_fill,
-                inputs=["premise.json", "graph.json", "endings.json"],
+                fn=beat_map_from_story,
+                inputs=["story.json"],
                 output="beat_map.json",
-                prompt_file="backward_fill.txt",
-                max_tokens=50000,
             ),
         ]),
 

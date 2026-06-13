@@ -18,11 +18,19 @@ from eval.runner import StageRunner, PipelineEvalRunner
 logger = logging.getLogger(__name__)
 
 
-def _find_prompt_path(pipeline_name: str, stage_id: str) -> Path:
+def _find_prompt_path(pipeline_name: str, stage_id: str, prompt_file: str | None = None) -> Path:
     from pipelines.registry import get_registry
     from pipelines.runner import LLMStage, FnStage
 
     pipeline = get_registry()[pipeline_name].pipeline
+
+    if prompt_file:
+        path = pipeline.prompts_dir / prompt_file
+        if not path.exists():
+            available = sorted(p.name for p in pipeline.prompts_dir.glob("*.txt"))
+            raise FileNotFoundError(f"Prompt file not found: {path}\nAvailable: {available}")
+        return path
+
     for node in pipeline.nodes:
         for stage in node.stages:
             if stage.id == stage_id:
@@ -32,7 +40,7 @@ def _find_prompt_path(pipeline_name: str, stage_id: str) -> Path:
                     return pipeline.prompts_dir / stage.prompt_file
                 raise TypeError(
                     f"Stage {stage_id!r} is a FnStage without prompt_file — not hill-climbable. "
-                    "Set prompt_file on the FnStage to enable climbing."
+                    "Set prompt_file on the FnStage or pass --prompt-file to enable climbing."
                 )
     raise ValueError(f"Stage {stage_id!r} not found in {pipeline_name!r}")
 
@@ -72,6 +80,7 @@ def hill_climb(
     end_to_end: bool = False,
     brief: dict | None = None,
     briefs: list | None = None,
+    prompt_file: str | None = None,
 ) -> tuple:
     """
     Hill-climb the prompt for a single LLM stage.
@@ -94,10 +103,14 @@ def hill_climb(
 
     briefs: list of brief dicts for e2e mode. A random brief is chosen per run.
       Takes precedence over brief when provided.
+
+    prompt_file: climb a specific .txt file in the pipeline's prompts dir instead of
+      the stage's registered prompt_file. For stages that make multiple kinds of LLM
+      calls (e.g. node_scripts: scene_sketch.txt, narration.txt).
     """
     from llm_clients.connector_selector import get_connector as _get_connector
     judge = Judge(_get_connector(judge_connector) if judge_connector else None)
-    prompt_path = _find_prompt_path(pipeline_name, stage_id)
+    prompt_path = _find_prompt_path(pipeline_name, stage_id, prompt_file)
 
     if end_to_end:
         brief_pool = briefs or ([brief] if brief else None)

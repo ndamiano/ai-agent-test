@@ -315,6 +315,14 @@ eval/
 - Higher `weight` shifts p25 toward this criterion.
 - File must be named `<pipeline>_<stage>.json`.
 
+**Level-based rubrics** (e.g. the WIP `renpy_e2e.levels.json`) replace the 0–100 `description` with a discrete `levels` map (`0`–`4`), each level a self-contained description of what that quality looks like. Scoring becomes classification ("pick the level that matches") instead of guessing a calibrated float, which a judge does far more reliably. Display multiplies by `scale.display_multiplier` (×25 → 0–100). Authoring rules:
+
+- **The no-context test.** The judge reads the rubric cold — zero knowledge of how it was built. Every judge-facing field (`note`, `description`, `levels`) must read as if written for a stranger. Three bleed smells to cut: (1) contrast to a prior version ("not a calibrated number", "instead of"); (2) pipeline internals ("the build gate", "the premise", "voice sheet", "the JSON outputs"); (3) authoring commentary ("anchored to a failure mode", "this game scored here"). Author-only notes are fine in underscore-prefixed fields (`_draft`, `_authoring`) — the judge prompt renders only `note` + `description` + `levels`, never those.
+- **Anchor level 0 to a concrete, real failure mode** — ideally one actually seen in output.
+- **Mechanical correctness the build already guarantees lands mid-scale, not top** — don't reward what the validity gate already enforces.
+- **Level 4 is an attainable target, not a myth**, and define any jargon inline.
+- **Stakes scale to the story's own register** — a quiet, low-stakes story can reach the top level on its own terms; never bias toward high drama.
+
 **Axis-structured rubrics** (e.g. `renpy_e2e.json`) add an `axis` field to each criterion and a top-level `axes` list. The overall is the mean of the per-axis means — each axis weighted equally regardless of criterion count — instead of a weighted average, and `weight` is ignored. Use this when you want several independent quality dimensions to count equally:
 
 ```json

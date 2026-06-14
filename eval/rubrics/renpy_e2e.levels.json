@@ -1,0 +1,206 @@
+{
+  "_draft": "WORK IN PROGRESS — level-based e2e rubric. Not loaded by the eval system (live rubric is renpy_e2e.json); swap in once the judge supports level scoring. Authoring rules live in EVAL.md (Writing a rubric).",
+  "stage": "e2e",
+  "pipeline": "renpy",
+  "scale": {
+    "min": 0,
+    "max": 4,
+    "display_multiplier": 25
+  },
+  "axes": ["narrative", "characters", "writing", "structure"],
+  "note": "You are a player who has just finished this game. Judge only what the script shows on screen — dialogue, narration, menus, and scene/show staging. You have no information beyond the script itself, so do not assume any intent, theme, or backstory that is not shown. Follow the menus and jumps between labels to trace the different paths. Score each story on its own register: a quiet, low-stakes story can reach the top level on its own terms, and bigger stakes are not worth more by themselves. For each criterion, choose the single level (0-4) whose description best matches the game, and quote specific lines as your evidence.",
+  "criteria": [
+    {
+      "name": "hook_strength",
+      "axis": "narrative",
+      "description": "Does the opening grab fast — a concrete dramatic question or destabilizing event by the end of the first scene?",
+      "levels": {
+        "0": "Nothing at stake. Pure scene-setting, mood, or logistics; the first scene ends with no question, tension, or stakes. You don't know what the story is about. e.g. two people describe the weather and a train timetable, then part.",
+        "1": "Inert gesture. Something that could matter is mentioned (a hesitation, an absence) but never pressed — no question actually forms. Throat-clearing with a prop.",
+        "2": "Weak or generic question. A stake exists but you don't care yet — 'will they make the train?' before anyone's been established. Functional, forgettable.",
+        "3": "Real question lands in scene one and you want it answered — a concrete destabilizing event, or tension between people you've been given a reason to care about. Professional opening.",
+        "4": "Grabs and complicates. The opening question reframes what you assumed, or implicates a character you already feel for, so you can't look away."
+      }
+    },
+    {
+      "name": "plot_coherence",
+      "axis": "narrative",
+      "description": "Do events follow from one another by cause, driven by character choices rather than convenience?",
+      "levels": {
+        "0": "Incoherent. You can't follow what is happening or why; events don't connect, contradict each other, or feel randomly ordered.",
+        "1": "Strung together. Events occur in sequence but with little causation — this, then that, with no 'therefore.' Things happen because the script moved on, not because anything caused them.",
+        "2": "Mostly follows, with seams. The through-line is traceable but leans on convenience — a turn nothing set up, a problem that solves itself, a character acting against what we've seen to reach a beat.",
+        "3": "Causally sound. Each beat follows from the one before, and turns are motivated by what characters want and decide. No contrivance you'd notice on a normal read.",
+        "4": "Tightly woven. Every beat pays off something earlier and sets up something later; the causation is so clean that in hindsight the ending feels inevitable. Nothing is arbitrary or wasted."
+      }
+    },
+    {
+      "name": "thematic_depth",
+      "axis": "narrative",
+      "description": "Does the story have something to say — a real tension it explores rather than a lesson it spells out?",
+      "levels": {
+        "0": "Nothing underneath. No idea or question runs through it; it's a sequence of events that isn't 'about' anything.",
+        "1": "Stated, not explored. A theme is announced or moralized in dialogue or narration ('family is what matters most') but never tested or complicated.",
+        "2": "A real question, lightly touched. Something worth thinking about is present, but the story only grazes it — one side gets all the weight, or it surfaces once and drops.",
+        "3": "Genuinely explored. The story puts a real tension under pressure from more than one angle, and trusts the player to feel it instead of spelling out the lesson.",
+        "4": "Resonant. The tension is alive in nearly every scene, given its strongest case from multiple sides, and it lingers after the game ends — you're still turning it over."
+      }
+    },
+    {
+      "name": "emotional_pacing",
+      "axis": "narrative",
+      "description": "Is the emotional intensity shaped across the game — escalation, release, contrast — rather than flat?",
+      "levels": {
+        "0": "Flat or arrhythmic. One unchanging emotional pitch throughout (all calm, or all crisis), or lurching at random with no shape. Nothing builds.",
+        "1": "Monotone with bumps. Mostly one register; the occasional spike feels arbitrary rather than earned by what came before.",
+        "2": "Some shape, uneven. There's a general rise, but it's lumpy — a big moment lands before it's set up, or a stretch sags with no variation.",
+        "3": "Well-paced. Tension builds and releases deliberately; quieter beats set up louder ones, and the peaks land because they were earned.",
+        "4": "Orchestrated. The rhythm is deliberately controlled scene to scene — escalation, release, and contrast placed so the peaks land with full force and the quieter stretches still hold attention. The shaping is intentional throughout, never accidental."
+      }
+    },
+    {
+      "name": "ending_satisfaction",
+      "axis": "narrative",
+      "description": "Do the endings close the story with finality and feel earned by the path that reached them?",
+      "levels": {
+        "0": "Just stops. The game cuts off mid-thought; no ending, no sense of conclusion. You're not sure it's over.",
+        "1": "Arbitrary stop. It ends, but the ending doesn't follow from the path or resolve anything — it could be pasted onto another path without changing meaning.",
+        "2": "Resolved, but boring. The ending closes the story but doesn't land — it goes through the motions or restates where you began, leaving little impression. (An expected ending is fine; a dull one is not.)",
+        "3": "Earned and final. The ending follows from the path that reached it and closes the story with a real sense of conclusion. You understand why you arrived here.",
+        "4": "Lands. The ending feels both earned and surprising — the inevitable result of everything before it, resonant enough that it recolors the path in hindsight."
+      }
+    },
+    {
+      "name": "distinctiveness",
+      "axis": "characters",
+      "description": "Is each character one particular person rather than an archetype — distinguishable from the others?",
+      "levels": {
+        "0": "Indistinguishable. Characters are interchangeable; nothing separates them in voice, concern, or behavior. Names on a single speaker.",
+        "1": "Labels, not people. Each has a tag (the nervous one, the gruff one) but it's a sticker, not a person — the trait is stated and never shows up in how they behave.",
+        "2": "Distinct on paper. You can tell them apart by role or surface trait, but cover the names and the dialogue blurs together — they all think and talk the same.",
+        "3": "Particular people. Each character has a specific way of seeing and speaking that's their own; with names hidden you could usually tell who is who.",
+        "4": "Unmistakable. Each character is so specifically themselves — in concern, voice, and reflex — that a single line gives them away, and no two could be swapped without the scene breaking."
+      }
+    },
+    {
+      "name": "depth",
+      "axis": "characters",
+      "description": "Do characters have interiority beyond their plot function — wants in tension, contradictions?",
+      "levels": {
+        "0": "Functional only. Characters exist to move the plot or deliver information; there's no inner life, nothing they want for themselves.",
+        "1": "One note. A single stated want or trait, held flatly, with no tension or contradiction inside them. A function with a feeling attached.",
+        "2": "Hints of interior. There's a suggestion of wanting something, or a contradiction, but it stays on the surface and never pressures their choices.",
+        "3": "Inner life. At least the central characters want something that collides with another of their wants or with someone else's, and it shows in how they act under pressure.",
+        "4": "Fully dimensioned. Characters carry contradictions they don't resolve and wants they can't reconcile, and it drives them — they feel like they existed before the game started and would go on after."
+      }
+    },
+    {
+      "name": "consistency",
+      "axis": "characters",
+      "description": "Within a single path, do each character's voice, values, and knowledge hold together?",
+      "levels": {
+        "0": "Incoherent. Characters change personality scene to scene, or know things they could not know on this path. No stable self.",
+        "1": "Frequent breaks. Recognizable but unreliable — values or voice shift without reason often enough to notice, or they reference events that didn't happen on the path you took.",
+        "2": "Mostly steady, occasional slip. Largely consistent, but with a noticeable lapse — an out-of-character turn the story doesn't earn, or a piece of knowledge they shouldn't have.",
+        "3": "Consistent. Voice, values, and knowledge hold across the path; characters change only where the story motivates it.",
+        "4": "Ironclad. Coherent across every path — each character stays themselves under pressure, and any change is visibly earned by what happened. You never catch a seam."
+      }
+    },
+    {
+      "name": "arc_movement",
+      "axis": "characters",
+      "description": "Is at least the protagonist changed by the events of a path, in a way the path causes and dramatizes?",
+      "levels": {
+        "0": "Static. No one changes; the protagonist ends exactly as they began, untouched by anything that happened.",
+        "1": "Announced, not shown. A change is asserted ('I'm different now') but nothing in their behavior or choices demonstrates it.",
+        "2": "Slight or unearned. Some movement, but faint, or it happens without the path really causing it — a shift stated more than lived.",
+        "3": "Real change, earned. At least the protagonist is visibly different by the end — a belief abandoned, a fear faced — and the events of the path made it happen.",
+        "4": "Transformed. By the end the protagonist holds something — a belief, a want, a way of seeing — they could not have held at the start, and the path earned every step of the change. Nothing about it is merely asserted."
+      }
+    },
+    {
+      "name": "relationship_dynamics",
+      "axis": "characters",
+      "description": "Do relationships have specific texture and shift over the story, rather than sitting as fixed labels?",
+      "levels": {
+        "0": "None. Relationships are unstated or purely functional; characters interact without any sense of history or feeling between them.",
+        "1": "Labeled. Bonds are asserted ('they're old friends,' 'rivals') but never shown — the label does all the work and the relationship never moves.",
+        "2": "Static texture. There's some real feeling between characters, but it stays fixed — the relationship at the end is the same as at the start.",
+        "3": "Relationships that move. Bonds carry history and friction, and at least one shifts over the story because of what happens between the characters.",
+        "4": "Alive between them. Relationships have specific, lived texture and change in ways that feel inevitable in hindsight — the space between two characters is as vivid as the characters themselves."
+      }
+    },
+    {
+      "name": "dialogue_craft",
+      "axis": "writing",
+      "description": "Do the lines read as real, distinct, subtextual speech?",
+      "levels": {
+        "0": "Not human speech. Lines no person would say aloud — stilted, nonsensical, or robotic — and characters don't answer each other. e.g. 'I shall procure the morning bread before the eight-fifteen as is my custom,' met with an unrelated reply.",
+        "1": "Announces everything. Characters state feelings and intentions outright as the default mode ('I'm upset you left,' 'I want to win') — fine once, but here it's how all meaning gets delivered. On-topic and grammatical, but no subtext, no real exchange.",
+        "2": "Mechanical, not a real conversation. Functionally correct — on-topic, takes turns — but it doesn't read like people actually talking, and the voices are interchangeable. Correct, not convincing.",
+        "3": "A plausible conversation. Lines answer, deflect, or dodge the line before; you can tell speakers apart by how they talk; feeling is sometimes shown indirectly instead of stated. Reads like real people.",
+        "4": "Every line earns its place. A plausible, reactive conversation where exchanges reveal character and move the scene at once with no filler — and you could name each speaker with the labels hidden. Sustained, not in flashes."
+      }
+    },
+    {
+      "name": "prose_quality",
+      "axis": "writing",
+      "description": "Is the narration (the on-screen text with no speaker) precise and controlled, free of cliché and filler?",
+      "levels": {
+        "0": "Broken or absent. Narration is incoherent, or missing where it's needed so the scene can't be followed.",
+        "1": "Cliché and filler. Leans on stock phrases ('a chill ran down her spine,' 'time stood still') and says little; vague or padded.",
+        "2": "Serviceable. Clear and grammatical but flat — it states what's happening without precision or voice. Neither bad nor good.",
+        "3": "Controlled. Concrete and economical, with a consistent voice that picks the right detail and earns its images.",
+        "4": "Distinctive. The prose has a voice of its own — precise, rhythmic, every image doing work — the kind of line you'd stop and reread."
+      }
+    },
+    {
+      "name": "show_vs_tell",
+      "axis": "writing",
+      "description": "Are feelings and traits dramatized through action, dialogue, and staging rather than labeled by the narrator?",
+      "levels": {
+        "0": "All telling. The narration labels every feeling and trait outright ('she was nervous,' 'he was cruel'); nothing is dramatized.",
+        "1": "Mostly telling. Occasionally shows, but the default is to name emotions and traits rather than let them play out.",
+        "2": "Mixed. A roughly even hand — some states dramatized, others flatly labeled; inconsistent about trusting the player.",
+        "3": "Mostly showing. States and traits come through action, dialogue, and staging; the narration trusts the player to read them, with only rare lapses into labeling.",
+        "4": "Shown throughout. Feeling and character are conveyed entirely through behavior, word choice, and what's on screen — the player infers everything, and it's never once spelled out."
+      }
+    },
+    {
+      "name": "choice_meaningfulness",
+      "axis": "structure",
+      "description": "Are the menu choices real decisions with visible stakes, built up by the lines before them?",
+      "levels": {
+        "0": "Fake choices. Options are interchangeable or meaningless ('Go left / Go right'), or appear with no relation to the scene. No decision is really being made.",
+        "1": "Flavor only. Options differ in wording but not in weight — picking one expresses nothing and clearly won't matter. Buttons to advance.",
+        "2": "Decisions without buildup. The choice is real but bolted on — the scene didn't build toward it, so it arrives cold and you're guessing rather than deciding.",
+        "3": "Real dilemmas. Choices present genuine decisions with visible stakes, and the lines before each menu build toward them so the choice feels urgent.",
+        "4": "Defining choices. Each menu poses a dilemma with no easy answer that the whole scene has been pulling toward — you feel its weight, and choosing reveals something about who you want to be."
+      }
+    },
+    {
+      "name": "branch_coherence",
+      "axis": "structure",
+      "description": "Does each traced path read coherently on its own, without assuming events from a branch the player didn't take?",
+      "levels": {
+        "0": "Broken across branches. Paths reference events that didn't happen on them, or jumps land in scenes that assume a different history. Following a path leaves you confused about what's true.",
+        "1": "Frequent bleed. Recognizable paths, but they regularly assume things from branches you didn't take — characters react to events you never saw.",
+        "2": "Mostly clean, some bleed. A path holds together for the most part, but with a noticeable slip — a line that only makes sense if you'd taken the other branch, or a rough merge.",
+        "3": "Coherent paths. Each traced path stands on its own: every reference matches what happened on that path, and merges read smoothly regardless of which branch led in.",
+        "4": "Seamless. Every path reads as if written as the only one — nothing assumes an unvisited branch, merges are invisible, and you'd never guess a scene serves multiple histories."
+      }
+    },
+    {
+      "name": "path_differentiation",
+      "axis": "structure",
+      "description": "Do choices change the story, not just the scene list?",
+      "levels": {
+        "0": "Illusory. Branches reconverge at once or lead to near-identical text — same scene, a word swapped.",
+        "1": "Cosmetic / local. A choice has a surface or one-off consequence (which character is present, a detail changes) but the story proceeds the same way to the same ending. e.g. you pick who to lose, then it continues identically without them.",
+        "2": "Divergent events, same story. Different scenes and different endings with minor nuance, but more or less the same things happened and the paths mean the same.",
+        "3": "Choices change what happens. Genuinely different events and different fates across paths; the endings diverge enough you'd replay to see the other. The plot forks.",
+        "4": "Choices change what it means. The paths leave the player with a different understanding of what the story was about — taking different positions on its central tension, however quiet (a slice-of-life's 'hold on vs. let go' counts as much as a thriller's life-or-death). A replay feels like a different truth, not just a different outcome."
+      }
+    }
+  ]
+}

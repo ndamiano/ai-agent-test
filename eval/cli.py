@@ -148,7 +148,8 @@ def cmd_score_game(args):
         sys.exit(f"No gradable artifact found under {game_dir} "
                  f"(expected a built game with game/script.rpy).")
 
-    rubric    = _load_rubric(args.pipeline, "e2e")
+    rubric    = (json.loads(Path(args.rubric).read_text(encoding="utf-8"))
+                 if args.rubric else _load_rubric(args.pipeline, "e2e"))
     connector = get_connector(args.connector) if args.connector else get_connector()
     judge     = Judge(connector=connector)
 
@@ -323,6 +324,8 @@ def main():
     p_game.add_argument("game_dir", help="A built game dir (e.g. eval/games/renpy_romance_<id>)")
     p_game.add_argument("--connector", default=None,
                         help="Judge connector: cline | openrouter | lmstudio (default: configured)")
+    p_game.add_argument("--rubric", default=None,
+                        help="Path to a rubric JSON (default: rubrics/<pipeline>_e2e.json)")
     p_game.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
                         help="Print the judge's per-criterion reasoning")
     p_game.add_argument("--no-save", action="store_true", dest="no_save")

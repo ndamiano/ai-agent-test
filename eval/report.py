@@ -175,9 +175,9 @@ def print_review(run_num: int, output: dict, scored: dict, rubric: dict):
     for c in rubric.get("criteria", []):
         name = c["name"]
         s = scored.get("scores", {}).get(name, {})
-        score = s.get("score", "?")
         reason = s.get("reasoning", "")
-        print(f"  {name:<22} {score:>6}   {reason}")
+        cell = f"L{s['level']} ({s.get('score','?')})" if "level" in s else f"{s.get('score','?')}"
+        print(f"  {name:<22} {cell:>10}   {reason}")
 
 
 def print_diff(summary_a: dict, summary_b: dict, label_a: str = "A", label_b: str = "B"):

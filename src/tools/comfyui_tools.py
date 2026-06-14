@@ -62,14 +62,22 @@ _TITLE_CARD_NEGATIVE = (
 )
 
 
+def _tag(tags: dict, key: str) -> str:
+    # appearance_tags values are model output: usually a string, sometimes a list.
+    val = tags.get(key, "")
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val if v)
+    return str(val) if val else ""
+
+
 def _build_character_prompt(char_data: dict) -> tuple[str, str]:
     tags = char_data.get("appearance_tags", {})
     subject = ", ".join(filter(None, [
-        tags.get("body", ""),
-        tags.get("hair", ""),
-        tags.get("eyes", ""),
-        tags.get("clothing", ""),
-        tags.get("distinguishing", ""),
+        _tag(tags, "body"),
+        _tag(tags, "hair"),
+        _tag(tags, "eyes"),
+        _tag(tags, "clothing"),
+        _tag(tags, "distinguishing"),
     ]))
     positive = f"{_QUALITY}, {_STYLE_LOCK}, {subject}, {_CHAR_COMPOSITION}"
     return positive, _CHAR_NEGATIVE

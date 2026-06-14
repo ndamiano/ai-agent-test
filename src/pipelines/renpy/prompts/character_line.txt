@@ -5,23 +5,24 @@
 {beat_summary}
 When: {scene_position}
 Tone: {emotional_tone}
-What {char_name} wants in this scene: {scene_objective}
+What {char_name} wants without stating it: {scene_objective}
 
 ## Last few lines
 {history}
 
-## This line's job
+## Context (use for subtext only, never state directly)
 {line_intent}
-{char_name} is feeling: {line_emotion}
+{line_emotion}
 {register_note}
 {exit_note}
 
-Rules:
+## Rules
 - Write words a person would actually say out loud. Read it back — if no human would say it, rewrite it plainer.
-- React to the last line first — answer it, deflect it, or pointedly ignore it
+- React to the last line first — answer it, deflect it, or pointedly ignore it.
 - 1-3 sentences. No monologues.
-- Advance the scene — never restate or rephrase what was already said
-- Do not reuse imagery, gestures, or phrasing from the last few lines
-- At most one metaphor per scene, total — and only on a charged line
+- Advance the scene — never restate or rephrase what was already said.
+- Do not reuse imagery, gestures, or phrasing from the last few lines.
+- At most one metaphor per scene, total — and only on a charged line.
+- **Subtext rule:** Never let the character announce their emotional state, intention, or what they want. Convey meaning through what they choose to say, avoid, or deflect. If the line states a feeling or goal explicitly, it fails.
 
 {char_name}'s next line:

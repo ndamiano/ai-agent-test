@@ -29,6 +29,24 @@ def _distribution(values: list) -> dict:
     }
 
 
+def _axes_in_order(rubric: dict) -> list:
+    seen = []
+    for c in rubric.get("criteria", []):
+        a = c.get("axis")
+        if a and a not in seen:
+            seen.append(a)
+    return seen
+
+
+def _run_axis_mean(scored_run: dict, rubric: dict, axis: str) -> float | None:
+    vals = [
+        float(scored_run["scores"][c["name"]]["score"])
+        for c in rubric["criteria"]
+        if c.get("axis") == axis and c["name"] in scored_run.get("scores", {})
+    ]
+    return sum(vals) / len(vals) if vals else None
+
+
 def summarize(run_results: list, scored: list, rubric: dict) -> dict:
     overall_scores = [float(s["overall"]) for s in scored if s is not None]
 
@@ -42,11 +60,19 @@ def summarize(run_results: list, scored: list, rubric: dict) -> dict:
         ]
         by_criterion[name] = _distribution(vals)
 
+    by_axis = {}
+    for axis in _axes_in_order(rubric):
+        vals = [
+            m for s in scored if s is not None
+            for m in [_run_axis_mean(s, rubric, axis)] if m is not None
+        ]
+        by_axis[axis] = _distribution(vals)
+
     n = len(run_results)
     ok_count = sum(1 for r in run_results if r["ok"])
     elapsed = [r["elapsed"] for r in run_results]
 
-    return {
+    summary = {
         "n": n,
         "success_rate": round(ok_count / n, 3) if n else 0.0,
         "elapsed_mean": round(statistics.mean(elapsed), 1) if elapsed else 0.0,
@@ -54,10 +80,13 @@ def summarize(run_results: list, scored: list, rubric: dict) -> dict:
         "overall": _distribution(overall_scores),
         "by_criterion": by_criterion,
     }
+    if by_axis:
+        summary["by_axis"] = by_axis
+    return summary
 
 
 def save(pipeline: str, stage: str, brief: str, summary: dict, label: str = "",
-         run_results: list = None) -> Path:
+         run_results: list = None, scored: list = None) -> Path:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     run_id = f"{label}_{ts}_{uuid.uuid4().hex[:6]}" if label else f"{ts}_{uuid.uuid4().hex[:6]}"
     out_dir = RESULTS_DIR / pipeline / stage / brief / run_id
@@ -66,8 +95,31 @@ def save(pipeline: str, stage: str, brief: str, summary: dict, label: str = "",
     if run_results is not None:
         outputs = [{"output": r.get("output"), "ok": r.get("ok", False)} for r in run_results]
         (out_dir / "outputs.json").write_text(json.dumps(outputs, indent=2), encoding="utf-8")
+    if scored is not None:
+        (out_dir / "scored.json").write_text(json.dumps(scored, indent=2), encoding="utf-8")
     print(f"Saved → {out_dir.relative_to(RESULTS_DIR.parent)}/summary.json")
     return out_dir
+
+
+def load_latest(pipeline: str, stage: str, brief: str) -> tuple | None:
+    """Most recent saved run for this target with both summary and scored persisted.
+
+    Returns (run_dir, summary, scored) or None when no resumable run exists.
+    Used by hill_climb's --resume to skip re-measuring the current best prompt.
+    """
+    base = RESULTS_DIR / pipeline / stage / brief
+    if not base.exists():
+        return None
+    runs = [
+        d for d in base.iterdir()
+        if d.is_dir() and (d / "summary.json").exists() and (d / "scored.json").exists()
+    ]
+    if not runs:
+        return None
+    latest = max(runs, key=lambda d: d.stat().st_mtime)
+    summary = json.loads((latest / "summary.json").read_text(encoding="utf-8"))
+    scored = json.loads((latest / "scored.json").read_text(encoding="utf-8"))
+    return latest, summary, scored
 
 
 def print_summary(summary: dict, label: str = ""):
@@ -87,6 +139,11 @@ def print_summary(summary: dict, label: str = ""):
             f"p25={ov.get('p25','—')}  p75={ov.get('p75','—')}  "
             f"min={ov.get('min','—')}  max={ov.get('max','—')}"
         )
+    if summary.get("by_axis"):
+        print("by axis:")
+        for name, dist in summary["by_axis"].items():
+            if dist.get("n", 0) > 0:
+                print(f"  {name:32s}  mean={dist.get('mean','—')}  p25={dist.get('p25','—')}  p75={dist.get('p75','—')}")
     if summary.get("by_criterion"):
         print("by criterion:")
         for name, dist in summary["by_criterion"].items():

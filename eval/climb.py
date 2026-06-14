@@ -60,7 +60,9 @@ def _score_run(results: list, stage_id: str, rubric: dict, judge: Judge, e2e: bo
     scored = []
     for r in results:
         if r["ok"]:
-            payload = r.get("outputs", {}) if e2e else r.get("output")
+            # e2e grades the built artifact (the game script) when the pipeline
+            # provides one; otherwise it falls back to the raw JSON outputs.
+            payload = (r.get("artifact") or r.get("outputs", {})) if e2e else r.get("output")
             if payload:
                 scored.append(judge.score(stage_id, payload, rubric))
                 continue
@@ -81,6 +83,7 @@ def hill_climb(
     brief: dict | None = None,
     briefs: list | None = None,
     prompt_file: str | None = None,
+    resume: bool = False,
 ) -> tuple:
     """
     Hill-climb the prompt for a single LLM stage.
@@ -123,18 +126,30 @@ def hill_climb(
         runner = StageRunner(pipeline_name, stage_id, fixtures)
         score_stage_id = stage_id
 
-    print(f"\n[baseline] {pipeline_name}/{stage_id}  n={n}{'  (end-to-end)' if end_to_end else ''}")
-    baseline_t0 = time.monotonic()
-    baseline_results = runner.run_n(n)
-    baseline_elapsed = time.monotonic() - baseline_t0
-    baseline_run_mean = sum(r["elapsed"] for r in baseline_results) / len(baseline_results) if baseline_results else 0.0
-    print(f"  baseline done  {baseline_elapsed:.0f}s total  run mean={baseline_run_mean:.1f}s")
-    print_failure_analysis(baseline_results)
-    baseline_scored  = _score_run(baseline_results, score_stage_id, rubric, judge, e2e=end_to_end)
-    baseline_summary = summarize(baseline_results, baseline_scored, rubric)
-    print_summary(baseline_summary, "Baseline")
-    save(pipeline_name, stage_id, brief_name, baseline_summary, label="baseline",
-         run_results=baseline_results)
+    resumed = None
+    if resume:
+        from eval.report import load_latest
+        resumed = load_latest(pipeline_name, stage_id, brief_name)
+        if resumed is None:
+            print("  [resume] no prior run with scored.json — running a fresh baseline")
+
+    if resumed is not None:
+        latest_dir, baseline_summary, baseline_scored = resumed
+        print(f"\n[resume] {pipeline_name}/{stage_id}  reusing baseline from {latest_dir.name}")
+        print_summary(baseline_summary, "Baseline (resumed)")
+    else:
+        print(f"\n[baseline] {pipeline_name}/{stage_id}  n={n}{'  (end-to-end)' if end_to_end else ''}")
+        baseline_t0 = time.monotonic()
+        baseline_results = runner.run_n(n)
+        baseline_elapsed = time.monotonic() - baseline_t0
+        baseline_run_mean = sum(r["elapsed"] for r in baseline_results) / len(baseline_results) if baseline_results else 0.0
+        print(f"  baseline done  {baseline_elapsed:.0f}s total  run mean={baseline_run_mean:.1f}s")
+        print_failure_analysis(baseline_results)
+        baseline_scored  = _score_run(baseline_results, score_stage_id, rubric, judge, e2e=end_to_end)
+        baseline_summary = summarize(baseline_results, baseline_scored, rubric)
+        print_summary(baseline_summary, "Baseline")
+        save(pipeline_name, stage_id, brief_name, baseline_summary, label="baseline",
+             run_results=baseline_results, scored=baseline_scored)
 
     current_prompt  = prompt_path.read_text(encoding="utf-8")
     current_summary = baseline_summary
@@ -165,6 +180,7 @@ def hill_climb(
         best_mutation = None
         best_summary  = None
         best_scored   = None
+        best_results  = None
 
         for j, mutation in enumerate(mutations):
             mut_t0 = time.monotonic()
@@ -185,6 +201,7 @@ def hill_climb(
                 best_mutation = mutation
                 best_summary  = summary
                 best_scored   = scored
+                best_results  = results
 
         iter_elapsed = time.monotonic() - iter_t0
         current_p25 = current_summary.get("overall", {}).get("p25", 0.0) or 0.0
@@ -200,7 +217,7 @@ def hill_climb(
             current_summary = best_summary
             current_scored  = best_scored
             save(pipeline_name, stage_id, brief_name, current_summary, label=f"iter{i+1:02d}_accepted",
-                 run_results=results)
+                 run_results=best_results, scored=best_scored)
         else:
             print("  rejected — no improvement")
 

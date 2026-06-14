@@ -15,6 +15,9 @@ class PipelineDefinition:
     pipeline: Pipeline
     brief_schema: Dict[str, Any]       # documents required/optional brief fields
     enrich_brief: Optional[Callable[[dict], dict]] = None
+    # Given a finished working_dir, return the gradable artifact for e2e scoring
+    # (bespoke per pipeline). None means e2e scoring falls back to the JSON outputs.
+    e2e_view: Optional[Callable[[Any], Optional[str]]] = None
 
 
 def _enrich_character_brief(brief: dict) -> dict:
@@ -59,6 +62,7 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
     from pipelines.character.pipeline import CHARACTER_PIPELINE
     from pipelines.ttrpg.pipeline import TTRPG_PIPELINE
     from pipelines.renpy.pipeline import RENPY_PIPELINE
+    from pipelines.renpy.e2e_view import e2e_artifact as _renpy_e2e_view
     return {
         "character": PipelineDefinition(
             name="character",
@@ -105,6 +109,7 @@ def _build_registry() -> Dict[str, PipelineDefinition]:
                 },
             },
             enrich_brief=_enrich_renpy_brief,
+            e2e_view=_renpy_e2e_view,
         ),
     }
 

@@ -67,6 +67,13 @@ Model endpoint does not support response_format / json_schema.
     (small mode uses manual JSON extraction instead of response_format)
   • Check that the endpoint URL points to a model that accepts the OpenAI response_format field""",
 
+    "build_gate": """\
+Pipeline ran, but the built game failed the technical-validity gate (lint errors or
+a failed Ren'Py build). The run is excluded from creative scoring by design.
+  • Read build_result.lint in the run's outputs.json for the specific errors
+  • Broken jumps / undefined labels usually trace to node_scripts or graph assembly
+  • A high build_gate rate means structure is unsound — fix that before climbing prose""",
+
     "unknown": """\
 Failure cause unclear from log output.
   • Check the log excerpt above for raw error text
@@ -80,6 +87,8 @@ def classify(result: dict) -> str:
         return "timeout"
     if result.get("ok"):
         return "ok"
+    if str(result.get("error", "")).startswith("build gate"):
+        return "build_gate"
     log = (result.get("log") or "").lower()
     for name, pattern in _PATTERNS:
         if name == "timeout":
@@ -96,10 +105,13 @@ def analyze(results: list) -> dict:
     examples: dict = {}
     for r, cls in classified:
         if cls != "ok" and cls not in examples:
-            log = r.get("log", "").strip()
+            log = (r.get("log") or "").strip()
             # Keep the most informative lines (error lines near the end)
             lines = [ln for ln in log.splitlines() if ln.strip()]
-            examples[cls] = "\n".join(lines[-6:]) if lines else "(no log captured)"
+            if lines:
+                examples[cls] = "\n".join(lines[-6:])
+            else:
+                examples[cls] = str(r.get("error") or "(no log captured)")
     return {
         "total": len(results),
         "ok_count": counts.get("ok", 0),

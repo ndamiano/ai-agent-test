@@ -140,6 +140,23 @@ class StageRunner:
         return results
 
 
+def _build_gate(outputs: dict) -> str | None:
+    """Technical-validity gate for e2e runs: a game that lints with errors or fails to
+    build is not a valid sample to score creatively, so we fail it (it counts against
+    success_rate and is excluded from scoring). Returns a reason string, or None if it passes.
+    Lint error_count of None means no SDK was available — we cannot gate, so we pass it."""
+    build = outputs.get("build_result", {})
+    error_count = build.get("lint", {}).get("error_count")
+    if error_count:
+        return f"build gate: {error_count} lint error(s)"
+    if build.get("dist_error"):
+        return f"build gate: {build['dist_error']}"
+    rc = build.get("dist_returncode")
+    if rc not in (None, 0):
+        return f"build gate: dist returncode {rc}"
+    return None
+
+
 class PipelineEvalRunner:
     """Runs a full pipeline end-to-end N times.
 
@@ -151,8 +168,9 @@ class PipelineEvalRunner:
         self.briefs = briefs if isinstance(briefs, list) else [briefs]
 
     def run_n(self, n: int) -> list:
-        from pipelines.registry import run_pipeline
+        from pipelines.registry import run_pipeline, get_registry
 
+        e2e_view = get_registry()[self.pipeline_name].e2e_view
         results = []
         for i in range(n):
             brief = random.choice(self.briefs)
@@ -162,8 +180,16 @@ class PipelineEvalRunner:
                 try:
                     outputs = run_pipeline(self.pipeline_name, brief, tmp)
                     elapsed = time.monotonic() - t0
+                    # Read the gradable artifact off disk before the tempdir is cleaned.
+                    artifact = e2e_view(tmp_path) if e2e_view else None
                     game_dir = self._save_game(tmp_path, brief)
-                    result = {"ok": True, "outputs": outputs, "elapsed": elapsed, "game_dir": game_dir}
+                    gate = _build_gate(outputs)
+                    if gate:
+                        result = {"ok": False, "error": gate, "outputs": outputs,
+                                  "artifact": artifact, "elapsed": elapsed, "game_dir": game_dir}
+                    else:
+                        result = {"ok": True, "outputs": outputs, "artifact": artifact,
+                                  "elapsed": elapsed, "game_dir": game_dir}
                 except Exception as e:
                     result = {"ok": False, "error": str(e), "elapsed": time.monotonic() - t0}
             results.append(result)

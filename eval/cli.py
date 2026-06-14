@@ -92,8 +92,10 @@ def cmd_score_stage(args):
 
 
 def cmd_score_pipeline(args):
+    from eval.climb import _score_run
+    from eval.failures import print_analysis as print_failure_analysis
     from eval.judge import Judge
-    from eval.report import summarize, save, print_summary
+    from eval.report import summarize, save, print_summary, print_review
     from eval.runner import PipelineEvalRunner
 
     brief  = _load_brief(args.brief)
@@ -102,17 +104,20 @@ def cmd_score_pipeline(args):
 
     print(f"Scoring pipeline {args.pipeline}  brief={args.brief}  n={args.n}")
     results = runner.run_n(args.n)
+    print_failure_analysis(results)
 
     rubric_path = RUBRICS_DIR / f"{args.pipeline}_e2e.json"
     if rubric_path.exists():
         rubric = json.loads(rubric_path.read_text(encoding="utf-8"))
-        scored = [
-            judge.score("e2e", r.get("outputs", {}), rubric) if r["ok"] else None
-            for r in results
-        ]
+        scored = _score_run(results, "e2e", rubric, judge, e2e=True)
+        if args.show_reasoning:
+            for i, s in enumerate(scored):
+                if s:
+                    print_review(i + 1, {"artifact": "(built game script)"}, s, rubric)
         summary = summarize(results, scored, rubric)
     else:
         print(f"(no e2e rubric at {rubric_path.name} — reporting timing/success only)")
+        scored = None
         n_runs = len(results)
         summary = {
             "n": n_runs,
@@ -125,7 +130,40 @@ def cmd_score_pipeline(args):
 
     print_summary(summary, f"pipeline:{args.pipeline} / {args.brief}")
     if not args.no_save:
-        save(args.pipeline, "e2e", args.brief, summary)
+        save(args.pipeline, "e2e", args.brief, summary, scored=scored)
+
+
+def cmd_score_game(args):
+    from eval.judge import Judge
+    from eval.report import summarize, save, print_summary, print_review
+    from llm_clients.connector_selector import get_connector
+    from pipelines.registry import get_registry
+
+    game_dir = Path(args.game_dir)
+    defn = get_registry().get(args.pipeline)
+    if defn is None or defn.e2e_view is None:
+        sys.exit(f"Pipeline {args.pipeline!r} has no e2e artifact view to grade.")
+    artifact = defn.e2e_view(game_dir)
+    if not artifact:
+        sys.exit(f"No gradable artifact found under {game_dir} "
+                 f"(expected a built game with game/script.rpy).")
+
+    rubric    = _load_rubric(args.pipeline, "e2e")
+    connector = get_connector(args.connector) if args.connector else get_connector()
+    judge     = Judge(connector=connector)
+
+    print(f"Scoring game {game_dir.name}  connector={args.connector or 'default'}")
+    scored = judge.score("e2e", artifact, rubric)
+    if scored is None:
+        sys.exit("Judge returned no score — check the connector/model (JSON mode support?).")
+
+    if args.show_reasoning:
+        print_review(1, {"artifact": f"({game_dir.name})"}, scored, rubric)
+
+    summary = summarize([{"ok": True, "elapsed": 0.0}], [scored], rubric)
+    print_summary(summary, f"game:{game_dir.name}  ({args.connector or 'default'})")
+    if not args.no_save:
+        save(args.pipeline, "e2e", game_dir.name, summary, scored=[scored])
 
 
 def cmd_climb(args):
@@ -178,6 +216,7 @@ def cmd_climb(args):
         brief=brief,
         briefs=briefs,
         prompt_file=getattr(args, "prompt_file", None),
+        resume=getattr(args, "resume", False),
     )
 
 
@@ -274,7 +313,19 @@ def main():
     p_pipe.add_argument("pipeline")
     p_pipe.add_argument("--brief", required=True)
     p_pipe.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
+    p_pipe.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
+                        help="Print the judge's per-criterion reasoning for each run")
     p_pipe.add_argument("--no-save", action="store_true", dest="no_save")
+
+    p_game = score_sub.add_parser("game",
+                                  help="Score an already-built game directory against the e2e rubric")
+    p_game.add_argument("pipeline")
+    p_game.add_argument("game_dir", help="A built game dir (e.g. eval/games/renpy_romance_<id>)")
+    p_game.add_argument("--connector", default=None,
+                        help="Judge connector: cline | openrouter | lmstudio (default: configured)")
+    p_game.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
+                        help="Print the judge's per-criterion reasoning")
+    p_game.add_argument("--no-save", action="store_true", dest="no_save")
 
     # climb
     p = sub.add_parser("climb", help="Hill-climb a stage's prompt template")
@@ -294,6 +345,10 @@ def main():
                         "stage's registered prompt (e.g. scene_sketch.txt for renpy/node_scripts)")
     p.add_argument("--judge-connector", default=None, dest="judge_connector",
                    help="Connector for judge scoring/mutation (e.g. cline). Defaults to active connector.")
+    p.add_argument("--resume", action="store_true",
+                   help="Skip the baseline run and reuse the last saved summary/scored for this "
+                        "target+brief as the starting point (the prompt file already holds that best). "
+                        "Falls back to a fresh baseline if no resumable run exists.")
 
     # rescore
     p = sub.add_parser("rescore", help="Re-score saved outputs with a different judge connector")
@@ -315,7 +370,8 @@ def main():
 
     dispatch = {
         "capture": cmd_capture,
-        "score":   lambda a: cmd_score_stage(a) if a.score_target == "stage" else cmd_score_pipeline(a),
+        "score":   lambda a: {"stage": cmd_score_stage, "pipeline": cmd_score_pipeline,
+                              "game": cmd_score_game}[a.score_target](a),
         "climb":   cmd_climb,
         "rescore": cmd_rescore,
         "report":  cmd_report,

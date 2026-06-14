@@ -1,31 +1,89 @@
 {
   "stage": "e2e",
   "pipeline": "renpy",
+  "axes": ["narrative", "characters", "writing", "structure"],
+  "overall": "mean of the four axis means (each axis weighted equally regardless of how many criteria it holds)",
+  "note": "The input is the game's Ren'Py script (script.rpy) — the actual built artifact. Judge it as a player would: the only knowledge you have is what the script shows on screen (dialogue, narration, menus, and scene/show staging). You do NOT know the author's intent, the planned theme, or any character bible. Trace paths by following menus and jumps between labels.",
   "criteria": [
     {
+      "name": "hook_strength",
+      "axis": "narrative",
+      "description": "Starting from the start label, the opening grabs the player fast — a concrete dramatic question or a destabilizing event by the end of the first scene. Test: if the opening is scene-setting, exposition, or mood with nothing at stake by the time the first menu or scene change arrives, score 0-40. If something the player needs resolved is already in play within the first scene, score 70+. Atmosphere alone is not a hook."
+    },
+    {
+      "name": "plot_coherence",
+      "axis": "narrative",
+      "description": "Following one path start to ending, events cause one another and characters drive them. Test: any major turn that happens for the plot's convenience — a reversal nothing set up, a character acting against everything shown to reach a beat — scores 0-40. If each beat is the visible consequence of an earlier one, score 70+. Coincidence that creates trouble is fine; coincidence that resolves it is not."
+    },
+    {
+      "name": "thematic_depth",
+      "axis": "narrative",
+      "description": "Played through, the game has something to say — it puts a genuine tension under pressure rather than asserting a lesson. Test: if it moralizes, states its point in narration, or only ever weights one side of its central conflict, score 0-40. If different scenes or paths embody defensible opposing answers so the player feels the tension instead of being told it, score 70+. You are inferring this from the script alone; no stated theme exists."
+    },
+    {
+      "name": "emotional_pacing",
+      "axis": "narrative",
+      "description": "Intensity is shaped across the playthrough — escalation, release, contrast — not a flat line. Test: if every scene runs at the same emotional pitch (all crisis, or all quiet), or tension never builds toward the choices and endings, score 0-40. If there is a deliberate rise with beats of contrast (a quiet moment before a confrontation) that make the peaks land, score 70+."
+    },
+    {
+      "name": "ending_satisfaction",
+      "axis": "narrative",
+      "description": "Trace at least two endings via the menus and jumps. Each lands with finality and feels earned by the path that reached it. Test: an ending that trails off, restates the setup, or could be swapped onto a different path without changing meaning scores 0-40. If each ending is a distinct, earned conclusion the player understands arriving at, score 70+."
+    },
+    {
+      "name": "distinctiveness",
+      "axis": "characters",
+      "description": "Each character reads as one particular person, not an archetype with adjectives. Test: an interchangeable cast, or characters defined only by stacked traits, scores 0-40. If — with the speaker name tags mentally removed — you could still tell who is talking from vocabulary, rhythm, and concerns alone, score 70+."
+    },
+    {
+      "name": "depth",
+      "axis": "characters",
+      "description": "Characters show interiority beyond their plot function — wants in tension, contradictions, things they will not say. Test: characters who exist only to advance the plot or deliver information score 0-40. If at least the central characters carry a want that collides with another of their wants or with the protagonist's, visible in how they behave under pressure, score 70+. An antagonist whose only trait is opposition fails."
+    },
+    {
+      "name": "consistency",
+      "axis": "characters",
+      "description": "Within a single traced path, each character's voice, values, and knowledge hold together — no personality whiplash, no referencing events they could not have witnessed on that path. Test: any unearned out-of-character turn, or a character knowing something that only happened on a branch the player did not take, scores 0-40. If behavior coheres scene to scene and changes only where the story motivates it, score 70+."
+    },
+    {
+      "name": "arc_movement",
+      "axis": "characters",
+      "description": "At least the protagonist is changed by the events of a path; the person at the ending is not the person at the start, and the path caused the difference. Test: a protagonist identical in outlook from first scene to last scores 0-40. If there is visible movement — a belief abandoned, a fear faced, a bond transformed — that the events made happen, score 70+. The change must be dramatized, not announced."
+    },
+    {
+      "name": "relationship_dynamics",
+      "axis": "characters",
+      "description": "Relationships have specific texture and shift over the playthrough rather than sitting as generic ally/enemy labels. Test: flat or static relationships, or bonds asserted but never shown, score 0-40. If relationships carry history and friction and shift because of what happens between the characters across scenes, score 70+."
+    },
+    {
       "name": "dialogue_craft",
-      "description": "Read the scripts in node_scripts. Each character's lines could only have been spoken by that character — vocabulary, rhythm, and register match their voice sheet from the premise. Characters convey emotion through what they say, avoid, or deflect, never by announcing it ('I feel betrayed' scores 0-40). Conversations have real turn-taking: questions get answered or pointedly dodged, lines react to the line before them. If covering speaker labels and still identifying who speaks is possible, and no exchange is filler, score 75+.",
-      "weight": 2.0
+      "axis": "writing",
+      "description": "Lines feel spoken by distinct people, conversations have real turn-taking — questions answered or pointedly dodged, lines reacting to the line before — and emotion comes through what characters say, avoid, or deflect, never by announcing it ('I feel betrayed' scores 0-40). If, with speaker tags hidden, you could still identify who speaks, and no exchange is filler, score 75+."
     },
     {
-      "name": "path_coherence",
-      "description": "Trace at least two distinct root-to-ending paths through the scripts using the graph's jumps and menus. Every event a character references actually happened earlier ON THAT PATH — dialogue that assumes events from a sibling branch the player never visited scores 0-35. Scene-to-scene transitions make causal sense, and merged paths read coherently regardless of which branch led in.",
-      "weight": 2.0
+      "name": "prose_quality",
+      "axis": "writing",
+      "description": "The narration lines (quoted text with no speaker) are precise and controlled — no purple prose, cliche, or filler. Test: cliche-laden, vague, or overwrought narration ('a chill ran down her spine', 'time seemed to stop') scores 0-40. If narration is concrete and economical, with a controlled voice that earns its images, score 70+."
     },
     {
-      "name": "choice_stakes",
-      "description": "Menu choice labels read as real decisions with visible stakes and tension between options — not scene summaries or interchangeable flavors ('Go left' / 'Go right' scores 0-40). The dialogue immediately before each menu builds toward the decision so the choice feels urgent rather than bolted on.",
-      "weight": 1.0
+      "name": "show_vs_tell",
+      "axis": "writing",
+      "description": "Emotional states and character traits are conveyed through action, dialogue, and on-screen staging (scene/show) rather than stated by the narrator. Test: narration that labels feelings or traits ('she was nervous', 'he was a cruel man') scores 0-40. If the player infers states from what characters do, how they speak, and what the staging shows, score 70+."
     },
     {
-      "name": "story_arc",
-      "description": "The premise states a central question; scenes escalate it and each ending answers it differently through a distinct protagonist choice (check premise and story against the scripts). Endings of the same type are fundamentally different decisions, feel earned by the path that reaches them, and final scenes land with finality rather than trailing off.",
-      "weight": 1.5
+      "name": "choice_meaningfulness",
+      "axis": "structure",
+      "description": "Menu choice labels read as real decisions with visible stakes, and the lines immediately before each menu build toward the decision. Test: scene-summary or interchangeable labels ('Go left' / 'Go right'), or a menu that appears with no buildup, scores 0-40. If each menu presents a genuine dilemma the preceding scene made urgent, score 70+."
     },
     {
-      "name": "technical_validity",
-      "description": "Scripts are well-formed Ren'Py: every jump target is a defined label, branch nodes end in a menu with one option per child, endings return, speakers and backgrounds reference defined ids. build_result reports a successful build and zero lint errors. Any broken jump, empty scene, or lint error scores 0-40.",
-      "weight": 1.0
+      "name": "branch_coherence",
+      "axis": "structure",
+      "description": "Trace at least two distinct paths from start to an ending by following menus and jumps between labels. Each path reads coherently on its own: every event a character references actually happened earlier ON THAT PATH, and where branches merge back the result reads cleanly regardless of which choice led in. Test: any line that assumes events from a branch the player did not take scores 0-35. If both traced paths hold together causally, score 70+."
+    },
+    {
+      "name": "path_differentiation",
+      "axis": "structure",
+      "description": "Different menu choices lead to genuinely different experiences, not cosmetic variants of one path. Compare the branches and their endings. Test: branches that reconverge to the same beats and near-identical endings, differing only in flavor text, score 0-40. If the choices change events, character outcomes, and the conclusion reached, so a replay reveals a different story, score 70+."
     }
   ]
 }

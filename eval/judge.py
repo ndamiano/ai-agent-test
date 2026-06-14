@@ -38,28 +38,67 @@ _MUTATE_SYSTEM = (
 )
 
 
+def _has_axes(rubric: dict) -> bool:
+    return any("axis" in c for c in rubric.get("criteria", []))
+
+
+def _criteria_block(rubric: dict) -> str:
+    """Render criteria for the score prompt, grouped by axis when the rubric defines them."""
+    if not _has_axes(rubric):
+        return "\n".join(
+            f"- {c['name']} (weight {c.get('weight', 1.0)}): {c['description']}"
+            for c in rubric["criteria"]
+        )
+    lines = []
+    for axis in rubric.get("axes") or _axes_in_order(rubric):
+        lines.append(f"\n{axis.upper()} axis:")
+        lines += [
+            f"  - {c['name']}: {c['description']}"
+            for c in rubric["criteria"] if c.get("axis") == axis
+        ]
+    return "\n".join(lines)
+
+
+def _axes_in_order(rubric: dict) -> list:
+    seen = []
+    for c in rubric.get("criteria", []):
+        a = c.get("axis")
+        if a and a not in seen:
+            seen.append(a)
+    return seen
+
+
 def _score_prompt(stage_id: str, output: dict, rubric: dict) -> str:
-    criteria_lines = "\n".join(
-        f"- {c['name']} (weight {c.get('weight', 1.0)}): {c['description']}"
-        for c in rubric["criteria"]
-    )
     score_schema = {
         c["name"]: {"score": "float 0–100", "reasoning": "one sentence citing specific evidence from the output"}
         for c in rubric["criteria"]
     }
-    score_schema["overall"] = "float 0–100 (weighted average across criteria)"
-    return "\n".join([
-        f"Stage: {stage_id}",
-        "",
-        "Output to evaluate:",
-        json.dumps(output, indent=2, ensure_ascii=False),
+    if _has_axes(rubric):
+        overall_note = (
+            "Score every criterion independently. The overall is the mean of the axis means "
+            "(each axis weighted equally); compute it that way, not as a flat average of all criteria."
+        )
+    else:
+        overall_note = "float 0–100 (weighted average across criteria)"
+    score_schema["overall"] = overall_note
+    if isinstance(output, str):
+        heading, body = "Artifact to evaluate (the built game script a player runs):", output
+    else:
+        heading, body = "Output to evaluate:", json.dumps(output, indent=2, ensure_ascii=False)
+    lines = [f"Stage: {stage_id}", ""]
+    if rubric.get("note"):
+        lines += [rubric["note"], ""]
+    lines += [
+        heading,
+        body,
         "",
         "Criteria:",
-        criteria_lines,
+        _criteria_block(rubric),
         "",
         "Return JSON exactly matching this structure:",
         json.dumps({"scores": score_schema}, indent=2),
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def _mutate_prompt(current_prompt: str, summary: dict, rubric: dict,
@@ -103,6 +142,28 @@ def _mutate_prompt(current_prompt: str, summary: dict, rubric: dict,
     return "\n".join(lines)
 
 
+def axis_means(scores: dict, rubric: dict) -> dict:
+    """Mean criterion score per axis, for axis-structured rubrics."""
+    means = {}
+    for axis in _axes_in_order(rubric):
+        vals = [
+            float(scores[c["name"]]["score"])
+            for c in rubric["criteria"]
+            if c.get("axis") == axis and c["name"] in scores
+        ]
+        if vals:
+            means[axis] = round(sum(vals) / len(vals), 2)
+    return means
+
+
+def _axis_overall(scores: dict, rubric: dict) -> float:
+    """Overall = mean of the per-axis means (each axis weighted equally)."""
+    means = axis_means(scores, rubric)
+    if not means:
+        return 0.0
+    return round(sum(means.values()) / len(means), 2)
+
+
 def _weighted_average(scores: dict, rubric: dict) -> float:
     total_weight = sum(c.get("weight", 1.0) for c in rubric["criteria"])
     if not total_weight:
@@ -132,7 +193,10 @@ class Judge:
             raw = self._call(_SCORE_SYSTEM, _score_prompt(stage_id, output, rubric), json_mode=True)
             parsed = json.loads(strip_fences(raw))
             scores = parsed.get("scores", {k: v for k, v in parsed.items() if k != "overall"})
-            overall = parsed.get("overall") or _weighted_average(scores, rubric)
+            if _has_axes(rubric):
+                overall = _axis_overall(scores, rubric)
+            else:
+                overall = parsed.get("overall") or _weighted_average(scores, rubric)
             return {"scores": scores, "overall": float(overall)}
         except Exception as e:
             logger.warning(f"Judge scoring failed: {e}")

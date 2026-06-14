@@ -78,6 +78,24 @@ python eval/cli.py climb renpy/premise --e2e --brief renpy_romance
 
 Without `--brief`/`--brief-pool`, all non-character briefs are pooled and one is picked at random per run — this prevents overfitting the prompt to one genre. Each successful run also copies the built game to `eval/games/` for manual play-testing. E2e runs are slow (full pipeline × n × mutations × iterations); start with `--n 1 --iterations 1` to estimate duration.
 
+**E2e grades the artifact, not the pipeline.** The judge receives only the built game — for renpy, the actual `game_output/game/script.rpy` read off disk — and nothing from the production bible (no premise, central_question, voice sheets, or story plan). It scores the game the way a player would: from dialogue, narration, menus, and `scene`/`show` staging alone, tracing branches by following menus and jumps. What counts as "the artifact" is a **per-pipeline** decision: each `PipelineDefinition` may set an `e2e_view(working_dir) -> str` hook (mirroring `enrich_brief`) that returns its gradable artifact; renpy's lives in `pipelines/renpy/e2e_view.py`. When a pipeline defines no view, e2e falls back to scoring the raw JSON outputs.
+
+**The e2e rubric is axis-structured.** `rubrics/renpy_e2e.json` groups its criteria into four equal-weight axes — Narrative, Characters, Writing, Structure — and the overall score is the **mean of the four axis means**, so an axis counts 25% no matter how many criteria it holds. The score summary prints a `by axis` rollup above the per-criterion lines. Mutation still targets the single weakest criterion by p25.
+
+**Technical validity is a gate, not a scored axis.** All four axes measure creative quality. A run whose built game fails lint or the Ren'Py build is marked failed (it lowers `success_rate` and is excluded from scoring) rather than being scored as a bad game — so a pretty-but-broken game can never post a high creative score. See `_build_gate` in `runner.py`. When no Ren'Py SDK is installed, lint cannot run and the gate passes (`error_count` is `None`).
+
+### Score an already-built game with a chosen judge
+
+Generation runs on the small local model, but a small model cannot critique prose — it scores broken output as good. Grade the *artifact* with a more capable (free) judge instead. `score game` points any judge connector at an already-built game directory (e.g. one saved under `eval/games/`), reads its `script.rpy`, and scores it against `rubrics/<pipeline>_e2e.json` — no pipeline re-run:
+
+```bash
+# grade a saved game with the cline connector, print per-criterion reasoning
+python eval/cli.py score game renpy eval/games/renpy_romance_58b4d987 \
+  --connector cline --show-reasoning
+```
+
+Point the judge at a bigger model by setting that connector's `model` in `settings.json` (e.g. the `cline` block). Without `--connector` it uses the configured default (the local model — same self-grading bias that inflates scores). Results save under `eval/results/renpy/e2e/<game_name>/`.
+
 ### Re-score saved outputs with a different judge model
 
 Climb and score runs now save `outputs.json` alongside `summary.json`. You can re-judge those outputs with a different model (e.g. Opus via Cline) to cross-check whether your local model's scores are meaningful:
@@ -296,6 +314,20 @@ eval/
 - `description` is the judge's scoring instruction — write it as a specific, testable claim.
 - Higher `weight` shifts p25 toward this criterion.
 - File must be named `<pipeline>_<stage>.json`.
+
+**Axis-structured rubrics** (e.g. `renpy_e2e.json`) add an `axis` field to each criterion and a top-level `axes` list. The overall is the mean of the per-axis means — each axis weighted equally regardless of criterion count — instead of a weighted average, and `weight` is ignored. Use this when you want several independent quality dimensions to count equally:
+
+```json
+{
+  "stage": "e2e",
+  "pipeline": "renpy",
+  "axes": ["narrative", "characters", "writing", "structure"],
+  "criteria": [
+    { "name": "hook_strength", "axis": "narrative", "description": "..." },
+    { "name": "dialogue_craft", "axis": "writing", "description": "..." }
+  ]
+}
+```
 
 ### Interpreting score output
 

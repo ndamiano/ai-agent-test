@@ -169,10 +169,16 @@ def test_real_e2e_rubric_is_well_formed():
     rubric = json.loads(path.read_text(encoding="utf-8"))
     axes = set(rubric["axes"])
     assert axes == {"narrative", "characters", "writing", "structure"}
+    # the live e2e rubric is level-based: classification, not a calibrated float
+    assert judge._is_levels(rubric)
+    keys = [str(k) for k in range(rubric["scale"]["min"], rubric["scale"]["max"] + 1)]
     for c in rubric["criteria"]:
         assert c["name"].isidentifier(), c["name"]
         assert c["axis"] in axes, c["name"]
-        assert len(c["description"]) > 80
+        assert len(c["description"]) > 20, c["name"]
+        # every level 0..max is authored with a self-contained description
+        assert set(c["levels"]) == set(keys), c["name"]
+        assert all(c["levels"][k].strip() for k in keys), c["name"]
     # every declared axis is actually used
     used = {c["axis"] for c in rubric["criteria"]}
     assert used == axes

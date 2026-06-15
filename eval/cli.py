@@ -42,12 +42,38 @@ def _load_brief(name: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_rubric(pipeline: str, stage: str) -> dict:
+def _load_rubric(pipeline: str, stage: str, required: bool = True) -> dict | None:
     path = RUBRICS_DIR / f"{pipeline}_{stage}.json"
     if not path.exists():
+        if not required:
+            return None
         available = [p.name for p in RUBRICS_DIR.glob("*.json")]
         sys.exit(f"Rubric not found: {path}\nAvailable: {available}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _make_judge(connector_name: str | None = None):
+    """A Judge bound to the named connector, or the active one when None."""
+    from eval.judge import Judge
+    from llm_clients.connector_selector import get_connector
+    return Judge(connector=get_connector(connector_name) if connector_name else None)
+
+
+def _report_and_save(label: str, pipeline: str, stage: str, brief: str,
+                     results: list, scored: list, rubric: dict,
+                     show_reasoning: bool, review_payloads: list, no_save: bool,
+                     **save_kw) -> dict:
+    """Shared tail for every score command: print reasoning, summarize, print, save."""
+    from eval.report import summarize, print_summary, print_review, save
+    if show_reasoning:
+        for i, s in enumerate(scored):
+            if s:
+                print_review(i + 1, review_payloads[i], s, rubric)
+    summary = summarize(results, scored, rubric)
+    print_summary(summary, label)
+    if not no_save:
+        save(pipeline, stage, brief, summary, **save_kw)
+    return summary
 
 
 # ── commands ──────────────────────────────────────────────────────────────────
@@ -61,63 +87,44 @@ def cmd_capture(args):
 def cmd_score_stage(args):
     from eval.failures import print_analysis as print_failure_analysis
     from eval.fixtures import load as load_fixtures
-    from eval.judge import Judge
-    from eval.report import summarize, save, print_summary, print_review
     from eval.runner import StageRunner
 
     pipeline_name, stage_id = args.target.split("/", 1)
     rubric   = _load_rubric(pipeline_name, stage_id)
     fixtures = load_fixtures(pipeline_name, args.brief)
     runner   = StageRunner(pipeline_name, stage_id, fixtures)
-    judge    = Judge()
+    judge    = _make_judge(args.connector)
 
-    print(f"Scoring {args.target}  brief={args.brief}  n={args.n}")
+    print(f"Scoring {args.target}  brief={args.brief}  n={args.n}  connector={args.connector or 'default'}")
     results = runner.run_n(args.n)
     print_failure_analysis(results)
     scored  = [
         judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
         for r in results
     ]
-
-    if args.show_reasoning:
-        for i, (r, s) in enumerate(zip(results, scored)):
-            if r["ok"] and r["output"] and s:
-                print_review(i + 1, r["output"], s, rubric)
-
-    summary = summarize(results, scored, rubric)
-    print_summary(summary, f"{args.target} / {args.brief}")
-
-    if not args.no_save:
-        save(pipeline_name, stage_id, args.brief, summary, run_results=results)
+    _report_and_save(f"{args.target} / {args.brief}", pipeline_name, stage_id, args.brief,
+                     results, scored, rubric, args.show_reasoning,
+                     [r["output"] for r in results], args.no_save, run_results=results)
 
 
 def cmd_score_pipeline(args):
     from eval.climb import _score_run
     from eval.failures import print_analysis as print_failure_analysis
-    from eval.judge import Judge
-    from eval.report import summarize, save, print_summary, print_review
+    from eval.report import summarize, save, print_summary
     from eval.runner import PipelineEvalRunner
 
     brief  = _load_brief(args.brief)
     runner = PipelineEvalRunner(args.pipeline, brief)
-    judge  = Judge()
+    judge  = _make_judge(args.connector)
+    label  = f"pipeline:{args.pipeline} / {args.brief}"
 
-    print(f"Scoring pipeline {args.pipeline}  brief={args.brief}  n={args.n}")
+    print(f"Scoring pipeline {args.pipeline}  brief={args.brief}  n={args.n}  connector={args.connector or 'default'}")
     results = runner.run_n(args.n)
     print_failure_analysis(results)
 
-    rubric_path = RUBRICS_DIR / f"{args.pipeline}_e2e.json"
-    if rubric_path.exists():
-        rubric = json.loads(rubric_path.read_text(encoding="utf-8"))
-        scored = _score_run(results, "e2e", rubric, judge, e2e=True)
-        if args.show_reasoning:
-            for i, s in enumerate(scored):
-                if s:
-                    print_review(i + 1, {"artifact": "(built game script)"}, s, rubric)
-        summary = summarize(results, scored, rubric)
-    else:
-        print(f"(no e2e rubric at {rubric_path.name} — reporting timing/success only)")
-        scored = None
+    rubric = _load_rubric(args.pipeline, "e2e", required=False)
+    if rubric is None:
+        print(f"(no e2e rubric for {args.pipeline} — reporting timing/success only)")
         n_runs = len(results)
         summary = {
             "n": n_runs,
@@ -127,16 +134,18 @@ def cmd_score_pipeline(args):
             "overall": {},
             "by_criterion": {},
         }
+        print_summary(summary, label)
+        if not args.no_save:
+            save(args.pipeline, "e2e", args.brief, summary, scored=None)
+        return
 
-    print_summary(summary, f"pipeline:{args.pipeline} / {args.brief}")
-    if not args.no_save:
-        save(args.pipeline, "e2e", args.brief, summary, scored=scored)
+    scored = _score_run(results, "e2e", rubric, judge, e2e=True)
+    _report_and_save(label, args.pipeline, "e2e", args.brief, results, scored, rubric,
+                     args.show_reasoning, [{"artifact": "(built game script)"}] * len(scored),
+                     args.no_save, scored=scored)
 
 
 def cmd_score_game(args):
-    from eval.judge import Judge
-    from eval.report import summarize, save, print_summary, print_review
-    from llm_clients.connector_selector import get_connector
     from pipelines.registry import get_registry
 
     game_dir = Path(args.game_dir)
@@ -148,23 +157,19 @@ def cmd_score_game(args):
         sys.exit(f"No gradable artifact found under {game_dir} "
                  f"(expected a built game with game/script.rpy).")
 
-    rubric    = (json.loads(Path(args.rubric).read_text(encoding="utf-8"))
-                 if args.rubric else _load_rubric(args.pipeline, "e2e"))
-    connector = get_connector(args.connector) if args.connector else get_connector()
-    judge     = Judge(connector=connector)
+    rubric = (json.loads(Path(args.rubric).read_text(encoding="utf-8"))
+              if args.rubric else _load_rubric(args.pipeline, "e2e"))
+    judge  = _make_judge(args.connector)
 
     print(f"Scoring game {game_dir.name}  connector={args.connector or 'default'}")
     scored = judge.score("e2e", artifact, rubric)
     if scored is None:
         sys.exit("Judge returned no score — check the connector/model (JSON mode support?).")
 
-    if args.show_reasoning:
-        print_review(1, {"artifact": f"({game_dir.name})"}, scored, rubric)
-
-    summary = summarize([{"ok": True, "elapsed": 0.0}], [scored], rubric)
-    print_summary(summary, f"game:{game_dir.name}  ({args.connector or 'default'})")
-    if not args.no_save:
-        save(args.pipeline, "e2e", game_dir.name, summary, scored=[scored])
+    _report_and_save(f"game:{game_dir.name}  ({args.connector or 'default'})",
+                     args.pipeline, "e2e", game_dir.name,
+                     [{"ok": True, "elapsed": 0.0}], [scored], rubric, args.show_reasoning,
+                     [{"artifact": f"({game_dir.name})"}], args.no_save, scored=[scored])
 
 
 def cmd_climb(args):
@@ -307,6 +312,8 @@ def main():
     p_stage.add_argument("target", help="pipeline/stage_id")
     p_stage.add_argument("--brief", required=True)
     p_stage.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
+    p_stage.add_argument("--connector", default=None,
+                         help="Judge connector: cline | openrouter | lmstudio (default: configured)")
     p_stage.add_argument("--no-save", action="store_true", dest="no_save")
     p_stage.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
                          help="Print each run's output + judge reasoning for spot-checking")
@@ -315,6 +322,8 @@ def main():
     p_pipe.add_argument("pipeline")
     p_pipe.add_argument("--brief", required=True)
     p_pipe.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
+    p_pipe.add_argument("--connector", default=None,
+                        help="Judge connector: cline | openrouter | lmstudio (default: configured)")
     p_pipe.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
                         help="Print the judge's per-criterion reasoning for each run")
     p_pipe.add_argument("--no-save", action="store_true", dest="no_save")

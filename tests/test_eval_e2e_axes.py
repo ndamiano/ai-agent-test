@@ -164,6 +164,35 @@ def test_classify_build_gate_surfaces_error_when_no_log():
     assert analysis["examples"]["build_gate"] == "build gate: 2 lint error(s)"
 
 
+def test_flat_levels_rubric_renders_level_descriptions():
+    # a level-based rubric without axes must still emit each level's text to the judge,
+    # not fall back to the float "(weight ...): description" line
+    rubric = {
+        "scale": {"min": 0, "max": 4, "display_multiplier": 25},
+        "criteria": [
+            {"name": "subtext", "weight": 1.5, "description": "show don't announce",
+             "levels": {"0": "all announced", "1": "mostly", "2": "mixed", "3": "indirect", "4": "submerged"}},
+        ],
+    }
+    prompt = judge._score_prompt("node_scripts", {"scripts": {}}, rubric)
+    assert "all announced" in prompt and "submerged" in prompt
+    assert '"level": "integer 0-4"' in prompt
+    assert "(weight 1.5)" not in prompt  # not the float fallback
+
+
+def test_real_node_scripts_rubric_is_well_formed():
+    path = Path(__file__).parent.parent / "eval" / "rubrics" / "renpy_node_scripts.json"
+    rubric = json.loads(path.read_text(encoding="utf-8"))
+    assert judge._is_levels(rubric)
+    assert not judge._has_axes(rubric)  # flat stage rubric, weighted average
+    keys = [str(k) for k in range(rubric["scale"]["min"], rubric["scale"]["max"] + 1)]
+    for c in rubric["criteria"]:
+        assert c["name"].isidentifier(), c["name"]
+        assert c["weight"] > 0, c["name"]
+        assert set(c["levels"]) == set(keys), c["name"]
+        assert all(c["levels"][k].strip() for k in keys), c["name"]
+
+
 def test_real_e2e_rubric_is_well_formed():
     path = Path(__file__).parent.parent / "eval" / "rubrics" / "renpy_e2e.json"
     rubric = json.loads(path.read_text(encoding="utf-8"))

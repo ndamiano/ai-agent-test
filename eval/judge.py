@@ -55,6 +55,13 @@ def _level_keys(rubric: dict) -> list:
 def _criteria_block(rubric: dict) -> str:
     """Render criteria for the score prompt, grouped by axis when the rubric defines them."""
     if not _has_axes(rubric):
+        if _is_levels(rubric):
+            keys = _level_keys(rubric)
+            lines = []
+            for c in rubric["criteria"]:
+                lines.append(f"- {c['name']} — {c.get('description', '')}")
+                lines += [f"    {k}: {c['levels'][k]}" for k in keys if k in c.get("levels", {})]
+            return "\n".join(lines)
         return "\n".join(
             f"- {c['name']} (weight {c.get('weight', 1.0)}): {c['description']}"
             for c in rubric["criteria"]

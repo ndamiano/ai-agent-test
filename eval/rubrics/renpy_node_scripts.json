@@ -1,31 +1,72 @@
 {
   "stage": "node_scripts",
   "pipeline": "renpy",
+  "scale": {
+    "min": 0,
+    "max": 4,
+    "display_multiplier": 25
+  },
+  "note": "You are reading the dialogue and narration written for the scenes of a visual novel — the lines characters speak and the on-screen narration, with scene/show staging. Judge only the writing on the page; you have no knowledge of the author's intent or any plan beyond what the lines show. Score on the scene's own register: a quiet, low-stakes exchange can reach the top level on its own terms. For each criterion, pick the single level (0-4) whose description best matches the writing, and quote specific lines as evidence.",
   "criteria": [
     {
       "name": "voice_distinctness",
-      "description": "No two characters need distinct voices, but the whole cast must not collapse into one. Test: if every character speaks in the same register — same sentence length, vocabulary, emotional temperature, so the scene reads as one voice with different names — score 0–35. If characters who should differ (a terse teen vs. a careful parent) audibly do, score 75+. Do not penalize two characters who legitimately share a voice (siblings, same upbringing).",
-      "weight": 2.0
+      "weight": 2.0,
+      "description": "Does the cast avoid collapsing into a single voice — do characters who should differ actually sound different?",
+      "levels": {
+        "0": "One voice, many names. Every character speaks in the same register — same sentence length, vocabulary, emotional temperature — so the scene reads as one person talking to themselves.",
+        "1": "Tagged, not voiced. Characters have a stated difference (the nervous one, the gruff one) but it never reaches their speech; cover the names and you can't tell who is talking.",
+        "2": "Distinct by subject only. You can sometimes tell them apart by what they talk about (their job, their worry), but the way they talk — rhythm, word choice — is interchangeable.",
+        "3": "Audibly different. Characters who should differ do — a terse teen and a careful parent don't sound alike — and with names hidden you could usually place a line. Two characters who would genuinely share a voice (siblings, same upbringing) are fine.",
+        "4": "Unmistakable. Each character's voice is specific enough that a single line gives them away, and no two could swap lines without the scene breaking."
+      }
     },
     {
       "name": "scene_economy",
-      "description": "Every line does dramatic work — advances tension, reveals character, or moves the situation forward. No filler exchanges ('Oh, I see.' / 'Yes, exactly.'). 8–14 lines total means each one must carry weight. Test: if lines could be cut without changing what the player knows or feels after the scene, score 0–40. If removing any line would lose something, score 70+.",
-      "weight": 2.0
+      "weight": 2.0,
+      "description": "Does every line do dramatic work — advancing tension, revealing character, or moving the situation — with no filler?",
+      "levels": {
+        "0": "Padding throughout. Lines exist to fill space; whole exchanges could be cut and nothing about the scene would change.",
+        "1": "Mostly filler. Some lines work, but the scene is laced with empty back-and-forth ('Oh, I see.' / 'Yes, exactly.') that carries no information or feeling.",
+        "2": "Functional but loose. The scene gets where it is going, but several lines restate what is already known or could be removed without loss.",
+        "3": "Tight. Nearly every line earns its place — cut one and you would lose information, tension, or character. Little to trim.",
+        "4": "Nothing wasted. Every line does at least one job and often two; remove any and the scene is poorer. Lean from first line to last."
+      }
     },
     {
       "name": "naturalism",
-      "description": "Read each spoken line aloud — would a real person say it that way in conversation? Lines must be plain spoken language by default. Three failure modes drag a scene into the uncanny: (a) figurative overshoot — a metaphor or simile where a person would speak plainly ('I'll let my pencil ride the wind like a kite across a blank page'); (b) a recurring image the same character keeps reaching for, so their speech reads as themed rather than spoken ('our bond is a ticket that never expires', 'keep our family's ticket from tearing in half'); (c) abstract interiority spoken aloud — narrating an inner state or idea instead of talking ('The carousel is just a space for what I see inside', 'The park's noise feels louder when they're apart'). Test: if a scene shows any of these more than once, score 0–40. If every line passes the say-it-aloud test and figurative language appears at most once, only on an emotionally charged line, score 75+.",
-      "weight": 2.0
+      "weight": 2.0,
+      "description": "Read each spoken line aloud — would a real person say it that way? Lines should be plain spoken language, not written-literary.",
+      "levels": {
+        "0": "Nobody talks like this. Lines are stilted or uncanny throughout — characters narrate their inner states, speak in sustained metaphor, or recite ideas no one would say in conversation.",
+        "1": "Frequently overwritten. Plain speech keeps tipping into figurative overshoot ('I'll let my pencil ride the wind like a kite'), a character's recurring themed image ('keep our family's ticket from tearing in half'), or interiority spoken aloud ('the carousel is just a space for what I see inside') — more than once or twice.",
+        "2": "Occasionally stagey. Mostly speakable, but a line or two strains for effect or reaches for an image where a person would just talk.",
+        "3": "Sounds spoken. Every line passes the say-it-aloud test; figurative language is rare and lands on a charged line rather than decorating ordinary ones.",
+        "4": "Effortlessly real. The dialogue reads exactly as people speak — plain where it should be, vivid only when feeling earns it, never once writerly."
+      }
     },
     {
       "name": "subtext",
-      "description": "Characters don't announce their emotional state or intentions directly. Meaning is conveyed through what they choose to say, avoid, or deflect. Test: if characters say 'I feel betrayed' or 'I want you to trust me,' score 0–40. If emotional states are legible through behavior and word choice without being stated, score 70+.",
-      "weight": 1.5
+      "weight": 1.5,
+      "description": "Do characters convey feeling and intent through what they say, avoid, or deflect — rather than announcing it?",
+      "levels": {
+        "0": "Everything announced. Characters state their emotions and goals outright as the default mode ('I feel betrayed,' 'I'm torn,' 'I want you to trust me'); there is nothing left to infer.",
+        "1": "Mostly on the nose. Now and then a feeling is implied, but the scene's habit is to name emotions and intentions directly.",
+        "2": "Mixed. Some lines carry subtext while others flatly declare the feeling; inconsistent about trusting the player to read between the lines.",
+        "3": "Mostly indirect. Emotional states are usually legible through behavior, word choice, and what is left unsaid, with only the occasional direct declaration.",
+        "4": "Fully under the surface. Feeling and intent come through entirely in how characters speak and what they avoid; the scene never states what it can show, and the player reads it effortlessly."
+      }
     },
     {
       "name": "beat_fidelity",
-      "description": "The script delivers what the beat summary promised — the specific confrontation, revelation, or decision described in beat_map. The location and characters present match. The script ends correctly per the node type (choice menu for branches, jump for linear nodes).",
-      "weight": 1.5
+      "weight": 1.5,
+      "description": "Does each node read as a complete, coherent scene — a clear event or exchange, consistent characters and place — and end correctly for its node type (a choice menu for a branch, a jump for a linear node)?",
+      "levels": {
+        "0": "Broken. The node has no coherent scene — fragments, a place or cast that shifts mid-scene, or a missing/contradictory ending (a branch with no menu, a node that dead-ends).",
+        "1": "Barely holds. A scene is discernible but underbaked — it gestures at an event without depicting it, or the ending type is wrong for the node.",
+        "2": "Functional. A clear scene with the right ending, but generic — it advances the situation without a specific event, revelation, or decision landing.",
+        "3": "Delivers. The node depicts a specific event, exchange, or decision with a consistent cast and place, and ends correctly for its type.",
+        "4": "Lands cleanly. The node delivers a sharp, specific scene whose ending — menu or jump — feels like the natural result of the lines that built to it."
+      }
     }
   ]
 }

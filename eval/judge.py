@@ -221,6 +221,11 @@ def _axis_overall(scores: dict, rubric: dict) -> float:
     return round(sum(means.values()) / len(means), 2)
 
 
+def _overall(scores: dict, rubric: dict) -> float:
+    """Mean of axis means for axis rubrics; weighted average for flat ones."""
+    return _axis_overall(scores, rubric) if _has_axes(rubric) else _weighted_average(scores, rubric)
+
+
 def _weighted_average(scores: dict, rubric: dict) -> float:
     total_weight = sum(c.get("weight", 1.0) for c in rubric["criteria"])
     if not total_weight:
@@ -252,7 +257,7 @@ class Judge:
             raw = parsed.get("scores", {k: v for k, v in parsed.items() if k != "overall"})
             if _is_levels(rubric):
                 scores = _levels_to_scores(raw, rubric)
-                overall = _axis_overall(scores, rubric)
+                overall = _overall(scores, rubric)
             else:
                 scores = raw
                 if _has_axes(rubric):

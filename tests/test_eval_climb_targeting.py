@@ -42,6 +42,23 @@ def test_mutate_filter_picks_weakest_within_allowed_set():
     assert "'distinctiveness'" in prompt
 
 
+def test_flat_levels_overall_is_weighted_average_not_zero():
+    # regression: a flat (no-axis) level rubric must aggregate via weighted average.
+    # _axis_overall returns 0.0 with no axes, which silently zeroed every climb.
+    rubric = {
+        "scale": {"min": 0, "max": 4, "display_multiplier": 25},
+        "criteria": [
+            {"name": "subtext", "weight": 1.5, "levels": {str(k): "x" for k in range(5)}},
+            {"name": "naturalism", "weight": 2.0, "levels": {str(k): "x" for k in range(5)}},
+        ],
+    }
+    scores = {"subtext": {"score": 25.0}, "naturalism": {"score": 50.0}}
+    overall = judge._overall(scores, rubric)
+    assert overall > 0
+    # weighted: (25*1.5 + 50*2.0) / 3.5 == 39.29
+    assert overall == round((25 * 1.5 + 50 * 2.0) / 3.5, 2)
+
+
 def test_save_mutation_persists_text_and_score(tmp_path, monkeypatch):
     monkeypatch.setattr(report, "RESULTS_DIR", tmp_path)
     path = report.save_mutation("renpy", "node_scripts", "park", 1, 2,

@@ -78,9 +78,21 @@ python eval/cli.py climb renpy/premise --e2e --brief renpy_romance
 
 Without `--brief`/`--brief-pool`, all non-character briefs are pooled and one is picked at random per run — this prevents overfitting the prompt to one genre. Each successful run also copies the built game to `eval/games/` for manual play-testing. E2e runs are slow (full pipeline × n × mutations × iterations); start with `--n 1 --iterations 1` to estimate duration.
 
+**Scope the mutation target with `--criterion`.** In e2e mode the mutator targets the single weakest criterion across the *whole game*. When the whole game is rough, that's often a criterion the prompt you're climbing can't move — e.g. climbing `node_scripts` (one dialogue line at a time) while `arc_movement` (a story-structure property set by `story`/`beat_map`) sits at 0, so every mutation chases an arc the line can't carry and quality drops. Restrict the target to criteria the climbed prompt actually owns:
+
+```bash
+# climb dialogue against only the criteria a per-line prompt can move
+python eval/cli.py climb renpy/node_scripts --e2e --prompt-file character_line.txt \
+  --criterion subtext distinctiveness emotional_pacing
+```
+
+The mutator then picks the weakest *among those*, ignoring structural criteria it can't affect. (A weak `arc_movement` is a real signal — but it's telling you to climb `story`/`beat_map`, not `node_scripts`.)
+
+**Every proposed mutation is saved**, accepted or not, under `eval/results/<pipeline>/<stage>/<brief>/mutations/iterNN_mutMM_p25-<score>_<ts>.txt` — the rewritten prompt with a header recording its target and overall p25/mean. Rejected mutations are otherwise discarded (the prompt file is restored to the prior best), so this is how you inspect *why* a climb stalled.
+
 **E2e grades the artifact, not the pipeline.** The judge receives only the built game — for renpy, the actual `game_output/game/script.rpy` read off disk — and nothing from the production bible (no premise, central_question, voice sheets, or story plan). It scores the game the way a player would: from dialogue, narration, menus, and `scene`/`show` staging alone, tracing branches by following menus and jumps. What counts as "the artifact" is a **per-pipeline** decision: each `PipelineDefinition` may set an `e2e_view(working_dir) -> str` hook (mirroring `enrich_brief`) that returns its gradable artifact; renpy's lives in `pipelines/renpy/e2e_view.py`. When a pipeline defines no view, e2e falls back to scoring the raw JSON outputs.
 
-**The e2e rubric is axis-structured and level-based.** `rubrics/renpy_e2e.json` groups its criteria into four equal-weight axes — Narrative, Characters, Writing, Structure — and the overall score is the **mean of the four axis means**, so an axis counts 25% no matter how many criteria it holds. Each criterion is scored by a discrete **level** (0–4, each a self-contained description) rather than a free-floating float — classification, which a judge does far more reliably (see "Writing a rubric" below). The score summary prints a `by axis` rollup above the per-criterion lines. Mutation still targets the single weakest criterion by p25.
+**The e2e rubric is axis-structured and level-based.** `rubrics/renpy_e2e.json` groups its criteria into four equal-weight axes — Narrative, Characters, Writing, Structure — and the overall score is the **mean of the four axis means**, so an axis counts 25% no matter how many criteria it holds. Each criterion is scored by a discrete **level** (0–4, each a self-contained description) rather than a free-floating float — classification, which a judge does far more reliably (see "Writing a rubric" below). The score summary prints a `by axis` rollup above the per-criterion lines. Mutation targets the single weakest criterion by p25 — scope it with `--criterion` (see "Hill climb end-to-end") when the climbed prompt can't move the global weakest.
 
 **Technical validity is a gate, not a scored axis.** All four axes measure creative quality. A run whose built game fails lint or the Ren'Py build is marked failed (it lowers `success_rate` and is excluded from scoring) rather than being scored as a bad game — so a pretty-but-broken game can never post a high creative score. See `_build_gate` in `runner.py`. When no Ren'Py SDK is installed, lint cannot run and the gate passes (`error_count` is `None`).
 

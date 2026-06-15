@@ -218,6 +218,7 @@ def cmd_climb(args):
         briefs=briefs,
         prompt_file=getattr(args, "prompt_file", None),
         resume=getattr(args, "resume", False),
+        target_criteria=getattr(args, "criteria", None),
     )
 
 
@@ -348,6 +349,11 @@ def main():
                         "stage's registered prompt (e.g. scene_sketch.txt for renpy/node_scripts)")
     p.add_argument("--judge-connector", default=None, dest="judge_connector",
                    help="Connector for judge scoring/mutation (e.g. cline). Defaults to active connector.")
+    p.add_argument("--criterion", nargs="+", dest="criteria", default=None,
+                   help="Restrict mutation targeting to these rubric criteria (the mutator picks the "
+                        "weakest among them). Use when the climbed prompt can only move some criteria "
+                        "(e.g. node_scripts: subtext distinctiveness) and you don't want it chasing "
+                        "structural criteria it can't affect (e.g. arc_movement).")
     p.add_argument("--resume", action="store_true",
                    help="Skip the baseline run and reuse the last saved summary/scored for this "
                         "target+brief as the starting point (the prompt file already holds that best). "

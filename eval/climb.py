@@ -12,7 +12,7 @@ from pathlib import Path
 from eval.failures import print_analysis as print_failure_analysis
 from eval.fixtures import load as load_fixtures
 from eval.judge import Judge
-from eval.report import summarize, save, print_summary, print_diff
+from eval.report import summarize, save, save_mutation, print_summary, print_diff
 from eval.runner import StageRunner, PipelineEvalRunner
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ def hill_climb(
     briefs: list | None = None,
     prompt_file: str | None = None,
     resume: bool = False,
+    target_criteria: list | None = None,
 ) -> tuple:
     """
     Hill-climb the prompt for a single LLM stage.
@@ -114,6 +115,13 @@ def hill_climb(
     from llm_clients.connector_selector import get_connector as _get_connector
     judge = Judge(_get_connector(judge_connector) if judge_connector else None)
     prompt_path = _find_prompt_path(pipeline_name, stage_id, prompt_file)
+
+    if target_criteria:
+        known = {c["name"] for c in rubric["criteria"]}
+        unknown = [c for c in target_criteria if c not in known]
+        if unknown:
+            raise ValueError(f"--criterion not in rubric: {unknown}. Available: {sorted(known)}")
+        print(f"  mutation target restricted to: {target_criteria}")
 
     if end_to_end:
         brief_pool = briefs or ([brief] if brief else None)
@@ -168,7 +176,7 @@ def hill_climb(
         for m in range(n_mutations):
             print(f"  proposing mutation {m+1}/{n_mutations}...")
             try:
-                mutations.append(judge.propose_mutation(current_prompt, current_summary, rubric, current_scored))
+                mutations.append(judge.propose_mutation(current_prompt, current_summary, rubric, current_scored, target_criteria))
             except Exception as e:
                 logger.warning(f"Mutation proposal {m+1} failed: {e}")
 
@@ -194,6 +202,9 @@ def hill_climb(
             print_failure_analysis(results)
             scored  = _score_run(results, score_stage_id, rubric, judge, e2e=end_to_end)
             summary = summarize(results, scored, rubric)
+            mut_path = save_mutation(pipeline_name, stage_id, brief_name, i + 1, j + 1, mutation, summary,
+                                     target=",".join(target_criteria) if target_criteria else None)
+            print(f"  mutation saved → {mut_path.relative_to(mut_path.parents[5])}")
 
             candidate_p25 = summary.get("overall", {}).get("p25", 0.0) or 0.0
             best_p25      = best_summary.get("overall", {}).get("p25", 0.0) if best_summary else -1.0

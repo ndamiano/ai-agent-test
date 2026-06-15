@@ -101,6 +101,21 @@ def save(pipeline: str, stage: str, brief: str, summary: dict, label: str = "",
     return out_dir
 
 
+def save_mutation(pipeline: str, stage: str, brief: str, iteration: int, idx: int,
+                  mutation_text: str, summary: dict, target: str | None = None) -> Path:
+    """Persist a proposed mutation's prompt text + its score so rejected ones are inspectable."""
+    out_dir = RESULTS_DIR / pipeline / stage / brief / "mutations"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    overall = summary.get("overall", {})
+    p25, mean = overall.get("p25"), overall.get("mean")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    path = out_dir / f"iter{iteration:02d}_mut{idx:02d}_p25-{p25}_{ts}.txt"
+    header = (f"# {pipeline}/{stage}  iteration {iteration}  mutation {idx}\n"
+              f"# target={target or 'weakest'}  overall p25={p25}  mean={mean}\n\n")
+    path.write_text(header + mutation_text, encoding="utf-8")
+    return path
+
+
 def load_latest(pipeline: str, stage: str, brief: str) -> tuple | None:
     """Most recent saved run for this target with both summary and scored persisted.
 

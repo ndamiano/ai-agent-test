@@ -125,8 +125,10 @@ def _score_prompt(stage_id: str, output: dict, rubric: dict) -> str:
 
 
 def _mutate_prompt(current_prompt: str, summary: dict, rubric: dict,
-                   scored: list | None = None) -> str:
+                   scored: list | None = None, criteria: list | None = None) -> str:
     by_criterion = summary.get("by_criterion", {})
+    if criteria:
+        by_criterion = {k: v for k, v in by_criterion.items() if k in criteria}
     weakest = min(by_criterion, key=lambda k: by_criterion[k].get("p25", 5.0), default=None)
     if weakest is None:
         target_desc = "overall quality"
@@ -256,5 +258,5 @@ class Judge:
             return None
 
     def propose_mutation(self, current_prompt: str, summary: dict, rubric: dict,
-                         scored: list | None = None) -> str:
-        return self._call(_MUTATE_SYSTEM, _mutate_prompt(current_prompt, summary, rubric, scored))
+                         scored: list | None = None, criteria: list | None = None) -> str:
+        return self._call(_MUTATE_SYSTEM, _mutate_prompt(current_prompt, summary, rubric, scored, criteria))

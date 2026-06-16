@@ -11,6 +11,7 @@ from renpy import graph as _graph
 from renpy._script import (
     _postprocess_script,
     _validate_and_repair,
+    _find_script_issues,
     _stitch_script,
     _write_options_rpy,
     run_final_lint,
@@ -1080,7 +1081,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 # Stage 8: Build
 # ---------------------------------------------------------------------------
 
-def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
+def build(inputs: Dict, working_dir: Path, distribute: bool = True, repair: bool = True) -> Dict:
     brief        = inputs.get("brief", {})
     premise      = inputs.get("premise", {})
     manifest     = inputs.get("asset_manifest", {})
@@ -1096,7 +1097,23 @@ def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
     valid_cgs         = {cg["id"] for cg in manifest.get("cgs", [])}
     valid_labels      = set(node_ids) | {"start", "splashscreen", "main_menu"}
 
-    _validate_and_repair(scripts, node_ids, valid_labels, valid_backgrounds, valid_characters, valid_cgs)
+    if repair:
+        # Legacy pipeline behavior: LLM-rewrite broken scenes in place.
+        _validate_and_repair(scripts, node_ids, valid_labels, valid_backgrounds, valid_characters, valid_cgs)
+    else:
+        # Agentic path: do NOT rewrite the agent's content. Surface structural issues
+        # (e.g. a jump to a node that doesn't exist) so the agent builds the missing
+        # piece instead of the build mutilating what it wrote.
+        script_issues = {
+            nid: issue
+            for nid in node_ids
+            if scripts.get(nid)
+            and (issue := _find_script_issues(scripts[nid], valid_labels,
+                                              valid_backgrounds, valid_characters, valid_cgs))
+        }
+        if script_issues:
+            return {"status": "built", "output_dir": output_dir,
+                    "script_issues": script_issues, "lint": {"error_count": None}}
 
     for nid in node_ids:
         if scripts.get(nid):

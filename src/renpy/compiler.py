@@ -43,9 +43,11 @@ def compile_gate(build_result: Dict) -> Optional[str]:
     return None
 
 
-def compile_renpy(working_dir, distribute: bool = True) -> Dict:
+def compile_renpy(working_dir, distribute: bool = True, repair: bool = False) -> Dict:
     # distribute=False lints only (fast) — used for mid-build compile checks; the
     # final delivery build packages the project.
+    # repair=False (the agentic default) does NOT rewrite the agent's content; it
+    # surfaces structural issues so the agent fixes them (e.g. builds a missing node).
     working_dir = Path(working_dir)
 
     missing = [f for f in _REQUIRED if not (working_dir / f).exists()]
@@ -57,9 +59,18 @@ def compile_renpy(working_dir, distribute: bool = True) -> Dict:
     # character without an id). compile_renpy must always return a structured
     # pass/fail — a crash is just a compile failure with a reason.
     try:
-        build_result = build(_load_artifact(working_dir), working_dir, distribute=distribute)
+        build_result = build(_load_artifact(working_dir), working_dir,
+                             distribute=distribute, repair=repair)
     except Exception as e:
         return {"ok": False, "reason": f"build error: {type(e).__name__}: {e}",
+                "lint_error_count": None, "project_dir": None}
+
+    # Structural issues (dangling jumps, undefined characters, missing backgrounds)
+    # are reported verbatim — they're the agent's actionable to-do.
+    issues = build_result.get("script_issues")
+    if issues:
+        detail = "; ".join(f"{nid}: {prob}" for nid, prob in issues.items())
+        return {"ok": False, "reason": f"script issues — {detail}",
                 "lint_error_count": None, "project_dir": None}
 
     reason = compile_gate(build_result)

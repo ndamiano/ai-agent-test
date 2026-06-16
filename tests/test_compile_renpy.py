@@ -83,6 +83,33 @@ def test_compile_reports_missing_artifact(tmp_path):
     assert "missing artifact" in result["reason"]
 
 
+def test_compile_reports_dangling_jump_without_repair(tmp_path, monkeypatch):
+    # The agent wrote scene_01 jumping to scene_02 which it hasn't built. The agentic
+    # path must NOT rewrite scene_01 — it must report the dangling jump so the agent
+    # builds scene_02. And it must not invoke the LLM repair.
+    import renpy.fns as fns
+    monkeypatch.setattr(fns, "_get_sdk_path", lambda: "")
+
+    def _no_repair(*a, **k):
+        raise AssertionError("_validate_and_repair must not run in the agentic path")
+    monkeypatch.setattr(fns, "_validate_and_repair", _no_repair)
+
+    (tmp_path / "brief.json").write_text(json.dumps({"title": "T"}))
+    (tmp_path / "premise.json").write_text(json.dumps(
+        {"characters": [{"id": "evelyn", "name": "Evelyn"}]}))
+    (tmp_path / "asset_manifest.json").write_text(json.dumps(
+        {"backgrounds": [{"id": "bg_office", "image_file": "o.png"}],
+         "characters": [{"id": "evelyn", "image_file": "e.png"}], "cgs": [], "title_card": {}}))
+    (tmp_path / "node_scripts.json").write_text(json.dumps({
+        "node_ids": ["scene_01"],
+        "scripts": {"scene_01": "label scene_01:\n    scene bg_office\n    jump scene_02"}}))
+
+    result = compile_renpy(tmp_path)   # repair=False by default
+    assert result["ok"] is False
+    assert "scene_02" in result["reason"]
+    assert "jump" in result["reason"].lower()
+
+
 def test_compile_returns_structured_failure_on_malformed_content(tmp_path, monkeypatch):
     # The agent authored a premise whose character lacks an 'id' — build() raises
     # KeyError deep inside. compile_renpy must catch it and return a clean failure,

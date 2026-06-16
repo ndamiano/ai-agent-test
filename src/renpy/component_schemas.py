@@ -102,7 +102,9 @@ SKELETONS: Dict[str, str] = {
         '    evelyn \\"A line.\\"\\n    jump scene_02"\n'
         '  }\n'
         '}  // scene <bg id>, show/speaker <character id> must exist in asset_manifest; '
-        'every node_id needs a scripts entry; the builder adds "label start" -> node_ids[0]'
+        'every node_id needs a scripts entry; the builder adds "label start" -> node_ids[0].\n'
+        '// Any "jump <target>" or menu choice MUST point to a node you also create '
+        '(add <target> to node_ids and write its script) — if you jump to scene_02, build scene_02.'
     ),
 }
 

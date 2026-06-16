@@ -1081,6 +1081,35 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 # Stage 8: Build
 # ---------------------------------------------------------------------------
 
+def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:
+    """Write a solid-color placeholder for every declared image that isn't on disk.
+
+    A missing asset must not block the build — Ren'Py lint rejects unloadable images.
+    generate_asset (comfyui) upgrades these to real art later; until then the game
+    still builds and runs. Filenames mirror _stitch_script's defaults exactly.
+    """
+    images_dir = os.path.join(game_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    def _put(filename: str, w: int, h: int, color):
+        if not filename:
+            return
+        path = os.path.join(images_dir, filename)
+        if not os.path.exists(path):
+            write_solid_png(Path(path), w, h, color)
+
+    for bg in manifest.get("backgrounds", []):
+        bg_id = bg.get("id", "")
+        default = (bg_id[3:] + ".png") if bg_id.startswith("bg_") else f"{bg_id}.png"
+        _put(bg.get("image_file", default), 1280, 720, (58, 58, 92))
+    for ch in manifest.get("characters", []):
+        _put(ch.get("image_file", f"{ch.get('id', '')}.png"), 512, 768, (92, 58, 92))
+    for cg in manifest.get("cgs", []):
+        _put(cg.get("image_file", f"{cg.get('id', '')}.png"), 1280, 720, (40, 20, 60))
+    tc = manifest.get("title_card", {})
+    _put(tc.get("image_file", ""), 1280, 720, (20, 30, 60))
+
+
 def build(inputs: Dict, working_dir: Path, distribute: bool = True, repair: bool = True) -> Dict:
     brief        = inputs.get("brief", {})
     premise      = inputs.get("premise", {})
@@ -1135,6 +1164,10 @@ def build(inputs: Dict, working_dir: Path, distribute: bool = True, repair: bool
         f.write(full_script)
     sdk_path = _get_sdk_path()
     _copy_templates(game_dir, sdk_path)
+
+    # A declared-but-missing image must not fail the build; placeholder it (real art
+    # comes from generate_asset). This keeps the compile gate about the script, not assets.
+    _ensure_placeholder_images(manifest, game_dir)
 
     # Overwrite placeholder main menu background with generated title card
     title_card_src = os.path.join(game_dir, "images", "title_card.png")

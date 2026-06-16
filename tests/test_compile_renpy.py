@@ -77,6 +77,20 @@ def test_compile_produces_launchable_project(tmp_path, monkeypatch):
     assert 'define alex = Character("Alex"' in body
 
 
+def test_build_placeholders_declared_images(tmp_path, monkeypatch):
+    # Declared-but-missing images must not block the build — build() writes placeholders.
+    import renpy.fns as fns
+    monkeypatch.setattr(fns, "_get_sdk_path", lambda: "")
+
+    _write_minimal_artifact(tmp_path)   # manifest declares room.png + alex.png, no files
+    result = compile_renpy(tmp_path)
+    assert result["ok"] is True
+
+    images = tmp_path / "game_output" / "game" / "images"
+    assert (images / "room.png").exists()
+    assert (images / "alex.png").exists()
+
+
 def test_compile_reports_missing_artifact(tmp_path):
     result = compile_renpy(tmp_path)
     assert result["ok"] is False

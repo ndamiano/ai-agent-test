@@ -74,10 +74,16 @@ def compile_renpy(working_dir, distribute: bool = True, repair: bool = False) ->
                 "lint_error_count": None, "project_dir": None}
 
     reason = compile_gate(build_result)
+    # Surface the actual lint messages, not just the count — the agent needs to know
+    # WHAT failed to fix it.
+    lint_errors = build_result.get("lint", {}).get("errors") or []
+    if reason and "lint error" in reason and lint_errors:
+        reason = f"{reason}: " + " | ".join(lint_errors[:5])
     return {
         "ok": reason is None,
         "reason": reason,
         "lint_error_count": build_result.get("lint", {}).get("error_count"),
+        "lint_errors": lint_errors,
         "dist_returncode": build_result.get("dist_returncode"),
         "dist_error": build_result.get("dist_error"),
         "project_dir": build_result.get("project_dir") or build_result.get("output_dir"),

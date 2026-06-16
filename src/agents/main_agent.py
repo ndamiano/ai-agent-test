@@ -28,22 +28,8 @@ class MainAgent:
         self.system_context = agent_data["system_prompt"]
         self._tools_schema = self._build_tools_schema(agent_data["tools"])
 
-        if "run_pipeline" in (agent_data.get("tools") or []):
-            self.system_context = self._inject_pipeline_list(self.system_context)
-
         if system_prompt is not None:
             self.system_context = system_prompt
-
-    def _inject_pipeline_list(self, system_prompt: str) -> str:
-        from pipelines.registry import get_registry
-        registry = get_registry()
-        lines = ["Available pipelines:"]
-        for name, defn in registry.items():
-            required = defn.brief_schema.get("required", [])
-            optional = defn.brief_schema.get("optional", {})
-            opt_str = f"  Optional: {list(optional.keys())}" if optional else ""
-            lines.append(f"- {name}: {defn.description}\n  Required brief fields: {required}{opt_str}")
-        return f"{system_prompt}\n\n" + "\n".join(lines)
 
     def _build_tools_schema(self, allowed_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         from tools.tool_manager import build_openai_tool_schema

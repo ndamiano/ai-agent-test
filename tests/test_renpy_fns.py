@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 
-from pipelines.renpy.fns import (
+from renpy.fns import (
     _parse_char_output,
     _split_dialogue,
     _guaranteed_ancestors,
@@ -20,7 +20,7 @@ from pipelines.renpy.fns import (
     _find_protagonist_id,
     _MAX_LINE_CHARS,
 )
-from pipelines.renpy.graph import assemble_story
+from renpy.graph import assemble_story
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +341,7 @@ def test_find_protagonist_uses_premise_field():
 
 
 def test_generate_premise_backfills_missing_protagonist_id(monkeypatch):
-    from pipelines.renpy import fns as F
+    from renpy import fns as F
 
     # Model omits protagonist_id entirely
     monkeypatch.setattr(F, "_call_json", lambda *a, **k: {
@@ -355,7 +355,7 @@ def test_generate_premise_backfills_missing_protagonist_id(monkeypatch):
 
 
 def test_generate_premise_repairs_unresolved_protagonist_id(monkeypatch):
-    from pipelines.renpy import fns as F
+    from renpy import fns as F
 
     # Model emits an id that matches no character
     monkeypatch.setattr(F, "_call_json", lambda *a, **k: {
@@ -491,7 +491,7 @@ def test_history_uses_display_names():
 # ---------------------------------------------------------------------------
 
 def test_voice_sheets_per_character(monkeypatch):
-    import pipelines.renpy.fns as fns
+    import renpy.fns as fns
 
     sent_prompts = []
 
@@ -523,30 +523,11 @@ def test_voice_sheets_per_character(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# eval: _find_prompt_path --prompt-file override
-# ---------------------------------------------------------------------------
-
-def test_find_prompt_path_default_and_override():
-    import pytest
-    from eval.climb import _find_prompt_path
-
-    default = _find_prompt_path("renpy", "node_scripts")
-    assert default.name == "character_line.txt"
-
-    override = _find_prompt_path("renpy", "node_scripts", "scene_sketch.txt")
-    assert override.name == "scene_sketch.txt"
-    assert override.exists()
-
-    with pytest.raises(FileNotFoundError):
-        _find_prompt_path("renpy", "node_scripts", "does_not_exist.txt")
-
-
-# ---------------------------------------------------------------------------
 # _copy_templates — seeds missing gitignored assets from the SDK
 # ---------------------------------------------------------------------------
 
 def test_copy_templates_seeds_gui_from_sdk(tmp_path, monkeypatch):
-    import pipelines.renpy.renpy_builder as rb
+    import renpy.renpy_builder as rb
 
     sdk_game = tmp_path / "sdk" / "the_question" / "game"
     (sdk_game / "gui").mkdir(parents=True)
@@ -573,7 +554,7 @@ def test_copy_templates_seeds_gui_from_sdk(tmp_path, monkeypatch):
 
 
 def test_copy_templates_no_sdk_still_warns_not_crashes(tmp_path, monkeypatch):
-    import pipelines.renpy.renpy_builder as rb
+    import renpy.renpy_builder as rb
 
     templates = tmp_path / "templates"
     templates.mkdir()
@@ -591,7 +572,7 @@ def test_copy_templates_no_sdk_still_warns_not_crashes(tmp_path, monkeypatch):
 
 def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
     import tools.comfyui_tools as comfyui_tools
-    from pipelines.renpy.fns import generate_images
+    from renpy.fns import generate_images
 
     monkeypatch.setattr(
         comfyui_tools, "generate_images_batch",
@@ -624,7 +605,7 @@ def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_generate_single_node_scene_position(monkeypatch):
-    from pipelines.renpy import fns as F
+    from renpy import fns as F
 
     premise = {
         "premise": "p", "tone_directives": [], "setting": {},
@@ -663,7 +644,7 @@ def test_generate_single_node_scene_position(monkeypatch):
 
 def test_scene_cli_load_and_list(tmp_path, capsys):
     import json
-    from pipelines.renpy import scene
+    from renpy import scene
 
     out = assemble_story(_story())
     (tmp_path / "premise.json").write_text(json.dumps({"characters": []}))

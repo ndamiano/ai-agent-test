@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Bootstrap: add repo root to sys.path so `eval` is importable as a package,
-# then add src/ so pipeline/llm_client imports work.
+# then add src/ so renpy/llm_client imports work.
 import sys as _sys
 from pathlib import Path as _Path
 _root = _Path(__file__).resolve().parent.parent
@@ -9,21 +9,19 @@ for _p in [str(_root), str(_root / "src")]:
         _sys.path.insert(0, _p)
 
 """
-Maestro eval CLI — score and hill-climb pipeline stage prompts.
+Maestro eval CLI — grade a finished artifact.
 
 Commands:
-  capture   Run pipeline once, save intermediate outputs as fixtures
-  score     Score a stage (100x timebox) or full pipeline (10x timebox)
-  climb     Hill-climb a stage's prompt template
-  report    Print or diff saved result summaries
+  score game   Score an already-built game directory against the e2e rubric
+  report       Print or diff saved result summaries
 
 Examples:
-  python eval/cli.py capture renpy --brief renpy_romance
-  python eval/cli.py score stage renpy/premise --brief renpy_romance --time 300
-  python eval/cli.py score pipeline renpy --brief renpy_romance --time 1800
-  python eval/cli.py climb renpy/premise --brief renpy_romance --time-per-run 120 --iterations 10
-  python eval/cli.py report eval/results/renpy/premise/renpy_romance/<run>/summary.json
+  python eval/cli.py score game renpy eval/games/renpy_romance_<id>
+  python eval/cli.py report eval/results/renpy/e2e/<brief>/<run>/summary.json
   python eval/cli.py report <path_a> --compare <path_b>
+
+Hill-climbing of generation prompts is reintroduced in a later phase; only
+finished-artifact grading is wired here.
 """
 
 import argparse
@@ -32,21 +30,12 @@ import sys
 from pathlib import Path
 
 import eval._paths  # noqa: F401 — sets up sys.path
-from eval._paths import BRIEFS_DIR, RUBRICS_DIR
+from eval._paths import RUBRICS_DIR
 
 
-def _load_brief(name: str) -> dict:
-    path = BRIEFS_DIR / f"{name}.json"
-    if not path.exists():
-        sys.exit(f"Brief not found: {path}\nAvailable: {[p.stem for p in BRIEFS_DIR.glob('*.json')]}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _load_rubric(pipeline: str, stage: str, required: bool = True) -> dict | None:
+def _load_rubric(pipeline: str, stage: str) -> dict:
     path = RUBRICS_DIR / f"{pipeline}_{stage}.json"
     if not path.exists():
-        if not required:
-            return None
         available = [p.name for p in RUBRICS_DIR.glob("*.json")]
         sys.exit(f"Rubric not found: {path}\nAvailable: {available}")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -59,217 +48,34 @@ def _make_judge(connector_name: str | None = None):
     return Judge(connector=get_connector(connector_name) if connector_name else None)
 
 
-def _report_and_save(label: str, pipeline: str, stage: str, brief: str,
-                     results: list, scored: list, rubric: dict,
-                     show_reasoning: bool, review_payloads: list, no_save: bool,
-                     **save_kw) -> dict:
-    """Shared tail for every score command: print reasoning, summarize, print, save."""
-    from eval.report import summarize, print_summary, print_review, save
-    if show_reasoning:
-        for i, s in enumerate(scored):
-            if s:
-                print_review(i + 1, review_payloads[i], s, rubric)
-    summary = summarize(results, scored, rubric)
-    print_summary(summary, label)
-    if not no_save:
-        save(pipeline, stage, brief, summary, **save_kw)
-    return summary
-
-
 # ── commands ──────────────────────────────────────────────────────────────────
 
-def cmd_capture(args):
-    from eval.fixtures import capture
-    brief = _load_brief(args.brief)
-    capture(args.pipeline, brief, args.brief)
-
-
-def cmd_score_stage(args):
-    from eval.failures import print_analysis as print_failure_analysis
-    from eval.fixtures import load as load_fixtures
-    from eval.runner import StageRunner
-
-    pipeline_name, stage_id = args.target.split("/", 1)
-    rubric   = _load_rubric(pipeline_name, stage_id)
-    fixtures = load_fixtures(pipeline_name, args.brief)
-    runner   = StageRunner(pipeline_name, stage_id, fixtures)
-    judge    = _make_judge(args.connector)
-
-    print(f"Scoring {args.target}  brief={args.brief}  n={args.n}  connector={args.connector or 'default'}")
-    results = runner.run_n(args.n)
-    print_failure_analysis(results)
-    scored  = [
-        judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
-        for r in results
-    ]
-    _report_and_save(f"{args.target} / {args.brief}", pipeline_name, stage_id, args.brief,
-                     results, scored, rubric, args.show_reasoning,
-                     [r["output"] for r in results], args.no_save, run_results=results)
-
-
-def cmd_score_pipeline(args):
-    from eval.climb import _score_run
-    from eval.failures import print_analysis as print_failure_analysis
-    from eval.report import summarize, save, print_summary
-    from eval.runner import PipelineEvalRunner
-
-    brief  = _load_brief(args.brief)
-    runner = PipelineEvalRunner(args.pipeline, brief)
-    judge  = _make_judge(args.connector)
-    label  = f"pipeline:{args.pipeline} / {args.brief}"
-
-    print(f"Scoring pipeline {args.pipeline}  brief={args.brief}  n={args.n}  connector={args.connector or 'default'}")
-    results = runner.run_n(args.n)
-    print_failure_analysis(results)
-
-    rubric = _load_rubric(args.pipeline, "e2e", required=False)
-    if rubric is None:
-        print(f"(no e2e rubric for {args.pipeline} — reporting timing/success only)")
-        n_runs = len(results)
-        summary = {
-            "n": n_runs,
-            "success_rate": round(sum(1 for r in results if r["ok"]) / n_runs, 3) if n_runs else 0.0,
-            "elapsed_mean": round(sum(r["elapsed"] for r in results) / n_runs, 1) if n_runs else 0.0,
-            "elapsed_total": round(sum(r["elapsed"] for r in results), 1),
-            "overall": {},
-            "by_criterion": {},
-        }
-        print_summary(summary, label)
-        if not args.no_save:
-            save(args.pipeline, "e2e", args.brief, summary, scored=None)
-        return
-
-    scored = _score_run(results, "e2e", rubric, judge, e2e=True)
-    _report_and_save(label, args.pipeline, "e2e", args.brief, results, scored, rubric,
-                     args.show_reasoning, [{"artifact": "(built game script)"}] * len(scored),
-                     args.no_save, scored=scored)
-
-
 def cmd_score_game(args):
-    from pipelines.registry import get_registry
+    from renpy.e2e_view import e2e_artifact
+    from eval.report import summarize, print_summary, print_review, save
 
     game_dir = Path(args.game_dir)
-    defn = get_registry().get(args.pipeline)
-    if defn is None or defn.e2e_view is None:
-        sys.exit(f"Pipeline {args.pipeline!r} has no e2e artifact view to grade.")
-    artifact = defn.e2e_view(game_dir)
+    artifact = e2e_artifact(game_dir)
     if not artifact:
         sys.exit(f"No gradable artifact found under {game_dir} "
                  f"(expected a built game with game/script.rpy).")
 
     rubric = (json.loads(Path(args.rubric).read_text(encoding="utf-8"))
               if args.rubric else _load_rubric(args.pipeline, "e2e"))
-    judge  = _make_judge(args.connector)
+    judge = _make_judge(args.connector)
 
     print(f"Scoring game {game_dir.name}  connector={args.connector or 'default'}")
     scored = judge.score("e2e", artifact, rubric)
     if scored is None:
         sys.exit("Judge returned no score — check the connector/model (JSON mode support?).")
 
-    _report_and_save(f"game:{game_dir.name}  ({args.connector or 'default'})",
-                     args.pipeline, "e2e", game_dir.name,
-                     [{"ok": True, "elapsed": 0.0}], [scored], rubric, args.show_reasoning,
-                     [{"artifact": f"({game_dir.name})"}], args.no_save, scored=[scored])
-
-
-def cmd_climb(args):
-    from eval.climb import hill_climb
-
-    pipeline_name, stage_id = args.target.split("/", 1)
-    end_to_end = getattr(args, "e2e", False)
-    brief_pool_names = getattr(args, "brief_pool", None) or []
-
-    if end_to_end:
-        rubric = _load_rubric(pipeline_name, "e2e")
-        if brief_pool_names:
-            briefs = [_load_brief(n) for n in brief_pool_names]
-            brief  = None
-            brief_name = "pool"
-        elif args.brief:
-            briefs = None
-            brief  = _load_brief(args.brief)
-            brief_name = args.brief
-        else:
-            # Auto-discover all non-character briefs
-            all_briefs = [
-                p.stem for p in BRIEFS_DIR.glob("*.json")
-                if not p.stem.startswith("character_")
-            ]
-            if not all_briefs:
-                sys.exit("No briefs found in eval/briefs/")
-            print(f"e2e pool: {all_briefs}")
-            briefs = [_load_brief(n) for n in all_briefs]
-            brief  = None
-            brief_name = "pool"
-    else:
-        if not args.brief:
-            sys.exit("--brief is required for stage climbing")
-        rubric = _load_rubric(pipeline_name, stage_id)
-        briefs = None
-        brief  = None
-        brief_name = args.brief
-
-    hill_climb(
-        pipeline_name=pipeline_name,
-        stage_id=stage_id,
-        brief_name=brief_name,
-        rubric=rubric,
-        n=args.n,
-        iterations=args.iterations,
-        n_mutations=args.mutations,
-        judge_connector=getattr(args, "judge_connector", None),
-        end_to_end=end_to_end,
-        brief=brief,
-        briefs=briefs,
-        prompt_file=getattr(args, "prompt_file", None),
-        resume=getattr(args, "resume", False),
-        target_criteria=getattr(args, "criteria", None),
-    )
-
-
-def cmd_rescore(args):
-    from eval.judge import Judge
-    from eval.report import summarize, save, print_summary, print_diff
-    from llm_clients.connector_selector import get_connector
-
-    run_dir = Path(args.run_dir)
-    outputs_path = run_dir / "outputs.json"
-    summary_path = run_dir / "summary.json"
-
-    if not outputs_path.exists():
-        sys.exit(f"No outputs.json in {run_dir} — run was saved before output persistence was added.")
-
-    outputs = json.loads(outputs_path.read_text(encoding="utf-8"))
-    pipeline_name, stage_id = args.target.split("/", 1)
-    rubric = _load_rubric(pipeline_name, stage_id)
-
-    connector = get_connector(connector_type=args.connector) if args.connector else get_connector()
-    judge = Judge(connector=connector)
-
-    print(f"Rescoring {len(outputs)} outputs from {run_dir.name}"
-          + (f"  connector={args.connector}" if args.connector else ""))
-
-    scored = [
-        judge.score(stage_id, r["output"], rubric) if r["ok"] and r["output"] else None
-        for r in outputs
-    ]
-    run_results = [{"ok": r["ok"], "output": r["output"], "elapsed": 0} for r in outputs]
-
-    if getattr(args, "show_reasoning", False):
-        from eval.report import print_review
-        for i, (r, s) in enumerate(zip(outputs, scored)):
-            if r["ok"] and r["output"] and s:
-                print_review(i + 1, r["output"], s, rubric)
-
-    summary = summarize(run_results, scored, rubric)
-    print_summary(summary, f"{args.target} rescore")
-
-    if args.compare and summary_path.exists():
-        original = json.loads(summary_path.read_text(encoding="utf-8"))
-        print_diff(original, summary, "original", "rescore")
-
-    label = f"rescore_{args.connector}" if args.connector else "rescore"
-    save(pipeline_name, stage_id, run_dir.parent.name, summary, label=label)
+    label = f"game:{game_dir.name}  ({args.connector or 'default'})"
+    if args.show_reasoning:
+        print_review(1, {"artifact": f"({game_dir.name})"}, scored, rubric)
+    summary = summarize([{"ok": True, "elapsed": 0.0}], [scored], rubric)
+    print_summary(summary, label)
+    if not args.no_save:
+        save(args.pipeline, "e2e", game_dir.name, summary, scored=[scored])
 
 
 def cmd_report(args):
@@ -293,40 +99,14 @@ def cmd_report(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Maestro eval: score and hill-climb pipeline prompts",
+        description="Maestro eval: grade a finished artifact",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # capture
-    p = sub.add_parser("capture", help="Run pipeline once, save intermediate outputs as fixtures")
-    p.add_argument("pipeline")
-    p.add_argument("--brief", required=True, help="Brief name (matches briefs/<name>.json)")
-
-    # score
-    p_score = sub.add_parser("score", help="Score a stage or full pipeline within a time budget")
+    p_score = sub.add_parser("score", help="Grade a finished artifact")
     score_sub = p_score.add_subparsers(dest="score_target", required=True)
-
-    p_stage = score_sub.add_parser("stage", help="Score a single stage (e.g. renpy/premise)")
-    p_stage.add_argument("target", help="pipeline/stage_id")
-    p_stage.add_argument("--brief", required=True)
-    p_stage.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
-    p_stage.add_argument("--connector", default=None,
-                         help="Judge connector: cline | openrouter | lmstudio (default: configured)")
-    p_stage.add_argument("--no-save", action="store_true", dest="no_save")
-    p_stage.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
-                         help="Print each run's output + judge reasoning for spot-checking")
-
-    p_pipe = score_sub.add_parser("pipeline", help="Score full pipeline end-to-end")
-    p_pipe.add_argument("pipeline")
-    p_pipe.add_argument("--brief", required=True)
-    p_pipe.add_argument("--n", type=int, default=5, help="Number of runs (default: 5)")
-    p_pipe.add_argument("--connector", default=None,
-                        help="Judge connector: cline | openrouter | lmstudio (default: configured)")
-    p_pipe.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
-                        help="Print the judge's per-criterion reasoning for each run")
-    p_pipe.add_argument("--no-save", action="store_true", dest="no_save")
 
     p_game = score_sub.add_parser("game",
                                   help="Score an already-built game directory against the e2e rubric")
@@ -340,46 +120,6 @@ def main():
                         help="Print the judge's per-criterion reasoning")
     p_game.add_argument("--no-save", action="store_true", dest="no_save")
 
-    # climb
-    p = sub.add_parser("climb", help="Hill-climb a stage's prompt template")
-    p.add_argument("target", help="pipeline/stage_id (e.g. renpy/premise)")
-    p.add_argument("--brief", default=None,
-                   help="Brief name for stage climbing (required) or single-brief e2e mode")
-    p.add_argument("--brief-pool", nargs="+", dest="brief_pool", default=None,
-                   help="Multiple brief names for e2e mode; a random one is picked per run. "
-                        "If omitted in e2e mode, all available briefs are used.")
-    p.add_argument("--n",          type=int, default=5, help="Runs per evaluation slot (default: 5)")
-    p.add_argument("--iterations", type=int, default=5, help="Hill-climb iterations (default: 5)")
-    p.add_argument("--mutations",  type=int, default=5, help="Mutations per iteration (default: 5)")
-    p.add_argument("--e2e", action="store_true",
-                   help="Run full pipeline per trial; score final output against the <pipeline>_e2e rubric")
-    p.add_argument("--prompt-file", default=None, dest="prompt_file",
-                   help="Climb a specific .txt file in the pipeline's prompts dir instead of the "
-                        "stage's registered prompt (e.g. scene_sketch.txt for renpy/node_scripts)")
-    p.add_argument("--judge-connector", default=None, dest="judge_connector",
-                   help="Connector for judge scoring/mutation (e.g. cline). Defaults to active connector.")
-    p.add_argument("--criterion", nargs="+", dest="criteria", default=None,
-                   help="Restrict mutation targeting to these rubric criteria (the mutator picks the "
-                        "weakest among them). Use when the climbed prompt can only move some criteria "
-                        "(e.g. node_scripts: subtext distinctiveness) and you don't want it chasing "
-                        "structural criteria it can't affect (e.g. arc_movement).")
-    p.add_argument("--resume", action="store_true",
-                   help="Skip the baseline run and reuse the last saved summary/scored for this "
-                        "target+brief as the starting point (the prompt file already holds that best). "
-                        "Falls back to a fresh baseline if no resumable run exists.")
-
-    # rescore
-    p = sub.add_parser("rescore", help="Re-score saved outputs with a different judge connector")
-    p.add_argument("run_dir", help="Path to a result run directory containing outputs.json")
-    p.add_argument("target",  help="pipeline/stage_id (e.g. renpy/node_scripts)")
-    p.add_argument("--connector", default=None,
-                   help="Connector type to use for judging (e.g. cline, lmstudio). Defaults to active connector.")
-    p.add_argument("--compare", action="store_true",
-                   help="Diff rescore against the original summary.json in the same run dir")
-    p.add_argument("--show-reasoning", action="store_true", dest="show_reasoning",
-                   help="Print judge reasoning for each output")
-
-    # report
     p = sub.add_parser("report", help="Print a saved result summary")
     p.add_argument("summary", help="Path to summary.json")
     p.add_argument("--compare", default=None, help="Path to a second summary.json to diff against")
@@ -387,12 +127,8 @@ def main():
     args = parser.parse_args()
 
     dispatch = {
-        "capture": cmd_capture,
-        "score":   lambda a: {"stage": cmd_score_stage, "pipeline": cmd_score_pipeline,
-                              "game": cmd_score_game}[a.score_target](a),
-        "climb":   cmd_climb,
-        "rescore": cmd_rescore,
-        "report":  cmd_report,
+        "score":  lambda a: {"game": cmd_score_game}[a.score_target](a),
+        "report": cmd_report,
     }
     dispatch[args.command](args)
 

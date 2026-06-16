@@ -1,9 +1,0 @@
----
-Character: {name}
-Description: Create a concrete portrait of {name}, specifying age, build, hair color and style, eye description, clothing style, and at least one revealing visual detail (e.g., ink-stained fingertips, threadbare cuffs, a battered satchel) that exposes their habits or history. Pure inventory alone is insufficient.
-Personality: {personality}
-Setting: {setting}
-Tone: {tone}
-
-Output exactly as JSON:
-{"appearance": "..."}

@@ -97,7 +97,7 @@ def write_to_file(
     create_dirs: bool = True,
 ) -> Dict[str, Any]:
     try:
-        from tools.execution_context import resolve_base_path, track_written_file
+        from tools.execution_context import resolve_base_path
         base_dir = resolve_base_path()
         path = resolve_base_path(file_path)
 
@@ -115,8 +115,6 @@ def write_to_file(
 
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
-
-        track_written_file(str(path))
 
         return {
             "success": True,
@@ -145,7 +143,7 @@ def edit_file(
     new_text: str,
 ) -> Dict[str, Any]:
     try:
-        from tools.execution_context import resolve_base_path, track_written_file
+        from tools.execution_context import resolve_base_path
         base_dir = resolve_base_path()
         path = resolve_base_path(file_path)
 
@@ -189,8 +187,6 @@ def edit_file(
 
         with open(path, 'w', encoding='utf-8') as f:
             f.write(new_content)
-
-        track_written_file(str(path))
 
         return {
             "success": True,

@@ -1,11 +1,7 @@
-import json
-import threading
 from contextvars import ContextVar
 from typing import Optional, Dict, List
 from contextlib import contextmanager
 from pathlib import Path
-
-_file_track_lock = threading.Lock()
 
 _task_id_var: ContextVar[Optional[str]] = ContextVar('task_id', default=None)
 _subtask_id_var: ContextVar[Optional[str]] = ContextVar('subtask_id', default=None)
@@ -65,32 +61,6 @@ def resolve_task_id(task_id: Optional[str] = None) -> str:
         if task_id is None:
             raise ValueError("task_id must be provided or available in execution context")
     return task_id
-
-
-def track_written_file(absolute_path: str) -> None:
-    """Append a written file path to the task's written_files list. Thread-safe."""
-    task_id = get_task_id()
-    if not task_id:
-        return
-    from database.task_store import task_store
-    with _file_track_lock:
-        existing_raw = task_store.get_context(task_id, "written_files")
-        existing: List[str] = json.loads(existing_raw) if existing_raw else []
-        if absolute_path not in existing:
-            existing.append(absolute_path)
-        task_store.write_context(task_id, "written_files", json.dumps(existing))
-
-
-def get_written_files(task_id: str) -> List[str]:
-    """Return all file paths written during a task run."""
-    from database.task_store import task_store
-    raw = task_store.get_context(task_id, "written_files")
-    if not raw:
-        return []
-    try:
-        return json.loads(raw)
-    except Exception:
-        return []
 
 
 def resolve_base_path(input_path: Optional[str] = None) -> Path:

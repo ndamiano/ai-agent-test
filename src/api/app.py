@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import logging
-from database.schema import init_db
 from llm_clients.connector_selector import reset_connector_cache
 
 # Create FastAPI app
@@ -21,29 +20,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import tasks, system, settings, agents, outputs, websocket, chat
+from api.routers import system, settings, agents, outputs, websocket, chat
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event handler to initialize database and register tools."""
+    """Startup event handler to register tools and start the event bus."""
     try:
-        # Initialize database
-        init_db()
-        logging.info("Database initialized successfully")
-
         # Start event bus
         from api.websocket.event_bus import event_bus
         await event_bus.start()
         logging.info("Event bus started")
 
         # Import tool modules — decorators register tools at import time
-        import tools.task_tools  # noqa: F401
         import tools.file_tools  # noqa: F401
         import tools.system_tools  # noqa: F401
-        import tools.synthesis_tools  # noqa: F401
-        import tools.orchestration_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
-        import tools.pipeline_tools  # noqa: F401
         logging.info("Tools registered successfully")
 
     except Exception as e:
@@ -74,7 +65,6 @@ async def root(request: Request):
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
 
 # Mount routers
-app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])

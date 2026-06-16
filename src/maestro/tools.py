@@ -94,7 +94,11 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
 
     def _schema_error(component_id: str, content):
         validator = schemas.get(component_id)
-        return validator(content) if validator else None
+        if not validator:
+            return None
+        if not isinstance(content, dict):
+            return f"{component_id} must be a JSON object, not a {type(content).__name__}"
+        return validator(content)
 
     # ── artifact mutation (gated on freeze) ──────────────────────────────────
     def write_component(component_id: str, content) -> Dict:
@@ -158,8 +162,9 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         return {"ok": not failures, "failures": failures}
 
     def compile_renpy_tool() -> Dict:
+        # Lint-only during the loop; final packaging happens once at the end (run_build).
         from renpy.compiler import compile_renpy
-        return compile_renpy(state.run_dir)
+        return compile_renpy(state.run_dir, distribute=False)
 
     # ── working memory ───────────────────────────────────────────────────────
     def update_scratchpad(current_goal: str = "",

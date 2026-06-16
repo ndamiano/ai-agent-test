@@ -49,7 +49,7 @@ def test_validate_tool_reports_failures(tmp_path):
 
 def test_compile_renpy_tool_delegates(tmp_path, monkeypatch):
     import renpy.compiler as compiler
-    monkeypatch.setattr(compiler, "compile_renpy", lambda wd: {"ok": True, "reason": None})
+    monkeypatch.setattr(compiler, "compile_renpy", lambda wd, **kw: {"ok": True, "reason": None})
     tools = build_tools(_spec(), RunState(tmp_path))
     assert tools["compile_renpy"]()["ok"] is True
 

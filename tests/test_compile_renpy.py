@@ -81,3 +81,22 @@ def test_compile_reports_missing_artifact(tmp_path):
     result = compile_renpy(tmp_path)
     assert result["ok"] is False
     assert "missing artifact" in result["reason"]
+
+
+def test_compile_returns_structured_failure_on_malformed_content(tmp_path, monkeypatch):
+    # The agent authored a premise whose character lacks an 'id' — build() raises
+    # KeyError deep inside. compile_renpy must catch it and return a clean failure,
+    # never propagate (that broke a live run).
+    import renpy.fns as fns
+    monkeypatch.setattr(fns, "_get_sdk_path", lambda: "")
+
+    (tmp_path / "brief.json").write_text(json.dumps({"title": "Broken"}))
+    (tmp_path / "premise.json").write_text(json.dumps({"characters": [{"name": "NoId"}]}))
+    (tmp_path / "asset_manifest.json").write_text(json.dumps(
+        {"backgrounds": [], "characters": [], "cgs": [], "title_card": {}}))
+    (tmp_path / "node_scripts.json").write_text(json.dumps({"node_ids": [], "scripts": {}}))
+
+    result = compile_renpy(tmp_path)   # must not raise
+    assert result["ok"] is False
+    assert "build error" in result["reason"]
+    assert "KeyError" in result["reason"]

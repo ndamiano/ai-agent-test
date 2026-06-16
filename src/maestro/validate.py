@@ -128,13 +128,19 @@ _CHECKS: Dict[str, Callable[[Dict, Dict, object], CheckResult]] = {
 
 
 def run_check(check: Dict, artifact: Dict, run_dir) -> CheckResult:
-    fn = _CHECKS.get(check.get("type"))
+    ctype = check.get("type")
+    fn = _CHECKS.get(ctype)
     if fn is None:
-        return False, f"unknown check type: {check.get('type')!r}"
+        return False, f"unknown check type: {ctype!r}"
     try:
         return fn(artifact, check, run_dir)
     except KeyError as e:
-        return False, f"malformed {check.get('type')} check: missing {e}"
+        # A missing key in the check dict itself = the spec declared a malformed check.
+        return False, f"malformed {ctype} check: missing key {e}"
+    except Exception as e:
+        # Any other error is a real failure to evaluate — report it honestly rather
+        # than letting it crash validate or get mislabeled.
+        return False, f"{ctype} check could not run: {type(e).__name__}: {e}"
 
 
 def validate(spec, state, component_id: Optional[str] = None) -> List[Dict]:

@@ -51,7 +51,15 @@ def compile_renpy(working_dir) -> Dict:
         return {"ok": False, "reason": f"missing artifact files: {missing}",
                 "lint_error_count": None, "project_dir": None}
 
-    build_result = build(_load_artifact(working_dir), working_dir)
+    # build() can raise on structurally-invalid agent-authored content (e.g. a
+    # character without an id). compile_renpy must always return a structured
+    # pass/fail — a crash is just a compile failure with a reason.
+    try:
+        build_result = build(_load_artifact(working_dir), working_dir)
+    except Exception as e:
+        return {"ok": False, "reason": f"build error: {type(e).__name__}: {e}",
+                "lint_error_count": None, "project_dir": None}
+
     reason = compile_gate(build_result)
     return {
         "ok": reason is None,

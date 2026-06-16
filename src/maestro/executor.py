@@ -60,7 +60,9 @@ class Executor:
         self.last_result: Optional[str] = None
 
     # ── context (rebuilt fresh each step from durable state) ─────────────────
-    def build_context(self) -> Dict:
+    def build_context(self, todo: Optional[List[Dict]] = None) -> Dict:
+        # `todo` may be passed in to avoid recomputing validate (the compiles check
+        # runs a real Ren'Py build, so we run validate once per step, not per use).
         return {
             "spec": {
                 "title": self.spec.title,
@@ -71,7 +73,7 @@ class Executor:
                     for c in self.spec.components
                 ],
             },
-            "todo": validate(self.spec, self.state),
+            "todo": validate(self.spec, self.state) if todo is None else todo,
             "scratchpad": self.state.read_scratchpad(),
             "story_state": self.state.read_story_state(),
             "last_result": self.last_result,
@@ -93,29 +95,27 @@ class Executor:
         all_ids = {c.get("id") for c in self.spec.components}
         # A component not in the failing set already passes; only fire milestones
         # for ones that were failing and then transition to passing.
-        outstanding = self._failing_components()
-        passed = all_ids - outstanding
+        failures = validate(self.spec, self.state)
+        passed = all_ids - {f["component_id"] for f in failures}
 
         for step in range(1, self.max_steps + 1):
-            if self.is_done():
+            if not failures:                       # frozen already checked above
                 return ExecutorResult(ok=True, steps=step - 1, history=history)
 
-            action = self.decide(self.build_context()) or {}
+            action = self.decide(self.build_context(todo=failures)) or {}
             result = self._dispatch(action)
             self.last_result = self._summarize(action, result)
             history.append(StepRecord(step=step, action=action, summary=self.last_result))
 
-            now_failing = self._failing_components()
+            # One validate per step (it runs the compiles build); reused next iteration.
+            failures = validate(self.spec, self.state)
+            now_failing = {f["component_id"] for f in failures}
             for cid in (all_ids - now_failing) - passed:
                 self._fire_milestone(cid)
             passed = all_ids - now_failing
 
-        return ExecutorResult(
-            ok=self.is_done(),
-            steps=self.max_steps,
-            failures=validate(self.spec, self.state),
-            history=history,
-        )
+        return ExecutorResult(ok=not failures, steps=self.max_steps,
+                              failures=failures, history=history)
 
     def _fire_milestone(self, component_id: str) -> None:
         if self.on_milestone is None:

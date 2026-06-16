@@ -76,10 +76,10 @@ def test_unknown_and_malformed_checks():
 
 def test_compiles_check_delegates(monkeypatch):
     import renpy.compiler as compiler
-    monkeypatch.setattr(compiler, "compile_renpy", lambda wd: {"ok": True, "reason": None})
+    monkeypatch.setattr(compiler, "compile_renpy", lambda wd, **kw: {"ok": True, "reason": None})
     assert run_check({"type": "compiles"}, ART, "/tmp/whatever")[0] is True
 
-    monkeypatch.setattr(compiler, "compile_renpy", lambda wd: {"ok": False, "reason": "2 lint error(s)"})
+    monkeypatch.setattr(compiler, "compile_renpy", lambda wd, **kw: {"ok": False, "reason": "2 lint error(s)"})
     ok, detail = run_check({"type": "compiles"}, ART, "/tmp/whatever")
     assert ok is False and "2 lint error" in detail
 

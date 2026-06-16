@@ -72,13 +72,15 @@ def _parse_action(response: Dict) -> Dict:
     return {"tool": fn["name"], "args": args}
 
 
-def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None) -> Callable:
+def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
+                     component_guide: str = "") -> Callable:
     from llm_clients.connector_selector import get_connector
     conn = connector or get_connector()
     schemas = tool_schemas or TOOL_SCHEMAS
+    system = f"{_SYSTEM}\n\n{component_guide}" if component_guide else _SYSTEM
 
     def decide(context: Dict) -> Dict:
-        messages = MessageBuilder(_SYSTEM).extend(
+        messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
         response = conn.generate_with_tools(messages, schemas)
         return _parse_action(response)

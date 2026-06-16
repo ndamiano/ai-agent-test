@@ -83,14 +83,27 @@ TOOL_SCHEMAS: List[Dict] = [
 ]
 
 
-def build_tools(spec, state) -> Dict[str, Callable]:
+def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> Dict[str, Callable]:
+    # schemas: component_id -> validator(content) -> error str | None. Injected by the
+    # caller (e.g. renpy) so maestro stays genre-agnostic. None = no structural checks.
+    schemas = schemas or {}
+
     def _require_frozen():
         if not spec.frozen:
             raise SpecNotFrozen("spec must be frozen before building the artifact")
 
+    def _schema_error(component_id: str, content):
+        validator = schemas.get(component_id)
+        return validator(content) if validator else None
+
     # ── artifact mutation (gated on freeze) ──────────────────────────────────
     def write_component(component_id: str, content) -> Dict:
         _require_frozen()
+        # Reject the wrong shape up front so it's an immediate steering signal, not a
+        # crash inside compile later. The bad content is NOT persisted.
+        err = _schema_error(component_id, content)
+        if err:
+            return {"ok": False, "error": f"invalid {component_id}: {err}"}
         state.write_component(component_id, content)
         return {"ok": True, "component_id": component_id}
 
@@ -101,6 +114,11 @@ def build_tools(spec, state) -> Dict[str, Callable]:
         consistent. The next node reads the updated story state, never prior script.
         """
         _require_frozen()
+        if node_id == "start":
+            return {"ok": False, "error": "do not use 'start' as a node id — the builder "
+                                          "adds 'label start' that jumps to the first node"}
+        if not isinstance(content, str) or not content.strip():
+            return {"ok": False, "error": "node content must be non-empty Ren'Py script text"}
         from maestro.story_state import init_story_state, apply_delta
 
         ns = state.read_component("node_scripts") or {"scripts": {}, "node_ids": []}

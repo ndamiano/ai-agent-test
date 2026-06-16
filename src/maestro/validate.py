@@ -112,8 +112,9 @@ def _check_refs_resolve(artifact: Dict, c: Dict, run_dir) -> CheckResult:
 
 
 def _check_compiles(artifact: Dict, c: Dict, run_dir) -> CheckResult:
+    # Lint-only during the loop — distribute (packaging) is reserved for final delivery.
     from renpy.compiler import compile_renpy
-    res = compile_renpy(run_dir)
+    res = compile_renpy(run_dir, distribute=False)
     return bool(res.get("ok")), None if res.get("ok") else f"compile failed: {res.get('reason')}"
 
 

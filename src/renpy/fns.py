@@ -1080,7 +1080,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 # Stage 8: Build
 # ---------------------------------------------------------------------------
 
-def build(inputs: Dict, working_dir: Path) -> Dict:
+def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
     brief        = inputs.get("brief", {})
     premise      = inputs.get("premise", {})
     manifest     = inputs.get("asset_manifest", {})
@@ -1133,7 +1133,10 @@ def build(inputs: Dict, working_dir: Path) -> Dict:
         lint_summary = run_final_lint(output_dir, sdk_path)
         result["lint"] = lint_summary
         print(f"    [build]  final lint: {lint_summary['error_count']} error(s)")
-        result.update(_distribute(output_dir, sdk_path))
+        # Distribute (packaging) is expensive; skip it for mid-build compile checks
+        # and only run it for final delivery.
+        if distribute:
+            result.update(_distribute(output_dir, sdk_path))
     else:
         result["lint"] = {"error_count": None}
 

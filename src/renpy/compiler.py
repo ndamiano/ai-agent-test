@@ -43,7 +43,9 @@ def compile_gate(build_result: Dict) -> Optional[str]:
     return None
 
 
-def compile_renpy(working_dir) -> Dict:
+def compile_renpy(working_dir, distribute: bool = True) -> Dict:
+    # distribute=False lints only (fast) — used for mid-build compile checks; the
+    # final delivery build packages the project.
     working_dir = Path(working_dir)
 
     missing = [f for f in _REQUIRED if not (working_dir / f).exists()]
@@ -55,7 +57,7 @@ def compile_renpy(working_dir) -> Dict:
     # character without an id). compile_renpy must always return a structured
     # pass/fail — a crash is just a compile failure with a reason.
     try:
-        build_result = build(_load_artifact(working_dir), working_dir)
+        build_result = build(_load_artifact(working_dir), working_dir, distribute=distribute)
     except Exception as e:
         return {"ok": False, "reason": f"build error: {type(e).__name__}: {e}",
                 "lint_error_count": None, "project_dir": None}

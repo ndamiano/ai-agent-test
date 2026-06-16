@@ -39,12 +39,35 @@ artifact, e.g. "premise.characters"):
   {"type": "refs_resolve", "from": "node_scripts.node_ids", "to": "graph.nodes", "to_key": "id"}
   {"type": "compiles"}                                               // the artifact builds + lints clean
 
+The builder compiles EXACTLY these three components (use these ids and these shapes):
+
+  premise        — characters MUST each have an "id" (snake_case) and "name";
+                   plus central_question and endings.
+  asset_manifest — "backgrounds", "characters", "cgs" are lists; each background and
+                   character needs an "id"; character ids must match premise ids.
+  node_scripts   — "node_ids" (list of node id strings, NOT including "start") and
+                   "scripts" (object node_id -> Ren'Py text). The builder adds
+                   "label start" jumping to node_ids[0].
+
 Rules:
-- A Ren'Py game needs at minimum: premise, asset_manifest, node_scripts. These three
-  artifact files (by exactly those ids) are what the builder compiles, so include them.
-- Put a {"type": "compiles"} condition on the final buildable component (node_scripts).
-- Choose component count/distinctness/fields that fit THIS request — different games
-  track different things. Be specific and checkable; do not invent check types.
+- Include exactly those three components (premise, asset_manifest, node_scripts) with
+  those exact ids. Do NOT invent extra components (no separate "graph") and do NOT use
+  refs_resolve to components that won't exist.
+- Use done-conditions that check the fields the builder needs. A good default set:
+
+  premise:
+    {"type": "exists", "path": "premise.central_question"}
+    {"type": "count", "path": "premise.characters", "min": 2}
+    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name"]}
+  asset_manifest:
+    {"type": "exists", "path": "asset_manifest.backgrounds"}
+    {"type": "each_has", "path": "asset_manifest.characters", "fields": ["id"]}
+  node_scripts:
+    {"type": "count", "path": "node_scripts.node_ids", "min": 1}
+    {"type": "compiles"}
+
+- Tune counts to fit THIS request, but keep every condition checkable; do not invent
+  check types.
 - Declare in story_state_schema what continuity this particular game hinges on.
 
 Return only the JSON object.

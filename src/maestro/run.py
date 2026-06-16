@@ -34,13 +34,21 @@ def run_build(run_id: str, max_steps: int = 60, decide=None) -> ExecutorResult:
         raise ValueError(f"no spec for run {run_id!r} — propose one first")
     spec = Spec(spec_data)
 
-    tools = build_tools(spec, state)
-    decider = decide or make_llm_decider()
+    from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide
+
+    tools = build_tools(spec, state, schemas=renpy_schemas)
+    decider = decide or make_llm_decider(component_guide=skeleton_guide())
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
     )
-    return executor.run()
+    result = executor.run()
+
+    # The loop's compile checks are lint-only; package the project once at the end.
+    if result.ok:
+        from renpy.compiler import compile_renpy
+        compile_renpy(state.run_dir, distribute=True)
+    return result
 
 
 def _cli(request: str) -> int:

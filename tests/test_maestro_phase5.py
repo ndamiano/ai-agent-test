@@ -121,13 +121,15 @@ def test_run_build_drives_to_completion(in_tmp_runs):
     from maestro import run as run_mod
 
     state = RunState.for_run("rb1")
+    # 'blurb' is not a renpy schema-guarded component, so run_build's injected
+    # schemas don't constrain it — this test exercises the run_build wiring only.
     state.write_spec({"title": "T", "frozen": True, "components": [
-        {"id": "premise", "done_conditions": [{"type": "exists", "path": "premise.q"}]},
+        {"id": "blurb", "done_conditions": [{"type": "exists", "path": "blurb.q"}]},
     ]})
 
     def decide(ctx):
         if ctx["todo"]:
-            return {"tool": "write_component", "args": {"component_id": "premise", "content": {"q": "Q?"}}}
+            return {"tool": "write_component", "args": {"component_id": "blurb", "content": {"q": "Q?"}}}
         return {}
 
     result = run_mod.run_build("rb1", max_steps=5, decide=decide)

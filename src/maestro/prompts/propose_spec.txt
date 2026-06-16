@@ -53,21 +53,35 @@ Rules:
 - Include exactly those three components (premise, asset_manifest, node_scripts) with
   those exact ids. Do NOT invent extra components (no separate "graph") and do NOT use
   refs_resolve to components that won't exist.
-- Use done-conditions that check the fields the builder needs. A good default set:
+- The done-conditions ARE the quality bar: the builder does the minimum that satisfies
+  them, so demand a real game, not a stub. A good default set:
 
   premise:
     {"type": "exists", "path": "premise.central_question"}
-    {"type": "count", "path": "premise.characters", "min": 2}
-    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name"]}
+    {"type": "count", "path": "premise.characters", "min": 3}
+    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name", "voice"]}
+    {"type": "count", "path": "premise.endings", "min": 3}
+    {"type": "distinct", "path": "premise.endings", "key": "id"}
   asset_manifest:
     {"type": "exists", "path": "asset_manifest.backgrounds"}
     {"type": "each_has", "path": "asset_manifest.characters", "fields": ["id"]}
   node_scripts:
-    {"type": "count", "path": "node_scripts.node_ids", "min": 1}
+    {"type": "count", "path": "node_scripts.node_ids", "min": 6}
+    {"type": "refs_resolve", "from": "premise.endings", "from_key": "id", "to": "node_scripts.node_ids"}
+    {"type": "reachable_from_start"}
+    {"type": "min_branches", "min": 2}
+    {"type": "each_node_min_lines", "min": 3}
+    {"type": "all_characters_speak"}
     {"type": "compiles"}
 
-- Tune counts to fit THIS request, but keep every condition checkable; do not invent
-  check types.
+  Structural check types (Ren'Py): reachable_from_start (every node reachable via
+  jumps/menus from the first node), min_branches (>= min `menu:` choice blocks),
+  each_node_min_lines (every node has >= min dialogue/narration lines),
+  all_characters_speak (every premise character has lines). Each ending must be a node
+  (that's the refs_resolve above).
+
+- Tune counts to fit THIS request (a longer game = higher min nodes/endings/branches),
+  but keep every condition checkable; use only the check types listed here.
 - Declare in story_state_schema what continuity this particular game hinges on.
 
 Return only the JSON object.

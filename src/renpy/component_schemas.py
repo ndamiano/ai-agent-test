@@ -96,15 +96,20 @@ SKELETONS: Dict[str, str] = {
     ),
     "node_scripts": (
         '{\n'
-        '  "node_ids": ["scene_01", "scene_02", "ending_good"],   // do NOT include "start"\n'
+        '  "node_ids": ["scene_01", "scene_02", "ending_good", "ending_bad"],  // do NOT include "start"\n'
         '  "scripts": {\n'
         '    "scene_01": "label scene_01:\\n    scene bg_office\\n    show evelyn\\n'
-        '    evelyn \\"A line.\\"\\n    jump scene_02"\n'
+        '    evelyn \\"You came back.\\"\\n    show jack\\n    jack \\"I had to see you.\\"\\n'
+        '    evelyn \\"After everything?\\"\\n    menu:\\n        \\"Stay.\\":\\n'
+        '            jump scene_02\\n        \\"Walk away.\\":\\n            jump ending_bad"\n'
         '  }\n'
-        '}  // scene <bg id>, show/speaker <character id> must exist in asset_manifest; '
-        'every node_id needs a scripts entry; the builder adds "label start" -> node_ids[0].\n'
-        '// Any "jump <target>" or menu choice MUST point to a node you also create '
-        '(add <target> to node_ids and write its script) — if you jump to scene_02, build scene_02.'
+        '}\n'
+        '// A node is a real SCENE, not one line: several dialogue beats between characters,\n'
+        '//   then either a menu: with 2+ choices that jump to different nodes, or a jump.\n'
+        '// scene <bg id> + show/speaker <character id> must exist in asset_manifest.\n'
+        '// Every node_id needs a scripts entry; the builder adds "label start" -> node_ids[0].\n'
+        '// Any jump/menu target MUST be a node you also create (jump scene_02 -> build scene_02).\n'
+        '// Each ending in premise.endings must be its own node, reached via choices.'
     ),
 }
 

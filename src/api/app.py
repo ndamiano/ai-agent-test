@@ -36,6 +36,8 @@ async def startup_event():
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
         import maestro.chat_tools  # noqa: F401
+        from renpy.checks import register_all as register_renpy_checks
+        register_renpy_checks()  # story-structure check types for specs
         logging.info("Tools registered successfully")
 
     except Exception as e:

@@ -25,16 +25,20 @@ def create_run() -> str:
     return run_id
 
 
-def run_build(run_id: str, max_steps: int = 60, decide=None) -> ExecutorResult:
+def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
+    # A spec that demands a real VN (many nodes + branching) needs more steps than a
+    # trivial one; the loop is cheap now (compile checks lint-only).
     from maestro.spec_tools import _emit
+    from renpy.checks import register_all as register_renpy_checks
+    from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide
+
+    register_renpy_checks()  # make reachable_from_start / min_branches / ... available
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
     if spec_data is None:
         raise ValueError(f"no spec for run {run_id!r} — propose one first")
     spec = Spec(spec_data)
-
-    from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide
 
     tools = build_tools(spec, state, schemas=renpy_schemas)
     decider = decide or make_llm_decider(component_guide=skeleton_guide())
@@ -44,9 +48,16 @@ def run_build(run_id: str, max_steps: int = 60, decide=None) -> ExecutorResult:
     )
     result = executor.run()
 
-    # The loop's compile checks are lint-only; package the project once at the end.
     if result.ok:
+        # Generate real art (ComfyUI when up, placeholder fallback) then package once.
+        # The loop's compile checks are lint-only and the agent may never call
+        # generate_asset, so finalize assets here for delivery.
+        from renpy.fns import generate_images
         from renpy.compiler import compile_renpy
+        try:
+            generate_images(state.load_artifact(), state.run_dir)
+        except Exception:
+            pass  # placeholders already cover the build; never fail delivery on art
         compile_renpy(state.run_dir, distribute=True)
     return result
 

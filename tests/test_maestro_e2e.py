@@ -58,6 +58,72 @@ def test_full_loop_builds_a_launchable_project(tmp_path, monkeypatch):
     assert "a case begins" in state.read_story_state()["established_facts"]
 
 
+def test_full_loop_builds_branching_multi_scene_game(tmp_path, monkeypatch):
+    """A spec demanding depth + branching + multiple endings drives a real game:
+    several reachable nodes, menu choices, distinct endings, every character speaking."""
+    import renpy.fns as fns
+    monkeypatch.setattr(fns, "_get_sdk_path", lambda: "")
+    from renpy.checks import register_all
+    register_all()   # make reachable_from_start / min_branches / ... available
+
+    state = RunState(tmp_path)
+    spec = Spec({"title": "Noir", "frozen": True, "components": [
+        {"id": "premise", "deps": [], "done_conditions": [
+            {"type": "count", "path": "premise.characters", "min": 3},
+            {"type": "count", "path": "premise.endings", "min": 3},
+            {"type": "distinct", "path": "premise.endings", "key": "id"}]},
+        {"id": "asset_manifest", "deps": [], "done_conditions": [
+            {"type": "exists", "path": "asset_manifest.backgrounds"}]},
+        {"id": "node_scripts", "deps": ["premise", "asset_manifest"], "done_conditions": [
+            {"type": "count", "path": "node_scripts.node_ids", "min": 4},
+            {"type": "refs_resolve", "from": "premise.endings", "from_key": "id",
+             "to": "node_scripts.node_ids"},
+            {"type": "reachable_from_start"},
+            {"type": "min_branches", "min": 1},
+            {"type": "each_node_min_lines", "min": 2},
+            {"type": "all_characters_speak"},
+            {"type": "compiles"}]},
+    ]})
+    tools = build_tools(spec, state, schemas=SCHEMAS)
+
+    nodes = {
+        "scene_01": 'label scene_01:\n    scene bg_office\n    show evelyn\n    evelyn "You came back."\n    show jack\n    jack "I had to."\n    menu:\n        "Stay":\n            jump scene_02\n        "Leave":\n            jump ending_bad',
+        "scene_02": 'label scene_02:\n    show lila\n    lila "Choose wisely."\n    evelyn "I will."\n    menu:\n        "Good":\n            jump ending_good\n        "Neutral":\n            jump ending_neutral',
+        "ending_good": 'label ending_good:\n    evelyn "We made it."\n    "The end."\n    return',
+        "ending_bad": 'label ending_bad:\n    evelyn "Gone."\n    "Fade out."\n    return',
+        "ending_neutral": 'label ending_neutral:\n    evelyn "Someday."\n    "Maybe."\n    return',
+    }
+
+    def decide(ctx):
+        out = {f["component_id"] for f in ctx["todo"]}
+        if "premise" in out:
+            return {"tool": "write_component", "args": {"component_id": "premise", "content": {
+                "central_question": "Will they stay?",
+                "characters": [{"id": "evelyn", "name": "Evelyn", "voice": "soft"},
+                               {"id": "jack", "name": "Jack", "voice": "gruff"},
+                               {"id": "lila", "name": "Lila", "voice": "sly"}],
+                "endings": [{"id": "ending_good"}, {"id": "ending_bad"}, {"id": "ending_neutral"}]}}}
+        if "asset_manifest" in out:
+            return {"tool": "write_component", "args": {"component_id": "asset_manifest", "content": {
+                "backgrounds": [{"id": "bg_office", "image_file": "office.png"}],
+                "characters": [{"id": "evelyn", "image_file": "evelyn.png"},
+                               {"id": "jack", "image_file": "jack.png"},
+                               {"id": "lila", "image_file": "lila.png"}],
+                "cgs": [], "title_card": {}}}}
+        if "node_scripts" in out:
+            for nid, content in nodes.items():
+                if nid not in (state.read_component("node_scripts") or {}).get("scripts", {}):
+                    return {"tool": "write_node", "args": {"node_id": nid, "content": content}}
+        return {}
+
+    result = Executor(spec, state, tools, decide, max_steps=20).run()
+    assert result.ok is True, result.failures
+
+    body = (tmp_path / "game_output" / "game" / "script.rpy").read_text(encoding="utf-8")
+    assert "menu:" in body
+    assert "label ending_good:" in body and "label ending_bad:" in body
+
+
 def test_invalid_content_becomes_steering_signal_not_crash(tmp_path, monkeypatch):
     """If the agent writes the wrong shape, write_component rejects it and the loop
     keeps going (no crash); a stubborn agent simply never reaches done."""

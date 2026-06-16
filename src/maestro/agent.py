@@ -21,8 +21,13 @@ _SYSTEM = (
     "that clears the next failing condition. You author content yourself as JSON via "
     "write_component. When writing story nodes, use write_node so the node's dialogue "
     "and its story-state delta (new facts, entity updates, threads, event summary) are "
-    "recorded together; rely on the story state for continuity, not on prior script. "
-    "Keep working until the to-do is empty. Do not explain — call a tool."
+    "recorded together; rely on the story state for continuity, not on prior script.\n\n"
+    "Write a REAL story, not stubs. Each node is a full scene: several dialogue beats "
+    "between characters with subtext, not one line then a jump. Give every character "
+    "lines. Use menu: blocks for player choices that branch to different nodes. Build a "
+    "spine of scenes that reaches multiple DISTINCT endings (each ending is its own "
+    "node). If you jump to a node, create it. Keep working until the to-do is empty. "
+    "Do not explain — call a tool."
 )
 
 

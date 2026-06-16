@@ -128,6 +128,13 @@ _CHECKS: Dict[str, Callable[[Dict, Dict, object], CheckResult]] = {
 }
 
 
+def register_check(name: str, fn: Callable[[Dict, Dict, object], CheckResult]) -> None:
+    """Register a custom check type. Genre-specific checks (e.g. renpy story structure)
+    register here at startup so specs can reference them by `type` like any other check,
+    while maestro itself stays genre-agnostic."""
+    _CHECKS[name] = fn
+
+
 def run_check(check: Dict, artifact: Dict, run_dir) -> CheckResult:
     ctype = check.get("type")
     fn = _CHECKS.get(ctype)

@@ -10,14 +10,14 @@ See `ROADMAP.md` for the full plan and current status.
 
 ## How it works
 
-The user talks to Maestro via a chat interface. Maestro figures out what to make and makes it — either directly via tools, or by firing pipelines that are specialized for specific tasks. Maestro doesn't need to know how a pipeline works internally. It fires `run_pipeline("renpy")`, eventually gets back a completed game. Pipelines feel like tool calls.
+The user talks to Maestro via a chat interface. When asked to make something, Maestro does NOT write the artifact by hand and does NOT run a fixed pipeline. It drafts a per-game **spec** — a contract of components, each with checkable done-conditions — for the human to review and freeze. Once frozen, a non-LLM **executor** drives an agentic loop that builds the artifact against the spec until every done-condition passes.
 
-**Pipelines are the key architectural idea.** They:
-- Limit what's in the main agent's context (it sees inputs and outputs, not every intermediate step)
-- Are specialized and optimized for their domain
-- Can call other pipelines
-- Can run in parallel (queue + gather pattern)
-- Have strict dependency ordering when outputs feed into each other
+**The agentic loop + frozen spec is the key architectural idea.** Three layers:
+1. **Spec layer** (agentic, human-gated): the chat agent drafts a spec; the human reviews, edits, and freezes it. Build tools refuse until frozen.
+2. **Executor** (NOT an LLM): drives the loop. Each step rebuilds a *minimal* context from durable on-disk state (spec + validate's to-do + scratchpad + story state + last result) — the transcript is never used as memory, so context stays ~constant as the game grows. Completion is decided by `validate`, never by the agent claiming done.
+3. **Tools**: the bounded capabilities the agent composes (write_component / write_node, validate, compile_renpy, generate_asset, ...). The agent chooses the order.
+
+It steals the old pipeline's two good properties (completion guarantee, no context rot) without its rigidity: "done" = the artifact satisfies the frozen spec, not "all stages ran."
 
 ---
 
@@ -25,31 +25,40 @@ The user talks to Maestro via a chat interface. Maestro figures out what to make
 
 ```
 src/
-  agents/       MainAgent (agentic loop), MaestroAgent (wave orchestration), RefinerAgent
-                chat.json / maestro.json / worker.json — agent configs + system prompts
-  api/          FastAPI routers (tasks, chat, settings, agents, outputs, websocket)
+  agents/       MainAgent (chat persona — drafts/amends specs) + agent_store, chat.json / summarizer.json
+  api/          FastAPI routers (chat, settings, agents, outputs, system, websocket)
   config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
-  database/     task_store.py (SQLite)
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
                 inference.py — PipelineAgent, call_llm, json_with_correction (shared inference primitives)
-  pipelines/    runner.py — DAG executor for LLM + Fn stages
-                registry.py — pipeline registry
-                renpy/ — 8-stage branching VN pipeline (premise→story→graph→beat_map→node_scripts→asset_manifest→images→build), see its STAGES.md
-                character/ — character pipeline (concept→identity/appearance/voice→portrait)
-                ttrpg/ — campaign pipeline (setting→factions→npcs→encounters→plot_hooks→document)
-  tools/        tool_manager.py, orchestration_tools, system_tools, pipeline_tools
+  maestro/      The agentic build system:
+                spec.py — Spec (components, frozen flag, dep_order)
+                state.py — RunState: durable per-run dir <working_dir>/runs/<run_id>/
+                validate.py — typed done-condition checks → failure list (the to-do)
+                executor.py — the non-LLM loop (stateless per step, completion via validate)
+                tools.py — artifact tools (build_tools) + TOOL_SCHEMAS
+                agent.py — the build agent (LLM decider: one tool call per step)
+                spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate)
+                story_state.py — continuity bible (facts, entities, threads, recent tail)
+                run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
+                chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
+                prompts/ — climbable .txt prompts (propose_spec.txt)
+  renpy/        Ren'Py capabilities (not a pipeline): compiler.py (compile_renpy — the spine),
+                fns.py (build + image gen), _script.py, graph.py, renpy_builder.py, templating.py,
+                prompts/, renpy_templates/
+  tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 
-**Inference path (agents)**: `MainAgent` → `MessageBuilder` → `get_connector()` → `OpenAICompatibleConnector`  
-**Inference path (pipelines)**: `PipelineAgent.send()` → `MessageBuilder` → `call_llm()` → connector (same path, unified)
+**Inference path (chat agent)**: `MainAgent` → `MessageBuilder` → `get_connector()` → `OpenAICompatibleConnector`
+**Inference path (build agent/spec drafting)**: `agent.make_llm_decider` / `PipelineAgent.send()` → `MessageBuilder` → `call_llm()` → connector
 
-**Adding a pipeline**: implement in `src/pipelines/<name>/`, register in `src/pipelines/registry.py`. No other changes needed.
+**Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; declare the done-conditions that prove it in the spec.
 
-**Settings**: `src/config/settings.json` (gitignored). Copy from `settings.example.json`.  
-**Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `max_waves`, `use_json_mode`. Use `small` for local models.
+**Settings**: `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
+**Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `use_json_mode`. Use `small` for local models.
 
-**Run backend**: `source venv/bin/activate && python run.py`  
-**Run frontend**: `cd frontend && npm run dev`  
+**Run backend**: `source venv/bin/activate && python run.py`
+**Run frontend**: `cd frontend && npm run dev`  *(frontend is mid-rebuild — see ROADMAP)*
+**Run a build (CLI)**: `cd src && python -m maestro.run "<request>"` (propose → freeze → build)
 **Run tests**: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
 
 ---
@@ -76,35 +85,21 @@ Only validate at system boundaries (user input, external APIs, tool results). Do
 
 ---
 
-## Making pipelines hill-climbable
+## Keeping prompts hill-climbable
 
-Hill climbing requires every LLM call prompt to be in a `.txt` file the eval system can swap. Follow this checklist when building or modifying a pipeline:
+Hill-climb *tooling* is currently removed (eval is trimmed to grading finished artifacts — `eval/cli.py score game`). But keep prompts swappable so it can return:
 
-1. **One `.txt` file per LLM call.** Never inline prompt strings in Python (`_SOME_PROMPT = "..."`). Every call gets its own file under `pipelines/<name>/prompts/`.
-
-2. **Wire `prompt_file` on every FnStage that makes an LLM call.** `prompt_file` tells the climb tool which file to swap. Set it in `pipeline.py`:
-   ```python
-   FnStage(id="my_stage", fn=my_fn, ..., prompt_file="my_prompt.txt")
-   ```
-
-3. **Load prompts via `render_template` in the function.** The file name in `prompt_file` and the file loaded in the function must match:
-   ```python
-   prompt = render_template(_PROMPTS_DIR / "my_prompt.txt", ctx)
-   ```
-
-4. **Stages with multiple LLM calls: one `.txt` per call, register the primary.** The stage's `prompt_file` is the default climb target; any other prompt file in the pipeline's prompts dir climbs via `eval/cli.py climb ... --prompt-file <name>.txt` (e.g. `node_scripts` registers `character_line.txt`; `scene_sketch.txt` and `narration.txt` climb via the flag).
-
-5. **`LLMStage` is automatic.** Use `prompt_template=` instead of `prompt_file=` — the runner handles loading and swapping.
-
-6. **System prompts.** Hardcoded `_SYSTEM` strings are not climbable. If a system prompt is load-bearing for quality, move it to a `system.txt` file and load it at call time.
+1. **One `.txt` file per LLM call.** Never inline prompt strings in Python (`_SOME_PROMPT = "..."`). Each call gets its own file under a `prompts/` dir (`maestro/prompts/`, `renpy/prompts/`).
+2. **Load via `render_template`** (`renpy/templating.py`): `prompt = render_template(_PROMPTS_DIR / "my_prompt.txt", ctx)`.
+3. **Load-bearing system prompts** belong in a `.txt` too, not a hardcoded `_SYSTEM` string, if quality depends on them.
 
 ---
 
 ## Small model strategy
 
-Small models aren't dumb — they're easily distracted. They follow the most recent, most concrete instruction in the context window. The pipeline architecture already helps by keeping intermediate steps out of the agent's context. Within pipelines and per-call prompts:
+Small models aren't dumb — they're easily distracted. They follow the most recent, most concrete instruction in the context window. The architecture already helps: the executor rebuilds a minimal context each step (spec + to-do + scratchpad + story state) and keeps the growing artifact out of the window. Within per-call prompts:
 
-1. **Decompose over one-shot** — any stage that produces N items should loop (one call per item) rather than generate everything at once. Prevents truncation, keeps each call focused. Applied to characters (3 calls: identity/appearance/voice) and scenes (1 call per beat).
-2. **Output skeleton before field descriptions** — show exact JSON structure first with inline comments, not a bullet list then a separate example. Model fills a skeleton rather than constructing from scratch.
-3. **Minimum injected context per stage** — each stage gets only what it actually needs. Characters in scene planning need role+personality, not appearance. Completed scenes for continuity need setting_id+character_ids, not full dramatic briefs.
-4. **Use `model_category: "small"`** in settings — enables tighter context budget, fewer iterations, JSON mode.
+1. **Decompose over one-shot** — produce N items with N calls (one node per `write_node`), not all at once. Prevents truncation, keeps each call focused.
+2. **Output skeleton before field descriptions** — show exact JSON structure first with inline comments, not a bullet list then a separate example. Model fills a skeleton rather than constructing from scratch (see `prompts/propose_spec.txt`).
+3. **Minimum context per step** — the executor injects only the to-do, scratchpad, and story-state snapshot; never the full transcript or prior script.
+4. **Use `model_category: "small"`** in settings — tighter context budget, fewer iterations, JSON mode.

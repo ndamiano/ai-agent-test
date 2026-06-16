@@ -6,55 +6,33 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 
 ## Current state
 
-**Agents**
-- Maestro agent (wave orchestration) + Worker agents (tool execution)
-- Chat agent (conversational mode, persistent session, full tool access)
-- Agents fire pipelines as tool calls — sees inputs and outputs, never intermediate steps
+**Mid-rebuild (branch `agentic-rebuild`):** the fixed pipeline DAG was ripped out and replaced with an agentic loop + human-gated frozen spec. See `new_architecture.md` for the design and CLAUDE.md for the current layout.
 
-**Pipelines**
-- Ren'Py branching visual novel (`renpy`, 8 stages: premise → story → graph → beat_map → node_scripts → asset_manifest → images → build)
-  - Premise: binding brief, a central question (values tension the endings answer differently), characters from interiority (identity/situation/charge, Grimgong test) — no role enum
-  - Story: top-down outline in branch-and-bottleneck shape — endings first (each a distinct answer), then the commitment choice + arm assignment, then scenes trunk-first with all prior scenes in view (scene_type variety, whats_new per scene, no repeated conflicts)
-  - Graph: assembled deterministically from the outline — structure follows story
-  - Scripts: scene sketch plans each node (speaker order, per-line intent, per-scene character objectives), then per-slot generation — Python owns all Ren'Py syntax; one LLM call per dialogue/narration line with per-character voice-sheet system prompts; story-so-far uses guaranteed ancestors only (no sibling-branch bleed); final lines funnel into the node's exit (choice/jump/ending)
-  - Voice sheets: one plain-text call per character expands a one-line seed into a full impersonation sheet
-  - See `src/pipelines/renpy/STAGES.md` for full stage reference
-- Character creation (concept → identity/appearance/voice → portrait image)
-- TTRPG campaign (setting → factions → NPCs → encounters → plot_hooks → campaign document)
-- Pipeline registry — add a pipeline in `pipelines/<name>/`, register in `registry.py`, done
+**Agentic build system (`src/maestro/`)** — backend complete (Phases 0–6), validated by 181 unit tests + a real-SDK compile; live end-to-end run pending (needs the local LLM up).
+- **Spec** (`spec.py`) — per-game contract: components with typed done-conditions, frozen flag, dependency order. Drafted fresh per game by the agent (`spec_tools.propose_spec`, climbable `prompts/propose_spec.txt`); no human-authored genre schema.
+- **Human gate** — `freeze_spec` is the human's out-of-band approval (no freeze tool); `amend_spec` (reason mandatory) un-freezes to pause for re-approval. Build tools refuse until frozen.
+- **Durable state** (`state.py`) — per-run dir `<working_dir>/runs/<run_id>/`: component JSONs (ids = compile filenames), structured scratchpad (replace-not-append), story state. Source of truth; the transcript is never memory.
+- **validate** (`validate.py`) — closed typed check set (exists / count / distinct / each_has / refs_resolve / compiles) → failure list = the recomputed to-do. Empty vs frozen spec = done.
+- **Executor** (`executor.py`) — non-LLM loop; rebuilds minimal context each step; completion decided by validate; architecture-triggered milestone check-ins.
+- **Build agent** (`agent.py`) — stateless-per-step LLM decider, one tool call per step from rebuilt context.
+- **Tools** (`tools.py`) — write_component / write_node (fused with story-state delta), read_component / read_story_state, generate_asset, validate, compile_renpy, update_scratchpad, request_review.
+- **Story state** (`story_state.py`) — continuity bible (facts / entities / open threads / recent tail); snapshot not log; spine-tracked.
+- **Run** (`run.py`) — `python -m maestro.run "<request>"` CLI: propose → freeze → build → project path.
 
-**Inference**
-- Unified path: `PipelineAgent` → `MessageBuilder` → `OpenAICompatibleConnector` (same path for agents and pipelines)
-- Structured JSON schema output (`response_format: json_schema`); graceful fallback if endpoint doesn't support it
-- `frequency_penalty` (default 0.5) and separate `pipeline_max_tokens` (default 4096) per connector
-- Repetition detection — raises before looping output poisons history
-- `safe_history_content()` — strips local model channel markup from history before replay
-- Streaming with empty-result detection; marks connector to skip streaming on subsequent calls
-- All pipeline stage schemas are full JSON Schema (`type` + `properties`)
+**Ren'Py capabilities (`src/renpy/`)** — `compile_renpy` (the spine: artifact → launchable project + lint/distribute gate), `build` + image generation, script assembly. (The old per-stage text generators remain in `fns.py` but are no longer wired into the loop — the agent authors content.)
 
-**Observability**
-- Pipeline progress WebSocket events at every node/stage lifecycle (started, completed, retrying, failed)
-- `PipelineProgress` UI panel: live status dots, progress bars per pipeline run, inline retry errors
-- Request/response logs with correlated `request_id` UUIDs
+**Inference** — unified path `PipelineAgent` / `make_llm_decider` → `MessageBuilder` → `OpenAICompatibleConnector`. Structured JSON output with fallback; repetition detection; `safe_history_content()`; streaming with empty-result detection.
 
-**Platform**
-- Tool manager (decorator-based, auto schema inference)
-- Task store (SQLite) + WebSocket event bus
-- Model category settings (`large` / `medium` / `small`)
-- React frontend: Chat tab + Tasks tab, pipeline progress panel
+**Platform** — tool manager (decorator, auto schema inference), WebSocket event bus, model category settings (`large`/`medium`/`small`).
+
+**Pending** — frontend rebuild (the old task UI was demolished; spec-review surface not yet built — `frontend/` still calls the removed `/api/tasks`); live-LLM end-to-end validation; eval is trimmed to grading finished artifacts (`eval/cli.py score game`), hill-climb tooling to return later.
 
 ---
 
 ## Architecture decisions
 
-### Pipelines as tool calls
-Pipelines limit what's in the agent's context. The agent fires `run_pipeline("renpy")` and eventually gets back a completed game. It never sees intermediate steps. Pipelines are specialized, optimized, and composable.
-
-### Pipeline execution model
-- **`run_pipeline(name, brief)`** — fire a single pipeline, block until done, return JSON outputs
-- **`run_subpipeline(parent_dir, name, brief)`** — call a pipeline from within a FnStage; child working dir isolated under parent; returns `{status, pipeline, working_dir, outputs}`
-- **`queue_pipeline(name, brief)`** — add pipeline to session queue (non-blocking)
-- **`run_queued_pipelines()`** — run all queued pipelines in parallel, block until all complete
+### Agentic loop + frozen spec (replaces the pipeline DAG)
+The agent drafts a per-game spec of components with checkable done-conditions; the human freezes it; a non-LLM executor builds against it until validate passes. Steals the pipeline's completion guarantee (done = artifact satisfies the spec) and no-context-rot (minimal rebuilt context each step) without the rigidity of fixed stages.
 
 ### Small model strategy
 Decompose over one-shot. Every stage that produces N items loops (one call per item). Each call gets only what it needs — no full character objects where `id+role+personality` suffice. Show output skeleton before field descriptions. These principles apply to prompts and to the call structure itself.
@@ -68,7 +46,7 @@ Small local models fail in specific, detectable ways: repetition loops, channel 
 
 - [ ] **Parallel subpipelines** — `run_subpipeline` currently sequential; queue/gather pattern within FnStages
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
-- [x] **Automated prompt optimization** — eval suite + LLM-as-judge scorer + hill-climbing loop (`eval/`); per-stage and end-to-end climbing (e2e rubric + `--prompt-file` for multi-prompt stages)
+- [ ] **Automated prompt optimization (to re-add)** — LLM-as-judge scorer + hill-climbing loop. Removed in the rebuild; eval currently grades finished artifacts only (`eval/cli.py score game`). Prompts are kept as swappable `.txt` files so climbing can return.
 - [ ] **Per-character dialogue agents** — replace single dialogue call with an orchestrator + one agent per character. Each agent holds only their character's context. Long-term: try different models per character to match voice/capability to role. Validate via eval before/after comparison.
 
 ## Pipelines requiring composition
@@ -118,7 +96,6 @@ Small local models fail in specific, detectable ways: repetition loops, channel 
 
 - Tool manager decorator pattern + schema inference
 - MessageBuilder context budgeting and deduplication
-- Pipeline DAG runner (LLMStage + FnStage, parallel stages, retry)
 - Connector abstraction (OpenAI-compatible, streaming, swappable)
-- Task store + WebSocket event bus
-- Maestro wave orchestration model
+- WebSocket event bus
+- `compile_renpy` spine + Ren'Py assembly/build

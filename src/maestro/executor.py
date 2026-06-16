@@ -73,6 +73,7 @@ class Executor:
             },
             "todo": validate(self.spec, self.state),
             "scratchpad": self.state.read_scratchpad(),
+            "story_state": self.state.read_story_state(),
             "last_result": self.last_result,
             "available_tools": sorted(self.tools),
         }

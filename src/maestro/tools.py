@@ -31,10 +31,26 @@ TOOL_SCHEMAS: List[Dict] = [
             "content": {"type": "object", "description": "The component's full content as JSON"},
         }, "required": ["component_id", "content"]}}},
     {"type": "function", "function": {
+        "name": "write_node",
+        "description": "Write one story node into node_scripts AND merge its story-state "
+                       "delta in the same call (dialogue + continuity bookkeeping together).",
+        "parameters": {"type": "object", "properties": {
+            "node_id": {"type": "string"},
+            "content": {"description": "The node's Ren'Py script text"},
+            "story_state_delta": {"type": "object", "description":
+                "new_facts[], entity_updates{}, open_threads_add[], "
+                "open_threads_resolve[], event_summary"},
+        }, "required": ["node_id", "content"]}}},
+    {"type": "function", "function": {
         "name": "read_component",
         "description": "Read a component you previously wrote.",
         "parameters": {"type": "object", "properties": {
             "component_id": {"type": "string"}}, "required": ["component_id"]}}},
+    {"type": "function", "function": {
+        "name": "read_story_state",
+        "description": "Read the continuity bible (facts, entity states, open threads, "
+                       "recent events) before writing the next node.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "generate_asset",
         "description": "Generate the image assets the asset_manifest declares.",
@@ -78,6 +94,29 @@ def build_tools(spec, state) -> Dict[str, Callable]:
         state.write_component(component_id, content)
         return {"ok": True, "component_id": component_id}
 
+    def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None) -> Dict:
+        """Fused: write one node into node_scripts AND merge its story-state delta.
+
+        Producing the dialogue and the continuity bookkeeping in one call keeps them
+        consistent. The next node reads the updated story state, never prior script.
+        """
+        _require_frozen()
+        from maestro.story_state import init_story_state, apply_delta
+
+        ns = state.read_component("node_scripts") or {"scripts": {}, "node_ids": []}
+        ns.setdefault("scripts", {})[node_id] = content
+        ns.setdefault("node_ids", [])
+        if node_id not in ns["node_ids"]:
+            ns["node_ids"].append(node_id)
+        state.write_component("node_scripts", ns)
+
+        if story_state_delta:
+            ss = state.read_story_state() or init_story_state(spec.story_state_schema)
+            apply_delta(ss, story_state_delta)
+            state.write_story_state(ss)
+
+        return {"ok": True, "node_id": node_id}
+
     def generate_asset() -> Dict:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
         _require_frozen()
@@ -91,6 +130,10 @@ def build_tools(spec, state) -> Dict[str, Callable]:
         if content is None:
             return {"ok": False, "error": f"no component {component_id!r}"}
         return {"ok": True, "component_id": component_id, "content": content}
+
+    def read_story_state() -> Dict:
+        from maestro.story_state import init_story_state
+        return {"ok": True, "story_state": state.read_story_state() or init_story_state(spec.story_state_schema)}
 
     def validate_tool(component_id: Optional[str] = None) -> Dict:
         failures = validate(spec, state, component_id)
@@ -115,7 +158,9 @@ def build_tools(spec, state) -> Dict[str, Callable]:
 
     return {
         "write_component": write_component,
+        "write_node": write_node,
         "read_component": read_component,
+        "read_story_state": read_story_state,
         "generate_asset": generate_asset,
         "validate": validate_tool,
         "compile_renpy": compile_renpy_tool,

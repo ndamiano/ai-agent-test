@@ -17,9 +17,12 @@ logger = logging.getLogger(__name__)
 _SYSTEM = (
     "You are building a Ren'Py visual novel against a frozen spec. Each turn you "
     "see the spec, the current to-do (done-conditions that still fail), your "
-    "scratchpad, and the last result. Choose exactly ONE tool call that clears the "
-    "next failing condition. You author component content yourself as JSON via "
-    "write_component. Keep working until the to-do is empty. Do not explain — call a tool."
+    "scratchpad, the story state, and the last result. Choose exactly ONE tool call "
+    "that clears the next failing condition. You author content yourself as JSON via "
+    "write_component. When writing story nodes, use write_node so the node's dialogue "
+    "and its story-state delta (new facts, entity updates, threads, event summary) are "
+    "recorded together; rely on the story state for continuity, not on prior script. "
+    "Keep working until the to-do is empty. Do not explain — call a tool."
 )
 
 
@@ -28,17 +31,22 @@ def _render_context(ctx: Dict) -> str:
     todo_lines = [f"- [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}"
                   for f in todo] or ["(none — build may be complete)"]
     pad = ctx.get("scratchpad", {})
-    return "\n".join([
+    lines = [
         f"SPEC: {json.dumps(ctx.get('spec', {}), ensure_ascii=False)}",
         "",
         "TO-DO (failing done-conditions):",
         *todo_lines,
         "",
         f"SCRATCHPAD: {json.dumps(pad, ensure_ascii=False)}",
+    ]
+    if ctx.get("story_state"):
+        lines.append(f"STORY STATE: {json.dumps(ctx['story_state'], ensure_ascii=False)}")
+    lines += [
         f"LAST RESULT: {ctx.get('last_result')}",
         "",
         "Call one tool to address the first to-do item.",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def _parse_action(response: Dict) -> Dict:

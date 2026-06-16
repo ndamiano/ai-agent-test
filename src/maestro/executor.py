@@ -48,12 +48,15 @@ class Executor:
     """
 
     def __init__(self, spec, state, tools: Dict[str, Callable], decide: Callable,
-                 max_steps: int = 60):
+                 max_steps: int = 60, on_milestone: Optional[Callable[[str], None]] = None):
         self.spec = spec
         self.state = state
         self.tools = tools
         self.decide = decide
         self.max_steps = max_steps
+        # Architecture-triggered check-in: called the first time a component's
+        # done-conditions all pass. The agent doesn't judge when to interrupt.
+        self.on_milestone = on_milestone
         self.last_result: Optional[str] = None
 
     # ── context (rebuilt fresh each step from durable state) ─────────────────
@@ -75,6 +78,9 @@ class Executor:
         }
 
     # ── completion: decided by validate, never by the agent ──────────────────
+    def _failing_components(self) -> set:
+        return {f["component_id"] for f in validate(self.spec, self.state)}
+
     def is_done(self) -> bool:
         return self.spec.frozen and not validate(self.spec, self.state)
 
@@ -83,6 +89,12 @@ class Executor:
             raise SpecNotFrozenError("build refuses to run until the spec is frozen")
 
         history: List[StepRecord] = []
+        all_ids = {c.get("id") for c in self.spec.components}
+        # A component not in the failing set already passes; only fire milestones
+        # for ones that were failing and then transition to passing.
+        outstanding = self._failing_components()
+        passed = all_ids - outstanding
+
         for step in range(1, self.max_steps + 1):
             if self.is_done():
                 return ExecutorResult(ok=True, steps=step - 1, history=history)
@@ -92,12 +104,25 @@ class Executor:
             self.last_result = self._summarize(action, result)
             history.append(StepRecord(step=step, action=action, summary=self.last_result))
 
+            now_failing = self._failing_components()
+            for cid in (all_ids - now_failing) - passed:
+                self._fire_milestone(cid)
+            passed = all_ids - now_failing
+
         return ExecutorResult(
             ok=self.is_done(),
             steps=self.max_steps,
             failures=validate(self.spec, self.state),
             history=history,
         )
+
+    def _fire_milestone(self, component_id: str) -> None:
+        if self.on_milestone is None:
+            return
+        try:
+            self.on_milestone(component_id)
+        except Exception:
+            logger.exception("on_milestone callback failed for %s", component_id)
 
     def _dispatch(self, action: Dict) -> Dict:
         name = action.get("tool")

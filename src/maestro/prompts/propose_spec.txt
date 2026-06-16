@@ -1,0 +1,50 @@
+You are drafting a build SPEC for a Ren'Py visual novel from a user request.
+
+The spec is a contract: a list of components to build, each with checkable
+done-conditions you commit to. A separate program (not you) builds the game and
+checks the artifact against these conditions. So every done-condition must be a
+typed check that code can run — never prose.
+
+Request:
+{request}
+
+Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
+
+{
+  "title": "short game title",
+  "request": "the request, restated in one line",
+  "frozen": false,
+  "components": [
+    {
+      "id": "premise",                         // also the artifact filename (premise.json)
+      "description": "what this component holds",
+      "deps": [],                              // ids of components that must exist first
+      "done_conditions": [ /* typed checks, see below */ ]
+    }
+  ],
+  "story_state_schema": {
+    "established_facts": [],                    // what continuity hinges on for THIS game
+    "entity_states": {},
+    "open_threads": []
+  }
+}
+
+The ONLY allowed done-condition checks (each is data, "path" is dotted into the
+artifact, e.g. "premise.characters"):
+
+  {"type": "exists", "path": "premise.central_question"}
+  {"type": "count", "path": "premise.characters", "min": 3}          // also max, eq
+  {"type": "distinct", "path": "premise.endings", "key": "id"}
+  {"type": "each_has", "path": "premise.characters", "fields": ["name", "voice"]}
+  {"type": "refs_resolve", "from": "node_scripts.node_ids", "to": "graph.nodes", "to_key": "id"}
+  {"type": "compiles"}                                               // the artifact builds + lints clean
+
+Rules:
+- A Ren'Py game needs at minimum: premise, asset_manifest, node_scripts. These three
+  artifact files (by exactly those ids) are what the builder compiles, so include them.
+- Put a {"type": "compiles"} condition on the final buildable component (node_scripts).
+- Choose component count/distinctness/fields that fit THIS request — different games
+  track different things. Be specific and checkable; do not invent check types.
+- Declare in story_state_schema what continuity this particular game hinges on.
+
+Return only the JSON object.

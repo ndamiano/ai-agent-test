@@ -20,6 +20,53 @@ class SpecNotFrozen(RuntimeError):
     pass
 
 
+# OpenAI-format schemas for the decider's tool-calling. Kept beside build_tools so
+# the names stay in sync.
+TOOL_SCHEMAS: List[Dict] = [
+    {"type": "function", "function": {
+        "name": "write_component",
+        "description": "Write (fill or overwrite) an artifact component by id. You author the content.",
+        "parameters": {"type": "object", "properties": {
+            "component_id": {"type": "string", "description": "Component id, e.g. 'premise'"},
+            "content": {"type": "object", "description": "The component's full content as JSON"},
+        }, "required": ["component_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "read_component",
+        "description": "Read a component you previously wrote.",
+        "parameters": {"type": "object", "properties": {
+            "component_id": {"type": "string"}}, "required": ["component_id"]}}},
+    {"type": "function", "function": {
+        "name": "generate_asset",
+        "description": "Generate the image assets the asset_manifest declares.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "validate",
+        "description": "Recompute the to-do: which done-conditions still fail.",
+        "parameters": {"type": "object", "properties": {
+            "component_id": {"type": "string", "description": "Optional: scope to one component"}},
+            "required": []}}},
+    {"type": "function", "function": {
+        "name": "compile_renpy",
+        "description": "Build the artifact into a Ren'Py project and report the gate result.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "update_scratchpad",
+        "description": "Replace your working memory (current goal, recent decisions, open questions).",
+        "parameters": {"type": "object", "properties": {
+            "current_goal": {"type": "string"},
+            "recent_decisions": {"type": "array", "items": {"type": "string"}},
+            "open_questions": {"type": "array", "items": {"type": "string"}},
+        }, "required": []}}},
+    {"type": "function", "function": {
+        "name": "request_review",
+        "description": "Ask the human to choose, when genuinely stuck between options.",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string"},
+            "options": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["question"]}}},
+]
+
+
 def build_tools(spec, state) -> Dict[str, Callable]:
     def _require_frozen():
         if not spec.frozen:

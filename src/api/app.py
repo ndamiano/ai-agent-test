@@ -35,6 +35,7 @@ async def startup_event():
         import tools.file_tools  # noqa: F401
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
+        import maestro.chat_tools  # noqa: F401
         logging.info("Tools registered successfully")
 
     except Exception as e:

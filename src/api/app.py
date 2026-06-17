@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import system, settings, agents, outputs, websocket, chat
+from api.routers import system, settings, agents, outputs, websocket, chat, games
 
 @app.on_event("startup")
 async def startup_event():
@@ -74,6 +74,7 @@ app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(outputs.router, prefix="/api/outputs", tags=["outputs"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(games.router, prefix="/api/games", tags=["games"])
 
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""

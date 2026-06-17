@@ -1,134 +1,54 @@
-export type MaestroPhase = 'planning' | 'evaluation' | 'error_recovery'
+// A "game" is one build run (runs/<run_id>/), surfaced read-only by /api/games.
 
-export interface Subtask {
+export interface Game {
+    run_id: string
+    title: string
+    frozen: boolean
+    built: boolean
+    n_components: number
+    mtime: number
+}
+
+export interface SpecComponent {
     id: string
-    agent_id: string
-    goal: string
-    name: string | null
-    description: string | null
-    status: 'pending' | 'in_progress' | 'completed' | 'failed'
-    position: number
-    output_preview: string | null
-    depends_on: string[]
-    child_task_id?: string | null
+    description?: string
+    deps?: string[]
+    done_conditions?: Array<Record<string, any>>
 }
 
-export interface TaskEvent {
-    id: string
-    event_type: string
-    message: string
-    subtask_id: string | null
-    created_at: string
+export interface Spec {
+    title: string
+    request?: string
+    frozen: boolean
+    components: SpecComponent[]
+    story_state_schema?: Record<string, any>
 }
 
-export interface RefinementMessage {
-    role: 'user' | 'assistant'
-    content: string
-    timestamp: string
+export interface TodoItem {
+    component_id: string
+    check: Record<string, any>
+    detail: string | null
 }
 
-export interface Task {
-    id: string
-    goal: string
-    status: 'pending' | 'refining' | 'synthesizing' | 'planning' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'archived'
-    created_at: string
-    updated_at: string
-    subtasks: Subtask[]
-    parent_task_id?: string | null
-}
-
-export interface TaskDetail extends Task {
-    events: TaskEvent[]
-    context_keys: string[]
-    child_tasks: Task[]
-}
-
-export interface Agent {
-    id: string
-    name: string
-    description: string
-    tools: string[]
+export interface GameDetail {
+    run_id: string
+    spec: Spec
+    artifact: Record<string, any>
+    todo: TodoItem[]
+    frozen: boolean
+    built: boolean
 }
 
 export interface SystemStatus {
     status: string
     lmstudio_connected: boolean
-    embedding_connected: boolean
     lmstudio_url: string
     agent_count: number
-    task_count: number
 }
 
-export interface AskResponse {
-    question: string
-    answer: string
-    context_used: string[]
-}
-
-export interface ArtifactManifest {
-    summary: string
-    artifacts: Array<{ type: string; label: string; path: string }>
-}
-
-export interface ToolUsage {
-    tool_name: string
-    arguments: Record<string, any>
-    status: 'success' | 'failed'
-    timestamp: string
-}
-
-export interface AgentMessage {
-    agent_id: string
-    phase: MaestroPhase
-    message: string
-    timestamp: string
-}
-
-export type PipelineEventType =
-    | 'pipeline_started'
-    | 'pipeline_node_started'
-    | 'pipeline_node_completed'
-    | 'pipeline_node_failed'
-    | 'pipeline_stage_started'
-    | 'pipeline_stage_completed'
-    | 'pipeline_stage_retrying'
-    | 'pipeline_stage_failed'
-    | 'pipeline_completed'
-    | 'pipeline_failed'
-
-export interface PipelineEvent {
-    type: PipelineEventType
-    task_id: string
-    subtask_id?: string | null
-    pipeline: string
-    pipeline_path?: string[]
-    parent_pipeline?: string | null
-    working_dir: string
-    timestamp: string
-    node_count?: number
-    node_id?: string
-    stage_count?: number
-    stage_id?: string
-    stage_type?: 'llm' | 'function'
-    attempt?: number
-    max_attempts?: number
-    output?: string
-    error?: string
-}
-
-export type WebSocketMessage =
-    | { type: 'connected'; timestamp: string }
-    | { type: 'task_created'; task_id: string; goal: string; timestamp: string }
-    | { type: 'task_status'; task_id: string; task: Task }
-    | { type: 'subtask_started'; task_id: string; subtask_id: string; agent_id: string; timestamp: string }
-    | { type: 'subtask_completed'; task_id: string; subtask_id: string; agent_id: string; timestamp: string }
-    | { type: 'subtask_failed'; task_id: string; subtask_id: string; error: string; timestamp: string }
-    | { type: 'task_completed'; task_id: string }
-    | { type: 'task_failed'; task_id: string; error: string }
-    | { type: 'agent_message'; task_id: string; agent_id: string; phase: MaestroPhase; message: string; timestamp: string; subtask_id?: string }
-    | { type: 'tool_usage'; task_id: string; subtask_id: string; tool_name: string; arguments: Record<string, any>; status: 'success' | 'failed'; timestamp: string }
-    | { type: 'refine_message'; task_id: string; messages: RefinementMessage[]; timestamp: string }
-    | PipelineEvent
+// Generic envelope — the event bus broadcasts many shapes; the per-stage phase
+// will tag build events with run_id and we'll narrow then.
+export type WebSocketMessage = { type: string; [key: string]: any }
 
 export interface LMStudioSettings {
     base_url: string

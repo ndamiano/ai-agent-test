@@ -1,32 +1,13 @@
 import React, { useState } from 'react'
-import TaskListPanel from './TaskListPanel'
-import StagePanel from './StagePanel'
-import CommandBar from './CommandBar'
 import ChatPanel from './ChatPanel'
-import type { Task } from '../types'
+import GamesPanel from './GamesPanel'
 
 interface LayoutProps {
-    selectedTaskId: string | null
-    setSelectedTaskId: (id: string | null) => void
-    onTaskCreate: (goal: string) => void
     onSettingsClick: () => void
-    tasks: Task[]
-    tasksLoading: boolean
-    tasksError: string | null
-    onRefreshTasks: () => Promise<void>
 }
 
-const Layout: React.FC<LayoutProps> = ({
-    selectedTaskId,
-    setSelectedTaskId,
-    onTaskCreate,
-    onSettingsClick,
-    tasks,
-    tasksLoading,
-    tasksError,
-    onRefreshTasks,
-}) => {
-    const [tab, setTab] = useState<'chat' | 'tasks'>('chat')
+const Layout: React.FC<LayoutProps> = ({ onSettingsClick }) => {
+    const [tab, setTab] = useState<'chat' | 'games'>('chat')
 
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
@@ -36,7 +17,7 @@ const Layout: React.FC<LayoutProps> = ({
                 <div className="flex items-center gap-4">
                     <div className="text-white font-semibold text-sm tracking-wide">Maestro</div>
                     <div className="flex gap-1">
-                        {(['chat', 'tasks'] as const).map(t => (
+                        {(['chat', 'games'] as const).map(t => (
                             <button
                                 key={t}
                                 onClick={() => setTab(t)}
@@ -63,36 +44,9 @@ const Layout: React.FC<LayoutProps> = ({
                 </button>
             </div>
 
-            {/* Chat tab */}
-            {tab === 'chat' && (
-                <div className="flex-1 overflow-hidden">
-                    <ChatPanel />
-                </div>
-            )}
-
-            {/* Tasks tab */}
-            {tab === 'tasks' && (
-                <>
-                    <div className="flex-shrink-0">
-                        <CommandBar onTaskCreate={onTaskCreate} />
-                    </div>
-                    <div className="flex-1 flex overflow-hidden">
-                        <div className="w-72 flex-shrink-0 border-r border-white/[0.06]">
-                            <TaskListPanel
-                                selectedTaskId={selectedTaskId}
-                                onSelectTask={setSelectedTaskId}
-                                tasks={tasks}
-                                loading={tasksLoading}
-                                error={tasksError}
-                                onRefresh={onRefreshTasks}
-                            />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <StagePanel taskId={selectedTaskId} />
-                        </div>
-                    </div>
-                </>
-            )}
+            <div className="flex-1 overflow-hidden">
+                {tab === 'chat' ? <ChatPanel /> : <GamesPanel />}
+            </div>
         </div>
     )
 }

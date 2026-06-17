@@ -6,11 +6,6 @@ class AgentUpdateRequest(BaseModel):
     type: Optional[str] = None
     capabilities: Optional[List[str]] = None
 
-class CreateTaskRequest(BaseModel):
-    goal: str
-    execution_mode: Optional[str] = None
-    working_directory: Optional[str] = None
-
 class LMStudioSettingsRequest(BaseModel):
     base_url: str
     model: str

@@ -71,7 +71,12 @@ def test_schemas_filtered_for_node_mode():
 
 def test_schemas_unfiltered_for_unknown_mode():
     assert _schemas_for_mode(None, TOOL_SCHEMAS) is TOOL_SCHEMAS
-    assert _schemas_for_mode("premise", TOOL_SCHEMAS) is TOOL_SCHEMAS  # no mode config yet
+    assert _schemas_for_mode("graph", TOOL_SCHEMAS) is TOOL_SCHEMAS  # no such mode
+
+
+def test_premise_mode_allows_write_component():
+    names = {s["function"]["name"] for s in _schemas_for_mode("premise", TOOL_SCHEMAS)}
+    assert "write_component" in names and "write_node" not in names
 
 
 def test_render_context_shows_locked_components():

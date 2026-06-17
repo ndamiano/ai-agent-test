@@ -16,10 +16,26 @@ _SCRIPT_SYSTEM = (
 )
 
 
+_STAGE_SLOTS = ("left", "right", "center")
+
+
+def _stage_positions(shown: dict) -> dict:
+    """Assign each on-screen character a distinct slot so they don't pile up at
+    center (ports the old pipeline's deterministic staging). A character's explicit
+    `at <pos>` wins; the rest fill the remaining left/right/center slots in the order
+    they were shown. A lone character sits center."""
+    ids = list(shown)
+    if len(ids) == 1:
+        return {ids[0]: shown[ids[0]] or "center"}
+    taken = {p for p in shown.values() if p}
+    free = [p for p in _STAGE_SLOTS if p not in taken]
+    return {cid: (shown[cid] or (free.pop(0) if free else "center")) for cid in ids}
+
+
 def _postprocess_script(script: str, valid_characters: set) -> str:
     lines = script.split("\n")
     result = []
-    shown: dict = {}
+    shown: dict = {}   # cid -> explicit position, or None (auto-assigned a slot)
     prev_expects_block = False
     prev_indent = 0
 
@@ -41,9 +57,14 @@ def _postprocess_script(script: str, valid_characters: set) -> str:
         show_m = re.match(r'show\s+(\w+)(?:\s+at\s+(\w+))?', stripped)
         hide_m = re.match(r'hide\s+(\w+)', stripped)
         if show_m:
-            cid, pos = show_m.group(1), show_m.group(2) or "center"
+            cid, explicit = show_m.group(1), show_m.group(2)
             if cid in valid_characters:
-                shown[cid] = pos
+                shown[cid] = explicit
+                if not explicit:
+                    # Give a bare `show X` a slot now so it isn't centered on top of
+                    # whoever's already on stage; dialogue lines re-stage as the cast grows.
+                    line = re.sub(r'^(\s*show\s+\w+)', r'\1 at ' + _stage_positions(shown)[cid],
+                                  line, count=1)
         elif hide_m:
             shown.pop(hide_m.group(1), None)
         elif stripped.startswith("scene "):
@@ -54,9 +75,10 @@ def _postprocess_script(script: str, valid_characters: set) -> str:
                 speaker = dialogue_m.group(1)
                 if speaker in valid_characters and speaker in shown:
                     pad = line[: len(line) - len(stripped)]
-                    for cid, pos in shown.items():
+                    positions = _stage_positions(shown)
+                    for cid in shown:
                         t = "speaking" if cid == speaker else "not_speaking"
-                        result.append(f"{pad}show {cid} at {pos}, {t}")
+                        result.append(f"{pad}show {cid} at {positions[cid]}, {t}")
 
         if "%" in line and '%%' not in line:
             line = re.sub(r'("(?:[^"\\]|\\.)*")', lambda m: m.group(0).replace("%", "%%"), line)

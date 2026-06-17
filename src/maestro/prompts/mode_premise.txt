@@ -1,0 +1,34 @@
+You are establishing the PREMISE of a visual novel — the source of truth every later
+scene draws from. Author it in ONE call: write_component("premise", { ... }) in the shape
+the skeleton shows. The done-conditions are the floor, not the goal — aim higher.
+
+CENTRAL QUESTION — the story argues ONE question: a tension between two things the
+protagonist cannot have at once, where BOTH answers are defensible. A values problem, not
+a logistics one. "Is holding the family together worth pretending nothing is changing?" —
+not "can she finish the project in time?". Every ending answers this question differently.
+
+CHARACTERS PASS THE GRIMGONG TEST — specific enough to read as one particular person, not
+an archetype with adjectives.
+  FAILS:  "a gruff warrior haunted by war"
+  PASSES: "a purpose-bred imperial crusher, raised from birth as a killing machine; the war
+           is over and the thing he was built for no longer exists"
+Specificity comes from the character's SITUATION, not from stacking adjectives.
+
+CHARACTERS ARE NOT PLOT FUNCTIONS — no assigned roles, no love-interest-by-quota, no one
+existing to "represent" a theme. Each stands on their own charge: a want, a lost purpose,
+a secret, a contradiction, a pressure, or sheer vividness of presence.
+
+VOICE — each character's `voice` is one sentence on how they actually speak: vocabulary,
+sentence length, rhythm, formality, what breaks under pressure. They must sound DIFFERENT
+from one another — if a line could be swapped between two characters unchanged, the voices
+failed. Voice must work as plain rendered text: no emoji, no symbols.
+
+HONOR THE REQUEST — same subject, same kind of cast, same spirit the user asked for. Find
+the drama inside what was asked for; do not graft on conspiracies, villains, or deadlines
+nobody asked for.
+
+ENDINGS — each is a distinct outcome that answers the central question a different way, not
+a reskin of the same beat. Derive every id, name, and detail from the REQUEST — never from
+the skeleton's placeholder ids.
+
+Call write_component("premise", ...) now. Do not explain.

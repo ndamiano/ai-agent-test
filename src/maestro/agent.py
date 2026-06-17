@@ -23,9 +23,13 @@ _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
 # restricted tool set. The executor picks the mode (context["mode"]); an unknown/None
 # mode falls back to the general prompt + full tools, so nothing regresses.
 _MODE_PROMPTS: Dict[str, str] = {
+    "premise": render_template(_PROMPTS_DIR / "mode_premise.txt", {}),
+    "asset_manifest": render_template(_PROMPTS_DIR / "mode_asset.txt", {}),
     "node_scripts": render_template(_PROMPTS_DIR / "mode_node.txt", {}),
 }
 _MODE_TOOLS: Dict[str, frozenset] = {
+    "premise": frozenset({"write_component", "update_scratchpad", "request_review"}),
+    "asset_manifest": frozenset({"write_component", "update_scratchpad", "request_review"}),
     "node_scripts": frozenset({"write_node", "edit_node", "read_story_state", "validate",
                                "compile_renpy", "update_scratchpad", "request_review"}),
 }

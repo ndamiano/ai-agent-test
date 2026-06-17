@@ -98,15 +98,10 @@ def test_compile_reports_missing_artifact(tmp_path):
 
 
 def test_compile_reports_dangling_jump_without_repair(tmp_path, monkeypatch):
-    # The agent wrote scene_01 jumping to scene_02 which it hasn't built. The agentic
-    # path must NOT rewrite scene_01 — it must report the dangling jump so the agent
-    # builds scene_02. And it must not invoke the LLM repair.
+    # The agent wrote scene_01 jumping to scene_02 which it hasn't built. The build must
+    # NOT rewrite scene_01 — it must report the dangling jump so the agent builds scene_02.
     import renpy.fns as fns
     monkeypatch.setattr(fns, "_get_sdk_path", lambda: "")
-
-    def _no_repair(*a, **k):
-        raise AssertionError("_validate_and_repair must not run in the agentic path")
-    monkeypatch.setattr(fns, "_validate_and_repair", _no_repair)
 
     (tmp_path / "brief.json").write_text(json.dumps({"title": "T"}))
     (tmp_path / "premise.json").write_text(json.dumps(

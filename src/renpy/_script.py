@@ -3,18 +3,7 @@ import os
 import platform
 import re
 import subprocess
-from pathlib import Path
 from typing import Dict, List, Set, Tuple
-
-from renpy.templating import render_template
-from llm_clients.inference import PipelineAgent, strip_fences
-
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
-
-_SCRIPT_SYSTEM = (
-    "You are a Ren'Py script writer. Output only valid Ren'Py script. "
-    "No JSON, no markdown fences, no explanation."
-)
 
 
 _STAGE_SLOTS = ("left", "right", "center")
@@ -120,49 +109,6 @@ def _find_script_issues(
     if broken_speakers:
         parts.append(f"unknown dialogue speakers (not defined as Character): {sorted(broken_speakers)}")
     return "; ".join(parts)
-
-
-def _repair_broken_scene(
-    scene_id: str,
-    script: str,
-    issue: str,
-    valid_labels: Set[str],
-    valid_backgrounds: Set[str],
-    valid_characters: Set[str],
-    valid_cgs: Set[str] = None,
-) -> str:
-    valid_scenes = sorted(valid_backgrounds | (valid_cgs or set()))
-    prompt = render_template(_PROMPTS_DIR / "bridge.txt", {
-        "scene_id":              scene_id,
-        "issue":                 issue,
-        "script":                script,
-        "available_labels":      sorted(valid_labels),
-        "available_backgrounds": valid_scenes,
-        "available_characters":  sorted(valid_characters),
-    })
-    agent = PipelineAgent(_SCRIPT_SYSTEM, max_tokens=25000)
-    raw   = strip_fences(agent.send(prompt)).strip()
-    return raw if raw else script
-
-
-def _validate_and_repair(
-    scripts: Dict[str, str],
-    scene_ids: List[str],
-    valid_labels: Set[str],
-    valid_backgrounds: Set[str],
-    valid_characters: Set[str],
-    valid_cgs: Set[str],
-) -> None:
-    for sid in scene_ids:
-        script = scripts.get(sid, "")
-        if not script:
-            continue
-        issues = _find_script_issues(script, valid_labels, valid_backgrounds, valid_characters, valid_cgs)
-        if issues:
-            print(f"    [build]  repairing {sid}: {issues}")
-            scripts[sid] = _repair_broken_scene(
-                sid, script, issues, valid_labels, valid_backgrounds, valid_characters, valid_cgs
-            )
 
 
 def _stitch_script(

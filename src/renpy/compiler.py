@@ -43,11 +43,10 @@ def compile_gate(build_result: Dict) -> Optional[str]:
     return None
 
 
-def compile_renpy(working_dir, distribute: bool = True, repair: bool = False) -> Dict:
+def compile_renpy(working_dir, distribute: bool = True) -> Dict:
     # distribute=False lints only (fast) — used for mid-build compile checks; the
-    # final delivery build packages the project.
-    # repair=False (the agentic default) does NOT rewrite the agent's content; it
-    # surfaces structural issues so the agent fixes them (e.g. builds a missing node).
+    # final delivery build packages the project. The build never rewrites the agent's
+    # content; it surfaces structural issues so the agent fixes them.
     working_dir = Path(working_dir)
 
     missing = [f for f in _REQUIRED if not (working_dir / f).exists()]
@@ -60,15 +59,13 @@ def compile_renpy(working_dir, distribute: bool = True, repair: bool = False) ->
     # pass/fail — a crash is just a compile failure with a reason.
     try:
         if distribute:
-            build_result = build(_load_artifact(working_dir), working_dir,
-                                 distribute=True, repair=repair)
+            build_result = build(_load_artifact(working_dir), working_dir, distribute=True)
         else:
             # Loop compile checks run constantly; silence the build's chatter so the
             # executor's per-step log is the signal. Lint info still comes back in the result.
             import contextlib, io
             with contextlib.redirect_stdout(io.StringIO()):
-                build_result = build(_load_artifact(working_dir), working_dir,
-                                     distribute=False, repair=repair)
+                build_result = build(_load_artifact(working_dir), working_dir, distribute=False)
     except Exception as e:
         return {"ok": False, "reason": f"build error: {type(e).__name__}: {e}",
                 "lint_error_count": None, "project_dir": None}

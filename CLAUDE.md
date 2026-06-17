@@ -42,9 +42,11 @@ src/
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
                 chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
                 prompts/ — climbable .txt prompts (propose_spec.txt)
-  renpy/        Ren'Py capabilities (not a pipeline): compiler.py (compile_renpy — the spine),
-                fns.py (build + image gen), _script.py, graph.py, renpy_builder.py, templating.py,
-                prompts/, renpy_templates/
+  renpy/        Ren'Py capabilities the genre-agnostic maestro core wires in (not a pipeline):
+                compiler.py (compile_renpy — the spine), fns.py (build + image gen),
+                _script.py (stitch/lint/postprocess), component_schemas.py + checks.py
+                (the schemas/done-condition checks maestro injects), renpy_builder.py,
+                templating.py, renpy_templates/
   tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 

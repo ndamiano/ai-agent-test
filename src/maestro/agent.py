@@ -80,11 +80,16 @@ def _render_context(ctx: Dict) -> str:
         ]
     if ctx.get("story_state"):
         lines.append(f"STORY STATE: {json.dumps(ctx['story_state'], ensure_ascii=False)}")
-    lines += [
-        f"LAST RESULT: {ctx.get('last_result')}",
-        "",
-        "Call one tool to address the first to-do item.",
-    ]
+    if ctx.get("last_read"):
+        lines += ["", f"LAST READ:\n{ctx['last_read']}"]
+    lines += [f"LAST RESULT: {ctx.get('last_result')}"]
+    if ctx.get("stalled"):
+        lines += [
+            "",
+            "⚠ You just repeated a read without changing anything. STOP reading — you have "
+            "the content above. Call write_node or edit_node NOW to make a change.",
+        ]
+    lines += ["", "Call one tool to address the first to-do item."]
     return "\n".join(lines)
 
 
@@ -122,6 +127,10 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
         mode = context.get("mode")
         system = _MODE_PROMPTS.get(mode, _SYSTEM) + guide_suffix
         schemas = _schemas_for_mode(mode, all_schemas)
+        # If the agent is spinning on reads, take read tools away so it must act.
+        if context.get("stalled"):
+            schemas = [s for s in schemas
+                       if not s.get("function", {}).get("name", "").startswith("read")]
         messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
         response = conn.generate_with_tools(messages, schemas)

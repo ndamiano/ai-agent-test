@@ -13,6 +13,7 @@ recomputes the to-do. The growing artifact lives outside the context window, so
 context stays roughly constant as the game grows.
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -21,6 +22,9 @@ from typing import Callable, Dict, List, Optional
 from maestro.validate import validate
 
 logger = logging.getLogger(__name__)
+
+# Reads carry no artifact change; repeating one is the agent spinning, not progressing.
+_READ_TOOLS = {"read_node", "read_component", "read_story_state"}
 
 
 @dataclass
@@ -69,6 +73,9 @@ class Executor:
         # executor emits structured dicts; the caller decides where they go.
         self.on_event = on_event
         self.last_result: Optional[str] = None
+        # The payload of the most recent read, surfaced into the next step's context — each
+        # step is stateless, so without this the agent re-reads the same node forever.
+        self.last_read: Optional[str] = None
 
     def _emit(self, event_type: str, **fields) -> None:
         if self.on_event is None:
@@ -79,7 +86,7 @@ class Executor:
             logger.exception("on_event callback failed for %s", event_type)
 
     # ── context (rebuilt fresh each step from durable state) ─────────────────
-    def build_context(self, todo: Optional[List[Dict]] = None) -> Dict:
+    def build_context(self, todo: Optional[List[Dict]] = None, stalled: bool = False) -> Dict:
         # `todo` may be passed in to avoid recomputing validate (the compiles check
         # runs a real Ren'Py build, so we run validate once per step, not per use).
         todo = validate(self.spec, self.state) if todo is None else todo
@@ -126,6 +133,8 @@ class Executor:
             "scratchpad": self.state.read_scratchpad(),
             "story_state": self.state.read_story_state(),
             "last_result": self.last_result,
+            "last_read": self.last_read,
+            "stalled": stalled,
             "available_tools": sorted(self.tools),
         }
 
@@ -158,11 +167,12 @@ class Executor:
             print(f"  step {step}/{self.max_steps}: {len(failures)} check(s) failing — deciding...",
                   flush=True)
             t0 = time.perf_counter()
-            ctx = self.build_context(todo=failures)
+            ctx = self.build_context(todo=failures, stalled=self._is_stalling(history))
             mode = ctx.get("mode")
             action = self.decide(ctx) or {}
             result = self._dispatch(action)
             self.last_result = self._summarize(action, result)
+            self.last_read = self._read_payload(action, result)
             history.append(StepRecord(step=step, action=action, summary=self.last_result))
 
             # One validate per step (it runs the compiles build); reused next iteration.
@@ -210,3 +220,30 @@ class Executor:
         if isinstance(result, dict) and result.get("error"):
             return f"{label}: error — {result['error']}"
         return f"{label}: ok"
+
+    @staticmethod
+    def _action_sig(action: Dict):
+        args = action.get("args") if isinstance(action.get("args"), dict) else {}
+        return action.get("tool"), (args.get("node_id") or args.get("component_id"))
+
+    def _is_stalling(self, history: List[StepRecord]) -> bool:
+        """Two identical reads in a row = the agent spinning. The next step will be told to
+        stop reading and act (read tools are dropped from its choices)."""
+        if len(history) < 2:
+            return False
+        a, b = self._action_sig(history[-1].action), self._action_sig(history[-2].action)
+        return a == b and a[0] in _READ_TOOLS
+
+    def _read_payload(self, action: Dict, result: Dict) -> Optional[str]:
+        """The content a read returned, for the next step's context. None after a write so
+        a stale read doesn't linger."""
+        if action.get("tool") not in _READ_TOOLS or not isinstance(result, dict) or result.get("error"):
+            return None
+        for key in ("content", "story_state"):
+            if key in result:
+                val = result[key]
+                text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
+                if len(text) > 2000:
+                    text = text[:2000] + " …(truncated)"
+                return f"{self._summarize(action, result)}\n{text}"
+        return None

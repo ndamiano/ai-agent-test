@@ -109,3 +109,13 @@ def test_render_context_shows_locked_components():
 
 def test_render_context_omits_locked_block_when_empty():
     assert "LOCKED COMPONENTS" not in _render_context({"todo": [], "upstream": {}})
+
+
+def test_render_context_shows_last_read_and_stall_nudge():
+    rendered = _render_context({"todo": [], "last_read": "read_node(s1)\nlabel s1:", "stalled": True})
+    assert "LAST READ" in rendered and "label s1:" in rendered
+    assert "STOP reading" in rendered
+
+
+def test_render_context_no_stall_nudge_when_calm():
+    assert "STOP reading" not in _render_context({"todo": [], "stalled": False})

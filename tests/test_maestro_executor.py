@@ -125,6 +125,30 @@ def test_emits_progress_events(tmp_path):
     assert steps[0]["step"] == 1 and "n_failing" in steps[0] and "mode" in steps[0]
 
 
+def test_is_stalling_on_repeated_reads(tmp_path):
+    from maestro.executor import StepRecord
+    ex = Executor(_spec(), RunState(tmp_path), _tools(RunState(tmp_path)), decide=lambda c: {})
+    read = {"tool": "read_node", "args": {"node_id": "s1"}}
+    write = {"tool": "write_node", "args": {"node_id": "s1"}}
+
+    assert ex._is_stalling([StepRecord(1, read, "")]) is False           # need 2
+    assert ex._is_stalling([StepRecord(1, read, ""), StepRecord(2, read, "")]) is True
+    # different target → not stalling
+    read2 = {"tool": "read_node", "args": {"node_id": "s2"}}
+    assert ex._is_stalling([StepRecord(1, read, ""), StepRecord(2, read2, "")]) is False
+    # repeated writes are progress, not a stall
+    assert ex._is_stalling([StepRecord(1, write, ""), StepRecord(2, write, "")]) is False
+
+
+def test_read_payload_surfaced_then_cleared(tmp_path):
+    ex = Executor(_spec(), RunState(tmp_path), {}, decide=lambda c: {})
+    read = {"tool": "read_node", "args": {"node_id": "s1"}}
+    payload = ex._read_payload(read, {"ok": True, "content": 'label s1:\n    a "hi"'})
+    assert payload and 'a "hi"' in payload
+    # a write returns no payload → last_read clears
+    assert ex._read_payload({"tool": "write_node", "args": {}}, {"ok": True}) is None
+
+
 def test_context_is_rebuilt_from_durable_state(tmp_path):
     state = RunState(tmp_path)
     state.write_component("premise", {"central_question": "Q?", "characters": [{"id": "a"}, {"id": "b"}]})

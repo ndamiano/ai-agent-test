@@ -151,11 +151,14 @@ def run_check(check: Dict, artifact: Dict, run_dir) -> CheckResult:
         return False, f"{ctype} check could not run: {type(e).__name__}: {e}"
 
 
-def validate(spec, state, component_id: Optional[str] = None) -> List[Dict]:
+def validate(spec, state, component_id: Optional[str] = None,
+             skip_types: Optional[set] = None) -> List[Dict]:
     """Return the structured failure list for the spec against durable state.
 
     Each failure: {component_id, check, detail}. Empty list = every declared
     done-condition holds. Pass component_id to validate a single component.
+    skip_types omits those check types — used for a cheap live to-do that skips the
+    expensive `compiles` build while a sub-loop is mid-flight.
     """
     artifact = state.load_artifact()
     failures: List[Dict] = []
@@ -163,6 +166,8 @@ def validate(spec, state, component_id: Optional[str] = None) -> List[Dict]:
         if component_id is not None and comp.get("id") != component_id:
             continue
         for check in comp.get("done_conditions", []):
+            if skip_types and check.get("type") in skip_types:
+                continue
             ok, detail = run_check(check, artifact, state.run_dir)
             if not ok:
                 failures.append({"component_id": comp.get("id"), "check": check, "detail": detail})

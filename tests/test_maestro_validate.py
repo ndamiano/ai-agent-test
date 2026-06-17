@@ -131,3 +131,18 @@ def test_validate_scoped_to_component(tmp_path):
     ]})
     failures = validate(spec, state, component_id="b")
     assert {f["component_id"] for f in failures} == {"b"}
+
+
+def test_validate_skip_types(tmp_path):
+    state = RunState(tmp_path)
+    spec = Spec({"components": [
+        {"id": "node_scripts", "done_conditions": [
+            {"type": "exists", "path": "node_scripts.x"},
+            {"type": "compiles"},
+        ]},
+    ]})
+    # Both fail normally; skipping compiles avoids the expensive build and leaves only exists.
+    types = {f["check"]["type"] for f in validate(spec, state)}
+    assert types == {"exists", "compiles"}
+    skipped = {f["check"]["type"] for f in validate(spec, state, skip_types={"compiles"})}
+    assert skipped == {"exists"}

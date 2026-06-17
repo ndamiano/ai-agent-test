@@ -116,7 +116,7 @@ def check_all_characters_speak(artifact: Dict, check: Dict, run_dir) -> CheckRes
         spoke |= {sp for sp in _SPEAKER_RE.findall(s) if sp not in _KEYWORDS}
     silent = sorted(chars - spoke)
     if silent:
-        return False, f"characters who never speak: {silent} — give them lines or cut them"
+        return False, f"characters who never speak: {silent} — give them lines"
     return True, None
 
 

@@ -199,17 +199,20 @@ class Executor:
                 target = pick_target([f for f in failures if f["component_id"] == mode])
                 ctx = self.build_context(todo=failures)
                 ctx["target"] = target
-                n_at_start = len(failures)
 
                 def report(summary: str) -> None:
                     nonlocal step
                     step += 1
                     self.last_result = summary
                     history.append(StepRecord(step=step, action={}, summary=summary))
+                    # Live to-do without the expensive compile, so the panel reflects nodes
+                    # being written mid-sub-loop instead of freezing on the start snapshot.
+                    live = validate(self.spec, self.state, skip_types={"compiles"})
                     print(f"  step {step}/{self.max_steps} [{mode}→{target['check'].get('type')}]: "
                           f"{summary}", flush=True)
                     self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
-                               summary=summary, n_failing=n_at_start, todo=failures)
+                               summary=summary, target=target["check"].get("type"),
+                               n_failing=len(live), todo=live)
 
                 runner(target=target, context=ctx, dispatch=self._dispatch,
                        target_met=lambda: self._target_met(target), report=report,

@@ -207,7 +207,12 @@ class Executor:
                     history.append(StepRecord(step=step, action={}, summary=summary))
                     # Live to-do without the expensive compile, so the panel reflects nodes
                     # being written mid-sub-loop instead of freezing on the start snapshot.
+                    # But once the cheap checks all pass, compiles is the only thing between
+                    # here and done — run the real build THEN so the panel never reports
+                    # "0 failing" on a build that is actually red.
                     live = validate(self.spec, self.state, skip_types={"compiles"})
+                    if not live:
+                        live = validate(self.spec, self.state)
                     print(f"  step {step}/{self.max_steps} [{mode}→{target['check'].get('type')}]: "
                           f"{summary}", flush=True)
                     self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,

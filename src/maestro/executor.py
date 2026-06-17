@@ -14,6 +14,7 @@ context stays roughly constant as the game grows.
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -103,6 +104,10 @@ class Executor:
             if not failures:                       # frozen already checked above
                 return ExecutorResult(ok=True, steps=step - 1, history=history)
 
+            # Log before the (slow) LLM call so the loop isn't a silent black box.
+            print(f"  step {step}/{self.max_steps}: {len(failures)} check(s) failing — deciding...",
+                  flush=True)
+            t0 = time.perf_counter()
             action = self.decide(self.build_context(todo=failures)) or {}
             result = self._dispatch(action)
             self.last_result = self._summarize(action, result)
@@ -114,6 +119,10 @@ class Executor:
             for cid in (all_ids - now_failing) - passed:
                 self._fire_milestone(cid)
             passed = all_ids - now_failing
+
+            dt = time.perf_counter() - t0
+            print(f"  step {step}: {self.last_result}  [{dt:.0f}s, {len(failures)} failing]",
+                  flush=True)
 
         return ExecutorResult(ok=not failures, steps=self.max_steps,
                               failures=failures, history=history)
@@ -139,6 +148,9 @@ class Executor:
 
     def _summarize(self, action: Dict, result: Dict) -> str:
         name = action.get("tool", "?")
+        args = action.get("args", {}) if isinstance(action.get("args"), dict) else {}
+        target = args.get("node_id") or args.get("component_id") or ""
+        label = f"{name}({target})" if target else name
         if isinstance(result, dict) and result.get("error"):
-            return f"{name}: error — {result['error']}"
-        return f"{name}: ok"
+            return f"{label}: error — {result['error']}"
+        return f"{label}: ok"

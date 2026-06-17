@@ -59,8 +59,16 @@ def compile_renpy(working_dir, distribute: bool = True, repair: bool = False) ->
     # character without an id). compile_renpy must always return a structured
     # pass/fail — a crash is just a compile failure with a reason.
     try:
-        build_result = build(_load_artifact(working_dir), working_dir,
-                             distribute=distribute, repair=repair)
+        if distribute:
+            build_result = build(_load_artifact(working_dir), working_dir,
+                                 distribute=True, repair=repair)
+        else:
+            # Loop compile checks run constantly; silence the build's chatter so the
+            # executor's per-step log is the signal. Lint info still comes back in the result.
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                build_result = build(_load_artifact(working_dir), working_dir,
+                                     distribute=False, repair=repair)
     except Exception as e:
         return {"ok": False, "reason": f"build error: {type(e).__name__}: {e}",
                 "lint_error_count": None, "project_dir": None}

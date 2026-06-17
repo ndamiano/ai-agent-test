@@ -104,9 +104,36 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
     # caller (e.g. renpy) so maestro stays genre-agnostic. None = no structural checks.
     schemas = schemas or {}
 
+    # A component LOCKS once its own done-conditions all pass: full rewrites would
+    # otherwise drop/rename ids that other components already reference, regressing
+    # previously-passing checks. EXCEPTION: a component whose "done" includes a
+    # `compiles` check is the terminal/integration piece (e.g. node_scripts) — its
+    # correctness depends on the whole artifact, so it must stay writable until the
+    # build ends, and we never run its expensive compile just to test a lock.
+    # Keying on the compiles check (not agent-declared deps) is robust to specs that
+    # leave deps empty.
+    def _has_compiles(c: Dict) -> bool:
+        return any(dc.get("type") == "compiles" for dc in c.get("done_conditions", []))
+    # Lockable = has a real contract (done_conditions) and is not the compiles-gated
+    # terminal component. A component with no contract never locks (it "passes" vacuously).
+    _lockable = {c["id"] for c in spec.components
+                 if c.get("done_conditions") and not _has_compiles(c)}
+
     def _require_frozen():
         if not spec.frozen:
             raise SpecNotFrozen("spec must be frozen before building the artifact")
+
+    def _locked(component_id: str) -> bool:
+        return (component_id in _lockable
+                and state.read_component(component_id) is not None
+                and not validate(spec, state, component_id))
+
+    def _locked_error(component_id: str) -> Dict:
+        return {"ok": False, "error":
+                f"{component_id} is complete and locked — all its done-conditions pass. "
+                f"Do NOT rewrite it. The remaining failures are in OTHER components; fix "
+                f"those to conform to {component_id} (use its existing ids; read_component "
+                f"to see them)."}
 
     def _schema_error(component_id: str, content):
         validator = schemas.get(component_id)
@@ -119,6 +146,8 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
     # ── artifact mutation (gated on freeze) ──────────────────────────────────
     def write_component(component_id: str, content) -> Dict:
         _require_frozen()
+        if _locked(component_id):
+            return _locked_error(component_id)
         # Reject the wrong shape up front so it's an immediate steering signal, not a
         # crash inside compile later. The bad content is NOT persisted.
         err = _schema_error(component_id, content)
@@ -139,6 +168,8 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         Tolerates the delta passed nested (story_state_delta) or as flat kwargs.
         """
         _require_frozen()
+        if _locked("node_scripts"):
+            return _locked_error("node_scripts")
         if node_id == "start":
             return {"ok": False, "error": "do not use 'start' as a node id — the builder "
                                           "adds 'label start' that jumps to the first node"}

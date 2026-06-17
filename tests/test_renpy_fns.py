@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 
 from renpy.fns import (
+    _merge_cast_into_manifest,
     _parse_char_output,
     _split_dialogue,
     _guaranteed_ancestors,
@@ -659,3 +660,34 @@ def test_scene_cli_load_and_list(tmp_path, capsys):
 
     with pytest.raises(FileNotFoundError):
         scene.main([str(tmp_path / "nope")])
+
+
+# ---------------------------------------------------------------------------
+# _merge_cast_into_manifest — premise is the source of truth for the cast
+# ---------------------------------------------------------------------------
+
+def test_merge_backfills_empty_manifest_from_premise():
+    premise = {"characters": [{"id": "jack", "name": "Jack", "voice": "gruff"},
+                              {"id": "mara", "name": "Mara", "description": "informant"}]}
+    merged = _merge_cast_into_manifest(premise, {"characters": []})
+    ids = {c["id"] for c in merged["characters"]}
+    assert ids == {"jack", "mara"}
+    by_id = {c["id"]: c for c in merged["characters"]}
+    assert by_id["jack"]["image_file"] == "jack.png"
+    assert by_id["mara"]["description"] == "informant"
+
+
+def test_merge_preserves_existing_manifest_entry_as_override():
+    premise = {"characters": [{"id": "jack", "name": "Jack"}]}
+    manifest = {"characters": [{"id": "jack", "image_file": "custom_jack.png", "description": "art note"}]}
+    merged = _merge_cast_into_manifest(premise, manifest)
+    assert len(merged["characters"]) == 1
+    assert merged["characters"][0]["image_file"] == "custom_jack.png"
+
+
+def test_merge_keeps_other_manifest_keys():
+    premise = {"characters": [{"id": "jack", "name": "Jack"}]}
+    manifest = {"backgrounds": [{"id": "bg_x"}], "characters": []}
+    merged = _merge_cast_into_manifest(premise, manifest)
+    assert merged["backgrounds"] == [{"id": "bg_x"}]
+    assert {c["id"] for c in merged["characters"]} == {"jack"}

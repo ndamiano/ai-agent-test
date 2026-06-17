@@ -3,6 +3,7 @@
 import logging
 import requests
 import json
+import time
 import uuid
 from typing import Any, Dict, Optional
 from datetime import datetime
@@ -47,6 +48,14 @@ def _log_response_to_file(response: Any, endpoint: str, request_id: str, metadat
         "response": response,
         "metadata": metadata or {}
     })
+
+
+def _log_call(model: str, n_msgs: int, has_tools: bool, dt: float, result: Any) -> None:
+    """One watchable INFO line per LLM call — so a 100-step run isn't a silent black box."""
+    usage = result.get("usage", {}) if isinstance(result, dict) else {}
+    tok = usage.get("completion_tokens", "?")
+    logger.info("llm call: model=%s msgs=%d tools=%s %.1fs out_tok=%s",
+                model, n_msgs, has_tools, dt, tok)
 
 
 class OpenAICompatibleConnector(BaseConnector):
@@ -148,6 +157,7 @@ class OpenAICompatibleConnector(BaseConnector):
             metadata={"method": "generate_with_tools", "model": self.model_name, "has_tools": bool(tools)}
         )
 
+        t0 = time.perf_counter()
         try:
             response = session.post(
                 self.api_endpoint,
@@ -159,6 +169,7 @@ class OpenAICompatibleConnector(BaseConnector):
             if response.status_code == 200:
                 result = response.json()
                 result = self._unwrap_response(result)
+                _log_call(self.model_name, len(messages), bool(tools), time.perf_counter() - t0, result)
                 self._log_llm(messages, result)
                 _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
                 return result
@@ -170,6 +181,7 @@ class OpenAICompatibleConnector(BaseConnector):
                 if response.status_code == 200:
                     result = response.json()
                     result = self._unwrap_response(result)
+                    _log_call(self.model_name, len(messages), bool(tools), time.perf_counter() - t0, result)
                     self._log_llm(messages, result)
                     _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
                     return result

@@ -1019,7 +1019,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     )
 
     premise  = inputs.get("premise", {})
-    manifest = inputs.get("asset_manifest", {})
+    manifest = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
 
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -1081,6 +1081,26 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 # Stage 8: Build
 # ---------------------------------------------------------------------------
 
+def _merge_cast_into_manifest(premise: Dict, manifest: Dict) -> Dict:
+    """premise.characters is the single source of truth for the cast.
+
+    Sprite defines, placeholder pngs, image generation and the lint's valid-speaker set
+    all key off asset_manifest.characters — but the cast's identity lives in premise. If
+    the agent leaves asset_manifest.characters incomplete, every premise speaker gets
+    flagged "not defined" even though Ren'Py defines it from premise. So backfill a
+    manifest entry for every premise character (existing manifest entries win as image
+    overrides). The agent never has to duplicate the cast into the manifest.
+    """
+    chars = list(manifest.get("characters", []))
+    have = {c.get("id") for c in chars if isinstance(c, dict)}
+    for pc in premise.get("characters", []):
+        cid = pc.get("id")
+        if cid and cid not in have:
+            chars.append({"id": cid, "image_file": f"{cid}.png",
+                          "description": pc.get("description") or pc.get("voice") or cid})
+    return {**manifest, "characters": chars}
+
+
 def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:
     """Write a solid-color placeholder for every declared image that isn't on disk.
 
@@ -1113,7 +1133,7 @@ def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:
 def build(inputs: Dict, working_dir: Path, distribute: bool = True, repair: bool = True) -> Dict:
     brief        = inputs.get("brief", {})
     premise      = inputs.get("premise", {})
-    manifest     = inputs.get("asset_manifest", {})
+    manifest     = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
     node_scripts = inputs.get("node_scripts", {})
     scripts      = node_scripts.get("scripts", {})
     node_ids     = node_scripts.get("node_ids", list(scripts.keys()))

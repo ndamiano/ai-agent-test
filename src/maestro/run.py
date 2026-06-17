@@ -76,6 +76,10 @@ def _cli(request: str) -> int:
     from maestro.spec_tools import propose_spec, freeze_spec
     import json
 
+    # Without this the whole maestro/llm_clients/renpy log tree is silent on the CLI
+    # path — a 100-step build would emit nothing. INFO surfaces per-call + per-decision.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+
     run_id = create_run()
     print(f"run: {run_id}\nproposing spec for: {request!r}\n")
     spec = propose_spec(request, run_id)

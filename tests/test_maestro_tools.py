@@ -145,3 +145,45 @@ def test_write_component_normalizes_node_scripts(tmp_path):
         "node_ids": ["s1"], "scripts": {"s1": 'label s1:\\n    a \\"hi\\"\\n    return'}})
     s = state.read_component("node_scripts")["scripts"]["s1"]
     assert s == 'label s1:\n    a "hi"\n    return'
+
+
+def _spec_with_dep():
+    # premise is depended upon by node_scripts → premise is lockable; node_scripts is a leaf.
+    return Spec({"title": "T", "frozen": True, "components": [
+        {"id": "premise", "deps": [], "done_conditions": [
+            {"type": "count", "path": "premise.characters", "min": 2},
+        ]},
+        {"id": "node_scripts", "deps": ["premise"], "done_conditions": [
+            {"type": "count", "path": "node_scripts.node_ids", "min": 1},
+            {"type": "compiles"},  # the compiles gate marks the terminal/leaf component
+        ]},
+    ]})
+
+
+def test_passing_component_locks_against_rewrite(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec_with_dep(), state)
+    # First write makes premise pass → it locks.
+    assert tools["write_component"]("premise", {"characters": [{"id": "a"}, {"id": "b"}]})["ok"]
+    # A second rewrite of the now-passing, depended-upon component is refused.
+    res = tools["write_component"]("premise", {"characters": [{"id": "a"}]})
+    assert res["ok"] is False and "locked" in res["error"]
+    # The original content survives — the bad rewrite was not persisted.
+    assert len(state.read_component("premise")["characters"]) == 2
+
+
+def test_failing_depended_component_not_locked(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec_with_dep(), state)
+    # premise written but still failing (only 1 char) → not locked, rewrite allowed.
+    tools["write_component"]("premise", {"characters": [{"id": "a"}]})
+    assert tools["write_component"]("premise", {"characters": [{"id": "a"}, {"id": "b"}]})["ok"]
+
+
+def test_leaf_component_never_locks(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec_with_dep(), state)
+    # node_scripts carries a `compiles` check → terminal/leaf → never locks, stays
+    # rewritable (and the lock test short-circuits before running a real compile).
+    assert tools["write_component"]("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": "x"}})["ok"]
+    assert tools["write_component"]("node_scripts", {"node_ids": ["s1", "s2"], "scripts": {"s1": "x", "s2": "y"}})["ok"]

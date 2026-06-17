@@ -7,30 +7,17 @@ executor decides completion via validate, so the agent never claims done.
 
 import json
 import logging
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from llm_clients.message_builder import MessageBuilder
 from maestro.tools import TOOL_SCHEMAS
+from renpy.templating import render_template
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = (
-    "You are building a Ren'Py visual novel against a frozen spec. Each turn you "
-    "see the spec, the current to-do (done-conditions that still fail), your "
-    "scratchpad, the story state, and the last result. Choose exactly ONE tool call "
-    "that clears the next failing condition. You author content yourself as JSON via "
-    "write_component. When writing story nodes, use write_node so the node's dialogue "
-    "and its story-state delta (new facts, entity updates, threads, event summary) are "
-    "recorded together; rely on the story state for continuity, not on prior script.\n\n"
-    "Write a REAL story, not stubs. Each node is a full scene: several dialogue beats "
-    "between characters with subtext, not one line then a jump. Give every character "
-    "lines. Use menu: blocks for player choices that branch to different nodes. Build a "
-    "spine of scenes that reaches multiple DISTINCT endings (each ending is its own "
-    "node). If you jump to a node, create it. Speakers and `show` names must be the EXACT "
-    "character ids from the premise/manifest — never invent or rename them; narration is a "
-    "bare quoted line with no speaker (there is no 'narrator' character). Keep working "
-    "until the to-do is empty. Do not explain — call a tool."
-)
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+_SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
 
 
 def _render_context(ctx: Dict) -> str:
@@ -90,6 +77,10 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
         messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
         response = conn.generate_with_tools(messages, schemas)
-        return _parse_action(response)
+        action = _parse_action(response)
+        args = action.get("args", {}) if isinstance(action.get("args"), dict) else {}
+        target = args.get("node_id") or args.get("component_id") or ""
+        logger.info("decided: %s%s", action.get("tool", "(none)"), f"({target})" if target else "")
+        return action
 
     return decide

@@ -11,7 +11,7 @@ if __name__ == "__main__":
     log_config["formatters"]["access"]["fmt"] = "%(levelname)s:%(name)s:%(message)s"
 
     # Add our application loggers with propagate=False to prevent duplicates
-    for logger_name in ["agents", "tools", "database"]:
+    for logger_name in ["agents", "tools", "database", "maestro", "llm_clients", "renpy"]:
         log_config["loggers"][logger_name] = {"handlers": ["default"], "level": "INFO", "propagate": False}
 
     uvicorn.run(

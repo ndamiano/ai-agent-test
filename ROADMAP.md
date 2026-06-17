@@ -13,8 +13,8 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 - **Human gate** — `freeze_spec` is the human's out-of-band approval (no freeze tool); `amend_spec` (reason mandatory) un-freezes to pause for re-approval. Build tools refuse until frozen.
 - **Durable state** (`state.py`) — per-run dir `<working_dir>/runs/<run_id>/`: component JSONs (ids = compile filenames), structured scratchpad (replace-not-append), story state. Source of truth; the transcript is never memory.
 - **validate** (`validate.py`) — closed typed check set (exists / count / distinct / each_has / refs_resolve / compiles) → failure list = the recomputed to-do. Empty vs frozen spec = done.
-- **Executor** (`executor.py`) — non-LLM loop; rebuilds minimal context each step; completion decided by validate; architecture-triggered milestone check-ins.
-- **Build agent** (`agent.py`) — stateless-per-step LLM decider, one tool call per step from rebuilt context.
+- **Executor** (`executor.py`) — non-LLM loop; rebuilds minimal context each step (incl. locked-upstream content + the active per-stage mode); completion decided by validate; milestone + structured progress events (`on_event`).
+- **Build agent** (`agent.py`) — stateless-per-step LLM decider, one tool call per step. Per-stage modes: the executor derives the active component from the to-do (dep order), giving that stage a scoped system prompt + restricted tool set (e.g. `mode_node.txt` for node writing). Locked components are injected into context so the agent never hunts ids via `read_component`.
 - **Tools** (`tools.py`) — write_component / write_node (fused with story-state delta), read_component / read_story_state, generate_asset, validate, compile_renpy, update_scratchpad, request_review.
 - **Story state** (`story_state.py`) — continuity bible (facts / entities / open threads / recent tail); snapshot not log; spine-tracked.
 - **Run** (`run.py`) — `python -m maestro.run "<request>"` CLI: propose → freeze → build → project path.
@@ -25,7 +25,9 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 
 **Platform** — tool manager (decorator, auto schema inference), WebSocket event bus, model category settings (`large`/`medium`/`small`).
 
-**Pending** — frontend rebuild (the old task UI was demolished; spec-review surface not yet built — `frontend/` still calls the removed `/api/tasks`); live-LLM end-to-end validation; eval is trimmed to grading finished artifacts (`eval/cli.py score game`), hill-climb tooling to return later.
+**Frontend** — rebuilt chat-first (`frontend/`): a chat tab and a Games tab that browses runs, freezes a spec, kicks a build, and streams live build progress over the websocket. Remaining UX: optimistic mid-build interjection ("I don't like this"), `revise_component`/`fork_run`, chat-spawned builds, LLM quality-gate (see `per-stage-differentiation.md` Part D).
+
+**Pending** — live-LLM end-to-end validation; eval is trimmed to grading finished artifacts (`eval/cli.py score game`), hill-climb tooling to return later.
 
 ---
 

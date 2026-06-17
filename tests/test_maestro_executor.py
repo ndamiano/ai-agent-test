@@ -97,6 +97,34 @@ def test_done_not_faked_by_agent(tmp_path):
     assert len(result.failures) > 0
 
 
+def test_emits_progress_events(tmp_path):
+    state = RunState(tmp_path)
+
+    def decide(ctx):
+        outstanding = {f["component_id"] for f in ctx["todo"]}
+        if "premise" in outstanding:
+            return {"tool": "write_component", "args": {
+                "component_id": "premise",
+                "content": {"central_question": "Q?", "characters": [{"id": "a"}, {"id": "b"}]},
+            }}
+        return {"tool": "write_component", "args": {
+            "component_id": "graph", "content": {"nodes": [{"id": "n1"}]}}}
+
+    events = []
+    ex = Executor(_spec(), state, _tools(state), decide, max_steps=10,
+                  on_event=events.append)
+    ex.run()
+
+    types = [e["type"] for e in events]
+    assert types[0] == "build_started"
+    assert types.count("build_step") == 2
+    assert types[-1] == "build_done"
+    assert events[-1]["ok"] is True
+    # build_step carries the active mode + shrinking failure count.
+    steps = [e for e in events if e["type"] == "build_step"]
+    assert steps[0]["step"] == 1 and "n_failing" in steps[0] and "mode" in steps[0]
+
+
 def test_context_is_rebuilt_from_durable_state(tmp_path):
     state = RunState(tmp_path)
     state.write_component("premise", {"central_question": "Q?", "characters": [{"id": "a"}, {"id": "b"}]})

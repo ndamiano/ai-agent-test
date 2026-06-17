@@ -82,9 +82,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     const message: WebSocketMessage = JSON.parse(event.data)
                     setMessages(prev => [...prev, message])
 
-                    // Notify subscribers for this task_id
-                    if ('task_id' in message) {
-                        const callbacks = subscribersRef.current.get(message.task_id)
+                    // Notify subscribers keyed by run_id (builds) or task_id (legacy).
+                    const key = message.run_id ?? message.task_id
+                    if (key) {
+                        const callbacks = subscribersRef.current.get(key)
                         if (callbacks) {
                             callbacks.forEach(callback => callback(message))
                         }

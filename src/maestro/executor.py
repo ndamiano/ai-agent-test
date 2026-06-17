@@ -50,7 +50,8 @@ class Executor:
     """
 
     def __init__(self, spec, state, tools: Dict[str, Callable], decide: Callable,
-                 max_steps: int = 60, on_milestone: Optional[Callable[[str], None]] = None):
+                 max_steps: int = 60, on_milestone: Optional[Callable[[str], None]] = None,
+                 on_event: Optional[Callable[[Dict], None]] = None):
         self.spec = spec
         self.state = state
         self.tools = tools
@@ -59,12 +60,43 @@ class Executor:
         # Architecture-triggered check-in: called the first time a component's
         # done-conditions all pass. The agent doesn't judge when to interrupt.
         self.on_milestone = on_milestone
+        # Optional progress sink (e.g. the websocket bus). Transport-agnostic: the
+        # executor emits structured dicts; the caller decides where they go.
+        self.on_event = on_event
         self.last_result: Optional[str] = None
+
+    def _emit(self, event_type: str, **fields) -> None:
+        if self.on_event is None:
+            return
+        try:
+            self.on_event({"type": event_type, **fields})
+        except Exception:
+            logger.exception("on_event callback failed for %s", event_type)
 
     # ── context (rebuilt fresh each step from durable state) ─────────────────
     def build_context(self, todo: Optional[List[Dict]] = None) -> Dict:
         # `todo` may be passed in to avoid recomputing validate (the compiles check
         # runs a real Ren'Py build, so we run validate once per step, not per use).
+        todo = validate(self.spec, self.state) if todo is None else todo
+
+        # A component whose done-conditions all pass is "locked": its content (e.g. the
+        # premise's character ids) is settled and downstream steps must conform to it, so
+        # hand it to the agent directly instead of making it call read_component. Derived
+        # from the to-do — no extra validate. node_scripts is compiles-gated, so it only
+        # passes when the build is essentially done; it never bloats this mid-build.
+        failing_ids = {f["component_id"] for f in todo}
+        upstream = {}
+        for cid in (c.get("id") for c in self.spec.components):
+            if cid in failing_ids:
+                continue
+            content = self.state.read_component(cid)
+            if content is not None:
+                upstream[cid] = content
+
+        # The active "mode" = the earliest still-failing component in dependency order.
+        # The executor decides this, not the agent (routing stays non-LLM).
+        mode = next((cid for cid in self.spec.dep_order() if cid in failing_ids), None)
+
         return {
             "spec": {
                 "title": self.spec.title,
@@ -75,7 +107,9 @@ class Executor:
                     for c in self.spec.components
                 ],
             },
-            "todo": validate(self.spec, self.state) if todo is None else todo,
+            "todo": todo,
+            "mode": mode,
+            "upstream": upstream,
             "scratchpad": self.state.read_scratchpad(),
             "story_state": self.state.read_story_state(),
             "last_result": self.last_result,
@@ -99,16 +133,20 @@ class Executor:
         # for ones that were failing and then transition to passing.
         failures = validate(self.spec, self.state)
         passed = all_ids - {f["component_id"] for f in failures}
+        self._emit("build_started", n_failing=len(failures), max_steps=self.max_steps)
 
         for step in range(1, self.max_steps + 1):
             if not failures:                       # frozen already checked above
+                self._emit("build_done", ok=True, steps=step - 1)
                 return ExecutorResult(ok=True, steps=step - 1, history=history)
 
             # Log before the (slow) LLM call so the loop isn't a silent black box.
             print(f"  step {step}/{self.max_steps}: {len(failures)} check(s) failing — deciding...",
                   flush=True)
             t0 = time.perf_counter()
-            action = self.decide(self.build_context(todo=failures)) or {}
+            ctx = self.build_context(todo=failures)
+            mode = ctx.get("mode")
+            action = self.decide(ctx) or {}
             result = self._dispatch(action)
             self.last_result = self._summarize(action, result)
             history.append(StepRecord(step=step, action=action, summary=self.last_result))
@@ -123,7 +161,10 @@ class Executor:
             dt = time.perf_counter() - t0
             print(f"  step {step}: {self.last_result}  [{dt:.0f}s, {len(failures)} failing]",
                   flush=True)
+            self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
+                       summary=self.last_result, elapsed=round(dt, 1), n_failing=len(failures))
 
+        self._emit("build_done", ok=not failures, steps=self.max_steps)
         return ExecutorResult(ok=not failures, steps=self.max_steps,
                               failures=failures, history=history)
 

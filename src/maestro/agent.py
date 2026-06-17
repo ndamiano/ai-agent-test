@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
 
+# Per-stage modes: a still-failing component can get a tighter system prompt + a
+# restricted tool set. The executor picks the mode (context["mode"]); an unknown/None
+# mode falls back to the general prompt + full tools, so nothing regresses.
+_MODE_PROMPTS: Dict[str, str] = {
+    "node_scripts": render_template(_PROMPTS_DIR / "mode_node.txt", {}),
+}
+_MODE_TOOLS: Dict[str, frozenset] = {
+    "node_scripts": frozenset({"write_node", "read_story_state", "validate",
+                               "compile_renpy", "update_scratchpad", "request_review"}),
+}
+
+
+def _schemas_for_mode(mode: Optional[str], all_schemas: List[Dict]) -> List[Dict]:
+    allowed = _MODE_TOOLS.get(mode)
+    if not allowed:
+        return all_schemas
+    return [s for s in all_schemas if s.get("function", {}).get("name") in allowed]
+
 
 def _render_context(ctx: Dict) -> str:
     todo = ctx.get("todo", [])
@@ -33,6 +51,13 @@ def _render_context(ctx: Dict) -> str:
         "",
         f"SCRATCHPAD: {json.dumps(pad, ensure_ascii=False)}",
     ]
+    upstream = ctx.get("upstream") or {}
+    if upstream:
+        lines += [
+            "",
+            "LOCKED COMPONENTS (settled — use these EXACT ids, do not invent or rename):",
+            json.dumps(upstream, ensure_ascii=False),
+        ]
     if ctx.get("story_state"):
         lines.append(f"STORY STATE: {json.dumps(ctx['story_state'], ensure_ascii=False)}")
     lines += [
@@ -70,10 +95,13 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
                      component_guide: str = "") -> Callable:
     from llm_clients.connector_selector import get_connector
     conn = connector or get_connector()
-    schemas = tool_schemas or TOOL_SCHEMAS
-    system = f"{_SYSTEM}\n\n{component_guide}" if component_guide else _SYSTEM
+    all_schemas = tool_schemas or TOOL_SCHEMAS
+    guide_suffix = f"\n\n{component_guide}" if component_guide else ""
 
     def decide(context: Dict) -> Dict:
+        mode = context.get("mode")
+        system = _MODE_PROMPTS.get(mode, _SYSTEM) + guide_suffix
+        schemas = _schemas_for_mode(mode, all_schemas)
         messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
         response = conn.generate_with_tools(messages, schemas)

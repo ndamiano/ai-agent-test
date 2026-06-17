@@ -7,12 +7,18 @@ Build orchestration (freeze/build/streaming) lives in the next phase.
 """
 
 import logging
+import threading
 from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Run ids with a build thread in flight. Guards against double-builds and lets the
+# UI show a "building" state on load (the live event stream covers the rest).
+_active_builds: set = set()
+_active_lock = threading.Lock()
 
 
 def _runs_dir():
@@ -46,6 +52,7 @@ async def list_games():
             "title": spec.get("title", ""),
             "frozen": bool(spec.get("frozen")),
             "built": _is_built(run_dir),
+            "building": run_dir.name in _active_builds,
             "n_components": len(state.component_ids()),
             "mtime": run_dir.stat().st_mtime,
         })
@@ -74,4 +81,46 @@ async def get_game(run_id: str):
         "todo": validate(spec, state),
         "frozen": spec.frozen,
         "built": _is_built(state.run_dir),
+        "building": run_id in _active_builds,
     }
+
+
+@router.post("/{run_id}/freeze", response_model=Dict)
+async def freeze_game(run_id: str):
+    """Human approval action — freeze the spec so the build can run."""
+    from maestro.spec_tools import freeze_spec
+    from maestro.state import RunState
+
+    if RunState.for_run(run_id).read_spec() is None:
+        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    return freeze_spec(run_id)
+
+
+@router.post("/{run_id}/build", response_model=Dict)
+async def build_game(run_id: str):
+    """Kick a build on a background thread. Progress streams over the websocket."""
+    from maestro.run import run_build
+    from maestro.state import RunState
+
+    spec_data = RunState.for_run(run_id).read_spec()
+    if spec_data is None:
+        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    if not spec_data.get("frozen"):
+        raise HTTPException(status_code=400, detail="freeze the spec before building")
+
+    with _active_lock:
+        if run_id in _active_builds:
+            raise HTTPException(status_code=409, detail="build already in progress")
+        _active_builds.add(run_id)
+
+    def _run():
+        try:
+            run_build(run_id)
+        except Exception:
+            logger.exception("build failed for %s", run_id)
+        finally:
+            with _active_lock:
+                _active_builds.discard(run_id)
+
+    threading.Thread(target=_run, daemon=True, name=f"build-{run_id}").start()
+    return {"status": "building", "run_id": run_id}

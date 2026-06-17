@@ -49,6 +49,7 @@ def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
+        on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
     )
 
     t0 = time.perf_counter()

@@ -36,11 +36,15 @@ async function request<T>(path: string, init?: RequestInit, retries = 2): Promis
 }
 
 export const api = {
-    // Games (read-only browse of build runs)
+    // Games
     listGames: () =>
         request<Game[]>('/games'),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
+    freezeGame: (runId: string) =>
+        request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
+    buildGame: (runId: string) =>
+        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST' }),
 
     // System
     getStatus: () =>

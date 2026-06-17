@@ -5,6 +5,7 @@ export interface Game {
     title: string
     frozen: boolean
     built: boolean
+    building: boolean
     n_components: number
     mtime: number
 }
@@ -37,6 +38,7 @@ export interface GameDetail {
     todo: TodoItem[]
     frozen: boolean
     built: boolean
+    building: boolean
 }
 
 export interface SystemStatus {

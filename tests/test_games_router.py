@@ -53,6 +53,68 @@ def test_get_game_404_for_unknown(tmp_path, monkeypatch):
     assert exc.value.status_code == 404
 
 
+def _patch_for_run(monkeypatch, base):
+    monkeypatch.setattr(RunState, "for_run",
+                        classmethod(lambda cls, rid: RunState(base / rid)))
+
+
+def test_freeze_game_sets_frozen(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    RunState(tmp_path / "g").write_spec({"title": "G", "frozen": False, "components": []})
+
+    assert asyncio.run(games.freeze_game("g"))["frozen"] is True
+    assert RunState(tmp_path / "g").read_spec()["frozen"] is True
+
+
+def test_freeze_game_404(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.freeze_game("ghost"))
+    assert exc.value.status_code == 404
+
+
+def test_build_requires_frozen_spec(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    RunState(tmp_path / "g").write_spec({"title": "G", "frozen": False, "components": []})
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.build_game("g"))
+    assert exc.value.status_code == 400
+
+
+def test_build_starts_thread_and_guards_double_build(tmp_path, monkeypatch):
+    import threading
+    _patch_for_run(monkeypatch, tmp_path)
+    RunState(tmp_path / "g").write_spec({"title": "G", "frozen": True, "components": []})
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def fake_run_build(run_id, *a, **k):
+        started.set()
+        release.wait(timeout=5)
+
+    monkeypatch.setattr("maestro.run.run_build", fake_run_build)
+
+    try:
+        assert asyncio.run(games.build_game("g"))["status"] == "building"
+        assert started.wait(timeout=5)
+        # Second build while the first is in flight is rejected.
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(games.build_game("g"))
+        assert exc.value.status_code == 409
+    finally:
+        release.set()
+    # After the thread finishes, the guard clears.
+    for _ in range(50):
+        if "g" not in games._active_builds:
+            break
+        import time; time.sleep(0.05)
+    assert "g" not in games._active_builds
+
+
 def test_get_game_returns_spec_artifact_todo(tmp_path, monkeypatch):
     monkeypatch.setattr(RunState, "for_run",
                         classmethod(lambda cls, rid: RunState(tmp_path / rid)))

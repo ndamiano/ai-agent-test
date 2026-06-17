@@ -26,8 +26,10 @@ _SYSTEM = (
     "between characters with subtext, not one line then a jump. Give every character "
     "lines. Use menu: blocks for player choices that branch to different nodes. Build a "
     "spine of scenes that reaches multiple DISTINCT endings (each ending is its own "
-    "node). If you jump to a node, create it. Keep working until the to-do is empty. "
-    "Do not explain — call a tool."
+    "node). If you jump to a node, create it. Speakers and `show` names must be the EXACT "
+    "character ids from the premise/manifest — never invent or rename them; narration is a "
+    "bare quoted line with no speaker (there is no 'narrator' character). Keep working "
+    "until the to-do is empty. Do not explain — call a tool."
 )
 
 

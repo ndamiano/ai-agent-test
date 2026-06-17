@@ -101,3 +101,36 @@ def test_executor_drives_real_tools_to_completion(tmp_path):
     result = Executor(spec, state, tools, decide, max_steps=5).run()
     assert result.ok is True
     assert result.failures == []
+
+
+def test_write_node_accepts_flat_delta_kwargs(tmp_path):
+    # The model passes delta fields flat (entity_updates=...) instead of nested; this
+    # used to crash with TypeError. Now folded into the delta.
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    res = tools["write_node"]("scene_01", "label scene_01:\n    return",
+                              new_facts=["a clue surfaced"],
+                              entity_updates={"mara": {"trust": "wary"}})
+    assert res["ok"] is True
+    ss = state.read_story_state()
+    assert "a clue surfaced" in ss["established_facts"]
+    assert ss["entity_states"]["mara"]["trust"] == "wary"
+
+
+def test_write_node_normalizes_over_escaped_script(tmp_path):
+    # Model over-escaped: literal \n and \" instead of real newline/quote. Normalize it.
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("scene_01", 'label scene_01:\\n    evelyn \\"Hi.\\"\\n    return')
+    script = state.read_component("node_scripts")["scripts"]["scene_01"]
+    assert "\\n" not in script and '\\"' not in script
+    assert script == 'label scene_01:\n    evelyn "Hi."\n    return'
+
+
+def test_write_component_normalizes_node_scripts(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_component"]("node_scripts", {
+        "node_ids": ["s1"], "scripts": {"s1": 'label s1:\\n    a \\"hi\\"\\n    return'}})
+    s = state.read_component("node_scripts")["scripts"]["s1"]
+    assert s == 'label s1:\n    a "hi"\n    return'

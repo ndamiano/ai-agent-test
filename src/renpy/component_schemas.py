@@ -109,7 +109,10 @@ SKELETONS: Dict[str, str] = {
         '// scene <bg id> + show/speaker <character id> must exist in asset_manifest.\n'
         '// Every node_id needs a scripts entry; the builder adds "label start" -> node_ids[0].\n'
         '// Any jump/menu target MUST be a node you also create (jump scene_02 -> build scene_02).\n'
-        '// Each ending in premise.endings must be its own node, reached via choices.'
+        '// Each ending in premise.endings must be its own node, reached via choices.\n'
+        '// Speakers and `show` names must be EXACT character ids from the manifest — do not\n'
+        '//   invent or rename (no \\"maria\\" if the id is \\"mara\\"). Narration is a BARE quoted\n'
+        '//   line with NO speaker: "    \\"The rain fell.\\"" — there is no \\"narrator\\" character.'
     ),
 }
 

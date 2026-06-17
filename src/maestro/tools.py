@@ -20,6 +20,22 @@ class SpecNotFrozen(RuntimeError):
     pass
 
 
+# Small local models routinely over-escape when emitting script text as a JSON string
+# value — producing literal "\n" / "\"" instead of real newlines and quotes, which
+# corrupts the Ren'Py node. Undo one level of over-escaping. Idempotent for correct
+# content (real newlines/quotes are untouched).
+def _normalize_script(text):
+    if not isinstance(text, str):
+        return text
+    return text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+
+
+# Story-state delta fields, so write_node can accept them whether nested under
+# story_state_delta or passed flat (the model does both).
+_DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
+                 "open_threads_resolve", "event_summary")
+
+
 # OpenAI-format schemas for the decider's tool-calling. Kept beside build_tools so
 # the names stay in sync.
 TOOL_SCHEMAS: List[Dict] = [
@@ -108,14 +124,19 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         err = _schema_error(component_id, content)
         if err:
             return {"ok": False, "error": f"invalid {component_id}: {err}"}
+        # Fix over-escaped script text the model may have written into node_scripts.
+        if component_id == "node_scripts" and isinstance(content.get("scripts"), dict):
+            content["scripts"] = {k: _normalize_script(v) for k, v in content["scripts"].items()}
         state.write_component(component_id, content)
         return {"ok": True, "component_id": component_id}
 
-    def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None) -> Dict:
+    def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
+                   **delta_fields) -> Dict:
         """Fused: write one node into node_scripts AND merge its story-state delta.
 
         Producing the dialogue and the continuity bookkeeping in one call keeps them
         consistent. The next node reads the updated story state, never prior script.
+        Tolerates the delta passed nested (story_state_delta) or as flat kwargs.
         """
         _require_frozen()
         if node_id == "start":
@@ -125,16 +146,19 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return {"ok": False, "error": "node content must be non-empty Ren'Py script text"}
         from maestro.story_state import init_story_state, apply_delta
 
+        delta = dict(story_state_delta or {})
+        delta.update({k: v for k, v in delta_fields.items() if k in _DELTA_FIELDS})
+
         ns = state.read_component("node_scripts") or {"scripts": {}, "node_ids": []}
-        ns.setdefault("scripts", {})[node_id] = content
+        ns.setdefault("scripts", {})[node_id] = _normalize_script(content)
         ns.setdefault("node_ids", [])
         if node_id not in ns["node_ids"]:
             ns["node_ids"].append(node_id)
         state.write_component("node_scripts", ns)
 
-        if story_state_delta:
+        if delta:
             ss = state.read_story_state() or init_story_state(spec.story_state_schema)
-            apply_delta(ss, story_state_delta)
+            apply_delta(ss, delta)
             state.write_story_state(ss)
 
         return {"ok": True, "node_id": node_id}

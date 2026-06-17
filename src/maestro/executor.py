@@ -35,6 +35,7 @@ class ExecutorResult:
     steps: int
     failures: List[Dict] = field(default_factory=list)
     history: List[StepRecord] = field(default_factory=list)
+    elapsed: float = 0.0
 
 
 class SpecNotFrozenError(RuntimeError):

@@ -117,6 +117,17 @@ def test_write_node_accepts_flat_delta_kwargs(tmp_path):
     assert ss["entity_states"]["mara"]["trust"] == "wary"
 
 
+def test_write_node_tolerates_malformed_delta(tmp_path):
+    # The model sometimes passes story_state_delta as a list/string, not a dict.
+    # Must not crash (this hit a ValueError live).
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    assert tools["write_node"]("scene_01", "label scene_01:\n    return",
+                               story_state_delta=["new_facts"])["ok"] is True
+    assert tools["write_node"]("scene_02", "label scene_02:\n    return",
+                               story_state_delta="oops")["ok"] is True
+
+
 def test_write_node_normalizes_over_escaped_script(tmp_path):
     # Model over-escaped: literal \n and \" instead of real newline/quote. Normalize it.
     state = RunState(tmp_path)

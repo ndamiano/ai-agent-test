@@ -146,7 +146,8 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return {"ok": False, "error": "node content must be non-empty Ren'Py script text"}
         from maestro.story_state import init_story_state, apply_delta
 
-        delta = dict(story_state_delta or {})
+        # Tolerate a malformed story_state_delta (the model sometimes passes a list/str).
+        delta = dict(story_state_delta) if isinstance(story_state_delta, dict) else {}
         delta.update({k: v for k, v in delta_fields.items() if k in _DELTA_FIELDS})
 
         ns = state.read_component("node_scripts") or {"scripts": {}, "node_ids": []}

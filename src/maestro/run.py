@@ -8,11 +8,15 @@
 The build refuses unless the spec is frozen — freezing is your action.
 """
 
+import logging
 import sys
+import time
 import uuid
 from typing import Optional
 
 from maestro.spec import Spec
+
+logger = logging.getLogger(__name__)
 from maestro.state import RunState
 from maestro.tools import build_tools
 from maestro.agent import make_llm_decider
@@ -46,6 +50,8 @@ def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
     )
+
+    t0 = time.perf_counter()
     result = executor.run()
 
     if result.ok:
@@ -59,6 +65,10 @@ def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
         except Exception:
             pass  # placeholders already cover the build; never fail delivery on art
         compile_renpy(state.run_dir, distribute=True)
+
+    result.elapsed = time.perf_counter() - t0
+    logger.info("build %s: ok=%s steps=%d elapsed=%.1fs",
+                run_id, result.ok, result.steps, result.elapsed)
     return result
 
 
@@ -80,7 +90,9 @@ def _cli(request: str) -> int:
     print("\nfrozen — building...\n")
     result = run_build(run_id)
 
-    print(f"\nok={result.ok}  steps={result.steps}")
+    mins, secs = divmod(int(result.elapsed), 60)
+    print(f"\nok={result.ok}  steps={result.steps}  elapsed={mins}m{secs:02d}s "
+          f"({result.elapsed:.1f}s)")
     if not result.ok:
         for f in result.failures:
             print(f"  unmet: [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}")

@@ -30,8 +30,8 @@ _MODE_PROMPTS: Dict[str, str] = {
 _MODE_TOOLS: Dict[str, frozenset] = {
     "premise": frozenset({"write_component", "update_scratchpad", "request_review"}),
     "asset_manifest": frozenset({"write_component", "update_scratchpad", "request_review"}),
-    "node_scripts": frozenset({"write_node", "edit_node", "read_story_state", "validate",
-                               "compile_renpy", "update_scratchpad", "request_review"}),
+    "node_scripts": frozenset({"write_node", "edit_node", "read_node", "read_story_state",
+                               "validate", "compile_renpy", "update_scratchpad", "request_review"}),
 }
 
 
@@ -61,6 +61,22 @@ def _render_context(ctx: Dict) -> str:
             "",
             "LOCKED COMPONENTS (settled — use these EXACT ids, do not invent or rename):",
             json.dumps(upstream, ensure_ascii=False),
+        ]
+    view = ctx.get("active_view")
+    if view and view.get("node_ids"):
+        edges = view.get("edges", {})
+        counts = view.get("line_counts", {})
+        unreachable = set(view.get("unreachable", []))
+        node_lines = [
+            f"  {nid} -> {edges.get(nid, [])}"
+            f"  ({'UNREACHABLE' if nid in unreachable else 'reachable'}, {counts.get(nid, 0)} lines)"
+            for nid in view["node_ids"]
+        ]
+        lines += [
+            "",
+            "CURRENT NODES (these already exist — reuse these EXACT ids; jump ONLY to an id "
+            "listed here or to a node you also create this step):",
+            *node_lines,
         ]
     if ctx.get("story_state"):
         lines.append(f"STORY STATE: {json.dumps(ctx['story_state'], ensure_ascii=False)}")

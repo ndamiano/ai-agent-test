@@ -33,7 +33,7 @@ def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
     # A spec that demands a real VN (many nodes + branching) needs more steps than a
     # trivial one; the loop is cheap now (compile checks lint-only).
     from maestro.spec_tools import _emit
-    from renpy.checks import register_all as register_renpy_checks
+    from renpy.checks import register_all as register_renpy_checks, node_view
     from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide
 
     register_renpy_checks()  # make reachable_from_start / min_branches / ... available
@@ -50,6 +50,7 @@ def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
+        projectors={"node_scripts": node_view},
     )
 
     t0 = time.perf_counter()

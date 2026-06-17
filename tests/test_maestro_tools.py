@@ -51,6 +51,16 @@ def test_edit_node_surgical_replace(tmp_path):
     assert "jump s2" in s1          # the rest of the node (incl. its jump) is untouched
 
 
+def test_read_node(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    a "hi"'}})
+
+    got = tools["read_node"]("s1")
+    assert got["ok"] is True and 'a "hi"' in got["content"]
+    assert tools["read_node"]("nope")["ok"] is False
+
+
 def test_edit_node_errors(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)

@@ -11,6 +11,15 @@ USE THE LOCKED IDS — they are handed to you, do not go looking:
   line with NO speaker — there is no "narrator" character.
 - The ids you need are already in the context. You do not need to read anything.
 
+WORK FROM THE CURRENT NODES LIST — DON'T GUESS, DON'T RENAME:
+- The CURRENT NODES block lists every node that already exists, its jump targets, whether
+  it's reachable, and its line count. Reuse these EXACT ids. Never a renamed variant
+  (no `cave_scene` if the node is `scene_cave`; no `arena_scene` if it's `scene_arena`).
+- Only touch nodes named in the TO-DO. Do NOT rewrite a scene that already passes — that
+  changes its jumps and orphans other nodes, creating new failures.
+- Every `jump`/`menu` target must be an id already in CURRENT NODES, or a node you create
+  in the SAME step. A jump to anything else is the "unknown jump target" error.
+
 FIXING COMPILE/LINT ERRORS — STAY SURGICAL:
 - A `compiles` failure names the node in brackets, e.g. `[scene_3] line 89: unterminated
   string literal`. Fix ONLY that node — do not touch others.
@@ -25,8 +34,9 @@ REACHABILITY:
 - Every node must be reachable from the first node via a chain of `jump`/`menu`.
 - When you create node X, make sure some existing node jumps to X (directly or via a menu
   choice). An ending node is reached by a choice.
-- If `reachable_from_start` lists orphan nodes, add a jump/menu that reaches them — do not
-  create more new nodes.
+- If a node is marked UNREACHABLE in CURRENT NODES, fix it by adding a `jump`/`menu` choice
+  FROM a reachable node TO that orphan (edit_node on the reachable node). Do NOT recreate or
+  rename the orphan, and do not add more new nodes.
 - Each ending in premise.endings must be its own node, reached via choices.
 
 WRITE A REAL STORY, NOT STUBS:

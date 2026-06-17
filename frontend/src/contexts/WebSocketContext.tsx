@@ -96,6 +96,10 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }
 
             ws.onclose = () => {
+                // A superseded socket (replaced on remount, e.g. StrictMode) must not
+                // touch shared state or reconnect — otherwise we end up with two live
+                // sockets and every event is delivered twice.
+                if (wsRef.current !== ws) return
                 setConnected(false)
                 if (!unmountedRef.current && retryCountRef.current < MAX_RETRIES) {
                     const attempt = retryCountRef.current

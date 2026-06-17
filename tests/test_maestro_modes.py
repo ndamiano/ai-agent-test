@@ -55,6 +55,28 @@ def test_upstream_holds_passing_components_only(tmp_path):
     assert "node_scripts" not in ctx["upstream"]            # still failing → withheld
 
 
+def test_active_view_from_projector(tmp_path):
+    state = RunState(tmp_path)
+    state.write_component("premise", {"central_question": "Q?"})  # passes → not the mode
+    state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": "label s1:"}})
+
+    proj = lambda artifact: {"node_ids": artifact.get("node_scripts", {}).get("node_ids", [])}
+    ex = Executor(_spec(), state, tools={}, decide=lambda c: {}, max_steps=1,
+                  projectors={"node_scripts": proj})
+
+    todo = [{"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"}]
+    ctx = ex.build_context(todo=todo)
+    assert ctx["mode"] == "node_scripts"
+    assert ctx["active_view"] == {"node_ids": ["s1"]}
+
+
+def test_active_view_none_without_projector_for_mode(tmp_path):
+    state = RunState(tmp_path)
+    ex = _executor(state)  # no projectors
+    todo = [{"component_id": "premise", "check": {"type": "exists"}, "detail": "y"}]
+    assert ex.build_context(todo=todo)["active_view"] is None
+
+
 def test_no_mode_when_nothing_failing(tmp_path):
     state = RunState(tmp_path)
     ex = _executor(state)

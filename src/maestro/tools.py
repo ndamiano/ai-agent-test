@@ -76,6 +76,13 @@ TOOL_SCHEMAS: List[Dict] = [
         "parameters": {"type": "object", "properties": {
             "component_id": {"type": "string"}}, "required": ["component_id"]}}},
     {"type": "function", "function": {
+        "name": "read_node",
+        "description": "Read one node's current Ren'Py script — do this before edit_node so "
+                       "you quote an EXACT snippet from it, and to see a node's jumps/lines "
+                       "before fixing it.",
+        "parameters": {"type": "object", "properties": {
+            "node_id": {"type": "string"}}, "required": ["node_id"]}}},
+    {"type": "function", "function": {
         "name": "read_story_state",
         "description": "Read the continuity bible (facts, entity states, open threads, "
                        "recent events) before writing the next node.",
@@ -245,6 +252,12 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return {"ok": False, "error": f"no component {component_id!r}"}
         return {"ok": True, "component_id": component_id, "content": content}
 
+    def read_node(node_id: str) -> Dict:
+        scripts = (state.read_component("node_scripts") or {}).get("scripts", {})
+        if node_id not in scripts:
+            return {"ok": False, "error": f"no node {node_id!r}"}
+        return {"ok": True, "node_id": node_id, "content": scripts[node_id]}
+
     def read_story_state() -> Dict:
         from maestro.story_state import init_story_state
         return {"ok": True, "story_state": state.read_story_state() or init_story_state(spec.story_state_schema)}
@@ -276,6 +289,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         "write_node": write_node,
         "edit_node": edit_node,
         "read_component": read_component,
+        "read_node": read_node,
         "read_story_state": read_story_state,
         "generate_asset": generate_asset,
         "validate": validate_tool,

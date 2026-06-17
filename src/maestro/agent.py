@@ -26,7 +26,7 @@ _MODE_PROMPTS: Dict[str, str] = {
     "node_scripts": render_template(_PROMPTS_DIR / "mode_node.txt", {}),
 }
 _MODE_TOOLS: Dict[str, frozenset] = {
-    "node_scripts": frozenset({"write_node", "read_story_state", "validate",
+    "node_scripts": frozenset({"write_node", "edit_node", "read_story_state", "validate",
                                "compile_renpy", "update_scratchpad", "request_review"}),
 }
 

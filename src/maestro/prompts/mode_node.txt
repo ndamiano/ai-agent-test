@@ -11,6 +11,16 @@ USE THE LOCKED IDS — they are handed to you, do not go looking:
   line with NO speaker — there is no "narrator" character.
 - The ids you need are already in the context. You do not need to read anything.
 
+FIXING COMPILE/LINT ERRORS — STAY SURGICAL:
+- A `compiles` failure names the node in brackets, e.g. `[scene_3] line 89: unterminated
+  string literal`. Fix ONLY that node — do not touch others.
+- For a single bad line (an unterminated string, a stray quote), use `edit_node` to
+  replace just that snippet. Do NOT rewrite the whole scene with `write_node` to fix one
+  line — a full rewrite tends to drop the scene's jump/menu and orphan other nodes,
+  creating new reachability failures.
+- Common cause of "unterminated string": a quote inside dialogue. Escape inner quotes
+  (\\") or rephrase. Speaker lines are `char_id "text"`, never `Name: "text"`.
+
 REACHABILITY:
 - Every node must be reachable from the first node via a chain of `jump`/`menu`.
 - When you create node X, make sure some existing node jumps to X (directly or via a menu

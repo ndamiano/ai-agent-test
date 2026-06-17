@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
-import type { Game, GameDetail, WebSocketMessage } from '../types'
+import type { Game, GameDetail, TodoItem, WebSocketMessage } from '../types'
 
 const Badge: React.FC<{ label: string; tone: 'green' | 'blue' | 'gray' | 'amber' }> = ({ label, tone }) => {
     const tones = {
@@ -20,6 +20,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const [error, setError] = useState<string | null>(null)
     const [building, setBuilding] = useState(false)
     const [feed, setFeed] = useState<string[]>([])
+    const [liveTodo, setLiveTodo] = useState<TodoItem[] | null>(null)
     const [acting, setActing] = useState(false)
 
     const load = useCallback(() => {
@@ -33,7 +34,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         return () => { cancelled = true }
     }, [runId])
 
-    useEffect(() => { setFeed([]); return load() }, [load])
+    useEffect(() => { setFeed([]); setLiveTodo(null); return load() }, [load])
 
     // Live build events for this run.
     useEffect(() => {
@@ -42,12 +43,14 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'build_started':
                     setBuilding(true)
                     setFeed([`build started — ${msg.n_failing} checks failing`])
+                    if (msg.todo) setLiveTodo(msg.todo)
                     break
                 case 'build_step':
                     setFeed(prev => [
                         ...prev.slice(-40),
                         `step ${msg.step}${msg.mode ? ` [${msg.mode}]` : ''}: ${msg.summary} — ${msg.n_failing} failing`,
                     ])
+                    if (msg.todo) setLiveTodo(msg.todo)
                     break
                 case 'component_complete':
                     setFeed(prev => [...prev.slice(-40), `✓ ${msg.component_id} complete`])
@@ -55,6 +58,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     break
                 case 'build_done':
                     setBuilding(false)
+                    setLiveTodo(null)  // fall back to the authoritative refetched to-do
                     setFeed(prev => [...prev.slice(-40), msg.ok ? '✓ build complete' : '✗ build ended with failures'])
                     load()
                     onChanged()
@@ -168,24 +172,30 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 ))}
             </section>
 
-            {/* To-do */}
-            <section className="space-y-2">
-                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">
-                    To-do {detail.todo.length === 0 ? '— complete ✓' : `(${detail.todo.length} failing)`}
-                </h3>
-                {detail.todo.length === 0 ? (
-                    <p className="text-green-400 text-sm">Every done-condition passes.</p>
-                ) : (
-                    <ul className="space-y-1">
-                        {detail.todo.map((t, i) => (
-                            <li key={i} className="text-sm text-gray-300">
-                                <span className="text-amber-400 font-mono text-xs">[{t.component_id}]</span>{' '}
-                                <span className="text-gray-500">{String(t.check?.type)}</span>: {t.detail}
-                            </li>
-                        ))}
-                    </ul>
-                )}
-            </section>
+            {/* To-do (live during a build, else the last fetched state) */}
+            {(() => {
+                const todo = liveTodo ?? detail.todo
+                return (
+                    <section className="space-y-2">
+                        <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">
+                            To-do {todo.length === 0 ? '— complete ✓' : `(${todo.length} failing)`}
+                            {liveTodo ? <span className="text-amber-400 ml-1 normal-case font-normal">· live</span> : null}
+                        </h3>
+                        {todo.length === 0 ? (
+                            <p className="text-green-400 text-sm">Every done-condition passes.</p>
+                        ) : (
+                            <ul className="space-y-1">
+                                {todo.map((t, i) => (
+                                    <li key={i} className="text-sm text-gray-300">
+                                        <span className="text-amber-400 font-mono text-xs">[{t.component_id}]</span>{' '}
+                                        <span className="text-gray-500">{String(t.check?.type)}</span>: {t.detail}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </section>
+                )
+            })()}
 
             {detail.built && (
                 <p className="text-gray-500 text-sm">

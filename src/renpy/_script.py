@@ -256,10 +256,38 @@ def _parse_lint_errors(lint_output: str) -> List[Tuple[int, str]]:
     return results
 
 
-def run_final_lint(output_dir: str, sdk_path: str) -> dict:
+def node_line_ranges(full_script: str, node_ids: List[str]) -> List[Tuple[int, int, str]]:
+    """Map each node's `label <id>:` to its [start, end] line span in the stitched
+    script, so a lint error on a script.rpy line can be attributed to the node that
+    owns it — the agent fixes that one scene instead of churning across all of them."""
+    starts = []
+    for i, ln in enumerate(full_script.split("\n"), 1):
+        m = re.match(r'\s*label\s+(\w+)\s*:', ln)
+        if m and m.group(1) in node_ids:
+            starts.append((i, m.group(1)))
+    starts.sort()
+    ranges = []
+    for idx, (start, sid) in enumerate(starts):
+        end = starts[idx + 1][0] - 1 if idx + 1 < len(starts) else 10 ** 9
+        ranges.append((start, end, sid))
+    return ranges
+
+
+def _node_for_line(lineno: int, ranges: List[Tuple[int, int, str]]):
+    for start, end, sid in ranges:
+        if start <= lineno <= end:
+            return sid
+    return None
+
+
+def run_final_lint(output_dir: str, sdk_path: str, node_ranges=None) -> dict:
     lint_output = _run_renpy_lint(output_dir, sdk_path)
     errors = _parse_lint_errors(lint_output) if lint_output else []
+    formatted = []
+    for lineno, ctx in errors[:10]:
+        sid = _node_for_line(lineno, node_ranges) if node_ranges else None
+        formatted.append(f"[{sid}] {ctx}" if sid else ctx)
     return {
         "error_count": len(errors),
-        "errors": [ctx for _, ctx in errors[:10]],
+        "errors": formatted,
     }

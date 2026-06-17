@@ -133,7 +133,8 @@ class Executor:
         # for ones that were failing and then transition to passing.
         failures = validate(self.spec, self.state)
         passed = all_ids - {f["component_id"] for f in failures}
-        self._emit("build_started", n_failing=len(failures), max_steps=self.max_steps)
+        self._emit("build_started", n_failing=len(failures), max_steps=self.max_steps,
+                   todo=failures)
 
         for step in range(1, self.max_steps + 1):
             if not failures:                       # frozen already checked above
@@ -162,7 +163,8 @@ class Executor:
             print(f"  step {step}: {self.last_result}  [{dt:.0f}s, {len(failures)} failing]",
                   flush=True)
             self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
-                       summary=self.last_result, elapsed=round(dt, 1), n_failing=len(failures))
+                       summary=self.last_result, elapsed=round(dt, 1), n_failing=len(failures),
+                       todo=failures)
 
         self._emit("build_done", ok=not failures, steps=self.max_steps)
         return ExecutorResult(ok=not failures, steps=self.max_steps,

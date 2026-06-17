@@ -58,6 +58,19 @@ TOOL_SCHEMAS: List[Dict] = [
                 "open_threads_resolve[], event_summary"},
         }, "required": ["node_id", "content"]}}},
     {"type": "function", "function": {
+        "name": "edit_node",
+        "description": "Surgically replace a snippet inside ONE existing node WITHOUT "
+                       "rewriting the whole scene. Use this to fix a single broken line "
+                       "(e.g. an unterminated string the linter flagged) — it preserves "
+                       "the node's jumps/menus so you don't break reachability. Replaces "
+                       "the first exact occurrence of `find`.",
+        "parameters": {"type": "object", "properties": {
+            "node_id": {"type": "string"},
+            "find": {"type": "string",
+                     "description": "exact text to replace; include enough to be unique in the node"},
+            "replace": {"type": "string", "description": "replacement (may be empty to delete)"},
+        }, "required": ["node_id", "find", "replace"]}}},
+    {"type": "function", "function": {
         "name": "read_component",
         "description": "Read a component you previously wrote.",
         "parameters": {"type": "object", "properties": {
@@ -195,6 +208,29 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
 
         return {"ok": True, "node_id": node_id}
 
+    def edit_node(node_id: str, find: str, replace: str = "") -> Dict:
+        """Surgically patch ONE node: replace the first exact occurrence of `find`.
+
+        Lets the agent fix a single bad line (e.g. an unterminated string the linter
+        flagged on a specific node) without regenerating the whole scene — a full
+        rewrite tends to drop the node's jump/menu and orphan downstream nodes.
+        """
+        _require_frozen()
+        if _locked("node_scripts"):
+            return _locked_error("node_scripts")
+        ns = state.read_component("node_scripts") or {}
+        scripts = ns.get("scripts", {})
+        if node_id not in scripts:
+            return {"ok": False, "error": f"no node {node_id!r} to edit"}
+        text = scripts[node_id]
+        if not isinstance(find, str) or not find or find not in text:
+            return {"ok": False, "error":
+                    f"`find` text not present in {node_id} — quote an exact snippet from the node"}
+        scripts[node_id] = _normalize_script(
+            text.replace(find, replace if isinstance(replace, str) else "", 1))
+        state.write_component("node_scripts", ns)
+        return {"ok": True, "node_id": node_id}
+
     def generate_asset() -> Dict:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
         _require_frozen()
@@ -238,6 +274,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
     return {
         "write_component": write_component,
         "write_node": write_node,
+        "edit_node": edit_node,
         "read_component": read_component,
         "read_story_state": read_story_state,
         "generate_asset": generate_asset,

@@ -15,7 +15,7 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 - **validate** (`validate.py`) — closed typed check set (exists / count / distinct / each_has / refs_resolve / compiles) → failure list = the recomputed to-do. Empty vs frozen spec = done.
 - **Executor** (`executor.py`) — non-LLM loop; rebuilds minimal context each step (incl. locked-upstream content + the active per-stage mode); completion decided by validate; milestone + structured progress events (`on_event`).
 - **Build agent** (`agent.py`) — stateless-per-step LLM decider, one tool call per step. Per-stage modes: the executor derives the active component from the to-do (dep order), giving that stage a scoped system prompt + restricted tool set (e.g. `mode_node.txt` for node writing). Locked components are injected into context so the agent never hunts ids via `read_component`.
-- **Tools** (`tools.py`) — write_component / write_node (fused with story-state delta), read_component / read_story_state, generate_asset, validate, compile_renpy, update_scratchpad, request_review.
+- **Tools** (`tools.py`) — write_component / write_node (fused with story-state delta) / edit_node (surgical single-snippet patch), read_component / read_story_state, generate_asset, validate, compile_renpy, update_scratchpad, request_review.
 - **Story state** (`story_state.py`) — continuity bible (facts / entities / open threads / recent tail); snapshot not log; spine-tracked.
 - **Run** (`run.py`) — `python -m maestro.run "<request>"` CLI: propose → freeze → build → project path.
 

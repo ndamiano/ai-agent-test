@@ -36,6 +36,30 @@ def test_write_and_read_component(tmp_path):
     assert tools["read_component"]("missing")["ok"] is False
 
 
+def test_edit_node_surgical_replace(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("node_scripts", {
+        "node_ids": ["s1"],
+        "scripts": {"s1": 'label s1:\n    a "he said hi"\n    jump s2'},
+    })
+
+    res = tools["edit_node"]("s1", "he said hi", "she said hi")
+    assert res["ok"] is True
+    s1 = state.read_component("node_scripts")["scripts"]["s1"]
+    assert "she said hi" in s1
+    assert "jump s2" in s1          # the rest of the node (incl. its jump) is untouched
+
+
+def test_edit_node_errors(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    a "x"'}})
+
+    assert tools["edit_node"]("missing", "a", "b")["ok"] is False        # no such node
+    assert tools["edit_node"]("s1", "not-present", "b")["ok"] is False   # find not in node
+
+
 def test_validate_tool_reports_failures(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)

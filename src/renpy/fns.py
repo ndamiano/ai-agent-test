@@ -1200,7 +1200,9 @@ def build(inputs: Dict, working_dir: Path, distribute: bool = True, repair: bool
     result = {"project_dir": os.path.abspath(output_dir)}
 
     if sdk_path:
-        lint_summary = run_final_lint(output_dir, sdk_path)
+        from renpy._script import node_line_ranges
+        ranges = node_line_ranges(full_script, node_ids)
+        lint_summary = run_final_lint(output_dir, sdk_path, node_ranges=ranges)
         result["lint"] = lint_summary
         print(f"    [build]  final lint: {lint_summary['error_count']} error(s)")
         # Distribute (packaging) is expensive; skip it for mid-build compile checks

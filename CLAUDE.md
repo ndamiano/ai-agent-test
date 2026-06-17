@@ -26,7 +26,7 @@ It steals the old pipeline's two good properties (completion guarantee, no conte
 ```
 src/
   agents/       MainAgent (chat persona — drafts/amends specs) + agent_store, chat.json / summarizer.json
-  api/          FastAPI routers (chat, settings, agents, outputs, system, websocket)
+  api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket)
   config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
                 inference.py — PipelineAgent, call_llm, json_with_correction (shared inference primitives)

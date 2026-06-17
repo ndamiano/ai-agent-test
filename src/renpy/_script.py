@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -179,7 +180,7 @@ def _stitch_script(
         cid   = char["id"]
         name  = char["name"]
         color = char.get("color", "#ffffff")
-        lines.append(f'define {cid} = Character("{name}", color="{color}")')
+        lines.append(f'define {cid} = Character({json.dumps(name)}, color="{color}")')
     lines.append("")
 
     lines.append("## Images")

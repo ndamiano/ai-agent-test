@@ -41,9 +41,12 @@ artifact, e.g. "premise.characters"):
 
 The builder compiles EXACTLY these three components (use these ids and these shapes):
 
-  premise        — characters MUST each have an "id" (snake_case) and "name";
-                   plus central_question and endings. Characters are speaking roles only —
-                   do NOT add a "narrator" character (narration is written as bare lines).
+  premise        — characters MUST each have an "id" (snake_case) and "name", plus the
+                   portable character core: "voice", "temperament", "drive" (a plain,
+                   story-independent want), "history" (list of distinct formative events),
+                   "competencies" (list), and "example_lines" (list, sound different per
+                   character); plus central_question and endings. Characters are speaking
+                   roles only — do NOT add a "narrator" character (narration is bare lines).
   asset_manifest — "backgrounds", "characters", "cgs" are lists; each background and
                    character needs an "id"; character ids must match premise ids.
   node_scripts   — "node_ids" (list of node id strings, NOT including "start") and
@@ -60,7 +63,7 @@ Rules:
   premise:
     {"type": "exists", "path": "premise.central_question"}
     {"type": "count", "path": "premise.characters", "min": 3}
-    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name", "voice"]}
+    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name", "voice", "temperament", "drive", "history", "competencies", "example_lines"]}
     {"type": "count", "path": "premise.endings", "min": 3}
     {"type": "distinct", "path": "premise.endings", "key": "id"}
   asset_manifest:

@@ -42,6 +42,13 @@ def test_skeleton_guide_lists_components():
     assert "premise" in guide and "asset_manifest" in guide and "node_scripts" in guide
 
 
+def test_premise_skeleton_advertises_character_core():
+    # The skeleton is what the model fills in, so it must show the portable core fields.
+    guide = skeleton_guide(["premise"])
+    for field in ("voice", "temperament", "drive", "history", "competencies", "example_lines"):
+        assert f'"{field}"' in guide
+
+
 # ── write_component enforces injected schemas ────────────────────────────────
 
 def _frozen_spec():

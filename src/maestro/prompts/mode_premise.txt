@@ -15,13 +15,26 @@ an archetype with adjectives.
 Specificity comes from the character's SITUATION, not from stacking adjectives.
 
 CHARACTERS ARE NOT PLOT FUNCTIONS — no assigned roles, no love-interest-by-quota, no one
-existing to "represent" a theme. Each stands on their own charge: a want, a lost purpose,
-a secret, a contradiction, a pressure, or sheer vividness of presence.
+existing to "represent" a theme. Write a standalone person the story has not happened to
+yet: the core is portable (true in any scene) and bound to the SETTING, never to this plot.
 
-VOICE — each character's `voice` is one sentence on how they actually speak: vocabulary,
-sentence length, rhythm, formality, what breaks under pressure. They must sound DIFFERENT
-from one another — if a line could be swapped between two characters unchanged, the voices
-failed. Voice must work as plain rendered text: no emoji, no symbols.
+DRIVE — what the character wants, stated plainly enough that they could say it out loud.
+Legible beats exotic: "save as many as I can" carries more drama than "decide who dies but
+never be decided about". A drive is NOT a goal for this story's plot — it is the standing
+want the story will press against. The conflict comes from a clear drive meeting the
+situation, not from a baroque internal contradiction.
+
+HISTORY — a list of 2-3 DISTINCT formative events, each whole and each adding new
+information. Not a role descriptor ("a medic in the war" is a competency, not history), and
+never one event split into two entries.
+
+VOICE + EXAMPLE_LINES — `voice` is one sentence on how they speak (vocabulary, sentence
+length, rhythm, what breaks under pressure); `example_lines` are 2+ actual lines that prove
+it. They must sound DIFFERENT from one another — if a line could be swapped between two
+characters unchanged, the voices failed. Plain rendered text only: no emoji, no symbols.
+
+TEMPERAMENT + COMPETENCIES — `temperament` is how they carry themselves day to day;
+`competencies` is a list of concrete skills drawn from the setting.
 
 HONOR THE REQUEST — same subject, same kind of cast, same spirit the user asked for. Find
 the drama inside what was asked for; do not graft on conspiracies, villains, or deadlines

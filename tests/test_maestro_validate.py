@@ -58,6 +58,45 @@ def test_each_has():
     assert ok is False and "missing 'voice'" in detail
 
 
+# ── character-core floor: the locked portable-character field set ───────────
+
+_CORE_FIELDS = ["id", "name", "voice", "temperament", "drive",
+                "history", "competencies", "example_lines"]
+
+
+def test_character_core_floor_rejects_thin_character():
+    # The pre-change shape (id+name+voice) no longer clears the floor.
+    thin = {"premise": {"characters": [{"id": "a", "name": "A", "voice": "wry"}]}}
+    ok, detail = run_check(
+        {"type": "each_has", "path": "premise.characters", "fields": _CORE_FIELDS}, thin, None)
+    assert ok is False and "missing 'temperament'" in detail
+
+
+def test_character_core_floor_rejects_empty_list_fields():
+    # history/competencies/example_lines must be non-empty lists, not [].
+    empty = {"premise": {"characters": [{
+        "id": "a", "name": "A", "voice": "wry", "temperament": "calm",
+        "drive": "save as many as she can", "history": [], "competencies": ["triage"],
+        "example_lines": ["he'll live, next"],
+    }]}}
+    ok, detail = run_check(
+        {"type": "each_has", "path": "premise.characters", "fields": _CORE_FIELDS}, empty, None)
+    assert ok is False and "missing 'history'" in detail
+
+
+def test_character_core_floor_passes_full_character():
+    full = {"premise": {"characters": [{
+        "id": "vesna_kol", "name": "Vesna Kol", "voice": "plain, fast, clinical",
+        "temperament": "calm, decisive", "drive": "save as many as she can",
+        "history": ["triaged her own brother to save a ward"],
+        "competencies": ["triage", "field surgery"],
+        "example_lines": ["I'd rather save one than none.", "He'll live. Next."],
+    }]}}
+    ok, _ = run_check(
+        {"type": "each_has", "path": "premise.characters", "fields": _CORE_FIELDS}, full, None)
+    assert ok is True
+
+
 def test_refs_resolve_pass_and_fail():
     good = {"type": "refs_resolve", "from": "node_scripts.node_ids", "to": "graph.nodes", "to_key": "id"}
     assert _ok(good)[0] is True

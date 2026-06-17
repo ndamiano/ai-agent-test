@@ -19,12 +19,26 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from maestro.validate import validate
+from maestro.validate import validate, run_check
 
 logger = logging.getLogger(__name__)
 
 # Reads carry no artifact change; repeating one is the agent spinning, not progressing.
 _READ_TOOLS = {"read_node", "read_component", "read_story_state"}
+
+# Order a sub-loop attacks failing checks: a broken script poisons everything, so fix
+# syntax first; then reach the node count; then structure; then content quality.
+_CHECK_PRIORITY = {
+    "compiles": 0,
+    "count": 1,
+    "reachable_from_start": 2, "min_branches": 2, "refs_resolve": 2, "distinct": 2, "exists": 2,
+    "each_node_min_lines": 3, "all_characters_speak": 3, "each_has": 3,
+}
+
+
+def pick_target(failures: List[Dict]) -> Dict:
+    """The single failing check a sub-loop should drive to green next."""
+    return min(failures, key=lambda f: _CHECK_PRIORITY.get(f.get("check", {}).get("type"), 2))
 
 
 @dataclass
@@ -56,7 +70,8 @@ class Executor:
     def __init__(self, spec, state, tools: Dict[str, Callable], decide: Callable,
                  max_steps: int = 60, on_milestone: Optional[Callable[[str], None]] = None,
                  on_event: Optional[Callable[[Dict], None]] = None,
-                 projectors: Optional[Dict[str, Callable]] = None):
+                 projectors: Optional[Dict[str, Callable]] = None,
+                 sub_runners: Optional[Dict[str, Callable]] = None):
         self.spec = spec
         self.state = state
         self.tools = tools
@@ -66,6 +81,10 @@ class Executor:
         # to the agent (e.g. the node graph for node_scripts). Injected by the caller so
         # maestro stays genre-agnostic. None = no view.
         self.projectors = projectors or {}
+        # component_id -> stateful runner(target, context, dispatch, target_met, report,
+        # budget, view_fn) -> steps_used. For components that need iterate-until-done
+        # (node_scripts), a sub-loop with its own working memory replaces one-shot steps.
+        self.sub_runners = sub_runners or {}
         # Architecture-triggered check-in: called the first time a component's
         # done-conditions all pass. The agent doesn't judge when to interrupt.
         self.on_milestone = on_milestone
@@ -145,53 +164,82 @@ class Executor:
     def is_done(self) -> bool:
         return self.spec.frozen and not validate(self.spec, self.state)
 
+    def _target_met(self, target: Dict) -> bool:
+        ok, _ = run_check(target["check"], self.state.load_artifact(), self.state.run_dir)
+        return ok
+
+    def _view(self, mode: Optional[str]) -> Optional[Dict]:
+        projector = self.projectors.get(mode)
+        return projector(self.state.load_artifact()) if projector else None
+
     def run(self) -> ExecutorResult:
         if not self.spec.frozen:
             raise SpecNotFrozenError("build refuses to run until the spec is frozen")
 
         history: List[StepRecord] = []
         all_ids = {c.get("id") for c in self.spec.components}
-        # A component not in the failing set already passes; only fire milestones
-        # for ones that were failing and then transition to passing.
         failures = validate(self.spec, self.state)
         passed = all_ids - {f["component_id"] for f in failures}
         self._emit("build_started", n_failing=len(failures), max_steps=self.max_steps,
                    todo=failures)
 
-        for step in range(1, self.max_steps + 1):
-            if not failures:                       # frozen already checked above
-                self._emit("build_done", ok=True, steps=step - 1)
-                return ExecutorResult(ok=True, steps=step - 1, history=history)
+        step = 0
+        while step < self.max_steps:
+            if not failures:
+                self._emit("build_done", ok=True, steps=step)
+                return ExecutorResult(ok=True, steps=step, history=history)
 
-            # Log before the (slow) LLM call so the loop isn't a silent black box.
-            print(f"  step {step}/{self.max_steps}: {len(failures)} check(s) failing — deciding...",
-                  flush=True)
-            t0 = time.perf_counter()
-            ctx = self.build_context(todo=failures, stalled=self._is_stalling(history))
-            mode = ctx.get("mode")
-            action = self.decide(ctx) or {}
-            result = self._dispatch(action)
-            self.last_result = self._summarize(action, result)
-            self.last_read = self._read_payload(action, result)
-            history.append(StepRecord(step=step, action=action, summary=self.last_result))
+            failing_ids = {f["component_id"] for f in failures}
+            mode = next((cid for cid in self.spec.dep_order() if cid in failing_ids), None)
+            runner = self.sub_runners.get(mode)
+            before = step
 
-            # One validate per step (it runs the compiles build); reused next iteration.
+            if runner is not None:
+                # Stateful sub-loop: drive ONE target check to green, with working memory.
+                target = pick_target([f for f in failures if f["component_id"] == mode])
+                ctx = self.build_context(todo=failures)
+                ctx["target"] = target
+                n_at_start = len(failures)
+
+                def report(summary: str) -> None:
+                    nonlocal step
+                    step += 1
+                    self.last_result = summary
+                    history.append(StepRecord(step=step, action={}, summary=summary))
+                    print(f"  step {step}/{self.max_steps} [{mode}→{target['check'].get('type')}]: "
+                          f"{summary}", flush=True)
+                    self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
+                               summary=summary, n_failing=n_at_start, todo=failures)
+
+                runner(target=target, context=ctx, dispatch=self._dispatch,
+                       target_met=lambda: self._target_met(target), report=report,
+                       budget=self.max_steps - step, view_fn=lambda: self._view(mode))
+                if step == before:        # runner made no move — don't spin forever
+                    step += 1
+            else:
+                step += 1
+                t0 = time.perf_counter()
+                ctx = self.build_context(todo=failures, stalled=self._is_stalling(history))
+                action = self.decide(ctx) or {}
+                result = self._dispatch(action)
+                self.last_result = self._summarize(action, result)
+                self.last_read = self._read_payload(action, result)
+                history.append(StepRecord(step=step, action=action, summary=self.last_result))
+                dt = time.perf_counter() - t0
+                print(f"  step {step}: {self.last_result}  [{dt:.0f}s]", flush=True)
+
             failures = validate(self.spec, self.state)
             now_failing = {f["component_id"] for f in failures}
             for cid in (all_ids - now_failing) - passed:
                 self._fire_milestone(cid)
             passed = all_ids - now_failing
 
-            dt = time.perf_counter() - t0
-            print(f"  step {step}: {self.last_result}  [{dt:.0f}s, {len(failures)} failing]",
-                  flush=True)
-            self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
-                       summary=self.last_result, elapsed=round(dt, 1), n_failing=len(failures),
-                       todo=failures)
+            if runner is None:
+                self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
+                           summary=self.last_result, n_failing=len(failures), todo=failures)
 
-        self._emit("build_done", ok=not failures, steps=self.max_steps)
-        return ExecutorResult(ok=not failures, steps=self.max_steps,
-                              failures=failures, history=history)
+        self._emit("build_done", ok=not failures, steps=step)
+        return ExecutorResult(ok=not failures, steps=step, failures=failures, history=history)
 
     def _fire_milestone(self, component_id: str) -> None:
         if self.on_milestone is None:

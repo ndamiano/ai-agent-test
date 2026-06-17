@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.spec import Spec
 from maestro.state import RunState
-from maestro.executor import Executor, SpecNotFrozenError
+from maestro.executor import Executor, SpecNotFrozenError, pick_target
 
 
 def _spec(frozen=True):
@@ -123,6 +123,49 @@ def test_emits_progress_events(tmp_path):
     # build_step carries the active mode + shrinking failure count.
     steps = [e for e in events if e["type"] == "build_step"]
     assert steps[0]["step"] == 1 and "n_failing" in steps[0] and "mode" in steps[0]
+
+
+def _fail(check_type, detail="x", cid="node_scripts"):
+    return {"component_id": cid, "check": {"type": check_type}, "detail": detail}
+
+
+def test_pick_target_priority_order():
+    fails = [_fail("each_node_min_lines"), _fail("reachable_from_start"),
+             _fail("count"), _fail("compiles")]
+    assert pick_target(fails)["check"]["type"] == "compiles"
+    assert pick_target([_fail("each_node_min_lines"), _fail("count")])["check"]["type"] == "count"
+    assert pick_target([_fail("all_characters_speak"),
+                        _fail("reachable_from_start")])["check"]["type"] == "reachable_from_start"
+
+
+def test_executor_drives_target_via_sub_runner(tmp_path):
+    state = RunState(tmp_path)
+    state.write_component("premise", {"central_question": "Q?"})
+    spec = Spec({"title": "T", "frozen": True, "components": [
+        {"id": "premise", "deps": [], "done_conditions": [
+            {"type": "exists", "path": "premise.central_question"}]},
+        {"id": "node_scripts", "deps": ["premise"], "done_conditions": [
+            {"type": "count", "path": "node_scripts.node_ids", "min": 2}]},
+    ]})
+
+    def write_two(**kw):
+        state.write_component("node_scripts", {"node_ids": ["a", "b"], "scripts": {}})
+        return {"ok": True}
+
+    seen = []
+
+    def runner(target, context, dispatch, target_met, report, budget, view_fn):
+        seen.append((target["component_id"], target["check"]["type"]))
+        dispatch({"tool": "write_two", "args": {}})
+        report("write_two: ok")
+        assert target_met()  # the write satisfied the target
+
+    ex = Executor(spec, state, {"write_two": write_two}, decide=lambda c: {}, max_steps=5,
+                  sub_runners={"node_scripts": runner})
+    result = ex.run()
+
+    assert result.ok is True
+    assert seen == [("node_scripts", "count")]   # premise already passed → only node target
 
 
 def test_is_stalling_on_repeated_reads(tmp_path):

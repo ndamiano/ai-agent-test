@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.executor import Executor
-from maestro.agent import _schemas_for_mode, _render_context, _MODE_TOOLS
+from maestro.agent import _schemas_for_mode, _render_context, _MODE_TOOLS, make_node_subloop
 from maestro.tools import TOOL_SCHEMAS
 
 
@@ -119,3 +119,42 @@ def test_render_context_shows_last_read_and_stall_nudge():
 
 def test_render_context_no_stall_nudge_when_calm():
     assert "STOP reading" not in _render_context({"todo": [], "stalled": False})
+
+
+def test_render_context_shows_single_target():
+    rendered = _render_context({"todo": [], "target": {
+        "component_id": "node_scripts", "check": {"type": "reachable_from_start"},
+        "detail": "scene_03 unreachable"}})
+    assert "YOUR TARGET" in rendered and "reachable_from_start" in rendered
+
+
+class _FakeConn:
+    def __init__(self, responses):
+        self.responses, self.i = responses, 0
+
+    def generate_with_tools(self, messages, schemas):
+        r = self.responses[min(self.i, len(self.responses) - 1)]
+        self.i += 1
+        return r
+
+
+def test_node_subloop_dispatches_and_stops_on_target():
+    tool_call = {"id": "tc1", "function": {
+        "name": "write_node", "arguments": '{"node_id": "s1", "content": "label s1:"}'}}
+    conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tool_call]}}]}])
+    runner = make_node_subloop(connector=conn, cap=5)
+
+    dispatched, reports = [], []
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
+        target_met=lambda: True,           # satisfied after the first write → loop stops
+        report=lambda s: reports.append(s),
+        budget=5,
+        view_fn=lambda: None,
+    )
+
+    assert dispatched and dispatched[0]["tool"] == "write_node"
+    assert reports and reports[0].startswith("write_node(s1)")
+    assert conn.i == 1                      # stopped after target met, didn't keep looping

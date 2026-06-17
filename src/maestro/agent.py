@@ -52,9 +52,16 @@ def _render_context(ctx: Dict) -> str:
         "",
         "TO-DO (failing done-conditions):",
         *todo_lines,
-        "",
-        f"SCRATCHPAD: {json.dumps(pad, ensure_ascii=False)}",
     ]
+    target = ctx.get("target")
+    if target:
+        lines += [
+            "",
+            f"YOUR TARGET — finish ONLY when THIS check passes: "
+            f"[{target.get('component_id')}] {target['check'].get('type')}: {target.get('detail')}",
+            "Make the change that clears it. Don't chase other to-do items.",
+        ]
+    lines += ["", f"SCRATCHPAD: {json.dumps(pad, ensure_ascii=False)}"]
     upstream = ctx.get("upstream") or {}
     if upstream:
         lines += [
@@ -141,3 +148,72 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
         return action
 
     return decide
+
+
+def _parse_tool_args(tc: Dict) -> Dict:
+    raw = (tc.get("function", {}).get("arguments") or "{}").strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        raw = raw[4:] if raw.startswith("json") else raw
+        raw = raw.strip()
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        logger.warning("subloop returned unparseable args: %r", raw)
+        return {}
+
+
+def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
+    """A stateful sub-agent that drives ONE target check to green, with working memory.
+
+    Unlike the stateless decider (one tool call from rebuilt context), this keeps a tool
+    conversation: it reads/writes/edits and SEES its own results, looping until the target
+    passes or it hits the step cap. The transcript holds only this task's tool calls (never
+    the whole artifact) and MessageBuilder.build() enforces a char budget, so context stays
+    bounded — the per-target reset is what keeps it from rotting as the game grows.
+    """
+    from llm_clients.connector_selector import get_connector
+    conn = connector or get_connector()
+    guide_suffix = f"\n\n{component_guide}" if component_guide else ""
+    system = _MODE_PROMPTS["node_scripts"] + guide_suffix
+    schemas = _schemas_for_mode("node_scripts", TOOL_SCHEMAS)
+
+    def run(target, context, dispatch, target_met, report, budget, view_fn):
+        ctx = dict(context)
+        ctx["target"] = target
+        mb = MessageBuilder(system).add_user(_render_context(ctx))
+
+        for _ in range(min(cap, max(budget, 0))):
+            response = conn.generate_with_tools(mb.build(), schemas)
+            if "error" in response:
+                logger.warning("subloop LLM error: %s", response["error"])
+                break
+            message = (response.get("choices") or [{}])[0].get("message", {})
+            tool_calls = [tc for tc in (message.get("tool_calls") or [])
+                          if tc.get("function", {}).get("name")]
+            if not tool_calls:
+                break
+
+            mb.add_assistant(message.get("content"), tool_calls=tool_calls)
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                args = _parse_tool_args(tc)
+                result = dispatch({"tool": name, "args": args})
+                mb.add_tool_result(tc.get("id", ""),
+                                   json.dumps(result, ensure_ascii=False)[:800])
+                tgt = args.get("node_id") or args.get("component_id") or ""
+                err = result.get("error") if isinstance(result, dict) else None
+                report(f"{name}({tgt}): " + (f"error — {err}" if err else "ok"))
+
+            # The artifact changed; re-show the graph so the agent tracks ids as it builds.
+            view = view_fn()
+            if view and view.get("node_ids"):
+                note = "CURRENT NODES: " + json.dumps(view["node_ids"], ensure_ascii=False)
+                if view.get("unreachable"):
+                    note += f" | UNREACHABLE: {view['unreachable']}"
+                mb.add_user(note)
+
+            if target_met():
+                break
+
+    return run

@@ -19,7 +19,7 @@ from maestro.spec import Spec
 logger = logging.getLogger(__name__)
 from maestro.state import RunState
 from maestro.tools import build_tools
-from maestro.agent import make_llm_decider
+from maestro.agent import make_llm_decider, make_node_subloop
 from maestro.executor import Executor, ExecutorResult
 
 
@@ -46,11 +46,15 @@ def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
 
     tools = build_tools(spec, state, schemas=renpy_schemas)
     decider = decide or make_llm_decider(component_guide=skeleton_guide())
+    # node_scripts iterates until each target check passes — a stateful sub-loop, not
+    # one-shot steps. A scripted `decide` (tests) keeps the simple stateless path.
+    sub_runners = {} if decide else {"node_scripts": make_node_subloop(component_guide=skeleton_guide())}
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
         projectors={"node_scripts": node_view},
+        sub_runners=sub_runners,
     )
 
     t0 = time.perf_counter()

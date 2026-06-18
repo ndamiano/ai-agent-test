@@ -33,17 +33,6 @@ def _is_repetitive(content: str) -> bool:
     return bool(_REPETITION_RE.search(content))
 
 
-def make_response_format(name: str, schema: dict) -> dict:
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": name,
-            "strict": "true",
-            "schema": schema,
-        },
-    }
-
-
 def safe_history_content(content: str) -> str:
     """
     Keep provider/internal channel tags out of subsequent LLM requests.

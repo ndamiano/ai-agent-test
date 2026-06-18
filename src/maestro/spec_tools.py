@@ -13,7 +13,7 @@ Check-in events are emitted on the event bus so the UI can surface them.
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 
 from maestro.state import RunState
 

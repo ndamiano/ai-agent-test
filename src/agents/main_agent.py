@@ -17,12 +17,10 @@ class MainAgent:
     def __init__(
         self,
         agent_id: str,
-        max_history_length: int = 20,
         system_prompt: Optional[str] = None,
     ):
         self.connector = get_connector()
         self.message_history: List[Dict[str, str]] = []
-        self.max_history_length = max_history_length
 
         agent_data = get_agent(agent_id)
         self.system_context = agent_data["system_prompt"]
@@ -157,16 +155,6 @@ class MainAgent:
                 'status': status,
                 'timestamp': get_utc_timestamp()
             })
-
-    def get_message_history(self) -> List[Dict[str, str]]:
-        return self.message_history.copy()
-
-    def clear_history(self):
-        self.message_history.clear()
-
-    def _trim_history(self):
-        if len(self.message_history) > self.max_history_length:
-            self.message_history = self.message_history[-self.max_history_length:]
 
     def chat(self, message: str) -> str:
         self.message_history.append(MessageBuilder.user_msg(message))

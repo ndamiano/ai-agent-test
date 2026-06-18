@@ -1,12 +1,11 @@
 from contextvars import ContextVar
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from contextlib import contextmanager
 from pathlib import Path
 
 _task_id_var: ContextVar[Optional[str]] = ContextVar('task_id', default=None)
 _subtask_id_var: ContextVar[Optional[str]] = ContextVar('subtask_id', default=None)
 _working_directory_var: ContextVar[Optional[str]] = ContextVar('working_directory', default=None)
-_pipeline_path_var: ContextVar[List[str]] = ContextVar('pipeline_path', default=[])
 
 
 @contextmanager
@@ -34,33 +33,12 @@ def get_working_directory() -> Optional[str]:
     return _working_directory_var.get()
 
 
-def get_pipeline_path() -> List[str]:
-    return list(_pipeline_path_var.get())
-
-
-@contextmanager
-def pipeline_context(pipeline_path: List[str]):
-    token = _pipeline_path_var.set(list(pipeline_path))
-    try:
-        yield
-    finally:
-        _pipeline_path_var.reset(token)
-
-
 def get_execution_context() -> Dict[str, Optional[str]]:
     return {
         'task_id': get_task_id(),
         'subtask_id': get_subtask_id(),
         'working_directory': get_working_directory(),
     }
-
-
-def resolve_task_id(task_id: Optional[str] = None) -> str:
-    if task_id is None:
-        task_id = get_task_id()
-        if task_id is None:
-            raise ValueError("task_id must be provided or available in execution context")
-    return task_id
 
 
 def resolve_base_path(input_path: Optional[str] = None) -> Path:

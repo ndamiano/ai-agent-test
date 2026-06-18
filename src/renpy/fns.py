@@ -179,11 +179,7 @@ def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
     game_dir = os.path.join(output_dir, "game")
     os.makedirs(game_dir, exist_ok=True)
 
-    title_card_file = manifest.get("title_card", {}).get("image_file", "")
-    first_bg        = manifest.get("backgrounds", [{}])[0]
-    first_bg_id     = first_bg.get("id", "")
-    first_bg_file   = first_bg.get("image_file", (first_bg_id[3:] + ".png") if first_bg_id.startswith("bg_") else "")
-    _write_options_rpy(game_dir, title, main_menu_bg_file=title_card_file or first_bg_file)
+    _write_options_rpy(game_dir, title)
 
     script_path = os.path.join(game_dir, "script.rpy")
     with open(script_path, "w", encoding="utf-8") as f:

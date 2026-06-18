@@ -180,7 +180,7 @@ def _stitch_script(
     return "\n".join(lines)
 
 
-def _write_options_rpy(game_dir: str, title: str, main_menu_bg_file: str = "") -> None:
+def _write_options_rpy(game_dir: str, title: str) -> None:
     safe = re.sub(r"[^A-Za-z0-9_]", "", title.replace(" ", "_")) or "UntitledGame"
     content = (
         f'define config.name = "{title}"\n'

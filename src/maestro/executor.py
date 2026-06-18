@@ -157,13 +157,6 @@ class Executor:
             "available_tools": sorted(self.tools),
         }
 
-    # ── completion: decided by validate, never by the agent ──────────────────
-    def _failing_components(self) -> set:
-        return {f["component_id"] for f in validate(self.spec, self.state)}
-
-    def is_done(self) -> bool:
-        return self.spec.frozen and not validate(self.spec, self.state)
-
     def _target_met(self, target: Dict) -> bool:
         ok, _ = run_check(target["check"], self.state.load_artifact(), self.state.run_dir)
         return ok

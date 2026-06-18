@@ -1,10 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
-
-class AgentUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    type: Optional[str] = None
-    capabilities: Optional[List[str]] = None
+from typing import Optional
 
 class LMStudioSettingsRequest(BaseModel):
     base_url: str

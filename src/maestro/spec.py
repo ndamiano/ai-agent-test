@@ -36,12 +36,6 @@ class Spec:
     def story_state_schema(self) -> Dict:
         return self.data.get("story_state_schema", {})
 
-    def component(self, component_id: str) -> Dict:
-        for c in self.components:
-            if c.get("id") == component_id:
-                return c
-        raise KeyError(f"no component {component_id!r} in spec")
-
     def dep_order(self) -> List[str]:
         """Component ids in dependency order (topological). Raises on a cycle."""
         order: List[str] = []

@@ -7,7 +7,7 @@ from renpy.checks import (
     check_reachable_from_start, check_min_branches,
     check_each_node_min_lines, check_all_characters_speak, register_all,
 )
-from maestro.validate import run_check, validate
+from maestro.validate import validate
 from maestro.spec import Spec
 from maestro.state import RunState
 

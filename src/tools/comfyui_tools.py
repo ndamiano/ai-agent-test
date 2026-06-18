@@ -164,13 +164,6 @@ def _http_post(url: str, data: dict) -> dict:
         return json.loads(body) if body else {}
 
 
-def _http_post_empty(url: str) -> None:
-    """POST with no body, ignore response."""
-    req = urllib.request.Request(url, data=b"", headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30):
-        pass
-
-
 def _http_get(url: str) -> dict:
     with urllib.request.urlopen(url, timeout=30) as resp:
         return json.loads(resp.read())

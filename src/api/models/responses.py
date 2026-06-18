@@ -1,10 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
-class ErrorResponse(BaseModel):
-    detail: str
-    code: Optional[int] = None
-
 class AgentResponse(BaseModel):
     id: str
     name: str

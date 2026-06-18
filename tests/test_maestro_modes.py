@@ -163,9 +163,12 @@ def test_prompt_routes_author_vs_fix():
 class _FakeConn:
     def __init__(self, responses):
         self.responses, self.i, self.last_schemas = responses, 0, None
+        self.reasoning = None
+        self.reasoning_calls = []
 
-    def generate_with_tools(self, messages, schemas):
+    def generate_with_tools(self, messages, schemas, reasoning=None):
         self.last_schemas = schemas
+        self.reasoning_calls.append(reasoning)
         r = self.responses[min(self.i, len(self.responses) - 1)]
         self.i += 1
         return r
@@ -193,3 +196,111 @@ def test_node_subloop_dispatches_and_stops_on_target():
     assert conn.i == 1                      # stopped after target met, didn't keep looping
     # The subloop handed the connector tools gated to the target (count → write_node only).
     assert {s["function"]["name"] for s in conn.last_schemas} == {"write_node"}
+    assert conn.reasoning_calls == [None]   # never escalated — it made progress immediately
+
+
+def _writer_response():
+    tc = {"id": "tc", "function": {
+        "name": "write_node", "arguments": '{"node_id": "n", "content": "label n:"}'}}
+    return {"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}
+
+
+def test_node_subloop_escalates_reasoning_after_stall():
+    # Every dispatch errors → no progress. After 2 dead iterations reasoning turns on.
+    conn = _FakeConn([_writer_response()])
+    runner = make_node_subloop(connector=conn, cap=5)
+    reports = []
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: {"error": "bad node id"},
+        target_met=lambda: False,
+        report=lambda s: reports.append(s),
+        budget=5,
+        view_fn=lambda: None,
+    )
+    assert conn.reasoning_calls[:2] == [None, None]   # cheap attempts first
+    assert conn.reasoning_calls[2] == "high"          # escalated after STALL_LIMIT
+    assert reports                                    # tool errors still reported per call
+
+
+def _reader_response():
+    tc = {"id": "tc", "function": {"name": "read_node", "arguments": '{"node_id": "n"}'}}
+    return {"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}
+
+
+def test_node_subloop_drops_reads_when_sightseeing():
+    # read_node never changes the artifact, so a run of them is no progress even though each
+    # call "succeeds". After STALL_LIMIT the brake trips: reasoning escalates AND read tools
+    # are pulled so the model must act instead of touring the graph (the 13-read budget leak).
+    conn = _FakeConn([_reader_response()])
+    runner = make_node_subloop(connector=conn, cap=6)
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "compiles"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: {"ok": True, "content": "label n:"},
+        target_met=lambda: False,
+        report=lambda s: None,
+        budget=6,
+        view_fn=lambda: None,
+    )
+    assert conn.reasoning_calls[:2] == [None, None]
+    assert conn.reasoning_calls[2] == "high"          # reads don't reset stall → escalates
+    read_names = {"read_node", "read_component", "read_story_state"}
+    assert not (read_names & {s["function"]["name"] for s in conn.last_schemas})  # reads pulled
+
+
+def test_node_subloop_count_rejects_overwrite():
+    # During `count` the model keeps rewriting scene_01 — an overwrite never raises the count,
+    # so it's rejected and steered to a new id; only genuinely new ids reach dispatch.
+    tc = {"id": "tc", "function": {
+        "name": "write_node", "arguments": '{"node_id": "scene_01", "content": "label scene_01:"}'}}
+    conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}])
+    runner = make_node_subloop(connector=conn, cap=3)
+    dispatched, reports = [], []
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
+        target_met=lambda: False,
+        report=lambda s: reports.append(s),
+        budget=3,
+        view_fn=lambda: {"node_ids": ["scene_01"]},   # scene_01 already exists
+    )
+    assert dispatched == []                             # overwrite never reached the real tool
+    assert any("already exists" in r for r in reports)
+
+
+def test_node_subloop_count_allows_new_id():
+    tc = {"id": "tc", "function": {
+        "name": "write_node", "arguments": '{"node_id": "scene_02", "content": "label scene_02:"}'}}
+    conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}])
+    runner = make_node_subloop(connector=conn, cap=1)
+    dispatched = []
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
+        target_met=lambda: False,
+        report=lambda s: None,
+        budget=1,
+        view_fn=lambda: {"node_ids": ["scene_01"]},
+    )
+    assert dispatched and dispatched[0]["args"]["node_id"] == "scene_02"
+
+
+def test_node_subloop_no_escalation_while_progressing():
+    # Each write lands cleanly → stall resets every iteration → reasoning stays off. (Target is
+    # each_node_min_lines, where rewriting a node IS the job — count would reject the repeat.)
+    conn = _FakeConn([_writer_response()])
+    runner = make_node_subloop(connector=conn, cap=4)
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "each_node_min_lines"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: {"ok": True},
+        target_met=lambda: False,
+        report=lambda s: None,
+        budget=4,
+        view_fn=lambda: None,
+    )
+    assert all(r is None for r in conn.reasoning_calls)

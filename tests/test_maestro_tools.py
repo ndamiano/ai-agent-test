@@ -51,6 +51,50 @@ def test_edit_node_surgical_replace(tmp_path):
     assert "jump s2" in s1          # the rest of the node (incl. its jump) is untouched
 
 
+def test_write_node_rejects_undefined_speaker(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("premise", {"central_question": "Q?",
+                                      "characters": [{"id": "elias_voss"}, {"id": "yuki_tanaka"}]})
+
+    # 'elias_vanaka' is a typo for the real 'elias_voss' — must be caught at write time, not
+    # left to surface as a compile NameError dozens of steps later.
+    res = tools["write_node"]("scene_01", 'label scene_01:\n    elias_vanaka "Shoot it."')
+    assert res["ok"] is False
+    assert "elias_vanaka" in res["error"] and "elias_voss" in res["error"]
+    assert state.read_component("node_scripts") is None    # nothing persisted
+
+
+def test_write_node_accepts_defined_speakers_narration_and_keywords(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("premise", {"central_question": "Q?",
+                                      "characters": [{"id": "elias_voss"}, {"id": "yuki_tanaka"}]})
+
+    res = tools["write_node"]("scene_01",
+        'label scene_01:\n'
+        '    scene bg_jungle\n'
+        '    show elias_voss\n'
+        '    "The forest went quiet."\n'           # narration: no speaker
+        '    elias_voss "Positions!"\n'
+        '    yuki_tanaka "Wait."\n'
+        '    jump scene_02')
+    assert res["ok"] is True
+
+
+def test_edit_node_rejects_patch_that_introduces_bad_speaker(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("premise", {"central_question": "Q?",
+                                      "characters": [{"id": "elias_voss"}]})
+    state.write_component("node_scripts", {
+        "node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    elias_voss "hi"'}})
+
+    res = tools["edit_node"]("s1", "elias_voss", "elias_vanaka")
+    assert res["ok"] is False and "elias_vanaka" in res["error"]
+    assert 'elias_voss "hi"' in state.read_component("node_scripts")["scripts"]["s1"]  # unchanged
+
+
 def test_read_node(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)

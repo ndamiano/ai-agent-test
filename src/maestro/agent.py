@@ -16,6 +16,9 @@ from renpy.templating import render_template
 
 logger = logging.getLogger(__name__)
 
+# Reads carry no artifact change; a run of them is the sub-loop sightseeing, not progressing.
+_READ_TOOLS = {"read_node", "read_component", "read_story_state"}
+
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
 
@@ -175,13 +178,16 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
         mode = context.get("mode")
         system = _MODE_PROMPTS.get(mode, _SYSTEM) + guide_suffix
         schemas = _schemas_for_mode(mode, all_schemas)
-        # If the agent is spinning on reads, take read tools away so it must act.
-        if context.get("stalled"):
+        # If the agent is spinning on reads, take read tools away so it must act — and turn
+        # reasoning on, since a stalled small model rarely breaks the loop with thinking off.
+        stalled = context.get("stalled")
+        if stalled:
             schemas = [s for s in schemas
                        if not s.get("function", {}).get("name", "").startswith("read")]
         messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
-        response = conn.generate_with_tools(messages, schemas)
+        response = (conn.generate_with_tools(messages, schemas, reasoning="high")
+                    if stalled else conn.generate_with_tools(messages, schemas))
         action = _parse_action(response)
         args = action.get("args", {}) if isinstance(action.get("args"), dict) else {}
         target = args.get("node_id") or args.get("component_id") or ""
@@ -202,6 +208,27 @@ def _parse_tool_args(tc: Dict) -> Dict:
     except json.JSONDecodeError:
         logger.warning("subloop returned unparseable args: %r", raw)
         return {}
+
+
+def _create_only(dispatch: Callable, view_fn: Callable) -> Callable:
+    """Wrap dispatch so write_node refuses to overwrite an existing node. Used only while
+    driving `count`: the job there is to ADD scenes, but the small model loves to rewrite
+    scene_01 — an overwrite never raises the count, so reject it and steer to a fresh id.
+    Other targets legitimately rewrite nodes, so this guard is count-only."""
+    existing = set((view_fn() or {}).get("node_ids") or [])
+
+    def guarded(action: Dict) -> Dict:
+        if action.get("tool") == "write_node":
+            nid = (action.get("args") or {}).get("node_id")
+            if nid in existing:
+                return {"ok": False, "error":
+                        f"node {nid!r} already exists — to raise the scene COUNT write a NEW "
+                        f"scene id (e.g. the next scene_NN); do not rewrite an existing scene."}
+            if nid:
+                existing.add(nid)
+        return dispatch(action)
+
+    return guarded
 
 
 def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
@@ -225,10 +252,25 @@ def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) 
         # write_node with the author prompt; a fix target gets edit tools + the repair prompt.
         schemas = _schemas_for_target(target, node_schemas)
         system = _prompt_for_target(target) + guide_suffix
+        if target["check"].get("type") == "count":
+            dispatch = _create_only(dispatch, view_fn)
         mb = MessageBuilder(system).add_user(_render_context(ctx))
 
+        # Reasoning escalation: small local models build fine with thinking OFF, but once a
+        # target stops progressing (tool calls erroring, no new node landing) they spiral and
+        # never recover on their own. After STALL_LIMIT unproductive iterations, turn reasoning
+        # on for the rest of THIS target. Resets each target (run() is called fresh per target).
+        # A read is never "progress" — it changes no artifact — so a string of read_node calls
+        # (the model sightseeing the graph) counts as a stall and trips the same brake the
+        # stateless decider has: escalate reasoning AND drop read tools so it must act.
+        STALL_LIMIT = 2
+        escalated = False
+        reads_dropped = False
+        stall = 0
+
         for _ in range(min(cap, max(budget, 0))):
-            response = conn.generate_with_tools(mb.build(), schemas)
+            response = (conn.generate_with_tools(mb.build(), schemas, reasoning="high")
+                        if escalated else conn.generate_with_tools(mb.build(), schemas))
             if "error" in response:
                 logger.warning("subloop LLM error: %s", response["error"])
                 break
@@ -239,6 +281,7 @@ def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) 
                 break
 
             mb.add_assistant(message.get("content"), tool_calls=tool_calls)
+            made_progress = False
             for tc in tool_calls:
                 name = tc["function"]["name"]
                 args = _parse_tool_args(tc)
@@ -247,7 +290,22 @@ def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) 
                                    json.dumps(result, ensure_ascii=False)[:800])
                 tgt = args.get("node_id") or args.get("component_id") or ""
                 err = result.get("error") if isinstance(result, dict) else None
+                if not err and name not in _READ_TOOLS:
+                    made_progress = True
                 report(f"{name}({tgt}): " + (f"error — {err}" if err else "ok"))
+
+            stall = 0 if made_progress else stall + 1
+            if stall >= STALL_LIMIT:
+                if not escalated:
+                    escalated = True
+                    logger.info("subloop stalled %dx on %s — escalating reasoning to high",
+                                stall, target["check"].get("type"))
+                if not reads_dropped:
+                    reads_dropped = True
+                    schemas = [s for s in schemas
+                               if s.get("function", {}).get("name") not in _READ_TOOLS]
+                    logger.info("subloop stalled %dx on %s — dropping read tools to force action",
+                                stall, target["check"].get("type"))
 
             # The artifact changed; re-show the graph so the agent tracks ids as it builds.
             view = view_fn()

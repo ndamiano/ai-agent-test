@@ -50,6 +50,16 @@ _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
                  "open_threads_resolve", "event_summary")
 
 
+# A dialogue line is `<speaker> "..."`. A speaker that isn't a defined Character compiles
+# to a NameError deep in the Ren'Py build — a failure the agent then chases for dozens of
+# steps via edit_node. Catch it at write time instead. Valid speakers = premise character
+# ids + the always-defined `act` narrator + Ren'Py statement keywords (mirror renpy/_script.py).
+_SPEAKER_RE = re.compile(r'^[ \t]*(\w+)\s+"', re.MULTILINE)
+_SPEAKER_KEYWORDS = {"scene", "show", "hide", "jump", "return", "menu", "call", "pause",
+                     "play", "stop", "queue", "voice", "nvl", "window", "image", "define",
+                     "transform", "init", "python", "label", "with", "extend", "act"}
+
+
 # OpenAI-format schemas for the decider's tool-calling. Kept beside build_tools so
 # the names stay in sync.
 TOOL_SCHEMAS: List[Dict] = [
@@ -177,6 +187,21 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return f"{component_id} must be a JSON object, not a {type(content).__name__}"
         return validator(content)
 
+    def _speaker_error(script: str) -> Optional[str]:
+        """Reject a node whose dialogue names a speaker that is not a defined character —
+        the cast is locked upstream, so an unknown speaker is a typo (e.g. 'elias_vanaka'
+        for 'elias_voss') that only surfaces as a compile failure dozens of steps later."""
+        prem = state.read_component("premise") or {}
+        chars = {c.get("id") for c in prem.get("characters", []) if c.get("id")}
+        if not chars:  # premise not authored yet — nothing to check against
+            return None
+        bad = sorted(set(_SPEAKER_RE.findall(script)) - chars - _SPEAKER_KEYWORDS)
+        if not bad:
+            return None
+        return (f"undefined speaker(s) {bad} — not defined characters, they will break the "
+                f"compile. Use ONLY these exact character ids: {sorted(chars)}. For narration, "
+                f"write a plain \"...\" line with no speaker prefix.")
+
     # ── artifact mutation (gated on freeze) ──────────────────────────────────
     def write_component(component_id: str, content) -> Dict:
         _require_frozen()
@@ -209,6 +234,10 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
                                           "adds 'label start' that jumps to the first node"}
         if not isinstance(content, str) or not content.strip():
             return {"ok": False, "error": "node content must be non-empty Ren'Py script text"}
+        script = _normalize_script(content)
+        err = _speaker_error(script)
+        if err:
+            return {"ok": False, "error": err}
         from maestro.story_state import init_story_state, apply_delta
 
         # Tolerate a malformed story_state_delta (the model sometimes passes a list/str).
@@ -216,7 +245,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         delta.update({k: v for k, v in delta_fields.items() if k in _DELTA_FIELDS})
 
         ns = state.read_component("node_scripts") or {"scripts": {}, "node_ids": []}
-        ns.setdefault("scripts", {})[node_id] = _normalize_script(content)
+        ns.setdefault("scripts", {})[node_id] = script
         ns.setdefault("node_ids", [])
         if node_id not in ns["node_ids"]:
             ns["node_ids"].append(node_id)
@@ -250,8 +279,12 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return {"ok": False, "error":
                     f"`find` text not present in {node_id} — copy an EXACT snippet from the "
                     f"node text below (match whitespace and quotes exactly):\n{text}"}
-        scripts[node_id] = _normalize_script(
+        patched = _normalize_script(
             text.replace(find, replace if isinstance(replace, str) else "", 1))
+        err = _speaker_error(patched)
+        if err:
+            return {"ok": False, "error": err}
+        scripts[node_id] = patched
         state.write_component("node_scripts", ns)
         return {"ok": True, "node_id": node_id}
 

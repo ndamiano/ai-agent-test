@@ -35,8 +35,7 @@ def _log_request_to_file(payload: dict, endpoint: str, request_id: str, metadata
         "request_id": request_id,
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint,
-        # chat/completions carries "messages"; the Responses API carries "input".
-        "payload": payload.get("messages", payload.get("input")),
+        "payload": payload.get("input"),
         "metadata": metadata or {}
     })
 
@@ -66,6 +65,17 @@ _REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 # Responses effort enum so a setting of "on"/"off" works instead of being silently dropped
 # (a dropped value = no reasoning field = the model reasons unbounded again).
 _REASONING_ALIASES = {"on": "high", "off": "none"}
+
+# Sentinel: caller did not pass a per-call reasoning override, so fall back to self.reasoning.
+# Distinct from None/"none" which are explicit values ("none" = reasoning off).
+_REASONING_UNSET = object()
+
+
+def _resolve_effort(value):
+    """Map a reasoning value (incl. on/off aliases) to the Responses effort enum, or None."""
+    if isinstance(value, str):
+        value = _REASONING_ALIASES.get(value, value)
+    return value
 
 
 def _chat_tools_to_responses(tools):
@@ -134,12 +144,53 @@ def _responses_to_chat(resp):
     return {"choices": [{"message": msg}], "usage": usage, "id": resp.get("id")}
 
 
+def _responses_stream_to_chat_chunks(events):
+    """Responses-API SSE events -> chat-shaped streaming chunks.
+
+    Re-emits the typed Responses event stream as OpenAI chat `{"choices":[{"delta":...}]}`
+    chunks so existing accumulators (MainAgent._get_response_with_tools, inference.call_llm)
+    work unchanged.
+
+    Assistant text streams token-by-token via `response.output_text.delta`. Tool calls are
+    taken from the terminal `response.output_item.done` item, which always carries the
+    complete call (id, name, full arguments) — LM Studio sends function arguments as a single
+    `.done` event, not incremental `.delta`s, so reconstructing from deltas drops the args.
+    """
+    n_tools = 0
+    for ev in events:
+        etype = ev.get("type")
+        if etype == "response.created":
+            resp = ev.get("response", {}) or {}
+            yield {"id": resp.get("id"), "choices": []}
+        elif etype == "response.output_text.delta":
+            yield {"choices": [{"index": 0, "delta": {"content": ev.get("delta", "")}}]}
+        elif etype == "response.output_item.done":
+            item = ev.get("item", {}) or {}
+            if item.get("type") == "function_call":
+                tool_index = n_tools
+                n_tools += 1
+                yield {"choices": [{"index": 0, "delta": {"tool_calls": [{
+                    "index": tool_index, "id": item.get("call_id"), "type": "function",
+                    "function": {"name": item.get("name", ""),
+                                 "arguments": item.get("arguments", "")}}]}}]}
+        elif etype == "response.completed":
+            resp = ev.get("response", {}) or {}
+            u = resp.get("usage", {}) or {}
+            od = u.get("output_tokens_details", {}) or {}
+            finish = "tool_calls" if n_tools else "stop"
+            yield {"usage": {"prompt_tokens": u.get("input_tokens"),
+                             "completion_tokens": u.get("output_tokens"),
+                             "total_tokens": u.get("total_tokens"),
+                             "completion_tokens_details": {"reasoning_tokens": od.get("reasoning_tokens")}},
+                   "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
+
+
 class OpenAICompatibleConnector(BaseConnector):
     connector_name = "openai_compatible"
 
     def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "default",
                  max_tokens: int = 50000, frequency_penalty: float = 0.5,
-                 reasoning: Optional[str] = None, api_style: str = "chat"):
+                 reasoning: Optional[str] = None):
         super().__init__()
 
         self.base_url = base_url.rstrip('/')
@@ -147,24 +198,18 @@ class OpenAICompatibleConnector(BaseConnector):
         self.model_name = model
         self.max_tokens = max_tokens
         self.frequency_penalty = frequency_penalty
-        # Reasoning-effort for reasoning models. On the Responses API (api_style="responses")
-        # this becomes reasoning.effort and is the ONLY place it actually takes effect — the
-        # chat/completions endpoint silently ignores it, letting the model burn 20-50k thinking
-        # tokens per call. "none" disables reasoning; None lets the model pick. on/off aliased.
-        self.reasoning = _REASONING_ALIASES.get(reasoning, reasoning) if isinstance(reasoning, str) else reasoning
-        # "chat" → /chat/completions (OpenAI standard); "responses" → /v1/responses, the only
-        # OpenAI-compatible LM Studio path that honors reasoning effort.
-        self.api_style = api_style
+        # Reasoning-effort for reasoning models, sent as reasoning.effort on the Responses API.
+        # "none" disables reasoning — the lever that stops a local model burning 20-50k thinking
+        # tokens per call; None lets the model pick. on/off aliased to the effort enum.
+        self.reasoning = _resolve_effort(reasoning)
         self._response_format_supported = True
-        # The Responses path has no SSE translation here, so don't let callers attempt
-        # streaming (they'd fail and fall back every call, logging a warning each time).
-        self._streaming_works = api_style != "responses"
+        self._streaming_works = True
         self._context_length: Optional[int] = None
 
         # The API root: a base_url already carrying a version segment ("/v1") is used as-is; a
-        # bare host gets "/v1" appended. chat/responses/models endpoints all derive from it.
+        # bare host gets "/v1" appended. responses/models endpoints all derive from it.
         self._api_root = self.base_url if self._is_versioned_path(self.base_url) else f"{self.base_url}/v1"
-        self.api_endpoint = f"{self._api_root}/chat/completions"
+        self.api_endpoint = f"{self._api_root}/responses"
 
     def get_context_length(self) -> Optional[int]:
         """Return the loaded model's context window size by querying /v1/models.
@@ -212,7 +257,8 @@ class OpenAICompatibleConnector(BaseConnector):
             return result["data"]
         return result
 
-    def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None, max_tokens: int = None) -> dict:
+    def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None,
+                            max_tokens: int = None, reasoning=_REASONING_UNSET) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -220,89 +266,12 @@ class OpenAICompatibleConnector(BaseConnector):
             return {"error": error_msg}
 
         request_id = str(uuid.uuid4())
+        return self._call_responses(messages, tools, response_format, max_tokens, request_id, reasoning)
 
-        if self.api_style == "responses":
-            return self._call_responses(messages, tools, max_tokens, request_id)
-
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
-            "frequency_penalty": self.frequency_penalty,
-            "stream": False,
-        }
-
-        # chat/completions honors a top-level `reasoning` string for models that support it
-        # (e.g. Gemma 4: "none" disables thinking — which also avoids its repetition loops).
-        if self.reasoning is not None:
-            payload["reasoning"] = self.reasoning
-
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
-        if response_format and getattr(self, "_response_format_supported", True):
-            payload["response_format"] = response_format
-
-        session = self._get_session()
-
-        _log_request_to_file(
-            payload=payload,
-            endpoint=self.api_endpoint,
-            request_id=request_id,
-            metadata={"method": "generate_with_tools", "model": self.model_name, "has_tools": bool(tools)}
-        )
-
-        t0 = time.perf_counter()
-        try:
-            response = session.post(
-                self.api_endpoint,
-                json=payload,
-                headers=self._prepare_headers(),
-                timeout=300
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                result = self._unwrap_response(result)
-                _log_call(self.model_name, len(messages), bool(tools), time.perf_counter() - t0, result)
-                self._log_llm(messages, result)
-                _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
-                return result
-            elif response_format and "response_format" in response.text:
-                logger.warning("Endpoint does not support response_format, retrying without it")
-                self._response_format_supported = False
-                payload.pop("response_format", None)
-                response = session.post(self.api_endpoint, json=payload, headers=self._prepare_headers(), timeout=300)
-                if response.status_code == 200:
-                    result = response.json()
-                    result = self._unwrap_response(result)
-                    _log_call(self.model_name, len(messages), bool(tools), time.perf_counter() - t0, result)
-                    self._log_llm(messages, result)
-                    _log_response_to_file(result, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
-                    return result
-                error_msg = f"Status {response.status_code}: {response.text}"
-                self._log_llm(messages, None, error_msg)
-                return {"error": error_msg}
-            else:
-                error_msg = f"Status {response.status_code}: {response.text}"
-                self._log_llm(messages, None, error_msg)
-                _log_response_to_file({"error": error_msg}, self.api_endpoint, request_id, {"method": "generate_with_tools", "model": self.model_name})
-                return {"error": error_msg}
-
-        except requests.exceptions.RequestException as e:
-            error_msg = f"Connection error: {str(e)}"
-            self._log_llm(messages, None, error_msg)
-            return {"error": error_msg}
-
-    def _call_responses(self, messages: list, tools: list, max_tokens: Optional[int],
-                        request_id: str) -> dict:
-        """Call the OpenAI-compatible Responses endpoint, translating to/from chat shape.
-
-        The Responses API is the only LM Studio path that honors reasoning.effort, so this is
-        how we keep a local reasoning model from spending ~30k tokens thinking per node. Speaks
-        the same {choices, usage} shape back to callers as generate_with_tools."""
+    def _responses_payload(self, messages: list, tools: list, response_format: Optional[dict],
+                           max_tokens: Optional[int], stream: bool,
+                           reasoning=_REASONING_UNSET) -> dict:
+        """Build the Responses-API request body from chat-shaped inputs."""
         instructions, input_items = _chat_messages_to_responses_input(messages)
         payload = {
             "model": self.model_name,
@@ -310,17 +279,35 @@ class OpenAICompatibleConnector(BaseConnector):
             "temperature": 0.7,
             "max_output_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "frequency_penalty": self.frequency_penalty,
-            "stream": False,
+            "stream": stream,
         }
         if instructions:
             payload["instructions"] = instructions
-        if self.reasoning in _REASONING_EFFORTS:
-            payload["reasoning"] = {"effort": self.reasoning}
+        # Per-call override (the executor escalates effort when a target stalls) falls back to
+        # the connector's configured effort when unset.
+        effort = self.reasoning if reasoning is _REASONING_UNSET else _resolve_effort(reasoning)
+        if effort in _REASONING_EFFORTS:
+            payload["reasoning"] = {"effort": effort}
         if tools:
             payload["tools"] = _chat_tools_to_responses(tools)
             payload["tool_choice"] = "auto"
+        # JSON / structured output lives under text.format on the Responses API, not the
+        # chat/completions top-level response_format field.
+        if response_format and self._response_format_supported:
+            payload["text"] = {"format": response_format}
+        return payload
 
-        endpoint = f"{self._api_root}/responses"
+    def _call_responses(self, messages: list, tools: list, response_format: Optional[dict],
+                        max_tokens: Optional[int], request_id: str,
+                        reasoning=_REASONING_UNSET) -> dict:
+        """Call the OpenAI-compatible Responses endpoint, translating to/from chat shape.
+
+        The Responses API honors reasoning.effort — how we keep a local reasoning model from
+        spending ~30k tokens thinking per node. Speaks the same {choices, usage} shape back to
+        callers as the old chat path did, so call sites are unchanged."""
+        payload = self._responses_payload(messages, tools, response_format, max_tokens,
+                                          stream=False, reasoning=reasoning)
+        endpoint = self.api_endpoint
         _log_request_to_file(payload=payload, endpoint=endpoint, request_id=request_id,
                              metadata={"method": "responses", "model": self.model_name,
                                        "has_tools": bool(tools)})
@@ -337,6 +324,23 @@ class OpenAICompatibleConnector(BaseConnector):
                 _log_response_to_file(raw, endpoint, request_id,
                                       {"method": "responses", "model": self.model_name})
                 return result
+            # Server doesn't understand text.format — drop it and retry once so structured
+            # output degrades to free-form rather than failing the whole call.
+            if response_format and "format" in response.text:
+                logger.warning("Endpoint does not support text.format, retrying without it")
+                self._response_format_supported = False
+                payload.pop("text", None)
+                response = self._get_session().post(
+                    endpoint, json=payload, headers=self._prepare_headers(), timeout=300)
+                if response.status_code == 200:
+                    raw = self._unwrap_response(response.json())
+                    result = _responses_to_chat(raw)
+                    _log_call(self.model_name, len(messages), bool(tools),
+                              time.perf_counter() - t0, result)
+                    self._log_llm(messages, result)
+                    _log_response_to_file(raw, endpoint, request_id,
+                                          {"method": "responses", "model": self.model_name})
+                    return result
             error_msg = f"Status {response.status_code}: {response.text}"
             self._log_llm(messages, None, error_msg)
             _log_response_to_file({"error": error_msg}, endpoint, request_id,
@@ -348,12 +352,6 @@ class OpenAICompatibleConnector(BaseConnector):
             return {"error": error_msg}
 
     def generate_with_tools_stream(self, messages: list, tools: list = None):
-        if self.api_style == "responses":
-            # No SSE translation for the Responses API yet — signal callers to use the
-            # non-streaming path (generate_with_tools), which handles responses. Both stream
-            # consumers fall back to generate_with_tools on an error chunk.
-            yield {"error": "streaming not supported for responses api_style"}
-            return
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -362,23 +360,7 @@ class OpenAICompatibleConnector(BaseConnector):
             return
 
         request_id = str(uuid.uuid4())
-        payload = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": self.max_tokens,
-            "frequency_penalty": self.frequency_penalty,
-            "stream": True,
-        }
-
-        if self.reasoning is not None:
-            payload["reasoning"] = self.reasoning
-
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-
-        session = self._get_session()
+        payload = self._responses_payload(messages, tools, None, None, stream=True)
 
         _log_request_to_file(
             payload=payload,
@@ -388,7 +370,7 @@ class OpenAICompatibleConnector(BaseConnector):
         )
 
         try:
-            response = session.post(
+            response = self._get_session().post(
                 self.api_endpoint,
                 json=payload,
                 headers=self._prepare_headers(),
@@ -396,41 +378,35 @@ class OpenAICompatibleConnector(BaseConnector):
                 timeout=(10, 300)
             )
 
-            if response.status_code == 200:
-                chunks = []
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-
-                    line = line.decode('utf-8')
-
-                    if not line.strip() or line.startswith(':'):
-                        continue
-
-                    if line.startswith('data: '):
-                        data_str = line[6:]
-
-                        if data_str.strip() == '[DONE]':
-                            break
-
-                        try:
-                            chunk = json.loads(data_str)
-                            chunk = self._unwrap_response(chunk)
-                            chunks.append(chunk)
-                            yield chunk
-
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse streaming chunk: {e}")
-                            continue
-            else:
+            if response.status_code != 200:
                 error_msg = f"Status {response.status_code}: {response.text}"
                 logger.error(f"API streaming error: {error_msg}")
                 self._log_llm(messages, None, error_msg)
                 _log_response_to_file({"error": error_msg}, self.api_endpoint, request_id, {"method": "generate_with_tools_stream", "model": self.model_name})
                 yield {"error": error_msg}
+                return
+
+            yield from _responses_stream_to_chat_chunks(self._iter_sse_events(response))
 
         except requests.exceptions.RequestException as e:
             error_msg = f"Streaming connection error: {str(e)}"
             logger.error(f"API streaming error: {error_msg}")
             self._log_llm(messages, None, error_msg)
             yield {"error": error_msg}
+
+    def _iter_sse_events(self, response):
+        """Parse an SSE stream into the JSON `data:` payloads (the typed Responses events)."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode('utf-8')
+            if not line.strip() or line.startswith(':') or not line.startswith('data: '):
+                continue
+            data_str = line[6:]
+            if data_str.strip() == '[DONE]':
+                break
+            try:
+                yield self._unwrap_response(json.loads(data_str))
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse streaming chunk: {e}")
+                continue

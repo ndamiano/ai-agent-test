@@ -28,9 +28,10 @@ def create_run() -> str:
     return run_id
 
 
-def run_build(run_id: str, max_steps: int = 120, decide=None) -> ExecutorResult:
+def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     # A spec that demands a real VN (many nodes + branching) needs more steps than a
-    # trivial one; the loop is cheap now (compile checks lint-only).
+    # trivial one; the loop is cheap now (compile checks lint-only, steps run <15s), so
+    # budget for a 50-node game with wiring + compile-fix slack rather than starving it.
     from maestro.spec_tools import _emit
     from renpy.checks import register_all as register_renpy_checks, node_view
     from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide

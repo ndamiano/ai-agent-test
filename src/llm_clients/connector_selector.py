@@ -48,7 +48,6 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
         max_tokens=settings.get("max_tokens", 50000),
         frequency_penalty=settings.get("frequency_penalty", 0.5),
         reasoning=settings.get("reasoning"),
-        api_style=settings.get("api_style", "chat"),
     )
     _cached_settings_hash = settings_hash
 

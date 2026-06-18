@@ -33,23 +33,8 @@ def _run(connector, body, monkeypatch):
     return sess.captured
 
 
-def test_chat_path_sends_reasoning_string(monkeypatch):
-    # chat/completions honors a top-level `reasoning` string for models that support it
-    # (Gemma 4: "none" disables thinking). Sent as a plain string, not the {effort} object.
-    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="none", api_style="chat")
-    payload = _run(c, {"choices": [{"message": {"content": "ok"}}], "usage": {}}, monkeypatch)
-    assert payload["reasoning"] == "none"
-
-
-def test_chat_path_omits_reasoning_when_unset(monkeypatch):
-    c = OpenAICompatibleConnector(base_url="http://x", model="m", api_style="chat")
-    payload = _run(c, {"choices": [{"message": {"content": "ok"}}], "usage": {}}, monkeypatch)
-    assert "reasoning" not in payload
-
-
 def test_responses_path_sends_reasoning_effort(monkeypatch):
-    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="low",
-                                  api_style="responses")
+    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="low")
     body = {"id": "r", "output": [], "usage": {}}
     payload = _run(c, body, monkeypatch)
     assert payload["reasoning"] == {"effort": "low"}
@@ -57,6 +42,38 @@ def test_responses_path_sends_reasoning_effort(monkeypatch):
 
 
 def test_responses_omits_reasoning_when_unset(monkeypatch):
-    c = OpenAICompatibleConnector(base_url="http://x", model="m", api_style="responses")
+    c = OpenAICompatibleConnector(base_url="http://x", model="m")
     payload = _run(c, {"id": "r", "output": [], "usage": {}}, monkeypatch)
     assert "reasoning" not in payload
+
+
+def _run_with_reasoning(connector, reasoning, monkeypatch):
+    sess = _Session({"id": "r", "output": [], "usage": {}})
+    monkeypatch.setattr(connector, "_get_session", lambda: sess)
+    connector.generate_with_tools([{"role": "user", "content": "hi"}], reasoning=reasoning)
+    return sess.captured
+
+
+def test_per_call_reasoning_overrides_configured(monkeypatch):
+    # The executor escalates effort on a stalled target regardless of the configured floor.
+    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="none")
+    payload = _run_with_reasoning(c, "high", monkeypatch)
+    assert payload["reasoning"] == {"effort": "high"}
+
+
+def test_per_call_reasoning_aliases_resolve(monkeypatch):
+    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="none")
+    assert _run_with_reasoning(c, "on", monkeypatch)["reasoning"] == {"effort": "high"}
+
+
+def test_per_call_none_disables_configured_reasoning(monkeypatch):
+    # "none" is the explicit OFF effort (the API rejects omitting it as "off"), so a per-call
+    # "none" must send effort:none even when the connector is configured high.
+    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="high")
+    assert _run_with_reasoning(c, "none", monkeypatch)["reasoning"] == {"effort": "none"}
+
+
+def test_unset_per_call_falls_back_to_configured(monkeypatch):
+    c = OpenAICompatibleConnector(base_url="http://x", model="m", reasoning="low")
+    payload = _run(c, {"id": "r", "output": [], "usage": {}}, monkeypatch)
+    assert payload["reasoning"] == {"effort": "low"}

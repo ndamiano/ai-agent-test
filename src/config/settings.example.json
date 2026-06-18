@@ -5,7 +5,6 @@
     "model": "local-model",
     "temperature": 0.7,
     "max_tokens": 50000,
-    "api_style": "responses",
     "reasoning": "low"
   },
   "cline": {

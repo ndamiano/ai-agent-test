@@ -23,63 +23,40 @@ _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 # Prompt construction helpers
 # ---------------------------------------------------------------------------
 
+# Anima (animaOfficial_preview3Base) uses a Qwen text encoder — it reads natural
+# language, not Pony/booru tag salad. score_9/score_8_up etc. are Pony embeddings
+# the Qwen encoder doesn't know, so prompts are plain descriptive sentences.
 _STYLE_LOCK = (
-    "anime style, visual novel sprite, 2d illustration, "
-    "clean lineart, flat color shading, cel shading"
+    "Anime visual novel art style with clean lineart, flat cel shading, and soft colors"
 )
 _CHAR_COMPOSITION = (
-    "full body, white background, simple background, "
-    "looking at viewer, neutral pose, arms at sides, "
-    "standing, solo"
+    "Full body view of the character standing in a relaxed neutral pose, arms at their "
+    "sides, facing the viewer, against a plain white background."
 )
-_QUALITY = "masterpiece, best quality, score_9, score_8_up, score_7_up"
+_QUALITY = "masterpiece, best quality, highly detailed"
 
 _CHAR_NEGATIVE = (
-    "worst quality, low quality, score_1, score_2, score_3, "
-    "blurry, jpeg artifacts, "
-    "background, scenery, landscape, rain, fog, "
-    "dynamic pose, action pose, fighting stance, "
-    "cropped, bust only, portrait only, headshot, "
-    "multiple characters, extra limbs, bad anatomy, "
-    "watermark, signature"
+    "low quality, blurry, distorted, extra limbs, bad anatomy, bad hands, "
+    "background scenery, multiple characters, cropped, watermark, signature, text"
 )
 
 _BG_NEGATIVE = (
-    "worst quality, low quality, score_1, score_2, score_3, "
-    "blurry, jpeg artifacts, characters, people, figures, "
-    "anime style, cartoon"
+    "low quality, blurry, distorted, people, characters, figures, watermark, signature, text"
 )
 
 _CG_NEGATIVE = (
-    "worst quality, low quality, score_1, score_2, score_3, "
-    "blurry, jpeg artifacts, white background, simple background, "
-    "sprite style, isolated character, no background"
+    "low quality, blurry, distorted, bad anatomy, plain white background, "
+    "empty scene, watermark, signature, text"
 )
 
 _TITLE_CARD_NEGATIVE = (
-    "worst quality, low quality, score_1, score_2, score_3, "
-    "blurry, jpeg artifacts, text, watermark, signature, ui elements, hud"
+    "low quality, blurry, distorted, watermark, signature, ui elements, hud"
 )
 
 
-def _tag(tags: dict, key: str) -> str:
-    # appearance_tags values are model output: usually a string, sometimes a list.
-    val = tags.get(key, "")
-    if isinstance(val, list):
-        return ", ".join(str(v) for v in val if v)
-    return str(val) if val else ""
-
-
 def _build_character_prompt(char_data: dict) -> tuple[str, str]:
-    tags = char_data.get("appearance_tags", {})
-    subject = ", ".join(filter(None, [
-        _tag(tags, "body"),
-        _tag(tags, "hair"),
-        _tag(tags, "eyes"),
-        _tag(tags, "clothing"),
-        _tag(tags, "distinguishing"),
-    ]))
-    positive = f"{_QUALITY}, {_STYLE_LOCK}, {subject}, {_CHAR_COMPOSITION}"
+    description = (char_data.get("description") or char_data.get("name") or "").strip()
+    positive = f"{_QUALITY}. {_STYLE_LOCK}. {description} {_CHAR_COMPOSITION}"
     return positive, _CHAR_NEGATIVE
 
 
@@ -96,15 +73,10 @@ def _build_character_workflow(base_workflow: dict, positive: str, negative: str)
     return wf
 
 
-def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
+def _build_widescreen_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
     import copy
     wf = copy.deepcopy(base_workflow)
-    bg_positive = (
-        f"{positive}, "
-        "visual novel background, wide establishing shot, "
-        "atmospheric, detailed environment, no characters"
-    )
-    wf["11"]["inputs"]["text"] = bg_positive
+    wf["11"]["inputs"]["text"] = positive
     wf["12"]["inputs"]["text"] = negative
     wf["28"]["inputs"]["width"] = 1280
     wf["28"]["inputs"]["height"] = 720
@@ -125,20 +97,23 @@ def build_character_job(char_data: dict) -> dict:
 
 def build_background_job(description: str) -> dict:
     """Return a {prompt, workflow_override} job dict for a background image."""
+    positive = (
+        f"A wide, atmospheric visual novel background establishing shot of a detailed "
+        f"environment, with no characters present. {description}"
+    )
     return {
-        "prompt": description,
-        "workflow_override": _build_background_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), description, _BG_NEGATIVE),
+        "prompt": positive,
+        "workflow_override": _build_widescreen_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _BG_NEGATIVE),
     }
 
 
 def build_cg_job(description: str) -> dict:
     """Return a {prompt, workflow_override} job dict for a full-screen CG illustration."""
     positive = (
-        f"{_QUALITY}, {_STYLE_LOCK}, "
-        f"anime visual novel CG illustration, full scene, characters in environment, "
-        f"dynamic composition, dramatic lighting, detailed background, {description}"
+        f"{_QUALITY}. {_STYLE_LOCK}. A full-scene anime visual novel CG illustration with "
+        f"characters in their environment, dynamic composition, and dramatic lighting. {description}"
     )
-    wf = _build_background_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _CG_NEGATIVE)
+    wf = _build_widescreen_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _CG_NEGATIVE)
     wf["19"]["inputs"]["cfg"] = 7.0
     wf["19"]["inputs"]["steps"] = 35
     return {"prompt": positive, "workflow_override": wf}
@@ -147,10 +122,10 @@ def build_cg_job(description: str) -> dict:
 def build_title_card_job(description: str) -> dict:
     """Return a {prompt, workflow_override} job dict for the game title card."""
     positive = (
-        f"{_QUALITY}, {_STYLE_LOCK}, "
-        f"visual novel title card, wide cinematic composition, key visual, atmospheric, {description}"
+        f"{_QUALITY}. {_STYLE_LOCK}. A wide, cinematic visual novel title card key visual "
+        f"with an atmospheric composition. {description}"
     )
-    wf = _build_background_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _TITLE_CARD_NEGATIVE)
+    wf = _build_widescreen_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _TITLE_CARD_NEGATIVE)
     wf["19"]["inputs"]["cfg"] = 7.0
     wf["19"]["inputs"]["steps"] = 35
     return {"prompt": positive, "workflow_override": wf}

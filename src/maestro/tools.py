@@ -11,6 +11,7 @@ State is bounded on purpose: there is no raw read_file/write_file. Components ar
 written by id; scratchpad is replaced, not appended.
 """
 
+import re
 from typing import Callable, Dict, List, Optional
 
 from maestro.validate import validate
@@ -21,13 +22,26 @@ class SpecNotFrozen(RuntimeError):
 
 
 # Small local models routinely over-escape when emitting script text as a JSON string
-# value — producing literal "\n" / "\"" instead of real newlines and quotes, which
-# corrupts the Ren'Py node. Undo one level of over-escaping. Idempotent for correct
-# content (real newlines/quotes are untouched).
+# value, and inconsistently so — a single intended newline can arrive as "\n", or as a
+# backslash welded to a real newline ("\\\n"), or as several stacked backslashes; quotes
+# likewise come back as "\"", "\\\"", etc. Collapsing one fixed level (the old behaviour)
+# left the surplus backslashes behind, which broke labels/indentation and made every
+# dialogue line unparseable. Collapse any run of backslashes before a newline or quote,
+# and any run before a literal n/t escape. Idempotent for correct content.
+_BSLASH_NEWLINE = re.compile(r"\\+\n")
+_BSLASH_LIT_N = re.compile(r"\\+n")
+_BSLASH_LIT_T = re.compile(r"\\+t")
+_BSLASH_QUOTE = re.compile(r'\\+"')
+
+
 def _normalize_script(text):
     if not isinstance(text, str):
         return text
-    return text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+    text = _BSLASH_NEWLINE.sub("\n", text)
+    text = _BSLASH_LIT_N.sub("\n", text)
+    text = _BSLASH_LIT_T.sub("\t", text)
+    text = _BSLASH_QUOTE.sub('"', text)
+    return text
 
 
 # Story-state delta fields, so write_node can accept them whether nested under

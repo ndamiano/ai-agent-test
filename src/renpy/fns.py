@@ -50,7 +50,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     for char in manifest.get("characters", []):
         img_file = char.get("image_file", f"{char['id']}.png")
         job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "char"})
-        jobs.append(build_character_job(premise_chars.get(char["id"], char)))
+        jobs.append(build_character_job({**premise_chars.get(char["id"], {}), **char}))
 
     for cg in manifest.get("cgs", []):
         img_file = cg.get("image_file", f"{cg['id']}.png")

@@ -130,12 +130,16 @@ def _fail(check_type, detail="x", cid="node_scripts"):
 
 
 def test_pick_target_priority_order():
+    # Build before polish: nodes on the page (count) first, lint (compiles) last so one
+    # stubborn syntax error can't starve node creation.
     fails = [_fail("each_node_min_lines"), _fail("reachable_from_start"),
              _fail("count"), _fail("compiles")]
-    assert pick_target(fails)["check"]["type"] == "compiles"
+    assert pick_target(fails)["check"]["type"] == "count"
     assert pick_target([_fail("each_node_min_lines"), _fail("count")])["check"]["type"] == "count"
     assert pick_target([_fail("all_characters_speak"),
                         _fail("reachable_from_start")])["check"]["type"] == "reachable_from_start"
+    # compiles is dead last — only targeted when nothing else fails.
+    assert pick_target([_fail("compiles"), _fail("each_has")])["check"]["type"] == "each_has"
 
 
 def test_executor_drives_target_via_sub_runner(tmp_path):

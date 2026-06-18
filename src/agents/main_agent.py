@@ -43,7 +43,8 @@ class MainAgent:
         return openai_tools
 
     def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:
-        if hasattr(self.connector, 'generate_with_tools_stream'):
+        if (hasattr(self.connector, 'generate_with_tools_stream')
+                and getattr(self.connector, '_streaming_works', True)):
             try:
                 # Envelope fields from the first chunk (id, model, etc.)
                 envelope: Dict[str, Any] = {}

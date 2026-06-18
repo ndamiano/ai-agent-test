@@ -3,6 +3,27 @@ import { api } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import type { Game, GameDetail, TodoItem, WebSocketMessage } from '../types'
 
+// Render a done-condition as a plain-English line so the human reviews the actual contract
+// at freeze time — not just "N done-condition(s)", which hid that quality checks were missing.
+const describeCheck = (c: Record<string, any>): string => {
+    const t = c.check?.type ?? c.type
+    const path = c.check?.path ?? c.path
+    const min = c.check?.min ?? c.min
+    switch (t) {
+        case 'count': return `≥ ${min} ${path}`
+        case 'exists': return `${path} present`
+        case 'distinct': return `${path} all distinct`
+        case 'each_has': return `each ${path} has ${(c.fields || []).join(', ')}`
+        case 'refs_resolve': return `${c.from ?? ''} all resolve to ${c.to ?? ''}`
+        case 'each_node_min_lines': return `every node ≥ ${min ?? 3} lines`
+        case 'min_branches': return `≥ ${min ?? 1} player choice(s)`
+        case 'reachable_from_start': return 'every node reachable from start'
+        case 'all_characters_speak': return 'every character speaks'
+        case 'compiles': return 'builds + lints clean'
+        default: return String(t)
+    }
+}
+
 const Badge: React.FC<{ label: string; tone: 'green' | 'blue' | 'gray' | 'amber' }> = ({ label, tone }) => {
     const tones = {
         green: 'bg-green-500/15 text-green-400',
@@ -165,9 +186,17 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     <div key={c.id} className="bg-[#1a1a1a] border border-white/[0.06] rounded-lg px-3 py-2">
                         <div className="text-white text-sm font-medium">{c.id}</div>
                         {c.description && <div className="text-gray-500 text-xs mt-0.5">{c.description}</div>}
-                        <div className="text-gray-600 text-[11px] mt-1">
-                            {(c.done_conditions || []).length} done-condition(s)
-                        </div>
+                        {(c.done_conditions || []).length === 0 ? (
+                            <div className="text-red-400 text-[11px] mt-1">⚠ no done-conditions — nothing checks this</div>
+                        ) : (
+                            <ul className="mt-1 space-y-0.5">
+                                {(c.done_conditions || []).map((dc, i) => (
+                                    <li key={i} className="text-gray-400 text-[11px] flex gap-1">
+                                        <span className="text-gray-600">✓</span>{describeCheck(dc)}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
                 ))}
             </section>

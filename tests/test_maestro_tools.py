@@ -67,7 +67,10 @@ def test_edit_node_errors(tmp_path):
     state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    a "x"'}})
 
     assert tools["edit_node"]("missing", "a", "b")["ok"] is False        # no such node
-    assert tools["edit_node"]("s1", "not-present", "b")["ok"] is False   # find not in node
+    res = tools["edit_node"]("s1", "not-present", "b")                    # find not in node
+    assert res["ok"] is False
+    # The error echoes the node verbatim so the next attempt copies an exact snippet.
+    assert 'a "x"' in res["error"]
 
 
 def test_validate_tool_reports_failures(tmp_path):

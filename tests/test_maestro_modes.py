@@ -6,7 +6,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.executor import Executor
-from maestro.agent import _schemas_for_mode, _render_context, _MODE_TOOLS, make_node_subloop
+from maestro.agent import (_schemas_for_mode, _schemas_for_target, _prompt_for_target,
+                           _NODE_PROMPTS, _render_context, _MODE_TOOLS, make_node_subloop)
 from maestro.tools import TOOL_SCHEMAS
 
 
@@ -128,11 +129,43 @@ def test_render_context_shows_single_target():
     assert "YOUR TARGET" in rendered and "reachable_from_start" in rendered
 
 
+def _node_schemas():
+    return _schemas_for_mode("node_scripts", TOOL_SCHEMAS)
+
+
+def test_count_target_exposes_only_write_node():
+    names = {s["function"]["name"]
+             for s in _schemas_for_target({"check": {"type": "count"}}, _node_schemas())}
+    assert names == {"write_node"}                       # can't waste a step reading/editing
+
+
+def test_reachability_target_withholds_write_node():
+    names = {s["function"]["name"]
+             for s in _schemas_for_target({"check": {"type": "reachable_from_start"}}, _node_schemas())}
+    assert names == {"read_node", "edit_node"}           # wire orphans, don't create more
+
+
+def test_unknown_target_keeps_full_node_set():
+    full = _node_schemas()
+    assert _schemas_for_target({"check": {"type": "refs_resolve"}}, full) is full
+    assert _schemas_for_target(None, full) is full
+
+
+def test_prompt_routes_author_vs_fix():
+    # Content/structure targets author fresh scenes; wiring/compile targets repair them.
+    assert _prompt_for_target({"check": {"type": "count"}}) is _NODE_PROMPTS["author"]
+    assert _prompt_for_target({"check": {"type": "each_node_min_lines"}}) is _NODE_PROMPTS["author"]
+    assert _prompt_for_target({"check": {"type": "reachable_from_start"}}) is _NODE_PROMPTS["fix"]
+    assert _prompt_for_target({"check": {"type": "compiles"}}) is _NODE_PROMPTS["fix"]
+    assert _prompt_for_target(None) is _NODE_PROMPTS["author"]            # default = author
+
+
 class _FakeConn:
     def __init__(self, responses):
-        self.responses, self.i = responses, 0
+        self.responses, self.i, self.last_schemas = responses, 0, None
 
     def generate_with_tools(self, messages, schemas):
+        self.last_schemas = schemas
         r = self.responses[min(self.i, len(self.responses) - 1)]
         self.i += 1
         return r
@@ -158,3 +191,5 @@ def test_node_subloop_dispatches_and_stops_on_target():
     assert dispatched and dispatched[0]["tool"] == "write_node"
     assert reports and reports[0].startswith("write_node(s1)")
     assert conn.i == 1                      # stopped after target met, didn't keep looping
+    # The subloop handed the connector tools gated to the target (count → write_node only).
+    assert {s["function"]["name"] for s in conn.last_schemas} == {"write_node"}

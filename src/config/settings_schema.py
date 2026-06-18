@@ -3,12 +3,24 @@
 from pydantic import BaseModel, Field
 from typing import Dict, Literal, Optional
 
+# Reasoning-effort knob for reasoning models. Only takes effect with api_style="responses"
+# (reasoning.effort on the Responses API); chat/completions silently ignores it. "none"
+# disables reasoning — the lever that stops a local model spending ~30k tokens thinking per
+# node. None = the model's own default. ("off" is NOT a valid value — it errors.)
+ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+
+# Which OpenAI-compatible endpoint to use. "responses" (/v1/responses) is the only LM Studio
+# path that honors reasoning effort; "chat" is /chat/completions.
+ApiStyle = Literal["chat", "responses"]
+
 
 class LLMStudioSettings(BaseModel):
     base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
     max_tokens: int = Field(50000, ge=1)
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
+    reasoning: Optional[ReasoningLevel] = None
+    api_style: ApiStyle = "chat"
 
 
 class ClineSettings(BaseModel):
@@ -17,6 +29,8 @@ class ClineSettings(BaseModel):
     model: str = Field(..., min_length=1)
     max_tokens: int = Field(50000, ge=1)
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
+    reasoning: Optional[ReasoningLevel] = None
+    api_style: ApiStyle = "chat"
 
 
 class ComfyUISettings(BaseModel):

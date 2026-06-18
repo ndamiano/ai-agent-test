@@ -70,11 +70,11 @@ Rules:
     {"type": "exists", "path": "asset_manifest.backgrounds"}
     {"type": "each_has", "path": "asset_manifest.characters", "fields": ["id"]}
   node_scripts:
-    {"type": "count", "path": "node_scripts.node_ids", "min": 6}
+    {"type": "count", "path": "node_scripts.node_ids", "min": 20}
     {"type": "refs_resolve", "from": "premise.endings", "from_key": "id", "to": "node_scripts.node_ids"}
     {"type": "reachable_from_start"}
     {"type": "min_branches", "min": 2}
-    {"type": "each_node_min_lines", "min": 3}
+    {"type": "each_node_min_lines", "min": 10}
     {"type": "all_characters_speak"}
     {"type": "compiles"}
 

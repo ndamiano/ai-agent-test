@@ -85,6 +85,12 @@ def _cli(request: str) -> int:
     # path — a 100-step build would emit nothing. INFO surfaces per-call + per-decision.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
+    # Register the renpy checks + spec baseline before proposing, so the proposed spec the
+    # human reviews already carries the enforced contract (run_build registers too, but that
+    # is after freeze).
+    from renpy.checks import register_all
+    register_all()
+
     run_id = create_run()
     print(f"run: {run_id}\nproposing spec for: {request!r}\n")
     spec = propose_spec(request, run_id)

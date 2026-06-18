@@ -26,13 +26,18 @@ logger = logging.getLogger(__name__)
 # Reads carry no artifact change; repeating one is the agent spinning, not progressing.
 _READ_TOOLS = {"read_node", "read_component", "read_story_state"}
 
-# Order a sub-loop attacks failing checks: a broken script poisons everything, so fix
-# syntax first; then reach the node count; then structure; then content quality.
+# Order a sub-loop attacks failing checks: BUILD the game before POLISHING it. First get
+# all the nodes on the page (count), then make each substantial (lines), then wire them
+# (reachability/branches/refs), then content coverage. compiles is LAST: the structure
+# checks are regex over the script text and don't need a clean build, so a single
+# stubborn lint error must not starve node creation (it did — fixing one broken node for
+# 40 steps while the game sat at half its required size). Lint once the game is whole.
 _CHECK_PRIORITY = {
-    "compiles": 0,
-    "count": 1,
+    "count": 0,
+    "each_node_min_lines": 1,
     "reachable_from_start": 2, "min_branches": 2, "refs_resolve": 2, "distinct": 2, "exists": 2,
-    "each_node_min_lines": 3, "all_characters_speak": 3, "each_has": 3,
+    "all_characters_speak": 3, "each_has": 3,
+    "compiles": 4,
 }
 
 

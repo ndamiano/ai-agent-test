@@ -131,3 +131,8 @@ _CHECKS = {
 def register_all() -> None:
     for name, fn in _CHECKS.items():
         register_check(name, fn)
+    # Guarantee a Ren'Py spec's baseline done-conditions exist regardless of what the
+    # proposer drafted (it has dropped the structure/quality checks). Idempotent.
+    from maestro.spec_tools import register_spec_normalizer
+    from renpy.spec_baseline import enforce_baseline
+    register_spec_normalizer(enforce_baseline)

@@ -4,7 +4,9 @@
     "base_url": "http://localhost:1234",
     "model": "local-model",
     "temperature": 0.7,
-    "max_tokens": 50000
+    "max_tokens": 50000,
+    "api_style": "responses",
+    "reasoning": "low"
   },
   "cline": {
     "api_key": "",

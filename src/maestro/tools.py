@@ -245,8 +245,11 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return {"ok": False, "error": f"no node {node_id!r} to edit"}
         text = scripts[node_id]
         if not isinstance(find, str) or not find or find not in text:
+            # Return the node verbatim so the next attempt copies an exact snippet instead
+            # of guessing again — the find-mismatch retry loop was the top cycle-waster.
             return {"ok": False, "error":
-                    f"`find` text not present in {node_id} — quote an exact snippet from the node"}
+                    f"`find` text not present in {node_id} — copy an EXACT snippet from the "
+                    f"node text below (match whitespace and quotes exactly):\n{text}"}
         scripts[node_id] = _normalize_script(
             text.replace(find, replace if isinstance(replace, str) else "", 1))
         state.write_component("node_scripts", ns)

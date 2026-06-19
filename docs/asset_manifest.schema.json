@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://maestro/asset_manifest.schema.json",
+  "title": "Maestro Asset Manifest",
+  "description": "The generation spec for every visual asset the Game IR references by id. The IR carries only ids (background, sprite, icon, map); this manifest owns everything needed to PRODUCE the image: prompts, dimensions, animations, style anchors. One id space shared with the IR — every asset id the IR references must exist here. Design rationale lives in game_ir_decisions.md.",
+
+  "type": "object",
+  "required": ["assets"],
+  "additionalProperties": false,
+  "properties": {
+    "style": {
+      "type": "object",
+      "description": "Optional global style applied to every asset's prompt (art direction the whole game shares).",
+      "additionalProperties": false,
+      "properties": {
+        "prompt": { "type": "string", "description": "Style suffix mixed into every generation, e.g. 'painterly noir, muted palette'." },
+        "negative_prompt": { "type": "string" }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/asset" }
+    }
+  },
+
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+
+    "asset": {
+      "type": "object",
+      "required": ["id", "kind", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id", "description": "Matches the id the IR references (background/sprite/icon/map)." },
+        "kind": {
+          "enum": ["background", "sprite", "portrait", "item_icon", "map", "tileset"],
+          "description": "What slot this fills + its generation defaults."
+        },
+        "prompt": { "type": "string", "description": "Positive generation prompt for the image." },
+        "negative_prompt": { "type": "string" },
+        "width": { "type": "integer", "exclusiveMinimum": 0, "description": "Override default size for the kind." },
+        "height": { "type": "integer", "exclusiveMinimum": 0 },
+        "transparent": { "type": "boolean", "description": "Request an alpha background (sprites, portraits, item icons)." },
+        "style_ref": { "type": "string", "description": "Optional asset id to anchor style/character consistency against." },
+        "animations": {
+          "type": "array",
+          "description": "Optional animation states. Omit for a still image.",
+          "items": { "$ref": "#/$defs/animation" }
+        }
+      }
+    },
+
+    "animation": {
+      "type": "object",
+      "required": ["name", "frames"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "State name, e.g. idle / walk / talk / attack." },
+        "frames": { "type": "integer", "minimum": 1, "description": "Frame count." },
+        "fps": { "type": "integer", "minimum": 1, "description": "Playback rate; defaults to a per-kind value." },
+        "prompt": { "type": "string", "description": "Optional per-state prompt addition (e.g. 'mid-stride')." },
+        "loop": { "type": "boolean", "description": "Whether the state loops (idle/walk) or plays once (attack)." }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "style": { "prompt": "hand-painted, candle-lit, muted earth tones", "negative_prompt": "text, watermark" },
+      "assets": [
+        { "id": "bg_cell", "kind": "background", "prompt": "a damp stone cellar, one barred window, a wooden drawer in the corner" },
+        { "id": "bg_hall", "kind": "background", "prompt": "a narrow stone corridor with stairs leading up to daylight" },
+        { "id": "spr_warden", "kind": "sprite", "prompt": "a gaunt prison warden in a grey coat, keys at his belt", "transparent": true,
+          "animations": [
+            { "name": "idle", "frames": 4, "fps": 6, "loop": true },
+            { "name": "talk", "frames": 6, "fps": 8, "loop": true, "prompt": "mouth moving, gesturing" }
+          ] },
+        { "id": "icon_key", "kind": "item_icon", "prompt": "a small rusty iron key", "transparent": true, "width": 128, "height": 128 }
+      ]
+    }
+  ]
+}

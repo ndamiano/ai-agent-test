@@ -50,3 +50,6 @@ eval/fixtures/
 eval/results/
 eval/games/
 
+# Compiled game projects (regenerable from the IR)
+build/
+

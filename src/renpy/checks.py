@@ -131,8 +131,13 @@ _CHECKS = {
 def register_all() -> None:
     for name, fn in _CHECKS.items():
         register_check(name, fn)
+    # Point-and-click structure checks (rooms_reachable / items_obtainable / ...). Harmless
+    # to register alongside the VN checks — a spec only references the ones its genre uses.
+    from renpy.pnc_checks import register_all as register_pnc_checks
+    register_pnc_checks()
     # Guarantee a Ren'Py spec's baseline done-conditions exist regardless of what the
-    # proposer drafted (it has dropped the structure/quality checks). Idempotent.
+    # proposer drafted (it has dropped the structure/quality checks). enforce_baseline picks
+    # the genre's baseline from spec["genre"]. Idempotent.
     from maestro.spec_tools import register_spec_normalizer
     from renpy.spec_baseline import enforce_baseline
     register_spec_normalizer(enforce_baseline)

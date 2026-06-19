@@ -21,6 +21,8 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 
 **Ren'Py capabilities (`src/renpy/`)** — `compile_renpy` (the spine: artifact → launchable project + lint/distribute gate), `build` + image generation, script assembly with deterministic character staging (`_postprocess_script` auto-places sprites left/right/center) and node-attributed lint errors. (The old per-stage text generators remain in `fns.py` but are no longer wired into the loop — the agent authors content; their prompts are mined into the agentic mode prompts.)
 
+**Two genres** — the Ren'Py layer now builds both **visual novels** (premise + asset_manifest + node_scripts) and **point-and-click adventures** (premise + asset_manifest + `rooms` + node_scripts) on the same loop. A pnc game is clickable room screens with coordinate hotspots, an inventory, item-use puzzles, NPC dialogue (reuses node_scripts), and a win goal; `_pnc_script.py` stitches it and `pnc_checks.py` proves it (rooms-reachable / items-obtainable+used / goal-reachable / hotspots-in-bounds / compiles). `propose_spec` auto-detects genre from the request and tags `spec["genre"]`; the maestro core stays genre-agnostic (dispatches sub-runners/projectors/baseline by component id). Validated by unit tests + a real-SDK (8.5.2) compile of a generated pnc project (0 lint errors); live-LLM pnc run pending with the VN one.
+
 **Inference** — unified path `PipelineAgent` / `make_llm_decider` → `MessageBuilder` → `OpenAICompatibleConnector`. Structured JSON output with fallback; repetition detection; `safe_history_content()`; streaming with empty-result detection.
 
 **Platform** — tool manager (decorator, auto schema inference), WebSocket event bus, model category settings (`large`/`medium`/`small`).

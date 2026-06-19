@@ -43,10 +43,12 @@ src/
                 chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
                 prompts/ — climbable .txt prompts (propose_spec.txt)
   renpy/        Ren'Py capabilities the genre-agnostic maestro core wires in (not a pipeline):
-                compiler.py (compile_renpy — the spine), fns.py (build + image gen),
-                _script.py (stitch/lint/postprocess), component_schemas.py + checks.py
-                (the schemas/done-condition checks maestro injects), renpy_builder.py,
-                templating.py, renpy_templates/
+                compiler.py (compile_renpy — the spine), fns.py (build + image gen; dispatches
+                VN vs point-and-click), _script.py (VN stitch), _pnc_script.py (point-and-click
+                stitch: room screens + hotspots + inventory), component_schemas.py + checks.py +
+                pnc_checks.py (the schemas/done-condition checks maestro injects),
+                spec_baseline.py (per-genre baseline floor), renpy_builder.py, templating.py,
+                renpy_templates/
   tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 
@@ -56,6 +58,8 @@ src/
 The connector speaks **only** the OpenAI-compatible Responses API (`/v1/responses`) — the chat/completions path was removed. It's the only LM Studio endpoint that honors `reasoning.effort` (the lever that caps a local reasoning model's thinking tokens). `OpenAICompatibleConnector` translates the chat-shaped messages/tools callers pass into Responses `input`/`tools` and normalizes the response (and the SSE stream) back to chat shape, so call sites are unchanged. JSON mode rides on `text.format`, not `response_format`.
 
 **Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; declare the done-conditions that prove it in the spec.
+
+**Genres**: the Ren'Py layer builds two game shapes, both on the same agentic loop. `vn` (visual novel): premise + asset_manifest + node_scripts (dialogue labels + menu branches). `point_and_click` (room/hotspot adventure): premise (NPCs) + asset_manifest (+item icons) + `rooms` (clickable screens, inventory, item-use puzzles, win goal) + node_scripts (NPC dialogue the talk-hotspots `call`). The maestro core stays genre-agnostic — it dispatches sub-runners/projectors/baseline by component id. `spec_tools.propose_spec` auto-detects the genre from the request (keyword match, then a classifier call), tags `spec["genre"]`, and renders the matching `prompts/propose_spec[_pnc].txt`; `run.run_build` and `renpy/` key their build/checks/skeletons off that tag. Adding a genre = a new component shape (schema + skeleton + baseline + checks) and a stitch in `renpy/`, wired by genre in `run.run_build` — never branch the maestro core.
 
 **Settings**: `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
 **Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `use_json_mode`. Use `small` for local models.

@@ -37,8 +37,52 @@ def _v_asset_manifest(c: Dict) -> Optional[str]:
     for i, ch in enumerate(c.get("characters", [])):
         if not isinstance(ch, dict) or not ch.get("id"):
             return f"asset_manifest.characters[{i}] needs an 'id' matching a premise character id"
+    if "items" in c:
+        if not isinstance(c["items"], list):
+            return "asset_manifest.items must be a list (use [] if none)"
+        for i, it in enumerate(c["items"]):
+            if not isinstance(it, dict) or not it.get("id"):
+                return f"asset_manifest.items[{i}] needs an 'id' matching a rooms item id"
     if "title_card" in c and not isinstance(c["title_card"], dict):
         return "asset_manifest.title_card must be an object"
+    return None
+
+
+def _v_rooms(c: Dict) -> Optional[str]:
+    room_ids = c.get("room_ids")
+    rooms = c.get("rooms")
+    if not isinstance(room_ids, list) or not room_ids:
+        return "rooms.room_ids must be a non-empty list of room id strings"
+    if not isinstance(rooms, dict):
+        return "rooms.rooms must be an object mapping room_id -> {bg, hotspots}"
+    if c.get("start_room") and c["start_room"] not in room_ids:
+        return f"rooms.start_room {c['start_room']!r} is not in room_ids"
+    if not isinstance(c.get("items", []), list):
+        return "rooms.items must be a list (use [] if none)"
+    for i, it in enumerate(c.get("items", [])):
+        if not isinstance(it, dict) or not it.get("id"):
+            return f"rooms.items[{i}] needs an 'id' (e.g. 'item_key')"
+    goal = c.get("goal")
+    if goal is not None and (not isinstance(goal, dict) or not goal.get("type") or not goal.get("id")):
+        return "rooms.goal must be an object with 'type' ('flag' or 'room') and 'id'"
+    # Validate only the rooms actually authored so far — count/each checks drive the rest.
+    for rid, room in rooms.items():
+        if not isinstance(room, dict):
+            return f"rooms.rooms[{rid!r}] must be an object"
+        if not room.get("bg"):
+            return f"rooms.rooms[{rid!r}] needs a 'bg' (an asset_manifest background id)"
+        hs = room.get("hotspots")
+        if not isinstance(hs, list) or not hs:
+            return f"rooms.rooms[{rid!r}].hotspots must be a non-empty list"
+        for j, h in enumerate(hs):
+            if not isinstance(h, dict):
+                return f"rooms.rooms[{rid!r}].hotspots[{j}] must be an object"
+            for field in ("id", "label", "logic"):
+                if not h.get(field):
+                    return f"rooms.rooms[{rid!r}].hotspots[{j}] needs a '{field}'"
+            rect = h.get("rect")
+            if not (isinstance(rect, list) and len(rect) == 4 and all(isinstance(n, (int, float)) for n in rect)):
+                return f"rooms.rooms[{rid!r}].hotspots[{j}].rect must be [x, y, w, h] (4 numbers)"
     return None
 
 
@@ -64,6 +108,15 @@ SCHEMAS: Dict[str, Callable[[Dict], Optional[str]]] = {
     "premise": _v_premise,
     "asset_manifest": _v_asset_manifest,
     "node_scripts": _v_node_scripts,
+    "rooms": _v_rooms,
+}
+
+# Which components each genre's spec carries — so skeleton_guide shows the agent the
+# right shapes. vn = visual novel (dialogue branches); point_and_click = rooms +
+# hotspots + inventory, reusing node_scripts for NPC dialogue.
+GENRE_COMPONENTS: Dict[str, list] = {
+    "vn": ["premise", "asset_manifest", "node_scripts"],
+    "point_and_click": ["premise", "asset_manifest", "rooms", "node_scripts"],
 }
 
 
@@ -107,11 +160,45 @@ SKELETONS: Dict[str, str] = {
         '{\n'
         '  "backgrounds": [ {"id": "bg_<place>", "image_file": "<place>.png", "description": "..."} ],\n'
         '  "characters":  [ {"id": "<same id as premise>", "image_file": "<id>.png", "description": "..."} ],\n'
+        '  "items": [ {"id": "<same id as a rooms item>", "image_file": "<id>.png", "description": "..."} ],\n'
         '  "cgs": [],\n'
         '  "title_card": {"image_file": "title_card.png", "description": "..."}\n'
         '}\n'
         '// asset_manifest holds IMAGES, not speakers. character ids here MUST match\n'
-        '//   premise.characters ids exactly — this does not define a character, premise does.'
+        '//   premise.characters ids exactly — this does not define a character, premise does.\n'
+        '// items hold inventory ICONS; their ids MUST match rooms.items ids. Omit "items"\n'
+        '//   (or use []) for a visual novel with no inventory.'
+    ),
+    "rooms": (
+        '{\n'
+        '  "start_room": "room_<first>",\n'
+        '  "items": [ {"id": "item_<thing>", "name": "<Display Name>", "examine": "..."} ],\n'
+        '  "flags": ["<flag_set_by_a_puzzle>"],          // booleans gating progress\n'
+        '  "goal": {"type": "flag", "id": "<flag_that_means_you_won>"},\n'
+        '  "room_ids": ["room_<first>", "room_<second>"],\n'
+        '  "rooms": {\n'
+        '    "room_<first>": {\n'
+        '      "bg": "bg_<place>",\n'
+        '      "hotspots": [\n'
+        '        {"id": "h_<thing>", "rect": [340, 210, 180, 160], "label": "<short noun>",\n'
+        '         "logic": "label hs_room_<first>_h_<thing>:\\n    \\"It is a heavy locked door.\\"\\n    return"}\n'
+        '      ]\n'
+        '    }\n'
+        '  }\n'
+        '}\n'
+        '// A ROOM is a screen the player clicks around in. rect = [x, y, width, height] in\n'
+        '//   pixels on a 1280x720 frame; keep boxes inside it and non-overlapping.\n'
+        '// Each hotspot.logic is a Ren\'Py LABEL body named exactly hs_<room_id>_<hotspot_id>.\n'
+        '//   It runs when clicked, then MUST end by `return` (back to the room) or `jump room_x`\n'
+        '//   (move rooms). Verbs you compose in the logic body:\n'
+        '//     examine: a bare "..." narration line, then return\n'
+        '//     take:    $ if "item_x" not in inventory: inventory.append("item_x")  then return\n'
+        '//     use:     if "item_x" in inventory:  then set a flag ($ flag = True) / jump, else "..."\n'
+        '//     talk:    call <node_id>  (an NPC dialogue node you also create in node_scripts)\n'
+        '//     move:    jump room_<other>\n'
+        '//     win:     jump win   (reached once goal is satisfiable)\n'
+        '// bg must exist in asset_manifest.backgrounds; every item id must appear in\n'
+        '//   asset_manifest.items; the goal flag/room must be reachable through the clicks.'
     ),
     "node_scripts": (
         '{\n'
@@ -138,7 +225,7 @@ SKELETONS: Dict[str, str] = {
 }
 
 
-def skeleton_guide(component_ids=None) -> str:
-    ids = component_ids or list(SKELETONS)
+def skeleton_guide(component_ids=None, genre: str = "vn") -> str:
+    ids = component_ids or GENRE_COMPONENTS.get(genre, GENRE_COMPONENTS["vn"])
     blocks = [f"### {cid}\n{SKELETONS[cid]}" for cid in ids if cid in SKELETONS]
     return "Required component shapes (author content in exactly these shapes):\n\n" + "\n\n".join(blocks)

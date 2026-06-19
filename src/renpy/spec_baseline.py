@@ -40,6 +40,62 @@ _BASELINE: Dict[str, List[Dict]] = {
     ],
 }
 
+# Point-and-click baseline. A pnc spec's terminal/compiles-gated piece is `rooms` (it
+# stitches the whole script.rpy); node_scripts is reused only for NPC dialogue that
+# `rooms` talk-hotspots call, so its floor is light. premise carries NPCs, not a
+# branching cast — no endings, no 3-character minimum.
+_BASELINE_PNC: Dict[str, List[Dict]] = {
+    "premise": [
+        {"type": "exists", "path": "premise.central_question"},
+        {"type": "each_has", "path": "premise.characters", "fields": ["id", "name"]},
+    ],
+    "asset_manifest": [
+        {"type": "exists", "path": "asset_manifest.backgrounds"},
+        {"type": "each_has", "path": "asset_manifest.backgrounds", "fields": ["id"]},
+    ],
+    # node_scripts here is only the NPC dialogue rooms talk-hotspots call — optional, and
+    # vacuous if the game has no NPCs. Keep the floor to quality-on-what-exists; don't demand
+    # all_characters_speak (it would permanently deadlock a pnc game that has no characters).
+    "node_scripts": [
+        {"type": "each_node_min_lines", "min": 4},
+    ],
+    "rooms": [
+        {"type": "exists", "path": "rooms.start_room"},
+        {"type": "count", "path": "rooms.room_ids", "min": 3},
+        {"type": "each_room_min_hotspots", "min": 2},
+        {"type": "hotspots_in_bounds"},
+        {"type": "rooms_reachable"},
+        {"type": "items_obtainable"},
+        {"type": "items_used"},
+        {"type": "goal_reachable"},
+        {"type": "compiles"},
+    ],
+}
+
+_BASELINES = {"vn": _BASELINE, "point_and_click": _BASELINE_PNC}
+
+# Intrinsic build order for a point-and-click spec: rooms' talk-hotspots `call` dialogue nodes
+# that must exist first, and everything sits on premise/assets. The dep_order (and thus which
+# component the executor drives first) is derived from deps, so we SET them authoritatively
+# here — a proposer that emits its own deps can otherwise close a cycle (e.g. node_scripts ->
+# rooms) once we add rooms -> node_scripts. component_id -> its canonical deps.
+_PNC_DEPS: Dict[str, List[str]] = {
+    "premise": [],
+    "asset_manifest": ["premise"],
+    "node_scripts": ["premise"],
+    "rooms": ["premise", "asset_manifest", "node_scripts"],
+}
+
+
+def _enforce_pnc_deps(by_id: Dict[str, Dict]) -> None:
+    for cid, deps in _PNC_DEPS.items():
+        comp = by_id.get(cid)
+        if comp is None:
+            continue
+        # Overwrite, don't merge — the structure is fixed, and any proposer-set dep into this
+        # set could only be wrong (and risks a cycle). Keep only deps whose component exists.
+        comp["deps"] = [d for d in deps if d in by_id]
+
 
 def _identity(check: Dict):
     # What makes two checks "the same condition" when merging: the kind, plus what it points
@@ -55,7 +111,11 @@ def enforce_baseline(spec: Dict) -> Dict:
     alone — a VN missing premise/node_scripts is a louder failure the build surfaces anyway.
     """
     by_id = {c.get("id"): c for c in spec.get("components", [])}
-    for cid, baseline in _BASELINE.items():
+    genre = spec.get("genre", "vn")
+    if genre == "point_and_click":
+        _enforce_pnc_deps(by_id)
+    baseline_set = _BASELINES.get(genre, _BASELINE)
+    for cid, baseline in baseline_set.items():
         comp = by_id.get(cid)
         if comp is None:
             continue

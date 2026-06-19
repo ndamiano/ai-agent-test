@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.spec import Spec
 from maestro.state import RunState
-from maestro.tools import build_tools, SpecNotFrozen
+from maestro.tools import build_tools, SpecNotFrozen, _normalize_script
 from maestro.executor import Executor
 
 
@@ -49,6 +49,53 @@ def test_edit_node_surgical_replace(tmp_path):
     s1 = state.read_component("node_scripts")["scripts"]["s1"]
     assert "she said hi" in s1
     assert "jump s2" in s1          # the rest of the node (incl. its jump) is untouched
+
+
+def test_normalize_folds_smart_punctuation():
+    # Curly quotes / em dash / ellipsis fold to ASCII so the model's ASCII `find` matches.
+    out = _normalize_script('a "It’s a weapon—maybe…"')
+    assert out == 'a "It\'s a weapon-maybe..."'
+
+
+def test_normalize_converts_emphasis_and_strips_stray_asterisk():
+    # *word* is the model reaching for markdown emphasis → Ren'Py italic; lone * is dropped.
+    assert _normalize_script('a "risking *our* future"') == 'a "risking {i}our{/i} future"'
+    assert _normalize_script('a "a soft *plip sound"') == 'a "a soft plip sound"'
+
+
+def test_edit_node_matches_ascii_find_against_curly_stored_text(tmp_path):
+    # Stored text has a curly apostrophe + em dash; the model types ASCII. The fold lets the
+    # surgical replace land instead of looping on `find text not present`.
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("node_scripts", {
+        "node_ids": ["s1"],
+        "scripts": {"s1": 'label s1:\n    k "I trust you—but not the Queen’s plan."'},
+    })
+
+    res = tools["edit_node"]("s1", "I trust you-but not the Queen's plan.",
+                             "I trust you. Not the Queen.")
+    assert res["ok"] is True
+    s1 = state.read_component("node_scripts")["scripts"]["s1"]
+    assert "I trust you. Not the Queen." in s1
+
+
+def test_edit_node_matches_despite_whitespace_mismatch(tmp_path):
+    # The small model can't reproduce a multi-line snippet's newlines/indentation byte-for-byte
+    # — the find-loop killer. A find whose whitespace differs (spaces where the stored text has
+    # a newline + indent) must still land instead of spinning on `find text not present`.
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("node_scripts", {
+        "node_ids": ["s1"],
+        "scripts": {"s1": 'label s1:\n    show jinx right\n    jinx "Share what?"'},
+    })
+
+    res = tools["edit_node"]("s1", "show jinx right jinx", "show jinx at right\n    jinx")
+    assert res["ok"] is True
+    s1 = state.read_component("node_scripts")["scripts"]["s1"]
+    assert "show jinx at right" in s1
+    assert '"Share what?"' in s1     # tail past the matched span survives
 
 
 def test_write_node_rejects_undefined_speaker(tmp_path):

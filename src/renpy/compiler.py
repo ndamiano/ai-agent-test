@@ -15,15 +15,17 @@ from typing import Dict, Optional
 
 from renpy.fns import build
 
-# The artifact pieces build() consumes. brief is optional (title defaults);
-# the other three are required to produce a meaningful game.
-_REQUIRED = ("premise.json", "asset_manifest.json", "node_scripts.json")
+# The artifact pieces build() consumes. premise + asset_manifest are always required;
+# the game body is node_scripts (VN) OR rooms (point-and-click), so at least one must
+# exist. brief is optional (title defaults).
+_REQUIRED = ("premise.json", "asset_manifest.json")
+_BODY = ("node_scripts.json", "rooms.json")
 _OPTIONAL = ("brief.json",)
 
 
 def _load_artifact(working_dir: Path) -> Dict:
     inputs: Dict = {}
-    for fname in _OPTIONAL + _REQUIRED:
+    for fname in _OPTIONAL + _REQUIRED + _BODY:
         path = working_dir / fname
         if path.exists():
             inputs[path.stem] = json.loads(path.read_text(encoding="utf-8"))
@@ -50,6 +52,8 @@ def compile_renpy(working_dir, distribute: bool = True) -> Dict:
     working_dir = Path(working_dir)
 
     missing = [f for f in _REQUIRED if not (working_dir / f).exists()]
+    if not any((working_dir / f).exists() for f in _BODY):
+        missing.append(f"one of {list(_BODY)}")
     if missing:
         return {"ok": False, "reason": f"missing artifact files: {missing}",
                 "lint_error_count": None, "project_dir": None}

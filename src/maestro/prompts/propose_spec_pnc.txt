@@ -1,0 +1,89 @@
+You are drafting a build SPEC for a Ren'Py POINT-AND-CLICK adventure from a user request.
+
+The spec is a contract: a list of components to build, each with checkable done-conditions
+you commit to. A separate program (not you) builds the game and checks the artifact against
+these conditions. So every done-condition must be a typed check that code can run — never prose.
+
+A point-and-click game is ROOMS the player clicks around in: examining objects, taking items
+into an inventory, using items to solve puzzles, talking to characters, moving between rooms,
+and reaching a goal that wins. It is NOT a dialogue-menu visual novel.
+
+Request:
+{request}
+
+Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
+
+{
+  "title": "short game title",
+  "request": "the request, restated in one line",
+  "frozen": false,
+  "components": [
+    {
+      "id": "premise",
+      "description": "theme + the characters the player can talk to (NPCs)",
+      "deps": [],
+      "done_conditions": [ /* typed checks, see below */ ]
+    }
+  ],
+  "story_state_schema": {
+    "established_facts": [],
+    "entity_states": {},
+    "open_threads": []
+  }
+}
+
+The ONLY allowed done-condition checks ("path" is dotted into the artifact):
+
+  {"type": "exists", "path": "rooms.start_room"}
+  {"type": "count", "path": "rooms.room_ids", "min": 3}              // also max, eq
+  {"type": "each_has", "path": "premise.characters", "fields": ["id", "name"]}
+  {"type": "compiles"}                                               // builds + lints clean
+  // point-and-click structure checks (no args except where shown):
+  {"type": "each_room_min_hotspots", "min": 2}
+  {"type": "hotspots_in_bounds"}      // every hotspot rect inside the 1280x720 frame
+  {"type": "rooms_reachable"}         // every room reachable by clicking from start_room
+  {"type": "items_obtainable"}        // every item is granted by some take hotspot
+  {"type": "items_used"}              // every item is checked by some use hotspot (no dead items)
+  {"type": "goal_reachable"}          // the goal flag/room is reachable through the clicks
+
+The builder compiles EXACTLY these four components (use these ids and these shapes):
+
+  premise        — characters are the NPCs the player talks to; each needs "id" (snake_case)
+                   and "name". Add a "central_question" (the mystery/aim). Characters are
+                   speaking roles only — narration is bare lines, no "narrator".
+  asset_manifest — "backgrounds" (one per room, each needs "id"), "characters" (ids match
+                   premise ids), "items" (inventory icons; ids match rooms.items ids).
+  rooms          — "start_room", "room_ids" (list), "rooms" (room_id -> {bg, hotspots}),
+                   "items" (each {id, name}), "flags" (puzzle booleans), and "goal"
+                   ({type: "flag"|"room", id}). Each hotspot has a rect and a Ren'Py logic body.
+  node_scripts   — NPC dialogue nodes that rooms' talk-hotspots `call` (node_id -> Ren'Py text).
+
+Rules:
+- Include exactly those four components with those exact ids. The game body is `rooms`, so its
+  done-conditions ARE the quality bar — demand a real adventure, not a stub. A good default set:
+
+  premise:
+    {"type": "exists", "path": "premise.central_question"}
+    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name"]}
+  asset_manifest:
+    {"type": "exists", "path": "asset_manifest.backgrounds"}
+    {"type": "each_has", "path": "asset_manifest.backgrounds", "fields": ["id"]}
+  rooms:
+    {"type": "exists", "path": "rooms.start_room"}
+    {"type": "count", "path": "rooms.room_ids", "min": 3}
+    {"type": "each_room_min_hotspots", "min": 2}
+    {"type": "hotspots_in_bounds"}
+    {"type": "rooms_reachable"}
+    {"type": "items_obtainable"}
+    {"type": "items_used"}
+    {"type": "goal_reachable"}
+    {"type": "compiles"}
+  node_scripts:
+    {"type": "each_node_min_lines", "min": 4}
+    {"type": "all_characters_speak"}
+
+- Tune counts to fit THIS request (a bigger game = more rooms), but keep every condition
+  checkable; use only the check types listed here.
+- Declare in story_state_schema what continuity this particular game hinges on.
+
+Return only the JSON object.

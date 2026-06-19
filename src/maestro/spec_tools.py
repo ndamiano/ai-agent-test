@@ -51,21 +51,53 @@ def _emit(event_type: str, run_id: str, **payload) -> None:
         logger.debug("event bus unavailable for %s", event_type)
 
 
+# Strong textual signals a request wants a point-and-click adventure rather than a VN —
+# matched first so the common case skips the extra classification call.
+_PNC_KEYWORDS = ("point-and-click", "point and click", "point'n'click", "pointandclick",
+                 "point & click", "adventure game", "escape room", "escape-room",
+                 "room escape", "hidden object", "inventory puzzle")
+
+_GENRES = ("vn", "point_and_click")
+
+
+def _classify_genre(request: str) -> str:
+    """Pick the genre a request wants. Keyword match first (cheap, deterministic); only an
+    ambiguous request costs a classification call. Any failure falls back to 'vn' — the
+    human freeze gate catches a wrong guess."""
+    low = request.lower()
+    if any(k in low for k in _PNC_KEYWORDS):
+        return "point_and_click"
+    try:
+        from renpy.templating import render_template
+        from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
+        prompt = render_template(_PROMPTS_DIR / "classify_genre.txt", {"request": request})
+        agent = PipelineAgent(JSON_SYSTEM, max_tokens=200)
+        result = json_with_correction(agent, prompt, "classify_genre", attempts=2) or {}
+        genre = result.get("genre")
+        return genre if genre in _GENRES else "vn"
+    except Exception:
+        logger.warning("genre classification failed; defaulting to vn", exc_info=True)
+        return "vn"
+
+
 def propose_spec(request: str, run_id: str) -> Dict:
     """Draft a spec for the request and persist it (unfrozen). Returns the spec."""
     from renpy.templating import render_template
     from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
 
-    prompt = render_template(_PROMPTS_DIR / "propose_spec.txt", {"request": request})
+    genre = _classify_genre(request)
+    template = "propose_spec_pnc.txt" if genre == "point_and_click" else "propose_spec.txt"
+    prompt = render_template(_PROMPTS_DIR / template, {"request": request})
     agent = PipelineAgent(JSON_SYSTEM, max_tokens=8000)
     spec = json_with_correction(agent, prompt, "propose_spec", attempts=3)
 
     spec["frozen"] = False
+    spec["genre"] = genre  # before _normalize_spec — the baseline picks its checks by genre
     spec.setdefault("request", request)
     _normalize_spec(spec)  # baseline done-conditions in, so the human reviews the real contract
     state = RunState.for_run(run_id)
     state.write_spec(spec)
-    _emit("spec_proposed", run_id, title=spec.get("title", ""))
+    _emit("spec_proposed", run_id, title=spec.get("title", ""), genre=genre)
     return spec
 
 

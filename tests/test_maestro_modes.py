@@ -7,7 +7,8 @@ from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.executor import Executor
 from maestro.agent import (_schemas_for_mode, _schemas_for_target, _prompt_for_target,
-                           _NODE_PROMPTS, _render_context, _MODE_TOOLS, make_node_subloop)
+                           _NODE_PROMPTS, _TARGET_PROMPT, _TARGET_TOOLS, _render_context,
+                           _MODE_TOOLS, make_node_subloop)
 from maestro.tools import TOOL_SCHEMAS
 
 
@@ -135,29 +136,32 @@ def _node_schemas():
 
 def test_count_target_exposes_only_write_node():
     names = {s["function"]["name"]
-             for s in _schemas_for_target({"check": {"type": "count"}}, _node_schemas())}
+             for s in _schemas_for_target({"check": {"type": "count"}}, _node_schemas(), _TARGET_TOOLS)}
     assert names == {"write_node"}                       # can't waste a step reading/editing
 
 
 def test_reachability_target_withholds_write_node():
     names = {s["function"]["name"]
-             for s in _schemas_for_target({"check": {"type": "reachable_from_start"}}, _node_schemas())}
+             for s in _schemas_for_target({"check": {"type": "reachable_from_start"}},
+                                          _node_schemas(), _TARGET_TOOLS)}
     assert names == {"read_node", "edit_node"}           # wire orphans, don't create more
 
 
 def test_unknown_target_keeps_full_node_set():
     full = _node_schemas()
-    assert _schemas_for_target({"check": {"type": "refs_resolve"}}, full) is full
-    assert _schemas_for_target(None, full) is full
+    assert _schemas_for_target({"check": {"type": "refs_resolve"}}, full, _TARGET_TOOLS) is full
+    assert _schemas_for_target(None, full, _TARGET_TOOLS) is full
 
 
 def test_prompt_routes_author_vs_fix():
     # Content/structure targets author fresh scenes; wiring/compile targets repair them.
-    assert _prompt_for_target({"check": {"type": "count"}}) is _NODE_PROMPTS["author"]
-    assert _prompt_for_target({"check": {"type": "each_node_min_lines"}}) is _NODE_PROMPTS["author"]
-    assert _prompt_for_target({"check": {"type": "reachable_from_start"}}) is _NODE_PROMPTS["fix"]
-    assert _prompt_for_target({"check": {"type": "compiles"}}) is _NODE_PROMPTS["fix"]
-    assert _prompt_for_target(None) is _NODE_PROMPTS["author"]            # default = author
+    def p(t):
+        return _prompt_for_target({"check": {"type": t}}, _NODE_PROMPTS, _TARGET_PROMPT)
+    assert p("count") is _NODE_PROMPTS["author"]
+    assert p("each_node_min_lines") is _NODE_PROMPTS["author"]
+    assert p("reachable_from_start") is _NODE_PROMPTS["fix"]
+    assert p("compiles") is _NODE_PROMPTS["fix"]
+    assert _prompt_for_target(None, _NODE_PROMPTS, _TARGET_PROMPT) is _NODE_PROMPTS["author"]
 
 
 class _FakeConn:
@@ -224,6 +228,63 @@ def test_node_subloop_escalates_reasoning_after_stall():
     assert reports                                    # tool errors still reported per call
 
 
+def test_fix_target_starts_escalated():
+    # Repair targets (fix kind, e.g. compiles) need reasoning ON from the first call — without
+    # it the model garbles labels instead of repointing jumps. No stall wait.
+    tc = {"id": "tc", "function": {
+        "name": "edit_node", "arguments": '{"node_id": "n", "content": "label n:"}'}}
+    conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}])
+    runner = make_node_subloop(connector=conn, cap=5)
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "compiles"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: {"ok": True},
+        target_met=lambda: True,
+        report=lambda s: None,
+        budget=5,
+        view_fn=lambda: None,
+    )
+    assert conn.reasoning_calls[0] == "high"   # escalated from the first iteration, no stall
+
+
+def test_author_target_starts_unescalated():
+    # Authoring fresh content keeps reasoning OFF until it stalls (the cheap-first floor).
+    conn = _FakeConn([_writer_response()])
+    runner = make_node_subloop(connector=conn, cap=5)
+    runner(
+        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: {"ok": True},
+        target_met=lambda: True,
+        report=lambda s: None,
+        budget=5,
+        view_fn=lambda: None,
+    )
+    assert conn.reasoning_calls[0] is None
+
+
+def test_subloop_no_tool_call_is_visible_and_bails():
+    # Model returns prose, no tool call (the rooms hang). Must report it, escalate, then give
+    # up — never spin silently.
+    from maestro.agent import make_room_subloop
+    text_only = {"choices": [{"message": {"content": "{ a giant json blob }", "tool_calls": []}}]}
+    conn = _FakeConn([text_only])
+    runner = make_room_subloop(connector=conn, cap=10)
+    reports = []
+    runner(
+        target={"component_id": "rooms", "check": {"type": "count"}, "detail": "x"},
+        context={"todo": []},
+        dispatch=lambda action: {"ok": True},
+        target_met=lambda: False,
+        report=lambda s: reports.append(s),
+        budget=10,
+        view_fn=lambda: None,
+    )
+    assert reports and all("no tool call" in r for r in reports)   # every dead turn is surfaced
+    assert "high" in conn.reasoning_calls                          # escalated, didn't sit silent
+    assert conn.i <= 5                                             # bailed, didn't burn the budget
+
+
 def _reader_response():
     tc = {"id": "tc", "function": {"name": "read_node", "arguments": '{"node_id": "n"}'}}
     return {"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}
@@ -236,7 +297,7 @@ def test_node_subloop_drops_reads_when_sightseeing():
     conn = _FakeConn([_reader_response()])
     runner = make_node_subloop(connector=conn, cap=6)
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "compiles"}, "detail": "x"},
+        target={"component_id": "node_scripts", "check": {"type": "each_node_min_lines"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"ok": True, "content": "label n:"},
         target_met=lambda: False,

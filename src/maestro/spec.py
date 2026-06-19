@@ -25,6 +25,13 @@ class Spec:
         return self.data.get("request", "")
 
     @property
+    def genre(self) -> str:
+        """Which genre's build/checks/baseline this spec drives ('vn' default,
+        'point_and_click' for room/hotspot adventures). Genre knowledge lives in the
+        renpy layer; maestro just carries the tag."""
+        return self.data.get("genre", "vn")
+
+    @property
     def frozen(self) -> bool:
         return bool(self.data.get("frozen"))
 

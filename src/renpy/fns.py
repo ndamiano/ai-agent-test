@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, List
@@ -34,6 +35,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 
     premise  = inputs.get("premise", {})
     manifest = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
+    manifest = _merge_items_into_manifest(inputs.get("rooms", {}), manifest)
 
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -56,6 +58,11 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         img_file = cg.get("image_file", f"{cg['id']}.png")
         job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "cg"})
         jobs.append(build_cg_job(cg.get("description", cg["id"])))
+
+    for it in manifest.get("items", []):
+        img_file = it.get("image_file", f"{it['id']}.png")
+        job_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "item"})
+        jobs.append(build_background_job(it.get("description", it.get("name", it["id"]))))
 
     title_card = manifest.get("title_card", {})
     if title_card.get("description"):
@@ -81,6 +88,8 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
             kind = meta["kind"]
             if kind == "char":
                 w, h, color = 512, 768, (92, 58, 92)
+            elif kind == "item":
+                w, h, color = 128, 128, (120, 100, 40)
             elif kind in ("cg", "title_card"):
                 w, h, color = 1280, 720, (40, 20, 60) if kind == "cg" else (20, 30, 60)
             else:
@@ -111,6 +120,36 @@ def _merge_cast_into_manifest(premise: Dict, manifest: Dict) -> Dict:
     return {**manifest, "characters": chars}
 
 
+_APPEND_ITEM_RE = re.compile(r'inventory\.append\(\s*[\'"](\w+)[\'"]')
+
+
+def _merge_items_into_manifest(rooms_art: Dict, manifest: Dict) -> Dict:
+    """rooms.items is the source of truth for inventory items. The image defines and
+    placeholder/generated icons key off asset_manifest.items, so backfill a manifest entry
+    for every rooms item the agent didn't already list (existing entries win as overrides).
+    Also backfill any item id the hotspot logic actually picks up (inventory.append) even if it
+    was never declared — the inventory bar `add`s that image at runtime and would crash without
+    a define. Mirrors _merge_cast_into_manifest for the cast."""
+    if not rooms_art:
+        return manifest
+    items = list(manifest.get("items", []))
+    have = {i.get("id") for i in items if isinstance(i, dict)}
+    declared = {it.get("id"): it for it in rooms_art.get("items", []) if isinstance(it, dict)}
+
+    picked_up = set()
+    for room in (rooms_art.get("rooms", {}) or {}).values():
+        for h in room.get("hotspots", []) if isinstance(room, dict) else []:
+            picked_up |= set(_APPEND_ITEM_RE.findall(h.get("logic", "") or ""))
+
+    for iid in list(declared) + sorted(picked_up):
+        if iid and iid not in have:
+            meta = declared.get(iid, {})
+            items.append({"id": iid, "image_file": f"{iid}.png",
+                          "description": meta.get("name") or meta.get("examine") or iid})
+            have.add(iid)
+    return {**manifest, "items": items}
+
+
 def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:
     """Write a solid-color placeholder for every declared image that isn't on disk.
 
@@ -136,11 +175,18 @@ def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:
         _put(ch.get("image_file", f"{ch.get('id', '')}.png"), 512, 768, (92, 58, 92))
     for cg in manifest.get("cgs", []):
         _put(cg.get("image_file", f"{cg.get('id', '')}.png"), 1280, 720, (40, 20, 60))
+    for it in manifest.get("items", []):
+        _put(it.get("image_file", f"{it.get('id', '')}.png"), 128, 128, (120, 100, 40))
     tc = manifest.get("title_card", {})
     _put(tc.get("image_file", ""), 1280, 720, (20, 30, 60))
 
 
 def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
+    # A `rooms` artifact means this is a point-and-click adventure — a different game
+    # shape (clickable screens + inventory) that stitches via the pnc path.
+    if inputs.get("rooms"):
+        return _build_pnc(inputs, working_dir, distribute)
+
     brief        = inputs.get("brief", {})
     premise      = inputs.get("premise", {})
     manifest     = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
@@ -209,6 +255,52 @@ def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
         print(f"    [build]  final lint: {lint_summary['error_count']} error(s)")
         # Distribute (packaging) is expensive; skip it for mid-build compile checks
         # and only run it for final delivery.
+        if distribute:
+            result.update(_distribute(output_dir, sdk_path))
+    else:
+        result["lint"] = {"error_count": None}
+
+    return {"status": "built", "output_dir": output_dir, **result}
+
+
+def _build_pnc(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
+    from renpy._pnc_script import stitch_pnc
+
+    brief    = inputs.get("brief", {})
+    premise  = inputs.get("premise", {})
+    manifest = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
+    manifest = _merge_items_into_manifest(inputs.get("rooms", {}), manifest)
+    rooms_art = inputs.get("rooms", {})
+    scripts   = inputs.get("node_scripts", {}).get("scripts", {})
+
+    title      = brief.get("title", "Untitled")
+    output_dir = str(working_dir / "game_output")
+    valid_characters = {c["id"] for c in manifest.get("characters", [])} | {"act"}
+
+    full_script, issues = stitch_pnc(premise, manifest, rooms_art, scripts, valid_characters)
+    if issues:
+        return {"status": "built", "output_dir": output_dir,
+                "script_issues": issues, "lint": {"error_count": None}}
+
+    game_dir = os.path.join(output_dir, "game")
+    os.makedirs(game_dir, exist_ok=True)
+    _write_options_rpy(game_dir, title)
+
+    with open(os.path.join(game_dir, "script.rpy"), "w", encoding="utf-8") as f:
+        f.write(full_script)
+    sdk_path = _get_sdk_path()
+    _copy_templates(game_dir, sdk_path)
+    _ensure_placeholder_images(manifest, game_dir)
+
+    print(f"    [build]  point-and-click project written to: {output_dir}")
+    result = {"project_dir": os.path.abspath(output_dir)}
+
+    if sdk_path:
+        from renpy._pnc_script import pnc_line_ranges
+        ranges = pnc_line_ranges(full_script, rooms_art.get("room_ids", []),
+                                 list(scripts.keys()))
+        result["lint"] = run_final_lint(output_dir, sdk_path, node_ranges=ranges)
+        print(f"    [build]  final lint: {result['lint']['error_count']} error(s)")
         if distribute:
             result.update(_distribute(output_dir, sdk_path))
     else:

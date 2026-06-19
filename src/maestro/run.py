@@ -33,27 +33,38 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     # trivial one; the loop is cheap now (compile checks lint-only, steps run <15s), so
     # budget for a 50-node game with wiring + compile-fix slack rather than starving it.
     from maestro.spec_tools import _emit
+    from maestro.agent import make_room_subloop
     from renpy.checks import register_all as register_renpy_checks, node_view
+    from renpy.pnc_checks import room_view
     from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide
 
-    register_renpy_checks()  # make reachable_from_start / min_branches / ... available
+    register_renpy_checks()  # make reachable_from_start / rooms_reachable / ... available
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
     if spec_data is None:
         raise ValueError(f"no spec for run {run_id!r} — propose one first")
     spec = Spec(spec_data)
+    guide = skeleton_guide(genre=spec.genre)
 
     tools = build_tools(spec, state, schemas=renpy_schemas)
-    decider = decide or make_llm_decider(component_guide=skeleton_guide())
-    # node_scripts iterates until each target check passes — a stateful sub-loop, not
-    # one-shot steps. A scripted `decide` (tests) keeps the simple stateless path.
-    sub_runners = {} if decide else {"node_scripts": make_node_subloop(component_guide=skeleton_guide())}
+    decider = decide or make_llm_decider(component_guide=guide)
+    # node_scripts / rooms iterate until each target check passes — a stateful sub-loop, not
+    # one-shot steps. A scripted `decide` (tests) keeps the simple stateless path. A
+    # point-and-click game drives rooms AND reuses node_scripts for NPC dialogue.
+    sub_runners = {}
+    projectors = {"node_scripts": node_view}
+    if not decide:
+        sub_runners["node_scripts"] = make_node_subloop(component_guide=guide)
+    if spec.genre == "point_and_click":
+        projectors["rooms"] = room_view
+        if not decide:
+            sub_runners["rooms"] = make_room_subloop(component_guide=guide)
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
-        projectors={"node_scripts": node_view},
+        projectors=projectors,
         sub_runners=sub_runners,
     )
 

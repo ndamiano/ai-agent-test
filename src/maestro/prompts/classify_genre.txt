@@ -1,0 +1,19 @@
+Classify what KIND of game this request wants, so the right builder is used.
+
+Request:
+{request}
+
+Two genres:
+- "point_and_click": the player explores rooms/scenes and CLICKS things — examining objects,
+  picking up items into an inventory, using items to solve puzzles, moving between locations.
+  Adventure games, escape rooms, mystery/exploration games, hidden-object games.
+- "vn": a visual novel — the story advances through dialogue and the player makes branching
+  CHOICES at menus. Dating sims, kinetic novels, choice-driven narrative.
+
+If the request only says "a game" with no mechanic, choose "vn".
+
+Output ONLY this JSON:
+
+{
+  "genre": "vn"
+}

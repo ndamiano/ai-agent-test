@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.spec import Spec
 from maestro.state import RunState
-from maestro.tools import build_tools, SpecNotFrozen, _normalize_script
+from maestro.tools import build_tools, SpecNotFrozen
 from maestro.executor import Executor
 
 
@@ -20,158 +20,31 @@ def _spec(frozen=True):
     ]})
 
 
+def _node(text="hi", end=None):
+    return {"lines": [{"speaker": "a", "text": text}], "end": end or {"type": "return"}}
+
+
+# ── generic component / state tools ──────────────────────────────────────────
+
 def test_write_component_refuses_when_unfrozen(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(frozen=False), state)
+    tools = build_tools(_spec(frozen=False), RunState(tmp_path))
     with pytest.raises(SpecNotFrozen):
         tools["write_component"]("premise", {"x": 1})
 
 
 def test_write_and_read_component(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
+    tools = build_tools(_spec(), RunState(tmp_path))
     assert tools["write_component"]("premise", {"central_question": "Q?"})["ok"] is True
     got = tools["read_component"]("premise")
     assert got["ok"] is True and got["content"]["central_question"] == "Q?"
     assert tools["read_component"]("missing")["ok"] is False
 
 
-def test_edit_node_surgical_replace(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("node_scripts", {
-        "node_ids": ["s1"],
-        "scripts": {"s1": 'label s1:\n    a "he said hi"\n    jump s2'},
-    })
-
-    res = tools["edit_node"]("s1", "he said hi", "she said hi")
-    assert res["ok"] is True
-    s1 = state.read_component("node_scripts")["scripts"]["s1"]
-    assert "she said hi" in s1
-    assert "jump s2" in s1          # the rest of the node (incl. its jump) is untouched
-
-
-def test_normalize_folds_smart_punctuation():
-    # Curly quotes / em dash / ellipsis fold to ASCII so the model's ASCII `find` matches.
-    out = _normalize_script('a "It’s a weapon—maybe…"')
-    assert out == 'a "It\'s a weapon-maybe..."'
-
-
-def test_normalize_converts_emphasis_and_strips_stray_asterisk():
-    # *word* is the model reaching for markdown emphasis → Ren'Py italic; lone * is dropped.
-    assert _normalize_script('a "risking *our* future"') == 'a "risking {i}our{/i} future"'
-    assert _normalize_script('a "a soft *plip sound"') == 'a "a soft plip sound"'
-
-
-def test_edit_node_matches_ascii_find_against_curly_stored_text(tmp_path):
-    # Stored text has a curly apostrophe + em dash; the model types ASCII. The fold lets the
-    # surgical replace land instead of looping on `find text not present`.
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("node_scripts", {
-        "node_ids": ["s1"],
-        "scripts": {"s1": 'label s1:\n    k "I trust you—but not the Queen’s plan."'},
-    })
-
-    res = tools["edit_node"]("s1", "I trust you-but not the Queen's plan.",
-                             "I trust you. Not the Queen.")
-    assert res["ok"] is True
-    s1 = state.read_component("node_scripts")["scripts"]["s1"]
-    assert "I trust you. Not the Queen." in s1
-
-
-def test_edit_node_matches_despite_whitespace_mismatch(tmp_path):
-    # The small model can't reproduce a multi-line snippet's newlines/indentation byte-for-byte
-    # — the find-loop killer. A find whose whitespace differs (spaces where the stored text has
-    # a newline + indent) must still land instead of spinning on `find text not present`.
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("node_scripts", {
-        "node_ids": ["s1"],
-        "scripts": {"s1": 'label s1:\n    show jinx right\n    jinx "Share what?"'},
-    })
-
-    res = tools["edit_node"]("s1", "show jinx right jinx", "show jinx at right\n    jinx")
-    assert res["ok"] is True
-    s1 = state.read_component("node_scripts")["scripts"]["s1"]
-    assert "show jinx at right" in s1
-    assert '"Share what?"' in s1     # tail past the matched span survives
-
-
-def test_write_node_rejects_undefined_speaker(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("premise", {"central_question": "Q?",
-                                      "characters": [{"id": "elias_voss"}, {"id": "yuki_tanaka"}]})
-
-    # 'elias_vanaka' is a typo for the real 'elias_voss' — must be caught at write time, not
-    # left to surface as a compile NameError dozens of steps later.
-    res = tools["write_node"]("scene_01", 'label scene_01:\n    elias_vanaka "Shoot it."')
-    assert res["ok"] is False
-    assert "elias_vanaka" in res["error"] and "elias_voss" in res["error"]
-    assert state.read_component("node_scripts") is None    # nothing persisted
-
-
-def test_write_node_accepts_defined_speakers_narration_and_keywords(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("premise", {"central_question": "Q?",
-                                      "characters": [{"id": "elias_voss"}, {"id": "yuki_tanaka"}]})
-
-    res = tools["write_node"]("scene_01",
-        'label scene_01:\n'
-        '    scene bg_jungle\n'
-        '    show elias_voss\n'
-        '    "The forest went quiet."\n'           # narration: no speaker
-        '    elias_voss "Positions!"\n'
-        '    yuki_tanaka "Wait."\n'
-        '    jump scene_02')
-    assert res["ok"] is True
-
-
-def test_edit_node_rejects_patch_that_introduces_bad_speaker(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("premise", {"central_question": "Q?",
-                                      "characters": [{"id": "elias_voss"}]})
-    state.write_component("node_scripts", {
-        "node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    elias_voss "hi"'}})
-
-    res = tools["edit_node"]("s1", "elias_voss", "elias_vanaka")
-    assert res["ok"] is False and "elias_vanaka" in res["error"]
-    assert 'elias_voss "hi"' in state.read_component("node_scripts")["scripts"]["s1"]  # unchanged
-
-
-def test_read_node(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    a "hi"'}})
-
-    got = tools["read_node"]("s1")
-    assert got["ok"] is True and 'a "hi"' in got["content"]
-    assert tools["read_node"]("nope")["ok"] is False
-
-
-def test_edit_node_errors(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": 'label s1:\n    a "x"'}})
-
-    assert tools["edit_node"]("missing", "a", "b")["ok"] is False        # no such node
-    res = tools["edit_node"]("s1", "not-present", "b")                    # find not in node
-    assert res["ok"] is False
-    # The error echoes the node verbatim so the next attempt copies an exact snippet.
-    assert 'a "x"' in res["error"]
-
-
 def test_validate_tool_reports_failures(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    res = tools["validate"]()
-    assert res["ok"] is False
-    assert {f["component_id"] for f in res["failures"]} == {"premise"}
-
-    tools["write_component"]("premise", {"central_question": "Q?", "characters": [{"id": "a"}, {"id": "b"}]})
+    tools = build_tools(_spec(), RunState(tmp_path))
+    assert tools["validate"]()["ok"] is False
+    tools["write_component"]("premise", {"central_question": "Q?",
+                                         "characters": [{"id": "a"}, {"id": "b"}]})
     assert tools["validate"]()["ok"] is True
 
 
@@ -208,12 +81,10 @@ def test_update_scratchpad(tmp_path):
 def test_request_review_returns_pending(tmp_path):
     tools = build_tools(_spec(), RunState(tmp_path))
     res = tools["request_review"]("Romance or tragedy?", ["romance", "tragedy"])
-    assert res["status"] == "review_requested"
-    assert res["options"] == ["romance", "tragedy"]
+    assert res["status"] == "review_requested" and res["options"] == ["romance", "tragedy"]
 
 
 def test_executor_drives_real_tools_to_completion(tmp_path):
-    """Phase 3 + 4 together: executor + real artifact tools, agent authors content."""
     state = RunState(tmp_path)
     spec = _spec()
     tools = build_tools(spec, state)
@@ -227,91 +98,139 @@ def test_executor_drives_real_tools_to_completion(tmp_path):
         return {}
 
     result = Executor(spec, state, tools, decide, max_steps=5).run()
-    assert result.ok is True
-    assert result.failures == []
+    assert result.ok is True and result.failures == []
 
 
-def test_write_node_accepts_flat_delta_kwargs(tmp_path):
-    # The model passes delta fields flat (entity_updates=...) instead of nested; this
-    # used to crash with TypeError. Now folded into the delta.
+# ── structured node tools ────────────────────────────────────────────────────
+
+def test_write_node_persists_ir_object(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
-    res = tools["write_node"]("scene_01", "label scene_01:\n    return",
-                              new_facts=["a clue surfaced"],
-                              entity_updates={"mara": {"trust": "wary"}})
+    res = tools["write_node"]("scene_01", _node("hello", {"type": "jump", "target": "scene_02"}))
     assert res["ok"] is True
+    ns = state.read_component("nodes")
+    assert ns["node_ids"] == ["scene_01"]
+    assert ns["nodes"]["scene_01"]["lines"][0]["text"] == "hello"
+    assert ns["nodes"]["scene_01"]["end"] == {"type": "jump", "target": "scene_02"}
+
+
+def test_write_node_rejects_bad_shape(tmp_path):
+    tools = build_tools(_spec(), RunState(tmp_path))
+    assert tools["write_node"]("s1", "label s1:\n  a \"hi\"")["ok"] is False   # string, not object
+    assert tools["write_node"]("s1", {"lines": [], "end": {"type": "return"}})["ok"] is False  # empty
+    assert tools["write_node"]("s1", {"lines": [{"text": "x"}]})["ok"] is False  # no end
+    assert tools["write_node"]("s1", {"lines": [{"text": "x"}], "end": {"type": "boom"}})["ok"] is False
+
+
+def test_write_node_rejects_start_id(tmp_path):
+    tools = build_tools(_spec(), RunState(tmp_path))
+    assert tools["write_node"]("start", _node())["ok"] is False
+
+
+def test_write_node_merges_story_state_delta(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("scene_01", _node(), new_facts=["a clue surfaced"],
+                        entity_updates={"mara": {"trust": "wary"}})
     ss = state.read_story_state()
     assert "a clue surfaced" in ss["established_facts"]
     assert ss["entity_states"]["mara"]["trust"] == "wary"
 
 
 def test_write_node_tolerates_malformed_delta(tmp_path):
-    # The model sometimes passes story_state_delta as a list/string, not a dict.
-    # Must not crash (this hit a ValueError live).
+    tools = build_tools(_spec(), RunState(tmp_path))
+    assert tools["write_node"]("s1", _node(), story_state_delta=["new_facts"])["ok"] is True
+    assert tools["write_node"]("s2", _node(), story_state_delta="oops")["ok"] is True
+
+
+def test_edit_node_patches_line_and_end(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
-    assert tools["write_node"]("scene_01", "label scene_01:\n    return",
-                               story_state_delta=["new_facts"])["ok"] is True
-    assert tools["write_node"]("scene_02", "label scene_02:\n    return",
-                               story_state_delta="oops")["ok"] is True
+    tools["write_node"]("s1", {"lines": [{"speaker": "a", "text": "old"}],
+                               "end": {"type": "jump", "target": "s2"}})
+    assert tools["edit_node"]("s1", line_index=0, text="new", speaker="b")["ok"] is True
+    assert tools["edit_node"]("s1", end={"type": "return"})["ok"] is True
+    node = state.read_component("nodes")["nodes"]["s1"]
+    assert node["lines"][0] == {"speaker": "b", "text": "new"}
+    assert node["end"] == {"type": "return"}
 
 
-def test_write_node_normalizes_over_escaped_script(tmp_path):
-    # Model over-escaped: literal \n and \" instead of real newline/quote. Normalize it.
+def test_edit_node_errors(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
-    tools["write_node"]("scene_01", 'label scene_01:\\n    evelyn \\"Hi.\\"\\n    return')
-    script = state.read_component("node_scripts")["scripts"]["scene_01"]
-    assert "\\n" not in script and '\\"' not in script
-    assert script == 'label scene_01:\n    evelyn "Hi."\n    return'
+    tools["write_node"]("s1", _node())
+    assert tools["edit_node"]("missing", end={"type": "return"})["ok"] is False
+    assert tools["edit_node"]("s1", line_index=9, text="x")["ok"] is False
+    assert tools["edit_node"]("s1", end={"type": "boom"})["ok"] is False
 
 
-def test_write_component_normalizes_node_scripts(tmp_path):
+def test_read_node_returns_object(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
-    tools["write_component"]("node_scripts", {
-        "node_ids": ["s1"], "scripts": {"s1": 'label s1:\\n    a \\"hi\\"\\n    return'}})
-    s = state.read_component("node_scripts")["scripts"]["s1"]
-    assert s == 'label s1:\n    a "hi"\n    return'
+    tools["write_node"]("s1", _node("yo"))
+    got = tools["read_node"]("s1")
+    assert got["ok"] is True and got["content"]["lines"][0]["text"] == "yo"
+    assert tools["read_node"]("missing")["ok"] is False
 
+
+# ── structured place tools ───────────────────────────────────────────────────
+
+def _place():
+    return {"kind": "room", "background": "bg_x", "interactables": [
+        {"id": "hs_door", "label": "Door", "position": {"rect": {"x": 0, "y": 0, "w": 10, "h": 10}},
+         "action": {"type": "move", "target": "room_b"}}]}
+
+
+def test_write_and_read_place(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    assert tools["write_place"]("room_a", _place())["ok"] is True
+    pl = state.read_component("places")
+    assert pl["place_ids"] == ["room_a"] and pl["start_place"] == "room_a"
+    assert tools["read_place"]("room_a")["content"]["background"] == "bg_x"
+    assert tools["write_place"]("room_b", {"interactables": []})["ok"] is False  # empty
+
+
+def test_set_places_meta_and_edit_place(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_place"]("room_a", _place())
+    tools["set_places_meta"](goal={"type": "flag", "id": "escaped"}, flags=["escaped"],
+                             items=[{"id": "key", "name": "Key"}])
+    pl = state.read_component("places")
+    assert pl["goal"] == {"type": "flag", "id": "escaped"} and pl["flags"] == ["escaped"]
+    # repoint the move target
+    assert tools["edit_place"]("room_a", "hs_door",
+                               action={"type": "move", "target": "room_c"})["ok"] is True
+    h = state.read_component("places")["places"]["room_a"]["interactables"][0]
+    assert h["action"]["target"] == "room_c"
+    assert tools["set_places_meta"](goal={"type": "x"})["ok"] is False  # bad goal shape
+
+
+# ── locking ──────────────────────────────────────────────────────────────────
 
 def _spec_with_dep():
-    # premise is depended upon by node_scripts → premise is lockable; node_scripts is a leaf.
     return Spec({"title": "T", "frozen": True, "components": [
         {"id": "premise", "deps": [], "done_conditions": [
-            {"type": "count", "path": "premise.characters", "min": 2},
-        ]},
-        {"id": "node_scripts", "deps": ["premise"], "done_conditions": [
-            {"type": "count", "path": "node_scripts.node_ids", "min": 1},
-            {"type": "compiles"},  # the compiles gate marks the terminal/leaf component
-        ]},
+            {"type": "count", "path": "premise.characters", "min": 2}]},
+        {"id": "nodes", "deps": ["premise"], "done_conditions": [
+            {"type": "count", "path": "nodes.node_ids", "min": 1},
+            {"type": "compiles"}]},
     ]})
 
 
 def test_passing_component_locks_against_rewrite(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec_with_dep(), state)
-    # First write makes premise pass → it locks.
     assert tools["write_component"]("premise", {"characters": [{"id": "a"}, {"id": "b"}]})["ok"]
-    # A second rewrite of the now-passing, depended-upon component is refused.
     res = tools["write_component"]("premise", {"characters": [{"id": "a"}]})
     assert res["ok"] is False and "locked" in res["error"]
-    # The original content survives — the bad rewrite was not persisted.
     assert len(state.read_component("premise")["characters"]) == 2
-
-
-def test_failing_depended_component_not_locked(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec_with_dep(), state)
-    # premise written but still failing (only 1 char) → not locked, rewrite allowed.
-    tools["write_component"]("premise", {"characters": [{"id": "a"}]})
-    assert tools["write_component"]("premise", {"characters": [{"id": "a"}, {"id": "b"}]})["ok"]
 
 
 def test_leaf_component_never_locks(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec_with_dep(), state)
-    # node_scripts carries a `compiles` check → terminal/leaf → never locks, stays
-    # rewritable (and the lock test short-circuits before running a real compile).
-    assert tools["write_component"]("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": "x"}})["ok"]
-    assert tools["write_component"]("node_scripts", {"node_ids": ["s1", "s2"], "scripts": {"s1": "x", "s2": "y"}})["ok"]
+    # nodes carries a `compiles` check → terminal → never locks, stays writable.
+    assert tools["write_node"]("s1", _node())["ok"]
+    assert tools["write_node"]("s2", _node())["ok"]

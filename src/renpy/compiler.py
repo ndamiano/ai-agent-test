@@ -9,27 +9,7 @@ a distribute error, or a non-zero distribute return code fail the compile. A lin
 error_count of None means no SDK was available to check — we can't gate, so it passes.
 """
 
-import json
-from pathlib import Path
 from typing import Dict, Optional
-
-from renpy.fns import build
-
-# The artifact pieces build() consumes. premise + asset_manifest are always required;
-# the game body is node_scripts (VN) OR rooms (point-and-click), so at least one must
-# exist. brief is optional (title defaults).
-_REQUIRED = ("premise.json", "asset_manifest.json")
-_BODY = ("node_scripts.json", "rooms.json")
-_OPTIONAL = ("brief.json",)
-
-
-def _load_artifact(working_dir: Path) -> Dict:
-    inputs: Dict = {}
-    for fname in _OPTIONAL + _REQUIRED + _BODY:
-        path = working_dir / fname
-        if path.exists():
-            inputs[path.stem] = json.loads(path.read_text(encoding="utf-8"))
-    return inputs
 
 
 def compile_gate(build_result: Dict) -> Optional[str]:
@@ -46,54 +26,15 @@ def compile_gate(build_result: Dict) -> Optional[str]:
 
 
 def compile_renpy(working_dir, distribute: bool = True) -> Dict:
-    # distribute=False lints only (fast) — used for mid-build compile checks; the
-    # final delivery build packages the project. The build never rewrites the agent's
-    # content; it surfaces structural issues so the agent fixes them.
-    working_dir = Path(working_dir)
+    """Compile the artifact to a launchable Ren'Py project and gate it.
 
-    missing = [f for f in _REQUIRED if not (working_dir / f).exists()]
-    if not any((working_dir / f).exists() for f in _BODY):
-        missing.append(f"one of {list(_BODY)}")
-    if missing:
-        return {"ok": False, "reason": f"missing artifact files: {missing}",
-                "lint_error_count": None, "project_dir": None}
-
-    # build() can raise on structurally-invalid agent-authored content (e.g. a
-    # character without an id). compile_renpy must always return a structured
-    # pass/fail — a crash is just a compile failure with a reason.
+    Delegates to the IR backend (assemble_ir → ir_vn/ir_pnc → lint). Kept as the public
+    entry so the `compiles` check and the final packaging step are unchanged. Always returns
+    a structured pass/fail — a crash is just a compile failure with a reason.
+    """
+    from renpy.ir_compiler import compile_ir
     try:
-        if distribute:
-            build_result = build(_load_artifact(working_dir), working_dir, distribute=True)
-        else:
-            # Loop compile checks run constantly; silence the build's chatter so the
-            # executor's per-step log is the signal. Lint info still comes back in the result.
-            import contextlib, io
-            with contextlib.redirect_stdout(io.StringIO()):
-                build_result = build(_load_artifact(working_dir), working_dir, distribute=False)
+        return compile_ir(working_dir, distribute=distribute)
     except Exception as e:
         return {"ok": False, "reason": f"build error: {type(e).__name__}: {e}",
                 "lint_error_count": None, "project_dir": None}
-
-    # Structural issues (dangling jumps, undefined characters, missing backgrounds)
-    # are reported verbatim — they're the agent's actionable to-do.
-    issues = build_result.get("script_issues")
-    if issues:
-        detail = "; ".join(f"{nid}: {prob}" for nid, prob in issues.items())
-        return {"ok": False, "reason": f"script issues — {detail}",
-                "lint_error_count": None, "project_dir": None}
-
-    reason = compile_gate(build_result)
-    # Surface the actual lint messages, not just the count — the agent needs to know
-    # WHAT failed to fix it.
-    lint_errors = build_result.get("lint", {}).get("errors") or []
-    if reason and "lint error" in reason and lint_errors:
-        reason = f"{reason}: " + " | ".join(lint_errors[:5])
-    return {
-        "ok": reason is None,
-        "reason": reason,
-        "lint_error_count": build_result.get("lint", {}).get("error_count"),
-        "lint_errors": lint_errors,
-        "dist_returncode": build_result.get("dist_returncode"),
-        "dist_error": build_result.get("dist_error"),
-        "project_dir": build_result.get("project_dir") or build_result.get("output_dir"),
-    }

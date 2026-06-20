@@ -17,7 +17,7 @@ from maestro.spec import Spec
 
 logger = logging.getLogger(__name__)
 from maestro.state import RunState
-from maestro.tools import build_tools
+from maestro.tools import build_tools, tool_schemas_for
 from maestro.agent import make_llm_decider, make_node_subloop
 from maestro.executor import Executor, ExecutorResult
 
@@ -33,12 +33,11 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     # trivial one; the loop is cheap now (compile checks lint-only, steps run <15s), so
     # budget for a 50-node game with wiring + compile-fix slack rather than starving it.
     from maestro.spec_tools import _emit
-    from maestro.agent import make_room_subloop
-    from renpy.checks import register_all as register_renpy_checks, node_view
-    from renpy.pnc_checks import room_view
-    from renpy.component_schemas import SCHEMAS as renpy_schemas, skeleton_guide
+    from maestro.agent import make_place_subloop
+    from renpy.ir_checks import register_all as register_ir_checks, node_view, place_view
+    from renpy.component_schemas import SCHEMAS as ir_schemas, skeleton_guide
 
-    register_renpy_checks()  # make reachable_from_start / rooms_reachable / ... available
+    register_ir_checks()  # make reachable_from_start / places_reachable / ... available
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
@@ -47,19 +46,20 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     spec = Spec(spec_data)
     guide = skeleton_guide(genre=spec.genre)
 
-    tools = build_tools(spec, state, schemas=renpy_schemas)
-    decider = decide or make_llm_decider(component_guide=guide)
-    # node_scripts / rooms iterate until each target check passes — a stateful sub-loop, not
-    # one-shot steps. A scripted `decide` (tests) keeps the simple stateless path. A
-    # point-and-click game drives rooms AND reuses node_scripts for NPC dialogue.
+    tools = build_tools(spec, state, schemas=ir_schemas)
+    decider = decide or make_llm_decider(component_guide=guide,
+                                         tool_schemas=tool_schemas_for(spec.genre))
+    # nodes / places iterate until each target check passes — a stateful sub-loop, not one-shot
+    # steps. A scripted `decide` (tests) keeps the simple stateless path. A point-and-click game
+    # drives places AND reuses nodes for NPC dialogue.
     sub_runners = {}
-    projectors = {"node_scripts": node_view}
+    projectors = {"nodes": node_view}
     if not decide:
-        sub_runners["node_scripts"] = make_node_subloop(component_guide=guide)
+        sub_runners["nodes"] = make_node_subloop(component_guide=guide)
     if spec.genre == "point_and_click":
-        projectors["rooms"] = room_view
+        projectors["places"] = place_view
         if not decide:
-            sub_runners["rooms"] = make_room_subloop(component_guide=guide)
+            sub_runners["places"] = make_place_subloop(component_guide=guide)
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
@@ -100,7 +100,7 @@ def _cli(request: str) -> int:
     # Register the renpy checks + spec baseline before proposing, so the proposed spec the
     # human reviews already carries the enforced contract (run_build registers too, but that
     # is after freeze).
-    from renpy.checks import register_all
+    from renpy.ir_checks import register_all
     register_all()
 
     run_id = create_run()

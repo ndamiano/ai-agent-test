@@ -4,14 +4,6 @@ import shutil
 from pathlib import Path
 from typing import Dict, List
 
-from renpy._script import (
-    _postprocess_script,
-    _find_script_issues,
-    _stitch_script,
-    _write_options_rpy,
-    run_final_lint,
-)
-from renpy.renpy_builder import _copy_templates, _distribute
 from utils.image import write_solid_png
 
 
@@ -35,7 +27,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
 
     premise  = inputs.get("premise", {})
     manifest = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
-    manifest = _merge_items_into_manifest(inputs.get("rooms", {}), manifest)
+    manifest = _merge_items_into_manifest(inputs.get("places", {}), manifest)
 
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -181,129 +173,5 @@ def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:
     _put(tc.get("image_file", ""), 1280, 720, (20, 30, 60))
 
 
-def build(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
-    # A `rooms` artifact means this is a point-and-click adventure — a different game
-    # shape (clickable screens + inventory) that stitches via the pnc path.
-    if inputs.get("rooms"):
-        return _build_pnc(inputs, working_dir, distribute)
-
-    brief        = inputs.get("brief", {})
-    premise      = inputs.get("premise", {})
-    manifest     = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
-    node_scripts = inputs.get("node_scripts", {})
-    scripts      = node_scripts.get("scripts", {})
-    node_ids     = node_scripts.get("node_ids", list(scripts.keys()))
-
-    title      = brief.get("title", "Untitled")
-    output_dir = str(working_dir / "game_output")
-
-    valid_backgrounds = {bg["id"] for bg in manifest.get("backgrounds", [])}
-    valid_characters  = {c["id"] for c in manifest.get("characters", [])} | {"act"}
-    valid_cgs         = {cg["id"] for cg in manifest.get("cgs", [])}
-    valid_labels      = set(node_ids) | {"start", "splashscreen", "main_menu"}
-
-    # Do NOT rewrite the agent's content. Surface structural issues (e.g. a jump to a
-    # node that doesn't exist) so the agent builds the missing piece instead of the
-    # build mutilating what it wrote.
-    script_issues = {
-        nid: issue
-        for nid in node_ids
-        if scripts.get(nid)
-        and (issue := _find_script_issues(scripts[nid], valid_labels,
-                                          valid_backgrounds, valid_characters, valid_cgs))
-    }
-    if script_issues:
-        return {"status": "built", "output_dir": output_dir,
-                "script_issues": script_issues, "lint": {"error_count": None}}
-
-    for nid in node_ids:
-        if scripts.get(nid):
-            scripts[nid] = _postprocess_script(scripts[nid], valid_characters)
-
-    full_script = _stitch_script(premise, manifest, scripts, node_ids)
-
-    game_dir = os.path.join(output_dir, "game")
-    os.makedirs(game_dir, exist_ok=True)
-
-    _write_options_rpy(game_dir, title)
-
-    script_path = os.path.join(game_dir, "script.rpy")
-    with open(script_path, "w", encoding="utf-8") as f:
-        f.write(full_script)
-    sdk_path = _get_sdk_path()
-    _copy_templates(game_dir, sdk_path)
-
-    # A declared-but-missing image must not fail the build; placeholder it (real art
-    # comes from generate_asset). This keeps the compile gate about the script, not assets.
-    _ensure_placeholder_images(manifest, game_dir)
-
-    # Overwrite placeholder main menu background with generated title card
-    title_card_src = os.path.join(game_dir, "images", "title_card.png")
-    gui_main_menu  = os.path.join(game_dir, "gui", "main_menu.png")
-    if os.path.exists(title_card_src) and os.path.exists(os.path.dirname(gui_main_menu)):
-        shutil.copy2(title_card_src, gui_main_menu)
-        print("    [build]  title card → gui/main_menu.png")
-
-    print(f"    [build]  project written to: {output_dir}")
-    result = {"project_dir": os.path.abspath(output_dir)}
-
-    if sdk_path:
-        from renpy._script import node_line_ranges
-        ranges = node_line_ranges(full_script, node_ids)
-        lint_summary = run_final_lint(output_dir, sdk_path, node_ranges=ranges)
-        result["lint"] = lint_summary
-        print(f"    [build]  final lint: {lint_summary['error_count']} error(s)")
-        # Distribute (packaging) is expensive; skip it for mid-build compile checks
-        # and only run it for final delivery.
-        if distribute:
-            result.update(_distribute(output_dir, sdk_path))
-    else:
-        result["lint"] = {"error_count": None}
-
-    return {"status": "built", "output_dir": output_dir, **result}
-
-
-def _build_pnc(inputs: Dict, working_dir: Path, distribute: bool = True) -> Dict:
-    from renpy._pnc_script import stitch_pnc
-
-    brief    = inputs.get("brief", {})
-    premise  = inputs.get("premise", {})
-    manifest = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
-    manifest = _merge_items_into_manifest(inputs.get("rooms", {}), manifest)
-    rooms_art = inputs.get("rooms", {})
-    scripts   = inputs.get("node_scripts", {}).get("scripts", {})
-
-    title      = brief.get("title", "Untitled")
-    output_dir = str(working_dir / "game_output")
-    valid_characters = {c["id"] for c in manifest.get("characters", [])} | {"act"}
-
-    full_script, issues = stitch_pnc(premise, manifest, rooms_art, scripts, valid_characters)
-    if issues:
-        return {"status": "built", "output_dir": output_dir,
-                "script_issues": issues, "lint": {"error_count": None}}
-
-    game_dir = os.path.join(output_dir, "game")
-    os.makedirs(game_dir, exist_ok=True)
-    _write_options_rpy(game_dir, title)
-
-    with open(os.path.join(game_dir, "script.rpy"), "w", encoding="utf-8") as f:
-        f.write(full_script)
-    sdk_path = _get_sdk_path()
-    _copy_templates(game_dir, sdk_path)
-    _ensure_placeholder_images(manifest, game_dir)
-
-    print(f"    [build]  point-and-click project written to: {output_dir}")
-    result = {"project_dir": os.path.abspath(output_dir)}
-
-    if sdk_path:
-        from renpy._pnc_script import pnc_line_ranges
-        ranges = pnc_line_ranges(full_script, rooms_art.get("room_ids", []),
-                                 list(scripts.keys()))
-        result["lint"] = run_final_lint(output_dir, sdk_path, node_ranges=ranges)
-        print(f"    [build]  final lint: {result['lint']['error_count']} error(s)")
-        if distribute:
-            result.update(_distribute(output_dir, sdk_path))
-    else:
-        result["lint"] = {"error_count": None}
-
-    return {"status": "built", "output_dir": output_dir, **result}
+# Project building + compile moved to renpy.ir_compiler (assemble_ir → ir_vn/ir_pnc → lint).
+# fns now owns only image generation + the manifest backfills the compiler reuses.

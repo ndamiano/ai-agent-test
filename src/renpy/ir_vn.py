@@ -84,6 +84,18 @@ def _end(end: Dict, ind: str) -> List[str]:
     return [f"{ind}return{label}"]
 
 
+def node_block(node: Dict) -> List[str]:
+    """`label <id>:` + the node's lines (with per-line effects) + its terminal control.
+    Shared by the VN compiler and the point-and-click compiler (NPC dialogue nodes)."""
+    out = [f"label {node['id']}:"]
+    for line in node.get("lines", []):
+        out.append(f"{_IND}{_line(line)}")
+        for eff in line.get("effects", []):
+            out.append(f"{_IND}{_effect(eff)}")
+    out.extend(_end(node.get("end", {}), _IND))
+    return out
+
+
 def compile_vn(ir: Dict) -> str:
     """Return the Ren'Py script.rpy source for a visual_novel IR."""
     out: List[str] = []
@@ -105,12 +117,7 @@ def compile_vn(ir: Dict) -> str:
     out.append("")
 
     for node in ir.get("nodes", []):
-        out.append(f"label {node['id']}:")
-        for line in node.get("lines", []):
-            out.append(f"{_IND}{_line(line)}")
-            for eff in line.get("effects", []):
-                out.append(f"{_IND}{_effect(eff)}")
-        out.extend(_end(node.get("end", {}), _IND))
+        out.extend(node_block(node))
         out.append("")
 
     return "\n".join(out).rstrip() + "\n"

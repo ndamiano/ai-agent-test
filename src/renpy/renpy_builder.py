@@ -1,10 +1,29 @@
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates")
+
+
+def write_options_rpy(game_dir: str, title: str) -> None:
+    """Write game/options.rpy (config name/version + build identity) for a project."""
+    safe = re.sub(r"[^A-Za-z0-9_]", "", title.replace(" ", "_")) or "UntitledGame"
+    content = (
+        f'define config.name = "{title}"\n'
+        f'define config.version = "1.0"\n'
+        f'define config.window_icon = None\n'
+        f'define gui.show_name = True\n'
+        f'define config.save_directory = "{safe}"\n'
+        f'init python:\n'
+        f'    build.name = "{safe}"\n'
+        f'    build.executable_name = "{safe}"\n'
+        f'    build.directory_name = "{safe}-1.0"\n'
+    )
+    with open(os.path.join(game_dir, "options.rpy"), "w", encoding="utf-8") as f:
+        f.write(content)
 
 # Ships with every SDK; its gui.rpy/screens.rpy/gui/ are the stock 1280x720 set
 _SDK_TEMPLATE_PROJECT = "the_question"

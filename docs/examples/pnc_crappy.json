@@ -1,0 +1,54 @@
+{
+  "version": "0.1",
+  "genre": "point_and_click",
+  "meta": { "title": "The Cellar", "premise": "Escape the locked cellar." },
+  "characters": [{ "id": "warden", "name": "The Warden" }],
+  "items": [{ "id": "item_key", "name": "Rusty Key", "examine": "Cold and bent." }],
+  "flags": ["door_open", "escaped"],
+  "start": { "place": "room_cell" },
+  "goal": { "flag": "escaped" },
+  "places": [
+    {
+      "id": "room_cell",
+      "kind": "room",
+      "background": "bg_cell",
+      "interactables": [
+        { "id": "hs_drawer", "label": "Drawer", "position": { "rect": { "x": 120, "y": 400, "w": 200, "h": 150 } },
+          "action": { "type": "take", "item": "item_key", "text": "A key, tucked under a rag." } },
+        { "id": "hs_warden", "label": "Warden", "position": { "rect": { "x": 800, "y": 200, "w": 180, "h": 400 } },
+          "action": { "type": "talk", "node": "talk_warden" } },
+        { "id": "hs_door", "label": "Iron Door", "position": { "rect": { "x": 500, "y": 150, "w": 220, "h": 450 } },
+          "action": { "type": "use",
+            "clauses": [{ "requires": { "item": "item_key" },
+              "outcome": { "text": "The lock gives.", "effects": [{ "set_flag": "door_open" }] } }],
+            "fallback": { "text": "Locked. You need a key." } } },
+        { "id": "hs_leave", "label": "Doorway", "position": { "rect": { "x": 560, "y": 600, "w": 120, "h": 100 } },
+          "action": { "type": "move", "target": "room_hall", "requires": { "flag": "door_open" } } }
+      ]
+    },
+    {
+      "id": "room_hall",
+      "kind": "room",
+      "background": "bg_hall",
+      "interactables": [
+        { "id": "hs_exit", "label": "Stairs Up", "position": { "rect": { "x": 600, "y": 100, "w": 160, "h": 300 } },
+          "action": { "type": "use",
+            "clauses": [{ "requires": { "flag": "door_open" },
+              "outcome": { "text": "You climb into daylight.", "effects": [{ "set_flag": "escaped" }] } }],
+            "fallback": { "text": "The door won't budge yet." } } },
+        { "id": "hs_win", "label": "Freedom", "position": { "rect": { "x": 10, "y": 10, "w": 50, "h": 50 } },
+          "action": { "type": "win" } }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "talk_warden",
+      "lines": [
+        { "speaker": "warden", "text": "You won't find the key. I made sure of that." },
+        { "speaker": null, "text": "His eyes flick to the drawer, just once." }
+      ],
+      "end": { "type": "return" }
+    }
+  ]
+}

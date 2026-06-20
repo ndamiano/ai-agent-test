@@ -12,15 +12,15 @@ def _types(comp):
 
 
 def _node_comp(conditions):
-    return {"components": [{"id": "node_scripts", "done_conditions": list(conditions)}]}
+    return {"components": [{"id": "nodes", "done_conditions": list(conditions)}]}
 
 
 def test_adds_missing_structure_and_quality_checks():
     # The exact failure we hit: proposer emitted only count + refs + compiles.
     spec = _node_comp([
-        {"type": "count", "path": "node_scripts.node_ids", "min": 20},
+        {"type": "count", "path": "nodes.node_ids", "min": 20},
         {"type": "refs_resolve", "from": "premise.endings", "from_key": "id",
-         "to": "node_scripts.node_ids"},
+         "to": "nodes.node_ids"},
         {"type": "compiles"},
     ])
     enforce_baseline(spec)
@@ -31,7 +31,7 @@ def test_adds_missing_structure_and_quality_checks():
 
 def test_raises_min_to_floor_but_keeps_higher():
     spec = _node_comp([
-        {"type": "count", "path": "node_scripts.node_ids", "min": 6},     # below floor → raised
+        {"type": "count", "path": "nodes.node_ids", "min": 6},     # below floor → raised
         {"type": "each_node_min_lines", "min": 40},                       # above floor → kept
     ])
     enforce_baseline(spec)
@@ -69,7 +69,7 @@ def test_skips_components_not_in_spec():
     spec = {"components": [{"id": "premise", "done_conditions": []}]}
     enforce_baseline(spec)
     ids = {c["id"] for c in spec["components"]}
-    assert ids == {"premise"}              # does not invent node_scripts/asset_manifest
+    assert ids == {"premise"}              # does not invent nodes/asset_manifest
 
 
 def test_registry_idempotent_and_applied(monkeypatch):

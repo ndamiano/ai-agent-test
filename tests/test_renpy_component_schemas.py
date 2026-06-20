@@ -26,11 +26,12 @@ def test_asset_manifest_requires_list_keys_and_ids():
     assert validate_component("asset_manifest", good) is None
 
 
-def test_node_scripts_consistency():
-    assert validate_component("node_scripts", {"node_ids": ["start"], "scripts": {"start": "x"}})  # 'start' banned
-    assert validate_component("node_scripts", {"node_ids": ["s1"], "scripts": {}})  # missing entry
-    ok = {"node_ids": ["s1"], "scripts": {"s1": "label s1:\n    return"}}
-    assert validate_component("node_scripts", ok) is None
+def test_nodes_consistency():
+    n = {"lines": [{"text": "hi"}], "end": {"type": "return"}}
+    assert validate_component("nodes", {"node_ids": ["start"], "nodes": {"start": n}})  # 'start' banned
+    assert validate_component("nodes", {"node_ids": ["s1"], "nodes": {}})  # missing entry
+    assert validate_component("nodes", {"node_ids": ["s1"], "nodes": {"s1": {"lines": [], "end": {"type": "return"}}}})  # empty lines
+    assert validate_component("nodes", {"node_ids": ["s1"], "nodes": {"s1": n}}) is None
 
 
 def test_unknown_component_is_unconstrained():
@@ -39,7 +40,7 @@ def test_unknown_component_is_unconstrained():
 
 def test_skeleton_guide_lists_components():
     guide = skeleton_guide()
-    assert "premise" in guide and "asset_manifest" in guide and "node_scripts" in guide
+    assert "premise" in guide and "asset_manifest" in guide and "nodes" in guide
 
 
 def test_premise_skeleton_advertises_character_core():
@@ -77,6 +78,7 @@ def test_write_component_without_schemas_is_unconstrained(tmp_path):
 def test_write_node_rejects_start_id(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_frozen_spec(), state, schemas=SCHEMAS)
-    assert tools["write_node"]("start", "label start:\n    return")["ok"] is False
-    assert tools["write_node"]("scene_01", "")["ok"] is False     # empty content
-    assert tools["write_node"]("scene_01", "label scene_01:\n    return")["ok"] is True
+    n = {"lines": [{"text": "x"}], "end": {"type": "return"}}
+    assert tools["write_node"]("start", n)["ok"] is False
+    assert tools["write_node"]("scene_01", "not an object")["ok"] is False   # wrong shape
+    assert tools["write_node"]("scene_01", n)["ok"] is True

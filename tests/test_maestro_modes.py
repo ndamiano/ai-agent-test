@@ -16,8 +16,8 @@ def _spec():
     return Spec({"title": "T", "frozen": True, "components": [
         {"id": "premise", "deps": [], "done_conditions": [
             {"type": "exists", "path": "premise.central_question"}]},
-        {"id": "node_scripts", "deps": ["premise"], "done_conditions": [
-            {"type": "count", "path": "node_scripts.node_ids", "min": 3}]},
+        {"id": "nodes", "deps": ["premise"], "done_conditions": [
+            {"type": "count", "path": "nodes.node_ids", "min": 3}]},
     ]})
 
 
@@ -30,14 +30,14 @@ def test_mode_is_earliest_failing_in_dep_order(tmp_path):
     state.write_component("premise", {"central_question": "Q?"})  # passes
     ex = _executor(state)
 
-    # premise passes, node_scripts fails → mode is node_scripts.
-    todo = [{"component_id": "node_scripts", "check": {"type": "count"}, "detail": "too few"}]
+    # premise passes, nodes fails → mode is nodes.
+    todo = [{"component_id": "nodes", "check": {"type": "count"}, "detail": "too few"}]
     ctx = ex.build_context(todo=todo)
-    assert ctx["mode"] == "node_scripts"
+    assert ctx["mode"] == "nodes"
 
     # When premise also fails it comes first in dep order → it wins.
     todo2 = [
-        {"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        {"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
         {"component_id": "premise", "check": {"type": "exists"}, "detail": "y"},
     ]
     assert ex.build_context(todo=todo2)["mode"] == "premise"
@@ -46,29 +46,29 @@ def test_mode_is_earliest_failing_in_dep_order(tmp_path):
 def test_upstream_holds_passing_components_only(tmp_path):
     state = RunState(tmp_path)
     state.write_component("premise", {"central_question": "Q?", "characters": [{"id": "mara"}]})
-    state.write_component("node_scripts", {"node_ids": [], "scripts": {}})
+    state.write_component("nodes", {"node_ids": [], "scripts": {}})
     ex = _executor(state)
 
-    todo = [{"component_id": "node_scripts", "check": {"type": "count"}, "detail": "too few"}]
+    todo = [{"component_id": "nodes", "check": {"type": "count"}, "detail": "too few"}]
     ctx = ex.build_context(todo=todo)
 
     assert "premise" in ctx["upstream"]                     # passing → handed over
     assert ctx["upstream"]["premise"]["characters"][0]["id"] == "mara"
-    assert "node_scripts" not in ctx["upstream"]            # still failing → withheld
+    assert "nodes" not in ctx["upstream"]            # still failing → withheld
 
 
 def test_active_view_from_projector(tmp_path):
     state = RunState(tmp_path)
     state.write_component("premise", {"central_question": "Q?"})  # passes → not the mode
-    state.write_component("node_scripts", {"node_ids": ["s1"], "scripts": {"s1": "label s1:"}})
+    state.write_component("nodes", {"node_ids": ["s1"], "scripts": {"s1": "label s1:"}})
 
-    proj = lambda artifact: {"node_ids": artifact.get("node_scripts", {}).get("node_ids", [])}
+    proj = lambda artifact: {"node_ids": artifact.get("nodes", {}).get("node_ids", [])}
     ex = Executor(_spec(), state, tools={}, decide=lambda c: {}, max_steps=1,
-                  projectors={"node_scripts": proj})
+                  projectors={"nodes": proj})
 
-    todo = [{"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"}]
+    todo = [{"component_id": "nodes", "check": {"type": "count"}, "detail": "x"}]
     ctx = ex.build_context(todo=todo)
-    assert ctx["mode"] == "node_scripts"
+    assert ctx["mode"] == "nodes"
     assert ctx["active_view"] == {"node_ids": ["s1"]}
 
 
@@ -87,9 +87,9 @@ def test_no_mode_when_nothing_failing(tmp_path):
 
 
 def test_schemas_filtered_for_node_mode():
-    filtered = _schemas_for_mode("node_scripts", TOOL_SCHEMAS)
+    filtered = _schemas_for_mode("nodes", TOOL_SCHEMAS)
     names = {s["function"]["name"] for s in filtered}
-    assert names == set(_MODE_TOOLS["node_scripts"])
+    assert names == set(_MODE_TOOLS["nodes"])
     assert "write_component" not in names and "read_component" not in names
 
 
@@ -125,13 +125,13 @@ def test_render_context_no_stall_nudge_when_calm():
 
 def test_render_context_shows_single_target():
     rendered = _render_context({"todo": [], "target": {
-        "component_id": "node_scripts", "check": {"type": "reachable_from_start"},
+        "component_id": "nodes", "check": {"type": "reachable_from_start"},
         "detail": "scene_03 unreachable"}})
     assert "YOUR TARGET" in rendered and "reachable_from_start" in rendered
 
 
 def _node_schemas():
-    return _schemas_for_mode("node_scripts", TOOL_SCHEMAS)
+    return _schemas_for_mode("nodes", TOOL_SCHEMAS)
 
 
 def test_count_target_exposes_only_write_node():
@@ -186,7 +186,7 @@ def test_node_subloop_dispatches_and_stops_on_target():
 
     dispatched, reports = [], []
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
         target_met=lambda: True,           # satisfied after the first write → loop stops
@@ -215,7 +215,7 @@ def test_node_subloop_escalates_reasoning_after_stall():
     runner = make_node_subloop(connector=conn, cap=5)
     reports = []
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"error": "bad node id"},
         target_met=lambda: False,
@@ -236,7 +236,7 @@ def test_fix_target_starts_escalated():
     conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}])
     runner = make_node_subloop(connector=conn, cap=5)
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "compiles"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "compiles"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"ok": True},
         target_met=lambda: True,
@@ -252,7 +252,7 @@ def test_author_target_starts_unescalated():
     conn = _FakeConn([_writer_response()])
     runner = make_node_subloop(connector=conn, cap=5)
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"ok": True},
         target_met=lambda: True,
@@ -266,13 +266,13 @@ def test_author_target_starts_unescalated():
 def test_subloop_no_tool_call_is_visible_and_bails():
     # Model returns prose, no tool call (the rooms hang). Must report it, escalate, then give
     # up — never spin silently.
-    from maestro.agent import make_room_subloop
+    from maestro.agent import make_place_subloop
     text_only = {"choices": [{"message": {"content": "{ a giant json blob }", "tool_calls": []}}]}
     conn = _FakeConn([text_only])
-    runner = make_room_subloop(connector=conn, cap=10)
+    runner = make_place_subloop(connector=conn, cap=10)
     reports = []
     runner(
-        target={"component_id": "rooms", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "places", "check": {"type": "count"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"ok": True},
         target_met=lambda: False,
@@ -297,7 +297,7 @@ def test_node_subloop_drops_reads_when_sightseeing():
     conn = _FakeConn([_reader_response()])
     runner = make_node_subloop(connector=conn, cap=6)
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "each_node_min_lines"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "each_node_min_lines"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"ok": True, "content": "label n:"},
         target_met=lambda: False,
@@ -320,7 +320,7 @@ def test_node_subloop_count_rejects_overwrite():
     runner = make_node_subloop(connector=conn, cap=3)
     dispatched, reports = [], []
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
         target_met=lambda: False,
@@ -339,7 +339,7 @@ def test_node_subloop_count_allows_new_id():
     runner = make_node_subloop(connector=conn, cap=1)
     dispatched = []
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
         target_met=lambda: False,
@@ -356,7 +356,7 @@ def test_node_subloop_no_escalation_while_progressing():
     conn = _FakeConn([_writer_response()])
     runner = make_node_subloop(connector=conn, cap=4)
     runner(
-        target={"component_id": "node_scripts", "check": {"type": "each_node_min_lines"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "each_node_min_lines"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: {"ok": True},
         target_met=lambda: False,

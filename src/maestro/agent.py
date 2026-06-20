@@ -17,7 +17,7 @@ from renpy.templating import render_template
 logger = logging.getLogger(__name__)
 
 # Reads carry no artifact change; a run of them is the sub-loop sightseeing, not progressing.
-_READ_TOOLS = {"read_node", "read_component", "read_story_state"}
+_READ_TOOLS = {"read_node", "read_place", "read_component", "read_story_state"}
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
@@ -32,15 +32,15 @@ _NODE_PROMPTS: Dict[str, str] = {
     "author": render_template(_PROMPTS_DIR / "write_node.txt", {}),
     "fix": render_template(_PROMPTS_DIR / "fix_node.txt", {}),
 }
-_ROOM_PROMPTS: Dict[str, str] = {
-    "author": render_template(_PROMPTS_DIR / "write_room.txt", {}),
-    "fix": render_template(_PROMPTS_DIR / "fix_room.txt", {}),
+_PLACE_PROMPTS: Dict[str, str] = {
+    "author": render_template(_PROMPTS_DIR / "write_place.txt", {}),
+    "fix": render_template(_PROMPTS_DIR / "fix_place.txt", {}),
 }
 _MODE_PROMPTS: Dict[str, str] = {
     "premise": render_template(_PROMPTS_DIR / "mode_premise.txt", {}),
     "asset_manifest": render_template(_PROMPTS_DIR / "mode_asset.txt", {}),
-    "node_scripts": _NODE_PROMPTS["author"],  # stateless fallback path: author is the default job
-    "rooms": _ROOM_PROMPTS["author"],
+    "nodes": _NODE_PROMPTS["author"],  # stateless fallback path: author is the default job
+    "places": _PLACE_PROMPTS["author"],
 }
 # Which job each target is. Building/growing content = author; making existing items
 # wire up or compile = fix. Mirrors the *_TARGET_TOOLS maps. Unlisted → author.
@@ -49,11 +49,11 @@ _TARGET_PROMPT: Dict[str, str] = {
     "min_branches": "author", "all_characters_speak": "author",
     "reachable_from_start": "fix", "compiles": "fix",
 }
-_ROOM_TARGET_PROMPT: Dict[str, str] = {
-    "count": "author", "each_room_min_hotspots": "author",
+_PLACE_TARGET_PROMPT: Dict[str, str] = {
+    "count": "author", "each_place_min_interactables": "author",
     "items_obtainable": "author", "items_used": "author",
-    "rooms_reachable": "fix", "goal_reachable": "fix",
-    "hotspots_in_bounds": "fix", "compiles": "fix",
+    "places_reachable": "fix", "goal_reachable": "fix",
+    "compiles": "fix",
 }
 
 
@@ -64,11 +64,11 @@ def _prompt_for_target(target: Optional[Dict], prompts: Dict[str, str],
 _MODE_TOOLS: Dict[str, frozenset] = {
     "premise": frozenset({"write_component", "update_scratchpad", "request_review"}),
     "asset_manifest": frozenset({"write_component", "update_scratchpad", "request_review"}),
-    "node_scripts": frozenset({"write_node", "edit_node", "read_node", "read_story_state",
-                               "validate", "compile_renpy", "update_scratchpad", "request_review"}),
-    "rooms": frozenset({"write_component", "write_room", "edit_room", "read_room", "set_rooms_meta",
-                        "read_component", "validate", "compile_renpy", "update_scratchpad",
-                        "request_review"}),
+    "nodes": frozenset({"write_node", "edit_node", "read_node", "read_story_state",
+                        "validate", "compile_renpy", "update_scratchpad", "request_review"}),
+    "places": frozenset({"write_component", "write_place", "edit_place", "read_place",
+                         "set_places_meta", "read_component", "validate", "compile_renpy",
+                         "update_scratchpad", "request_review"}),
 }
 
 
@@ -79,11 +79,10 @@ def _schemas_for_mode(mode: Optional[str], all_schemas: List[Dict]) -> List[Dict
     return [s for s in all_schemas if s.get("function", {}).get("name") in allowed]
 
 
-# Per-TARGET tool gating inside the node sub-loop. Each structural goal needs only a few
-# tools; exposing the rest invites waste — while driving `count`, read_node/edit_node let the
-# model fixate on an existing node (re-reading, futile edits) instead of writing new ones.
-# Reachability is fixed by wiring orphans from existing nodes (edit only) — creating nodes
-# makes it worse, so write_node is withheld there. Unlisted targets get the full node set.
+# Per-TARGET tool gating inside the node sub-loop. Each structural goal needs only a few tools;
+# exposing the rest invites waste — while driving `count`, read/edit let the model fixate on an
+# existing node instead of writing new ones. Reachability is fixed by repointing an existing
+# node's end (edit only), so write_node is withheld there. Unlisted targets get the full set.
 _TARGET_TOOLS: Dict[str, frozenset] = {
     "count": frozenset({"write_node"}),
     "each_node_min_lines": frozenset({"read_node", "write_node", "edit_node"}),
@@ -92,21 +91,16 @@ _TARGET_TOOLS: Dict[str, frozenset] = {
     "all_characters_speak": frozenset({"read_node", "edit_node", "write_node"}),
     "compiles": frozenset({"read_node", "edit_node", "write_node", "compile_renpy"}),
 }
-# Per-TARGET gating for the rooms sub-loop. count ADDS rooms (write_room only); reachability/
-# goal/bounds are fixed by repointing jumps or moving rects (edit), so write_room is withheld
-# where adding rooms would only make it worse.
-_ROOM_TARGET_TOOLS: Dict[str, frozenset] = {
-    # count authors rooms in bulk — qwen-class models reliably emit the WHOLE rooms component
-    # in one shot, so offer write_component (the matching tool) alongside per-room write_room.
-    # Without it the model dumps the full component as TEXT (no tool call) and the loop stalls.
-    "count": frozenset({"write_component", "write_room"}),
-    "each_room_min_hotspots": frozenset({"read_room", "write_room", "edit_room"}),
-    "items_obtainable": frozenset({"read_room", "write_room", "edit_room", "set_rooms_meta"}),
-    "items_used": frozenset({"read_room", "write_room", "edit_room", "set_rooms_meta"}),
-    "rooms_reachable": frozenset({"read_room", "edit_room", "read_component"}),
-    "goal_reachable": frozenset({"read_room", "edit_room", "write_room", "set_rooms_meta", "read_component"}),
-    "hotspots_in_bounds": frozenset({"read_room", "edit_room"}),
-    "compiles": frozenset({"read_room", "edit_room", "write_room", "compile_renpy"}),
+# Per-TARGET gating for the places sub-loop. count ADDS places (write_place); reachability/goal
+# are fixed by repointing actions (edit), so write_place is withheld where adding would not help.
+_PLACE_TARGET_TOOLS: Dict[str, frozenset] = {
+    "count": frozenset({"write_component", "write_place"}),
+    "each_place_min_interactables": frozenset({"read_place", "write_place", "edit_place"}),
+    "items_obtainable": frozenset({"read_place", "write_place", "edit_place", "set_places_meta"}),
+    "items_used": frozenset({"read_place", "write_place", "edit_place", "set_places_meta"}),
+    "places_reachable": frozenset({"read_place", "edit_place", "read_component"}),
+    "goal_reachable": frozenset({"read_place", "edit_place", "write_place", "set_places_meta", "read_component"}),
+    "compiles": frozenset({"read_place", "edit_place", "write_place", "compile_renpy"}),
 }
 
 
@@ -161,15 +155,15 @@ def _render_context(ctx: Dict) -> str:
             "listed here or to a node you also create this step):",
             *node_lines,
         ]
-    if view and view.get("room_ids"):
+    if view and view.get("place_ids"):
         edges = view.get("edges", {})
-        counts = view.get("hotspot_counts", {})
+        counts = view.get("interactable_counts", {})
         unreachable = set(view.get("unreachable", []))
-        room_lines = [
-            f"  {rid} -> {edges.get(rid, [])}"
-            f"  ({'UNREACHABLE' if rid in unreachable else 'reachable'}, "
-            f"{counts.get(rid, 0)} hotspots)"
-            for rid in view["room_ids"]
+        place_lines = [
+            f"  {pid} -> {edges.get(pid, [])}"
+            f"  ({'UNREACHABLE' if pid in unreachable else 'reachable'}, "
+            f"{counts.get(pid, 0)} interactables)"
+            for pid in view["place_ids"]
         ]
         extra = []
         if view.get("items_never_taken"):
@@ -178,9 +172,9 @@ def _render_context(ctx: Dict) -> str:
             extra.append(f"items never used: {view['items_never_used']}")
         lines += [
             "",
-            "CURRENT ROOMS (these already exist — reuse these EXACT ids; `jump` ONLY to a room "
+            "CURRENT PLACES (these already exist — reuse these EXACT ids; `move` ONLY to a place "
             "id listed here or one you also create this step):",
-            *room_lines,
+            *place_lines,
             *(["  " + " | ".join(extra)] if extra else []),
         ]
     if ctx.get("story_state"):
@@ -404,15 +398,15 @@ def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, s
 
 def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
     return _make_subloop(
-        "node_scripts", _NODE_PROMPTS, _TARGET_PROMPT, _TARGET_TOOLS,
+        "nodes", _NODE_PROMPTS, _TARGET_PROMPT, _TARGET_TOOLS,
         count_tool="write_node", id_key="node_id", id_list_key="node_ids",
         noun="node", noun_plural="NODES",
         connector=connector, component_guide=component_guide, cap=cap)
 
 
-def make_room_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
+def make_place_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
     return _make_subloop(
-        "rooms", _ROOM_PROMPTS, _ROOM_TARGET_PROMPT, _ROOM_TARGET_TOOLS,
-        count_tool="write_room", id_key="room_id", id_list_key="room_ids",
-        noun="room", noun_plural="ROOMS",
+        "places", _PLACE_PROMPTS, _PLACE_TARGET_PROMPT, _PLACE_TARGET_TOOLS,
+        count_tool="write_place", id_key="place_id", id_list_key="place_ids",
+        noun="place", noun_plural="PLACES",
         connector=connector, component_guide=component_guide, cap=cap)

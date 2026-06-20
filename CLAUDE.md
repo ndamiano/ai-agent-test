@@ -42,13 +42,18 @@ src/
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
                 chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
                 prompts/ — climbable .txt prompts (propose_spec.txt)
-  renpy/        Ren'Py capabilities the genre-agnostic maestro core wires in (not a pipeline):
-                compiler.py (compile_renpy — the spine), fns.py (build + image gen; dispatches
-                VN vs point-and-click), _script.py (VN stitch), _pnc_script.py (point-and-click
-                stitch: room screens + hotspots + inventory), component_schemas.py + checks.py +
-                pnc_checks.py (the schemas/done-condition checks maestro injects),
-                spec_baseline.py (per-genre baseline floor), renpy_builder.py, templating.py,
-                renpy_templates/
+  renpy/        Ren'Py capabilities the genre-agnostic maestro core wires in (not a pipeline).
+                The agent emits the engine-agnostic Game IR (docs/game_ir.schema.json) as JSON
+                components; renpy/ projects it to Ren'Py:
+                compiler.py (compile_renpy — the spine, delegates to ir_compiler),
+                ir_assemble.py (lift the decomposed components → one IR dict),
+                ir_compiler.py (assemble → crossref gate → ir_vn/ir_pnc → write project → lint),
+                ir_vn.py / ir_pnc.py (IR → script.rpy for VN / point-and-click),
+                ir_checks.py (structured done-condition checks + node_view/place_view projectors),
+                lint.py (SDK lint runner + line→component attribution),
+                component_schemas.py (per-component structural validators + IR skeletons),
+                spec_baseline.py (per-genre baseline floor), fns.py (image gen + manifest
+                backfills), renpy_builder.py, templating.py, renpy_templates/
   tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 
@@ -59,7 +64,9 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 
 **Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; declare the done-conditions that prove it in the spec.
 
-**Genres**: the Ren'Py layer builds two game shapes, both on the same agentic loop. `vn` (visual novel): premise + asset_manifest + node_scripts (dialogue labels + menu branches). `point_and_click` (room/hotspot adventure): premise (NPCs) + asset_manifest (+item icons) + `rooms` (clickable screens, inventory, item-use puzzles, win goal) + node_scripts (NPC dialogue the talk-hotspots `call`). The maestro core stays genre-agnostic — it dispatches sub-runners/projectors/baseline by component id. `spec_tools.propose_spec` auto-detects the genre from the request (keyword match, then a classifier call), tags `spec["genre"]`, and renders the matching `prompts/propose_spec[_pnc].txt`; `run.run_build` and `renpy/` key their build/checks/skeletons off that tag. Adding a genre = a new component shape (schema + skeleton + baseline + checks) and a stitch in `renpy/`, wired by genre in `run.run_build` — never branch the maestro core.
+**The Game IR**: the agent writes JSON, never Ren'Py — `docs/game_ir.schema.json` is the engine-agnostic contract (nodes/places/actions/conditions/effects/combat); `docs/game_ir_decisions.md` is the rationale. The components are decomposed on disk (premise + asset_manifest + `nodes` [+ `places`]); at compile, `ir_assemble.assemble_ir` lifts them into one IR dict, `maestro.ir_crossref` gates that every id reference resolves (a hard compile gate), then `ir_vn`/`ir_pnc` projects to `script.rpy`. This removes whole error classes (quote escaping, speaker format, menu indentation, dangling jumps) by construction and makes validation a data walk, not regex over engine source.
+
+**Genres**: two game shapes on the same agentic loop. `vn` (visual novel): premise + asset_manifest + `nodes` (dialogue graph). `point_and_click` (room/hotspot adventure): premise (NPCs) + asset_manifest (+item icons) + `nodes` (NPC dialogue the talk-actions `call`) + `places` (clickable screens with structured action verbs, inventory, item-use puzzles, win goal). The maestro core stays genre-agnostic — it dispatches sub-runners/projectors/baseline by component id. `spec_tools.propose_spec` auto-detects the genre from the request (keyword match, then a classifier call), tags `spec["genre"]`, and renders the matching `prompts/propose_spec[_pnc].txt`; `run.run_build` and `renpy/` key their build/checks/skeletons off that tag. Adding a genre = a new component shape (schema + skeleton + baseline + checks) and a compiler in `renpy/`, wired by genre in `run.run_build` — never branch the maestro core.
 
 **Settings**: `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
 **Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `use_json_mode`. Use `small` for local models.

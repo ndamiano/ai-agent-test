@@ -11,7 +11,6 @@ State is bounded on purpose: there is no raw read_file/write_file. Components ar
 written by id; scratchpad is replaced, not appended.
 """
 
-import re
 from typing import Callable, Dict, List, Optional
 
 from maestro.validate import validate
@@ -21,111 +20,48 @@ class SpecNotFrozen(RuntimeError):
     pass
 
 
-# Small local models routinely over-escape when emitting script text as a JSON string
-# value, and inconsistently so — a single intended newline can arrive as "\n", or as a
-# backslash welded to a real newline ("\\\n"), or as several stacked backslashes; quotes
-# likewise come back as "\"", "\\\"", etc. Collapsing one fixed level (the old behaviour)
-# left the surplus backslashes behind, which broke labels/indentation and made every
-# dialogue line unparseable. Collapse any run of backslashes before a newline or quote,
-# and any run before a literal n/t escape. Idempotent for correct content.
-_BSLASH_NEWLINE = re.compile(r"\\+\n")
-_BSLASH_LIT_N = re.compile(r"\\+n")
-_BSLASH_LIT_T = re.compile(r"\\+t")
-_BSLASH_QUOTE = re.compile(r'\\+"')
-
-# Models emit "smart" Unicode punctuation (curly quotes, em/en dashes) in script text, but
-# then type ASCII when asking edit_node to `find` a snippet — so the find never matches the
-# stored curly text and the edit loop spins. Fold to ASCII at write time so stored content
-# matches what the model copies back. Length-preserving (1 char → 1 char) so edit_node can
-# reuse it for offset-stable match against any content written before this fold existed.
-_PUNCT_FOLD = str.maketrans({
-    "‘": "'", "’": "'",      # ‘ ’ single curly quotes / apostrophe
-    "“": '"', "”": '"',      # “ ” double curly quotes
-    "–": "-", "—": "-",      # – — en / em dash
-})
-
-# *word* is markdown emphasis the model reaches for; Ren'Py's emphasis is {i}…{/i}. Convert
-# paired runs (so the intent survives as italic) then drop any unpaired stray asterisk.
-_EMPHASIS_RE = re.compile(r"\*([^*\n]+?)\*")
-
-
-def _normalize_script(text):
-    if not isinstance(text, str):
-        return text
-    text = _BSLASH_NEWLINE.sub("\n", text)
-    text = _BSLASH_LIT_N.sub("\n", text)
-    text = _BSLASH_LIT_T.sub("\t", text)
-    text = _BSLASH_QUOTE.sub('"', text)
-    text = text.translate(_PUNCT_FOLD)
-    text = text.replace("…", "...")
-    text = _EMPHASIS_RE.sub(r"{i}\1{/i}", text)
-    text = text.replace("*", "")
-    return text
-
-
-def _flexible_find(text: str, find: str):
-    """Locate `find` inside `text`, returning (start, end) into the ORIGINAL text or (-1, -1).
-
-    edit_node's old exact-substring match was the top cycle-waster: a small model cannot
-    reproduce a multi-line snippet's leading indentation and newlines byte-for-byte, nor the
-    stored smart-punctuation, so the find missed and the edit loop spun for dozens of steps.
-    Match in three widening passes, each offset-stable so the caller can splice the original:
-      1. exact substring
-      2. punctuation-folded (curly quotes/dashes → ASCII; the fold is 1:1 so offsets hold)
-      3. whitespace-flexible: any run of spaces/tabs/newlines in `find` matches any run in
-         `text` (so wrong indentation or space-vs-newline no longer defeats the match)
-    """
-    if not isinstance(find, str) or not find:
-        return -1, -1
-    i = text.find(find)
-    if i >= 0:
-        return i, i + len(find)
-    ft, ff = text.translate(_PUNCT_FOLD), find.translate(_PUNCT_FOLD)  # 1:1 → indices map back
-    i = ft.find(ff)
-    if i >= 0:
-        return i, i + len(ff)
-    tokens = ff.split()
-    if not tokens:
-        return -1, -1
-    m = re.search(r"\s+".join(re.escape(t) for t in tokens), ft)
-    return (m.start(), m.end()) if m else (-1, -1)
-
-
 # Story-state delta fields, so write_node can accept them whether nested under
 # story_state_delta or passed flat (the model does both).
 _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
                  "open_threads_resolve", "event_summary")
 
+# The agent writes structured IR (JSON), never Ren'Py text — so the old text-repair
+# machinery (over-escape collapsing, smart-punctuation folding, fuzzy snippet finding,
+# speaker-name validation) is gone. Escaping is the compiler's job (ir_vn/ir_pnc via
+# json.dumps); reference integrity (speakers, targets) is ir_crossref's, run at compile.
 
-# A dialogue line is `<speaker> "..."`. A speaker that isn't a defined Character compiles
-# to a NameError deep in the Ren'Py build — a failure the agent then chases for dozens of
-# steps via edit_node. Catch it at write time instead. Valid speakers = premise character
-# ids + the always-defined `act` narrator + Ren'Py statement keywords (mirror renpy/_script.py).
-_SPEAKER_RE = re.compile(r'^[ \t]*(\w+)\s+"', re.MULTILINE)
-_SPEAKER_KEYWORDS = {"scene", "show", "hide", "jump", "return", "menu", "call", "pause",
-                     "play", "stop", "queue", "voice", "nvl", "window", "image", "define",
-                     "transform", "init", "python", "label", "with", "extend", "act",
-                     # control flow — common in hotspot logic (`if "key" in inventory:`), never speakers
-                     "if", "elif", "else", "while"}
+_END_TYPES = {"jump", "menu", "return", "end"}
 
 
-def _room_error(room_id: str, content: Dict) -> Optional[str]:
-    """Reject a malformed single room up front (mirrors the schema validators) so a wrong
-    shape steers immediately instead of crashing the pnc stitch later."""
-    if not content.get("bg"):
-        return f"room {room_id!r} needs a 'bg' (an asset_manifest background id)"
-    hs = content.get("hotspots")
-    if not isinstance(hs, list) or not hs:
-        return f"room {room_id!r}.hotspots must be a non-empty list of hotspot objects"
-    for j, h in enumerate(hs):
-        if not isinstance(h, dict):
-            return f"room {room_id!r}.hotspots[{j}] must be an object"
-        for f in ("id", "label", "logic"):
-            if not h.get(f):
-                return f"room {room_id!r}.hotspots[{j}] needs a '{f}'"
-        rect = h.get("rect")
-        if not (isinstance(rect, list) and len(rect) == 4 and all(isinstance(n, (int, float)) for n in rect)):
-            return f"room {room_id!r}.hotspots[{j}].rect must be [x, y, w, h] (4 numbers)"
+def _node_content_error(content) -> Optional[str]:
+    """Reject a malformed IR node object up front so a wrong shape steers immediately
+    instead of failing schema/crossref/compile later."""
+    if not isinstance(content, dict):
+        return "node content must be a JSON object {lines, end}"
+    lines = content.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return "node.lines must be a non-empty list of {speaker, text} objects"
+    for j, ln in enumerate(lines):
+        if not isinstance(ln, dict) or not ln.get("text"):
+            return f"node.lines[{j}] needs a non-empty 'text' (speaker is optional; null = narration)"
+    end = content.get("end")
+    if not isinstance(end, dict) or end.get("type") not in _END_TYPES:
+        return f"node.end must be an object whose 'type' is one of {sorted(_END_TYPES)}"
+    return None
+
+
+def _place_content_error(content) -> Optional[str]:
+    if not isinstance(content, dict):
+        return "place content must be a JSON object {kind, background, interactables}"
+    inter = content.get("interactables")
+    if not isinstance(inter, list) or not inter:
+        return "place.interactables must be a non-empty list of clickable objects"
+    for j, h in enumerate(inter):
+        if not isinstance(h, dict) or not h.get("id"):
+            return f"place.interactables[{j}] needs an 'id'"
+        act = h.get("action")
+        if not isinstance(act, dict) or not act.get("type"):
+            return f"place.interactables[{j}].action needs an object with a 'type'"
     return None
 
 
@@ -141,68 +77,75 @@ TOOL_SCHEMAS: List[Dict] = [
         }, "required": ["component_id", "content"]}}},
     {"type": "function", "function": {
         "name": "write_node",
-        "description": "Write one story node into node_scripts AND merge its story-state "
-                       "delta in the same call (dialogue + continuity bookkeeping together).",
+        "description": "Write one dialogue node into `nodes` AND merge its story-state delta in "
+                       "the same call. The node is a JSON object: ordered `lines` plus a terminal "
+                       "`end`. No Ren'Py — the compiler renders it.",
         "parameters": {"type": "object", "properties": {
             "node_id": {"type": "string"},
-            "content": {"description": "The node's Ren'Py script text"},
+            "content": {"type": "object", "description":
+                "{lines: [{speaker: <char id or null for narration>, text, effects?:[...]}], "
+                "end: {type: 'jump'|'menu'|'return'|'end', ...}}"},
             "story_state_delta": {"type": "object", "description":
                 "new_facts[], entity_updates{}, open_threads_add[], "
                 "open_threads_resolve[], event_summary"},
         }, "required": ["node_id", "content"]}}},
     {"type": "function", "function": {
         "name": "edit_node",
-        "description": "Surgically replace a snippet inside ONE existing node WITHOUT "
-                       "rewriting the whole scene. Use this to fix a single broken line "
-                       "(e.g. an unterminated string the linter flagged) — it preserves "
-                       "the node's jumps/menus so you don't break reachability. Replaces "
-                       "the first exact occurrence of `find`.",
+        "description": "Patch ONE field of an existing node without rewriting it: replace a "
+                       "single line by index (text/speaker/effects) or replace the node's `end`. "
+                       "Use to repoint a jump/menu target or fix one line.",
         "parameters": {"type": "object", "properties": {
             "node_id": {"type": "string"},
-            "find": {"type": "string",
-                     "description": "exact text to replace; include enough to be unique in the node"},
-            "replace": {"type": "string", "description": "replacement (may be empty to delete)"},
-        }, "required": ["node_id", "find", "replace"]}}},
+            "line_index": {"type": "integer", "description": "index into lines to patch (0-based)"},
+            "text": {"type": "string", "description": "new text for that line"},
+            "speaker": {"description": "new speaker id for that line (null for narration)"},
+            "effects": {"type": "array", "items": {"type": "object"},
+                        "description": "replace that line's effects"},
+            "end": {"type": "object", "description": "replace the node's terminal end object"},
+        }, "required": ["node_id"]}}},
     {"type": "function", "function": {
-        "name": "write_room",
-        "description": "Write one room into the rooms component: its background plus the "
-                       "clickable hotspots (each a screen rect + a Ren'Py logic body that "
-                       "runs on click). Adds the room to room_ids. Point-and-click only.",
+        "name": "write_place",
+        "description": "Write one place (room/map) into `places`: its background plus clickable "
+                       "interactables (each a screen rect + a structured `action`). Adds it to "
+                       "place_ids. Point-and-click only.",
         "parameters": {"type": "object", "properties": {
-            "room_id": {"type": "string", "description": "e.g. 'room_kitchen'"},
+            "place_id": {"type": "string", "description": "e.g. 'room_kitchen'"},
             "content": {"type": "object", "description":
-                "{bg: <background id>, hotspots: [{id, rect:[x,y,w,h], label, logic}]}"},
-        }, "required": ["room_id", "content"]}}},
+                "{kind: 'room', background: <asset id>, interactables: [{id, label, "
+                "position:{rect:{x,y,w,h}}, action:{type, ...}}]}"},
+        }, "required": ["place_id", "content"]}}},
     {"type": "function", "function": {
-        "name": "edit_room",
-        "description": "Surgically patch ONE hotspot's logic inside a room WITHOUT rewriting "
-                       "it — fix a broken line or repoint a `jump`. Replaces the first "
-                       "occurrence of `find`. Point-and-click only.",
+        "name": "edit_place",
+        "description": "Patch ONE interactable in a place without rewriting it: replace its "
+                       "`action` (e.g. repoint a move target / fix a use clause), `position`, or "
+                       "`label`. Point-and-click only.",
         "parameters": {"type": "object", "properties": {
-            "room_id": {"type": "string"},
-            "hotspot_id": {"type": "string"},
-            "find": {"type": "string", "description": "exact text to replace; enough to be unique"},
-            "replace": {"type": "string", "description": "replacement (may be empty to delete)"},
-        }, "required": ["room_id", "hotspot_id", "find", "replace"]}}},
+            "place_id": {"type": "string"},
+            "interactable_id": {"type": "string"},
+            "action": {"type": "object", "description": "replacement structured action"},
+            "position": {"type": "object", "description": "replacement {rect:{x,y,w,h}}"},
+            "label": {"type": "string"},
+        }, "required": ["place_id", "interactable_id"]}}},
     {"type": "function", "function": {
-        "name": "read_room",
-        "description": "Read one room's current background + hotspots (with their logic) — do "
-                       "this before edit_room so you quote an exact snippet.",
+        "name": "read_place",
+        "description": "Read one place's current background + interactables (with their actions).",
         "parameters": {"type": "object", "properties": {
-            "room_id": {"type": "string"}}, "required": ["room_id"]}}},
+            "place_id": {"type": "string"}}, "required": ["place_id"]}}},
     {"type": "function", "function": {
-        "name": "set_rooms_meta",
-        "description": "Declare the point-and-click game's global scaffold: the win `goal`, the "
-                       "inventory `items`, the puzzle `flags`, and the `start_room`. Required for "
-                       "goal_reachable — write_room never sets these. Merges (pass only what changes).",
+        "name": "set_places_meta",
+        "description": "Declare the point-and-click game's global scaffold on `places`: the win "
+                       "`goal`, inventory `items`, puzzle `flags`, numeric `variables`, and "
+                       "`start_place`. Required for goal_reachable. Merges (pass only what changes).",
         "parameters": {"type": "object", "properties": {
             "goal": {"type": "object", "description":
-                     "{type: 'flag'|'room', id: '<winning flag or room id>'}"},
+                     "{type: 'flag'|'room', id: '<winning flag or place id>'}"},
             "items": {"type": "array", "items": {"type": "object"},
-                      "description": "[{id, name, examine}] — ids match inventory.append(...) in hotspots"},
+                      "description": "[{id, name, examine}] — ids match take/use actions"},
             "flags": {"type": "array", "items": {"type": "string"},
-                      "description": "puzzle boolean names, e.g. ['door_unlocked', 'escaped']"},
-            "start_room": {"type": "string"},
+                      "description": "puzzle boolean names, e.g. ['door_open', 'escaped']"},
+            "variables": {"type": "array", "items": {"type": "object"},
+                          "description": "[{id, default}] numeric state"},
+            "start_place": {"type": "string"},
         }, "required": []}}},
     {"type": "function", "function": {
         "name": "read_component",
@@ -211,9 +154,8 @@ TOOL_SCHEMAS: List[Dict] = [
             "component_id": {"type": "string"}}, "required": ["component_id"]}}},
     {"type": "function", "function": {
         "name": "read_node",
-        "description": "Read one node's current Ren'Py script — do this before edit_node so "
-                       "you quote an EXACT snippet from it, and to see a node's jumps/lines "
-                       "before fixing it.",
+        "description": "Read one node's current content (lines + end) — to see its lines and "
+                       "targets before editing it.",
         "parameters": {"type": "object", "properties": {
             "node_id": {"type": "string"}}, "required": ["node_id"]}}},
     {"type": "function", "function": {
@@ -251,6 +193,16 @@ TOOL_SCHEMAS: List[Dict] = [
             "options": {"type": "array", "items": {"type": "string"}},
         }, "required": ["question"]}}},
 ]
+
+_PLACE_TOOLS = {"write_place", "edit_place", "read_place", "set_places_meta"}
+
+
+def tool_schemas_for(genre: str) -> List[Dict]:
+    """Tool schemas for the decider, scoped to the genre — point-and-click needs the place
+    tools; the visual novel doesn't, so they're dropped to keep its tool set focused."""
+    if genre == "point_and_click":
+        return TOOL_SCHEMAS
+    return [s for s in TOOL_SCHEMAS if s["function"]["name"] not in _PLACE_TOOLS]
 
 
 def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> Dict[str, Callable]:
@@ -297,21 +249,6 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return f"{component_id} must be a JSON object, not a {type(content).__name__}"
         return validator(content)
 
-    def _speaker_error(script: str) -> Optional[str]:
-        """Reject a node whose dialogue names a speaker that is not a defined character —
-        the cast is locked upstream, so an unknown speaker is a typo (e.g. 'elias_vanaka'
-        for 'elias_voss') that only surfaces as a compile failure dozens of steps later."""
-        prem = state.read_component("premise") or {}
-        chars = {c.get("id") for c in prem.get("characters", []) if c.get("id")}
-        if not chars:  # premise not authored yet — nothing to check against
-            return None
-        bad = sorted(set(_SPEAKER_RE.findall(script)) - chars - _SPEAKER_KEYWORDS)
-        if not bad:
-            return None
-        return (f"undefined speaker(s) {bad} — not defined characters, they will break the "
-                f"compile. Use ONLY these exact character ids: {sorted(chars)}. For narration, "
-                f"write a plain \"...\" line with no speaker prefix.")
-
     # ── artifact mutation (gated on freeze) ──────────────────────────────────
     def write_component(component_id: str, content) -> Dict:
         _require_frozen()
@@ -322,36 +259,24 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         err = _schema_error(component_id, content)
         if err:
             return {"ok": False, "error": f"invalid {component_id}: {err}"}
-        # Fix over-escaped script text the model may have written into node_scripts.
-        if component_id == "node_scripts" and isinstance(content.get("scripts"), dict):
-            content["scripts"] = {k: _normalize_script(v) for k, v in content["scripts"].items()}
-        # Same for a whole-rooms author: normalize each hotspot's Ren'Py logic body.
-        if component_id == "rooms" and isinstance(content.get("rooms"), dict):
-            for room in content["rooms"].values():
-                for h in (room.get("hotspots", []) if isinstance(room, dict) else []):
-                    if isinstance(h, dict) and isinstance(h.get("logic"), str):
-                        h["logic"] = _normalize_script(h["logic"])
         state.write_component(component_id, content)
         return {"ok": True, "component_id": component_id}
 
     def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
                    **delta_fields) -> Dict:
-        """Fused: write one node into node_scripts AND merge its story-state delta.
+        """Fused: write one IR node into `nodes` AND merge its story-state delta.
 
-        Producing the dialogue and the continuity bookkeeping in one call keeps them
-        consistent. The next node reads the updated story state, never prior script.
-        Tolerates the delta passed nested (story_state_delta) or as flat kwargs.
+        `content` is an IR node object ({lines, end}); escaping/rendering is the compiler's
+        job. Producing the dialogue and the continuity bookkeeping in one call keeps them
+        consistent — the next node reads the updated story state, never prior script.
         """
         _require_frozen()
-        if _locked("node_scripts"):
-            return _locked_error("node_scripts")
+        if _locked("nodes"):
+            return _locked_error("nodes")
         if node_id == "start":
-            return {"ok": False, "error": "do not use 'start' as a node id — the builder "
+            return {"ok": False, "error": "do not use 'start' as a node id — the compiler "
                                           "adds 'label start' that jumps to the first node"}
-        if not isinstance(content, str) or not content.strip():
-            return {"ok": False, "error": "node content must be non-empty Ren'Py script text"}
-        script = _normalize_script(content)
-        err = _speaker_error(script)
+        err = _node_content_error(content)
         if err:
             return {"ok": False, "error": err}
         from maestro.story_state import init_story_state, apply_delta
@@ -360,12 +285,12 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         delta = dict(story_state_delta) if isinstance(story_state_delta, dict) else {}
         delta.update({k: v for k, v in delta_fields.items() if k in _DELTA_FIELDS})
 
-        ns = state.read_component("node_scripts") or {"scripts": {}, "node_ids": []}
-        ns.setdefault("scripts", {})[node_id] = script
+        ns = state.read_component("nodes") or {"nodes": {}, "node_ids": []}
+        ns.setdefault("nodes", {})[node_id] = content
         ns.setdefault("node_ids", [])
         if node_id not in ns["node_ids"]:
             ns["node_ids"].append(node_id)
-        state.write_component("node_scripts", ns)
+        state.write_component("nodes", ns)
 
         if delta:
             ss = state.read_story_state() or init_story_state(spec.story_state_schema)
@@ -374,126 +299,113 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
 
         return {"ok": True, "node_id": node_id}
 
-    def edit_node(node_id: str, find: str, replace: str = "") -> Dict:
-        """Surgically patch ONE node: replace the first exact occurrence of `find`.
+    _UNSET = object()
 
-        Lets the agent fix a single bad line (e.g. an unterminated string the linter
-        flagged on a specific node) without regenerating the whole scene — a full
-        rewrite tends to drop the node's jump/menu and orphan downstream nodes.
-        """
+    def edit_node(node_id: str, line_index: Optional[int] = None, text: Optional[str] = None,
+                  speaker=_UNSET, effects: Optional[List] = None, end: Optional[Dict] = None) -> Dict:
+        """Patch ONE field of a node without rewriting it: a single line (by index) or the `end`.
+        Repointing a jump/menu target or fixing one line, without disturbing the rest."""
         _require_frozen()
-        if _locked("node_scripts"):
-            return _locked_error("node_scripts")
-        ns = state.read_component("node_scripts") or {}
-        scripts = ns.get("scripts", {})
-        if node_id not in scripts:
+        if _locked("nodes"):
+            return _locked_error("nodes")
+        ns = state.read_component("nodes") or {}
+        nodes = ns.get("nodes", {})
+        if node_id not in nodes:
             return {"ok": False, "error": f"no node {node_id!r} to edit"}
-        text = scripts[node_id]
-        start, end = _flexible_find(text, find)
-        if start < 0:
-            # Return the node verbatim so the next attempt copies a real snippet instead of
-            # guessing again — the find-mismatch retry loop was the top cycle-waster. Match is
-            # whitespace- and punctuation-flexible, so a SHORT distinctive snippet is enough.
-            return {"ok": False, "error":
-                    f"`find` text not present in {node_id} — copy a SHORT exact phrase from the "
-                    f"node text below (one line is plenty; whitespace need not match):\n{text}"}
-        rep = replace if isinstance(replace, str) else ""
-        patched = _normalize_script(text[:start] + rep + text[end:])
-        err = _speaker_error(patched)
-        if err:
-            return {"ok": False, "error": err}
-        scripts[node_id] = patched
-        state.write_component("node_scripts", ns)
+        node = nodes[node_id]
+        if end is not None:
+            if end.get("type") not in _END_TYPES:
+                return {"ok": False, "error": f"end.type must be one of {sorted(_END_TYPES)}"}
+            node["end"] = end
+        if line_index is not None:
+            lines = node.get("lines", [])
+            if not (0 <= line_index < len(lines)):
+                return {"ok": False, "error": f"line_index {line_index} out of range "
+                                              f"(node {node_id} has {len(lines)} lines)"}
+            if text is not None:
+                lines[line_index]["text"] = text
+            if speaker is not _UNSET:
+                lines[line_index]["speaker"] = speaker
+            if effects is not None:
+                lines[line_index]["effects"] = effects
+        state.write_component("nodes", ns)
         return {"ok": True, "node_id": node_id}
 
-    def write_room(room_id: str, content) -> Dict:
-        """Write one room (bg + hotspots) into the rooms component, mirroring write_node:
-        the scaffold (start_room/items/flags/goal/room_ids) is laid by write_component first,
-        then rooms are filled one at a time so each call stays focused."""
+    def write_place(place_id: str, content) -> Dict:
+        """Write one place (background + interactables) into `places`, mirroring write_node.
+        The scaffold (goal/items/flags/start_place) is laid by set_places_meta."""
         _require_frozen()
-        if _locked("rooms"):
-            return _locked_error("rooms")
-        if not isinstance(content, dict):
-            return {"ok": False, "error": "room content must be a JSON object {bg, hotspots}"}
-        err = _room_error(room_id, content)
+        if _locked("places"):
+            return _locked_error("places")
+        err = _place_content_error(content)
         if err:
             return {"ok": False, "error": err}
-        for h in content.get("hotspots", []):
-            if isinstance(h.get("logic"), str):
-                h["logic"] = _normalize_script(h["logic"])
-        speaker_err = _speaker_error("\n".join(h.get("logic", "") for h in content["hotspots"]))
-        if speaker_err:
-            return {"ok": False, "error": speaker_err}
+        places = state.read_component("places") or {"place_ids": [], "places": {}}
+        places.setdefault("places", {})[place_id] = content
+        places.setdefault("place_ids", [])
+        if place_id not in places["place_ids"]:
+            places["place_ids"].append(place_id)
+        if not places.get("start_place"):
+            places["start_place"] = place_id
+        state.write_component("places", places)
+        return {"ok": True, "place_id": place_id}
 
-        rooms = state.read_component("rooms") or {"room_ids": [], "rooms": {}}
-        rooms.setdefault("rooms", {})[room_id] = content
-        rooms.setdefault("room_ids", [])
-        if room_id not in rooms["room_ids"]:
-            rooms["room_ids"].append(room_id)
-        if not rooms.get("start_room"):
-            rooms["start_room"] = room_id
-        state.write_component("rooms", rooms)
-        return {"ok": True, "room_id": room_id}
-
-    def set_rooms_meta(goal=None, items=None, flags=None, start_room=None) -> Dict:
-        """Declare the game's global scaffold on the rooms component — the win goal, inventory
-        items, puzzle flags, start room. write_room builds individual rooms but never these, so
-        without this the goal stays undeclared and goal_reachable can't pass. Merges: only the
-        fields passed change."""
+    def set_places_meta(goal=None, items=None, flags=None, variables=None, start_place=None) -> Dict:
+        """Declare the point-and-click scaffold on `places` — win goal, items, flags, variables,
+        start_place. write_place never sets these. Merges: only the fields passed change."""
         _require_frozen()
-        if _locked("rooms"):
-            return _locked_error("rooms")
+        if _locked("places"):
+            return _locked_error("places")
         if goal is not None and (not isinstance(goal, dict)
                                  or goal.get("type") not in ("flag", "room") or not goal.get("id")):
             return {"ok": False, "error":
                     "goal must be {\"type\": \"flag\" or \"room\", \"id\": \"<the winning flag or "
-                    "room id>\"} — e.g. {\"type\": \"flag\", \"id\": \"escaped\"}"}
-        rooms = state.read_component("rooms") or {"room_ids": [], "rooms": {}}
+                    "place id>\"} — e.g. {\"type\": \"flag\", \"id\": \"escaped\"}"}
+        places = state.read_component("places") or {"place_ids": [], "places": {}}
         if goal is not None:
-            rooms["goal"] = goal
+            places["goal"] = goal
         if items is not None:
-            rooms["items"] = items
+            places["items"] = items
         if flags is not None:
-            rooms["flags"] = flags
-        if start_room is not None:
-            rooms["start_room"] = start_room
-        state.write_component("rooms", rooms)
-        return {"ok": True, "goal": rooms.get("goal"), "items": rooms.get("items"),
-                "flags": rooms.get("flags"), "start_room": rooms.get("start_room")}
+            places["flags"] = flags
+        if variables is not None:
+            places["variables"] = variables
+        if start_place is not None:
+            places["start_place"] = start_place
+        state.write_component("places", places)
+        return {"ok": True, "goal": places.get("goal"), "items": places.get("items"),
+                "flags": places.get("flags"), "start_place": places.get("start_place")}
 
-    def edit_room(room_id: str, hotspot_id: str, find: str, replace: str = "") -> Dict:
-        """Surgically patch one hotspot's logic — fix a line or repoint a jump without
-        rewriting the room (which tends to drop other hotspots' wiring)."""
+    def edit_place(place_id: str, interactable_id: str, action: Optional[Dict] = None,
+                   position: Optional[Dict] = None, label: Optional[str] = None) -> Dict:
+        """Patch ONE interactable — replace its action (repoint a move / fix a use), position,
+        or label — without rewriting the place (which tends to drop other interactables)."""
         _require_frozen()
-        if _locked("rooms"):
-            return _locked_error("rooms")
-        rooms = state.read_component("rooms") or {}
-        room = (rooms.get("rooms") or {}).get(room_id)
-        if room is None:
-            return {"ok": False, "error": f"no room {room_id!r} to edit"}
-        hs = next((h for h in room.get("hotspots", []) if h.get("id") == hotspot_id), None)
-        if hs is None:
-            return {"ok": False, "error": f"no hotspot {hotspot_id!r} in room {room_id!r}"}
-        text = hs.get("logic", "")
-        start, end = _flexible_find(text, find)
-        if start < 0:
-            return {"ok": False, "error":
-                    f"could not find {find!r} in hotspot {hotspot_id!r}. Copy a snippet from its "
-                    f"logic below (one line is plenty; whitespace need not match):\n{text}"}
-        rep = replace if isinstance(replace, str) else ""
-        patched = _normalize_script(text[:start] + rep + text[end:])
-        speaker_err = _speaker_error(patched)
-        if speaker_err:
-            return {"ok": False, "error": speaker_err}
-        hs["logic"] = patched
-        state.write_component("rooms", rooms)
-        return {"ok": True, "room_id": room_id, "hotspot_id": hotspot_id}
+        if _locked("places"):
+            return _locked_error("places")
+        places = state.read_component("places") or {}
+        place = (places.get("places") or {}).get(place_id)
+        if place is None:
+            return {"ok": False, "error": f"no place {place_id!r} to edit"}
+        h = next((i for i in place.get("interactables", []) if i.get("id") == interactable_id), None)
+        if h is None:
+            return {"ok": False, "error": f"no interactable {interactable_id!r} in place {place_id!r}"}
+        if action is not None:
+            if not action.get("type"):
+                return {"ok": False, "error": "action needs a 'type'"}
+            h["action"] = action
+        if position is not None:
+            h["position"] = position
+        if label is not None:
+            h["label"] = label
+        state.write_component("places", places)
+        return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
 
-    def read_room(room_id: str) -> Dict:
-        room = (state.read_component("rooms") or {}).get("rooms", {}).get(room_id)
-        if room is None:
-            return {"ok": False, "error": f"no room {room_id!r}"}
-        return {"ok": True, "room_id": room_id, "content": room}
+    def read_place(place_id: str) -> Dict:
+        place = (state.read_component("places") or {}).get("places", {}).get(place_id)
+        if place is None:
+            return {"ok": False, "error": f"no place {place_id!r}"}
+        return {"ok": True, "place_id": place_id, "content": place}
 
     def generate_asset() -> Dict:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
@@ -510,10 +422,10 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         return {"ok": True, "component_id": component_id, "content": content}
 
     def read_node(node_id: str) -> Dict:
-        scripts = (state.read_component("node_scripts") or {}).get("scripts", {})
-        if node_id not in scripts:
+        nodes = (state.read_component("nodes") or {}).get("nodes", {})
+        if node_id not in nodes:
             return {"ok": False, "error": f"no node {node_id!r}"}
-        return {"ok": True, "node_id": node_id, "content": scripts[node_id]}
+        return {"ok": True, "node_id": node_id, "content": nodes[node_id]}
 
     def read_story_state() -> Dict:
         from maestro.story_state import init_story_state
@@ -545,10 +457,10 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         "write_component": write_component,
         "write_node": write_node,
         "edit_node": edit_node,
-        "write_room": write_room,
-        "edit_room": edit_room,
-        "read_room": read_room,
-        "set_rooms_meta": set_rooms_meta,
+        "write_place": write_place,
+        "edit_place": edit_place,
+        "read_place": read_place,
+        "set_places_meta": set_places_meta,
         "read_component": read_component,
         "read_node": read_node,
         "read_story_state": read_story_state,

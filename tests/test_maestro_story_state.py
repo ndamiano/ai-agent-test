@@ -65,15 +65,15 @@ def test_write_node_writes_script_and_state(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
 
-    tools["write_node"]("scene_001", "label scene_001:\n    return", {
-        "new_facts": ["the storm is coming"],
-        "entity_updates": {"betta": {"trust": "warming"}},
-        "event_summary": "the opening",
-    })
+    tools["write_node"]("scene_001",
+                        {"lines": [{"speaker": None, "text": "It begins."}], "end": {"type": "return"}},
+                        {"new_facts": ["the storm is coming"],
+                         "entity_updates": {"betta": {"trust": "warming"}},
+                         "event_summary": "the opening"})
 
-    ns = state.read_component("node_scripts")
+    ns = state.read_component("nodes")
     assert ns["node_ids"] == ["scene_001"]
-    assert "label scene_001" in ns["scripts"]["scene_001"]
+    assert ns["nodes"]["scene_001"]["lines"][0]["text"] == "It begins."
 
     ss = state.read_story_state()
     assert "the storm is coming" in ss["established_facts"]
@@ -84,9 +84,10 @@ def test_write_node_writes_script_and_state(tmp_path):
 def test_write_node_appends_multiple_nodes(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
-    tools["write_node"]("scene_001", "label scene_001:\n    jump scene_002")
-    tools["write_node"]("scene_002", "label scene_002:\n    return")
-    ns = state.read_component("node_scripts")
+    n = {"lines": [{"speaker": None, "text": "x"}], "end": {"type": "return"}}
+    tools["write_node"]("scene_001", n)
+    tools["write_node"]("scene_002", n)
+    ns = state.read_component("nodes")
     assert ns["node_ids"] == ["scene_001", "scene_002"]
 
 

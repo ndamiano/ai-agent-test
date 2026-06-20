@@ -164,6 +164,20 @@ def test_edit_node_errors(tmp_path):
     assert tools["edit_node"]("s1", end={"type": "boom"})["ok"] is False
 
 
+def test_write_node_enforces_min_lines_floor(tmp_path):
+    # When the spec demands each_node_min_lines, a thin node is rejected at write time
+    # (born-compliant) so the loop never enters a separate repair phase for it.
+    spec = Spec({"title": "T", "frozen": True, "components": [
+        {"id": "nodes", "deps": [], "done_conditions": [
+            {"type": "each_node_min_lines", "min": 3}]}]})
+    tools = build_tools(spec, RunState(tmp_path))
+    thin = {"lines": [{"speaker": "a", "text": "hi"}], "end": {"type": "return"}}
+    res = tools["write_node"]("s1", thin)
+    assert res["ok"] is False and "at least 3" in res["error"]
+    fat = {"lines": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "end": {"type": "return"}}
+    assert tools["write_node"]("s1", fat)["ok"] is True
+
+
 def test_read_node_returns_object(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)

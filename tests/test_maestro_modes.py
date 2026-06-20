@@ -170,7 +170,7 @@ class _FakeConn:
         self.reasoning = None
         self.reasoning_calls = []
 
-    def generate_with_tools(self, messages, schemas, reasoning=None):
+    def generate_with_tools(self, messages, schemas, reasoning=None, max_tokens=None):
         self.last_schemas = schemas
         self.reasoning_calls.append(reasoning)
         r = self.responses[min(self.i, len(self.responses) - 1)]

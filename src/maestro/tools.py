@@ -210,6 +210,14 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
     # caller (e.g. renpy) so maestro stays genre-agnostic. None = no structural checks.
     schemas = schemas or {}
 
+    # Born-compliant nodes: write_node enforces the spec's each_node_min_lines floor, so a thin
+    # node is rejected at creation instead of passing `count` as a stub and then dragging the
+    # small model through a whack-a-mole each_node_min_lines repair phase (its worst failure mode).
+    _node_min_lines = next(
+        (dc.get("min", 0)
+         for c in spec.components if c.get("id") == "nodes"
+         for dc in c.get("done_conditions", []) if dc.get("type") == "each_node_min_lines"), 0)
+
     # A component LOCKS once its own done-conditions all pass: full rewrites would
     # otherwise drop/rename ids that other components already reference, regressing
     # previously-passing checks. EXCEPTION: a component whose "done" includes a
@@ -279,6 +287,11 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         err = _node_content_error(content)
         if err:
             return {"ok": False, "error": err}
+        if len(content["lines"]) < _node_min_lines:
+            return {"ok": False, "error":
+                    f"a node needs at least {_node_min_lines} lines/beats — this has "
+                    f"{len(content['lines'])}. Write the FULL scene now (several dialogue beats "
+                    f"with subtext), not a stub; thin nodes are rejected."}
         from maestro.story_state import init_story_state, apply_delta
 
         # Tolerate a malformed story_state_delta (the model sometimes passes a list/str).

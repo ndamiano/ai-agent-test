@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 # Reads carry no artifact change; a run of them is the sub-loop sightseeing, not progressing.
 _READ_TOOLS = {"read_node", "read_place", "read_component", "read_story_state"}
 
+# Cap every build LLM call. One node/component is small (<~2k tokens); the connector default is
+# 50k, which lets the small model's "dump the whole thing as prose instead of a tool call"
+# failure mode burn minutes on a single dead step (observed: 265s / 49999 tokens). Bounding it
+# turns a runaway into a quick dead turn the sub-loop's nudge then recovers from.
+_BUILD_MAX_TOKENS = 8000
+
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
 
@@ -234,8 +240,10 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
                        if not s.get("function", {}).get("name", "").startswith("read")]
         messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
-        response = (conn.generate_with_tools(messages, schemas, reasoning="high")
-                    if stalled else conn.generate_with_tools(messages, schemas))
+        response = (conn.generate_with_tools(messages, schemas, reasoning="high",
+                                             max_tokens=_BUILD_MAX_TOKENS)
+                    if stalled else conn.generate_with_tools(messages, schemas,
+                                                             max_tokens=_BUILD_MAX_TOKENS))
         action = _parse_action(response)
         args = action.get("args", {}) if isinstance(action.get("args"), dict) else {}
         target = args.get("node_id") or args.get("room_id") or args.get("component_id") or ""
@@ -273,8 +281,12 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
                 return {"ok": False, "error":
                         f"{noun} {iid!r} already exists — to raise the COUNT write a NEW {noun} "
                         f"id; do not rewrite an existing one."}
-            if iid:
+            result = dispatch(action)
+            # Only claim the id once the write actually succeeds — a rejected write (e.g. a thin
+            # node hitting the line floor) must stay retryable, not get locked out as "exists".
+            if iid and isinstance(result, dict) and result.get("ok"):
                 existing.add(iid)
+            return result
         return dispatch(action)
 
     return guarded
@@ -326,8 +338,10 @@ def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, s
         stall = 0
 
         for _ in range(min(cap, max(budget, 0))):
-            response = (conn.generate_with_tools(mb.build(), schemas, reasoning="high")
-                        if escalated else conn.generate_with_tools(mb.build(), schemas))
+            response = (conn.generate_with_tools(mb.build(), schemas, reasoning="high",
+                                                 max_tokens=_BUILD_MAX_TOKENS)
+                        if escalated else conn.generate_with_tools(mb.build(), schemas,
+                                                                   max_tokens=_BUILD_MAX_TOKENS))
             if "error" in response:
                 logger.warning("subloop LLM error: %s", response["error"])
                 break

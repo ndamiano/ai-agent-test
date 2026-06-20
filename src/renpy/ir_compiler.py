@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from maestro.ir_crossref import crossref_errors
+from maestro.ir_assemble import assemble_ir
 from renpy.compiler import compile_gate
-from renpy.ir_assemble import assemble_ir
 from renpy.ir_vn import compile_vn
 from renpy.lint import node_line_ranges, run_final_lint, pnc_line_ranges
 from renpy.fns import _get_sdk_path, _merge_cast_into_manifest, _ensure_placeholder_images

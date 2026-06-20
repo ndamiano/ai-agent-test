@@ -1,10 +1,11 @@
 """Lift the decomposed on-disk components into one schema-valid Game IR dict.
 
 The agent authors the game as separate components (premise + asset_manifest + nodes [+ places])
-so each write stays small and the context stays constant. The IR linter (ir_crossref) and the
-IR→Ren'Py compilers (ir_vn / ir_pnc) want ONE whole IR document. assemble_ir is the seam: a pure
-projection that maps premise→characters, the body components→nodes/places, and the body's
-declared state→top-level flags/variables/items/goal/start.
+so each write stays small and the context stays constant. The IR linter (ir_crossref) and every
+engine backend (renpy.ir_vn / ir_pnc, web, …) want ONE whole IR document. assemble_ir is the seam:
+a pure, engine-neutral projection that maps premise→characters, the body components→nodes/places,
+and the body's declared state→top-level flags/variables/items/goal/start. It lives in maestro core
+(next to ir_crossref) so every engine depends on it, not on each other.
 """
 
 from typing import Dict, List

@@ -41,12 +41,14 @@ src/
                 story_state.py — continuity bible (facts, entities, threads, recent tail)
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
                 chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
+                ir_assemble.py — lift the decomposed components → one engine-neutral IR dict
+                ir_crossref.py — gate that every id reference in the IR resolves
+                engines.py — compile_for(spec.engine): map engine tag → backend compile entry
                 prompts/ — climbable .txt prompts (propose_spec.txt)
-  renpy/        Ren'Py capabilities the genre-agnostic maestro core wires in (not a pipeline).
+  renpy/        Ren'Py engine backend (one of N) the genre-agnostic maestro core wires in.
                 The agent emits the engine-agnostic Game IR (docs/game_ir.schema.json) as JSON
-                components; renpy/ projects it to Ren'Py:
+                components; renpy/ projects the assembled IR to Ren'Py:
                 compiler.py (compile_renpy — the spine, delegates to ir_compiler),
-                ir_assemble.py (lift the decomposed components → one IR dict),
                 ir_compiler.py (assemble → crossref gate → ir_vn/ir_pnc → write project → lint),
                 ir_vn.py / ir_pnc.py (IR → script.rpy for VN / point-and-click),
                 ir_checks.py (structured done-condition checks + node_view/place_view projectors),
@@ -54,6 +56,11 @@ src/
                 component_schemas.py (per-component structural validators + IR skeletons),
                 spec_baseline.py (per-genre baseline floor), fns.py (image gen + manifest
                 backfills), renpy_builder.py, templating.py, renpy_templates/
+  web/          Self-contained browser backend (second engine). Same assemble_ir + crossref
+                pivot; compiler.py/ir_compiler.py write game.json (the IR) + a static, pre-tested
+                runtime (runtime/index.html,engine.js,style.css) that interprets the IR live —
+                no per-game codegen. "lint" gate = JSON-Schema + crossref. Output opens in any
+                browser / drops on any static host. Covers VN + point-and-click (combat pending).
   tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 
@@ -64,7 +71,9 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 
 **Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; declare the done-conditions that prove it in the spec.
 
-**The Game IR**: the agent writes JSON, never Ren'Py — `docs/game_ir.schema.json` is the engine-agnostic contract (nodes/places/actions/conditions/effects/combat); `docs/game_ir_decisions.md` is the rationale. The components are decomposed on disk (premise + asset_manifest + `nodes` [+ `places`]); at compile, `ir_assemble.assemble_ir` lifts them into one IR dict, `maestro.ir_crossref` gates that every id reference resolves (a hard compile gate), then `ir_vn`/`ir_pnc` projects to `script.rpy`. This removes whole error classes (quote escaping, speaker format, menu indentation, dangling jumps) by construction and makes validation a data walk, not regex over engine source.
+**Engines**: the IR is the pivot; a backend is a target it projects to. `spec["engine"]` (default `"renpy"`, also `"web"`) selects it; `maestro.engines.compile_for` maps the tag to a `compile_*(working_dir, distribute=bool) -> Dict` entry returning a uniform pass/fail. Both the in-loop compile tool and the final packaging dispatch through it, so the loop is engine-agnostic. `assemble_ir` + `ir_crossref` (maestro core) are the shared, engine-neutral seam; genre dispatch and `ir_checks` are also engine-neutral (they walk the IR graph). Adding an engine = a new `compile_*` in its own package (project the assembled IR to that engine's format) + one entry in `engines.py` — never branch the core.
+
+**The Game IR**: the agent writes JSON, never engine source — `docs/game_ir.schema.json` is the engine-agnostic contract (nodes/places/actions/conditions/effects/combat); `docs/game_ir_decisions.md` is the rationale. The components are decomposed on disk (premise + asset_manifest + `nodes` [+ `places`]); at compile, `maestro.ir_assemble.assemble_ir` lifts them into one IR dict, `maestro.ir_crossref` gates that every id reference resolves (a hard compile gate), then the selected engine projects it (Ren'Py: `ir_vn`/`ir_pnc` → `script.rpy`; web: `game.json` + static runtime). This removes whole error classes (quote escaping, speaker format, menu indentation, dangling jumps) by construction and makes validation a data walk, not regex over engine source.
 
 **Genres**: two game shapes on the same agentic loop. `vn` (visual novel): premise + asset_manifest + `nodes` (dialogue graph). `point_and_click` (room/hotspot adventure): premise (NPCs) + asset_manifest (+item icons) + `nodes` (NPC dialogue the talk-actions `call`) + `places` (clickable screens with structured action verbs, inventory, item-use puzzles, win goal). The maestro core stays genre-agnostic — it dispatches sub-runners/projectors/baseline by component id. `spec_tools.propose_spec` auto-detects the genre from the request (keyword match, then a classifier call), tags `spec["genre"]`, and renders the matching `prompts/propose_spec[_pnc].txt`; `run.run_build` and `renpy/` key their build/checks/skeletons off that tag. Adding a genre = a new component shape (schema + skeleton + baseline + checks) and a compiler in `renpy/`, wired by genre in `run.run_build` — never branch the maestro core.
 
@@ -74,7 +83,7 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 **Run backend**: `source venv/bin/activate && python run.py`
 **Run frontend**: `cd frontend && npm run dev`  *(frontend is mid-rebuild — see ROADMAP)*
 **Run a build (CLI)**: `cd src && python -m maestro.run "<request>"` (propose → freeze → build)
-**Recompile a finished run (CLI)**: `cd src && python -c "from renpy.compiler import compile_renpy; print(compile_renpy('<run_dir>', distribute=True))"` (re-projects the on-disk JSON components → Ren'Py, lints, packages)
+**Recompile a finished run (CLI)**: `cd src && python -c "from renpy.compiler import compile_renpy; print(compile_renpy('<run_dir>', distribute=True))"` (re-projects the on-disk JSON components → Ren'Py, lints, packages). Web target: swap `from web.compiler import compile_web` / `compile_web(...)` → writes `<run_dir>/game_output/` (open `index.html` over HTTP, e.g. `python -m http.server` in that dir — `fetch` is blocked over `file://`).
 **Run tests**: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
 
 ---

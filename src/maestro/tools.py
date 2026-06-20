@@ -450,8 +450,10 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
 
     def compile_renpy_tool() -> Dict:
         # Lint-only during the loop; final packaging happens once at the end (run_build).
-        from renpy.compiler import compile_renpy
-        return compile_renpy(state.run_dir, distribute=False)
+        # Dispatch on the chosen engine — same pass/fail contract either way, so the loop
+        # and the `compiles` done-condition are engine-agnostic.
+        from maestro.engines import compile_for
+        return compile_for(spec.engine)(state.run_dir, distribute=False)
 
     # ── working memory ───────────────────────────────────────────────────────
     def update_scratchpad(current_goal: str = "",

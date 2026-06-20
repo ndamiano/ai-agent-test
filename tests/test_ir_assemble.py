@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import jsonschema
-from renpy.ir_assemble import assemble_ir
+from maestro.ir_assemble import assemble_ir
 from maestro.ir_crossref import crossref_errors
 
 _SCHEMA = json.loads((Path(__file__).parent.parent / "docs" / "game_ir.schema.json").read_text())

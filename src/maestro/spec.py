@@ -32,6 +32,13 @@ class Spec:
         return self.data.get("genre", "vn")
 
     @property
+    def engine(self) -> str:
+        """Which engine backend projects this spec's IR ('renpy' default, 'web' for the
+        self-contained browser build). The IR and genre layers are engine-neutral; only the
+        compile target keys off this."""
+        return self.data.get("engine", "renpy")
+
+    @property
     def frozen(self) -> bool:
         return bool(self.data.get("frozen"))
 

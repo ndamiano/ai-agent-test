@@ -76,12 +76,12 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
         # The loop's compile checks are lint-only and the agent may never call
         # generate_asset, so finalize assets here for delivery.
         from renpy.fns import generate_images
-        from renpy.compiler import compile_renpy
+        from maestro.engines import compile_for
         try:
             generate_images(state.load_artifact(), state.run_dir)
         except Exception:
             pass  # placeholders already cover the build; never fail delivery on art
-        compile_renpy(state.run_dir, distribute=True)
+        compile_for(spec.engine)(state.run_dir, distribute=True)
 
     result.elapsed = time.perf_counter() - t0
     logger.info("build %s: ok=%s steps=%d elapsed=%.1fs",

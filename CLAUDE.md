@@ -74,6 +74,7 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 **Run backend**: `source venv/bin/activate && python run.py`
 **Run frontend**: `cd frontend && npm run dev`  *(frontend is mid-rebuild — see ROADMAP)*
 **Run a build (CLI)**: `cd src && python -m maestro.run "<request>"` (propose → freeze → build)
+**Recompile a finished run (CLI)**: `cd src && python -c "from renpy.compiler import compile_renpy; print(compile_renpy('<run_dir>', distribute=True))"` (re-projects the on-disk JSON components → Ren'Py, lints, packages)
 **Run tests**: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
 
 ---

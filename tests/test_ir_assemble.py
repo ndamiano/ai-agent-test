@@ -41,6 +41,21 @@ def test_assemble_vn_is_schema_valid_and_clean():
     assert crossref_errors(ir) == []
 
 
+def test_manifest_backgrounds_and_sprites_lifted():
+    art = _vn_artifact()
+    art["asset_manifest"] = {
+        "backgrounds": [{"id": "bg_room", "image_file": "room.png", "description": "x"}],
+        "characters": [{"id": "al", "image_file": "al.png"}],  # bo has no asset
+    }
+    ir = assemble_ir(art, "vn")
+    _VALIDATOR.validate(ir)
+    assert ir["backgrounds"] == [{"id": "bg_room", "image_file": "room.png"}]
+    al = next(c for c in ir["characters"] if c["id"] == "al")
+    bo = next(c for c in ir["characters"] if c["id"] == "bo")
+    assert al["sprite"] == "al.png"
+    assert "sprite" not in bo
+
+
 def test_start_defaults_to_first_node():
     art = _vn_artifact()
     del art["nodes"]["start"]

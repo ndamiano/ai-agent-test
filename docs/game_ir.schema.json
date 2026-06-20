@@ -26,6 +26,19 @@
       "description": "Character cast. A dialogue line's `speaker` MUST be an id here (or null for narration).",
       "items": { "$ref": "#/$defs/character" }
     },
+    "backgrounds": {
+      "type": "array",
+      "description": "Scene backgrounds lifted from the asset manifest. A node's `location` resolves to an `id` here.",
+      "items": {
+        "type": "object",
+        "required": ["id", "image_file"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "image_file": { "type": "string", "description": "filename under game/images/." }
+        }
+      }
+    },
     "items": {
       "type": "array",
       "description": "Inventory items. An id used by a take/use action or an item condition MUST be declared here.",
@@ -361,6 +374,7 @@
       "additionalProperties": false,
       "properties": {
         "id": { "$ref": "#/$defs/id" },
+        "location": { "type": "string", "description": "VN: background asset id (resolves to `backgrounds`) shown for this scene. Omitted by PnC dialogue nodes called from a place." },
         "lines": {
           "type": "array",
           "description": "Ordered dialogue beats. Effects attach to a specific line so timing is explicit.",

@@ -54,6 +54,7 @@ Small local models fail in specific, detectable ways: repetition loops, channel 
 - [ ] **Pipeline parameter schema** — agents know what inputs each pipeline expects before firing
 - [ ] **Automated prompt optimization (to re-add)** — LLM-as-judge scorer + hill-climbing loop. Removed in the rebuild; eval currently grades finished artifacts only (`eval/cli.py score game`). Prompts are kept as swappable `.txt` files so climbing can return.
 - [ ] **Per-character dialogue agents** — replace single dialogue call with an orchestrator + one agent per character. Each agent holds only their character's context. Long-term: try different models per character to match voice/capability to role. Validate via eval before/after comparison.
+- [ ] **Game IR 0.2 — first-class `locations`** — today a VN `node.location` points straight at an `asset_manifest.backgrounds` id (1:1 place↔image; the background is generated from that entry's description). Promote location to its own entity `locations: [{id, name, description, mood?, music?, time_variants?}]` so a place can carry day/night background variants, ambient music, and mood; the background image(s) generate *from the location*, and `node.location` repoints from a bg id → a location id. Deferred: while a location only holds one description + one image it is pure indirection, and the field can't land cleanly while IR 0.1 is frozen. PnC `places[].background` should converge on the same location concept.
 
 ## Pipelines requiring composition
 

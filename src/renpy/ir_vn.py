@@ -11,9 +11,15 @@ renpy.compiler); this just produces the script body they'd write to game/script.
 """
 
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 _IND = "    "
+
+
+def _spread(n: int) -> List[float]:
+    """Even xalign positions for n sprites on stage, so all are visible (never overlapping):
+    one character -> centre; two -> thirds; etc. Deterministic in roster order."""
+    return [round((i + 1) / (n + 1), 4) for i in range(n)]
 
 
 def _num(n) -> str:
@@ -84,10 +90,12 @@ def _end(end: Dict, ind: str) -> List[str]:
     return [f"{ind}return{label}"]
 
 
-def node_block(node: Dict) -> List[str]:
-    """`label <id>:` + the node's lines (with per-line effects) + its terminal control.
-    Shared by the VN compiler and the point-and-click compiler (NPC dialogue nodes)."""
+def node_block(node: Dict, preamble: Optional[List[str]] = None) -> List[str]:
+    """`label <id>:` + optional staging preamble (scene/show) + the node's lines (with per-line
+    effects) + its terminal control. Shared by the VN compiler and the point-and-click compiler
+    (NPC dialogue nodes, which pass no preamble — they play over the place they were called from)."""
     out = [f"label {node['id']}:"]
+    out.extend(preamble or [])
     for line in node.get("lines", []):
         out.append(f"{_IND}{_line(line)}")
         for eff in line.get("effects", []):
@@ -96,13 +104,55 @@ def node_block(node: Dict) -> List[str]:
     return out
 
 
+def _staging(ir: Dict):
+    """Build the per-node staging closure: background ids that can be `scene`d, and the sprite
+    image tag for each character that has one. Returns (preamble_fn, image_decl_lines)."""
+    bg_files = {bg["id"]: bg["image_file"] for bg in ir.get("backgrounds", [])}
+    sprites = {c["id"]: c["sprite"] for c in ir.get("characters", []) if c.get("sprite")}
+
+    decls: List[str] = []
+    for bid, fname in bg_files.items():
+        decls.append(f'image {bid} = "images/{fname}"')
+    for cid, fname in sprites.items():
+        decls.append(f'image char_{cid} = "images/{fname}"')
+
+    def preamble(node: Dict) -> List[str]:
+        pre: List[str] = []
+        loc = node.get("location")
+        if loc in bg_files:
+            pre.append(f"{_IND}scene {loc}")
+        # Show every character who speaks in this node, up front, before the first line,
+        # spread across the stage so all are visible.
+        roster: List[str] = []
+        for line in node.get("lines", []):
+            sp = line.get("speaker")
+            if sp in sprites and sp not in roster:
+                roster.append(sp)
+        for sp, x in zip(roster, _spread(len(roster))):
+            pre.append(f"{_IND}show char_{sp} at stage({x})")
+        return pre
+
+    return preamble, decls
+
+
 def compile_vn(ir: Dict) -> str:
     """Return the Ren'Py script.rpy source for a visual_novel IR."""
     out: List[str] = []
 
+    preamble, image_decls = _staging(ir)
+
     for c in ir.get("characters", []):
         out.append(f"define {c['id']} = Character({json.dumps(c['name'])})")
     out.append("")
+
+    out.append("transform stage(x):")
+    out.append(f"{_IND}xalign x")
+    out.append(f"{_IND}yalign 1.0")
+    out.append("")
+
+    if image_decls:
+        out.extend(image_decls)
+        out.append("")
 
     for f in ir.get("flags", []):
         out.append(f"default {f} = False")
@@ -117,7 +167,7 @@ def compile_vn(ir: Dict) -> str:
     out.append("")
 
     for node in ir.get("nodes", []):
-        out.extend(node_block(node))
+        out.extend(node_block(node, preamble(node)))
         out.append("")
 
     return "\n".join(out).rstrip() + "\n"

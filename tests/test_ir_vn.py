@@ -127,3 +127,81 @@ def test_condition_any_with_flag_and_var():
 
 def test_condition_var_vs_var():
     assert '"Stand tall" if mood > patience:' in _out()
+
+
+# --- backgrounds + sprite staging ---------------------------------------------
+
+def _staged_ir():
+    return {
+        "version": "0.1", "genre": "visual_novel",
+        "characters": [
+            {"id": "al", "name": "Al", "sprite": "al.png"},
+            {"id": "bo", "name": "Bo", "sprite": "bo.png"},
+            {"id": "cy", "name": "Cy"},  # no sprite
+        ],
+        "backgrounds": [{"id": "bg_room", "image_file": "room.png"}],
+        "start": {"node": "n1"},
+        "nodes": [
+            {"id": "n1", "location": "bg_room", "lines": [
+                {"speaker": "al", "text": "hi"},
+                {"speaker": None, "text": "narr"},
+                {"speaker": "bo", "text": "yo"},
+                {"speaker": "al", "text": "again"},  # duplicate speaker
+                {"speaker": "cy", "text": "no sprite"},
+            ], "end": {"type": "return"}},
+            {"id": "n2", "lines": [{"speaker": "al", "text": "x"}],  # no location
+             "end": {"type": "return"}},
+        ],
+    }
+
+
+def test_image_declarations_emitted():
+    out = compile_vn(_staged_ir())
+    assert 'image bg_room = "images/room.png"' in out
+    assert 'image char_al = "images/al.png"' in out
+    assert 'image char_bo = "images/bo.png"' in out
+    assert "char_cy" not in out  # no sprite, no decl
+
+
+def test_scene_set_from_node_location():
+    out = compile_vn(_staged_ir())
+    assert "label n1:\n    scene bg_room\n" in out
+
+
+def test_all_speakers_shown_up_front_once():
+    out = compile_vn(_staged_ir())
+    n1 = out.split("label n1:")[1].split("label n2:")[0]
+    # al and bo shown (have sprites), each once, before the first say line
+    assert n1.count("show char_al ") == 1
+    assert n1.count("show char_bo ") == 1
+    assert n1.index("show char_al") < n1.index('al "hi"')
+    # cy has no sprite -> never shown
+    assert "show char_cy" not in n1
+
+
+def test_sprites_spread_so_all_visible():
+    out = compile_vn(_staged_ir())
+    n1 = out.split("label n1:")[1].split("label n2:")[0]
+    # two visible speakers (al, bo) -> thirds, distinct positions, none overlapping
+    assert "show char_al at stage(0.3333)" in n1
+    assert "show char_bo at stage(0.6667)" in n1
+    # n2 has a single sprite speaker -> centred
+    n2 = out.split("label n2:")[1]
+    assert "show char_al at stage(0.5)" in n2
+
+
+def test_sprite_position_is_deterministic():
+    out1 = compile_vn(_staged_ir())
+    out2 = compile_vn(_staged_ir())
+    assert out1 == out2
+    assert "transform stage(x):" in out1
+
+
+def test_no_scene_when_location_absent_or_unknown():
+    ir = _staged_ir()
+    ir["nodes"][0]["location"] = "bg_ghost"  # not a declared background
+    out = compile_vn(ir)
+    n1 = out.split("label n1:")[1].split("label n2:")[0]
+    assert "scene" not in n1
+    n2 = out.split("label n2:")[1]
+    assert "scene" not in n2  # n2 had no location at all

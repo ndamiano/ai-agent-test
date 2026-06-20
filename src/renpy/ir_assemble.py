@@ -15,19 +15,31 @@ def _ir_genre(genre: str) -> str:
             "rpg": "rpg"}.get(genre, "visual_novel")
 
 
-def _characters(premise: Dict) -> List[Dict]:
+def _characters(premise: Dict, manifest: Dict) -> List[Dict]:
+    sprites = {c.get("id"): c.get("image_file")
+               for c in manifest.get("characters", []) if c.get("id")}
     out = []
     for c in premise.get("characters", []):
         if not c.get("id"):
             continue
-        out.append({"id": c["id"], "name": c.get("name") or c["id"]})
+        ch = {"id": c["id"], "name": c.get("name") or c["id"]}
+        if sprites.get(c["id"]):
+            ch["sprite"] = sprites[c["id"]]
+        out.append(ch)
     return out
+
+
+def _backgrounds(manifest: Dict) -> List[Dict]:
+    return [{"id": bg["id"], "image_file": bg["image_file"]}
+            for bg in manifest.get("backgrounds", [])
+            if bg.get("id") and bg.get("image_file")]
 
 
 def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
     """Build the full IR dict from the component artifact. `genre` is the spec genre
     ('vn' | 'point_and_click' | 'rpg'); it is mapped to the IR genre enum."""
     premise = artifact.get("premise", {}) or {}
+    manifest = artifact.get("asset_manifest", {}) or {}
     nodes_comp = artifact.get("nodes", {}) or {}
     places_comp = artifact.get("places", {}) or {}
     brief = artifact.get("brief", {}) or {}
@@ -38,9 +50,13 @@ def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
     ir: Dict = {
         "version": "0.1",
         "genre": _ir_genre(genre),
-        "characters": _characters(premise),
+        "characters": _characters(premise, manifest),
         "nodes": [{"id": nid, **nodes_map.get(nid, {})} for nid in node_ids],
     }
+
+    backgrounds = _backgrounds(manifest)
+    if backgrounds:
+        ir["backgrounds"] = backgrounds
 
     title = brief.get("title") or premise.get("title")
     if title:

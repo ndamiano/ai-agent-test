@@ -158,9 +158,28 @@ def _staged_ir():
 def test_image_declarations_emitted():
     out = compile_vn(_staged_ir())
     assert 'image bg_room = "images/room.png"' in out
-    assert 'image char_al = "images/al.png"' in out
-    assert 'image char_bo = "images/bo.png"' in out
+    # character sprites are ATL blocks with a baked zoom so they sit at stage height
+    assert 'image char_al:\n    "images/al.png"\n    zoom 0.55' in out
+    assert 'image char_bo:\n    "images/bo.png"\n    zoom 0.55' in out
     assert "char_cy" not in out  # no sprite, no decl
+
+
+def test_speaker_highlighting_dims_non_speakers():
+    out = compile_vn(_staged_ir())
+    assert "transform speaking:\n    alpha 1.0" in out
+    assert "transform not_speaking:\n    alpha 0.5" in out
+    n1 = out.split("label n1:")[1].split("label n2:")[0]
+    # al speaks first with bo also on stage -> al brightened, bo dimmed, before al's line
+    assert "show char_al at stage(0.3333), speaking" in n1
+    assert "show char_bo at stage(0.6667), not_speaking" in n1
+
+
+def test_no_highlight_with_single_speaker():
+    out = compile_vn(_staged_ir())
+    # n2 has only al speaking -> nothing to dim, no re-stage on the line
+    n2 = out.split("label n2:")[1]
+    assert "speaking" not in n2
+    assert "not_speaking" not in n2
 
 
 def test_scene_set_from_node_location():
@@ -171,11 +190,11 @@ def test_scene_set_from_node_location():
 def test_all_speakers_shown_up_front_once():
     out = compile_vn(_staged_ir())
     n1 = out.split("label n1:")[1].split("label n2:")[0]
-    # al and bo shown (have sprites), each once, before the first say line
-    assert n1.count("show char_al ") == 1
-    assert n1.count("show char_bo ") == 1
-    assert n1.index("show char_al") < n1.index('al "hi"')
-    # cy has no sprite -> never shown
+    # preamble = staging before the first spoken line: each sprite-speaker shown once, up front
+    preamble = n1.split('al "hi"')[0]
+    assert preamble.count("show char_al at stage(0.3333)\n") == 1
+    assert preamble.count("show char_bo at stage(0.6667)\n") == 1
+    # cy has no sprite -> never shown anywhere in the node
     assert "show char_cy" not in n1
 
 

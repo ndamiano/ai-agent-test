@@ -11,9 +11,15 @@ renpy.compiler); this just produces the script body they'd write to game/script.
 """
 
 import json
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 _IND = "    "
+
+# Sprites are full-height art; bake a zoom into each character image so it sits at a natural
+# stage height, and dim everyone but the current speaker (ported from the old text path).
+_ZOOM = 0.55
+_SPEAKING_ALPHA = 1.0
+_DIMMED_ALPHA = 0.5
 
 
 def _spread(n: int) -> List[float]:
@@ -90,13 +96,19 @@ def _end(end: Dict, ind: str) -> List[str]:
     return [f"{ind}return{label}"]
 
 
-def node_block(node: Dict, preamble: Optional[List[str]] = None) -> List[str]:
+def node_block(node: Dict, preamble: Optional[List[str]] = None,
+               restage: Optional[Callable[[str], List[str]]] = None) -> List[str]:
     """`label <id>:` + optional staging preamble (scene/show) + the node's lines (with per-line
-    effects) + its terminal control. Shared by the VN compiler and the point-and-click compiler
-    (NPC dialogue nodes, which pass no preamble — they play over the place they were called from)."""
+    effects) + its terminal control. `restage(speaker)` (VN only) returns the show-lines that
+    re-stage the cast — brightening the speaker, dimming the rest — emitted before each spoken
+    line. Shared with the point-and-click compiler (NPC dialogue nodes pass neither: they play
+    over the place they were called from)."""
     out = [f"label {node['id']}:"]
     out.extend(preamble or [])
     for line in node.get("lines", []):
+        sp = line.get("speaker")
+        if restage and sp:
+            out.extend(restage(sp))
         out.append(f"{_IND}{_line(line)}")
         for eff in line.get("effects", []):
             out.append(f"{_IND}{_effect(eff)}")
@@ -105,8 +117,8 @@ def node_block(node: Dict, preamble: Optional[List[str]] = None) -> List[str]:
 
 
 def _staging(ir: Dict):
-    """Build the per-node staging closure: background ids that can be `scene`d, and the sprite
-    image tag for each character that has one. Returns (preamble_fn, image_decl_lines)."""
+    """Build the staging closure: per node, the preamble (scene + initial shows) and a
+    `restage(speaker)` for speaker highlighting. Returns (stage_fn, image_decl_lines)."""
     bg_files = {bg["id"]: bg["image_file"] for bg in ir.get("backgrounds", [])}
     sprites = {c["id"]: c["sprite"] for c in ir.get("characters", []) if c.get("sprite")}
 
@@ -114,32 +126,45 @@ def _staging(ir: Dict):
     for bid, fname in bg_files.items():
         decls.append(f'image {bid} = "images/{fname}"')
     for cid, fname in sprites.items():
-        decls.append(f'image char_{cid} = "images/{fname}"')
+        decls.append(f"image char_{cid}:")
+        decls.append(f'{_IND}"images/{fname}"')
+        decls.append(f"{_IND}zoom {_ZOOM}")
 
-    def preamble(node: Dict) -> List[str]:
-        pre: List[str] = []
-        loc = node.get("location")
-        if loc in bg_files:
-            pre.append(f"{_IND}scene {loc}")
-        # Show every character who speaks in this node, up front, before the first line,
-        # spread across the stage so all are visible.
+    def stage(node: Dict):
+        # roster: distinct characters who speak in this node (and have a sprite), in order.
         roster: List[str] = []
         for line in node.get("lines", []):
             sp = line.get("speaker")
             if sp in sprites and sp not in roster:
                 roster.append(sp)
-        for sp, x in zip(roster, _spread(len(roster))):
-            pre.append(f"{_IND}show char_{sp} at stage({x})")
-        return pre
+        posmap = dict(zip(roster, _spread(len(roster))))
 
-    return preamble, decls
+        pre: List[str] = []
+        loc = node.get("location")
+        if loc in bg_files:
+            pre.append(f"{_IND}scene {loc}")
+        # Show every speaker up front, spread across the stage so all are visible.
+        for cid, x in posmap.items():
+            pre.append(f"{_IND}show char_{cid} at stage({x})")
+
+        def restage(speaker: str) -> List[str]:
+            # With one character on stage there is nobody to dim, so leave it be.
+            if speaker not in posmap or len(posmap) < 2:
+                return []
+            return [f"{_IND}show char_{cid} at stage({x}), "
+                    f"{'speaking' if cid == speaker else 'not_speaking'}"
+                    for cid, x in posmap.items()]
+
+        return pre, restage
+
+    return stage, decls
 
 
 def compile_vn(ir: Dict) -> str:
     """Return the Ren'Py script.rpy source for a visual_novel IR."""
     out: List[str] = []
 
-    preamble, image_decls = _staging(ir)
+    stage, image_decls = _staging(ir)
 
     for c in ir.get("characters", []):
         out.append(f"define {c['id']} = Character({json.dumps(c['name'])})")
@@ -148,6 +173,10 @@ def compile_vn(ir: Dict) -> str:
     out.append("transform stage(x):")
     out.append(f"{_IND}xalign x")
     out.append(f"{_IND}yalign 1.0")
+    out.append("transform speaking:")
+    out.append(f"{_IND}alpha {_SPEAKING_ALPHA}")
+    out.append("transform not_speaking:")
+    out.append(f"{_IND}alpha {_DIMMED_ALPHA}")
     out.append("")
 
     if image_decls:
@@ -167,7 +196,8 @@ def compile_vn(ir: Dict) -> str:
     out.append("")
 
     for node in ir.get("nodes", []):
-        out.extend(node_block(node, preamble(node)))
+        pre, restage = stage(node)
+        out.extend(node_block(node, pre, restage))
         out.append("")
 
     return "\n".join(out).rstrip() + "\n"

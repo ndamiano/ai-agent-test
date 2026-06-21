@@ -12,7 +12,7 @@ class MessageBuilder:
     """
     Builds the messages list sent to the LLM.
 
-    All callers — agents, pipeline runner, pipelines — must go through here
+    All callers must go through here
     so that cross-cutting concerns (truncation, token budgeting, logging) can
     be added in one place later without touching call sites.
 

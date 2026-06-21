@@ -6,15 +6,23 @@ See `VISION.md` for the philosophy, `ROADMAP.md` for the plan and current state,
 
 ## How it works
 
-You talk to Maestro through a chat interface. Maestro figures out what to make and makes it — either directly via tools, or by firing **pipelines**: specialized, multi-stage generators that feel like tool calls from the agent's perspective. The agent sees inputs and outputs, never intermediate steps.
+You talk to Maestro through a chat interface. When you ask for something, Maestro does **not** write the artifact by hand and does **not** run a fixed pipeline. It drafts a per-game **spec** — a contract of components, each with checkable done-conditions — for you to review and freeze. Once frozen, a non-LLM **executor** drives an agentic loop that builds the artifact against the spec until every done-condition passes. "Done" means the artifact satisfies the frozen spec, decided by `validate` — never the agent claiming it.
 
-**Current pipelines:**
+The agent emits the engine-neutral **Game IR** (JSON — `docs/game_ir.schema.json`), never raw engine source. A selected backend projects the assembled IR to a runnable artifact.
 
-| Pipeline | Produces |
+**Genres** (the shape of the game):
+
+| Genre | Produces |
 |---|---|
-| `renpy` | A branching Ren'Py visual novel — procedural story DAG, multiple endings, generated art, packaged game |
-| `character` | A richly detailed character — identity, personality, appearance, voice, portrait image |
-| `ttrpg` | A complete TTRPG campaign document — world, factions, NPCs, encounters, quests |
+| `vn` | A visual novel — dialogue graph (`nodes`) with choices, character sprites with per-line emotions, generated backgrounds |
+| `point_and_click` | A room/hotspot adventure — clickable places, inventory, item-use puzzles, NPC dialogue, a win goal |
+
+**Engines** (the target the IR projects to):
+
+| Engine | Output |
+|---|---|
+| `renpy` | A packaged Ren'Py project (requires the Ren'Py SDK) |
+| `web` | A self-contained static site — `game.json` + a pre-tested runtime; opens in any browser |
 
 ## Setup
 
@@ -26,39 +34,47 @@ pip install -r requirements.txt
 cp src/config/settings.example.json src/config/settings.json   # then edit
 python run.py
 
-# Frontend
+# Frontend (mid-rebuild — see ROADMAP)
 cd frontend
 npm install
 npm run dev
 ```
 
-Settings live in `src/config/settings.json` (gitignored) and can also be edited from the web UI (gear icon). Maestro talks to any OpenAI-compatible endpoint (LM Studio, etc.); image generation uses ComfyUI. Set `model_category` to `small` when running local models. Building the visual novel into a distributable requires the Ren'Py SDK (`renpy_sdk_path` setting or `RENPY_SDK` env var).
+Settings live in `src/config/settings.json` (gitignored) and can also be edited from the web UI. Maestro talks to any OpenAI-compatible endpoint (LM Studio, etc.) via its Responses API; image generation uses ComfyUI. Set `model_category` to `small` when running local models. Building a Ren'Py game into a distributable requires the Ren'Py SDK (`renpy_sdk_path` setting or `RENPY_SDK` env var).
+
+## Build a game from the CLI
+
+```bash
+cd src && python -m maestro.run "<request>"   # propose → freeze → build
+```
 
 ## Tests
 
 ```bash
-cd src && python -m pytest ../tests/ --ignore=../tests/integration -q   # backend
-cd frontend && npx vitest run                                           # frontend
+cd src && python -m pytest ../tests/ --ignore=../tests/integration -q
 ```
 
 Integration tests in `tests/integration/` require live LLM services.
 
 ## Evals
 
-`eval/` contains the hill-climbing system: capture pipeline outputs, score them with an LLM judge against rubrics, and mutate prompts to climb quality. See `eval/EVAL.md`.
+`eval/` grades finished artifacts with an LLM judge against rubrics (`eval/cli.py score game`). Hill-climbing (judge-scored prompt mutation) was removed in the rebuild and is slated to return; prompts are kept as swappable `.txt` files so it can. See `eval/EVAL.md`.
 
 ## Repository layout
 
 ```
 src/
-  agents/       MainAgent (chat loop), MaestroAgent (wave orchestration), RefinerAgent
+  agents/       MainAgent (chat persona — drafts/amends specs) + agent configs
   api/          FastAPI routers + WebSocket event bus
-  config/       settings schema/manager, agent configs
-  database/     SQLite task store
+  config/       settings schema/manager
   llm_clients/  connectors, message builder, shared inference primitives
-  pipelines/    DAG runner, registry, and the pipelines themselves
-  tools/        agent-facing tools (pipelines, files, ComfyUI, orchestration)
-frontend/       React + Vite chat/tasks UI
-eval/           rubrics, briefs, judge, hill-climbing CLI
+  maestro/      the agentic build system — spec, state, validate, executor, tools,
+                build agent, IR assemble/crossref, engine dispatch
+  renpy/        Ren'Py engine backend (IR → script.rpy → packaged project)
+  web/          Web engine backend (IR → game.json + static runtime)
+  tools/        tool manager, ComfyUI, system tools, execution context
+frontend/       chat-first React + Vite UI (mid-rebuild)
+eval/           rubrics, briefs, judge, scoring CLI
 tests/          pytest suite
+docs/           Game IR schema + rationale
 ```

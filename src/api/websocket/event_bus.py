@@ -39,22 +39,6 @@ class EventBus:
                 pass
         self.logger.info("Event bus stopped")
 
-    async def publish(self, event: dict) -> None:
-        """
-        Publish an event from an async context.
-
-        Args:
-            event: Event dictionary containing at minimum 'type' and 'task_id' keys
-        """
-        if self.queue is None:
-            self.logger.warning("Event bus not started, dropping event: %s", event.get('type'))
-            return
-
-        try:
-            await self.queue.put(event)
-        except asyncio.QueueFull:
-            self.logger.error("Event queue full, dropping event: %s", event.get('type'))
-
     def publish_sync(self, event: dict) -> None:
         """
         Thread-safe publish from sync/background thread contexts.

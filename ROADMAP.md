@@ -6,7 +6,7 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 
 ## Current state
 
-**Mid-rebuild (branch `agentic-rebuild`):** the fixed pipeline DAG was ripped out and replaced with an agentic loop + human-gated frozen spec. See `new_architecture.md` for the design and CLAUDE.md for the current layout.
+**Mid-rebuild (branch `agentic-rebuild`):** the fixed pipeline DAG was ripped out and replaced with an agentic loop + human-gated frozen spec. See CLAUDE.md for the design and current layout.
 
 **Engine-agnostic Game IR (done):** the agent now emits JSON (the Game IR — `docs/game_ir.schema.json`, rationale in `docs/game_ir_decisions.md`), never raw Ren'Py. The old Ren'Py-text path (`_script.py`/`_pnc_script.py` stitches, regex checks, text-edit/normalize helpers) is deleted. Components decompose as premise + asset_manifest + `nodes` [+ `places`]; `ir_assemble` lifts them to one IR, `ir_crossref` hard-gates references, `ir_vn`/`ir_pnc` project to `script.rpy`. Both genres compile lint-clean on the real SDK (8.5.2). This kills whole error classes (escaping/speaker/indentation/dangling-jumps) by construction and makes validation a data walk. Next: a live-LLM end-to-end run on the local model.
 

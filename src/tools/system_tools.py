@@ -1,64 +1,9 @@
 import json
 import logging
-import subprocess
-from typing import Optional
 
 from tools.tool_manager import tool_manager
 
 logger = logging.getLogger(__name__)
-
-
-@tool_manager.tool(
-    description="Execute a shell command and return its output. Use this for running scripts, building projects, or system operations.",
-    auto_inject_context=False,
-    param_hints={"working_dir": "Defaults to task output dir, not process cwd"},
-)
-def execute_command(
-    command: str,
-    working_dir: Optional[str] = None,
-    timeout: int = 30,
-) -> str:
-    from tools.execution_context import resolve_base_path
-
-    if working_dir is None:
-        working_dir = resolve_base_path()
-    else:
-        working_dir = resolve_base_path(working_dir)
-
-    working_dir = str(working_dir)
-    logger.info(f"Executing command: {command} in {working_dir}")
-
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            cwd=working_dir,
-            timeout=timeout,
-        )
-        return json.dumps({
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "return_code": result.returncode,
-        })
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Command timed out after {timeout}s: {command}")
-        return json.dumps({
-            "success": False,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout} seconds",
-            "return_code": -1,
-        })
-    except Exception as e:
-        logger.error(f"Command execution failed: {e}")
-        return json.dumps({
-            "success": False,
-            "stdout": "",
-            "stderr": str(e),
-            "return_code": -1,
-        })
 
 
 @tool_manager.tool(

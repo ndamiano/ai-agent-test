@@ -32,7 +32,6 @@ async def startup_event():
         logging.info("Event bus started")
 
         # Import tool modules — decorators register tools at import time
-        import tools.file_tools  # noqa: F401
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
         import maestro.chat_tools  # noqa: F401

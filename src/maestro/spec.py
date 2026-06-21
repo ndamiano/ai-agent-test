@@ -26,10 +26,25 @@ class Spec:
 
     @property
     def genre(self) -> str:
-        """Which genre's build/checks/baseline this spec drives ('vn' default,
-        'point_and_click' for room/hotspot adventures). Genre knowledge lives in the
-        renpy layer; maestro just carries the tag."""
+        """The preset name this spec was classified as ('vn' default, 'point_and_click', …).
+        Kept as a UI/back-compat tag; the build actually keys off the composed `modules`."""
         return self.data.get("genre", "vn")
+
+    @property
+    def modules(self) -> List[str]:
+        """The mechanic-modules this spec composes — explicit if set, else the genre preset's
+        default set. This is what the build, checks, and baseline are driven by."""
+        from maestro.modules import modules_for
+        return list(modules_for(self.data))
+
+    @property
+    def substrate(self) -> str:
+        """The execution substrate ('discrete' today). Explicit if set, else the preset's."""
+        from maestro.modules import PRESETS
+        if self.data.get("substrate"):
+            return self.data["substrate"]
+        preset = PRESETS.get(self.genre)
+        return preset.substrate if preset else "discrete"
 
     @property
     def engine(self) -> str:

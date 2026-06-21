@@ -24,6 +24,67 @@ def _node(text="hi", end=None):
     return {"lines": [{"speaker": "a", "text": text}], "end": end or {"type": "return"}}
 
 
+# ── add_interactable: append a hotspot without clobbering siblings ────────────
+
+def _places_spec():
+    return Spec({"title": "T", "frozen": True,
+                 "components": [{"id": "places", "done_conditions": []}]})
+
+
+def _seed_place(state):
+    state.write_component("places", {"place_ids": ["r1"], "places": {"r1": {
+        "kind": "room", "background": "bg",
+        "interactables": [{"id": "h_a", "action": {"type": "examine", "text": "x"}}]}}})
+
+
+def test_add_interactable_appends_preserving_siblings(tmp_path):
+    state = RunState(tmp_path)
+    _seed_place(state)
+    tools = build_tools(_places_spec(), state)
+    res = tools["add_interactable"]("r1", {"id": "h_to_r2", "label": "exit",
+        "position": {"rect": {"x": 1, "y": 1, "w": 1, "h": 1}},
+        "action": {"type": "move", "target": "r2"}})
+    assert res["ok"] is True
+    ids = [i["id"] for i in state.read_component("places")["places"]["r1"]["interactables"]]
+    assert ids == ["h_a", "h_to_r2"]                      # sibling preserved, new one appended
+
+
+def test_add_interactable_rejects_dupe_and_bad_shape(tmp_path):
+    state = RunState(tmp_path)
+    _seed_place(state)
+    tools = build_tools(_places_spec(), state)
+    assert tools["add_interactable"]("r1", {"id": "h_a", "action": {"type": "examine", "text": "y"}})["ok"] is False
+    assert tools["add_interactable"]("nope", {"id": "h_x", "action": {"type": "examine", "text": "y"}})["ok"] is False
+    assert tools["add_interactable"]("r1", {"id": "h_y"})["ok"] is False   # action missing
+
+
+# ── write-time action validation: catch malformed IR at the tool call ────────
+
+def test_action_validation_rejects_empty_requires_with_hint():
+    from maestro.tools import _action_struct_error
+    err = _action_struct_error({"type": "use", "clauses": [
+        {"requires": {}, "outcome": {"text": "pray", "effects": [{"set_flag": "f"}]}}]})
+    assert err and "requires" in err and "fallback" in err   # actionable: use fallback instead
+
+
+def test_action_validation_allows_unconditional_fallback_use():
+    from maestro.tools import _action_struct_error
+    # The unconditional pattern the model wanted (always set a flag) is fallback-only, no clauses.
+    assert _action_struct_error({"type": "use",
+        "fallback": {"text": "pray", "effects": [{"set_flag": "f"}]}}) is None
+    assert _action_struct_error({"type": "use"}) is not None   # neither clauses nor fallback
+
+
+def test_add_interactable_rejects_invalid_action(tmp_path):
+    state = RunState(tmp_path)
+    _seed_place(state)
+    tools = build_tools(_places_spec(), state)
+    bad = {"id": "h_bad", "position": {"rect": {"x": 1, "y": 1, "w": 1, "h": 1}},
+           "action": {"type": "use", "clauses": [{"requires": {}, "outcome": {"text": "x"}}]}}
+    res = tools["add_interactable"]("r1", bad)
+    assert res["ok"] is False and "requires" in res["error"]
+
+
 # ── generic component / state tools ──────────────────────────────────────────
 
 def test_write_component_refuses_when_unfrozen(tmp_path):
@@ -48,11 +109,11 @@ def test_validate_tool_reports_failures(tmp_path):
     assert tools["validate"]()["ok"] is True
 
 
-def test_compile_renpy_tool_delegates(tmp_path, monkeypatch):
-    import renpy.compiler as compiler
-    monkeypatch.setattr(compiler, "compile_renpy", lambda wd, **kw: {"ok": True, "reason": None})
+def test_no_manual_compile_tool(tmp_path):
+    # The executor runs `compiles` every step; a manual compile tool only wastes steps and lets
+    # the agent compile early, fighting the "compiles last" ordering — so it must not exist.
     tools = build_tools(_spec(), RunState(tmp_path))
-    assert tools["compile_renpy"]()["ok"] is True
+    assert "compile_renpy" not in tools and "compile" not in tools
 
 
 def test_generate_asset_wraps_image_gen(tmp_path, monkeypatch):

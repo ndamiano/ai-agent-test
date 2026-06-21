@@ -26,6 +26,11 @@
       "description": "Character cast. A dialogue line's `speaker` MUST be an id here (or null for narration).",
       "items": { "$ref": "#/$defs/character" }
     },
+    "card_matches": {
+      "type": "array",
+      "description": "Wagering card matches an interactable's play_match action enters. The card rules are engine-implemented (card_model); the IR only parameterizes stakes/opponent/payout. Resolution flows out via on_win/on_lose, mirroring encounters.",
+      "items": { "$ref": "#/$defs/card_match" }
+    },
     "backgrounds": {
       "type": "array",
       "description": "Scene backgrounds lifted from the asset manifest. A node's `location` resolves to an `id` here.",
@@ -216,7 +221,8 @@
         { "$ref": "#/$defs/action_move" },
         { "$ref": "#/$defs/action_use" },
         { "$ref": "#/$defs/action_win" },
-        { "$ref": "#/$defs/action_start_combat" }
+        { "$ref": "#/$defs/action_start_combat" },
+        { "$ref": "#/$defs/action_play_match" }
       ]
     },
 
@@ -261,18 +267,22 @@
     },
     "action_use": {
       "type": "object",
-      "description": "The puzzle verb: ordered `clauses` evaluated top-down — the first whose `requires` holds fires its outcome; if none match, `fallback` fires. A simple lock is one clause + a fallback.",
-      "required": ["type", "clauses"],
+      "description": "The interact verb: ordered `clauses` evaluated top-down — the first whose `requires` holds fires its outcome; if none match, `fallback` fires. A simple lock is one clause + a fallback. An UNCONDITIONAL effect (e.g. 'pray → set a flag, always') is just a `fallback` with no clauses. Must carry at least one of `clauses`/`fallback`.",
+      "required": ["type"],
+      "anyOf": [
+        { "required": ["clauses"] },
+        { "required": ["fallback"] }
+      ],
       "additionalProperties": false,
       "properties": {
         "type": { "const": "use" },
         "clauses": {
           "type": "array",
           "minItems": 1,
-          "description": "Evaluated in order; first match wins.",
+          "description": "Evaluated in order; first match wins. Each requires a REAL condition (never an empty {}). Omit entirely for an unconditional outcome — put it in `fallback`.",
           "items": { "$ref": "#/$defs/use_clause" }
         },
-        "fallback": { "$ref": "#/$defs/outcome", "description": "Outcome when no clause matches (e.g. 'It's locked.')." }
+        "fallback": { "$ref": "#/$defs/outcome", "description": "Outcome when no clause matches — or, with no clauses, the UNCONDITIONAL outcome (always fires)." }
       }
     },
 
@@ -303,6 +313,17 @@
         "type": { "const": "start_combat" },
         "encounter": { "type": "string", "description": "encounter id to enter." },
         "requires": { "$ref": "#/$defs/condition", "description": "Optional gate (only ambushes if a flag is set, etc.)." }
+      }
+    },
+    "action_play_match": {
+      "type": "object",
+      "description": "Play a wagering card match against an NPC. Any interactable can start one (a gambler, a card table); the match's on_win/on_lose flow resolution back out, mirroring start_combat.",
+      "required": ["type", "match"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "play_match" },
+        "match": { "type": "string", "description": "card_match id to play." },
+        "requires": { "$ref": "#/$defs/condition", "description": "Optional gate (e.g. must hold enough gold to ante)." }
       }
     },
 
@@ -658,6 +679,49 @@
           "properties": { "when": { "$ref": "#/$defs/condition" } }
         }
       ]
+    },
+
+    "card_match": {
+      "type": "object",
+      "description": "A wagering card match: a known card game (card_model, engine-implemented) played against an NPC for a stake. The IR parameterizes stakes/opponent/payout; the engine owns the rules and the opponent. Resolution flows out via on_win/on_lose (reuses node_end), so a match returns to the overworld like combat returns to navigation.",
+      "required": ["id", "card_model", "opponent", "ante"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "card_model": {
+          "enum": ["high_card", "blackjack"],
+          "description": "Which engine-implemented card game's rules to run. high_card = each side draws one card, higher wins (simplest). blackjack = draw toward 21 without busting."
+        },
+        "deck_model": {
+          "enum": ["standard_52"],
+          "default": "standard_52",
+          "description": "Which deck the engine deals from. standard_52 = a normal playing-card deck."
+        },
+        "opponent": { "type": "string", "description": "character id the player wagers against (name/sprite)." },
+        "ante": {
+          "type": "object",
+          "description": "The stake. The variable is spent to play and the payout is applied via on_win/on_lose effects.",
+          "required": ["var", "amount"],
+          "additionalProperties": false,
+          "properties": {
+            "var": { "type": "string", "description": "variable id staked (e.g. gold)." },
+            "amount": { "type": "number", "description": "amount staked per match." }
+          }
+        },
+        "rounds": { "type": "integer", "minimum": 1, "default": 1, "description": "Best-of-N rounds; the match is decided by who wins the majority. Default 1." },
+        "on_win": { "$ref": "#/$defs/match_resolution", "description": "Where play flows and what changes on a win (typically add the pot to the ante variable)." },
+        "on_lose": { "$ref": "#/$defs/match_resolution", "description": "Where play flows and what changes on a loss (typically subtract the ante)." }
+      }
+    },
+
+    "match_resolution": {
+      "type": "object",
+      "description": "What happens when a match ends: optional state changes (the payout) plus where control returns. Reuses node_end so a match resolves back into navigation/dialogue like everything else.",
+      "additionalProperties": false,
+      "properties": {
+        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } },
+        "end": { "$ref": "#/$defs/node_end" }
+      }
     }
   },
 

@@ -70,6 +70,24 @@ def check_reachable_from_start(artifact: Dict, check: Dict, run_dir) -> CheckRes
     return True, None
 
 
+def check_node_targets_resolve(artifact: Dict, check: Dict, run_dir) -> CheckResult:
+    """Every jump/menu target points at a node that actually exists. Node reference integrity is
+    otherwise only caught by ir_crossref at `compiles` — which, for a navigation game, is owned by
+    `places`, leaving a dangling NODE jump unfixable (the places sub-loop has no node tools). Run it
+    here so the error surfaces in NODES mode, where write_node/edit_node can fix it."""
+    node_ids, nodes = _nodes(artifact)
+    ids = set(node_ids)
+    bad = []
+    for nid in node_ids:
+        for tgt in _node_targets(nodes.get(nid, {})):
+            if tgt not in ids:
+                bad.append(f"{nid} -> {tgt}")
+    if bad:
+        return False, (f"node jump/menu targets that don't exist: {bad[:5]} — either create those "
+                       f"nodes (write_node) or repoint the jump to an existing node (edit_node).")
+    return True, None
+
+
 def check_min_branches(artifact: Dict, check: Dict, run_dir) -> CheckResult:
     _, nodes = _nodes(artifact)
     n = sum(1 for node in nodes.values() if (node.get("end", {}) or {}).get("type") == "menu")
@@ -191,7 +209,15 @@ def check_places_reachable(artifact: Dict, check: Dict, run_dir) -> CheckResult:
     reachable = _reachable_places(place_ids, places, pc.get("start_place"))
     orphans = [p for p in place_ids if p not in reachable]
     if orphans:
-        return False, f"places unreachable from start: {orphans[:5]} — add a move hotspot to them"
+        srcs = sorted(reachable)[:3] or [pc.get("start_place")]
+        return False, (
+            f"places unreachable from start: {orphans[:5]}. In a REACHABLE place (one of {srcs}) "
+            f"ADD a NEW move hotspot pointing AT the orphan — do NOT repoint an existing hotspot "
+            f"(that breaks its current route). e.g. add_interactable(place_id=\"{srcs[0]}\", "
+            f'interactable={{"id":"h_to_{orphans[0]}","label":"<exit>",'
+            f'"position":{{"rect":{{"x":1040,"y":560,"w":180,"h":120}}}},'
+            f'"action":{{"type":"move","target":"{orphans[0]}"}}}}). '
+            f"The move must live in a REACHABLE place and point AT the orphan, not the reverse.")
     return True, None
 
 
@@ -250,15 +276,29 @@ def check_goal_reachable(artifact: Dict, check: Dict, run_dir) -> CheckResult:
             for e in _action_effects(a):
                 if e.get("set_flag"):
                     set_flags.add(e["set_flag"])
+    srcs = sorted(reachable)[:3] or [pc.get("start_place")]
     if goal["id"] not in set_flags:
-        return False, f"no reachable hotspot sets the win flag '{goal['id']}'"
+        return False, (
+            f"the win flag '{goal['id']}' is never set by a reachable hotspot. ADD a `use` hotspot "
+            f"in a REACHABLE place ({srcs}) whose outcome sets it — e.g. "
+            f'add_interactable(place_id="{srcs[0]}", interactable={{"id":"h_win_{goal["id"]}",'
+            f'"label":"<thing>","position":{{"rect":{{"x":520,"y":300,"w":200,"h":160}}}},'
+            f'"action":{{"type":"use","clauses":[{{"requires":{{"flag":"<some flag>"}},'
+            f'"outcome":{{"text":"...","effects":[{{"set_flag":"{goal["id"]}"}}]}}}}],'
+            f'"fallback":{{"text":"Not yet."}}}}}}). The set_flag effect is what makes the goal reachable.')
     if not has_win:
-        return False, "no reachable hotspot has a 'win' action"
+        return False, (
+            f"no reachable hotspot has a 'win' action. ADD a hotspot whose action is "
+            f'{{"type":"win"}} to a REACHABLE place ({srcs}) — e.g. add_interactable(place_id='
+            f'"{srcs[0]}", interactable={{"id":"h_finish","label":"<thing>",'
+            f'"position":{{"rect":{{"x":540,"y":520,"w":200,"h":120}}}},'
+            f'"action":{{"type":"win"}}}}). The win action ends the game once the goal flag is set.')
     return True, None
 
 
 _CHECKS = {
     "reachable_from_start": check_reachable_from_start,
+    "node_targets_resolve": check_node_targets_resolve,
     "min_branches": check_min_branches,
     "each_node_min_lines": check_each_node_min_lines,
     "all_characters_speak": check_all_characters_speak,

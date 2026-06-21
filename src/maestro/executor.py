@@ -269,7 +269,10 @@ class Executor:
     def _summarize(self, action: Dict, result: Dict) -> str:
         name = action.get("tool", "?")
         args = action.get("args", {}) if isinstance(action.get("args"), dict) else {}
-        target = args.get("node_id") or args.get("component_id") or ""
+        target = (args.get("node_id") or args.get("place_id") or args.get("match_id")
+                  or args.get("component_id") or "")
+        if args.get("interactable_id"):
+            target = f"{target}/{args['interactable_id']}" if target else args["interactable_id"]
         label = f"{name}({target})" if target else name
         if isinstance(result, dict) and result.get("error"):
             return f"{label}: error — {result['error']}"

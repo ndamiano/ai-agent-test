@@ -112,9 +112,17 @@ def _check_refs_resolve(artifact: Dict, c: Dict, run_dir) -> CheckResult:
 
 
 def _check_compiles(artifact: Dict, c: Dict, run_dir) -> CheckResult:
-    # Lint-only during the loop — distribute (packaging) is reserved for final delivery.
-    from renpy.compiler import compile_renpy
-    res = compile_renpy(run_dir, distribute=False)
+    # Lint-only during the loop — distribute (packaging) is reserved for final delivery. Dispatch
+    # on the spec's engine (renpy default, web for card games) so the check matches what the loop's
+    # compile tool and final packaging do — a web game must not be lint-checked by the Ren'Py SDK.
+    import json
+    from pathlib import Path
+    from maestro.engines import compile_for
+    engine = "renpy"
+    spec_path = Path(run_dir) / "spec.json"
+    if spec_path.exists():
+        engine = (json.loads(spec_path.read_text(encoding="utf-8")) or {}).get("engine", "renpy")
+    res = compile_for(engine)(run_dir, distribute=False)
     return bool(res.get("ok")), None if res.get("ok") else f"compile failed: {res.get('reason')}"
 
 
@@ -136,6 +144,10 @@ def register_check(name: str, fn: Callable[[Dict, Dict, object], CheckResult]) -
 
 
 def run_check(check: Dict, artifact: Dict, run_dir) -> CheckResult:
+    # A spec is LLM-authored: a done-condition might be a bare string or otherwise malformed. Treat
+    # that as a reported failure, never a crash (a 500 in the games API, or a dead build step).
+    if not isinstance(check, dict):
+        return False, f"malformed check (expected an object with a 'type'): {check!r}"
     ctype = check.get("type")
     fn = _CHECKS.get(ctype)
     if fn is None:
@@ -166,7 +178,7 @@ def validate(spec, state, component_id: Optional[str] = None,
         if component_id is not None and comp.get("id") != component_id:
             continue
         for check in comp.get("done_conditions", []):
-            if skip_types and check.get("type") in skip_types:
+            if skip_types and isinstance(check, dict) and check.get("type") in skip_types:
                 continue
             ok, detail = run_check(check, artifact, state.run_dir)
             if not ok:

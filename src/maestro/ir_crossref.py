@@ -28,6 +28,7 @@ def crossref_errors(ir: Dict) -> List[str]:
     abilities = {a["id"] for a in ir.get("abilities", [])}
     combatants = {c["id"] for c in ir.get("combatants", [])}
     encounters = {e["id"] for e in ir.get("encounters", [])}
+    card_matches = {m["id"] for m in ir.get("card_matches", [])}
 
     errors: List[str] = []
 
@@ -118,7 +119,10 @@ def crossref_errors(ir: Dict) -> List[str]:
                 bad(f"{path}.item", action["item"], "item")
         elif t == "talk":
             if action["node"] not in nodes:
-                bad(f"{path}.node", action["node"], "node")
+                errors.append(
+                    f"{path}.node: talk targets node '{action['node']}' which does not exist — "
+                    f"either change this hotspot to a play_match/examine action (edit_place), or "
+                    f"write the dialogue node '{action['node']}' in the `nodes` component.")
         elif t == "move":
             if action["target"] not in places:
                 bad(f"{path}.target", action["target"], "place")
@@ -136,6 +140,11 @@ def crossref_errors(ir: Dict) -> List[str]:
         elif t == "start_combat":
             if action["encounter"] not in encounters:
                 bad(f"{path}.encounter", action["encounter"], "encounter")
+            if "requires" in action:
+                check_condition(action["requires"], f"{path}.requires")
+        elif t == "play_match":
+            if action["match"] not in card_matches:
+                bad(f"{path}.match", action["match"], "card_match")
             if "requires" in action:
                 check_condition(action["requires"], f"{path}.requires")
         # examine resolves nothing
@@ -204,5 +213,23 @@ def crossref_errors(ir: Dict) -> List[str]:
         for key in ("on_victory", "on_defeat"):
             if key in enc:
                 check_node_end(enc[key], f"encounters[{eid}].{key}")
+
+    # ── card matches ─────────────────────────────────────────────────────────
+    for m in ir.get("card_matches", []):
+        mid = m.get("id")
+        if m.get("opponent") not in chars:
+            bad(f"card_matches[{mid}].opponent", m.get("opponent"), "character")
+        ante = m.get("ante", {})
+        if ante.get("var") not in variables:
+            errors.append(
+                f"card_matches[{mid}].ante.var: '{ante.get('var')}' is not a declared variable — "
+                f"declare it via set_places_meta(variables=[{{\"id\":\"{ante.get('var')}\","
+                f"\"default\":100}}]) so the player has a starting balance to ante.")
+        for key in ("on_win", "on_lose"):
+            res = m.get(key)
+            if isinstance(res, dict):
+                check_effects(res.get("effects"), f"card_matches[{mid}].{key}.effects")
+                if "end" in res:
+                    check_node_end(res["end"], f"card_matches[{mid}].{key}.end")
 
     return errors

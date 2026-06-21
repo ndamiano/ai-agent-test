@@ -25,7 +25,7 @@ _FAIL = {"lint_error_count": None, "project_dir": None}
 
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
-    for stem in ("brief", "premise", "asset_manifest", "nodes", "places", "spec"):
+    for stem in ("brief", "premise", "asset_manifest", "nodes", "places", "matches", "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))
@@ -51,8 +51,18 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if missing:
         return {"ok": False, "reason": f"missing components: {missing}", **_FAIL}
 
-    genre = (inputs.get("spec", {}) or {}).get("genre", "vn")
-    ir = assemble_ir(inputs, genre)
+    from maestro.modules import modules_for, unprojectable
+    from web.projections import register as register_web_projections
+    register_web_projections()
+
+    spec_data = inputs.get("spec", {}) or {}
+    module_ids = modules_for(spec_data)
+    miss = unprojectable("web", module_ids)
+    if miss:
+        return {"ok": False, "reason":
+                f"the web engine has no projection for module(s) {miss}", **_FAIL}
+
+    ir = assemble_ir(inputs, spec_data.get("genre", "vn"))
 
     # Schema first: crossref assumes a well-formed IR, so a structural error must surface here
     # rather than crash the reference walk.

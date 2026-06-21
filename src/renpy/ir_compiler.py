@@ -28,7 +28,7 @@ _FAIL = {"lint_error_count": None, "project_dir": None}
 
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
-    for stem in ("brief", "premise", "asset_manifest", "nodes", "places", "spec"):
+    for stem in ("brief", "premise", "asset_manifest", "nodes", "places", "matches", "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))
@@ -45,8 +45,19 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if missing:
         return {"ok": False, "reason": f"missing components: {missing}", **_FAIL}
 
-    genre = (inputs.get("spec", {}) or {}).get("genre", "vn")
-    ir = assemble_ir(inputs, genre)
+    from maestro.modules import modules_for, unprojectable
+    from renpy.projections import register as register_renpy_projections
+    register_renpy_projections()
+
+    spec_data = inputs.get("spec", {}) or {}
+    module_ids = modules_for(spec_data)
+    missing = unprojectable("renpy", module_ids)
+    if missing:
+        return {"ok": False, "reason":
+                f"the renpy engine has no projection for module(s) {missing} — "
+                f"this game needs an engine that renders them (e.g. web)", **_FAIL}
+
+    ir = assemble_ir(inputs, spec_data.get("genre", "vn"))
 
     # Hard gate: every id reference must resolve. Replaces the legacy _find_script_issues.
     errs = crossref_errors(ir)

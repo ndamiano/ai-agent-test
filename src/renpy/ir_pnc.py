@@ -102,13 +102,18 @@ def _action_body(action: Dict) -> List[str]:
         return [f"{ind}jump {action['target']}"]
     if t == "use":
         out = []
-        for i, clause in enumerate(action.get("clauses", [])):
+        clauses = action.get("clauses", [])
+        for i, clause in enumerate(clauses):
             kw = "if" if i == 0 else "elif"
             out.append(f"{ind}{kw} {_condition(clause['requires'])}:")
             out += _outcome(clause.get("outcome", {}), ind + _IND)
         if action.get("fallback"):
-            out.append(f"{ind}else:")
-            out += _outcome(action["fallback"], ind + _IND)
+            if clauses:
+                out.append(f"{ind}else:")
+                out += _outcome(action["fallback"], ind + _IND)
+            else:
+                # No clauses → the fallback is unconditional; emit it directly (no dangling else).
+                out += _outcome(action["fallback"], ind)
         return out + [f"{ind}return"]
     if t == "win":
         if action.get("requires"):

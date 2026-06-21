@@ -11,11 +11,6 @@ and the body's declared state→top-level flags/variables/items/goal/start. It l
 from typing import Dict, List
 
 
-def _ir_genre(genre: str) -> str:
-    return {"vn": "visual_novel", "point_and_click": "point_and_click",
-            "rpg": "rpg"}.get(genre, "visual_novel")
-
-
 EMOTIONS = ("neutral", "happy", "sad", "angry", "surprised", "worried")
 
 
@@ -69,9 +64,32 @@ def _backgrounds(manifest: Dict) -> List[Dict]:
             if bg.get("id") and bg.get("image_file")]
 
 
+def _scan_refs(obj, flags: set, variables: set) -> None:
+    """Collect every flag/variable id REFERENCED anywhere in the IR — set_flag/clear_flag/flag for
+    flags; var / set_var.var / add_var.var (covers conditions, effects, and a match's ante) for
+    variables. A generic walk so it can't miss a location as new shapes are added."""
+    if isinstance(obj, dict):
+        for k in ("set_flag", "clear_flag", "flag"):
+            if isinstance(obj.get(k), str):
+                flags.add(obj[k])
+        if isinstance(obj.get("var"), str):
+            variables.add(obj["var"])
+        for k in ("set_var", "add_var"):
+            sv = obj.get(k)
+            if isinstance(sv, dict) and isinstance(sv.get("var"), str):
+                variables.add(sv["var"])
+        for v in obj.values():
+            _scan_refs(v, flags, variables)
+    elif isinstance(obj, list):
+        for v in obj:
+            _scan_refs(v, flags, variables)
+
+
 def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
-    """Build the full IR dict from the component artifact. `genre` is the spec genre
-    ('vn' | 'point_and_click' | 'rpg'); it is mapped to the IR genre enum."""
+    """Build the full IR dict from the component artifact. Presence-driven: a `places` component
+    means a navigation game (IR genre point_and_click, entry = start.place); otherwise a dialogue
+    game (visual_novel, entry = start.node). `genre` is accepted for back-compat but not consulted
+    — the components present decide the shape."""
     premise = artifact.get("premise", {}) or {}
     manifest = artifact.get("asset_manifest", {}) or {}
     nodes_comp = artifact.get("nodes", {}) or {}
@@ -80,11 +98,18 @@ def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
 
     node_ids = nodes_comp.get("node_ids", []) or []
     nodes_map = nodes_comp.get("nodes", {}) or {}
+    has_places = bool(places_comp.get("place_ids"))
 
     nodes = [{"id": nid, **nodes_map.get(nid, {})} for nid in node_ids]
+    # A line may carry emotion: null (the model spelling out "neutral"); the schema enum has no
+    # null, so drop the key — absent == neutral.
+    for n in nodes:
+        for ln in n.get("lines", []) or []:
+            if isinstance(ln, dict) and ln.get("emotion") is None:
+                ln.pop("emotion", None)
     ir: Dict = {
         "version": "0.1",
-        "genre": _ir_genre(genre),
+        "genre": "point_and_click" if has_places else "visual_novel",
         "characters": _characters(premise, manifest, nodes),
         "nodes": nodes,
     }
@@ -109,16 +134,42 @@ def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
     if items:
         ir["items"] = items
 
-    if genre == "point_and_click":
+    # card_play: lift the decomposed match definitions to the top level (presence-driven).
+    matches_comp = artifact.get("matches", {}) or {}
+    match_ids = matches_comp.get("match_ids", []) or []
+    matches_map = matches_comp.get("matches", {}) or {}
+    if match_ids:
+        ir["card_matches"] = [{"id": mid, **matches_map.get(mid, {})} for mid in match_ids]
+
+    if has_places:
         place_ids = places_comp.get("place_ids", []) or []
         places_map = places_comp.get("places", {}) or {}
         ir["places"] = [{"id": pid, **places_map.get(pid, {})} for pid in place_ids]
         start_place = places_comp.get("start_place") or (place_ids[0] if place_ids else None)
         ir["start"] = {"place": start_place} if start_place else {}
-        if places_comp.get("goal"):
-            ir["goal"] = places_comp["goal"]
+        goal = places_comp.get("goal")
+        if isinstance(goal, dict):
+            # The IR goal is a CONDITION. A flag goal maps to {flag: id}; a goal already in
+            # condition shape passes through. A room goal ("reach room X") isn't expressible as a
+            # condition, and an endless game has no win — drop those rather than emit invalid IR.
+            _COND_KEYS = ("flag", "var", "item", "all", "any", "not")
+            if goal.get("type") == "flag" and goal.get("id"):
+                ir["goal"] = {"flag": goal["id"]}
+            elif any(k in goal for k in _COND_KEYS):
+                ir["goal"] = goal
     else:
         start_node = nodes_comp.get("start") or (node_ids[0] if node_ids else None)
         ir["start"] = {"node": start_node} if start_node else {}
+
+    # Auto-declare any FLAG referenced anywhere but never explicitly declared (default false) — a
+    # referenced-but-unset flag is benign (a gate that simply never fires), so a forgotten flag
+    # declaration shouldn't be a hard compile failure. Variables are NOT auto-declared: a var needs
+    # a real default (gold starts at 100, not 0) and a typo'd var id should be CAUGHT, not silently
+    # invented — crossref flags it and the model declares it via set_places_meta.
+    ref_flags: set = set()
+    _scan_refs(ir, ref_flags, set())
+    missing_flags = [f for f in sorted(ref_flags) if f not in set(ir.get("flags", []))]
+    if missing_flags:
+        ir["flags"] = list(ir.get("flags", [])) + missing_flags
 
     return ir

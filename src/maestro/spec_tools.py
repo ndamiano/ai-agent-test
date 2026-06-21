@@ -57,14 +57,20 @@ _PNC_KEYWORDS = ("point-and-click", "point and click", "point'n'click", "pointan
                  "point & click", "adventure game", "escape room", "escape-room",
                  "room escape", "hidden object", "inventory puzzle")
 
-_GENRES = ("vn", "point_and_click")
+# Strong signals a request wants a wandering-and-wagering card game.
+_CARD_KEYWORDS = ("card game", "card-game", "card battle", "play for ante", "for ante",
+                  "blackjack", "poker", "wager", "gambl")
+
+_GENRES = ("vn", "point_and_click", "card_ante")
 
 
 def _classify_genre(request: str) -> str:
-    """Pick the genre a request wants. Keyword match first (cheap, deterministic); only an
+    """Pick the preset a request wants. Keyword match first (cheap, deterministic); only an
     ambiguous request costs a classification call. Any failure falls back to 'vn' — the
     human freeze gate catches a wrong guess."""
     low = request.lower()
+    if any(k in low for k in _CARD_KEYWORDS):
+        return "card_ante"
     if any(k in low for k in _PNC_KEYWORDS):
         return "point_and_click"
     try:
@@ -86,13 +92,23 @@ def propose_spec(request: str, run_id: str) -> Dict:
     from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
 
     genre = _classify_genre(request)
-    template = "propose_spec_pnc.txt" if genre == "point_and_click" else "propose_spec.txt"
+    template = {"point_and_click": "propose_spec_pnc.txt",
+                "card_ante": "propose_spec_card.txt"}.get(genre, "propose_spec.txt")
     prompt = render_template(_PROMPTS_DIR / template, {"request": request})
     agent = PipelineAgent(JSON_SYSTEM, max_tokens=8000)
     spec = json_with_correction(agent, prompt, "propose_spec", attempts=3)
 
     spec["frozen"] = False
-    spec["genre"] = genre  # before _normalize_spec — the baseline picks its checks by genre
+    spec["genre"] = genre  # before _normalize_spec — the baseline picks its checks by module set
+    # Expand the preset into the substrate + module set the build actually drives off of. The
+    # proposer may override (setdefault), but a fresh spec gets the preset's defaults.
+    import maestro.discrete  # noqa: F401 — ensure presets are registered
+    from maestro.modules import PRESETS
+    preset = PRESETS.get(genre)
+    if preset:
+        spec.setdefault("substrate", preset.substrate)
+        spec.setdefault("modules", list(preset.modules))
+        spec.setdefault("engine", preset.engine)
     spec.setdefault("request", request)
     _normalize_spec(spec)  # baseline done-conditions in, so the human reviews the real contract
     state = RunState.for_run(run_id)

@@ -1,0 +1,21 @@
+You are writing the card MATCHES — the wagering games the player can sit down to. Author the
+whole component in ONE call: write_component("matches", { ... }) in the shape the skeleton
+shows. Do NOT write the JSON as a message — it MUST be the argument of a write_component tool
+call, or nothing is saved.
+
+The LOCKED COMPONENTS block holds the settled premise. Every match's `opponent` MUST be an
+EXACT premise character id from there — an opponent that isn't a premise character is a bug.
+
+Each match is a known card game for a stake:
+  card_model  — "high_card" (each draws one card, higher wins) or "blackjack" (draw toward 21).
+  opponent    — the premise character id you wager against.
+  ante        — {var, amount}: the currency variable staked and how much. Use ONE currency
+                variable across the game (e.g. "gold"); the places component declares it.
+  on_win      — the payout: add_var the ante variable UP by the winnings, then end: return.
+  on_lose     — subtract the ante: add_var the ante variable DOWN, then end: return.
+
+Write one match per opponent the player can gamble with — enough that wandering and playing
+for ante is a real loop, not a single table. Derive ids/opponents from the REQUEST and the
+locked premise, never from the skeleton's placeholder ids.
+
+Call write_component("matches", ...) now. Do not explain.

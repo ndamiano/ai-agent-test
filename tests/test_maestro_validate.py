@@ -9,6 +9,22 @@ from maestro.state import RunState
 from maestro.validate import run_check, validate
 
 
+def test_malformed_check_is_a_failure_not_a_crash(tmp_path):
+    # A spec is LLM-authored: a done-condition can be a bare prose string. That must be a reported
+    # failure, never an AttributeError that 500s the games API or kills a build step.
+    ok, detail = run_check("Window opens at 1000x700", {}, None)
+    assert ok is False and "malformed" in detail
+
+    state = RunState(tmp_path)
+    spec = Spec({"frozen": True, "components": [
+        {"id": "engine_core", "done_conditions": ["prose, not a typed check",
+                                                  {"type": "exists", "path": "x.y"}]}]})
+    fails = validate(spec, state)                       # must not raise
+    assert any("malformed" in (f.get("detail") or "") for f in fails)
+    # the skip_types path (the sub-loop's cheap validate) must also tolerate the string
+    assert validate(spec, state, skip_types={"compiles"}) is not None
+
+
 # ── individual checks (artifact dict, no run dir needed except compiles) ─────
 
 ART = {

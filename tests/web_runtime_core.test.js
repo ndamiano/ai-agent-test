@@ -2,7 +2,7 @@
  * Run via `node tests/web_runtime_core.test.js` (also driven by tests/test_web_runtime_js.py). */
 const assert = require("assert");
 const path = require("path");
-const { makeState, evalCond, applyEffect, applyEffects } =
+const { makeState, evalCond, applyEffect, applyEffects, blackjackTotal, scoreOutcome } =
   require(path.join(__dirname, "..", "src", "web", "runtime", "engine.js"));
 
 const IR = {
@@ -65,6 +65,26 @@ function fresh() { return makeState(IR); }
   assert.deepStrictEqual(s.inv, []);
   applyEffects(s, [{ set_var: { var: "trust", value: 5 } }, { add_var: { var: "trust", delta: -2 } }]);
   assert.strictEqual(s.vars.trust, 3);
+})();
+
+// blackjackTotal: face cards score 10; aces soften from 11 to 1 to avoid a bust.
+(function () {
+  assert.strictEqual(blackjackTotal([10, 11]), 20);          // K = 10
+  assert.strictEqual(blackjackTotal([1, 13]), 21);           // A + K = blackjack
+  assert.strictEqual(blackjackTotal([1, 1, 9]), 21);         // 11 + 1 + 9 (one ace softened)
+  assert.strictEqual(blackjackTotal([10, 10, 5]), 25);       // bust reported as >21
+  assert.strictEqual(blackjackTotal([1, 5]), 16);            // 11 + 5
+})();
+
+// scoreOutcome: higher wins, tie pushes; with a bustLimit a bust loses, both-bust pushes.
+(function () {
+  assert.strictEqual(scoreOutcome(10, 7, null), "win");      // high_card
+  assert.strictEqual(scoreOutcome(5, 9, null), "lose");
+  assert.strictEqual(scoreOutcome(8, 8, null), "push");
+  assert.strictEqual(scoreOutcome(25, 18, 21), "lose");      // player busts
+  assert.strictEqual(scoreOutcome(20, 25, 21), "win");       // opponent busts
+  assert.strictEqual(scoreOutcome(25, 25, 21), "push");      // both bust
+  assert.strictEqual(scoreOutcome(20, 19, 21), "win");
 })();
 
 console.log("web_runtime_core: all assertions passed");

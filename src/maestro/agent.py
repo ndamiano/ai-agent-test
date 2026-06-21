@@ -45,6 +45,7 @@ _PLACE_PROMPTS: Dict[str, str] = {
 _MODE_PROMPTS: Dict[str, str] = {
     "premise": render_template(_PROMPTS_DIR / "mode_premise.txt", {}),
     "asset_manifest": render_template(_PROMPTS_DIR / "mode_asset.txt", {}),
+    "matches": render_template(_PROMPTS_DIR / "mode_matches.txt", {}),
     "nodes": _NODE_PROMPTS["author"],  # stateless fallback path: author is the default job
     "places": _PLACE_PROMPTS["author"],
 }
@@ -53,7 +54,7 @@ _MODE_PROMPTS: Dict[str, str] = {
 _TARGET_PROMPT: Dict[str, str] = {
     "count": "author", "each_node_min_lines": "author",
     "min_branches": "author", "all_characters_speak": "author",
-    "reachable_from_start": "fix", "compiles": "fix",
+    "reachable_from_start": "fix", "node_targets_resolve": "fix", "compiles": "fix",
 }
 _PLACE_TARGET_PROMPT: Dict[str, str] = {
     "count": "author", "each_place_min_interactables": "author",
@@ -70,10 +71,12 @@ def _prompt_for_target(target: Optional[Dict], prompts: Dict[str, str],
 _MODE_TOOLS: Dict[str, frozenset] = {
     "premise": frozenset({"write_component", "update_scratchpad", "request_review"}),
     "asset_manifest": frozenset({"write_component", "update_scratchpad", "request_review"}),
+    "matches": frozenset({"write_component", "write_match", "read_component",
+                          "update_scratchpad", "request_review"}),
     "nodes": frozenset({"write_node", "edit_node", "read_node", "read_story_state",
-                        "validate", "compile_renpy", "update_scratchpad", "request_review"}),
-    "places": frozenset({"write_component", "write_place", "edit_place", "read_place",
-                         "set_places_meta", "read_component", "validate", "compile_renpy",
+                        "validate", "update_scratchpad", "request_review"}),
+    "places": frozenset({"write_component", "write_place", "edit_place", "add_interactable",
+                         "read_place", "set_places_meta", "read_component", "validate",
                          "update_scratchpad", "request_review"}),
 }
 
@@ -93,20 +96,24 @@ _TARGET_TOOLS: Dict[str, frozenset] = {
     "count": frozenset({"write_node"}),
     "each_node_min_lines": frozenset({"read_node", "write_node", "edit_node"}),
     "reachable_from_start": frozenset({"read_node", "edit_node"}),
+    "node_targets_resolve": frozenset({"read_node", "edit_node", "write_node"}),
     "min_branches": frozenset({"read_node", "edit_node", "write_node"}),
     "all_characters_speak": frozenset({"read_node", "edit_node", "write_node"}),
-    "compiles": frozenset({"read_node", "edit_node", "write_node", "compile_renpy"}),
+    "compiles": frozenset({"read_node", "edit_node", "write_node"}),
 }
 # Per-TARGET gating for the places sub-loop. count ADDS places (write_place); reachability/goal
 # are fixed by repointing actions (edit), so write_place is withheld where adding would not help.
 _PLACE_TARGET_TOOLS: Dict[str, frozenset] = {
     "count": frozenset({"write_component", "write_place"}),
-    "each_place_min_interactables": frozenset({"read_place", "write_place", "edit_place"}),
-    "items_obtainable": frozenset({"read_place", "write_place", "edit_place", "set_places_meta"}),
-    "items_used": frozenset({"read_place", "write_place", "edit_place", "set_places_meta"}),
-    "places_reachable": frozenset({"read_place", "edit_place", "read_component"}),
-    "goal_reachable": frozenset({"read_place", "edit_place", "write_place", "set_places_meta", "read_component"}),
-    "compiles": frozenset({"read_place", "edit_place", "write_place", "compile_renpy"}),
+    "each_place_min_interactables": frozenset({"read_place", "add_interactable", "edit_place"}),
+    "items_obtainable": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta"}),
+    "items_used": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta"}),
+    "places_reachable": frozenset({"read_place", "add_interactable", "edit_place", "read_component"}),
+    "goal_reachable": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta", "read_component"}),
+    # compiles fixes are often cross-component: a dangling talk-node is repointed (edit_place), a
+    # missing variable/flag is declared (set_places_meta), a missing hotspot added (add_interactable).
+    "compiles": frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
+                           "write_place", "read_component"}),
 }
 
 
@@ -376,7 +383,10 @@ def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, s
                 result = dispatch({"tool": name, "args": args})
                 mb.add_tool_result(tc.get("id", ""),
                                    json.dumps(result, ensure_ascii=False)[:800])
-                tgt = args.get("node_id") or args.get("room_id") or args.get("component_id") or ""
+                tgt = (args.get("node_id") or args.get("place_id") or args.get("match_id")
+                       or args.get("component_id") or "")
+                if args.get("interactable_id"):
+                    tgt = f"{tgt}/{args['interactable_id']}" if tgt else args["interactable_id"]
                 err = result.get("error") if isinstance(result, dict) else None
                 if not err and name not in _READ_TOOLS:
                     made_progress = True

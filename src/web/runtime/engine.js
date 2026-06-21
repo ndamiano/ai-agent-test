@@ -52,13 +52,43 @@
 
   function applyEffects(state, effects) { (effects || []).forEach(function (e) { applyEffect(state, e); }); }
 
+  // ── card matches (pure rules — engine-implemented, IR only parameterizes) ───
+  // A card is a rank 1..13 (suit is irrelevant to these models). Face cards score 10; an ace is
+  // 11, softened to 1 only to avoid a bust. blackjackTotal returns the best non-busting total, or
+  // the minimal busting total (>21) so the caller can detect a bust.
+  function blackjackTotal(cards) {
+    var total = 0, aces = 0;
+    cards.forEach(function (r) {
+      if (r === 1) { aces++; total += 11; }
+      else total += Math.min(r, 10);
+    });
+    while (total > 21 && aces > 0) { total -= 10; aces--; }
+    return total;
+  }
+
+  // Decide a match from the two final scores. A bust (>21) loses; both bust = push; otherwise the
+  // higher score wins and an equal score pushes. For high_card the "score" is just the rank.
+  function scoreOutcome(playerScore, oppScore, bustLimit) {
+    var pBust = bustLimit != null && playerScore > bustLimit;
+    var oBust = bustLimit != null && oppScore > bustLimit;
+    if (pBust && oBust) return "push";
+    if (pBust) return "lose";
+    if (oBust) return "win";
+    if (playerScore > oppScore) return "win";
+    if (playerScore < oppScore) return "lose";
+    return "push";
+  }
+
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { makeState: makeState, evalCond: evalCond, applyEffect: applyEffect, applyEffects: applyEffects };
+    module.exports = {
+      makeState: makeState, evalCond: evalCond, applyEffect: applyEffect, applyEffects: applyEffects,
+      blackjackTotal: blackjackTotal, scoreOutcome: scoreOutcome,
+    };
     return; // node/jsdom unit context — do not boot the DOM runtime
   }
 
   // ── browser runtime ───────────────────────────────────────────────────────
-  var ir, state, chars = {}, nodeById = {}, placeById = {}, bgFiles = {};
+  var ir, state, chars = {}, nodeById = {}, placeById = {}, bgFiles = {}, matchById = {};
   var $ = function (id) { return document.getElementById(id); };
   var WIN = { win: true };
 
@@ -237,9 +267,71 @@
       }
       case "start_combat":
         await showLine(null, "[Combat is not available in this build yet.]"); hideDialogue(); return null;
+      case "play_match":
+        if (act.requires && !evalCond(state, act.requires)) {
+          await showLine(null, "Not now."); hideDialogue(); return null;
+        }
+        await runMatch(act.match); return null;
       default:
         return null;
     }
+  }
+
+  // ── card matches ────────────────────────────────────────────────────────────
+  function drawRank() { return 1 + Math.floor(Math.random() * 13); }
+  function rankName(r) { return ({ 1: "A", 11: "J", 12: "Q", 13: "K" })[r] || String(r); }
+  function handStr(cards) { return cards.map(rankName).join(" "); }
+
+  async function playHighCard(opp) {
+    var p = drawRank(), o = drawRank();
+    await showLine(null, "You draw " + rankName(p) + ".  " + charName(opp) + " draws " + rankName(o) + ".");
+    hideDialogue();
+    return scoreOutcome(p, o, null);
+  }
+
+  async function playBlackjack(opp) {
+    var ph = [drawRank(), drawRank()];
+    while (blackjackTotal(ph) < 21) {
+      await showLine(null, "Your hand: " + handStr(ph) + "  (" + blackjackTotal(ph) + ")");
+      hideDialogue();
+      if (await showMenu([{ text: "Hit" }, { text: "Stand" }]) === 1) break;
+      ph.push(drawRank());
+    }
+    var pt = blackjackTotal(ph);
+    var oh = [drawRank(), drawRank()];
+    while (blackjackTotal(oh) < 17) oh.push(drawRank());
+    var ot = blackjackTotal(oh);
+    await showLine(opp, "You stand at " + pt + ".  I have " + ot + ".");
+    hideDialogue();
+    return scoreOutcome(pt, ot, 21);
+  }
+
+  async function runMatch(matchId) {
+    var m = matchById[matchId];
+    if (!m) return null;
+    var opp = m.opponent, ante = m.ante || {};
+    var bal = state.vars[ante.var];
+    if (typeof bal === "number" && bal < ante.amount) {
+      await showLine(opp, "Come back when you can cover the " + ante.amount + " ante."); hideDialogue(); return null;
+    }
+    await showLine(opp, "A round of " + m.card_model.replace(/_/g, " ") + "? The ante is " + ante.amount + " " + ante.var + ".");
+    hideDialogue();
+
+    var rounds = m.rounds || 1, need = Math.floor(rounds / 2) + 1, pWins = 0, oWins = 0;
+    for (var r = 0; r < rounds; r++) {
+      var res = (m.card_model === "blackjack") ? await playBlackjack(opp) : await playHighCard(opp);
+      if (res === "win") pWins++;
+      else if (res === "lose") oWins++;
+      if (pWins >= need || oWins >= need) break;
+    }
+
+    var outcome = pWins > oWins ? "win" : (oWins > pWins ? "lose" : "push");
+    if (outcome === "push") { await showLine(opp, "A draw — your stake is safe."); hideDialogue(); return null; }
+    var resolution = outcome === "win" ? m.on_win : m.on_lose;
+    if (resolution) applyEffects(state, resolution.effects);
+    await showLine(opp, outcome === "win" ? "You take the pot." : "The pot is mine.");
+    hideDialogue();
+    return null;   // matches resolve back to the overworld (end: return)
   }
 
   async function runPlace(placeId) {
@@ -271,6 +363,7 @@
     (ir.nodes || []).forEach(function (n) { nodeById[n.id] = n; });
     (ir.places || []).forEach(function (p) { placeById[p.id] = p; });
     (ir.backgrounds || []).forEach(function (b) { bgFiles[b.id] = b.image_file; });
+    (ir.card_matches || []).forEach(function (m) { matchById[m.id] = m; });
   }
 
   function fit() {

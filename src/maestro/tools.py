@@ -52,6 +52,63 @@ def _node_content_error(content) -> Optional[str]:
     return None
 
 
+_CARD_MODELS = {"high_card", "blackjack"}
+
+
+def _match_content_error(content) -> Optional[str]:
+    if not isinstance(content, dict):
+        return "match content must be a JSON object {card_model, opponent, ante}"
+    if content.get("card_model") not in _CARD_MODELS:
+        return f"match.card_model must be one of {sorted(_CARD_MODELS)}"
+    if not content.get("opponent"):
+        return "match needs an 'opponent' (a premise character id)"
+    ante = content.get("ante")
+    if not isinstance(ante, dict) or not ante.get("var") or "amount" not in ante:
+        return "match.ante must be {var, amount} — the staked variable and how much"
+    return None
+
+
+def _action_validator():
+    """A JSON-Schema validator for a single interactable action, built once from the IR schema's
+    $defs/action — so write-time checks stay sourced from the one schema, not a hand-rolled copy."""
+    import json
+    from pathlib import Path
+    import jsonschema
+    schema = json.loads((Path(__file__).resolve().parents[2] / "docs" / "game_ir.schema.json")
+                        .read_text(encoding="utf-8"))
+    return jsonschema.Draft202012Validator({"$ref": "#/$defs/action", "$defs": schema["$defs"]})
+
+
+_ACTION_VALIDATOR = None
+
+
+def _action_struct_error(action) -> Optional[str]:
+    """Reject a malformed action at write time with an ACTIONABLE message — so the sub-loop fixes
+    it in one edit instead of discovering it at compile 20 steps later with the schema's opaque
+    'not valid under any of the given schemas'. Friendly hints for the common traps; the schema is
+    the backstop for the rest."""
+    if not isinstance(action, dict) or not action.get("type"):
+        return "action needs an object with a 'type'"
+    # The trap we keep hitting: a use clause with an empty `requires` ({}), which is not a valid
+    # condition. An unconditional outcome belongs in `fallback`, not a clause.
+    if action.get("type") == "use":
+        for i, cl in enumerate(action.get("clauses", []) or []):
+            req = cl.get("requires") if isinstance(cl, dict) else None
+            if not isinstance(req, dict) or not req:
+                return (f"use clause[{i}].requires must be a REAL condition — e.g. "
+                        f'{{"flag":"x"}}, {{"item":"y"}}, or {{"var":"g","op":">=","value":10}}. '
+                        f"For an outcome that ALWAYS fires, DROP the clause and put it in `fallback`: "
+                        f'{{"type":"use","fallback":{{"text":"...","effects":[...]}}}}.')
+    global _ACTION_VALIDATOR
+    if _ACTION_VALIDATOR is None:
+        _ACTION_VALIDATOR = _action_validator()
+    errs = sorted(_ACTION_VALIDATOR.iter_errors(action), key=lambda e: len(list(e.path)))
+    if errs:
+        loc = "/".join(str(p) for p in errs[0].path) or "action"
+        return f"action invalid at {loc}: {errs[0].message}"
+    return None
+
+
 def _place_content_error(content) -> Optional[str]:
     if not isinstance(content, dict):
         return "place content must be a JSON object {kind, background, interactables}"
@@ -61,9 +118,9 @@ def _place_content_error(content) -> Optional[str]:
     for j, h in enumerate(inter):
         if not isinstance(h, dict) or not h.get("id"):
             return f"place.interactables[{j}] needs an 'id'"
-        act = h.get("action")
-        if not isinstance(act, dict) or not act.get("type"):
-            return f"place.interactables[{j}].action needs an object with a 'type'"
+        err = _action_struct_error(h.get("action"))
+        if err:
+            return f"place.interactables[{j}] ({h.get('id')}): {err}"
     return None
 
 
@@ -131,6 +188,19 @@ TOOL_SCHEMAS: List[Dict] = [
             "label": {"type": "string"},
         }, "required": ["place_id", "interactable_id"]}}},
     {"type": "function", "function": {
+        "name": "add_interactable",
+        "description": "APPEND one new interactable (hotspot) to an existing place — without "
+                       "rewriting it (write_place clobbers the others) and without repointing an "
+                       "existing hotspot (edit_place breaks that hotspot's route). The right tool "
+                       "to add a move hotspot for an unreachable place, or a use/win hotspot to set "
+                       "the goal flag. Point-and-click only.",
+        "parameters": {"type": "object", "properties": {
+            "place_id": {"type": "string", "description": "the existing place to add to"},
+            "interactable": {"type": "object", "description":
+                "{id, label, position:{rect:{x,y,w,h}}, action:{type, ...}} — a new hotspot; its "
+                "id must not already exist in the place"},
+        }, "required": ["place_id", "interactable"]}}},
+    {"type": "function", "function": {
         "name": "read_place",
         "description": "Read one place's current background + interactables (with their actions).",
         "parameters": {"type": "object", "properties": {
@@ -151,6 +221,36 @@ TOOL_SCHEMAS: List[Dict] = [
                           "description": "[{id, default}] numeric state"},
             "start_place": {"type": "string"},
         }, "required": []}}},
+    {"type": "function", "function": {
+        "name": "write_match",
+        "description": "Write one wagering card match into `matches`: its card_model (high_card or "
+                       "blackjack), opponent (a premise character id), ante {var, amount}, and "
+                       "on_win/on_lose payout. Adds it to match_ids. Card games only.",
+        "parameters": {"type": "object", "properties": {
+            "match_id": {"type": "string", "description": "e.g. 'match_gambler'"},
+            "content": {"type": "object", "description":
+                "{card_model: 'high_card'|'blackjack', deck_model?: 'standard_52', "
+                "opponent: <char id>, ante: {var, amount}, rounds?: int, "
+                "on_win: {effects?, end?}, on_lose: {effects?, end?}}"},
+        }, "required": ["match_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "edit_match",
+        "description": "Patch fields of an existing card match without rewriting it (card_model, "
+                       "opponent, ante, rounds, on_win, on_lose). Card games only.",
+        "parameters": {"type": "object", "properties": {
+            "match_id": {"type": "string"},
+            "card_model": {"type": "string"},
+            "opponent": {"type": "string"},
+            "ante": {"type": "object", "description": "{var, amount}"},
+            "rounds": {"type": "integer"},
+            "on_win": {"type": "object", "description": "{effects?, end?}"},
+            "on_lose": {"type": "object", "description": "{effects?, end?}"},
+        }, "required": ["match_id"]}}},
+    {"type": "function", "function": {
+        "name": "read_match",
+        "description": "Read one card match's current definition.",
+        "parameters": {"type": "object", "properties": {
+            "match_id": {"type": "string"}}, "required": ["match_id"]}}},
     {"type": "function", "function": {
         "name": "read_component",
         "description": "Read a component you previously wrote.",
@@ -178,10 +278,6 @@ TOOL_SCHEMAS: List[Dict] = [
             "component_id": {"type": "string", "description": "Optional: scope to one component"}},
             "required": []}}},
     {"type": "function", "function": {
-        "name": "compile_renpy",
-        "description": "Build the artifact into a Ren'Py project and report the gate result.",
-        "parameters": {"type": "object", "properties": {}, "required": []}}},
-    {"type": "function", "function": {
         "name": "update_scratchpad",
         "description": "Replace your working memory (current goal, recent decisions, open questions).",
         "parameters": {"type": "object", "properties": {
@@ -198,15 +294,22 @@ TOOL_SCHEMAS: List[Dict] = [
         }, "required": ["question"]}}},
 ]
 
-_PLACE_TOOLS = {"write_place", "edit_place", "read_place", "set_places_meta"}
+def tool_schemas_for(spec) -> List[Dict]:
+    """Tool schemas for the decider, scoped to the spec's active modules. A tool a module *owns*
+    (e.g. navigation's place tools) is included only when that module is in the composition; every
+    ungated tool is always present. Keeps each game's tool set focused on what it can build.
 
+    `spec` may be a Spec, a spec dict, or a bare genre/preset string."""
+    from maestro.modules import compose, modules_for, MODULE_REGISTRY
 
-def tool_schemas_for(genre: str) -> List[Dict]:
-    """Tool schemas for the decider, scoped to the genre — point-and-click needs the place
-    tools; the visual novel doesn't, so they're dropped to keep its tool set focused."""
-    if genre == "point_and_click":
-        return TOOL_SCHEMAS
-    return [s for s in TOOL_SCHEMAS if s["function"]["name"] not in _PLACE_TOOLS]
+    spec_data = getattr(spec, "data", spec)
+    if isinstance(spec_data, str):
+        spec_data = {"genre": spec_data}
+
+    gated = {name for m in MODULE_REGISTRY.values() for name in m.tool_names}
+    active = set(compose(modules_for(spec_data)).tool_names)
+    return [s for s in TOOL_SCHEMAS
+            if s["function"]["name"] not in gated or s["function"]["name"] in active]
 
 
 def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> Dict[str, Callable]:
@@ -372,9 +475,17 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id}
 
-    def set_places_meta(goal=None, items=None, flags=None, variables=None, start_place=None) -> Dict:
+    def set_places_meta(goal=None, items=None, flags=None, variables=None, start_place=None,
+                        **ignored) -> Dict:
         """Declare the point-and-click scaffold on `places` — win goal, items, flags, variables,
-        start_place. write_place never sets these. Merges: only the fields passed change."""
+        start_place. write_place never sets these. Merges: only the fields passed change. Stray
+        kwargs (e.g. the model jamming `nodes=` here) are ignored, not a crash — but note them so
+        the model learns this tool can't touch that."""
+        if ignored:
+            return {"ok": False, "error":
+                    f"set_places_meta does not take {sorted(ignored)} — it only declares goal/items/"
+                    f"flags/variables/start_place. To change nodes use write_node/edit_node (in the "
+                    f"nodes step); for hotspots use add_interactable/edit_place."}
         _require_frozen()
         if _locked("places"):
             return _locked_error("places")
@@ -413,8 +524,9 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         if h is None:
             return {"ok": False, "error": f"no interactable {interactable_id!r} in place {place_id!r}"}
         if action is not None:
-            if not action.get("type"):
-                return {"ok": False, "error": "action needs a 'type'"}
+            err = _action_struct_error(action)
+            if err:
+                return {"ok": False, "error": err}
             h["action"] = action
         if position is not None:
             h["position"] = position
@@ -423,11 +535,85 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
 
+    def add_interactable(place_id: str, interactable: Dict) -> Dict:
+        """APPEND one new interactable to an existing place — without rewriting it (write_place
+        clobbers the others) and without cannibalizing an existing hotspot (edit_place repoints,
+        which breaks that hotspot's current route). This is the right tool to ADD a move hotspot
+        for an unreachable place, or a use/win hotspot to set the goal flag."""
+        _require_frozen()
+        if _locked("places"):
+            return _locked_error("places")
+        if not isinstance(interactable, dict) or not interactable.get("id"):
+            return {"ok": False, "error": "interactable must be an object with an 'id'"}
+        err = _action_struct_error(interactable.get("action"))
+        if err:
+            return {"ok": False, "error": err}
+        places = state.read_component("places") or {}
+        place = (places.get("places") or {}).get(place_id)
+        if place is None:
+            return {"ok": False, "error": f"no place {place_id!r}"}
+        inter = place.setdefault("interactables", [])
+        if any(i.get("id") == interactable["id"] for i in inter):
+            return {"ok": False, "error":
+                    f"interactable {interactable['id']!r} already exists in {place_id!r} — "
+                    f"use edit_place to change it, or pick a new id"}
+        inter.append(interactable)
+        state.write_component("places", places)
+        return {"ok": True, "place_id": place_id, "interactable_id": interactable["id"]}
+
     def read_place(place_id: str) -> Dict:
         place = (state.read_component("places") or {}).get("places", {}).get(place_id)
         if place is None:
             return {"ok": False, "error": f"no place {place_id!r}"}
         return {"ok": True, "place_id": place_id, "content": place}
+
+    def write_match(match_id: str, content) -> Dict:
+        """Write one card match into `matches` (mirrors write_node/write_place)."""
+        _require_frozen()
+        if _locked("matches"):
+            return _locked_error("matches")
+        err = _match_content_error(content)
+        if err:
+            return {"ok": False, "error": err}
+        matches = state.read_component("matches") or {"match_ids": [], "matches": {}}
+        matches.setdefault("matches", {})[match_id] = content
+        matches.setdefault("match_ids", [])
+        if match_id not in matches["match_ids"]:
+            matches["match_ids"].append(match_id)
+        state.write_component("matches", matches)
+        return {"ok": True, "match_id": match_id}
+
+    def edit_match(match_id: str, card_model=None, opponent=None, ante=None,
+                   rounds=None, on_win=None, on_lose=None) -> Dict:
+        _require_frozen()
+        if _locked("matches"):
+            return _locked_error("matches")
+        matches = state.read_component("matches") or {}
+        m = (matches.get("matches") or {}).get(match_id)
+        if m is None:
+            return {"ok": False, "error": f"no match {match_id!r} to edit"}
+        if card_model is not None:
+            if card_model not in _CARD_MODELS:
+                return {"ok": False, "error": f"card_model must be one of {sorted(_CARD_MODELS)}"}
+            m["card_model"] = card_model
+        if opponent is not None:
+            m["opponent"] = opponent
+        if ante is not None:
+            m["ante"] = ante
+        if rounds is not None:
+            m["rounds"] = rounds
+        if on_win is not None:
+            m["on_win"] = on_win
+        if on_lose is not None:
+            m["on_lose"] = on_lose
+        state.write_component("matches", matches)
+        return {"ok": True, "match_id": match_id}
+
+    def read_match(match_id: str) -> Dict:
+        m = (state.read_component("matches") or {}).get("matches", {}).get(match_id)
+        if m is None:
+            return {"ok": False, "error": f"no match {match_id!r}"}
+        return {"ok": True, "match_id": match_id, "content": m}
 
     def generate_asset() -> Dict:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
@@ -457,12 +643,9 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         failures = validate(spec, state, component_id)
         return {"ok": not failures, "failures": failures}
 
-    def compile_renpy_tool() -> Dict:
-        # Lint-only during the loop; final packaging happens once at the end (run_build).
-        # Dispatch on the chosen engine — same pass/fail contract either way, so the loop
-        # and the `compiles` done-condition are engine-agnostic.
-        from maestro.engines import compile_for
-        return compile_for(spec.engine)(state.run_dir, distribute=False)
+    # No compile tool: the executor already runs the `compiles` done-condition (a real build)
+    # after every step, so a manual trigger only wastes a step — and lets the agent compile early,
+    # fighting the deliberate "compiles last" check ordering (see executor._CHECK_PRIORITY).
 
     # ── working memory ───────────────────────────────────────────────────────
     def update_scratchpad(current_goal: str = "",
@@ -483,14 +666,17 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         "edit_node": edit_node,
         "write_place": write_place,
         "edit_place": edit_place,
+        "add_interactable": add_interactable,
         "read_place": read_place,
         "set_places_meta": set_places_meta,
+        "write_match": write_match,
+        "edit_match": edit_match,
+        "read_match": read_match,
         "read_component": read_component,
         "read_node": read_node,
         "read_story_state": read_story_state,
         "generate_asset": generate_asset,
         "validate": validate_tool,
-        "compile_renpy": compile_renpy_tool,
         "update_scratchpad": update_scratchpad,
         "request_review": request_review,
     }

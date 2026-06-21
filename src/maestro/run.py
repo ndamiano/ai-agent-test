@@ -18,7 +18,7 @@ from maestro.spec import Spec
 logger = logging.getLogger(__name__)
 from maestro.state import RunState
 from maestro.tools import build_tools, tool_schemas_for
-from maestro.agent import make_llm_decider, make_node_subloop
+from maestro.agent import make_llm_decider
 from maestro.executor import Executor, ExecutorResult
 
 
@@ -33,7 +33,7 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     # trivial one; the loop is cheap now (compile checks lint-only, steps run <15s), so
     # budget for a 50-node game with wiring + compile-fix slack rather than starving it.
     from maestro.spec_tools import _emit
-    from maestro.agent import make_place_subloop
+    from maestro.modules import compose, modules_for
     from renpy.ir_checks import register_all as register_ir_checks, node_view, place_view
     from renpy.component_schemas import SCHEMAS as ir_schemas, skeleton_guide
 
@@ -45,21 +45,20 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
         raise ValueError(f"no spec for run {run_id!r} — propose one first")
     spec = Spec(spec_data)
     guide = skeleton_guide(genre=spec.genre)
+    composed = compose(modules_for(spec.data))
 
     tools = build_tools(spec, state, schemas=ir_schemas)
     decider = decide or make_llm_decider(component_guide=guide,
-                                         tool_schemas=tool_schemas_for(spec.genre))
-    # nodes / places iterate until each target check passes — a stateful sub-loop, not one-shot
-    # steps. A scripted `decide` (tests) keeps the simple stateless path. A point-and-click game
-    # drives places AND reuses nodes for NPC dialogue.
+                                         tool_schemas=tool_schemas_for(spec))
+    # Each owned component with a sub-loop iterates until its target checks pass — a stateful
+    # sub-loop, not one-shot steps. A scripted `decide` (tests) keeps the simple stateless path.
+    # Projectors are the executor's engine-neutral graph views, keyed by the component in play.
+    _VIEWS = {"nodes": node_view, "places": place_view}
+    projectors = {cid: _VIEWS[cid] for cid in composed.components if cid in _VIEWS}
     sub_runners = {}
-    projectors = {"nodes": node_view}
     if not decide:
-        sub_runners["nodes"] = make_node_subloop(component_guide=guide)
-    if spec.genre == "point_and_click":
-        projectors["places"] = place_view
-        if not decide:
-            sub_runners["places"] = make_place_subloop(component_guide=guide)
+        for cid, factory in composed.sub_runners.items():
+            sub_runners[cid] = factory(component_guide=guide)
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),

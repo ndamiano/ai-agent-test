@@ -16,7 +16,36 @@ def _ir_genre(genre: str) -> str:
             "rpg": "rpg"}.get(genre, "visual_novel")
 
 
-def _characters(premise: Dict, manifest: Dict) -> List[Dict]:
+EMOTIONS = ("neutral", "happy", "sad", "angry", "surprised", "worried")
+
+
+def expression_file(image_file: str, emotion: str) -> str:
+    """Per-emotion sprite filename derived from a character's base image_file. Neutral keeps the
+    original file (so the existing single-sprite path is untouched); other emotions get a
+    `<stem>_<emotion>.png` sibling. Shared by the IR projection and the asset pipeline so the
+    file the compiler references is the file generation writes."""
+    if emotion == "neutral":
+        return image_file
+    stem = image_file.rsplit(".", 1)[0]
+    return f"{stem}_{emotion}.png"
+
+
+def used_emotions(char_id: str, nodes: List[Dict]) -> List[str]:
+    """Distinct emotions this character actually speaks with, in EMOTIONS order, always
+    including neutral. Bounds how many sprite variants get generated per cast member."""
+    seen = {"neutral"}
+    for node in nodes:
+        lines = node.get("lines")
+        if not isinstance(lines, list):
+            continue  # malformed input is the schema gate's job to reject, not ours to crash on
+        for line in lines:
+            if (isinstance(line, dict) and line.get("speaker") == char_id
+                    and line.get("emotion") in EMOTIONS):
+                seen.add(line["emotion"])
+    return [e for e in EMOTIONS if e in seen]
+
+
+def _characters(premise: Dict, manifest: Dict, nodes: List[Dict]) -> List[Dict]:
     sprites = {c.get("id"): c.get("image_file")
                for c in manifest.get("characters", []) if c.get("id")}
     out = []
@@ -24,8 +53,12 @@ def _characters(premise: Dict, manifest: Dict) -> List[Dict]:
         if not c.get("id"):
             continue
         ch = {"id": c["id"], "name": c.get("name") or c["id"]}
-        if sprites.get(c["id"]):
-            ch["sprite"] = sprites[c["id"]]
+        base = sprites.get(c["id"])
+        if base:
+            ch["sprite"] = base
+            emotions = used_emotions(c["id"], nodes)
+            if emotions != ["neutral"]:
+                ch["expressions"] = {e: expression_file(base, e) for e in emotions}
         out.append(ch)
     return out
 
@@ -48,11 +81,12 @@ def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
     node_ids = nodes_comp.get("node_ids", []) or []
     nodes_map = nodes_comp.get("nodes", {}) or {}
 
+    nodes = [{"id": nid, **nodes_map.get(nid, {})} for nid in node_ids]
     ir: Dict = {
         "version": "0.1",
         "genre": _ir_genre(genre),
-        "characters": _characters(premise, manifest),
-        "nodes": [{"id": nid, **nodes_map.get(nid, {})} for nid in node_ids],
+        "characters": _characters(premise, manifest, nodes),
+        "nodes": nodes,
     }
 
     backgrounds = _backgrounds(manifest)

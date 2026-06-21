@@ -158,9 +158,10 @@ def _staged_ir():
 def test_image_declarations_emitted():
     out = compile_vn(_staged_ir())
     assert 'image bg_room = "images/room.png"' in out
-    # character sprites are ATL blocks with a baked zoom so they sit at stage height
-    assert 'image char_al:\n    "images/al.png"\n    zoom 0.55' in out
-    assert 'image char_bo:\n    "images/bo.png"\n    zoom 0.55' in out
+    # character sprites are ATL blocks with a baked zoom so they sit at stage height;
+    # single-sprite characters declare just their neutral expression.
+    assert 'image char_al_neutral:\n    "images/al.png"\n    zoom 0.55' in out
+    assert 'image char_bo_neutral:\n    "images/bo.png"\n    zoom 0.55' in out
     assert "char_cy" not in out  # no sprite, no decl
 
 
@@ -170,8 +171,8 @@ def test_speaker_highlighting_dims_non_speakers():
     assert "transform not_speaking:\n    alpha 0.5" in out
     n1 = out.split("label n1:")[1].split("label n2:")[0]
     # al speaks first with bo also on stage -> al brightened, bo dimmed, before al's line
-    assert "show char_al at stage(0.3333), speaking" in n1
-    assert "show char_bo at stage(0.6667), not_speaking" in n1
+    assert "show char_al_neutral as char_al at stage(0.3333), speaking" in n1
+    assert "show char_bo_neutral as char_bo at stage(0.6667), not_speaking" in n1
 
 
 def test_no_highlight_with_single_speaker():
@@ -192,8 +193,8 @@ def test_all_speakers_shown_up_front_once():
     n1 = out.split("label n1:")[1].split("label n2:")[0]
     # preamble = staging before the first spoken line: each sprite-speaker shown once, up front
     preamble = n1.split('al "hi"')[0]
-    assert preamble.count("show char_al at stage(0.3333)\n") == 1
-    assert preamble.count("show char_bo at stage(0.6667)\n") == 1
+    assert preamble.count("show char_al_neutral as char_al at stage(0.3333)\n") == 1
+    assert preamble.count("show char_bo_neutral as char_bo at stage(0.6667)\n") == 1
     # cy has no sprite -> never shown anywhere in the node
     assert "show char_cy" not in n1
 
@@ -202,11 +203,11 @@ def test_sprites_spread_so_all_visible():
     out = compile_vn(_staged_ir())
     n1 = out.split("label n1:")[1].split("label n2:")[0]
     # two visible speakers (al, bo) -> thirds, distinct positions, none overlapping
-    assert "show char_al at stage(0.3333)" in n1
-    assert "show char_bo at stage(0.6667)" in n1
+    assert "show char_al_neutral as char_al at stage(0.3333)" in n1
+    assert "show char_bo_neutral as char_bo at stage(0.6667)" in n1
     # n2 has a single sprite speaker -> centred
     n2 = out.split("label n2:")[1]
-    assert "show char_al at stage(0.5)" in n2
+    assert "show char_al_neutral as char_al at stage(0.5)" in n2
 
 
 def test_sprite_position_is_deterministic():
@@ -216,11 +217,21 @@ def test_sprite_position_is_deterministic():
     assert "transform stage(x):" in out1
 
 
-def test_no_scene_when_location_absent_or_unknown():
+def test_unknown_location_clears_stage_without_a_background():
+    # An undeclared/absent location must NOT name a background, but must still emit a bare `scene`
+    # so sprites from the previous node don't linger into this one.
     ir = _staged_ir()
     ir["nodes"][0]["location"] = "bg_ghost"  # not a declared background
     out = compile_vn(ir)
     n1 = out.split("label n1:")[1].split("label n2:")[0]
-    assert "scene" not in n1
+    assert "scene bg_ghost" not in n1     # the bogus id never reaches the script
+    assert "\n    scene\n" in n1          # but the stage is reset to clear lingering sprites
     n2 = out.split("label n2:")[1]
-    assert "scene" not in n2  # n2 had no location at all
+    assert "\n    scene\n" in n2           # n2 had no location at all -> still reset
+
+
+def test_background_carries_forward_to_untagged_node():
+    # n1 sets bg_room; n2 has no location -> it should continue the same background, not blank out.
+    out = compile_vn(_staged_ir())
+    n2 = out.split("label n2:")[1]
+    assert "\n    scene bg_room\n" in n2

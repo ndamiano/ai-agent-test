@@ -5,9 +5,9 @@ about escaping, indentation, or `label`/`menu:` syntax.
 THE NODE SHAPE — write_node(node_id, content) where content is:
     {
       "lines": [
-        {"speaker": "<char id>", "text": "..."},
+        {"speaker": "<char id>", "text": "...", "emotion": "happy"},
         {"speaker": null, "text": "narration — speaker is null, never a 'narrator' character"},
-        {"speaker": "<char id>", "text": "...", "effects": [{"set_flag": "<flag>"}]}
+        {"speaker": "<char id>", "text": "...", "emotion": "angry", "effects": [{"set_flag": "<flag>"}]}
       ],
       "end": { ... one terminal, see below ... }
     }
@@ -17,6 +17,11 @@ open_threads_add / open_threads_resolve / event_summary).
 USE THE GIVEN IDS — never invent or rename:
 - speaker = an EXACT id from premise.characters (LOCKED COMPONENTS), or null for narration.
 - a jump/menu target = a node id in CURRENT NODES, or a node you create later this build.
+
+EMOTION (spoken lines only): tag each line with the speaker's expression so their face changes as
+they talk — one of neutral, happy, sad, angry, surprised, worried. Choose the one the line's
+subtext carries (a threat → angry, a reveal landing → surprised); omit only when neutral fits.
+Narration lines (speaker null) take no emotion.
 
 THE end (pick one):
 - continue:  {"type": "jump", "target": "<node id>"}

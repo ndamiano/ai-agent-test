@@ -108,7 +108,12 @@
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "name": { "type": "string", "description": "Display name." },
-        "sprite": { "type": "string", "description": "Optional asset id for portrait/sprite." }
+        "sprite": { "type": "string", "description": "Optional asset id for the neutral portrait/sprite (the base expression)." },
+        "expressions": {
+          "type": "object",
+          "description": "Optional per-emotion sprite variants ({emotion: image_file}). A line's `emotion` selects one; falls back to `sprite` (neutral) when absent. Derived by the asset pipeline, not hand-authored.",
+          "additionalProperties": { "type": "string" }
+        }
       }
     },
 
@@ -392,6 +397,10 @@
         "speaker": {
           "type": ["string", "null"],
           "description": "character id, or null for narration."
+        },
+        "emotion": {
+          "enum": ["neutral", "happy", "sad", "angry", "surprised", "worried"],
+          "description": "Optional facial expression for the speaker on this line (default neutral). Selects the speaker's matching sprite variant; ignored for narration (speaker null)."
         },
         "text": { "type": "string" },
         "effects": {

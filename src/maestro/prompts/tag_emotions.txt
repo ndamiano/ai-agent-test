@@ -1,0 +1,15 @@
+You assign a facial expression to each spoken line of a visual-novel scene, so the character's
+face matches what they are saying. Respond with a TOOL-FREE JSON object, nothing else.
+
+OUTPUT EXACTLY THIS SHAPE:
+{
+  "emotions": ["neutral", "happy", "..."]   // one per numbered line below, SAME order and count
+}
+
+Each value MUST be one of: neutral, happy, sad, angry, surprised, worried.
+Pick the expression the line's words and subtext convey — a threat is angry, a sudden reveal
+landing on the listener is surprised, a confession is sad, banter is happy. Use neutral only when
+the line is genuinely flat. Return exactly as many emotions as there are lines.
+
+LINES (index. speaker: text):
+{{lines}}

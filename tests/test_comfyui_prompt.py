@@ -36,7 +36,9 @@ def test_no_pony_booru_quality_tags_leak():
 def test_background_bakes_description_into_prompt():
     job = build_background_job("A war-scarred plain at twilight with amber backlighting.")
     assert "war-scarred plain" in job["prompt"]
-    assert "no characters" in job["prompt"]
+    assert "no humans" in job["prompt"]  # background stays unpopulated
+    # backgrounds render on the cel-shaded anime scene model, matching the sprite style
+    assert job["workflow_override"]["4"]["inputs"]["ckpt_name"] == "waiIllustriousSDXL_v170.safetensors"
 
 
 def test_cg_does_not_force_no_characters():

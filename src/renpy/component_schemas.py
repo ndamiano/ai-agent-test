@@ -12,7 +12,10 @@ and ir_crossref at compile.
 
 from typing import Callable, Dict, Optional
 
+from maestro.ir_assemble import EMOTIONS as _EMOTIONS_TUPLE
+
 _END_TYPES = {"jump", "menu", "return", "end"}
+_EMOTIONS = set(_EMOTIONS_TUPLE)
 
 
 def _v_premise(c: Dict) -> Optional[str]:
@@ -67,6 +70,11 @@ def _v_nodes(c: Dict) -> Optional[str]:
         lines = node.get("lines")
         if not isinstance(lines, list) or not lines:
             return f"nodes.nodes['{nid}'].lines must be a non-empty list of {{speaker, text}}"
+        for ln in lines:
+            emo = isinstance(ln, dict) and ln.get("emotion")
+            if emo and emo not in _EMOTIONS:
+                return (f"nodes.nodes['{nid}'] has line emotion {emo!r}; "
+                        f"must be one of {sorted(_EMOTIONS)}")
         end = node.get("end")
         if not isinstance(end, dict) or end.get("type") not in _END_TYPES:
             return f"nodes.nodes['{nid}'].end must have a 'type' in {sorted(_END_TYPES)}"
@@ -173,9 +181,9 @@ SKELETONS: Dict[str, str] = {
         '    "scene_01": {\n'
         '      "location": "bg_<place>",\n'
         '      "lines": [\n'
-        '        {"speaker": "<char_a>", "text": "..."},\n'
+        '        {"speaker": "<char_a>", "text": "...", "emotion": "happy"},\n'
         '        {"speaker": null, "text": "narration has speaker null"},\n'
-        '        {"speaker": "<char_b>", "text": "...", "effects": [{"set_flag": "<flag>"}]}\n'
+        '        {"speaker": "<char_b>", "text": "...", "emotion": "angry", "effects": [{"set_flag": "<flag>"}]}\n'
         '      ],\n'
         '      "end": {"type": "menu", "choices": [\n'
         '        {"text": "choice one", "target": "scene_02"},\n'
@@ -190,6 +198,9 @@ SKELETONS: Dict[str, str] = {
         '// location = a background asset id from asset_manifest.backgrounds; it sets the scene\n'
         '//   image and every character who speaks in the node is shown over it. Tag EVERY node.\n'
         '// speaker = an EXACT premise.characters id, or null for narration (no "narrator").\n'
+        '// emotion (spoken lines only) = the speaker\'s expression on this line: one of\n'
+        '//   neutral, happy, sad, angry, surprised, worried. Pick the one the line conveys so\n'
+        '//   the character\'s face changes as they talk; omit for neutral. Ignored on narration.\n'
         '// end.type is one of: jump {target}, menu {choices:[{text,target,requires?,effects?}]},\n'
         '//   return (back to caller), end {ending?} (a definitive ending).\n'
         '// Every jump/menu target MUST be a node you also create, AND every node must be\n'

@@ -61,7 +61,7 @@ def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
     from renpy.fns import generate_images
 
     monkeypatch.setattr(
-        comfyui_tools, "generate_images_batch",
+        comfyui_tools, "run_jobs",
         lambda jobs: [{"success": False, "error": "no comfyui"} for _ in jobs],
     )
 

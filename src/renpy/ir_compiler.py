@@ -18,7 +18,8 @@ from maestro.ir_assemble import assemble_ir
 from renpy.compiler import compile_gate
 from renpy.ir_vn import compile_vn
 from renpy.lint import node_line_ranges, run_final_lint, pnc_line_ranges
-from renpy.fns import _get_sdk_path, _merge_cast_into_manifest, _ensure_placeholder_images
+from renpy.fns import (_get_sdk_path, _merge_cast_into_manifest, _ensure_placeholder_images,
+                       _ensure_expression_placeholders)
 from renpy.renpy_builder import _copy_templates, _distribute, write_options_rpy
 
 _REQUIRED = ("premise", "asset_manifest")
@@ -77,6 +78,7 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
         manifest = _merge_cast_into_manifest(inputs.get("premise", {}),
                                              inputs.get("asset_manifest", {}))
         _ensure_placeholder_images(manifest, game_dir)
+        _ensure_expression_placeholders(ir, game_dir)
 
     build_result: Dict = {"project_dir": os.path.abspath(output_dir)}
     if sdk_path:

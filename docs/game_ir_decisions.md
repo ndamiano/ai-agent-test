@@ -39,6 +39,13 @@ regex over engine source.
    works. Effects `set_var` / `add_var` mutate. Available to every genre, not just RPG.
 4. **State changes attach to a concrete beat** — a dialogue `line` (fires after it's spoken), a
    menu `choice`, or a use `outcome`. No node-level effects: the timing was ambiguous.
+   **Emotion is per-line too, for the same reason:** a `line.emotion` (bounded enum
+   neutral/happy/sad/angry/surprised/worried) is the one expressive control the author writes; the
+   sprite variants are *derived*, not authored. `ir_assemble` scans the lines to build a
+   character's `expressions` map (only emotions actually spoken, so 2 used ≠ 6 generated), the
+   asset pipeline img2img's each variant off the neutral base, and `ir_vn` swaps the speaker's
+   sprite per line. Bounded enum + derived assets keeps authoring cheap for a small model and
+   bounds generation cost; a missing variant degrades to the neutral face, never a broken build.
 5. **`goal` (win condition) is optional.** Open-ended games (Stardew-shaped) may have none. A
    definitive ending is a node with `end: {type: end}`; an open world loops via
    `end: {type: return}`. So "the end" is per-node, and not every game has a win.

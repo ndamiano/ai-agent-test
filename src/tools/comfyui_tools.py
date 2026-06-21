@@ -4,6 +4,7 @@ import json
 import uuid
 import time
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
 _TXT2IMG_CHARACTER_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_character.json"
+_IMG2IMG_CHARACTER_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_character.json"
+_TXT2IMG_BACKGROUND_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_background.json"
 _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
 # ---------------------------------------------------------------------------
@@ -40,8 +43,14 @@ _CHAR_NEGATIVE = (
     "background scenery, multiple characters, cropped, watermark, signature, text"
 )
 
+# Backgrounds render on WAI Illustrious (SDXL), a cel-shaded anime model — so scenes MATCH the
+# anime sprite style instead of clashing with the photoreal look the Qwen/Anima model gives. It
+# reads booru-style quality tags, hence the leading tag salad (unlike the Anima prompts).
+_BG_QUALITY = "masterpiece, best quality, amazing quality, newest, absurdres"
 _BG_NEGATIVE = (
-    "low quality, blurry, distorted, people, characters, figures, watermark, signature, text"
+    "worst quality, low quality, blurry, distorted, people, person, 1girl, 1boy, "
+    "characters, figures, monster, creature, animal, insect, skeleton, subject, "
+    "foreground object, close-up, watermark, signature, text"
 )
 
 _CG_NEGATIVE = (
@@ -57,6 +66,31 @@ _TITLE_CARD_NEGATIVE = (
 def _build_character_prompt(char_data: dict) -> tuple[str, str]:
     description = (char_data.get("description") or char_data.get("name") or "").strip()
     positive = f"{_QUALITY}. {_STYLE_LOCK}. {description} {_CHAR_COMPOSITION}"
+    return positive, _CHAR_NEGATIVE
+
+
+# Emotion variants are img2img'd off the neutral base: same description + composition (so pose
+# and identity hold), only the facial-expression clause changes. The base's "relaxed neutral
+# pose" wording is dropped here so the expression is the sole variable.
+_CHAR_COMPOSITION_EMOTE = (
+    "Full body view of the character standing in a relaxed pose, arms at their "
+    "sides, facing the viewer, against a plain white background."
+)
+_EMOTION_PHRASE = {
+    "neutral":   "a calm, neutral expression",
+    "happy":     "a happy, warm smile",
+    "sad":       "a sad, downcast expression",
+    "angry":     "an angry, scowling expression",
+    "surprised": "a surprised, wide-eyed expression",
+    "worried":   "a worried, anxious expression",
+}
+
+
+def _build_character_emotion_prompt(char_data: dict, emotion: str) -> tuple[str, str]:
+    description = (char_data.get("description") or char_data.get("name") or "").strip()
+    phrase = _EMOTION_PHRASE.get(emotion, _EMOTION_PHRASE["neutral"])
+    positive = (f"{_QUALITY}. {_STYLE_LOCK}. {description} {_CHAR_COMPOSITION_EMOTE} "
+                f"Their facial expression shows {phrase}.")
     return positive, _CHAR_NEGATIVE
 
 
@@ -87,7 +121,7 @@ def _build_widescreen_workflow(base_workflow: dict, positive: str, negative: str
 
 
 def build_character_job(char_data: dict) -> dict:
-    """Return a {prompt, workflow_override} job dict for a character portrait."""
+    """Return a {prompt, workflow_override} job dict for a character's neutral base portrait."""
     positive, negative = _build_character_prompt(char_data)
     return {
         "prompt": positive,
@@ -95,15 +129,79 @@ def build_character_job(char_data: dict) -> dict:
     }
 
 
-def build_background_job(description: str) -> dict:
-    """Return a {prompt, workflow_override} job dict for a background image."""
-    positive = (
-        f"A wide, atmospheric visual novel background establishing shot of a detailed "
-        f"environment, with no characters present. {description}"
-    )
+def _build_img2img_character_workflow(base_workflow: dict, positive: str, negative: str,
+                                      image_name: str, denoise: float) -> dict:
+    import copy
+    wf = copy.deepcopy(base_workflow)
+    wf["11"]["inputs"]["text"] = positive
+    wf["12"]["inputs"]["text"] = negative
+    wf["28"]["inputs"]["image"] = image_name
+    wf["19"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
+    wf["19"]["inputs"]["denoise"] = denoise
+    return wf
+
+
+def build_character_emotion_job(char_data: dict, emotion: str, base_image_name: str,
+                                denoise: float = 0.5) -> dict:
+    """Return a {prompt, workflow_override} job dict for an expression variant, img2img'd off the
+    character's already-generated neutral base (uploaded to ComfyUI as `base_image_name`). Low
+    denoise holds identity/pose; only the facial expression changes."""
+    positive, negative = _build_character_emotion_prompt(char_data, emotion)
     return {
         "prompt": positive,
-        "workflow_override": _build_widescreen_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _BG_NEGATIVE),
+        "workflow_override": _build_img2img_character_workflow(
+            _load_workflow(_IMG2IMG_CHARACTER_WORKFLOW_PATH), positive, negative,
+            base_image_name, denoise),
+    }
+
+
+def upload_image(path: str, endpoint: Optional[str] = None) -> str:
+    """Upload a local image into ComfyUI's input dir (POST /upload/image) and return the stored
+    name LoadImage references. Used to seed img2img from a just-generated neutral sprite."""
+    endpoint = (endpoint or _get_comfyui_endpoint()).rstrip("/")
+    filename = Path(path).name
+    with open(path, "rb") as f:
+        file_bytes = f.read()
+
+    boundary = uuid.uuid4().hex
+    body = b"".join([
+        f"--{boundary}\r\n".encode(),
+        f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'.encode(),
+        b"Content-Type: application/octet-stream\r\n\r\n",
+        file_bytes,
+        f"\r\n--{boundary}\r\n".encode(),
+        b'Content-Disposition: form-data; name="overwrite"\r\n\r\n',
+        b"true",
+        f"\r\n--{boundary}--\r\n".encode(),
+    ])
+    req = urllib.request.Request(
+        f"{endpoint}/upload/image", data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        info = json.loads(resp.read())
+    name = info.get("name", filename)
+    subfolder = info.get("subfolder", "")
+    return f"{subfolder}/{name}" if subfolder else name
+
+
+def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
+    import copy
+    wf = copy.deepcopy(base_workflow)
+    wf["6"]["inputs"]["text"] = positive
+    wf["7"]["inputs"]["text"] = negative
+    wf["3"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
+    return wf
+
+
+def build_background_job(description: str) -> dict:
+    """Return a {prompt, workflow_override} job dict for a background image (WAI Illustrious)."""
+    positive = (f"{_BG_QUALITY}, scenery, no humans, empty environment, establishing shot, "
+                f"wide angle background, {description}")
+    return {
+        "prompt": positive,
+        "workflow_override": _build_background_workflow(
+            _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _BG_NEGATIVE),
     }
 
 
@@ -336,39 +434,40 @@ def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dic
     }
 
 
-def generate_images_batch(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Generate multiple images with a single LLM unload/reload cycle.
-
-    Each job: {"prompt": str, "workflow_override": dict | None}
-    Returns results in the same order as jobs.
-    """
-    comfyui_settings = _get_comfyui_settings()
-    vram_management  = comfyui_settings.get("vram_management", False)
-    endpoint         = _get_comfyui_endpoint()
-
+@contextmanager
+def vram_bracket():
+    """Free ComfyUI/LM-Studio VRAM for the duration, reloading the LLM on exit. Lets a caller
+    run several `run_jobs` passes (e.g. neutral bases then img2img emotion variants) inside ONE
+    unload/reload cycle instead of paying it per pass. No-op unless `comfyui.vram_management`."""
+    vram_management = _get_comfyui_settings().get("vram_management", False)
+    endpoint = _get_comfyui_endpoint()
     unloaded_model: Optional[str] = None
     if vram_management:
         _comfyui_free_vram(endpoint)
         unloaded_model = _lmstudio_get_loaded_model()
         if unloaded_model:
             _lmstudio_unload(unloaded_model)
-
-    results = []
     try:
-        for job in jobs:
-            try:
-                result = _run_comfyui_job(endpoint, job["prompt"], job.get("workflow_override"))
-            except Exception as e:
-                logger.error(f"generate_images_batch job failed: {e}")
-                result = {"success": False, "error": str(e)}
-            results.append(result)
+        yield
     finally:
         if vram_management:
             _comfyui_free_vram(endpoint)
             if unloaded_model:
                 _lmstudio_load(unloaded_model)
 
+
+def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Run image jobs sequentially (no VRAM management — wrap in `vram_bracket`). Each job:
+    {"prompt": str, "workflow_override": dict | None}. Results returned in job order."""
+    endpoint = _get_comfyui_endpoint()
+    results = []
+    for job in jobs:
+        try:
+            result = _run_comfyui_job(endpoint, job["prompt"], job.get("workflow_override"))
+        except Exception as e:
+            logger.error(f"run_jobs job failed: {e}")
+            result = {"success": False, "error": str(e)}
+        results.append(result)
     return results
 
 

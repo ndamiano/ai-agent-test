@@ -97,18 +97,18 @@ def _end(end: Dict, ind: str) -> List[str]:
 
 
 def node_block(node: Dict, preamble: Optional[List[str]] = None,
-               restage: Optional[Callable[[str], List[str]]] = None) -> List[str]:
+               restage: Optional[Callable[[str, str], List[str]]] = None) -> List[str]:
     """`label <id>:` + optional staging preamble (scene/show) + the node's lines (with per-line
-    effects) + its terminal control. `restage(speaker)` (VN only) returns the show-lines that
-    re-stage the cast — brightening the speaker, dimming the rest — emitted before each spoken
-    line. Shared with the point-and-click compiler (NPC dialogue nodes pass neither: they play
-    over the place they were called from)."""
+    effects) + its terminal control. `restage(speaker, emotion)` (VN only) returns the show-lines
+    that re-stage the cast — swapping the speaker to their line's expression, brightening them, and
+    dimming the rest — emitted before each spoken line. Shared with the point-and-click compiler
+    (NPC dialogue nodes pass neither: they play over the place they were called from)."""
     out = [f"label {node['id']}:"]
     out.extend(preamble or [])
     for line in node.get("lines", []):
         sp = line.get("speaker")
         if restage and sp:
-            out.extend(restage(sp))
+            out.extend(restage(sp, line.get("emotion") or "neutral"))
         out.append(f"{_IND}{_line(line)}")
         for eff in line.get("effects", []):
             out.append(f"{_IND}{_effect(eff)}")
@@ -118,44 +118,72 @@ def node_block(node: Dict, preamble: Optional[List[str]] = None,
 
 def _staging(ir: Dict):
     """Build the staging closure: per node, the preamble (scene + initial shows) and a
-    `restage(speaker)` for speaker highlighting. Returns (stage_fn, image_decl_lines)."""
+    `restage(speaker, emotion)` for speaker highlighting + expression swaps. Returns
+    (stage_fn, image_decl_lines)."""
     bg_files = {bg["id"]: bg["image_file"] for bg in ir.get("backgrounds", [])}
-    sprites = {c["id"]: c["sprite"] for c in ir.get("characters", []) if c.get("sprite")}
+
+    # Per character: {emotion: image_file}. `expressions` is authoritative; fall back to the
+    # neutral `sprite` so a single-sprite character still stages.
+    variants: Dict[str, Dict[str, str]] = {}
+    for c in ir.get("characters", []):
+        exprs = dict(c.get("expressions") or {})
+        if not exprs and c.get("sprite"):
+            exprs = {"neutral": c["sprite"]}
+        if exprs:
+            variants[c["id"]] = exprs
+
+    def _img(cid: str, emotion: str) -> str:
+        # Stable per-character displayable + tag: `char_<cid>_<emotion>` shown `as char_<cid>`,
+        # so swapping expression replaces in place instead of stacking a second sprite.
+        exprs = variants[cid]
+        return f"char_{cid}_{emotion if emotion in exprs else 'neutral'}"
 
     decls: List[str] = []
     for bid, fname in bg_files.items():
         decls.append(f'image {bid} = "images/{fname}"')
-    for cid, fname in sprites.items():
-        decls.append(f"image char_{cid}:")
-        decls.append(f'{_IND}"images/{fname}"')
-        decls.append(f"{_IND}zoom {_ZOOM}")
+    for cid, exprs in variants.items():
+        for emotion, fname in exprs.items():
+            decls.append(f"image char_{cid}_{emotion}:")
+            decls.append(f'{_IND}"images/{fname}"')
+            decls.append(f"{_IND}zoom {_ZOOM}")
 
-    def stage(node: Dict):
+    def stage(node: Dict, current_bg: Optional[str]):
         # roster: distinct characters who speak in this node (and have a sprite), in order.
+        # first_emotion: each roster member's earliest spoken expression (neutral default).
         roster: List[str] = []
+        first_emotion: Dict[str, str] = {}
         for line in node.get("lines", []):
             sp = line.get("speaker")
-            if sp in sprites and sp not in roster:
-                roster.append(sp)
+            if sp in variants:
+                if sp not in roster:
+                    roster.append(sp)
+                    first_emotion[sp] = line.get("emotion") or "neutral"
         posmap = dict(zip(roster, _spread(len(roster))))
+        current = dict(first_emotion)
 
-        pre: List[str] = []
+        # Reset the stage at every node so sprites from the previous scene never linger into this
+        # one. `scene` clears all shown images; it also (re)sets the background — the node's own
+        # location when it tags one, else the last known background carried forward (an untagged
+        # node continues the prior scene rather than blanking it).
         loc = node.get("location")
-        if loc in bg_files:
-            pre.append(f"{_IND}scene {loc}")
-        # Show every speaker up front, spread across the stage so all are visible.
+        bg = loc if loc in bg_files else current_bg
+        pre: List[str] = [f"{_IND}scene {bg}" if bg else f"{_IND}scene"]
+        # Show every speaker up front at their first expression, spread so all are visible.
         for cid, x in posmap.items():
-            pre.append(f"{_IND}show char_{cid} at stage({x})")
+            pre.append(f"{_IND}show {_img(cid, current[cid])} as char_{cid} at stage({x})")
 
-        def restage(speaker: str) -> List[str]:
-            # With one character on stage there is nobody to dim, so leave it be.
-            if speaker not in posmap or len(posmap) < 2:
+        def restage(speaker: str, emotion: str) -> List[str]:
+            changed = current.get(speaker) != emotion
+            if speaker in current:
+                current[speaker] = emotion
+            # One character on stage: nobody to dim, so re-show only to swap expression.
+            if len(posmap) < 2 and not changed:
                 return []
-            return [f"{_IND}show char_{cid} at stage({x}), "
+            return [f"{_IND}show {_img(cid, current[cid])} as char_{cid} at stage({x}), "
                     f"{'speaking' if cid == speaker else 'not_speaking'}"
                     for cid, x in posmap.items()]
 
-        return pre, restage
+        return pre, restage, bg
 
     return stage, decls
 
@@ -195,8 +223,9 @@ def compile_vn(ir: Dict) -> str:
     out.append(f"{_IND}jump {ir['start']['node']}")
     out.append("")
 
+    current_bg: Optional[str] = None
     for node in ir.get("nodes", []):
-        pre, restage = stage(node)
+        pre, restage, current_bg = stage(node, current_bg)
         out.extend(node_block(node, pre, restage))
         out.append("")
 

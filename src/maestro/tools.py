@@ -13,6 +13,7 @@ written by id; scratchpad is replaced, not appended.
 
 from typing import Callable, Dict, List, Optional
 
+from maestro.ir_assemble import EMOTIONS
 from maestro.validate import validate
 
 
@@ -31,6 +32,7 @@ _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
 # json.dumps); reference integrity (speakers, targets) is ir_crossref's, run at compile.
 
 _END_TYPES = {"jump", "menu", "return", "end"}
+_EMOTIONS = set(EMOTIONS)
 
 
 def _node_content_error(content) -> Optional[str]:
@@ -92,13 +94,15 @@ TOOL_SCHEMAS: List[Dict] = [
     {"type": "function", "function": {
         "name": "edit_node",
         "description": "Patch ONE field of an existing node without rewriting it: replace a "
-                       "single line by index (text/speaker/effects) or replace the node's `end`. "
-                       "Use to repoint a jump/menu target or fix one line.",
+                       "single line by index (text/speaker/emotion/effects) or replace the node's "
+                       "`end`. Use to repoint a jump/menu target or fix one line.",
         "parameters": {"type": "object", "properties": {
             "node_id": {"type": "string"},
             "line_index": {"type": "integer", "description": "index into lines to patch (0-based)"},
             "text": {"type": "string", "description": "new text for that line"},
             "speaker": {"description": "new speaker id for that line (null for narration)"},
+            "emotion": {"type": "string", "description": "new speaker expression: one of "
+                        "neutral, happy, sad, angry, surprised, worried"},
             "effects": {"type": "array", "items": {"type": "object"},
                         "description": "replace that line's effects"},
             "end": {"type": "object", "description": "replace the node's terminal end object"},
@@ -315,7 +319,8 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
     _UNSET = object()
 
     def edit_node(node_id: str, line_index: Optional[int] = None, text: Optional[str] = None,
-                  speaker=_UNSET, effects: Optional[List] = None, end: Optional[Dict] = None) -> Dict:
+                  speaker=_UNSET, emotion: Optional[str] = None,
+                  effects: Optional[List] = None, end: Optional[Dict] = None) -> Dict:
         """Patch ONE field of a node without rewriting it: a single line (by index) or the `end`.
         Repointing a jump/menu target or fixing one line, without disturbing the rest."""
         _require_frozen()
@@ -339,6 +344,10 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
                 lines[line_index]["text"] = text
             if speaker is not _UNSET:
                 lines[line_index]["speaker"] = speaker
+            if emotion is not None:
+                if emotion not in _EMOTIONS:
+                    return {"ok": False, "error": f"emotion must be one of {sorted(_EMOTIONS)}"}
+                lines[line_index]["emotion"] = emotion
             if effects is not None:
                 lines[line_index]["effects"] = effects
         state.write_component("nodes", ns)

@@ -1,0 +1,17 @@
+You place a visual-novel scene in one of the game's existing backgrounds, so the right setting is
+shown behind the dialogue. Respond with a TOOL-FREE JSON object, nothing else.
+
+OUTPUT EXACTLY THIS SHAPE:
+{
+  "location": "bg_id"   // MUST be one of the background ids listed below, copied exactly
+}
+
+Pick the background whose setting best fits where this scene happens. Read the dialogue for cues
+(who is present, what they're doing, indoor/outdoor, time). If nothing clearly fits, pick the most
+plausible one — every scene needs a background.
+
+AVAILABLE BACKGROUNDS (id — description):
+{{backgrounds}}
+
+THE SCENE (speaker: line):
+{{lines}}

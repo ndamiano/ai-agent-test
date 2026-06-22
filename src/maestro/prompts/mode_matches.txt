@@ -15,7 +15,6 @@ Each match is a known card game for a stake:
   on_lose     — subtract the ante: add_var the ante variable DOWN, then end: return.
 
 Write one match per opponent the player can gamble with — enough that wandering and playing
-for ante is a real loop, not a single table. Derive ids/opponents from the REQUEST and the
-locked premise, never from the skeleton's placeholder ids.
+for ante is a real loop, not a single table. {{include:derive_from_request}}
 
 Call write_component("matches", ...) now. Do not explain.

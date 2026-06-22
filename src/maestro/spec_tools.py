@@ -86,15 +86,37 @@ def _classify_genre(request: str) -> str:
         return "vn"
 
 
+_GENRE_BLURB = {"vn": "genre_blurb_vn.txt", "point_and_click": "genre_blurb_pnc.txt",
+                "card_ante": "genre_blurb_card.txt"}
+
+
+def _spec_prompt_ctx(request: str, genre: str) -> Dict:
+    """Build the propose_spec prompt context from the preset's composed modules, so the spec
+    prompt is generated from the SAME baseline + skeletons the build enforces (one source of
+    truth), not a per-genre prompt that re-hardcodes them."""
+    import json
+    import maestro.discrete  # noqa: F401 — register modules + presets
+    from maestro.modules import PRESETS, compose
+    from renpy.component_schemas import skeleton_guide
+
+    preset = PRESETS.get(genre) or PRESETS["vn"]
+    composed = compose(preset.modules)
+    blurb = (_PROMPTS_DIR / _GENRE_BLURB.get(genre, "genre_blurb_vn.txt")).read_text(encoding="utf-8").strip()
+    return {
+        "request": request,
+        "genre_blurb": blurb,
+        "component_shapes": skeleton_guide(genre=genre),
+        "default_conditions": json.dumps(composed.baseline, indent=2),
+    }
+
+
 def propose_spec(request: str, run_id: str) -> Dict:
     """Draft a spec for the request and persist it (unfrozen). Returns the spec."""
     from renpy.templating import render_template
     from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
 
     genre = _classify_genre(request)
-    template = {"point_and_click": "propose_spec_pnc.txt",
-                "card_ante": "propose_spec_card.txt"}.get(genre, "propose_spec.txt")
-    prompt = render_template(_PROMPTS_DIR / template, {"request": request})
+    prompt = render_template(_PROMPTS_DIR / "propose_spec.txt", _spec_prompt_ctx(request, genre))
     agent = PipelineAgent(JSON_SYSTEM, max_tokens=8000)
     spec = json_with_correction(agent, prompt, "propose_spec", attempts=3)
 

@@ -13,9 +13,18 @@ be scattered, hardcoded-by-`genre` registries into one object:
   tool_names  — decider tool-schema names this module contributes
   assemble    — (artifact, ir) -> mutate the IR with this module's slice
   crossref    — (ir) -> [error str] reference checks
-  sub_runner  — stateful sub-loop factory (dialogue->nodes, navigation->places)
+  mode_tools  — tool names the decider/sub-loop expose while building this module's component
+  mode_prompt — system-prompt filename the decider uses in this module's mode
+  prompts     — sub-loop system prompts keyed by job ("author"/"fix") -> filename
+  target_jobs — check-type -> job ("author"/"fix"); picks the sub-loop prompt + escalation
+  target_tools— check-type -> allowed tool names inside the sub-loop (per-target gating)
+  subloop     — sub-loop scalar config (count_tool/id_key/id_list_key/noun/noun_plural); its
+                presence is what marks the module as driving a stateful sub-loop
   projector   — executor view fn for its owned component
   action_verbs— action verb names this module adds to navigation's verb set
+  ir_slices   — IR-slice token -> the component a *reference* error in that slice routes to, so a
+                cross-component compile failure attaches to the mode that can fix it (e.g. card_play
+                maps {"card_matches": "matches"} so a dangling opponent lands in matches mode)
 
 `compose(module_ids)` unions the active modules into one bundle every former genre-keyed
 lookup now reads. Engine *projections* (IR -> Ren'Py / IR -> web runtime) are NOT on the
@@ -45,9 +54,15 @@ class Module:
     tool_names: Tuple[str, ...] = ()
     assemble: Optional[Callable] = None
     crossref: Optional[Callable] = None
-    sub_runner: Optional[Callable] = None
+    mode_tools: frozenset = frozenset()
+    mode_prompt: Optional[str] = None
+    prompts: Dict[str, str] = field(default_factory=dict)
+    target_jobs: Dict[str, str] = field(default_factory=dict)
+    target_tools: Dict[str, frozenset] = field(default_factory=dict)
+    subloop: Optional[Dict] = None
     projector: Optional[Callable] = None
     action_verbs: Tuple[str, ...] = ()
+    ir_slices: Dict[str, str] = field(default_factory=dict)
     # True if this module's content needs an engine-specific renderer beyond plain IR assembly
     # (dialogue/navigation/card_play). Such a module can only build on an engine that registered
     # a projection for it — otherwise the compile fails fast instead of silently dropping content.
@@ -121,9 +136,12 @@ class Composed:
     tool_names: List[str]
     assemblers: List[Callable]
     crossrefs: List[Callable]
-    sub_runners: Dict[str, Callable]   # component_id -> subloop factory
+    mode_tools: Dict[str, frozenset]   # component-mode -> allowed decider tool names
+    mode_prompts: Dict[str, str]       # component-mode -> system-prompt filename
+    subloop_modules: Dict[str, "Module"]  # component_id -> owning module (those with a sub-loop)
     projectors: Dict[str, Callable]    # component_id -> view fn
     action_verbs: List[str]
+    slice_owner: Dict[str, str]        # IR-slice token -> component a reference error routes to
 
 
 def compose(module_ids) -> Composed:
@@ -137,9 +155,12 @@ def compose(module_ids) -> Composed:
     tool_names: List[str] = []
     assemblers: List[Callable] = []
     crossrefs: List[Callable] = []
-    sub_runners: Dict[str, Callable] = {}
+    mode_tools: Dict[str, frozenset] = {}
+    mode_prompts: Dict[str, str] = {}
+    subloop_modules: Dict[str, "Module"] = {}
     projectors: Dict[str, Callable] = {}
     action_verbs: List[str] = []
+    slice_owner: Dict[str, str] = {}
 
     for mid in module_ids:
         m = MODULE_REGISTRY.get(mid)
@@ -163,21 +184,27 @@ def compose(module_ids) -> Composed:
             assemblers.append(m.assemble)
         if m.crossref is not None:
             crossrefs.append(m.crossref)
-        if m.sub_runner is not None:
-            for c in m.components:
-                sub_runners[c] = m.sub_runner
+        for c in m.components:
+            if m.mode_tools:
+                mode_tools[c] = m.mode_tools
+            if m.mode_prompt:
+                mode_prompts[c] = m.mode_prompt
+            if m.subloop is not None:
+                subloop_modules[c] = m
         if m.projector is not None:
             for c in m.components:
                 projectors[c] = m.projector
         for v in m.action_verbs:
             if v not in action_verbs:
                 action_verbs.append(v)
+        slice_owner.update(m.ir_slices)
 
     return Composed(
         module_ids=tuple(module_ids), components=components, schemas=schemas,
         skeletons=skeletons, baseline=baseline, deps=deps, tool_names=tool_names,
-        assemblers=assemblers, crossrefs=crossrefs, sub_runners=sub_runners,
-        projectors=projectors, action_verbs=action_verbs)
+        assemblers=assemblers, crossrefs=crossrefs, mode_tools=mode_tools,
+        mode_prompts=mode_prompts, subloop_modules=subloop_modules,
+        projectors=projectors, action_verbs=action_verbs, slice_owner=slice_owner)
 
 
 def modules_for(spec: Dict) -> Tuple[str, ...]:

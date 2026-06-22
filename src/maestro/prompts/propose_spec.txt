@@ -1,9 +1,8 @@
-You are drafting a build SPEC for a Ren'Py visual novel from a user request.
+You are drafting a build SPEC for {genre_blurb}
 
-The spec is a contract: a list of components to build, each with checkable
-done-conditions you commit to. A separate program (not you) builds the game and
-checks the artifact against these conditions. So every done-condition must be a
-typed check that code can run — never prose.
+The spec is a contract: a list of components to build, each with checkable done-conditions you
+commit to. A separate program (not you) builds the game and checks the artifact against these
+conditions. So every done-condition must be a typed check that code can run — never prose.
 
 Request:
 {request}
@@ -29,62 +28,24 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
   }
 }
 
-The ONLY allowed done-condition checks (each is data, "path" is dotted into the
-artifact, e.g. "premise.characters"):
+{{include:allowed_checks}}
 
-  {"type": "exists", "path": "premise.central_question"}
-  {"type": "count", "path": "premise.characters", "min": 3}          // also max, eq
-  {"type": "distinct", "path": "premise.endings", "key": "id"}
-  {"type": "each_has", "path": "premise.characters", "fields": ["name", "voice"]}
-  {"type": "refs_resolve", "from": "premise.endings", "from_key": "id", "to": "nodes.node_ids"}
-  {"type": "compiles"}                                               // the artifact builds + lints clean
+THE COMPONENTS to build (use these exact ids and these shapes — the agent authors content in
+exactly these shapes, so your done-conditions must check against them):
 
-The builder compiles EXACTLY these three components (use these ids and these shapes):
+{component_shapes}
 
-  premise        — characters MUST each have an "id" (snake_case) and "name", plus the
-                   portable character core: "voice", "temperament", "drive" (a plain,
-                   story-independent want), "history" (list of distinct formative events),
-                   "competencies" (list), and "example_lines" (list, sound different per
-                   character); plus central_question and endings. Characters are speaking
-                   roles only — narration is a line with speaker null (no "narrator").
-  asset_manifest — "backgrounds", "characters", "cgs" are lists; each background and
-                   character needs an "id"; character ids must match premise ids.
-  nodes          — "node_ids" (list of node id strings, NOT including "start") and "nodes"
-                   (object node_id -> {lines:[{speaker, text, effects?}], end:{type, ...}}).
-                   Plain JSON, NOT Ren'Py — the compiler renders it. The builder adds
-                   "label start" jumping to node_ids[0].
+THE DEFAULT DONE-CONDITION SET (the code-enforced floor — every spec carries at least these; you
+may RAISE a `min` to fit a bigger game, but never drop one). Put these on the matching component:
+
+{default_conditions}
 
 Rules:
-- Include exactly those three components (premise, asset_manifest, nodes) with those exact
-  ids. Do NOT invent extra components and do NOT use refs_resolve to components that won't exist.
-- The done-conditions ARE the quality bar: the builder does the minimum that satisfies
-  them, so demand a real game, not a stub. A good default set:
-
-  premise:
-    {"type": "exists", "path": "premise.central_question"}
-    {"type": "count", "path": "premise.characters", "min": 3}
-    {"type": "each_has", "path": "premise.characters", "fields": ["id", "name", "voice", "temperament", "drive", "history", "competencies", "example_lines"]}
-    {"type": "count", "path": "premise.endings", "min": 3}
-    {"type": "distinct", "path": "premise.endings", "key": "id"}
-  asset_manifest:
-    {"type": "exists", "path": "asset_manifest.backgrounds"}
-    {"type": "each_has", "path": "asset_manifest.characters", "fields": ["id"]}
-  nodes:
-    {"type": "count", "path": "nodes.node_ids", "min": 20}
-    {"type": "refs_resolve", "from": "premise.endings", "from_key": "id", "to": "nodes.node_ids"}
-    {"type": "reachable_from_start"}
-    {"type": "min_branches", "min": 2}
-    {"type": "each_node_min_lines", "min": 6}
-    {"type": "all_characters_speak"}
-    {"type": "compiles"}
-
-  Structural check types: reachable_from_start (every node reachable via jump/menu from the
-  first node), min_branches (>= min nodes whose end is a menu), each_node_min_lines (every
-  node has >= min lines/beats), all_characters_speak (every premise character has lines).
-  Each ending must be a node (that's the refs_resolve above).
-
-- Tune counts to fit THIS request (a longer game = higher min nodes/endings/branches),
-  but keep every condition checkable; use only the check types listed here.
+- Include exactly the components shown above, with those exact ids. Do NOT invent extra components
+  and do NOT use refs_resolve to a component that won't exist.
+- The done-conditions ARE the quality bar: the builder does the minimum that satisfies them, so
+  demand a real game, not a stub. Tune counts to fit THIS request (a longer game = higher mins),
+  but keep every condition checkable; use only the listed check types.
 - Declare in story_state_schema what continuity this particular game hinges on.
 
 Return only the JSON object.

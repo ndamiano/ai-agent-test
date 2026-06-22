@@ -18,7 +18,7 @@ from maestro.spec import Spec
 logger = logging.getLogger(__name__)
 from maestro.state import RunState
 from maestro.tools import build_tools, tool_schemas_for
-from maestro.agent import make_llm_decider
+from maestro.agent import make_llm_decider, make_subloop
 from maestro.executor import Executor, ExecutorResult
 
 
@@ -49,7 +49,9 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
 
     tools = build_tools(spec, state, schemas=ir_schemas)
     decider = decide or make_llm_decider(component_guide=guide,
-                                         tool_schemas=tool_schemas_for(spec))
+                                         tool_schemas=tool_schemas_for(spec),
+                                         mode_tools=composed.mode_tools,
+                                         mode_prompts=composed.mode_prompts)
     # Each owned component with a sub-loop iterates until its target checks pass — a stateful
     # sub-loop, not one-shot steps. A scripted `decide` (tests) keeps the simple stateless path.
     # Projectors are the executor's engine-neutral graph views, keyed by the component in play.
@@ -57,8 +59,8 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     projectors = {cid: _VIEWS[cid] for cid in composed.components if cid in _VIEWS}
     sub_runners = {}
     if not decide:
-        for cid, factory in composed.sub_runners.items():
-            sub_runners[cid] = factory(component_guide=guide)
+        for cid, module in composed.subloop_modules.items():
+            sub_runners[cid] = make_subloop(module, component_guide=guide)
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),

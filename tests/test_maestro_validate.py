@@ -12,7 +12,7 @@ from maestro.validate import run_check, validate
 def test_malformed_check_is_a_failure_not_a_crash(tmp_path):
     # A spec is LLM-authored: a done-condition can be a bare prose string. That must be a reported
     # failure, never an AttributeError that 500s the games API or kills a build step.
-    ok, detail = run_check("Window opens at 1000x700", {}, None)
+    ok, detail, _ = run_check("Window opens at 1000x700", {}, None)
     assert ok is False and "malformed" in detail
 
     state = RunState(tmp_path)
@@ -48,7 +48,7 @@ def _ok(check, artifact=ART, run_dir=None):
 
 def test_exists_pass_and_fail():
     assert _ok({"type": "exists", "path": "premise.central_question"})[0] is True
-    ok, detail = _ok({"type": "exists", "path": "premise.missing"})
+    ok, detail, _ = _ok({"type": "exists", "path": "premise.missing"})
     assert ok is False and "missing or empty" in detail
 
 
@@ -62,14 +62,14 @@ def test_count_min_max_eq():
 def test_distinct_pass_and_dupe():
     assert _ok({"type": "distinct", "path": "premise.characters", "key": "id"})[0] is True
     dupe_art = {"xs": [{"id": "a"}, {"id": "a"}]}
-    ok, detail = run_check({"type": "distinct", "path": "xs", "key": "id"}, dupe_art, None)
+    ok, detail, _ = run_check({"type": "distinct", "path": "xs", "key": "id"}, dupe_art, None)
     assert ok is False and "duplicate" in detail
 
 
 def test_each_has():
     assert _ok({"type": "each_has", "path": "premise.characters", "fields": ["name", "voice"]})[0] is True
     bad = {"xs": [{"name": "A"}, {"name": "B"}]}  # missing voice
-    ok, detail = run_check({"type": "each_has", "path": "xs", "fields": ["voice"]}, bad, None)
+    ok, detail, _ = run_check({"type": "each_has", "path": "xs", "fields": ["voice"]}, bad, None)
     assert ok is False and "missing 'voice'" in detail
 
 
@@ -82,7 +82,7 @@ _CORE_FIELDS = ["id", "name", "voice", "temperament", "drive",
 def test_character_core_floor_rejects_thin_character():
     # The pre-change shape (id+name+voice) no longer clears the floor.
     thin = {"premise": {"characters": [{"id": "a", "name": "A", "voice": "wry"}]}}
-    ok, detail = run_check(
+    ok, detail, _ = run_check(
         {"type": "each_has", "path": "premise.characters", "fields": _CORE_FIELDS}, thin, None)
     assert ok is False and "missing 'temperament'" in detail
 
@@ -94,7 +94,7 @@ def test_character_core_floor_rejects_empty_list_fields():
         "drive": "save as many as she can", "history": [], "competencies": ["triage"],
         "example_lines": ["he'll live, next"],
     }]}}
-    ok, detail = run_check(
+    ok, detail, _ = run_check(
         {"type": "each_has", "path": "premise.characters", "fields": _CORE_FIELDS}, empty, None)
     assert ok is False and "missing 'history'" in detail
 
@@ -107,7 +107,7 @@ def test_character_core_floor_passes_full_character():
         "competencies": ["triage", "field surgery"],
         "example_lines": ["I'd rather save one than none.", "He'll live. Next."],
     }]}}
-    ok, _ = run_check(
+    ok, _, _ = run_check(
         {"type": "each_has", "path": "premise.characters", "fields": _CORE_FIELDS}, full, None)
     assert ok is True
 
@@ -117,14 +117,14 @@ def test_refs_resolve_pass_and_fail():
     assert _ok(good)[0] is True
 
     broken_art = {**ART, "node_scripts": {"node_ids": ["n1", "n9"]}}
-    ok, detail = run_check(good, broken_art, None)
+    ok, detail, _ = run_check(good, broken_art, None)
     assert ok is False and "n9" in detail
 
 
 def test_unknown_and_malformed_checks():
-    ok, detail = run_check({"type": "bogus"}, ART, None)
+    ok, detail, _ = run_check({"type": "bogus"}, ART, None)
     assert ok is False and "unknown check type" in detail
-    ok, detail = run_check({"type": "count"}, ART, None)  # no path
+    ok, detail, _ = run_check({"type": "count"}, ART, None)  # no path
     assert ok is False and "malformed" in detail
 
 
@@ -134,7 +134,7 @@ def test_compiles_check_delegates(monkeypatch):
     assert run_check({"type": "compiles"}, ART, "/tmp/whatever")[0] is True
 
     monkeypatch.setattr(compiler, "compile_renpy", lambda wd, **kw: {"ok": False, "reason": "2 lint error(s)"})
-    ok, detail = run_check({"type": "compiles"}, ART, "/tmp/whatever")
+    ok, detail, _ = run_check({"type": "compiles"}, ART, "/tmp/whatever")
     assert ok is False and "2 lint error" in detail
 
 

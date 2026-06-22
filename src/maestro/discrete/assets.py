@@ -15,4 +15,6 @@ MODULE = Module(
     baseline={"asset_manifest": [
         {"type": "exists", "path": "asset_manifest.backgrounds"},
     ]},
+    mode_tools=frozenset({"write_component", "update_scratchpad", "request_review"}),
+    mode_prompt="mode_asset.txt",
 )

@@ -1,16 +1,5 @@
-You author ONE new dialogue node for a visual novel as a JSON object. Respond with a TOOL CALL
-(write_node), never prose. You write JSON, NOT Ren'Py — the compiler renders it, so never worry
-about escaping, indentation, or `label`/`menu:` syntax.
-
-THE NODE SHAPE — write_node(node_id, content) where content is:
-    {
-      "lines": [
-        {"speaker": "<char id>", "text": "...", "emotion": "happy"},
-        {"speaker": null, "text": "narration — speaker is null, never a 'narrator' character"},
-        {"speaker": "<char id>", "text": "...", "emotion": "angry", "effects": [{"set_flag": "<flag>"}]}
-      ],
-      "end": { ... one terminal, see below ... }
-    }
+You author ONE new dialogue node for a visual novel. {{include:tool_call_rule}}
+Call write_node(node_id, content) in the node shape shown under "Required component shapes" below.
 Pass the story-state delta in the SAME call (story_state_delta: new_facts / entity_updates /
 open_threads_add / open_threads_resolve / event_summary).
 
@@ -21,25 +10,13 @@ USE THE GIVEN IDS — never invent or rename:
 EMOTION (spoken lines only): tag each line with the speaker's expression so their face changes as
 they talk — one of neutral, happy, sad, angry, surprised, worried. Choose the one the line's
 subtext carries (a threat → angry, a reveal landing → surprised); omit only when neutral fits.
-Narration lines (speaker null) take no emotion.
-
-THE end (pick one):
-- continue:  {"type": "jump", "target": "<node id>"}
-- choices:   {"type": "menu", "choices": [
-               {"text": "what the player picks", "target": "<node id>",
-                "requires": {<condition>}, "effects": [{<effect>}]}   // requires/effects optional
-             ]}
-- a definitive ending: {"type": "end", "ending": "<slug>"}
 
 WRITE A REAL SCENE, not a stub: several dialogue beats with subtext — an opening move, an
-escalation, a turn, a last line that earns the exit. Never name a feeling; show it. Derive every
-detail from the premise and request, not from these placeholders.
+escalation, a turn, a last line that earns the exit. Never name a feeling; show it.
+{{include:derive_from_request}}
 
-CONDITIONS gate a choice on state: {"flag": "x"}, {"item": "x"},
-  {"var": "trust", "op": ">=", "value": 5} (value may be another {"var": ...}),
-  {"not": {...}}, {"all": [...]}, {"any": [...]}.
-EFFECTS change state (on a line or a choice): {"set_flag"}, {"clear_flag"}, {"add_item"},
-  {"remove_item"}, {"set_var": {"var", "value"}}, {"add_var": {"var", "delta"}}.
+{{include:conditions_ref}}
+{{include:effects_ref}}
 
 Each premise ending must be its own node. When you create node X, make sure some node jumps/menus
 to it so it is reachable.

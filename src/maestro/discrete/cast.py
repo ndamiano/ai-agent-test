@@ -17,4 +17,6 @@ MODULE = Module(
         {"type": "exists", "path": "premise.central_question"},
         {"type": "each_has", "path": "premise.characters", "fields": ["id", "name"]},
     ]},
+    mode_tools=frozenset({"write_component", "update_scratchpad", "request_review"}),
+    mode_prompt="mode_premise.txt",
 )

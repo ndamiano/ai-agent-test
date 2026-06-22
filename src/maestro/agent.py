@@ -28,101 +28,41 @@ _BUILD_MAX_TOKENS = 8000
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
 
-# Per-stage modes: a still-failing component can get a tighter system prompt + a
-# restricted tool set. The executor picks the mode (context["mode"]); an unknown/None
-# mode falls back to the general prompt + full tools, so nothing regresses.
-# The node loop has two genuinely different jobs — authoring fresh scenes vs. surgically
-# repairing existing ones — that want different instructions (and different tools). One blob
-# carrying both is noise the small model deliberates over; split by the active target's job.
-_NODE_PROMPTS: Dict[str, str] = {
-    "author": render_template(_PROMPTS_DIR / "write_node.txt", {}),
-    "fix": render_template(_PROMPTS_DIR / "fix_node.txt", {}),
-}
-_PLACE_PROMPTS: Dict[str, str] = {
-    "author": render_template(_PROMPTS_DIR / "write_place.txt", {}),
-    "fix": render_template(_PROMPTS_DIR / "fix_place.txt", {}),
-}
-_MODE_PROMPTS: Dict[str, str] = {
-    "premise": render_template(_PROMPTS_DIR / "mode_premise.txt", {}),
-    "asset_manifest": render_template(_PROMPTS_DIR / "mode_asset.txt", {}),
-    "matches": render_template(_PROMPTS_DIR / "mode_matches.txt", {}),
-    "nodes": _NODE_PROMPTS["author"],  # stateless fallback path: author is the default job
-    "places": _PLACE_PROMPTS["author"],
-}
-# Which job each target is. Building/growing content = author; making existing items
-# wire up or compile = fix. Mirrors the *_TARGET_TOOLS maps. Unlisted → author.
-_TARGET_PROMPT: Dict[str, str] = {
-    "count": "author", "each_node_min_lines": "author",
-    "min_branches": "author", "all_characters_speak": "author",
-    "reachable_from_start": "fix", "node_targets_resolve": "fix", "compiles": "fix",
-}
-_PLACE_TARGET_PROMPT: Dict[str, str] = {
-    "count": "author", "each_place_min_interactables": "author",
-    "items_obtainable": "author", "items_used": "author",
-    "places_reachable": "fix", "goal_reachable": "fix",
-    "compiles": "fix",
-}
+# Per-stage gating (which tools + which system prompt a mode/target gets) now lives on the owning
+# Module (maestro.discrete) and arrives via the composed bundle, so adding a module no longer
+# edits this file. The decider gets {mode -> tools} and {mode -> prompt-file} maps; the sub-loop
+# reads its module's prompts/target_jobs/target_tools/subloop config directly.
+
+_PROMPT_CACHE: Dict[str, str] = {}
+
+
+def _load_prompt(name: str) -> str:
+    cached = _PROMPT_CACHE.get(name)
+    if cached is None:
+        cached = render_template(_PROMPTS_DIR / name, {})
+        _PROMPT_CACHE[name] = cached
+    return cached
+
+
+def _filter_schemas(allowed, schemas: List[Dict]) -> List[Dict]:
+    """Keep only schemas whose tool name is in `allowed` (None/empty → keep all)."""
+    if not allowed:
+        return schemas
+    return [s for s in schemas if s.get("function", {}).get("name") in allowed]
 
 
 def _prompt_for_target(target: Optional[Dict], prompts: Dict[str, str],
-                       target_prompt: Dict[str, str]) -> str:
-    kind = target_prompt.get((target or {}).get("check", {}).get("type"), "author")
-    return prompts[kind]
-_MODE_TOOLS: Dict[str, frozenset] = {
-    "premise": frozenset({"write_component", "update_scratchpad", "request_review"}),
-    "asset_manifest": frozenset({"write_component", "update_scratchpad", "request_review"}),
-    "matches": frozenset({"write_component", "write_match", "read_component",
-                          "update_scratchpad", "request_review"}),
-    "nodes": frozenset({"write_node", "edit_node", "read_node", "read_story_state",
-                        "validate", "update_scratchpad", "request_review"}),
-    "places": frozenset({"write_component", "write_place", "edit_place", "add_interactable",
-                         "read_place", "set_places_meta", "read_component", "validate",
-                         "update_scratchpad", "request_review"}),
-}
-
-
-def _schemas_for_mode(mode: Optional[str], all_schemas: List[Dict]) -> List[Dict]:
-    allowed = _MODE_TOOLS.get(mode)
-    if not allowed:
-        return all_schemas
-    return [s for s in all_schemas if s.get("function", {}).get("name") in allowed]
-
-
-# Per-TARGET tool gating inside the node sub-loop. Each structural goal needs only a few tools;
-# exposing the rest invites waste — while driving `count`, read/edit let the model fixate on an
-# existing node instead of writing new ones. Reachability is fixed by repointing an existing
-# node's end (edit only), so write_node is withheld there. Unlisted targets get the full set.
-_TARGET_TOOLS: Dict[str, frozenset] = {
-    "count": frozenset({"write_node"}),
-    "each_node_min_lines": frozenset({"read_node", "write_node", "edit_node"}),
-    "reachable_from_start": frozenset({"read_node", "edit_node"}),
-    "node_targets_resolve": frozenset({"read_node", "edit_node", "write_node"}),
-    "min_branches": frozenset({"read_node", "edit_node", "write_node"}),
-    "all_characters_speak": frozenset({"read_node", "edit_node", "write_node"}),
-    "compiles": frozenset({"read_node", "edit_node", "write_node"}),
-}
-# Per-TARGET gating for the places sub-loop. count ADDS places (write_place); reachability/goal
-# are fixed by repointing actions (edit), so write_place is withheld where adding would not help.
-_PLACE_TARGET_TOOLS: Dict[str, frozenset] = {
-    "count": frozenset({"write_component", "write_place"}),
-    "each_place_min_interactables": frozenset({"read_place", "add_interactable", "edit_place"}),
-    "items_obtainable": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta"}),
-    "items_used": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta"}),
-    "places_reachable": frozenset({"read_place", "add_interactable", "edit_place", "read_component"}),
-    "goal_reachable": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta", "read_component"}),
-    # compiles fixes are often cross-component: a dangling talk-node is repointed (edit_place), a
-    # missing variable/flag is declared (set_places_meta), a missing hotspot added (add_interactable).
-    "compiles": frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
-                           "write_place", "read_component"}),
-}
+                       target_jobs: Dict[str, str]) -> str:
+    # A target's job (author fresh content vs. fix existing wiring) picks the system prompt.
+    # Unlisted check types default to author.
+    job = target_jobs.get((target or {}).get("check", {}).get("type"), "author")
+    return prompts[job]
 
 
 def _schemas_for_target(target: Optional[Dict], schemas: List[Dict],
                         target_tools: Dict[str, frozenset]) -> List[Dict]:
     allowed = target_tools.get((target or {}).get("check", {}).get("type"))
-    if not allowed:
-        return schemas
-    return [s for s in schemas if s.get("function", {}).get("name") in allowed]
+    return _filter_schemas(allowed, schemas)
 
 
 def _render_context(ctx: Dict) -> str:
@@ -229,16 +169,20 @@ def _parse_action(response: Dict) -> Dict:
 
 
 def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
-                     component_guide: str = "") -> Callable:
+                     component_guide: str = "", mode_tools: Optional[Dict[str, frozenset]] = None,
+                     mode_prompts: Optional[Dict[str, str]] = None) -> Callable:
     from llm_clients.connector_selector import get_connector
     conn = connector or get_connector()
     all_schemas = tool_schemas or TOOL_SCHEMAS
     guide_suffix = f"\n\n{component_guide}" if component_guide else ""
+    mode_tools = mode_tools or {}      # component-mode -> allowed tool names
+    mode_prompts = mode_prompts or {}  # component-mode -> system-prompt filename
 
     def decide(context: Dict) -> Dict:
         mode = context.get("mode")
-        system = _MODE_PROMPTS.get(mode, _SYSTEM) + guide_suffix
-        schemas = _schemas_for_mode(mode, all_schemas)
+        prompt_name = mode_prompts.get(mode)
+        system = (_load_prompt(prompt_name) if prompt_name else _SYSTEM) + guide_suffix
+        schemas = _filter_schemas(mode_tools.get(mode), all_schemas)
         # If the agent is spinning on reads, take read tools away so it must act — and turn
         # reasoning on, since a stalled small model rarely breaks the loop with thinking off.
         stalled = context.get("stalled")
@@ -299,23 +243,27 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
     return guarded
 
 
-def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, str],
-                  target_tools: Dict[str, frozenset], count_tool: str, id_key: str,
-                  id_list_key: str, noun: str, noun_plural: str,
-                  connector=None, component_guide: str = "", cap: int = 20) -> Callable:
+def make_subloop(module, connector=None, component_guide: str = "", cap: int = 20) -> Callable:
     """A stateful sub-agent that drives ONE target check to green, with working memory.
 
     Unlike the stateless decider (one tool call from rebuilt context), this keeps a tool
     conversation: it reads/writes/edits and SEES its own results, looping until the target
     passes or it hits the step cap. The transcript holds only this task's tool calls (never
     the whole artifact) and MessageBuilder.build() enforces a char budget, so context stays
-    bounded — the per-target reset is what keeps it from rotting as the game grows. Shared by
-    the node_scripts (VN) and rooms (point-and-click) loops; the maps differ, the loop doesn't.
+    bounded — the per-target reset is what keeps it from rotting as the game grows. One loop,
+    fully parameterized by the owning Module's config (nodes / places / any future content
+    module); the maps differ, the loop doesn't.
     """
     from llm_clients.connector_selector import get_connector
     conn = connector or get_connector()
     guide_suffix = f"\n\n{component_guide}" if component_guide else ""
-    base_schemas = _schemas_for_mode(mode, TOOL_SCHEMAS)
+    cfg = module.subloop
+    count_tool, id_key, id_list_key = cfg["count_tool"], cfg["id_key"], cfg["id_list_key"]
+    noun, noun_plural = cfg["noun"], cfg["noun_plural"]
+    prompts = {job: _load_prompt(fn) for job, fn in module.prompts.items()}
+    target_jobs = module.target_jobs
+    target_tools = module.target_tools
+    base_schemas = _filter_schemas(module.mode_tools, TOOL_SCHEMAS)
 
     def run(target, context, dispatch, target_met, report, budget, view_fn):
         ctx = dict(context)
@@ -323,7 +271,7 @@ def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, s
         # Gate tools AND the system prompt to THIS target's job: driving `count` exposes only
         # the write tool with the author prompt; a fix target gets edit tools + the repair prompt.
         schemas = _schemas_for_target(target, base_schemas, target_tools)
-        system = _prompt_for_target(target, prompts, target_prompt) + guide_suffix
+        system = _prompt_for_target(target, prompts, target_jobs) + guide_suffix
         if target["check"].get("type") == "count":
             dispatch = _create_guard(dispatch, view_fn, count_tool, id_key, id_list_key, noun)
         mb = MessageBuilder(system).add_user(_render_context(ctx))
@@ -339,7 +287,7 @@ def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, s
         # thinking from the first iteration — with it off the model garbles labels (e.g.
         # repeated-token names) instead of repointing jumps, and only spirals from there.
         STALL_LIMIT = 2
-        kind = target_prompt.get(target["check"].get("type"), "author")
+        kind = target_jobs.get(target["check"].get("type"), "author")
         escalated = kind == "fix"
         reads_dropped = False
         stall = 0
@@ -418,19 +366,3 @@ def _make_subloop(mode: str, prompts: Dict[str, str], target_prompt: Dict[str, s
                 break
 
     return run
-
-
-def make_node_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
-    return _make_subloop(
-        "nodes", _NODE_PROMPTS, _TARGET_PROMPT, _TARGET_TOOLS,
-        count_tool="write_node", id_key="node_id", id_list_key="node_ids",
-        noun="node", noun_plural="NODES",
-        connector=connector, component_guide=component_guide, cap=cap)
-
-
-def make_place_subloop(connector=None, component_guide: str = "", cap: int = 20) -> Callable:
-    return _make_subloop(
-        "places", _PLACE_PROMPTS, _PLACE_TARGET_PROMPT, _PLACE_TARGET_TOOLS,
-        count_tool="write_place", id_key="place_id", id_list_key="place_ids",
-        noun="place", noun_plural="PLACES",
-        connector=connector, component_guide=component_guide, cap=cap)

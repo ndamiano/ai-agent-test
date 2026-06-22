@@ -76,6 +76,10 @@ MODULE = Module(
     # premise (opponent) first; play_match targets must exist before the places that reference them.
     deps={"matches": ["premise"], "places": ["matches"]},
     tool_names=("write_match", "edit_match", "read_match"),
+    mode_tools=frozenset({"write_component", "write_match", "edit_match", "read_match",
+                          "read_component", "update_scratchpad", "request_review"}),
+    mode_prompt="mode_matches.txt",
     action_verbs=("play_match",),
+    ir_slices={"card_matches": "matches"},
     projected=True,
 )

@@ -6,10 +6,31 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.executor import Executor
-from maestro.agent import (_schemas_for_mode, _schemas_for_target, _prompt_for_target,
-                           _NODE_PROMPTS, _TARGET_PROMPT, _TARGET_TOOLS, _render_context,
-                           _MODE_TOOLS, make_node_subloop)
+from maestro.agent import (_filter_schemas, _schemas_for_target, _prompt_for_target,
+                           _render_context, _load_prompt, make_subloop)
+from maestro.discrete.dialogue import SPINE as DIALOGUE
+from maestro.discrete.navigation import MODULE as NAVIGATION
+from maestro.modules import compose, PRESETS
 from maestro.tools import TOOL_SCHEMAS
+
+# The per-mode/per-target gating moved from agent.py globals onto the owning Module; these aliases
+# read it from the composed bundle so the tests exercise the same behavior through the new seam.
+_MODE_TOOLS = compose(PRESETS["vn"].modules).mode_tools          # mode -> allowed tools
+_TARGET_TOOLS = DIALOGUE.target_tools                            # node per-target gating
+_TARGET_PROMPT = DIALOGUE.target_jobs                            # node check-type -> job
+_NODE_PROMPTS = {job: _load_prompt(fn) for job, fn in DIALOGUE.prompts.items()}
+
+
+def _schemas_for_mode(mode, schemas):
+    return _filter_schemas(_MODE_TOOLS.get(mode), schemas)
+
+
+def make_node_subloop(connector=None, component_guide="", cap=20):
+    return make_subloop(DIALOGUE, connector=connector, component_guide=component_guide, cap=cap)
+
+
+def make_place_subloop(connector=None, component_guide="", cap=20):
+    return make_subloop(NAVIGATION, connector=connector, component_guide=component_guide, cap=cap)
 
 
 def _spec():
@@ -266,7 +287,6 @@ def test_author_target_starts_unescalated():
 def test_subloop_no_tool_call_is_visible_and_bails():
     # Model returns prose, no tool call (the rooms hang). Must report it, escalate, then give
     # up — never spin silently.
-    from maestro.agent import make_place_subloop
     text_only = {"choices": [{"message": {"content": "{ a giant json blob }", "tool_calls": []}}]}
     conn = _FakeConn([text_only])
     runner = make_place_subloop(connector=conn, cap=10)

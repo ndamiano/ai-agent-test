@@ -41,7 +41,6 @@ the drama inside what was asked for; do not graft on conspiracies, villains, or 
 nobody asked for.
 
 ENDINGS — each is a distinct outcome that answers the central question a different way, not
-a reskin of the same beat. Derive every id, name, and detail from the REQUEST — never from
-the skeleton's placeholder ids.
+a reskin of the same beat. {{include:derive_from_request}}
 
 Call write_component("premise", ...) now. Do not explain.

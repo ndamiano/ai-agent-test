@@ -37,6 +37,7 @@ _CHECK_PRIORITY = {
     "each_node_min_lines": 1,
     "reachable_from_start": 2, "min_branches": 2, "refs_resolve": 2, "distinct": 2, "exists": 2,
     "all_characters_speak": 3, "each_has": 3,
+    "crossref": 3,
     "compiles": 4,
 }
 
@@ -163,7 +164,7 @@ class Executor:
         }
 
     def _target_met(self, target: Dict) -> bool:
-        ok, _ = run_check(target["check"], self.state.load_artifact(), self.state.run_dir)
+        ok, _, _ = run_check(target["check"], self.state.load_artifact(), self.state.run_dir)
         return ok
 
     def _view(self, mode: Optional[str]) -> Optional[Dict]:

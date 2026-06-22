@@ -12,7 +12,9 @@ for genres no one pre-specified. Closed check set:
   distinct      — values at path are all distinct (optionally projected by `key`)
   each_has      — every item in a collection has these subfields, non-empty
   refs_resolve  — every reference in `from` resolves to an id in `to`
-  compiles      — the artifact builds and passes the compile_renpy gate
+  crossref      — every IR id reference resolves (cheap data-walk); ATTRIBUTES each failure to the
+                  component that can fix it (see _check_crossref)
+  compiles      — the artifact builds and passes the engine compile gate
 """
 
 import json
@@ -111,27 +113,59 @@ def _check_refs_resolve(artifact: Dict, c: Dict, run_dir) -> CheckResult:
     return True, None
 
 
+def _read_spec(run_dir) -> Dict:
+    import json
+    from pathlib import Path
+    spec_path = Path(run_dir) / "spec.json"
+    if spec_path.exists():
+        return json.loads(spec_path.read_text(encoding="utf-8")) or {}
+    return {}
+
+
 def _check_compiles(artifact: Dict, c: Dict, run_dir) -> CheckResult:
     # Lint-only during the loop — distribute (packaging) is reserved for final delivery. Dispatch
     # on the spec's engine (renpy default, web for card games) so the check matches what the loop's
     # compile tool and final packaging do — a web game must not be lint-checked by the Ren'Py SDK.
-    import json
-    from pathlib import Path
     from maestro.engines import compile_for
-    engine = "renpy"
-    spec_path = Path(run_dir) / "spec.json"
-    if spec_path.exists():
-        engine = (json.loads(spec_path.read_text(encoding="utf-8")) or {}).get("engine", "renpy")
+    engine = _read_spec(run_dir).get("engine", "renpy")
     res = compile_for(engine)(run_dir, distribute=False)
     return bool(res.get("ok")), None if res.get("ok") else f"compile failed: {res.get('reason')}"
 
 
-_CHECKS: Dict[str, Callable[[Dict, Dict, object], CheckResult]] = {
+def _check_crossref(artifact: Dict, c: Dict, run_dir):
+    """The cheap, ATTRIBUTED reference gate (a pure data-walk, no engine build). Every unresolved
+    id reference attaches to the component that can fix it: a *reference* error (repoint to fix)
+    routes to the module that owns its IR slice (a dangling opponent → matches, a dangling jump →
+    nodes); a *declaration* error (declare to fix) stays on the spine, where set_*_meta lives. This
+    is what keeps a cross-component failure from dead-ending in the spine's mode with the wrong
+    tools — and being cheap, it runs every step and inside the single-component lock check."""
+    from maestro.ir_assemble import assemble_ir
+    from maestro.ir_crossref import crossref_records, slice_token, is_reference_kind
+    from maestro.modules import compose, modules_for
+    spec_data = _read_spec(run_dir)
+    try:
+        records = crossref_records(assemble_ir(artifact, spec_data.get("genre", "vn")))
+    except Exception:
+        # IR not assemblable yet (structure still being built) — structural checks gate this step.
+        return True, None, None
+    if not records:
+        return True, None, None
+    owner = compose(modules_for(spec_data)).slice_owner
+    attributions = [
+        {"component_id": owner.get(slice_token(r["path"])) if is_reference_kind(r["kind"]) else None,
+         "detail": r["message"]}
+        for r in records
+    ]
+    return False, "; ".join(r["message"] for r in records[:5]), attributions
+
+
+_CHECKS: Dict[str, Callable] = {
     "exists": _check_exists,
     "count": _check_count,
     "distinct": _check_distinct,
     "each_has": _check_each_has,
     "refs_resolve": _check_refs_resolve,
+    "crossref": _check_crossref,
     "compiles": _check_compiles,
 }
 
@@ -143,44 +177,67 @@ def register_check(name: str, fn: Callable[[Dict, Dict, object], CheckResult]) -
     _CHECKS[name] = fn
 
 
-def run_check(check: Dict, artifact: Dict, run_dir) -> CheckResult:
+# (ok, detail, attributions) — the canonical result run_check normalizes every check to. A check
+# fn returns (ok, detail) for the common case (the failure belongs to the component that declared
+# it) or (ok, detail, attributions) to ROUTE the failure elsewhere; attributions is a list of
+# {component_id, detail}, one per cross-component sub-failure (component_id None = the declaring
+# component). A 2-tuple is padded to attributions=None here, so callers read one shape.
+def run_check(check: Dict, artifact: Dict, run_dir):
     # A spec is LLM-authored: a done-condition might be a bare string or otherwise malformed. Treat
     # that as a reported failure, never a crash (a 500 in the games API, or a dead build step).
     if not isinstance(check, dict):
-        return False, f"malformed check (expected an object with a 'type'): {check!r}"
+        return False, f"malformed check (expected an object with a 'type'): {check!r}", None
     ctype = check.get("type")
     fn = _CHECKS.get(ctype)
     if fn is None:
-        return False, f"unknown check type: {ctype!r}"
+        return False, f"unknown check type: {ctype!r}", None
     try:
-        return fn(artifact, check, run_dir)
+        res = fn(artifact, check, run_dir)
+        return res if len(res) == 3 else (res[0], res[1], None)
     except KeyError as e:
         # A missing key in the check dict itself = the spec declared a malformed check.
-        return False, f"malformed {ctype} check: missing key {e}"
+        return False, f"malformed {ctype} check: missing key {e}", None
     except Exception as e:
         # Any other error is a real failure to evaluate — report it honestly rather
         # than letting it crash validate or get mislabeled.
-        return False, f"{ctype} check could not run: {type(e).__name__}: {e}"
+        return False, f"{ctype} check could not run: {type(e).__name__}: {e}", None
 
 
 def validate(spec, state, component_id: Optional[str] = None,
              skip_types: Optional[set] = None) -> List[Dict]:
     """Return the structured failure list for the spec against durable state.
 
-    Each failure: {component_id, check, detail}. Empty list = every declared
-    done-condition holds. Pass component_id to validate a single component.
-    skip_types omits those check types — used for a cheap live to-do that skips the
-    expensive `compiles` build while a sub-loop is mid-flight.
+    Each failure: {component_id, check, detail}. component_id is where the failure ROUTES — a
+    check may attribute it to a component other than the one that declared it (a cross-component
+    reference error attaches to the slice that can fix it, not the spine that ran the gate). Empty
+    list = every declared done-condition holds.
+
+    Pass component_id to ask "is THIS component done" — every check still runs (a failure declared
+    on the spine may route here), then the result is filtered to this component; the expensive
+    `compiles` build is skipped, since it only ever routes to the spine (never a lock-queried
+    component). skip_types omits those check types — used for a cheap live to-do mid-sub-loop.
     """
     artifact = state.load_artifact()
+    skip = set(skip_types or ())
+    if component_id is not None:
+        skip.add("compiles")
+    valid_ids = {c.get("id") for c in spec.components}
     failures: List[Dict] = []
     for comp in spec.components:
-        if component_id is not None and comp.get("id") != component_id:
-            continue
+        comp_id = comp.get("id")
         for check in comp.get("done_conditions", []):
-            if skip_types and isinstance(check, dict) and check.get("type") in skip_types:
+            if isinstance(check, dict) and check.get("type") in skip:
                 continue
-            ok, detail = run_check(check, artifact, state.run_dir)
-            if not ok:
-                failures.append({"component_id": comp.get("id"), "check": check, "detail": detail})
+            ok, detail, attributions = run_check(check, artifact, state.run_dir)
+            if ok:
+                continue
+            if attributions:
+                for a in attributions:
+                    cid = a.get("component_id") or comp_id
+                    failures.append({"component_id": cid if cid in valid_ids else comp_id,
+                                     "check": check, "detail": a["detail"]})
+            else:
+                failures.append({"component_id": comp_id, "check": check, "detail": detail})
+    if component_id is not None:
+        failures = [f for f in failures if f["component_id"] == component_id]
     return failures

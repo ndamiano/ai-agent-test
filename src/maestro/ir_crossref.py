@@ -14,9 +14,42 @@ manifest, so resolving them is a cross-schema check against that manifest, not t
 
 from typing import Dict, List
 
+# Reference kinds name an id that lives in ANOTHER slice (a jump's node, an opponent's character):
+# the fix is to repoint the reference, so the failure belongs to the slice that HOLDS it. Declaration
+# kinds name something that must be DECLARED (a variable/flag/item/stat); the fix is to declare it
+# wherever that kind is declared (the spine's set_*_meta), so those stay on the declaring component.
+_REFERENCE_KINDS = frozenset({"node", "character", "place", "encounter", "combatant",
+                              "ability", "card_match"})
+
+
+def slice_token(path: str) -> str:
+    """The IR-slice token a crossref path belongs to — the routing key for failure attribution.
+    `card_matches[mid].opponent` → 'card_matches'; `nodes[nid].end.target` → 'nodes'. `start` is
+    split one deeper (start.node vs start.place point at different slices)."""
+    if path.startswith("start."):
+        return ".".join(path.split(".")[:2])
+    for sep in ("[", "."):
+        if sep in path:
+            return path.split(sep, 1)[0]
+    return path
+
+
+def is_reference_kind(kind: str) -> bool:
+    """A reference (repoint to fix) routes to the slice that holds it; a declaration (declare to
+    fix) stays on the spine. See _REFERENCE_KINDS."""
+    return kind in _REFERENCE_KINDS
+
 
 def crossref_errors(ir: Dict) -> List[str]:
     """Return one error string per unresolved id reference. Empty list = every reference resolves."""
+    return [r["message"] for r in crossref_records(ir)]
+
+
+def crossref_records(ir: Dict) -> List[Dict]:
+    """Structured form of crossref_errors: one record {path, ref, kind, message} per unresolved
+    reference. `path` locates the bad reference (its leading token names the IR slice that holds
+    it); `kind` is what failed to resolve. The compile gate joins `message`s; failure attribution
+    reads `path`+`kind` to route each error to the component that can fix it."""
     chars = {c["id"] for c in ir.get("characters", [])}
     nodes = {n["id"] for n in ir.get("nodes", [])}
     places = {p["id"] for p in ir.get("places", [])}
@@ -30,10 +63,11 @@ def crossref_errors(ir: Dict) -> List[str]:
     encounters = {e["id"] for e in ir.get("encounters", [])}
     card_matches = {m["id"] for m in ir.get("card_matches", [])}
 
-    errors: List[str] = []
+    records: List[Dict] = []
 
     def bad(path: str, ref, kind: str) -> None:
-        errors.append(f"{path}: {ref!r} is not a declared {kind}")
+        records.append({"path": path, "ref": ref, "kind": kind,
+                        "message": f"{path}: {ref!r} is not a declared {kind}"})
 
     def check_condition(cond, path: str) -> None:
         if not isinstance(cond, dict):
@@ -119,10 +153,12 @@ def crossref_errors(ir: Dict) -> List[str]:
                 bad(f"{path}.item", action["item"], "item")
         elif t == "talk":
             if action["node"] not in nodes:
-                errors.append(
-                    f"{path}.node: talk targets node '{action['node']}' which does not exist — "
-                    f"either change this hotspot to a play_match/examine action (edit_place), or "
-                    f"write the dialogue node '{action['node']}' in the `nodes` component.")
+                records.append({
+                    "path": f"{path}.node", "ref": action["node"], "kind": "node",
+                    "message": (
+                        f"{path}.node: talk targets node '{action['node']}' which does not exist — "
+                        f"either change this hotspot to a play_match/examine action (edit_place), or "
+                        f"write the dialogue node '{action['node']}' in the `nodes` component.")})
         elif t == "move":
             if action["target"] not in places:
                 bad(f"{path}.target", action["target"], "place")
@@ -221,10 +257,12 @@ def crossref_errors(ir: Dict) -> List[str]:
             bad(f"card_matches[{mid}].opponent", m.get("opponent"), "character")
         ante = m.get("ante", {})
         if ante.get("var") not in variables:
-            errors.append(
-                f"card_matches[{mid}].ante.var: '{ante.get('var')}' is not a declared variable — "
-                f"declare it via set_places_meta(variables=[{{\"id\":\"{ante.get('var')}\","
-                f"\"default\":100}}]) so the player has a starting balance to ante.")
+            records.append({
+                "path": f"card_matches[{mid}].ante.var", "ref": ante.get("var"), "kind": "variable",
+                "message": (
+                    f"card_matches[{mid}].ante.var: '{ante.get('var')}' is not a declared variable — "
+                    f"declare it via set_places_meta(variables=[{{\"id\":\"{ante.get('var')}\","
+                    f"\"default\":100}}]) so the player has a starting balance to ante.")})
         for key in ("on_win", "on_lose"):
             res = m.get(key)
             if isinstance(res, dict):
@@ -232,4 +270,4 @@ def crossref_errors(ir: Dict) -> List[str]:
                 if "end" in res:
                     check_node_end(res["end"], f"card_matches[{mid}].{key}.end")
 
-    return errors
+    return records

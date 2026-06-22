@@ -141,6 +141,28 @@ def test_assemble_ir_backstops_narration_speaker():
     assert ir["nodes"][0]["lines"][0]["speaker"] is None
 
 
+# ── stringified-JSON content coercion ─────────────────────────────────────────
+def test_write_node_accepts_stringified_content(tmp_path):
+    """The small model often passes `content` as an escaped JSON string; accept it."""
+    state = RunState(tmp_path)
+    spec = Spec({"frozen": True, "components": [{"id": "nodes", "done_conditions": []}]})
+    tools = build_tools(spec, state, schemas=SCHEMAS)
+    import json as _json
+    body = _json.dumps({"location": "bg_a", "lines": [{"speaker": "ada", "text": "Hi."}],
+                        "end": {"type": "return"}})
+    res = tools["write_node"](node_id="s1", content=body)        # content is a STRING
+    assert res["ok"] is True
+    stored = state.read_component("nodes")["nodes"]["s1"]
+    assert isinstance(stored, dict) and stored["lines"][0]["text"] == "Hi."
+
+
+def test_coerce_json_leaves_non_json_alone():
+    from maestro.tools import _coerce_json
+    assert _coerce_json({"a": 1}) == {"a": 1}            # object untouched
+    assert _coerce_json("just a label") == "just a label"  # plain string untouched
+    assert _coerce_json('{"a": 1}') == {"a": 1}          # json string parsed
+
+
 # ── Fix 4: relaxed VN cast floor ──────────────────────────────────────────────
 def test_vn_premise_character_floor_is_two():
     from maestro.modules import compose, PRESETS

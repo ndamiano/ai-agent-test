@@ -11,6 +11,7 @@ State is bounded on purpose: there is no raw read_file/write_file. Components ar
 written by id; scratchpad is replaced, not appended.
 """
 
+import json
 from typing import Callable, Dict, List, Optional
 
 from maestro.ir_assemble import EMOTIONS, is_narration_speaker
@@ -40,6 +41,21 @@ _EMOTIONS = set(EMOTIONS)
 # later at crossref/compile — where a small model thrashes trying to "fix" it. Normalize at write
 # time so the intent (narration) is honored and the error never forms (is_narration_speaker is the
 # shared rule, also applied as a backstop in ir_assemble).
+def _coerce_json(value):
+    """A small model frequently passes a nested object (a node's content, a place/match body) as a
+    JSON STRING — `content: "{\\"lines\\": ...}"` — instead of an object, and the write is then
+    rejected for a wrong type, burning a step. Parse a JSON-looking string back to the object it
+    encodes; leave anything else untouched (a real type error still surfaces below)."""
+    if isinstance(value, str):
+        s = value.strip()
+        if s[:1] in ("{", "["):
+            try:
+                return json.loads(s)
+            except ValueError:
+                return value
+    return value
+
+
 def _normalize_narration(content):
     """In-place: any line whose speaker reads as narration becomes speaker:null."""
     if isinstance(content, dict):
@@ -387,6 +403,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         _require_frozen()
         if not force and _locked(component_id):
             return _locked_error(component_id)
+        content = _coerce_json(content)
         # Reject the wrong shape up front so it's an immediate steering signal, not a
         # crash inside compile later. The bad content is NOT persisted.
         err = _schema_error(component_id, content)
@@ -410,6 +427,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         if node_id == "start":
             return {"ok": False, "error": "do not use 'start' as a node id — the compiler "
                                           "adds 'label start' that jumps to the first node"}
+        content = _coerce_json(content)
         err = _node_content_error(content)
         if err:
             return {"ok": False, "error": err}
@@ -459,6 +477,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         if node_id not in nodes:
             return {"ok": False, "error": f"no node {node_id!r} to edit"}
         if content is not None:
+            content = _coerce_json(content)
             err = _node_content_error(content)
             if err:
                 return {"ok": False, "error": err}
@@ -496,6 +515,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         _require_frozen()
         if _locked("places"):
             return _locked_error("places")
+        content = _coerce_json(content)
         err = _place_content_error(content)
         if err:
             return {"ok": False, "error": err}
@@ -606,6 +626,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         _require_frozen()
         if _locked("matches"):
             return _locked_error("matches")
+        content = _coerce_json(content)
         err = _match_content_error(content)
         if err:
             return {"ok": False, "error": err}

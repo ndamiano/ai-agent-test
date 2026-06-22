@@ -45,7 +45,14 @@ src/
                 hitl.py — human-as-arbiter-of-done: human todos (block completion) + waivers
                   (accept a red machine check). effective_failures = validate − waivers + open todos
                 agent.py — the build decider + sub-loop; also `rewrite_node` (regenerate ONE
-                  node from a human note, used by the per-scene "rewrite" control)
+                  node from a human note, used by the per-scene "rewrite" control).
+                  Slot-driven node authoring: while driving `count`, a new node must fill an OPEN
+                  SLOT (a dangling target a written node already points at), enforced by
+                  `_create_guard`. The node graph grows only along declared edges — every scene is
+                  reachable, has a known parent, and is shown the synopsis breadcrumb of the path
+                  that leads to it (node_view's `open_slots`), so it continues the arc instead of
+                  re-treading a sibling. write_node persists each node's `event_summary` as its
+                  synopsis; entry + no-open-slots are exempt so the loop can't deadlock.
                 tools.py — artifact tools (build_tools) + TOOL_SCHEMAS. write_component/
                   write_node/edit_node take a human-only `force` to override the done-lock
                   (the agent never sets it — not in TOOL_SCHEMAS); edit_node also takes full
@@ -116,6 +123,9 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 ---
 
 ## Code standards
+
+### No half measures, no backwards compatibility
+When a full fix is available, take it — never the partial patch that leaves the root cause in place. If the real fix means changing the loop, change the loop; don't bolt a workaround onto the symptom. We are both the producer and the consumer of this code: there are no external callers, no published API, no old data to migrate. So never add backwards-compat shims, deprecation paths, version flags, or "keep the old way working too" code. Delete the old way and move the call sites. This is the opposite of timidity — surgical means *small and complete*, not *small and half-done*.
 
 ### Minimal and surgical
 Edit only what the task requires. No cleanup, refactoring, or "while I'm here" changes unless asked. Three similar lines beats a premature abstraction. No feature flags, backwards-compat shims, or half-finished stubs.

@@ -45,16 +45,73 @@ def _reachable(ids: List[str], edges: Dict[str, List[str]]) -> set:
     return reachable
 
 
+def _references(node_ids: List[str], nodes: Dict) -> List[Tuple[str, str, str]]:
+    """Every edge as (source, target, label) — label is the menu choice text or 'continues'."""
+    refs: List[Tuple[str, str, str]] = []
+    for nid in node_ids:
+        end = nodes.get(nid, {}).get("end", {}) or {}
+        kind = end.get("type")
+        if kind == "jump" and end.get("target"):
+            refs.append((nid, end["target"], "continues"))
+        elif kind == "menu":
+            for c in end.get("choices", []) or []:
+                if c.get("target"):
+                    refs.append((nid, c["target"], c.get("text") or "(choice)"))
+    return refs
+
+
+def _shortest_path(entry: str, target: str, edges: Dict[str, List[str]]) -> List[str]:
+    """BFS the id path entry→target over written edges. [] if unreachable."""
+    if entry == target:
+        return [entry]
+    prev: Dict[str, Optional[str]] = {entry: None}
+    frontier = [entry]
+    while frontier:
+        nxt = []
+        for n in frontier:
+            for t in edges.get(n, []):
+                if t not in prev:
+                    prev[t] = n
+                    if t == target:
+                        path = [t]
+                        while prev[path[-1]] is not None:
+                            path.append(prev[path[-1]])  # type: ignore[arg-type]
+                        return list(reversed(path))
+                    nxt.append(t)
+        frontier = nxt
+    return []
+
+
 def node_view(artifact: Dict) -> Dict:
     node_ids, nodes = _nodes(artifact)
+    synopses = (artifact.get("nodes", {}) or {}).get("synopses", {}) or {}
     edges = {nid: _node_targets(nodes.get(nid, {})) for nid in node_ids}
     reachable = _reachable(node_ids, edges)
+    written = set(node_ids)
+    entry = node_ids[0] if node_ids else None
+
+    # An OPEN SLOT is a target a written node already points at but that does not exist yet —
+    # the only place a new node may legitimately go. Each carries the path that leads to it
+    # (ancestor synopses) so the author continues the story instead of re-treading a sibling.
+    slots: Dict[str, Dict] = {}
+    for src, tgt, label in _references(node_ids, nodes):
+        if tgt in written:
+            continue
+        slots.setdefault(tgt, {"id": tgt, "from": []})["from"].append(
+            {"node": src, "label": label})
+    for tgt, slot in slots.items():
+        parent = slot["from"][0]["node"]
+        path_ids = _shortest_path(entry, parent, edges) if entry else []
+        slot["path"] = [{"id": pid, "synopsis": synopses.get(pid, "")} for pid in path_ids]
+
     return {
         "node_ids": node_ids,
         "edges": {nid: sorted(set(e)) for nid, e in edges.items()},
         "reachable": sorted(reachable),
         "unreachable": [n for n in node_ids if n not in reachable],
         "line_counts": {nid: len(nodes.get(nid, {}).get("lines", [])) for nid in node_ids},
+        "synopses": synopses,
+        "open_slots": sorted(slots.values(), key=lambda s: s["id"]),
     }
 
 

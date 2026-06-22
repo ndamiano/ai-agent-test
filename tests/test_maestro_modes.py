@@ -7,7 +7,8 @@ from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.executor import Executor
 from maestro.agent import (_filter_schemas, _schemas_for_target, _prompt_for_target,
-                           _render_context, _load_prompt, make_subloop)
+                           _render_context, _load_prompt, make_subloop, _create_guard,
+                           _render_open_slots)
 from maestro.discrete.dialogue import SPINE as DIALOGUE
 from maestro.discrete.navigation import MODULE as NAVIGATION
 from maestro.modules import compose, PRESETS
@@ -385,3 +386,75 @@ def test_node_subloop_no_escalation_while_progressing():
         view_fn=lambda: None,
     )
     assert all(r is None for r in conn.reasoning_calls)
+
+
+# ── slot-driven authoring: the count guard makes the node graph grow by design ───────────────
+
+def _guard(view):
+    """Wrap a recording dispatch with the count guard over a fixed view."""
+    seen = []
+    def dispatch(action):
+        seen.append(action)
+        return {"ok": True, "node_id": action["args"].get("node_id")}
+    guarded = _create_guard(dispatch, lambda: view, "write_node", "node_id", "node_ids", "node")
+    return guarded, seen
+
+
+def test_guard_entry_node_allowed_when_nothing_written():
+    guarded, seen = _guard({"node_ids": [], "open_slots": []})
+    assert guarded({"tool": "write_node", "args": {"node_id": "scene_01"}})["ok"] is True
+    assert seen  # dispatched
+
+
+def test_guard_rejects_node_that_is_not_an_open_slot():
+    view = {"node_ids": ["scene_01"], "open_slots": [{"id": "scene_02", "from": []}]}
+    guarded, seen = _guard(view)
+    res = guarded({"tool": "write_node", "args": {"node_id": "scene_99"}})
+    assert res["ok"] is False and "OPEN SLOT" in res["error"]
+    assert not seen  # never dispatched
+
+
+def test_guard_allows_filling_an_open_slot():
+    view = {"node_ids": ["scene_01"], "open_slots": [{"id": "scene_02", "from": []}]}
+    guarded, seen = _guard(view)
+    assert guarded({"tool": "write_node", "args": {"node_id": "scene_02"}})["ok"] is True
+    assert seen[0]["args"]["node_id"] == "scene_02"
+
+
+def test_guard_rejects_overwriting_existing_node():
+    view = {"node_ids": ["scene_01"], "open_slots": [{"id": "scene_02", "from": []}]}
+    guarded, _ = _guard(view)
+    res = guarded({"tool": "write_node", "args": {"node_id": "scene_01"}})
+    assert res["ok"] is False and "already exists" in res["error"]
+
+
+def test_guard_no_deadlock_when_no_open_slots():
+    # Nodes exist but every target is written → a fresh branch root is allowed (escape hatch).
+    view = {"node_ids": ["scene_01", "scene_02"], "open_slots": []}
+    guarded, seen = _guard(view)
+    assert guarded({"tool": "write_node", "args": {"node_id": "scene_03"}})["ok"] is True
+    assert seen
+
+
+def test_guard_ignores_slot_rule_for_views_without_open_slots():
+    # A places-style view (no open_slots key) keeps only the no-overwrite rule.
+    view = {"node_ids": ["r1"]}
+    guarded, seen = _guard(view)
+    assert guarded({"tool": "write_node", "args": {"node_id": "r2"}})["ok"] is True
+
+
+def test_render_open_slots_shows_breadcrumb():
+    view = {"open_slots": [{
+        "id": "scene_03",
+        "from": [{"node": "scene_02", "label": "go to the attic"}],
+        "path": [{"id": "scene_01", "synopsis": "they arrive"},
+                 {"id": "scene_02", "synopsis": "they argue"}],
+    }]}
+    text = "\n".join(_render_open_slots(view))
+    assert "OPEN SLOTS" in text
+    assert "scene_03" in text and "go to the attic" in text
+    assert "they arrive" in text and "they argue" in text
+
+
+def test_render_open_slots_empty_when_none():
+    assert _render_open_slots({"open_slots": []}) == []

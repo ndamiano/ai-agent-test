@@ -31,7 +31,12 @@ never one event split into two entries.
 VOICE + EXAMPLE_LINES — `voice` is one sentence on how they speak (vocabulary, sentence
 length, rhythm, what breaks under pressure); `example_lines` are 2+ actual lines that prove
 it. They must sound DIFFERENT from one another — if a line could be swapped between two
-characters unchanged, the voices failed. Plain rendered text only: no emoji, no symbols.
+characters unchanged, the voices failed. SHOW RANGE, NOT ONE TRICK: these lines are the
+template every later scene imitates, so do NOT make them all the character's signature move
+(their pet metaphor, their thesis stated as an aphorism). Include at least one plain, off-duty
+line — the character handling something mundane — so later scenes can let them talk without
+performing their theme. A voice built from one repeated move becomes a caricature 30 scenes
+deep. Plain rendered text only: no emoji, no symbols.
 
 TEMPERAMENT + COMPETENCIES — `temperament` is how they carry themselves day to day;
 `competencies` is a list of concrete skills drawn from the setting.

@@ -461,6 +461,11 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         ns.setdefault("node_ids", [])
         if node_id not in ns["node_ids"]:
             ns["node_ids"].append(node_id)
+        # The event_summary doubles as this node's synopsis — the breadcrumb later scenes see in
+        # CURRENT NODES / OPEN SLOTS so they continue the arc instead of re-treading a sibling.
+        summary = delta.get("event_summary")
+        if summary:
+            ns.setdefault("synopses", {})[node_id] = summary
         state.write_component("nodes", ns)
 
         if delta:

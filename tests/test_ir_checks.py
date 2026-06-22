@@ -58,6 +58,37 @@ def test_node_view():
     assert v["line_counts"]["n1"] == 2 and not v["unreachable"]
 
 
+def test_node_view_open_slots_and_synopses():
+    # n1 -> n2 (written), n3 (NOT written yet) -> n3 is an open slot reached from n1.
+    art = {
+        "premise": {"characters": [{"id": "al"}, {"id": "bo"}]},
+        "nodes": {
+            "node_ids": ["n1", "n2"],
+            "synopses": {"n1": "they arrive", "n2": "they argue"},
+            "nodes": {
+                "n1": {"lines": [{"speaker": "al", "text": "a"}],
+                       "end": {"type": "jump", "target": "n2"}},
+                "n2": {"lines": [{"speaker": "bo", "text": "b"}],
+                       "end": {"type": "menu", "choices": [{"text": "leave", "target": "n3"}]}},
+            },
+        },
+    }
+    v = c.node_view(art)
+    assert v["synopses"]["n1"] == "they arrive"
+    slots = v["open_slots"]
+    assert [s["id"] for s in slots] == ["n3"]
+    slot = slots[0]
+    assert slot["from"] == [{"node": "n2", "label": "leave"}]
+    # path to here = entry n1 → parent n2, each with its synopsis breadcrumb.
+    assert [(p["id"], p["synopsis"]) for p in slot["path"]] == [
+        ("n1", "they arrive"), ("n2", "they argue")]
+
+
+def test_node_view_no_open_slots_when_all_targets_written():
+    v = c.node_view(_vn_artifact())  # n1->{n2,n3}, both written
+    assert v["open_slots"] == []
+
+
 def _pnc_artifact():
     return {
         "premise": {"characters": [{"id": "w"}]},

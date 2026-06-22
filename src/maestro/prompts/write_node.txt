@@ -1,11 +1,23 @@
-You author ONE new dialogue node for a visual novel. {{include:tool_call_rule}}
+You write ONE dialogue node for a visual novel by FILLING ONE OPEN SLOT. {{include:tool_call_rule}}
 Call write_node(node_id, content) in the node shape shown under "Required component shapes" below.
 Pass the story-state delta in the SAME call (story_state_delta: new_facts / entity_updates /
 open_threads_add / open_threads_resolve / event_summary).
 
+FILL AN OPEN SLOT — do not invent a free-floating scene. The context lists OPEN SLOTS: scenes a
+written node already leads into but that do not exist yet. Pick ONE and use its EXACT id as
+node_id. (Only when NO slots are listed — the very first scene, or a fresh branch is needed — do
+you choose a new id yourself.) Filling a slot is what makes your scene reachable and tells you
+where in the story it sits.
+
+CONTINUE THE PATH, DON'T REPEAT IT — each OPEN SLOT shows "path to here": the scenes the player
+already passed to reach this one, with a one-line synopsis each. Read them. Pick up where they
+leave off; never rewrite a beat that already happened on that path. Glance at CURRENT NODES'
+synopses too — if a scene like the one you're about to write already exists, advance instead.
+
 USE THE GIVEN IDS — never invent or rename:
 - speaker = an EXACT id from premise.characters (LOCKED COMPONENTS), or null for narration.
-- a jump/menu target = a node id in CURRENT NODES, or a node you create later this build.
+- a jump/menu target = a node id in CURRENT NODES, an OPEN SLOT id, or a NEW id you open here
+  (which becomes the next slot to fill). Drive toward the endings the outline planned.
 
 EMOTION (spoken lines only): tag each line with the speaker's expression so their face changes as
 they talk — one of neutral, happy, sad, angry, surprised, worried. Choose the one the line's
@@ -20,8 +32,31 @@ WRITE A REAL SCENE, not a stub: several dialogue beats with subtext — an openi
 escalation, a turn, a last line that earns the exit. Never name a feeling; show it.
 {{include:derive_from_request}}
 
+SOUND LIKE PEOPLE, NOT A THEME. A strong `voice` has one failure mode: every line becomes the
+character restating their motif, and the scene reads as a caricature. Break it.
+- NOT EVERY LINE LANDS A POINT. Most real talk is logistics, deflection, a half-thought, a
+  non-answer, a change of subject. Let lines miss each other. One sharp line per beat is enough;
+  the rest can be small and plain.
+- NEVER SAY THE SUBTEXT OUT LOUD. A character does not diagnose the other. They enact it — get
+  petty about a detail, dodge, answer a question with a question, go quiet. The player infers the
+  feeling; no one announces it.
+  FAILS:  "You run when it gets hard." / "You're hiding in the numbers because you're afraid."
+  PASSES: "I'll be in the car." / "Fine. You do the kitchen, I'll do the garage. Keys?"
+- VARY THE SHAPE. Not every line a balanced epigram with a clever turn. Mix a clipped fragment, a
+  rambling burst, an interrupted line, a flat practical one. If two adjacent lines share a rhythm,
+  rewrite one.
+- A MOTIF IS SEASONING, NOT THE MEAL. A character may reach for their signature metaphor once in a
+  scene, not in every line. When tempted to repeat the move, say the plain thing instead.
+  FAILS:  "Soup doesn't pay the property tax, Mara." / "It's lonely at the top of your ledger."
+  PASSES: "Just— put it in the maybe pile, we'll deal with it later." / "Did you eat? You look grey."
+
 {{include:conditions_ref}}
 {{include:effects_ref}}
 
-Each premise ending must be its own node. When you create node X, make sure some node jumps/menus
-to it so it is reachable.
+Each premise ending is its own node, filled like any slot: a node menus/jumps to the ending's id
+(opening it as a slot), then a later step writes it. Don't write an ending until some scene leads
+to it.
+
+event_summary IS LOAD-BEARING: it becomes this scene's one-line synopsis — the breadcrumb every
+later scene sees to avoid repeating you. Make it specific (what CHANGES here), e.g. "sisters find
+the hidden ledger; debt is real" — not "they talk in the study".

@@ -80,6 +80,29 @@ def _scoped_spec(ctx: Dict) -> Dict:
     return {**{k: v for k, v in spec.items() if k != "components"}, "components": comps}
 
 
+def _render_open_slots(view: Dict) -> List[str]:
+    """The author's worklist: the dangling targets a new node may fill, each with the path that
+    leads to it so the scene continues the arc instead of repeating a sibling."""
+    slots = view.get("open_slots") or []
+    if not slots:
+        return []
+    out = ["",
+           "OPEN SLOTS — write ONE of these next, using its EXACT id. Each is a scene a written "
+           "node already leads into but that does not exist yet:"]
+    for s in slots:
+        srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in s.get("from", []))
+        out.append(f"  {s['id']}   (reached from: {srcs})")
+        path = s.get("path") or []
+        if path:
+            crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
+                               for p in path)
+            out.append(f"     path to here: {crumb}")
+    out.append("Continue from where that path leaves off — do NOT repeat a beat already shown "
+               "above. Your node's `end` opens the next slots (menu choices, a jump, or an ending "
+               "id from the outline).")
+    return out
+
+
 def _render_context(ctx: Dict) -> str:
     todo = ctx.get("todo", [])
     todo_lines = [f"- [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}"
@@ -111,10 +134,12 @@ def _render_context(ctx: Dict) -> str:
     if view and view.get("node_ids"):
         edges = view.get("edges", {})
         counts = view.get("line_counts", {})
+        synopses = view.get("synopses", {})
         unreachable = set(view.get("unreachable", []))
         node_lines = [
             f"  {nid} -> {edges.get(nid, [])}"
             f"  ({'UNREACHABLE' if nid in unreachable else 'reachable'}, {counts.get(nid, 0)} lines)"
+            + (f'  — "{synopses[nid]}"' if synopses.get(nid) else "")
             for nid in view["node_ids"]
         ]
         lines += [
@@ -123,6 +148,7 @@ def _render_context(ctx: Dict) -> str:
             "listed here or to a node you also create this step):",
             *node_lines,
         ]
+        lines += _render_open_slots(view)
     if view and view.get("place_ids"):
         edges = view.get("edges", {})
         counts = view.get("interactable_counts", {})
@@ -298,25 +324,38 @@ def _parse_tool_args(tc: Dict) -> Dict:
 
 def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
                   id_key: str, id_list_key: str, noun: str) -> Callable:
-    """Wrap dispatch so the count-driving write tool refuses to overwrite an existing item.
-    Driving `count` the job is to ADD; a small model loves to rewrite item #1 instead, which
-    never raises the count — so reject it and steer to a fresh id. count-only (other targets
-    legitimately rewrite)."""
-    existing = set((view_fn() or {}).get(id_list_key) or [])
+    """Wrap the count-driving write tool with two rules, so the graph grows by DESIGN, not by
+    free invention (which is what produced redundant sibling scenes):
 
+    1. No overwrite — driving `count` the job is to ADD; a small model loves to rewrite item #1,
+       which never raises the count.
+    2. Fill an OPEN SLOT — a new node must take an id some written node already points at (a
+       dangling target). This keeps every new scene reachable and gives it a known parent, so its
+       ancestor path can be shown and it continues the arc instead of re-treading a sibling. The
+       entry node (nothing written yet) and the escape case (no slots open — a fresh branch root
+       is needed to reach the count) are exempt, so the loop can never deadlock.
+
+    count-only (other, repair, targets legitimately rewrite). Slot rule only fires when the view
+    publishes `open_slots` (nodes); a view without it (places) keeps rule 1 alone."""
     def guarded(action: Dict) -> Dict:
-        if action.get("tool") == tool:
-            iid = (action.get("args") or {}).get(id_key)
-            if iid in existing:
+        if action.get("tool") != tool:
+            return dispatch(action)
+        view = view_fn() or {}
+        existing = set(view.get(id_list_key) or [])
+        iid = (action.get("args") or {}).get(id_key)
+        if iid in existing:
+            return {"ok": False, "error":
+                    f"{noun} {iid!r} already exists — to raise the COUNT write a NEW {noun} "
+                    f"id; do not rewrite an existing one."}
+        slots = view.get("open_slots")
+        if slots is not None and existing:
+            slot_ids = {s["id"] for s in slots}
+            if slot_ids and iid not in slot_ids:
                 return {"ok": False, "error":
-                        f"{noun} {iid!r} already exists — to raise the COUNT write a NEW {noun} "
-                        f"id; do not rewrite an existing one."}
-            result = dispatch(action)
-            # Only claim the id once the write actually succeeds — a rejected write (e.g. a thin
-            # node hitting the line floor) must stay retryable, not get locked out as "exists".
-            if iid and isinstance(result, dict) and result.get("ok"):
-                existing.add(iid)
-            return result
+                        f"{noun} {iid!r} is not an OPEN SLOT — a new {noun} must fill one of "
+                        f"{sorted(slot_ids)} (an id a written {noun} already leads to), so it is "
+                        f"reachable and continues that branch. Pick one of those ids, or first "
+                        f"give an existing {noun} a menu/jump to the new id you want."}
         return dispatch(action)
 
     return guarded
@@ -432,14 +471,19 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
                     logger.info("subloop stalled %dx on %s — dropping read tools to force action",
                                 stall, target["check"].get("type"))
 
-            # The artifact changed; re-show the graph so the agent tracks ids as it builds.
-            view = view_fn()
-            ids = (view or {}).get(id_list_key)
+            # The artifact changed; re-show the graph so the agent tracks ids as it builds. The
+            # sub-loop appends to its transcript (never rebuilds _render_context), so the live
+            # slot worklist + synopses must ride on this note or the author loses them after step 1.
+            view = view_fn() or {}
+            ids = view.get(id_list_key)
             if ids:
-                note = f"CURRENT {noun_plural}: " + json.dumps(ids, ensure_ascii=False)
+                syn = view.get("synopses") or {}
+                listing = ", ".join(f'{i} "{syn[i]}"' if syn.get(i) else i for i in ids)
+                note_lines = [f"CURRENT {noun_plural}: {listing}"]
                 if view.get("unreachable"):
-                    note += f" | UNREACHABLE: {view['unreachable']}"
-                mb.add_user(note)
+                    note_lines.append(f"UNREACHABLE: {view['unreachable']}")
+                note_lines += _render_open_slots(view)
+                mb.add_user("\n".join(note_lines))
 
             if target_met():
                 break

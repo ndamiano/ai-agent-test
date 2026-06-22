@@ -198,6 +198,13 @@ def test_write_node_merges_story_state_delta(tmp_path):
     assert ss["entity_states"]["mara"]["trust"] == "wary"
 
 
+def test_write_node_persists_event_summary_as_synopsis(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("scene_01", _node(), event_summary="sisters find the ledger")
+    assert state.read_component("nodes")["synopses"]["scene_01"] == "sisters find the ledger"
+
+
 def test_write_node_tolerates_malformed_delta(tmp_path):
     tools = build_tools(_spec(), RunState(tmp_path))
     assert tools["write_node"]("s1", _node(), story_state_delta=["new_facts"])["ok"] is True

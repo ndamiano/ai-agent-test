@@ -345,6 +345,23 @@ async def compile_game(run_id: str, body: CompileBody = CompileBody()):
     return compile_for(spec.engine)(state.run_dir, distribute=body.distribute)
 
 
+@router.post("/{run_id}/reveal", response_model=Dict)
+async def reveal_game(run_id: str):
+    """Open the run's folder in the host's file manager. Only works when the backend
+    runs on the same machine as the user (it does — Maestro is a local app)."""
+    import subprocess
+    import sys
+
+    state = _require_state(run_id)
+    path = str(state.run_dir)
+    opener = {"darwin": ["open"], "win32": ["explorer"]}.get(sys.platform, ["xdg-open"])
+    try:
+        subprocess.Popen([*opener, path])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"could not open folder: {e}")
+    return {"run_id": run_id, "path": path}
+
+
 # Node rewrites in flight (one per node), so the UI can disable a node's button while it runs.
 _rewriting: set = set()
 

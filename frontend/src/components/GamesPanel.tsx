@@ -76,6 +76,16 @@ const JsonEditCard: React.FC<{
     )
 }
 
+type BodyTabId = 'story' | 'scenes' | 'contract'
+const BodyTab: React.FC<{ id: BodyTabId; active: BodyTabId; onPick: (id: BodyTabId) => void; label: string }> = ({ id, active, onPick, label }) => (
+    <button onClick={() => onPick(id)}
+        className={`px-2 pb-2 -mb-px text-xs font-semibold uppercase tracking-wide border-b-2 transition-colors ${
+            id === active ? 'text-white border-blue-500' : 'text-gray-500 border-transparent hover:text-gray-300'
+        }`}>
+        {label}
+    </button>
+)
+
 const CharacterCard: React.FC<{ char: any; editable: boolean; onSave: (c: any) => Promise<void> | void }> = ({ char, editable, onSave }) => (
     <JsonEditCard editable={editable} value={char} onSave={onSave}
         title={<span>{char.name || char.id} <span className="text-gray-600 font-normal text-xs">({char.id})</span></span>}>
@@ -228,6 +238,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const [autoPause, setAutoPause] = useState(false)
     const [lastTouched, setLastTouched] = useState<string | null>(null)
     const [activeScene, setActiveScene] = useState<string | null>(null)
+    const [bodyTab, setBodyTab] = useState<'story' | 'scenes' | 'contract'>('scenes')
 
     const load = useCallback(() => {
         let cancelled = false
@@ -347,6 +358,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         await api.regenerateAssets(runId)
         setFeed(prev => [...prev.slice(-60), '✓ images regenerated (recompile to repackage)'])
     }, 'Regenerate failed')
+    const reveal = () => act(() => api.revealGame(runId), 'Open folder failed', false)
     const addTodo = () => act(async () => {
         await api.addTodo(runId, newTodoComp || (detail?.spec.components[0]?.id ?? ''), newTodoText)
         setNewTodoText('')
@@ -423,6 +435,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                             auto-pause per component
                         </label>
                     )}
+                    <button onClick={reveal} disabled={acting} title="open this run's folder in your file manager"
+                        className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium ml-auto">Open folder</button>
                 </div>
 
                 {status === 'awaiting_human' && (
@@ -477,64 +491,85 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 </div>
             </div>
 
-            {/* ── SCROLLABLE BODY: artifact cards ────────────────────────────────── */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
-                {detail.spec.request && <p className="text-gray-400 text-sm">{detail.spec.request}</p>}
+            {/* ── SCROLLABLE BODY: tabbed artifact cards ─────────────────────────── */}
+            <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex-shrink-0 flex gap-1 px-5 pt-3 border-b border-white/[0.08]">
+                    <BodyTab id="story" active={bodyTab} onPick={setBodyTab} label="Story" />
+                    <BodyTab id="scenes" active={bodyTab} onPick={setBodyTab} label={`Scenes${rawSceneIds.length ? ` (${rawSceneIds.length})` : ''}`} />
+                    <BodyTab id="contract" active={bodyTab} onPick={setBodyTab}
+                        label={`Contract${otherComponents.length + detail.waivers.length ? ` (${otherComponents.length + detail.waivers.length})` : ''}`} />
+                </div>
 
-                {premise && (
-                    <section className="space-y-2">
-                        <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Premise</h3>
-                        <JsonEditCard editable={editable} value={premise} onSave={v => saveComponent('premise', v)}
-                            title={detail.spec.title || 'premise'}>
-                            {premise.central_question && <p className="text-gray-200 text-sm italic">"{premise.central_question}"</p>}
-                            {Array.isArray(premise.endings) && premise.endings.length > 0 && (
-                                <p className="text-gray-400 text-xs mt-1"><span className="text-gray-500">Endings: </span>{premise.endings.map((e: any) => e.id).join(', ')}</p>
-                            )}
-                        </JsonEditCard>
-                    </section>
-                )}
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+                    {bodyTab === 'story' && <>
+                        {detail.spec.request && <p className="text-gray-400 text-sm">{detail.spec.request}</p>}
 
-                {characters.length > 0 && (
-                    <section className="space-y-2">
-                        <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Characters ({characters.length})</h3>
-                        <div className="grid grid-cols-2 gap-2">
-                            {characters.map((c, i) => <CharacterCard key={c.id ?? i} char={c} editable={editable} onSave={ch => saveChar(i, ch)} />)}
-                        </div>
-                    </section>
-                )}
+                        {premise && (
+                            <section className="space-y-2">
+                                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Premise</h3>
+                                <JsonEditCard editable={editable} value={premise} onSave={v => saveComponent('premise', v)}
+                                    title={detail.spec.title || 'premise'}>
+                                    {premise.central_question && <p className="text-gray-200 text-sm italic">"{premise.central_question}"</p>}
+                                    {Array.isArray(premise.endings) && premise.endings.length > 0 && (
+                                        <p className="text-gray-400 text-xs mt-1"><span className="text-gray-500">Endings: </span>{premise.endings.map((e: any) => e.id).join(', ')}</p>
+                                    )}
+                                </JsonEditCard>
+                            </section>
+                        )}
 
-                {otherComponents.length > 0 && (
-                    <section className="space-y-2">
-                        <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Components</h3>
-                        {otherComponents.map(c => (
-                            <ArtifactCard key={c.id} id={c.id} description={c.description} doneConditions={c.done_conditions || []}
-                                value={detail.artifact?.[c.id]} editable={editable} onSave={v => saveComponent(c.id, v)} />
-                        ))}
-                    </section>
-                )}
+                        {characters.length > 0 && (
+                            <section className="space-y-2">
+                                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Characters ({characters.length})</h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {characters.map((c, i) => <CharacterCard key={c.id ?? i} char={c} editable={editable} onSave={ch => saveChar(i, ch)} />)}
+                                </div>
+                            </section>
+                        )}
+                    </>}
 
-                {nodesComp && rawSceneIds.length > 0 && (
-                    <SceneNavigator runId={runId} nodesComp={nodesComp} orderedIds={orderedIds} activeId={activeId}
-                        editable={editable} rewriting={rewriting} onPick={setActiveScene} onRewrite={rewrite} onSaved={touch} />
-                )}
+                    {bodyTab === 'scenes' && (
+                        nodesComp && rawSceneIds.length > 0 ? (
+                            <SceneNavigator runId={runId} nodesComp={nodesComp} orderedIds={orderedIds} activeId={activeId}
+                                editable={editable} rewriting={rewriting} onPick={setActiveScene} onRewrite={rewrite} onSaved={touch} />
+                        ) : (
+                            <p className="text-gray-600 text-sm">No scenes yet — they appear here once the build writes nodes.</p>
+                        )
+                    )}
 
-                {detail.waivers.length > 0 && (
-                    <section className="space-y-1">
-                        <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Waived ({detail.waivers.length})</h3>
-                        <ul className="space-y-1">
-                            {detail.waivers.map(w => (
-                                <li key={w.sig} className="text-sm text-gray-400 flex items-center justify-between gap-2">
-                                    <span><span className="font-mono text-xs text-gray-600">[{w.component_id}]</span> {String(w.check?.type)} {w.check?.path ?? ''}</span>
-                                    <button onClick={() => unwaive(w.sig)} disabled={acting} className="text-gray-600 hover:text-gray-300 text-[11px] shrink-0">Reinstate</button>
-                                </li>
-                            ))}
-                        </ul>
-                    </section>
-                )}
+                    {bodyTab === 'contract' && <>
+                        {otherComponents.length > 0 && (
+                            <section className="space-y-2">
+                                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Components</h3>
+                                {otherComponents.map(c => (
+                                    <ArtifactCard key={c.id} id={c.id} description={c.description} doneConditions={c.done_conditions || []}
+                                        value={detail.artifact?.[c.id]} editable={editable} onSave={v => saveComponent(c.id, v)} />
+                                ))}
+                            </section>
+                        )}
 
-                {detail.built && (
-                    <p className="text-gray-500 text-sm">Build packaged under the run's <span className="font-mono text-gray-400">game_output/</span>.</p>
-                )}
+                        {detail.waivers.length > 0 && (
+                            <section className="space-y-1">
+                                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Waived ({detail.waivers.length})</h3>
+                                <ul className="space-y-1">
+                                    {detail.waivers.map(w => (
+                                        <li key={w.sig} className="text-sm text-gray-400 flex items-center justify-between gap-2">
+                                            <span><span className="font-mono text-xs text-gray-600">[{w.component_id}]</span> {String(w.check?.type)} {w.check?.path ?? ''}</span>
+                                            <button onClick={() => unwaive(w.sig)} disabled={acting} className="text-gray-600 hover:text-gray-300 text-[11px] shrink-0">Reinstate</button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </section>
+                        )}
+
+                        {detail.built && (
+                            <p className="text-gray-500 text-sm">Build packaged under the run's <span className="font-mono text-gray-400">game_output/</span>.</p>
+                        )}
+
+                        {otherComponents.length === 0 && detail.waivers.length === 0 && !detail.built && (
+                            <p className="text-gray-600 text-sm">No extra components or waivers — the contract lives in the spec's done-conditions.</p>
+                        )}
+                    </>}
+                </div>
             </div>
         </div>
     )

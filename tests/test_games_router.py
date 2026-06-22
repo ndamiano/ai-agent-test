@@ -74,6 +74,27 @@ def test_freeze_game_404(tmp_path, monkeypatch):
     assert exc.value.status_code == 404
 
 
+def test_reveal_opens_run_dir(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    RunState(tmp_path / "g").write_spec({"title": "G", "frozen": False, "components": []})
+
+    import subprocess
+    calls = []
+    monkeypatch.setattr(subprocess, "Popen", lambda args, *a, **k: calls.append(args))
+
+    result = asyncio.run(games.reveal_game("g"))
+    assert result["path"] == str(tmp_path / "g")
+    assert calls and calls[0][-1] == str(tmp_path / "g")
+
+
+def test_reveal_404_for_unknown(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.reveal_game("ghost"))
+    assert exc.value.status_code == 404
+
+
 def test_build_requires_frozen_spec(tmp_path, monkeypatch):
     _patch_for_run(monkeypatch, tmp_path)
     RunState(tmp_path / "g").write_spec({"title": "G", "frozen": False, "components": []})

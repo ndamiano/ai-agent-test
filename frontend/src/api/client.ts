@@ -59,6 +59,8 @@ export const api = {
         request<{ ok: boolean; reason?: string }>(`/games/${runId}/compile`, { method: 'POST', body: JSON.stringify({ distribute }) }),
     regenerateAssets: (runId: string) =>
         request<Record<string, any>>(`/games/${runId}/regenerate-assets`, { method: 'POST' }),
+    revealGame: (runId: string) =>
+        request<{ run_id: string; path: string }>(`/games/${runId}/reveal`, { method: 'POST' }),
     editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
         request<{ ok: boolean }>(`/games/${runId}/component/${componentId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
     editNode: (runId: string, nodeId: string, content: Record<string, any>) =>

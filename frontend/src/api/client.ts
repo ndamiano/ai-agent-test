@@ -43,8 +43,38 @@ export const api = {
         request<GameDetail>(`/games/${runId}`),
     freezeGame: (runId: string) =>
         request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
-    buildGame: (runId: string) =>
-        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST' }),
+    buildGame: (runId: string, autoPause = false) =>
+        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ auto_pause: autoPause }) }),
+
+    // Human-in-the-loop build control
+    pauseGame: (runId: string) =>
+        request<{ status: string }>(`/games/${runId}/pause`, { method: 'POST' }),
+    resumeGame: (runId: string) =>
+        request<{ status: string }>(`/games/${runId}/resume`, { method: 'POST' }),
+    cancelGame: (runId: string) =>
+        request<{ status: string }>(`/games/${runId}/cancel`, { method: 'POST' }),
+    setAutoPause: (runId: string, enabled: boolean) =>
+        request<{ auto_pause: boolean }>(`/games/${runId}/auto-pause`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+    compileGame: (runId: string, distribute = false) =>
+        request<{ ok: boolean; reason?: string }>(`/games/${runId}/compile`, { method: 'POST', body: JSON.stringify({ distribute }) }),
+    regenerateAssets: (runId: string) =>
+        request<Record<string, any>>(`/games/${runId}/regenerate-assets`, { method: 'POST' }),
+    editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
+        request<{ ok: boolean }>(`/games/${runId}/component/${componentId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+    editNode: (runId: string, nodeId: string, content: Record<string, any>) =>
+        request<{ ok: boolean }>(`/games/${runId}/node/${nodeId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+    rewriteNode: (runId: string, nodeId: string, note: string) =>
+        request<{ status: string }>(`/games/${runId}/node/${nodeId}/rewrite`, { method: 'POST', body: JSON.stringify({ note }) }),
+
+    // Done arbitration
+    addTodo: (runId: string, component_id: string, text: string) =>
+        request<{ id: string }>(`/games/${runId}/todos`, { method: 'POST', body: JSON.stringify({ component_id, text }) }),
+    resolveTodo: (runId: string, todoId: string, done = true) =>
+        request<{ done: boolean }>(`/games/${runId}/todos/${todoId}`, { method: 'PATCH', body: JSON.stringify({ done }) }),
+    waiveCheck: (runId: string, component_id: string, check: Record<string, any>) =>
+        request<{ sig: string }>(`/games/${runId}/waive`, { method: 'POST', body: JSON.stringify({ component_id, check }) }),
+    unwaiveCheck: (runId: string, sig: string) =>
+        request<{ sig: string }>(`/games/${runId}/unwaive`, { method: 'POST', body: JSON.stringify({ sig }) }),
 
     // System
     getStatus: () =>

@@ -98,6 +98,23 @@ Two-pass emotion img2img is good. Gaps:
   question is a real values tension. The highest-leverage single judge call, since everything
   derives from the premise.
 
+## 8. Post-compile refiner pass (make a working game first, then improve it)
+
+Today the loop's only verdict is the structural floor — when it goes green the artifact is
+*valid*, and that's the end of it. The image world's lesson: generate first, then run a refiner
+that fixes the problematic bits (low-res eyes, mangled hands). Apply the same shape here.
+
+- [ ] **Refiner stage after the first successful compile.** Read the finished, assembled content
+  and fix problematic pieces in place (flat/under-written nodes, thin examine text, weak match
+  flavor) — a quality-driven rewrite pass distinct from the build loop's structural drive. Plugs
+  into the §1 judge for its problem list and the §1 `revise_node`/`revise_place` tools for the fix.
+- [ ] **Heal manual-edit `story_state` desync here.** Human-in-the-loop hand-edits (edit a node's
+  character line via the games API) leave the cumulative `story_state.json` stale — it can't be
+  recomputed from the artifact, only carried. Rather than block edits at author time, let the
+  refiner re-derive / repair continuity after the fact. Until the refiner exists, manual edits
+  knowingly accept story_state staleness (the HITL editing is intentionally unguarded on this).
+- [ ] **Cap refiner passes** (budget) like the §1 judge, so it can't loop forever polishing.
+
 ---
 
 # Codebase / prompt / tooling debt
@@ -106,7 +123,7 @@ Not user-facing quality directly, but it caps how fast quality can climb: duplic
 drift, and a leaky seam means every new module re-touches the core. Found while auditing the
 prompts + tool-scoping.
 
-## 8. Prompt duplication (DRY) — confirmed, the suspicion was right
+## 9. Prompt duplication (DRY) — confirmed, the suspicion was right
 
 The same "house rules" are copy-pasted across 6–8 prompts; `render_template` is plain `{key}`
 substitution with no include/partial mechanism, so each prompt re-states everything. Bloats
@@ -128,7 +145,7 @@ every call's context (worse for small models — more tokens, more distraction) 
   restating the JSON shape; they reference the appended `skeleton_guide` ("Required component
   shapes") — `SKEL_NODES`/`SKEL_PLACES` are the one source, killing the `location` drift.
 
-## 9. Spec prompts triplicated + done-conditions authored twice
+## 10. Spec prompts triplicated + done-conditions authored twice
 
 `propose_spec.txt` / `propose_spec_pnc.txt` / `propose_spec_card.txt` are 270 lines of
 near-duplicate. Worse, each hardcodes a prose "good default set" of done-conditions that
@@ -142,7 +159,7 @@ sources for the same contract, guaranteed to drift.
 - [x] **Generic spec-drafter language.** Genre/engine-specific framing moved into `genre_blurb_*`;
   the template body is preset-agnostic.
 
-## 10. Tool-selection-per-module leaks back into the core
+## 11. Tool-selection-per-module leaks back into the core
 
 The module refactor was supposed to kill per-genre dispatch, but per-target/per-mode tool gating
 and prompt selection are **hardcoded in `agent.py`** (`_MODE_TOOLS`, `_TARGET_TOOLS`,
@@ -157,7 +174,7 @@ component / check-type strings. Adding `card_play` meant editing these maps — 
   `write_component` call — it can't repair or grow against a richer check. The moment card_play
   gets the depth checks from §4, it needs a sub-loop like nodes/places.
 
-## 11. Tool surface gaps that cap quality
+## 12. Tool surface gaps that cap quality
 
 - [ ] **`read_story_state` is absent from the places and matches tool sets.** PnC talk-node
   barks and card-match flavor are authored blind to continuity. Add it where those modules write.

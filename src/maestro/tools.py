@@ -365,9 +365,11 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         return validator(content)
 
     # ── artifact mutation (gated on freeze) ──────────────────────────────────
-    def write_component(component_id: str, content) -> Dict:
+    def write_component(component_id: str, content, force: bool = False) -> Dict:
+        # force: a human edit may overwrite a locked component (explicit override). The agent
+        # never sets it — force isn't in TOOL_SCHEMAS — so its lock discipline is unchanged.
         _require_frozen()
-        if _locked(component_id):
+        if not force and _locked(component_id):
             return _locked_error(component_id)
         # Reject the wrong shape up front so it's an immediate steering signal, not a
         # crash inside compile later. The bad content is NOT persisted.
@@ -378,15 +380,16 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         return {"ok": True, "component_id": component_id}
 
     def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
-                   **delta_fields) -> Dict:
+                   force: bool = False, **delta_fields) -> Dict:
         """Fused: write one IR node into `nodes` AND merge its story-state delta.
 
         `content` is an IR node object ({lines, end}); escaping/rendering is the compiler's
         job. Producing the dialogue and the continuity bookkeeping in one call keeps them
         consistent — the next node reads the updated story state, never prior script.
+        force: a human-driven rewrite may overwrite a locked nodes component (override).
         """
         _require_frozen()
-        if _locked("nodes"):
+        if not force and _locked("nodes"):
             return _locked_error("nodes")
         if node_id == "start":
             return {"ok": False, "error": "do not use 'start' as a node id — the compiler "
@@ -423,16 +426,26 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
 
     def edit_node(node_id: str, line_index: Optional[int] = None, text: Optional[str] = None,
                   speaker=_UNSET, emotion: Optional[str] = None,
-                  effects: Optional[List] = None, end: Optional[Dict] = None) -> Dict:
+                  effects: Optional[List] = None, end: Optional[Dict] = None,
+                  content: Optional[Dict] = None, force: bool = False) -> Dict:
         """Patch ONE field of a node without rewriting it: a single line (by index) or the `end`.
-        Repointing a jump/menu target or fixing one line, without disturbing the rest."""
+        Repointing a jump/menu target or fixing one line, without disturbing the rest.
+        content: a human edit may instead replace the WHOLE node ({lines, end}) at once.
+        force: a human edit may patch a locked nodes component (override)."""
         _require_frozen()
-        if _locked("nodes"):
+        if not force and _locked("nodes"):
             return _locked_error("nodes")
         ns = state.read_component("nodes") or {}
         nodes = ns.get("nodes", {})
         if node_id not in nodes:
             return {"ok": False, "error": f"no node {node_id!r} to edit"}
+        if content is not None:
+            err = _node_content_error(content)
+            if err:
+                return {"ok": False, "error": err}
+            nodes[node_id] = content
+            state.write_component("nodes", ns)
+            return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
         if end is not None:
             if end.get("type") not in _END_TYPES:

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from maestro.validate import validate, run_check
+from maestro.run_control import BuildCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,8 @@ class Executor:
                  max_steps: int = 60, on_milestone: Optional[Callable[[str], None]] = None,
                  on_event: Optional[Callable[[Dict], None]] = None,
                  projectors: Optional[Dict[str, Callable]] = None,
-                 sub_runners: Optional[Dict[str, Callable]] = None):
+                 sub_runners: Optional[Dict[str, Callable]] = None,
+                 control=None):
         self.spec = spec
         self.state = state
         self.tools = tools
@@ -97,6 +99,8 @@ class Executor:
         # Optional progress sink (e.g. the websocket bus). Transport-agnostic: the
         # executor emits structured dicts; the caller decides where they go.
         self.on_event = on_event
+        # Cross-thread human control (pause/resume/cancel). None = autonomous (CLI/tests).
+        self.control = control
         self.last_result: Optional[str] = None
         # The payload of the most recent read, surfaced into the next step's context — each
         # step is stateless, so without this the agent re-reads the same node forever.
@@ -109,6 +113,24 @@ class Executor:
             self.on_event({"type": event_type, **fields})
         except Exception:
             logger.exception("on_event callback failed for %s", event_type)
+
+    def _checkpoint(self, step: int) -> None:
+        """A pause/cancel boundary. Called at the top of each step and per node in the
+        sub-loop, so a pause halts at a point where durable state is consistent and a
+        cancel unwinds promptly (BuildCancelled is a BaseException — runners can't eat it)."""
+        c = self.control
+        if c is None:
+            return
+        if c.cancelled:
+            raise BuildCancelled()
+        if c.paused:
+            c.set_status("paused")
+            self._emit("build_paused", step=step)
+            c.wait_while_paused()
+            if c.cancelled:
+                raise BuildCancelled()
+            c.set_status("running")
+            self._emit("build_resumed", step=step)
 
     # ── context (rebuilt fresh each step from durable state) ─────────────────
     def build_context(self, todo: Optional[List[Dict]] = None, stalled: bool = False) -> Dict:
@@ -163,6 +185,34 @@ class Executor:
             "available_tools": sorted(self.tools),
         }
 
+    def _machine_failures(self, skip_types: Optional[set] = None) -> List[Dict]:
+        """validate's failures minus any the human has waived. The waived check leaves the
+        to-do, so the agent stops targeting it and it no longer blocks completion."""
+        from maestro.hitl import check_sig, waived_sigs
+        waived = waived_sigs(self.state)
+        return [f for f in validate(self.spec, self.state, skip_types=skip_types)
+                if check_sig(f) not in waived]
+
+    def _open_human_todos(self) -> List[Dict]:
+        from maestro.hitl import open_todos
+        return open_todos(self.state)
+
+    def _await_human(self, step: int) -> None:
+        """Machine checks pass but the human still has open todos — park here until they
+        resolve them (the human is the arbiter of done), rather than spin. Headless builds
+        (no control) treat human todos as advisory and don't park."""
+        c = self.control
+        if c is None:
+            return
+        c.set_status("awaiting_human")
+        self._emit("awaiting_human", step=step, todo=self._open_human_todos())
+        while self._open_human_todos():
+            if c.cancelled:
+                raise BuildCancelled()
+            time.sleep(0.5)
+        c.set_status("running")
+        self._emit("human_cleared", step=step)
+
     def _target_met(self, target: Dict) -> bool:
         ok, _, _ = run_check(target["check"], self.state.load_artifact(), self.state.run_dir)
         return ok
@@ -177,14 +227,18 @@ class Executor:
 
         history: List[StepRecord] = []
         all_ids = {c.get("id") for c in self.spec.components}
-        failures = validate(self.spec, self.state)
+        failures = self._machine_failures()
         passed = all_ids - {f["component_id"] for f in failures}
         self._emit("build_started", n_failing=len(failures), max_steps=self.max_steps,
                    todo=failures)
 
         step = 0
         while step < self.max_steps:
+          try:
+            self._checkpoint(step)
             if not failures:
+                if self._open_human_todos():
+                    self._await_human(step)   # block until the human clears them (or cancels)
                 self._emit("build_done", ok=True, steps=step)
                 return ExecutorResult(ok=True, steps=step, history=history)
 
@@ -202,6 +256,7 @@ class Executor:
                 def report(summary: str) -> None:
                     nonlocal step
                     step += 1
+                    self._checkpoint(step)
                     self.last_result = summary
                     history.append(StepRecord(step=step, action={}, summary=summary))
                     # Live to-do without the expensive compile, so the panel reflects nodes
@@ -209,9 +264,9 @@ class Executor:
                     # But once the cheap checks all pass, compiles is the only thing between
                     # here and done — run the real build THEN so the panel never reports
                     # "0 failing" on a build that is actually red.
-                    live = validate(self.spec, self.state, skip_types={"compiles"})
+                    live = self._machine_failures(skip_types={"compiles"})
                     if not live:
-                        live = validate(self.spec, self.state)
+                        live = self._machine_failures()
                     print(f"  step {step}/{self.max_steps} [{mode}→{target['check'].get('type')}]: "
                           f"{summary}", flush=True)
                     self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
@@ -235,7 +290,7 @@ class Executor:
                 dt = time.perf_counter() - t0
                 print(f"  step {step}: {self.last_result}  [{dt:.0f}s]", flush=True)
 
-            failures = validate(self.spec, self.state)
+            failures = self._machine_failures()
             now_failing = {f["component_id"] for f in failures}
             for cid in (all_ids - now_failing) - passed:
                 self._fire_milestone(cid)
@@ -244,11 +299,21 @@ class Executor:
             if runner is None:
                 self._emit("build_step", step=step, max_steps=self.max_steps, mode=mode,
                            summary=self.last_result, n_failing=len(failures), todo=failures)
+          except BuildCancelled:
+            if self.control is not None:
+                self.control.set_status("cancelled")
+            self._emit("build_cancelled", steps=step)
+            return ExecutorResult(ok=False, steps=step, failures=failures, history=history)
 
         self._emit("build_done", ok=not failures, steps=step)
         return ExecutorResult(ok=not failures, steps=step, failures=failures, history=history)
 
     def _fire_milestone(self, component_id: str) -> None:
+        # Auto-pause: if the human armed it, a finished component parks the build at the next
+        # step boundary so they can inspect/edit before the agent moves on.
+        if self.control is not None and self.control.auto_pause:
+            self.control.request_pause()
+            self._emit("auto_paused", component_id=component_id)
         if self.on_milestone is None:
             return
         try:

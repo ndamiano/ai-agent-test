@@ -61,16 +61,22 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     if not decide:
         for cid, module in composed.subloop_modules.items():
             sub_runners[cid] = make_subloop(module, component_guide=guide)
+    from maestro.run_control import get_or_create, remove
+    control = get_or_create(run_id)
     executor = Executor(
         spec, state, tools, decider, max_steps=max_steps,
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
         projectors=projectors,
         sub_runners=sub_runners,
+        control=control,
     )
 
     t0 = time.perf_counter()
-    result = executor.run()
+    try:
+        result = executor.run()
+    finally:
+        remove(run_id)
 
     if result.ok:
         # Generate real art (ComfyUI when up, placeholder fallback) then package once.
@@ -87,6 +93,35 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     result.elapsed = time.perf_counter() - t0
     logger.info("build %s: ok=%s steps=%d elapsed=%.1fs",
                 run_id, result.ok, result.steps, result.elapsed)
+    return result
+
+
+def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
+    """Regenerate one node from a human note, on its own (outside the build loop). Emits
+    node_rewrite_started/done so the panel can react, and re-compiles so the output reflects
+    the change. Meant to run on a background thread, like run_build."""
+    from maestro.spec_tools import _emit
+    from maestro.spec import Spec
+    from maestro.agent import rewrite_node
+    from renpy.ir_checks import register_all as register_ir_checks
+    from renpy.component_schemas import SCHEMAS as ir_schemas, skeleton_guide
+    from maestro.engines import compile_for
+
+    register_ir_checks()
+    state = RunState.for_run(run_id)
+    spec = Spec(state.read_spec())
+    tools = build_tools(spec, state, schemas=ir_schemas)
+    _emit("node_rewrite_started", run_id, node_id=node_id, note=note)
+    result = rewrite_node(spec, state, node_id, note, tools,
+                          component_guide=skeleton_guide(genre=spec.genre),
+                          report=lambda m: _emit("node_rewrite_step", run_id, node_id=node_id, summary=m))
+    if result.get("ok"):
+        try:
+            compile_for(spec.engine)(state.run_dir, distribute=False)
+        except Exception:
+            logger.exception("recompile after rewrite failed for %s", run_id)
+    _emit("node_rewrite_done", run_id, node_id=node_id, ok=bool(result.get("ok")),
+          error=result.get("error"))
     return result
 
 

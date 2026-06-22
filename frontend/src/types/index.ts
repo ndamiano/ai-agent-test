@@ -29,6 +29,21 @@ export interface TodoItem {
     component_id: string
     check: Record<string, any>
     detail: string | null
+    human?: boolean
+}
+
+export interface HumanTodo {
+    id: string
+    component_id: string
+    text: string
+    done: boolean
+}
+
+export interface Waiver {
+    sig: string
+    component_id: string
+    check: Record<string, any>
+    note?: string
 }
 
 export interface GameDetail {
@@ -36,9 +51,14 @@ export interface GameDetail {
     spec: Spec
     artifact: Record<string, any>
     todo: TodoItem[]
+    human_todos: HumanTodo[]
+    waivers: Waiver[]
     frozen: boolean
     built: boolean
     building: boolean
+    status: string
+    auto_pause: boolean
+    assets_exist: boolean
 }
 
 export interface SystemStatus {

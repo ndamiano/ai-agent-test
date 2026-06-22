@@ -11,9 +11,59 @@ import threading
 from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class TodoBody(BaseModel):
+    component_id: str
+    text: str
+
+
+class ResolveBody(BaseModel):
+    done: bool = True
+
+
+class WaiveBody(BaseModel):
+    component_id: str
+    check: Dict
+    note: str = ""
+
+
+class UnwaiveBody(BaseModel):
+    sig: str
+
+
+class ComponentBody(BaseModel):
+    content: Dict
+
+
+class NodeEditBody(BaseModel):
+    line_index: int = None
+    text: str = None
+    speaker: str = None
+    emotion: str = None
+    effects: List = None
+    end: Dict = None
+    content: Dict = None
+
+
+class CompileBody(BaseModel):
+    distribute: bool = False
+
+
+class BuildBody(BaseModel):
+    auto_pause: bool = False
+
+
+class AutoPauseBody(BaseModel):
+    enabled: bool
+
+
+class RewriteBody(BaseModel):
+    note: str = ""
 
 # Run ids with a build thread in flight. Guards against double-builds and lets the
 # UI show a "building" state on load (the live event stream covers the rest).
@@ -66,7 +116,8 @@ async def get_game(run_id: str):
     """Full detail for one game: spec, built artifact, and the current to-do."""
     from maestro.spec import Spec
     from maestro.state import RunState
-    from maestro.validate import validate
+    from maestro.hitl import effective_failures
+    from maestro.run_control import get as get_control
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
@@ -74,14 +125,22 @@ async def get_game(run_id: str):
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
 
     spec = Spec(spec_data)
+    ctrl = get_control(run_id)
+    built = _is_built(state.run_dir)
+    images = state.run_dir / "game_output" / "game" / "images"
     return {
         "run_id": run_id,
         "spec": spec_data,
         "artifact": state.load_artifact(),
-        "todo": validate(spec, state),
+        "todo": effective_failures(spec, state),
+        "human_todos": state.read_human_todos(),
+        "waivers": state.read_waivers(),
         "frozen": spec.frozen,
-        "built": _is_built(state.run_dir),
+        "built": built,
         "building": run_id in _active_builds,
+        "status": ctrl.status if ctrl else ("built" if built else "idle"),
+        "auto_pause": ctrl.auto_pause if ctrl else False,
+        "assets_exist": images.is_dir() and any(images.glob("*.png")),
     }
 
 
@@ -97,7 +156,7 @@ async def freeze_game(run_id: str):
 
 
 @router.post("/{run_id}/build", response_model=Dict)
-async def build_game(run_id: str):
+async def build_game(run_id: str, body: BuildBody = BuildBody()):
     """Kick a build on a background thread. Progress streams over the websocket."""
     from maestro.run import run_build
     from maestro.state import RunState
@@ -108,10 +167,14 @@ async def build_game(run_id: str):
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
+    from maestro.run_control import get_or_create
+
     with _active_lock:
         if run_id in _active_builds:
             raise HTTPException(status_code=409, detail="build already in progress")
         _active_builds.add(run_id)
+    # Register the control before the thread starts so an immediate pause/cancel finds it.
+    get_or_create(run_id).set_auto_pause(body.auto_pause)
 
     def _run():
         try:
@@ -124,3 +187,190 @@ async def build_game(run_id: str):
 
     threading.Thread(target=_run, daemon=True, name=f"build-{run_id}").start()
     return {"status": "building", "run_id": run_id}
+
+
+def _control(run_id: str):
+    """The live control for an in-flight build, or 409 if nothing is building."""
+    from maestro.run_control import get
+
+    ctrl = get(run_id)
+    if ctrl is None:
+        raise HTTPException(status_code=409, detail="no build in progress for this run")
+    return ctrl
+
+
+@router.post("/{run_id}/pause", response_model=Dict)
+async def pause_game(run_id: str):
+    """Pause a running build — it halts at the next step boundary (state stays consistent)."""
+    _control(run_id).request_pause()
+    return {"run_id": run_id, "status": "pausing"}
+
+
+@router.post("/{run_id}/resume", response_model=Dict)
+async def resume_game(run_id: str):
+    """Resume a paused build."""
+    _control(run_id).request_resume()
+    return {"run_id": run_id, "status": "running"}
+
+
+@router.post("/{run_id}/cancel", response_model=Dict)
+async def cancel_game(run_id: str):
+    """Cancel a running build — it unwinds at the next step boundary."""
+    _control(run_id).request_cancel()
+    return {"run_id": run_id, "status": "cancelling"}
+
+
+@router.post("/{run_id}/auto-pause", response_model=Dict)
+async def auto_pause_game(run_id: str, body: AutoPauseBody):
+    """Arm/disarm auto-pause: when armed, the build parks itself each time a component finishes."""
+    _control(run_id).set_auto_pause(body.enabled)
+    return {"run_id": run_id, "auto_pause": body.enabled}
+
+
+def _require_state(run_id: str):
+    from maestro.state import RunState
+
+    state = RunState.for_run(run_id)
+    if state.read_spec() is None:
+        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    return state
+
+
+@router.post("/{run_id}/todos", response_model=Dict)
+async def add_todo_game(run_id: str, body: TodoBody):
+    """Add a human todo against a component — the build won't complete while it's open.
+    A live build parks in `awaiting_human` once its machine checks pass."""
+    from maestro.hitl import add_todo
+
+    return add_todo(_require_state(run_id), body.component_id, body.text)
+
+
+@router.patch("/{run_id}/todos/{todo_id}", response_model=Dict)
+async def resolve_todo_game(run_id: str, todo_id: str, body: ResolveBody):
+    """Mark a human todo done (or reopen it) — only the human arbitrates this."""
+    from maestro.hitl import resolve_todo
+
+    if not resolve_todo(_require_state(run_id), todo_id, body.done):
+        raise HTTPException(status_code=404, detail=f"no todo {todo_id!r}")
+    return {"run_id": run_id, "todo_id": todo_id, "done": body.done}
+
+
+@router.post("/{run_id}/waive", response_model=Dict)
+async def waive_game(run_id: str, body: WaiveBody):
+    """Accept a machine check the validator still reports red — it leaves the to-do and
+    no longer blocks completion."""
+    from maestro.hitl import waive
+
+    return waive(_require_state(run_id), body.component_id, body.check, body.note)
+
+
+@router.post("/{run_id}/unwaive", response_model=Dict)
+async def unwaive_game(run_id: str, body: UnwaiveBody):
+    """Reinstate a previously waived check."""
+    from maestro.hitl import unwaive
+
+    if not unwaive(_require_state(run_id), body.sig):
+        raise HTTPException(status_code=404, detail=f"no waiver {body.sig!r}")
+    return {"run_id": run_id, "sig": body.sig}
+
+
+def _require_editable(run_id: str):
+    """Hand-edits race the executor thread on the same files, so only allow them when no
+    build is running OR the build is parked (paused / awaiting_human)."""
+    from maestro.run_control import get as get_control
+
+    if run_id in _active_builds:
+        ctrl = get_control(run_id)
+        if ctrl is None or ctrl.status not in ("paused", "awaiting_human"):
+            raise HTTPException(status_code=409,
+                                detail="pause the build before editing or regenerating")
+
+
+def _human_tools(spec, state):
+    """build_tools wired with the IR schemas, so a human edit is still schema-validated."""
+    from maestro.tools import build_tools
+    from renpy.component_schemas import SCHEMAS
+
+    return build_tools(spec, state, schemas=SCHEMAS)
+
+
+def _spec_state(run_id: str):
+    from maestro.spec import Spec
+
+    state = _require_state(run_id)
+    return Spec(state.read_spec()), state
+
+
+@router.put("/{run_id}/component/{component_id}", response_model=Dict)
+async def edit_component_game(run_id: str, component_id: str, body: ComponentBody):
+    """Human edit of a whole component (schema-validated; overrides the lock)."""
+    _require_editable(run_id)
+    spec, state = _spec_state(run_id)
+    result = _human_tools(spec, state)["write_component"](component_id, body.content, force=True)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "invalid component"))
+    return result
+
+
+@router.put("/{run_id}/node/{node_id}", response_model=Dict)
+async def edit_node_game(run_id: str, node_id: str, body: NodeEditBody):
+    """Human patch of one node field (e.g. fix a character's line); overrides the lock."""
+    _require_editable(run_id)
+    spec, state = _spec_state(run_id)
+    patch = body.model_dump(exclude_unset=True)
+    result = _human_tools(spec, state)["edit_node"](node_id, force=True, **patch)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "invalid edit"))
+    return result
+
+
+@router.post("/{run_id}/regenerate-assets", response_model=Dict)
+async def regenerate_assets_game(run_id: str):
+    """Regenerate the art (ComfyUI when up, placeholder fallback) from the current manifest.
+    Recompile afterward to repackage the project with the new images."""
+    _require_editable(run_id)
+    from renpy.fns import generate_images
+
+    _, state = _spec_state(run_id)
+    return generate_images(state.load_artifact(), state.run_dir) or {"ok": True}
+
+
+@router.post("/{run_id}/compile", response_model=Dict)
+async def compile_game(run_id: str, body: CompileBody = CompileBody()):
+    """Compile/package the project on demand. Output served via /api/outputs/."""
+    _require_editable(run_id)
+    from maestro.engines import compile_for
+
+    spec, state = _spec_state(run_id)
+    return compile_for(spec.engine)(state.run_dir, distribute=body.distribute)
+
+
+# Node rewrites in flight (one per node), so the UI can disable a node's button while it runs.
+_rewriting: set = set()
+
+
+@router.post("/{run_id}/node/{node_id}/rewrite", response_model=Dict)
+async def rewrite_node_game(run_id: str, node_id: str, body: RewriteBody):
+    """Regenerate one scene from a human note ('make it tenser'), on a background thread.
+    Progress + completion stream over the websocket (node_rewrite_*)."""
+    _require_state(run_id)
+    _require_editable(run_id)
+    from maestro.run import rewrite_node_run
+
+    key = f"{run_id}/{node_id}"
+    with _active_lock:
+        if key in _rewriting:
+            raise HTTPException(status_code=409, detail="this scene is already being rewritten")
+        _rewriting.add(key)
+
+    def _run():
+        try:
+            rewrite_node_run(run_id, node_id, body.note)
+        except Exception:
+            logger.exception("rewrite failed for %s", key)
+        finally:
+            with _active_lock:
+                _rewriting.discard(key)
+
+    threading.Thread(target=_run, daemon=True, name=f"rewrite-{key}").start()
+    return {"status": "rewriting", "run_id": run_id, "node_id": node_id}

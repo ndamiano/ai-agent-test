@@ -204,6 +204,63 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
     return decide
 
 
+def rewrite_node(spec, state, node_id: str, note: str, tools: Dict[str, Callable],
+                 connector=None, component_guide: str = "", report: Optional[Callable] = None,
+                 cap: int = 4) -> Dict:
+    """Regenerate ONE node, steered by a human note ("make Mara colder"). Uses the dialogue
+    author prompt + the build's write_node (force, so a locked nodes component is overwritten).
+    A focused mini-loop: one node, a couple of retries if the model fumbles the tool call.
+    Returns {ok, node_id} or {ok: False, error}."""
+    from llm_clients.connector_selector import get_connector
+    conn = connector or get_connector()
+    ns = state.read_component("nodes") or {}
+    existing = (ns.get("nodes") or {}).get(node_id)
+    if existing is None:
+        return {"ok": False, "error": f"no node {node_id!r} to rewrite"}
+
+    say = report or (lambda _msg: None)
+    system = _load_prompt("write_node.txt") + (f"\n\n{component_guide}" if component_guide else "")
+    schemas = _filter_schemas({"write_node"}, TOOL_SCHEMAS)
+    upstream = {cid: state.read_component(cid)
+                for cid in (c.get("id") for c in spec.components) if cid != "nodes"}
+    upstream = {k: v for k, v in upstream.items() if v is not None}
+
+    task = "\n".join([
+        f"Rewrite the dialogue node '{node_id}'. Keep this exact node id.",
+        f"Unless the direction says otherwise, keep its `end` ({json.dumps(existing.get('end', {}), ensure_ascii=False)}) "
+        f"so it stays wired into the graph.",
+        "",
+        f"HUMAN DIRECTION (the change to make): {note}",
+        "",
+        f"CURRENT NODE:\n{json.dumps(existing, ensure_ascii=False)}",
+        "",
+        "LOCKED UPSTREAM (use these EXACT character/entity ids):",
+        json.dumps(upstream, ensure_ascii=False),
+        f"STORY STATE: {json.dumps(state.read_story_state() or {}, ensure_ascii=False)}",
+        "",
+        f"Call write_node with node_id='{node_id}' and the full rewritten content. Tool call only, not prose.",
+    ])
+    mb = MessageBuilder(system).add_user(task)
+
+    for _ in range(cap):
+        response = conn.generate_with_tools(mb.build(), schemas, reasoning="high",
+                                            max_tokens=_BUILD_MAX_TOKENS)
+        action = _parse_action(response)
+        if action.get("tool") != "write_node":
+            say("no write_node tool call — nudging")
+            mb.add_user("Respond with a write_node TOOL CALL (not prose), passing the rewritten "
+                        f"content for node_id='{node_id}'.")
+            continue
+        args = {**(action.get("args") or {}), "node_id": node_id, "force": True}
+        result = tools["write_node"](**args)
+        if result.get("ok"):
+            say(f"rewrote {node_id}")
+            return {"ok": True, "node_id": node_id}
+        say(f"write_node rejected: {result.get('error')}")
+        mb.add_user(f"That was rejected: {result.get('error')}. Fix it and call write_node again.")
+    return {"ok": False, "error": f"could not rewrite {node_id!r} after {cap} attempts"}
+
+
 def _parse_tool_args(tc: Dict) -> Dict:
     raw = (tc.get("function", {}).get("arguments") or "{}").strip()
     if raw.startswith("```"):

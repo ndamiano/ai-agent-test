@@ -33,7 +33,11 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 
 **Platform** — tool manager (decorator, auto schema inference), WebSocket event bus, model category settings (`large`/`medium`/`small`).
 
-**Frontend** — rebuilt chat-first (`frontend/`): a chat tab and a Games tab that browses runs, freezes a spec, kicks a build, and streams live build progress over the websocket. Remaining UX: optimistic mid-build interjection ("I don't like this"), `revise_component`/`fork_run`, chat-spawned builds, LLM quality-gate (see `per-stage-differentiation.md` Part D).
+**Frontend** — rebuilt chat-first (`frontend/`): a chat tab and a Games tab that browses runs, freezes a spec, kicks a build, and streams live build progress over the websocket.
+
+**Human-in-the-loop build controls** — the human is a participant in the loop, not a spectator. Pause / resume / cancel a running build (`maestro/run_control.py` — a cross-thread signal the executor checks at step boundaries); hand-edit a component/node, regenerate assets, and compile on demand (all gated to a parked build); and arbitrate "done" — add human todos that block completion (the build parks in `awaiting_human`) and waive machine checks the human accepts (`maestro/hitl.py`). REST control surface on `/api/games/{run_id}/…`; status pushed over the existing websocket. Deferred: manual edits leave `story_state` stale → healed by a future post-compile refiner (see `docs/quality_todo.md` §8).
+
+Remaining UX: optimistic mid-build interjection ("I don't like this") via a director's note / steer-next-target, `revise_component`/`fork_run`, chat-spawned builds, LLM quality-gate (see `per-stage-differentiation.md` Part D).
 
 **Pending** — live-LLM end-to-end validation; eval is trimmed to grading finished artifacts (`eval/cli.py score game`), hill-climb tooling to return later.
 

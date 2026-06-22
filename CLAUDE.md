@@ -36,8 +36,20 @@ src/
                 validate.py — typed done-condition checks → failure list (the to-do); a check may
                   ATTRIBUTE its failure to the component that can fix it (not the one that declared
                   it), so a cross-component reference error routes to a mode with the right tools
-                executor.py — the non-LLM loop (stateless per step, completion via validate)
-                tools.py — artifact tools (build_tools) + TOOL_SCHEMAS
+                executor.py — the non-LLM loop (stateless per step, completion via validate);
+                  checks RunControl at each step boundary (pause/cancel), auto-pauses on a
+                  finished component when armed, and parks in `awaiting_human` when machine
+                  checks pass but human todos are still open
+                run_control.py — cross-thread RunControl (pause/resume/cancel + auto_pause flag)
+                  + per-run registry, the human-in-the-loop signal channel into the build thread
+                hitl.py — human-as-arbiter-of-done: human todos (block completion) + waivers
+                  (accept a red machine check). effective_failures = validate − waivers + open todos
+                agent.py — the build decider + sub-loop; also `rewrite_node` (regenerate ONE
+                  node from a human note, used by the per-scene "rewrite" control)
+                tools.py — artifact tools (build_tools) + TOOL_SCHEMAS. write_component/
+                  write_node/edit_node take a human-only `force` to override the done-lock
+                  (the agent never sets it — not in TOOL_SCHEMAS); edit_node also takes full
+                  `content` to replace a whole node (the manual per-scene editor)
                 agent.py — the build agent (LLM decider: one tool call per step)
                 spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate)
                 modules.py — Module contract + MODULE_REGISTRY + compose() + PRESETS + the

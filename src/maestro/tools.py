@@ -357,6 +357,15 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
          for c in spec.components if c.get("id") == "nodes"
          for dc in c.get("done_conditions", []) if dc.get("type") == "each_node_min_lines"), 0)
 
+    # Same born-compliant logic for `location`: if the spec gates each_node_has_location (VN), make
+    # write_node reject a node with no background up front. Otherwise the model writes 20 untagged
+    # nodes that pass `count`, and the loop then spends ~20 steps adding a location one edit at a
+    # time in a separate fix phase (measured). Cheaper to demand it at creation.
+    _node_needs_location = any(
+        dc.get("type") == "each_node_has_location"
+        for c in spec.components if c.get("id") == "nodes"
+        for dc in c.get("done_conditions", []))
+
     # A component LOCKS once its own done-conditions all pass: full rewrites would
     # otherwise drop/rename ids that other components already reference, regressing
     # previously-passing checks. EXCEPTION: a component whose "done" includes a
@@ -437,6 +446,10 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
                     f"a node needs at least {_node_min_lines} lines/beats — this has "
                     f"{len(content['lines'])}. Write the FULL scene now (several dialogue beats "
                     f"with subtext), not a stub; thin nodes are rejected."}
+        if _node_needs_location and not content.get("location"):
+            return {"ok": False, "error":
+                    "this node has no `location` — set it to a background id from asset_manifest "
+                    "(e.g. 'bg_room'); every scene needs a background. Add \"location\" and resend."}
         from maestro.story_state import init_story_state, apply_delta
 
         # Tolerate a malformed story_state_delta (the model sometimes passes a list/str).

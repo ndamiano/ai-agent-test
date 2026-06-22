@@ -102,6 +102,22 @@ def test_scoped_spec_drops_inactive_done_conditions():
 
 
 # ── Fix 6: per-node location gate + edit_node location ────────────────────────
+def test_write_node_demands_location_when_spec_gates_it(tmp_path):
+    """Born-compliant: if the spec gates each_node_has_location, write_node rejects an untagged
+    node at creation (no separate fix phase)."""
+    state = RunState(tmp_path)
+    gated = Spec({"frozen": True, "components": [{"id": "nodes", "done_conditions": [
+        {"type": "each_node_has_location"}]}]})
+    t = build_tools(gated, state, schemas=SCHEMAS)
+    body = {"lines": [{"speaker": "ada", "text": "Hi."}], "end": {"type": "return"}}
+    assert t["write_node"](node_id="s1", content=body)["ok"] is False        # no location -> rejected
+    assert t["write_node"](node_id="s1", content={**body, "location": "bg_a"})["ok"] is True
+    # A spec that does NOT gate location (e.g. NPC nodes) is unaffected.
+    ungated = Spec({"frozen": True, "components": [{"id": "nodes", "done_conditions": []}]})
+    t2 = build_tools(ungated, RunState(tmp_path / "b"), schemas=SCHEMAS)
+    assert t2["write_node"](node_id="s1", content=body)["ok"] is True
+
+
 def test_each_node_has_location_check_and_edit_fix(tmp_path):
     state = RunState(tmp_path)
     state.write_component("nodes", {"node_ids": ["s1", "s2"], "nodes": {

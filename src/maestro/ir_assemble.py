@@ -13,6 +13,15 @@ from typing import Dict, List
 
 EMOTIONS = ("neutral", "happy", "sad", "angry", "surprised", "worried")
 
+# Narration is speaker:null; the model often writes a string ("narration"/"narrator") instead,
+# which then reads as an undeclared character at crossref/compile. Normalized at write time AND
+# here at assembly (the backstop), so this never reaches the reference gate.
+NARRATION_ALIASES = frozenset({"narration", "narrator", "the narrator", "none", "null", "narrate", ""})
+
+
+def is_narration_speaker(s) -> bool:
+    return isinstance(s, str) and s.strip().lower() in NARRATION_ALIASES
+
 
 def expression_file(image_file: str, emotion: str) -> str:
     """Per-emotion sprite filename derived from a character's base image_file. Neutral keeps the
@@ -107,6 +116,8 @@ def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
         for ln in n.get("lines", []) or []:
             if isinstance(ln, dict) and ln.get("emotion") is None:
                 ln.pop("emotion", None)
+            if isinstance(ln, dict) and is_narration_speaker(ln.get("speaker")):
+                ln["speaker"] = None
     ir: Dict = {
         "version": "0.1",
         "genre": "point_and_click" if has_places else "visual_novel",

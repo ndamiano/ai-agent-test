@@ -231,3 +231,20 @@ context per step"; the render path violates it. Three mostly-static blocks injec
 - [x] **`classify_genre` can't emit `card_ante`.** `classify_genre.txt` offers only `vn` /
   `point_and_click`; the third preset is unreachable from the classifier, so a wander-and-gamble
   request misclassifies. Add `card_ante` (or its trigger) to the classifier prompt.
+
+### Found in the verification re-run
+
+- [x] **`speaker: "narration"` thrash.** The model writes the literal string `"narration"`/
+  `"narrator"` for narration instead of `speaker: null`. Nothing catches it at write time, so it
+  surfaces only at crossref/compile as a bogus undeclared character — and the small model then
+  thrashes (15+ steps, editing the WRONG node) trying to clear it. 4 such lines stalled a whole
+  build. Fixed: `write_node`/`edit_node` normalize narration-alias speakers to null at write time
+  (`is_narration_speaker` in `ir_assemble`, also applied as an assembly backstop). Healed the
+  stuck run on recompile.
+- [ ] **`write_node` tool-call reliability on a small model — the deeper lever.** Context-trimming
+  bought ~7 clean opening nodes (vs an immediate node-1 failure before), but the prose-not-tool-call
+  failure still RECURS deeper in the node phase (6×/run), forcing reasoning-escalation. So context
+  size was *a* cause, not *the* cause — the model intrinsically narrates instead of calling the
+  tool. Candidates: simplify the `write_node` schema/skeleton further, or add a prose→tool-call
+  salvage (parse a JSON node out of a prose reply instead of only nudging). Separate lever from
+  context size; likely the biggest remaining reliability win.

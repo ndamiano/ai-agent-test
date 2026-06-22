@@ -13,7 +13,7 @@ written by id; scratchpad is replaced, not appended.
 
 from typing import Callable, Dict, List, Optional
 
-from maestro.ir_assemble import EMOTIONS
+from maestro.ir_assemble import EMOTIONS, is_narration_speaker
 from maestro.validate import validate
 
 
@@ -33,6 +33,20 @@ _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
 
 _END_TYPES = {"jump", "menu", "return", "end"}
 _EMOTIONS = set(EMOTIONS)
+
+
+# The model intuitively writes a speaker STRING for narration ("narration"/"narrator") instead of
+# the convention speaker:null. Left alone it isn't a declared character, so it only blows up far
+# later at crossref/compile — where a small model thrashes trying to "fix" it. Normalize at write
+# time so the intent (narration) is honored and the error never forms (is_narration_speaker is the
+# shared rule, also applied as a backstop in ir_assemble).
+def _normalize_narration(content):
+    """In-place: any line whose speaker reads as narration becomes speaker:null."""
+    if isinstance(content, dict):
+        for ln in content.get("lines", []) or []:
+            if isinstance(ln, dict) and is_narration_speaker(ln.get("speaker")):
+                ln["speaker"] = None
+    return content
 
 
 def _node_content_error(content) -> Optional[str]:
@@ -399,6 +413,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         err = _node_content_error(content)
         if err:
             return {"ok": False, "error": err}
+        _normalize_narration(content)
         if len(content["lines"]) < _node_min_lines:
             return {"ok": False, "error":
                     f"a node needs at least {_node_min_lines} lines/beats — this has "
@@ -447,7 +462,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             err = _node_content_error(content)
             if err:
                 return {"ok": False, "error": err}
-            nodes[node_id] = content
+            nodes[node_id] = _normalize_narration(content)
             state.write_component("nodes", ns)
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
@@ -465,7 +480,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             if text is not None:
                 lines[line_index]["text"] = text
             if speaker is not _UNSET:
-                lines[line_index]["speaker"] = speaker
+                lines[line_index]["speaker"] = None if is_narration_speaker(speaker) else speaker
             if emotion is not None:
                 if emotion not in _EMOTIONS:
                     return {"ok": False, "error": f"emotion must be one of {sorted(_EMOTIONS)}"}

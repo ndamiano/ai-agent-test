@@ -118,6 +118,29 @@ def test_each_node_has_location_check_and_edit_fix(tmp_path):
     assert ok2 is True
 
 
+# ── narration-speaker normalization ───────────────────────────────────────────
+def test_narration_speaker_normalized_at_write_time(tmp_path):
+    state = RunState(tmp_path)
+    spec = Spec({"frozen": True, "components": [{"id": "nodes", "done_conditions": []}]})
+    tools = build_tools(spec, state, schemas=SCHEMAS)
+    tools["write_node"](node_id="s1", content={"lines": [
+        {"speaker": "narration", "text": "The house is dark."},
+        {"speaker": "Narrator", "text": "Wind moves."},
+        {"speaker": "ada", "text": "Hello."}], "end": {"type": "return"}})
+    lines = state.read_component("nodes")["nodes"]["s1"]["lines"]
+    assert lines[0]["speaker"] is None and lines[1]["speaker"] is None   # narration aliases -> null
+    assert lines[2]["speaker"] == "ada"                                  # a real speaker is kept
+
+
+def test_assemble_ir_backstops_narration_speaker():
+    from maestro.ir_assemble import assemble_ir
+    art = {"premise": {"characters": [{"id": "ada", "name": "Ada"}]},
+           "nodes": {"node_ids": ["s1"], "nodes": {"s1": {
+               "lines": [{"speaker": "narration", "text": "x"}], "end": {"type": "end"}}}}}
+    ir = assemble_ir(art)
+    assert ir["nodes"][0]["lines"][0]["speaker"] is None
+
+
 # ── Fix 4: relaxed VN cast floor ──────────────────────────────────────────────
 def test_vn_premise_character_floor_is_two():
     from maestro.modules import compose, PRESETS

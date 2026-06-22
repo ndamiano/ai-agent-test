@@ -163,6 +163,8 @@ TOOL_SCHEMAS: List[Dict] = [
             "effects": {"type": "array", "items": {"type": "object"},
                         "description": "replace that line's effects"},
             "end": {"type": "object", "description": "replace the node's terminal end object"},
+            "location": {"type": "string", "description": "set the node's background (a "
+                         "background id from asset_manifest, e.g. 'bg_office')"},
         }, "required": ["node_id"]}}},
     {"type": "function", "function": {
         "name": "write_place",
@@ -427,9 +429,11 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
     def edit_node(node_id: str, line_index: Optional[int] = None, text: Optional[str] = None,
                   speaker=_UNSET, emotion: Optional[str] = None,
                   effects: Optional[List] = None, end: Optional[Dict] = None,
+                  location: Optional[str] = None,
                   content: Optional[Dict] = None, force: bool = False) -> Dict:
-        """Patch ONE field of a node without rewriting it: a single line (by index) or the `end`.
-        Repointing a jump/menu target or fixing one line, without disturbing the rest.
+        """Patch ONE field of a node without rewriting it: a single line (by index), the `end`, or
+        the `location` (background id). Repointing a target, fixing a line, or tagging a scene's
+        background, without disturbing the rest.
         content: a human edit may instead replace the WHOLE node ({lines, end}) at once.
         force: a human edit may patch a locked nodes component (override)."""
         _require_frozen()
@@ -447,6 +451,8 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             state.write_component("nodes", ns)
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
+        if location is not None:
+            node["location"] = location
         if end is not None:
             if end.get("type") not in _END_TYPES:
                 return {"ok": False, "error": f"end.type must be one of {sorted(_END_TYPES)}"}

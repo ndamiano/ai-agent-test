@@ -107,6 +107,18 @@ def check_each_node_min_lines(artifact: Dict, check: Dict, run_dir) -> CheckResu
     return True, None
 
 
+def check_each_node_has_location(artifact: Dict, check: Dict, run_dir) -> CheckResult:
+    """Every node names a `location` (a background asset id) — so no scene, least of all the
+    opening, renders with a blank background. The skeleton says to tag every node, but nothing
+    enforced it, so an untagged node slipped through to a bg-less scene."""
+    node_ids, nodes = _nodes(artifact)
+    missing = [nid for nid in node_ids if not nodes.get(nid, {}).get("location")]
+    if missing:
+        return False, (f"nodes with no location/background: {missing[:5]} — set each node's "
+                       f"`location` to a background id (edit_node location='bg_...').")
+    return True, None
+
+
 def check_all_characters_speak(artifact: Dict, check: Dict, run_dir) -> CheckResult:
     chars = {c.get("id") for c in artifact.get("premise", {}).get("characters", []) if c.get("id")}
     if not chars:
@@ -301,6 +313,7 @@ _CHECKS = {
     "node_targets_resolve": check_node_targets_resolve,
     "min_branches": check_min_branches,
     "each_node_min_lines": check_each_node_min_lines,
+    "each_node_has_location": check_each_node_has_location,
     "all_characters_speak": check_all_characters_speak,
     "places_reachable": check_places_reachable,
     "each_place_min_interactables": check_each_place_min_interactables,

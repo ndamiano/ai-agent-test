@@ -3,10 +3,12 @@ Classify what KIND of game this request wants, so the right builder is used.
 Request:
 {request}
 
-Two genres:
+Three genres:
 - "point_and_click": the player explores rooms/scenes and CLICKS things — examining objects,
   picking up items into an inventory, using items to solve puzzles, moving between locations.
   Adventure games, escape rooms, mystery/exploration games, hidden-object games.
+- "card_ante": the player wanders between opponents and GAMBLES at card matches, staking money
+  on each hand (high-card or blackjack-style). Card games, casino/poker crawls, wager-for-stakes.
 - "vn": a visual novel — the story advances through dialogue and the player makes branching
   CHOICES at menus. Dating sims, kinetic novels, choice-driven narrative.
 

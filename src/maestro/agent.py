@@ -65,13 +65,28 @@ def _schemas_for_target(target: Optional[Dict], schemas: List[Dict],
     return _filter_schemas(allowed, schemas)
 
 
+def _scoped_spec(ctx: Dict) -> Dict:
+    """The spec, trimmed to what THIS step needs: the active component's full entry (its
+    done_conditions are the bar it's working to) plus id+description for the rest. The other
+    components' done_conditions are noise here — the TO-DO already names every failing check."""
+    spec = ctx.get("spec", {}) or {}
+    mode = ctx.get("mode")
+    comps = []
+    for c in spec.get("components", []):
+        if c.get("id") == mode:
+            comps.append(c)
+        else:
+            comps.append({"id": c.get("id"), "description": c.get("description", "")})
+    return {**{k: v for k, v in spec.items() if k != "components"}, "components": comps}
+
+
 def _render_context(ctx: Dict) -> str:
     todo = ctx.get("todo", [])
     todo_lines = [f"- [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}"
                   for f in todo] or ["(none — build may be complete)"]
     pad = ctx.get("scratchpad", {})
     lines = [
-        f"SPEC: {json.dumps(ctx.get('spec', {}), ensure_ascii=False)}",
+        f"SPEC: {json.dumps(_scoped_spec(ctx), ensure_ascii=False)}",
         "",
         "TO-DO (failing done-conditions):",
         *todo_lines,
@@ -170,17 +185,24 @@ def _parse_action(response: Dict) -> Dict:
 
 def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
                      component_guide: str = "", mode_tools: Optional[Dict[str, frozenset]] = None,
-                     mode_prompts: Optional[Dict[str, str]] = None) -> Callable:
+                     mode_prompts: Optional[Dict[str, str]] = None,
+                     mode_guides: Optional[Dict[str, str]] = None) -> Callable:
     from llm_clients.connector_selector import get_connector
     conn = connector or get_connector()
     all_schemas = tool_schemas or TOOL_SCHEMAS
-    guide_suffix = f"\n\n{component_guide}" if component_guide else ""
     mode_tools = mode_tools or {}      # component-mode -> allowed tool names
     mode_prompts = mode_prompts or {}  # component-mode -> system-prompt filename
+    # component-mode -> ONLY that component's authoring skeleton. Scoping the guide to the active
+    # mode keeps a premise/asset/outline step from carrying the OTHER components' skeletons (they're
+    # locked, the model isn't authoring them) — the small model's context stays on the task at hand.
+    # component_guide is the fallback for a mode with no scoped entry.
+    mode_guides = mode_guides or {}
 
     def decide(context: Dict) -> Dict:
         mode = context.get("mode")
         prompt_name = mode_prompts.get(mode)
+        guide = mode_guides.get(mode, component_guide)
+        guide_suffix = f"\n\n{guide}" if guide else ""
         system = (_load_prompt(prompt_name) if prompt_name else _SYSTEM) + guide_suffix
         schemas = _filter_schemas(mode_tools.get(mode), all_schemas)
         # If the agent is spinning on reads, take read tools away so it must act — and turn

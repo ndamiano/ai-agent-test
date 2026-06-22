@@ -35,7 +35,7 @@ _READ_TOOLS = {"read_node", "read_component", "read_story_state"}
 # 40 steps while the game sat at half its required size). Lint once the game is whole.
 _CHECK_PRIORITY = {
     "count": 0,
-    "each_node_min_lines": 1,
+    "each_node_min_lines": 1, "each_node_has_location": 1,
     "reachable_from_start": 2, "min_branches": 2, "refs_resolve": 2, "distinct": 2, "exists": 2,
     "all_characters_speak": 3, "each_has": 3,
     "crossref": 3,
@@ -79,6 +79,7 @@ class Executor:
                  on_event: Optional[Callable[[Dict], None]] = None,
                  projectors: Optional[Dict[str, Callable]] = None,
                  sub_runners: Optional[Dict[str, Callable]] = None,
+                 upstream_views: Optional[Dict[str, Callable]] = None,
                  control=None):
         self.spec = spec
         self.state = state
@@ -93,6 +94,9 @@ class Executor:
         # budget, view_fn) -> steps_used. For components that need iterate-until-done
         # (node_scripts), a sub-loop with its own working memory replaces one-shot steps.
         self.sub_runners = sub_runners or {}
+        # component_id -> fn(content)->trimmed: a compact view of a settled upstream component
+        # injected into later steps (e.g. asset_manifest → ids only). None = inject it whole.
+        self.upstream_views = upstream_views or {}
         # Architecture-triggered check-in: called the first time a component's
         # done-conditions all pass. The agent doesn't judge when to interrupt.
         self.on_milestone = on_milestone
@@ -150,7 +154,8 @@ class Executor:
                 continue
             content = self.state.read_component(cid)
             if content is not None:
-                upstream[cid] = content
+                view = self.upstream_views.get(cid)
+                upstream[cid] = view(content) if view else content
 
         # The active "mode" = the earliest still-failing component in dependency order.
         # The executor decides this, not the agent (routing stays non-LLM).

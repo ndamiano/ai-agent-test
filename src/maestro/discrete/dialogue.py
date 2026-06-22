@@ -25,6 +25,7 @@ _NODE_TARGET_JOBS = {
     "count": "author", "each_node_min_lines": "author",
     "min_branches": "author", "all_characters_speak": "author",
     "reachable_from_start": "fix", "node_targets_resolve": "fix",
+    "each_node_has_location": "fix",
     "crossref": "fix", "compiles": "fix",
 }
 # Per-target tool gating: each structural goal needs only a few tools. While driving `count`,
@@ -34,6 +35,7 @@ _NODE_TARGET_TOOLS = {
     "count": frozenset({"write_node"}),
     "each_node_min_lines": frozenset({"read_node", "write_node", "edit_node"}),
     "reachable_from_start": frozenset({"read_node", "edit_node"}),
+    "each_node_has_location": frozenset({"read_node", "edit_node"}),
     "node_targets_resolve": frozenset({"read_node", "edit_node", "write_node"}),
     "min_branches": frozenset({"read_node", "edit_node", "write_node"}),
     "all_characters_speak": frozenset({"read_node", "edit_node", "write_node"}),
@@ -58,7 +60,11 @@ SPINE = Module(
     **_NODE_GATING,
     baseline={
         "premise": [
-            {"type": "count", "path": "premise.characters", "min": 3},
+            # min 2, not 3: a 3-cast floor forced two-handers (a sisters drama, a duologue) to
+            # invent a filler third "character" — often a narrator/environment entity that then has
+            # to speak (fighting speaker:null narration) and has no sprite. 2 fits an intimate cast;
+            # a bigger story raises it naturally.
+            {"type": "count", "path": "premise.characters", "min": 2},
             {"type": "each_has", "path": "premise.characters",
              "fields": ["voice", "temperament", "drive", "history",
                         "competencies", "example_lines"]},
@@ -77,6 +83,7 @@ SPINE = Module(
             {"type": "min_branches", "min": 2},
             # One IR line == one dialogue beat; ~6 substantial beats ≈ the old 10-quoted-line target.
             {"type": "each_node_min_lines", "min": 6},
+            {"type": "each_node_has_location"},
             {"type": "all_characters_speak"},
             {"type": "crossref"},
             {"type": "compiles"},

@@ -61,6 +61,10 @@ class Module:
     target_tools: Dict[str, frozenset] = field(default_factory=dict)
     subloop: Optional[Dict] = None
     projector: Optional[Callable] = None
+    # (content) -> trimmed content: a compact view of this module's component shown to DOWNSTREAM
+    # steps when it's a settled/locked upstream (e.g. asset_manifest → just ids, dropping the
+    # image-gen prose a node author never needs). None = inject the full component.
+    context_view: Optional[Callable] = None
     action_verbs: Tuple[str, ...] = ()
     ir_slices: Dict[str, str] = field(default_factory=dict)
     # True if this module's content needs an engine-specific renderer beyond plain IR assembly
@@ -140,6 +144,7 @@ class Composed:
     mode_prompts: Dict[str, str]       # component-mode -> system-prompt filename
     subloop_modules: Dict[str, "Module"]  # component_id -> owning module (those with a sub-loop)
     projectors: Dict[str, Callable]    # component_id -> view fn
+    context_views: Dict[str, Callable]  # component_id -> trimmer for upstream injection
     action_verbs: List[str]
     slice_owner: Dict[str, str]        # IR-slice token -> component a reference error routes to
 
@@ -159,6 +164,7 @@ def compose(module_ids) -> Composed:
     mode_prompts: Dict[str, str] = {}
     subloop_modules: Dict[str, "Module"] = {}
     projectors: Dict[str, Callable] = {}
+    context_views: Dict[str, Callable] = {}
     action_verbs: List[str] = []
     slice_owner: Dict[str, str] = {}
 
@@ -194,6 +200,9 @@ def compose(module_ids) -> Composed:
         if m.projector is not None:
             for c in m.components:
                 projectors[c] = m.projector
+        if m.context_view is not None:
+            for c in m.components:
+                context_views[c] = m.context_view
         for v in m.action_verbs:
             if v not in action_verbs:
                 action_verbs.append(v)
@@ -204,7 +213,8 @@ def compose(module_ids) -> Composed:
         skeletons=skeletons, baseline=baseline, deps=deps, tool_names=tool_names,
         assemblers=assemblers, crossrefs=crossrefs, mode_tools=mode_tools,
         mode_prompts=mode_prompts, subloop_modules=subloop_modules,
-        projectors=projectors, action_verbs=action_verbs, slice_owner=slice_owner)
+        projectors=projectors, context_views=context_views, action_verbs=action_verbs,
+        slice_owner=slice_owner)
 
 
 def modules_for(spec: Dict) -> Tuple[str, ...]:

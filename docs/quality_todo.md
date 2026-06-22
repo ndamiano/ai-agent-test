@@ -188,3 +188,46 @@ component / check-type strings. Adding `card_play` meant editing these maps — 
   callbacks/payoff are hard. Weigh a scoped "recent beats" read against context bloat.
 - [ ] **`validate` is exposed as an agent tool *and* the executor auto-validates each step.**
   Check whether the in-loop `validate` tool call is ever load-bearing or just burns a turn.
+
+## 13. Context bloat in the build-step render path (found in a live run)
+
+Audited a real `vn` build (qwen3.6-35b-a3b) by capturing every LLM request. Premise/asset/outline
+each wrote first-try and the OUTPUT was strong, but **every build step ships ~20K chars (~5K
+tokens) to write ONE node** — and the first `write_node` call failed by returning prose instead of
+a tool call (then recovered only via reasoning-escalation). The architecture preaches "minimum
+context per step"; the render path violates it. Three mostly-static blocks injected EVERY step:
+
+- [x] **Scope `skeleton_guide` to the active component.** `run.py` builds `guide =
+  skeleton_guide(genre=spec.genre)` ONCE (all 4 component shapes, ~3.5K chars) and passes it as
+  `component_guide` to both `make_llm_decider` and every `make_subloop` — so a node step is shown
+  the premise/asset/outline AUTHORING skeletons for components already locked. Fix: per-mode guide
+  (`skeleton_guide(component_ids=[mode])`); the decider should pick the active mode's skeleton, and
+  `make_subloop(module)` should scope to `module.components`. Biggest, cheapest win (~3.5K→~0.9K).
+- [x] **Trim `LOCKED COMPONENTS` (upstream) to the fields the consumer uses.**
+  `executor.build_context` loads full component bodies into `upstream`; `_render_context` dumps them
+  verbatim. For node authoring the worst offender is `asset_manifest`'s image-gen prose (5 bg
+  paragraphs + 3 CG paragraphs + title card, ~2K chars) — a node author needs background **ids**,
+  never their Stable-Diffusion prompts; also drop `image_file`/`color`. Add a per-component "context
+  view" (like the executor `projectors`, but for upstream) so each consumer sees a trimmed shape.
+- [x] **Scope or drop the SPEC block in `_render_context`.** It dumps the WHOLE spec (all components
+  + every done_condition, ~1.5K) into every user message; the TO-DO already lists the failing checks
+  and LOCKED COMPONENTS carries the settled ids. Scope to the active component (+ its deps) or drop.
+
+  *#1–3 share one root cause and would likely have prevented the node-1 prose-not-tool-call failure
+  outright. Do them before tuning generation prompts — they change what the model actually sees.*
+
+- [x] **`premise count >= 3` mis-fits an intimate cast — confirmed defect.** On a two-hander the
+  floor forced the model to invent a third "character" — `narrator`/"The House" with example_lines.
+  Downstream it bit: that entity actually SPEAKS (`speaker: "narrator"` lines), but `asset_manifest`
+  only generated sprites for the two real sisters, so "The House" talks with no sprite, AND narration
+  is now split inconsistently between `speaker: null` and `speaker: "narrator"`. Fix: relax the VN
+  character floor (min 2), or model an "environment/narrator voice" as an explicit non-cast concept
+  the count doesn't include and `all_characters_speak` doesn't demand.
+- [x] **No per-node `location` check — the opening scene shipped with no background.** `scene_01`
+  (the first thing the player sees) had `location: None`; the skeleton SAYS "Tag EVERY node" but
+  nothing enforces it, so an untagged node compiles to a scene with no background image. Add an
+  `each_node_has_location` done-condition (or enforce it in `write_node` like the min-lines floor),
+  at least for the start node.
+- [x] **`classify_genre` can't emit `card_ante`.** `classify_genre.txt` offers only `vn` /
+  `point_and_click`; the third preset is unreachable from the classifier, so a wander-and-gamble
+  request misclassifies. Add `card_ante` (or its trigger) to the classifier prompt.

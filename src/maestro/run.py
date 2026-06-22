@@ -44,11 +44,12 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     if spec_data is None:
         raise ValueError(f"no spec for run {run_id!r} — propose one first")
     spec = Spec(spec_data)
-    guide = skeleton_guide(genre=spec.genre)
     composed = compose(modules_for(spec.data))
+    # Per-mode skeletons: each authoring step gets ONLY its own component's shape, not all of them.
+    mode_guides = {cid: skeleton_guide(component_ids=[cid]) for cid in composed.components}
 
     tools = build_tools(spec, state, schemas=ir_schemas)
-    decider = decide or make_llm_decider(component_guide=guide,
+    decider = decide or make_llm_decider(mode_guides=mode_guides,
                                          tool_schemas=tool_schemas_for(spec),
                                          mode_tools=composed.mode_tools,
                                          mode_prompts=composed.mode_prompts)
@@ -60,7 +61,8 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     sub_runners = {}
     if not decide:
         for cid, module in composed.subloop_modules.items():
-            sub_runners[cid] = make_subloop(module, component_guide=guide)
+            sub_runners[cid] = make_subloop(
+                module, component_guide=skeleton_guide(component_ids=list(module.components)))
     from maestro.run_control import get_or_create, remove
     control = get_or_create(run_id)
     executor = Executor(
@@ -69,6 +71,9 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
         projectors=projectors,
         sub_runners=sub_runners,
+        # Trim bulky upstream components to what a downstream author needs (drops asset_manifest's
+        # image-gen prose from every node step — the node author needs background ids, not prompts).
+        upstream_views=composed.context_views,
         control=control,
     )
 
@@ -113,7 +118,7 @@ def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
     tools = build_tools(spec, state, schemas=ir_schemas)
     _emit("node_rewrite_started", run_id, node_id=node_id, note=note)
     result = rewrite_node(spec, state, node_id, note, tools,
-                          component_guide=skeleton_guide(genre=spec.genre),
+                          component_guide=skeleton_guide(component_ids=["nodes"]),
                           report=lambda m: _emit("node_rewrite_step", run_id, node_id=node_id, summary=m))
     if result.get("ok"):
         try:

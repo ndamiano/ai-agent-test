@@ -241,10 +241,17 @@ context per step"; the render path violates it. Three mostly-static blocks injec
   build. Fixed: `write_node`/`edit_node` normalize narration-alias speakers to null at write time
   (`is_narration_speaker` in `ir_assemble`, also applied as an assembly backstop). Healed the
   stuck run on recompile.
-- [ ] **`write_node` tool-call reliability on a small model — the deeper lever.** Context-trimming
-  bought ~7 clean opening nodes (vs an immediate node-1 failure before), but the prose-not-tool-call
-  failure still RECURS deeper in the node phase (6×/run), forcing reasoning-escalation. So context
-  size was *a* cause, not *the* cause — the model intrinsically narrates instead of calling the
-  tool. Candidates: simplify the `write_node` schema/skeleton further, or add a prose→tool-call
-  salvage (parse a JSON node out of a prose reply instead of only nudging). Separate lever from
-  context size; likely the biggest remaining reliability win.
+- [~] **`write_node` tool-call reliability on a small model — investigated, partly a model ceiling.**
+  Replaying real outputs settled the causes: (1) the token-budget bump was WRONG — `max_tokens`
+  doesn't bind reasoning (a call hit 26.7k under a 20k cap) and the extra room let the model
+  over-reason into an EMPTY output; reverting to 8k *reduced* no-tool-calls (forces it to wrap up).
+  (2) ~40% of calls stringify `content`, but that JSON is usually MALFORMED (mangled quotes) —
+  `_coerce_json` now rescues the valid subset (shipped). (3) Born-compliant `location` enforcement
+  removed a ~20-step fix phase. Residual: the model still sometimes dumps text / emits malformed
+  tool JSON — a small-model JSON-emission ceiling the loop's nudge/escalation recovers from (builds
+  complete, slowly). Remaining levers (not done): a more capable node-authoring model; or shrink the
+  per-call JSON the model must emit (fewer required fields / shorter nodes).
+- [ ] **Fix-phase efficiency on a small model.** Reachability/location/crossref repair runs
+  one `edit_node` per failing item, and the small model repoints poorly (observed 3–4 edits on one
+  node). Born-compliant enforcement (min_lines, location, narration) attacks this at the source;
+  reachability + crossref still grind. Consider batch-repair tools or born-compliant wiring.

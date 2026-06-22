@@ -54,7 +54,21 @@ def test_compose_collects_context_views():
     from maestro.modules import compose, PRESETS
     c = compose(PRESETS["vn"].modules)
     assert "asset_manifest" in c.context_views
-    assert "premise" not in c.context_views        # premise is left whole (load-bearing for voice)
+    assert "premise" in c.context_views
+
+
+def test_premise_context_view_keeps_voice_drops_background():
+    from maestro.discrete.cast import _premise_view
+    full = {"central_question": "stay or go?", "endings": [{"id": "e1"}],
+            "characters": [{"id": "ada", "name": "Ada", "voice": "clipped", "temperament": "guarded",
+                            "drive": "leave", "example_lines": ["No."], "history": ["a long backstory"],
+                            "competencies": ["x"], "color": "#fff"}]}
+    v = _premise_view(full)
+    ch = v["characters"][0]
+    assert ch == {"id": "ada", "name": "Ada", "voice": "clipped", "temperament": "guarded",
+                  "drive": "leave", "example_lines": ["No."]}
+    assert "history" not in ch and "color" not in ch and "competencies" not in ch
+    assert v["central_question"] and v["endings"]              # thematic anchors kept
 
 
 def test_executor_injects_trimmed_upstream(tmp_path):

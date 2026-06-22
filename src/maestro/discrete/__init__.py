@@ -8,6 +8,7 @@ only adds a projection (see renpy.projections / web.projections).
 Module roster:
   cast          — owns `premise` (the character cast; floor: id + name)
   assets        — owns `asset_manifest` (images)
+  outline       — owns `outline` (the VN beat-sheet/arc between premise and nodes; vn-only)
   dialogue      — owns `nodes` as the STORY SPINE (rich premise, endings, branching, compiles)
   dialogue_npc  — owns `nodes` as SUPPORTING NPC barks (light floor; navigation is the spine)
   navigation    — owns `places` (rooms/hotspots/move); the spine when present
@@ -15,15 +16,17 @@ Module roster:
                   components above; no component of its own)
 
 Presets (what the classifier emits; `genre` keeps the preset name for the UI):
-  vn               = cast + assets + dialogue + economy
+  vn               = cast + assets + outline + dialogue + economy
   point_and_click  = cast + assets + dialogue_npc + navigation + economy
 """
 
 from maestro.modules import register_module, register_preset, Preset
-from maestro.discrete import cast, assets, dialogue, navigation, economy, card_play, goal
+from maestro.discrete import (cast, assets, outline, dialogue, navigation, economy,
+                              card_play, goal)
 
 register_module(cast.MODULE)
 register_module(assets.MODULE)
+register_module(outline.MODULE)
 register_module(dialogue.SPINE)
 register_module(dialogue.NPC)
 register_module(navigation.MODULE)
@@ -34,7 +37,7 @@ register_module(goal.ENDLESS)
 
 register_preset("vn", Preset(
     substrate="discrete",
-    modules=("cast", "assets", "dialogue", "economy"),
+    modules=("cast", "assets", "outline", "dialogue", "economy"),
     engine="renpy"))
 # Escape-room style: navigation overworld + NPC dialogue + a reachable flag/room win.
 register_preset("point_and_click", Preset(

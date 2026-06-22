@@ -84,8 +84,9 @@ def test_node_gating_lives_on_dialogue_module():
 def test_compose_exposes_mode_and_subloop_maps():
     from maestro.modules import compose, PRESETS
     c = compose(PRESETS["vn"].modules)
-    assert set(c.mode_prompts) == {"premise", "asset_manifest", "nodes"}
+    assert set(c.mode_prompts) == {"premise", "asset_manifest", "outline", "nodes"}
     assert c.mode_prompts["premise"] == "mode_premise.txt"
+    assert c.mode_prompts["outline"] == "mode_outline.txt"
     assert c.mode_prompts["nodes"] == "write_node.txt"
     assert list(c.subloop_modules) == ["nodes"]          # only the dialogue body sub-loops
     assert "write_node" in c.mode_tools["nodes"]

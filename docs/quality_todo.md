@@ -31,11 +31,16 @@ the LLM-judge the rebuild removed, this time as an in-loop gate.
 Premise → endings exist; the middle is authored node-by-node, each node seeing only the
 story-state snapshot. No global arc → no pacing, escalation, or setup/payoff across the script.
 
-- [ ] **Outline / beat-sheet stage between premise and nodes.** New `outline` component (act
-  structure, turning points, which beats gate which endings). Nodes author against an assigned
-  beat, not blind. Highest single lever after the judge.
-- [ ] **Add `outline` to dialogue SPINE deps** (premise → outline → nodes). Inject the assigned
-  beat into `write_node` context.
+- [x] **Outline / beat-sheet stage between premise and nodes.** New `outline` module/component
+  (`maestro/discrete/outline.py`): logline + ordered beats (each with a dramatic `purpose` +
+  `tension`) + a planned `ending_paths` entry per premise ending. Baseline forces ≥5 beats and a
+  path for *every* ending (`refs_resolve premise.endings → outline.ending_paths`), so branches
+  diverge by design. vn-only (ships in the `vn` preset; pnc/card use `dialogue_npc`).
+- [x] **Add `outline` to the vn build order** (premise → outline → nodes, declared authoritatively
+  in the outline module's deps). Injected into `write_node` context for free: a passing upstream
+  component is rendered into every later step's context, so the node sub-loop sees the whole arc;
+  `write_node.txt` now tells it to realize the outline rather than improvise. *(Soft assignment —
+  the model maps scenes onto the arc; a hard per-node beat-coverage check is a possible follow-up.)*
 - [ ] **Check: choices have consequences.** New check — a meaningful fraction of menu choices
   carry `effects` or gate distinct endings. Stops decorative choices.
 - [ ] **Raise `min_branches`** floor, or make it proportional to node count (20 nodes / 2

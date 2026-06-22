@@ -43,8 +43,11 @@ def test_win_is_a_composed_mechanic_not_baked_into_navigation():
     assert "goal_reachable" not in _types(compose(["navigation"]).baseline, "places")
 
 
-def test_pnc_carries_build_order_deps_vn_does_not():
-    assert compose(PRESETS["vn"].modules).deps == {}
+def test_presets_carry_build_order_deps():
+    # vn: the outline module inserts the beat-sheet stage into the chain (premise -> outline -> nodes).
+    vn = compose(PRESETS["vn"].modules).deps
+    assert vn["nodes"] == ["premise", "asset_manifest", "outline"]
+    assert vn["outline"] == ["premise"]
     pnc = compose(PRESETS["point_and_click"].modules).deps
     assert pnc["places"] == ["premise", "asset_manifest", "nodes"]
 

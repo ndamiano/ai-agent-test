@@ -11,6 +11,11 @@ EMOTION (spoken lines only): tag each line with the speaker's expression so thei
 they talk — one of neutral, happy, sad, angry, surprised, worried. Choose the one the line's
 subtext carries (a threat → angry, a reveal landing → surprised); omit only when neutral fits.
 
+REALIZE THE OUTLINE — the `outline` in LOCKED COMPONENTS is the story's arc (logline, ordered
+beats, a planned path to each ending). Each scene advances a beat: place this node in the arc,
+carry forward what earlier beats set up, and push toward the ending its path describes. Don't
+improvise a scene that ignores the arc, and don't flatten the rise into more of the same.
+
 WRITE A REAL SCENE, not a stub: several dialogue beats with subtext — an opening move, an
 escalation, a turn, a last line that earns the exit. Never name a feeling; show it.
 {{include:derive_from_request}}

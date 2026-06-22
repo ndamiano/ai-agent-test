@@ -50,6 +50,24 @@ def v_asset_manifest(c: Dict) -> Optional[str]:
     return None
 
 
+def v_outline(c: Dict) -> Optional[str]:
+    if not c.get("logline"):
+        return "outline.logline is required (one sentence naming the dramatic spine)"
+    beats = c.get("beats")
+    if not isinstance(beats, list) or not beats:
+        return "outline.beats must be a non-empty list of beat objects"
+    for i, b in enumerate(beats):
+        if not isinstance(b, dict) or not b.get("id"):
+            return f"outline.beats[{i}] needs an 'id' (e.g. 'beat_01')"
+    eps = c.get("ending_paths")
+    if not isinstance(eps, list):
+        return "outline.ending_paths must be a list (one per premise ending)"
+    for i, e in enumerate(eps):
+        if not isinstance(e, dict) or not e.get("ending"):
+            return f"outline.ending_paths[{i}] needs an 'ending' (a premise.endings id)"
+    return None
+
+
 def v_nodes(c: Dict) -> Optional[str]:
     node_ids = c.get("node_ids")
     nodes = c.get("nodes")
@@ -145,6 +163,26 @@ SKEL_ASSET_MANIFEST = (
     '// asset_manifest holds IMAGES, not speakers. character ids here MUST match\n'
     '//   premise.characters ids exactly. items hold inventory ICONS; their ids MUST match\n'
     '//   places items ids. Omit "items" (or use []) for a visual novel with no inventory.'
+)
+
+SKEL_OUTLINE = (
+    '{\n'
+    '  "logline": "one sentence naming the dramatic spine — who wants what, what stands in the way",\n'
+    '  "beats": [\n'
+    '    {"id": "beat_01", "summary": "what happens in this beat",\n'
+    '     "purpose": "its dramatic job: setup | inciting | escalation | midpoint_turn | crisis | climax | resolution",\n'
+    '     "tension": "the question or stake this beat presses — what the player worries about now"}\n'
+    '  ],\n'
+    '  "ending_paths": [\n'
+    '    {"ending": "<a premise.endings id>", "earned_by": "the choices/turns along the way that make this ending land"}\n'
+    '  ]\n'
+    '}\n'
+    '// The outline is the ARC the scenes will realize — author it FROM the premise (its\n'
+    '//   central_question, cast, endings). NOT scenes yet: the shape of the whole story.\n'
+    '// beats: 5+ in dramatic ORDER — a real rise (setup -> escalation -> a midpoint that\n'
+    '//   reframes -> crisis/climax -> resolution); each beat does work no other beat does.\n'
+    '// ending_paths: ONE per premise.endings id — plan how each different ending is EARNED,\n'
+    '//   so branches diverge in meaning, not just in which scene plays.'
 )
 
 SKEL_NODES = (

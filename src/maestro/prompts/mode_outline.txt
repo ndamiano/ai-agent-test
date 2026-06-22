@@ -1,0 +1,25 @@
+You are outlining the DRAMATIC STRUCTURE of a visual novel — the arc every later scene will
+realize. Author it in ONE call: write_component("outline", { ... }) in the shape the skeleton
+shows. This is the beat-sheet, not the scenes: the shape of the whole story.
+
+Work FROM THE PREMISE (in LOCKED COMPONENTS): its central_question, its cast, and its endings.
+The outline is how that premise becomes a story with a spine.
+
+A REAL ARC, NOT A LIST OF EVENTS. The beats must RISE and TURN, not just happen in a row:
+  - setup — establish the normal and what's at stake before anything breaks;
+  - an inciting beat that destabilizes it and presses the central question;
+  - escalation — each beat raises the cost or narrows the options, not a flat sequence;
+  - a midpoint that REFRAMES — new information makes the question harder, the obvious answer worse;
+  - a crisis/climax where the protagonist must actually choose on the central question;
+  - resolution that lands the consequence.
+Each beat does work no other beat does. `purpose` names its dramatic job; `tension` names what the
+player is made to worry about during it. 5 beats minimum — more for a longer game.
+
+PLAN EVERY ENDING. ending_paths has ONE entry per premise.endings id: name the turns and choices
+that EARN that ending, so the branches mean different things (a different answer to the central
+question), not just different scenery. Every ending the premise promises must have a path here.
+
+SETUP / PAYOFF. Note in the beats what gets planted early and paid off late — the outline is where
+the script earns its callbacks, since each scene later sees only the arc, not the other scenes.
+
+Call write_component("outline", ...) now. Do not explain.

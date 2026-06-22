@@ -24,6 +24,12 @@ _READ_TOOLS = {"read_node", "read_place", "read_component", "read_story_state"}
 # failure mode burn minutes on a single dead step (observed: 265s / 49999 tokens). Bounding it
 # turns a runaway into a quick dead turn the sub-loop's nudge then recovers from.
 _BUILD_MAX_TOKENS = 8000
+# When reasoning is ESCALATED to high, the thinking alone eats most of the budget (measured:
+# ~3.4k reasoning tokens, total 7.9k of 8k) — so the model regularly runs OUT before emitting the
+# tool call and the step reads as "no tool call / returned text". That's truncation, not the model
+# choosing prose. Give escalated calls room for the thinking AND the call; still bounded well under
+# the 50k default so a true runaway is still capped.
+_BUILD_MAX_TOKENS_HIGH = 20000
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _SYSTEM = render_template(_PROMPTS_DIR / "build_agent_system.txt", {})
@@ -214,7 +220,7 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
         messages = MessageBuilder(system).extend(
             [MessageBuilder.user_msg(_render_context(context))]).build()
         response = (conn.generate_with_tools(messages, schemas, reasoning="high",
-                                             max_tokens=_BUILD_MAX_TOKENS)
+                                             max_tokens=_BUILD_MAX_TOKENS_HIGH)
                     if stalled else conn.generate_with_tools(messages, schemas,
                                                              max_tokens=_BUILD_MAX_TOKENS))
         action = _parse_action(response)
@@ -266,7 +272,7 @@ def rewrite_node(spec, state, node_id: str, note: str, tools: Dict[str, Callable
 
     for _ in range(cap):
         response = conn.generate_with_tools(mb.build(), schemas, reasoning="high",
-                                            max_tokens=_BUILD_MAX_TOKENS)
+                                            max_tokens=_BUILD_MAX_TOKENS_HIGH)
         action = _parse_action(response)
         if action.get("tool") != "write_node":
             say("no write_node tool call — nudging")
@@ -373,7 +379,7 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
 
         for _ in range(min(cap, max(budget, 0))):
             response = (conn.generate_with_tools(mb.build(), schemas, reasoning="high",
-                                                 max_tokens=_BUILD_MAX_TOKENS)
+                                                 max_tokens=_BUILD_MAX_TOKENS_HIGH)
                         if escalated else conn.generate_with_tools(mb.build(), schemas,
                                                                    max_tokens=_BUILD_MAX_TOKENS))
             if "error" in response:

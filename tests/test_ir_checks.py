@@ -130,6 +130,22 @@ def test_node_view_open_slots_and_synopses():
         ("n1", "they arrive"), ("n2", "they argue")]
 
 
+def test_node_view_assigns_slot_the_next_beat():
+    # n1 tags beat_01 and jumps to the unwritten n2 → n2's slot should dramatize beat_02 (the
+    # beat after its parent's), and node_view ships the full ordered beats for the window.
+    art = {
+        "outline": {"beats": [{"id": "beat_01"}, {"id": "beat_02"}, {"id": "beat_03"}]},
+        "nodes": {
+            "node_ids": ["n1"],
+            "nodes": {"n1": {"beat": "beat_01", "lines": [{"speaker": "al", "text": "a"}],
+                             "end": {"type": "jump", "target": "n2"}}},
+        },
+    }
+    v = c.node_view(art)
+    assert [b["id"] for b in v["beats"]] == ["beat_01", "beat_02", "beat_03"]
+    assert v["open_slots"][0]["beat"] == "beat_02"
+
+
 def test_node_view_no_open_slots_when_all_targets_written():
     v = c.node_view(_vn_artifact())  # n1->{n2,n3}, both written
     assert v["open_slots"] == []

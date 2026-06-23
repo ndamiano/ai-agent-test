@@ -1,11 +1,9 @@
 You are establishing the PREMISE of a visual novel — the source of truth every later
 scene draws from. Author it in ONE call: write_component("premise", { ... }) in the shape
-the skeleton shows. The done-conditions are the floor, not the goal — aim higher.
+the skeleton shows.
 
-CENTRAL QUESTION — the story argues ONE question: a tension between two things the
-protagonist cannot have at once, where BOTH answers are defensible. A values problem, not
-a logistics one. "Is holding the family together worth pretending nothing is changing?" —
-not "can she finish the project in time?". Every ending answers this question differently.
+CENTRAL QUESTION — The main guiding beacon for the story. This question is the tension that drives
+the characters, and the question the story intends to answer with its resolution.
 
 CHARACTERS PASS THE GRIMGONG TEST — specific enough to read as one particular person, not
 an archetype with adjectives.
@@ -14,38 +12,28 @@ an archetype with adjectives.
            is over and the thing he was built for no longer exists"
 Specificity comes from the character's SITUATION, not from stacking adjectives.
 
-CHARACTERS ARE NOT PLOT FUNCTIONS — no assigned roles, no love-interest-by-quota, no one
-existing to "represent" a theme. Write a standalone person the story has not happened to
-yet: the core is portable (true in any scene) and bound to the SETTING, never to this plot.
-
 DRIVE — what the character wants, stated plainly enough that they could say it out loud.
-Legible beats exotic: "save as many as I can" carries more drama than "decide who dies but
-never be decided about". A drive is NOT a goal for this story's plot — it is the standing
-want the story will press against. The conflict comes from a clear drive meeting the
-situation, not from a baroque internal contradiction.
+Legible beats exotic. At the end of the story we should be able to know whether or not a
+character met their goal.
 
-HISTORY — a list of 2-3 DISTINCT formative events, each whole and each adding new
-information. Not a role descriptor ("a medic in the war" is a competency, not history), and
-never one event split into two entries.
+HISTORY — a list of things have happened in the character's life. These will be used to fulfil
+dialogue goals, and make the character feel alive. Given that, they can be connected to other
+characters or independent, and they should be varied and interesting.
 
-VOICE + EXAMPLE_LINES — `voice` is one sentence on how they speak (vocabulary, sentence
-length, rhythm, what breaks under pressure); `example_lines` are 2+ actual lines that prove
-it. They must sound DIFFERENT from one another — if a line could be swapped between two
-characters unchanged, the voices failed. SHOW RANGE, NOT ONE TRICK: these lines are the
-template every later scene imitates, so do NOT make them all the character's signature move
-(their pet metaphor, their thesis stated as an aphorism). Include at least one plain, off-duty
-line — the character handling something mundane — so later scenes can let them talk without
-performing their theme. A voice built from one repeated move becomes a caricature 30 scenes
-deep. Plain rendered text only: no emoji, no symbols.
+VOICE — is one sentence on how they speak (vocabulary, sentence length, rhythm). 
 
-TEMPERAMENT + COMPETENCIES — `temperament` is how they carry themselves day to day;
-`competencies` is a list of concrete skills drawn from the setting.
+EXAMPLE LINES - 2+ lines that the character would say. In general, characters should speak plainly,
+and their lines shouldn't be steeped in their profession.
+
+TEMPERAMENT — how they carry themselves day to day.
+
+COMPETENCIES - a list of concrete skills drawn from the setting.
 
 HONOR THE REQUEST — same subject, same kind of cast, same spirit the user asked for. Find
 the drama inside what was asked for; do not graft on conspiracies, villains, or deadlines
 nobody asked for.
 
 ENDINGS — each is a distinct outcome that answers the central question a different way, not
-a reskin of the same beat. {{include:derive_from_request}}
+a reskin of the same beat. Derive every detail from the premise and request, never from the skeleton's placeholder ids.
 
 Call write_component("premise", ...) now. Do not explain.

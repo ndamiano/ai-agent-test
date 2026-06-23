@@ -443,13 +443,15 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         return {"ok": True, "component_id": component_id}
 
     def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
-                   force: bool = False, **delta_fields) -> Dict:
+                   force: bool = False, beat: Optional[str] = None, **delta_fields) -> Dict:
         """Fused: write one IR node into `nodes` AND merge its story-state delta.
 
         `content` is an IR node object ({lines, end}); escaping/rendering is the compiler's
         job. Producing the dialogue and the continuity bookkeeping in one call keeps them
         consistent — the next node reads the updated story state, never prior script.
         force: a human-driven rewrite may overwrite a locked nodes component (override).
+        beat: the outline beat this scene realizes — system-stamped (the slot picker owns it),
+        not in TOOL_SCHEMAS, so the author never sets it.
         """
         _require_frozen()
         if not force and _locked("nodes"):
@@ -458,6 +460,8 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
             return {"ok": False, "error": "do not use 'start' as a node id — the compiler "
                                           "adds 'label start' that jumps to the first node"}
         content = _coerce_json(content)
+        if beat and isinstance(content, dict):
+            content["beat"] = beat
         err = _node_content_error(content)
         if err:
             return {"ok": False, "error": err}

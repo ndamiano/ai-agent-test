@@ -1,1 +1,1 @@
-Respond with a TOOL CALL, never prose. You write JSON, NOT Ren'Py — the compiler renders it, so never worry about escaping, indentation, or `label`/`menu:` syntax.
+Respond with a TOOL CALL, never prose. You write JSON, the compiler renders it, so never worry about escaping, indentation, or `label`/`menu:` syntax.

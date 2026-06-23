@@ -8,7 +8,7 @@ from maestro.state import RunState
 from maestro.executor import Executor
 from maestro.agent import (_filter_schemas, _schemas_for_target, _prompt_for_target,
                            _render_context, _load_prompt, make_subloop, _create_guard,
-                           _render_open_slots)
+                           _render_slot_focus, _pick_slot)
 from maestro.discrete.dialogue import SPINE as DIALOGUE
 from maestro.discrete.navigation import MODULE as NAVIGATION
 from maestro.modules import compose, PRESETS
@@ -133,6 +133,33 @@ def test_render_context_shows_locked_components():
 
 def test_render_context_omits_locked_block_when_empty():
     assert "LOCKED COMPONENTS" not in _render_context({"todo": [], "upstream": {}})
+
+
+def test_render_context_premise_is_title_request_and_own_todo():
+    # Premise mode gets the title + request + ONLY premise's failing checks — no spec dump, no
+    # other components' to-do, no skeleton noise.
+    ctx = {"mode": "premise",
+           "spec": {"title": "Attic", "request": "two sisters clear their dead mother's house"},
+           "todo": [{"component_id": "premise", "check": {"type": "count"}, "detail": "need 3 chars"},
+                    {"component_id": "nodes", "check": {"type": "count"}, "detail": "need 5 nodes"}],
+           "upstream": {"asset_manifest": {"backgrounds": ["bg"]}}}
+    rendered = _render_context(ctx)
+    assert rendered.startswith("TITLE: Attic\n\nREQUEST: two sisters clear")
+    assert "count: need 3 chars" in rendered          # premise's own check
+    assert "need 5 nodes" not in rendered              # other component's check withheld
+    assert "asset_manifest" not in rendered and "SPEC" not in rendered
+
+
+def test_render_context_drops_outline_beats_from_locked_components():
+    # The full beat list must NOT leak into LOCKED COMPONENTS — the node author gets the beat
+    # window from slot focus. logline + ending_paths stay.
+    ctx = {"todo": [], "upstream": {"outline": {
+        "logline": "two sisters, one house",
+        "beats": [{"id": "beat_01", "summary": "secret summary"}],
+        "ending_paths": [{"ending": "sell", "earned_by": "x"}]}}}
+    rendered = _render_context(ctx)
+    assert "two sisters" in rendered and "ending_paths" in rendered
+    assert "secret summary" not in rendered and "beat_01" not in rendered
 
 
 def test_render_context_shows_last_read_and_stall_nudge():
@@ -407,19 +434,50 @@ def test_guard_entry_node_allowed_when_nothing_written():
     assert seen  # dispatched
 
 
-def test_guard_rejects_node_that_is_not_an_open_slot():
+def test_guard_rejects_node_that_is_not_the_assigned_slot():
     view = {"node_ids": ["scene_01"], "open_slots": [{"id": "scene_02", "from": []}]}
     guarded, seen = _guard(view)
     res = guarded({"tool": "write_node", "args": {"node_id": "scene_99"}})
-    assert res["ok"] is False and "OPEN SLOT" in res["error"]
+    assert res["ok"] is False and "assigned slot" in res["error"] and "scene_02" in res["error"]
     assert not seen  # never dispatched
 
 
-def test_guard_allows_filling_an_open_slot():
+def test_guard_allows_filling_the_assigned_slot():
     view = {"node_ids": ["scene_01"], "open_slots": [{"id": "scene_02", "from": []}]}
     guarded, seen = _guard(view)
     assert guarded({"tool": "write_node", "args": {"node_id": "scene_02"}})["ok"] is True
     assert seen[0]["args"]["node_id"] == "scene_02"
+
+
+def test_guard_enforces_the_one_system_picked_slot():
+    # Two open slots; the system picks the one whose beat comes first. The other is rejected
+    # even though it is a valid open slot — the author writes the spine in order.
+    view = {"node_ids": ["scene_01"],
+            "beats": [{"id": "beat_01"}, {"id": "beat_02"}],
+            "open_slots": [{"id": "scene_03", "from": [], "beat": "beat_02"},
+                           {"id": "scene_02", "from": [], "beat": "beat_01"}]}
+    guarded, seen = _guard(view)
+    assert guarded({"tool": "write_node", "args": {"node_id": "scene_03"}})["ok"] is False
+    assert not seen
+    assert guarded({"tool": "write_node", "args": {"node_id": "scene_02"}})["ok"] is True
+
+
+def test_guard_stamps_the_assigned_slots_beat():
+    # The system owns the beat: writing the picked slot, the guard injects its beat into args so
+    # the author never sets it.
+    view = {"node_ids": ["scene_01"],
+            "beats": [{"id": "beat_01"}, {"id": "beat_02"}],
+            "open_slots": [{"id": "scene_02", "from": [], "beat": "beat_02"}]}
+    guarded, seen = _guard(view)
+    assert guarded({"tool": "write_node", "args": {"node_id": "scene_02"}})["ok"] is True
+    assert seen[0]["args"]["beat"] == "beat_02"
+
+
+def test_guard_stamps_first_beat_on_opening_node():
+    view = {"node_ids": [], "open_slots": [], "beats": [{"id": "beat_01"}, {"id": "beat_02"}]}
+    guarded, seen = _guard(view)
+    guarded({"tool": "write_node", "args": {"node_id": "scene_01"}})
+    assert seen[0]["args"]["beat"] == "beat_01"
 
 
 def test_guard_rejects_overwriting_existing_node():
@@ -444,18 +502,36 @@ def test_guard_ignores_slot_rule_for_views_without_open_slots():
     assert guarded({"tool": "write_node", "args": {"node_id": "r2"}})["ok"] is True
 
 
-def test_render_open_slots_shows_breadcrumb():
-    view = {"open_slots": [{
-        "id": "scene_03",
-        "from": [{"node": "scene_02", "label": "go to the attic"}],
-        "path": [{"id": "scene_01", "synopsis": "they arrive"},
-                 {"id": "scene_02", "synopsis": "they argue"}],
-    }]}
-    text = "\n".join(_render_open_slots(view))
-    assert "OPEN SLOTS" in text
-    assert "scene_03" in text and "go to the attic" in text
-    assert "they arrive" in text and "they argue" in text
+def test_render_slot_focus_shows_one_slot_and_beat_window():
+    view = {
+        "node_ids": ["scene_01", "scene_02"],
+        "beats": [{"id": "beat_01", "summary": "they arrive", "tension": "why now?"},
+                  {"id": "beat_02", "summary": "they argue", "tension": "who decides?"},
+                  {"id": "beat_03", "summary": "the break", "tension": "can it heal?"}],
+        "open_slots": [{
+            "id": "scene_03",
+            "beat": "beat_02",
+            "from": [{"node": "scene_02", "label": "go to the attic"}],
+            "path": [{"id": "scene_01", "synopsis": "they arrive"},
+                     {"id": "scene_02", "synopsis": "they pack"}],
+        }],
+    }
+    text = "\n".join(_render_slot_focus(view))
+    assert "node_id = scene_03" in text and "go to the attic" in text
+    assert "they arrive" in text and "they pack" in text          # path breadcrumb
+    assert "beat_01" in text and "beat_02" in text and "beat_03" in text  # prev/this/next
+    assert "THIS NODE'S BEAT" in text and "they argue" in text  # beat_02's summary
 
 
-def test_render_open_slots_empty_when_none():
-    assert _render_open_slots({"open_slots": []}) == []
+def test_render_slot_focus_opening_node_when_nothing_written():
+    view = {"node_ids": [], "open_slots": [],
+            "beats": [{"id": "beat_01", "summary": "the arrival"}]}
+    text = "\n".join(_render_slot_focus(view))
+    assert "OPENING NODE" in text and "FIRST BEAT" in text and "the arrival" in text
+
+
+def test_pick_slot_orders_by_beat():
+    view = {"beats": [{"id": "beat_01"}, {"id": "beat_02"}],
+            "open_slots": [{"id": "s_b", "beat": "beat_02"}, {"id": "s_a", "beat": "beat_01"}]}
+    assert _pick_slot(view)["id"] == "s_a"
+    assert _pick_slot({"open_slots": []}) is None

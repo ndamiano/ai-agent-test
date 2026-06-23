@@ -80,36 +80,117 @@ def _scoped_spec(ctx: Dict) -> Dict:
     return {**{k: v for k, v in spec.items() if k != "components"}, "components": comps}
 
 
-def _render_open_slots(view: Dict) -> List[str]:
-    """The author's worklist: the dangling targets a new node may fill, each with the path that
-    leads to it so the scene continues the arc instead of repeating a sibling."""
-    out: List[str] = []
+def _scoped_upstream(ctx: Dict) -> Dict:
+    """Trim the locked components to what THIS step needs. The outline's full beat list would dump
+    every beat into the node author's context; it gets only the beat WINDOW for its assigned scene
+    (THIS NODE'S BEAT + the one before/after, from _render_slot_focus), so drop outline.beats here
+    and keep logline + ending_paths."""
+    upstream = ctx.get("upstream") or {}
+    outline = upstream.get("outline")
+    if isinstance(outline, dict) and "beats" in outline:
+        upstream = {**upstream, "outline": {k: v for k, v in outline.items() if k != "beats"}}
+    return upstream
+
+
+def _pick_slot(view: Dict) -> Optional[Dict]:
+    """The system — not the author — chooses which scene to write next: the open slot whose beat
+    comes earliest in the outline, so the spine is built in dramatic order. None when there are no
+    open slots (the entry node, or a fresh branch root is needed)."""
     slots = view.get("open_slots") or []
-    if slots:
+    if not slots:
+        return None
+    order = {b["id"]: i for i, b in enumerate(view.get("beats") or []) if b.get("id")}
+    last = len(order)
+    return sorted(slots, key=lambda s: (order.get(s.get("beat"), last), s["id"]))[0]
+
+
+def _beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) -> Optional[str]:
+    """The beat the system stamps on the node being written — it picked the slot, so it owns the
+    beat too (the author no longer guesses it). The assigned slot's beat; the first beat for the
+    opening node; the first still-unrealized beat for an escape-hatch branch root. None (e.g. an
+    ending slot, or a non-VN nodes build with no outline) → leave the node's beat unset."""
+    if chosen is not None:
+        return chosen.get("beat")
+    beat_ids = [b["id"] for b in (view.get("beats") or []) if b.get("id")]
+    if not has_existing:
+        return beat_ids[0] if beat_ids else None
+    todo = view.get("beats_todo") or []
+    return todo[0] if todo else None
+
+
+def _render_beat(b: Dict) -> str:
+    stake = f' (stake: {b["tension"]})' if b.get("tension") else ""
+    return f'{b.get("id")} — {b.get("summary", "")}{stake}'
+
+
+def _render_slot_focus(view: Dict) -> List[str]:
+    """Hand the author ONE scene to write: its node_id, the path that leads to it, and the beat
+    window (previous beat behind us, this node's beat to dramatize, next beat to aim at) so it
+    continues the arc. The list of every open slot is gone — the system picks the slot, the author
+    just writes it."""
+    out: List[str] = []
+    beats = view.get("beats") or []
+    by_id = {b["id"]: b for b in beats if b.get("id")}
+    beat_ids = [b["id"] for b in beats if b.get("id")]
+    slot = _pick_slot(view)
+
+    if slot:
+        srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in slot.get("from", []))
         out += ["",
-                "OPEN SLOTS — write ONE of these next, using its EXACT id. Each is a scene a written "
-                "node already leads into but that does not exist yet:"]
-        for s in slots:
-            srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in s.get("from", []))
-            out.append(f"  {s['id']}   (reached from: {srcs})")
-            path = s.get("path") or []
-            if path:
-                crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
-                                   for p in path)
-                out.append(f"     path to here: {crumb}")
-        out.append("Continue from where that path leaves off — do NOT repeat a beat already shown "
-                   "above. Your node's `end` opens the next slot: prefer a single `jump` (go deeper "
-                   "toward an ending); use a `menu` ONLY at a real fork, never to list places to visit.")
+                f"WRITE THIS NODE NEXT — node_id = {slot['id']} (use this EXACT id). It is the scene "
+                f"reached from: {srcs}."]
+        path = slot.get("path") or []
+        if path:
+            crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
+                               for p in path)
+            out.append(f"  PATH TO HERE (already happened — do NOT repeat it): {crumb}")
+        bid = slot.get("beat")
+        if bid and bid in by_id:
+            i = beat_ids.index(bid)
+            if i > 0:
+                out.append(f"  PREVIOUS BEAT (behind us): {_render_beat(by_id[beat_ids[i - 1]])}")
+            out.append(f"  THIS NODE'S BEAT (dramatize it): {_render_beat(by_id[bid])}")
+            if i + 1 < len(beat_ids):
+                out.append(f"  NEXT BEAT (aim here — your `end` opens a slot toward it): "
+                           f"{_render_beat(by_id[beat_ids[i + 1]])}")
+        else:
+            if beat_ids:
+                out.append(f"  PREVIOUS BEAT (behind us): {_render_beat(by_id[beat_ids[-1]])}")
+            out.append("  THIS NODE IS AN ENDING — realize a premise ending (end.type 'end'); the "
+                       "arc resolves here, so open no further slot.")
+        out.append("Your `end` continues the spine: prefer a single `jump` toward the next beat; "
+                   "use a `menu` ONLY at a real fork, never to list places to visit.")
+        return out
+
+    if not view.get("node_ids"):
+        out += ["", "WRITE THE OPENING NODE — no scenes exist yet. Choose its node_id."]
+        if beat_ids:
+            out.append(f"  FIRST BEAT (dramatize it): {_render_beat(by_id[beat_ids[0]])}")
+            if len(beat_ids) > 1:
+                out.append(f"  NEXT BEAT (aim here): {_render_beat(by_id[beat_ids[1]])}")
+        return out
+
     todo = view.get("beats_todo")
     if todo:
         out += ["",
-                "OUTLINE BEATS NOT YET REALIZED (see the outline in LOCKED COMPONENTS for what each "
-                "is): " + ", ".join(todo) + ". Write a scene that dramatizes one and set its `beat` "
-                "to that id. You are done building scenes when every beat has one — not at any node count."]
+                "Every existing scene's path is fully written, but these outline beats still have no "
+                "scene: " + ", ".join(todo) + ". Give an existing node a jump/menu to a NEW node id, "
+                "then write that node to dramatize one."]
     return out
 
 
 def _render_context(ctx: Dict) -> str:
+    # Premise is the source of truth every later scene draws from — author it from the bare
+    # request, NOT from spec/to-do/skeleton noise (the shape rides on the system prompt). A clean
+    # prompt keeps the small model inventing a world, not parroting the scaffolding's placeholder ids.
+    if ctx.get("mode") == "premise":
+        spec = ctx.get("spec", {}) or {}
+        out = [f"TITLE: {spec.get('title', '')}", "", f"REQUEST: {spec.get('request', '')}"]
+        premise_todo = [f"- {f['check'].get('type')}: {f.get('detail')}"
+                        for f in ctx.get("todo", []) if f.get("component_id") == "premise"]
+        if premise_todo:
+            out += ["", "TO-DO (failing done-conditions for premise):", *premise_todo]
+        return "\n".join(out)
     todo = ctx.get("todo", [])
     todo_lines = [f"- [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}"
                   for f in todo] or ["(none — build may be complete)"]
@@ -129,7 +210,7 @@ def _render_context(ctx: Dict) -> str:
             "Make the change that clears it. Don't chase other to-do items.",
         ]
     lines += ["", f"SCRATCHPAD: {json.dumps(pad, ensure_ascii=False)}"]
-    upstream = ctx.get("upstream") or {}
+    upstream = _scoped_upstream(ctx)
     if upstream:
         lines += [
             "",
@@ -154,7 +235,7 @@ def _render_context(ctx: Dict) -> str:
             "listed here or to a node you also create this step):",
             *node_lines,
         ]
-        lines += _render_open_slots(view)
+        lines += _render_slot_focus(view)
     if view and view.get("place_ids"):
         edges = view.get("edges", {})
         counts = view.get("interactable_counts", {})
@@ -335,11 +416,11 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
 
     1. No overwrite — driving `count` the job is to ADD; a small model loves to rewrite item #1,
        which never raises the count.
-    2. Fill an OPEN SLOT — a new node must take an id some written node already points at (a
-       dangling target). This keeps every new scene reachable and gives it a known parent, so its
-       ancestor path can be shown and it continues the arc instead of re-treading a sibling. The
-       entry node (nothing written yet) and the escape case (no slots open — a fresh branch root
-       is needed to reach the count) are exempt, so the loop can never deadlock.
+    2. Fill THE ASSIGNED SLOT — the system picks one open slot (`_pick_slot`: earliest beat in
+       outline order) and the new node must take that exact id. This keeps every new scene
+       reachable with a known parent, builds the spine in dramatic order, and stops the model
+       inventing a sibling. The entry node (nothing written yet) and the escape case (no slots
+       open — a fresh branch root is needed to reach the count) are exempt, so it can't deadlock.
 
     count-only (other, repair, targets legitimately rewrite). Slot rule only fires when the view
     publishes `open_slots` (nodes); a view without it (places) keeps rule 1 alone."""
@@ -353,15 +434,18 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
             return {"ok": False, "error":
                     f"{noun} {iid!r} already exists — to raise the COUNT write a NEW {noun} "
                     f"id; do not rewrite an existing one."}
-        slots = view.get("open_slots")
-        if slots is not None and existing:
-            slot_ids = {s["id"] for s in slots}
-            if slot_ids and iid not in slot_ids:
-                return {"ok": False, "error":
-                        f"{noun} {iid!r} is not an OPEN SLOT — a new {noun} must fill one of "
-                        f"{sorted(slot_ids)} (an id a written {noun} already leads to), so it is "
-                        f"reachable and continues that branch. Pick one of those ids, or first "
-                        f"give an existing {noun} a menu/jump to the new id you want."}
+        chosen = _pick_slot(view) if view.get("open_slots") is not None else None
+        if view.get("open_slots") is not None and existing and chosen is not None \
+                and iid != chosen["id"]:
+            return {"ok": False, "error":
+                    f"{noun} {iid!r} is not the assigned slot — write {chosen['id']!r} next "
+                    f"(the scene the story leads into). Use that EXACT id as the {noun} id."}
+        # The system owns the beat too: it picked the slot, so it stamps the beat the node
+        # dramatizes (the author no longer sets it). Nodes only; None → left unset.
+        if id_key == "node_id":
+            beat = _beat_for_new_node(view, chosen, bool(existing))
+            if beat:
+                action = {**action, "args": {**(action.get("args") or {}), "beat": beat}}
         return dispatch(action)
 
     return guarded
@@ -488,7 +572,7 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
                 note_lines = [f"CURRENT {noun_plural}: {listing}"]
                 if view.get("unreachable"):
                     note_lines.append(f"UNREACHABLE: {view['unreachable']}")
-                note_lines += _render_open_slots(view)
+                note_lines += _render_slot_focus(view)
                 mb.add_user("\n".join(note_lines))
 
             if target_met():

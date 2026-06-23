@@ -99,13 +99,26 @@ def node_view(artifact: Dict) -> Dict:
             continue
         slots.setdefault(tgt, {"id": tgt, "from": []})["from"].append(
             {"node": src, "label": label})
+    beats_full = [b for b in (artifact.get("outline", {}) or {}).get("beats", []) if b.get("id")]
+    beat_ids = [b["id"] for b in beats_full]
+    beat_index = {bid: i for i, bid in enumerate(beat_ids)}
+    covered = {nodes.get(nid, {}).get("beat") for nid in node_ids}
+    uncovered = [b for b in beat_ids if b not in covered]
+
     for tgt, slot in slots.items():
         parent = slot["from"][0]["node"]
         path_ids = _shortest_path(entry, parent, edges) if entry else []
         slot["path"] = [{"id": pid, "synopsis": synopses.get(pid, "")} for pid in path_ids]
+        # The beat this slot should dramatize: the one after its parent's beat in outline order.
+        # A parent at (or past) the last beat leads to an ending (beat=None). Untagged parent →
+        # fall back to the earliest beat no scene covers yet.
+        pbeat = nodes.get(parent, {}).get("beat")
+        if pbeat in beat_index:
+            nxt = beat_index[pbeat] + 1
+            slot["beat"] = beat_ids[nxt] if nxt < len(beat_ids) else None
+        else:
+            slot["beat"] = uncovered[0] if uncovered else None
 
-    beats = [b.get("id") for b in (artifact.get("outline", {}) or {}).get("beats", []) if b.get("id")]
-    covered = {nodes.get(nid, {}).get("beat") for nid in node_ids}
     return {
         "node_ids": node_ids,
         "edges": {nid: sorted(set(e)) for nid, e in edges.items()},
@@ -114,7 +127,8 @@ def node_view(artifact: Dict) -> Dict:
         "line_counts": {nid: len(nodes.get(nid, {}).get("lines", [])) for nid in node_ids},
         "synopses": synopses,
         "open_slots": sorted(slots.values(), key=lambda s: s["id"]),
-        "beats_todo": [b for b in beats if b not in covered],
+        "beats": beats_full,
+        "beats_todo": uncovered,
     }
 
 

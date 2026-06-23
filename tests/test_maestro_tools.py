@@ -175,6 +175,14 @@ def test_write_node_persists_ir_object(tmp_path):
     assert ns["nodes"]["scene_01"]["end"] == {"type": "jump", "target": "scene_02"}
 
 
+def test_write_node_stamps_system_beat(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("scene_01", _node("hi", {"type": "jump", "target": "scene_02"}),
+                        beat="beat_03")
+    assert state.read_component("nodes")["nodes"]["scene_01"]["beat"] == "beat_03"
+
+
 def test_write_node_rejects_bad_shape(tmp_path):
     tools = build_tools(_spec(), RunState(tmp_path))
     assert tools["write_node"]("s1", "label s1:\n  a \"hi\"")["ok"] is False   # string, not object

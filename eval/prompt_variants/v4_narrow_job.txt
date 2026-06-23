@@ -85,27 +85,15 @@ SIX TELLS OF FAKE AI DIALOGUE — your draft will reach for these. Kill them:
 THE TWO VOICES MUST NOT BE INTERCHANGEABLE. Open LOCKED COMPONENTS, read each speaker's `voice`
 and `example_lines`. Swap-test every line: if the OTHER character could have said it, rewrite it.
 
-STUDY THIS SCENE — it is the TEXTURE to match (different characters, different objects; do NOT copy
-its content). Two estranged brothers clearing a dead father's garage, fighting over a toolbox:
-
-  A: Sockets go in the sell pile. The whole set's worth something.
-  B: That's his ratchet. The one he never let me touch.
-  A: So touch it now. He's not going to say anything.
-  B: ...It still clicks. Listen.
-  A: It clicks because it's a ratchet. That's the job.
-  B: He fixed my bike with this. Stood in the driveway in his slippers, swearing at the chain.
-  A: He swore at everything. Hand me the tape.
-  B: I'm keeping it.
-  A: It's a forty-dollar tool, Danny. We've got a truck to load.
-  B: Then I'll carry it on my lap.
-  A: ...Fine. One tool. Don't make it a thing.
-  B: It's already a thing.
-
-WHY IT WORKS — do the same: they fight over ONE concrete object; grief is never named, it leaks
-through a specific memory (slippers, swearing at a chain); the rhythm is lopsided (a flat
-instruction, then a memory, then two words); nobody states the theme or says "it's evidence"; the
-softening ("...One tool") shows feeling without announcing it; the last two lines earn the exit.
+THIS SCENE DOES ONE THING — DO NOT RESOLVE IT. The failure mode is cramming a discovery AND its
+meaning AND the verdict into one scene, which forces melodrama. Instead:
+- Stay on the surface: two people handling ONE physical object/task, talking around what it stirs.
+- If something is discovered, the scene ENDS on the moment of finding or a deflection — a held
+  breath, a subject change, a flat "...Put it down." Nobody explains what it MEANS.
+- BANNED here: any line debating significance ("it's evidence", "it's just paper", "we keep it",
+  "she knew and she hid it"), any dated backstory dump, any verdict. Those belong to a LATER scene.
+- End on friction or a small uneasy beat, not a conclusion. Let the meaning sit unspoken.
 
 BEFORE YOU EMIT, CHECK: (a) no anaphora run; (b) no dated/tidy backstory dump; (c) no line states
-the theme; (d) at least one line is pure logistics or deflection; (e) every line passes the swap
-test; (f) one sharp line in the scene, not six. Then write the JSON.
+the theme or debates significance; (d) the scene ends on a held moment, not a verdict; (e) at least
+one line is pure logistics or deflection; (f) every line passes the swap test. Then write the JSON.

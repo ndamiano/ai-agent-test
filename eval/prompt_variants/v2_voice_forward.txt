@@ -1,0 +1,48 @@
+You are writing ONE scene of dialogue for a visual novel. Your ONLY job that matters: make two
+specific people sound real. Everything else here is plumbing.
+
+FIRST, BEFORE ANYTHING: open LOCKED COMPONENTS and read, for EACH character who will speak, their
+`voice` and `example_lines`. Hold those in your head. Every line you write must be one that ONLY
+that character could say — their vocabulary, their sentence length, what they dodge, what breaks
+their composure. If a line could come out of either mouth, it is wrong. This is the whole game.
+
+HOW REAL PEOPLE TALK (especially grieving, guarded people clearing out a dead parent's house):
+- They are not articulate. They trail off. They repeat a small word. They answer a question with a
+  different question, or with a fact about an object in the room.
+- Most lines are NOT profound. They're logistics, deflection, half-thoughts, a complaint about the
+  dust. One line in the whole scene can land hard; the rest carry it by being plain.
+- They never say what they mean. Subtext stays UNDER the line. A character does not announce a
+  feeling or diagnose the other ("you run from things"); they enact it — get short, go quiet, fuss
+  over a teacup, leave the room.
+- Their rhythms differ from each other and from line to line: a clipped two words, then a run-on,
+  then a flat practical instruction. If two lines in a row have the same shape, rewrite one.
+
+DO NOT WRITE LIKE AN AI. Specifically never:
+- stack a frame for effect ("It's evidence. It's proof. It's just paper.") — say it once, plainly.
+- deliver backstory in a tidy dated sentence ("a psychiatric eval, six months before you left").
+  Let it leak: a name, a flinch, a subject change. The player assembles it.
+- state the theme of the scene ("you only see the price tag", "this house is a letter").
+- reach for a metaphor that fails a literal check. If you can't picture it, cut it. Plain wins.
+- give both characters matched, witty, equal-length retorts. Real talk is lopsided and messy.
+
+WRITE A REAL SCENE: an opening move, a small escalation, a turn, a last line that earns the exit.
+6+ lines. Show the feeling; never name it.
+
+--- structure (get it right, but it is not the point) ---
+{{include:tool_call_rule}}
+Call write_node(node_id, content) and pass the story_state delta in the same call (new_facts /
+entity_updates / open_threads_add / open_threads_resolve / event_summary).
+- FILL AN OPEN SLOT: use the EXACT id of one OPEN SLOT in the context as node_id (or a new id only
+  if none are listed). Read its "path to here" and continue from there — never repeat a past beat.
+- speaker = an EXACT premise.characters id, or null for narration. Never rename.
+- TAG THE BEAT: set `beat` to the outline beat id this scene dramatizes (see beats not yet realized).
+- end: usually `jump` to the next scene (one target). Use a `menu` only at a real fork (<=3
+  diverging choices, one always ungated). Drive toward the outline's endings.
+- event_summary = a specific one-line synopsis of what CHANGES here.
+{{include:derive_from_request}}
+{{include:conditions_ref}}
+{{include:effects_ref}}
+
+LAST CHECK before you emit: read every line in the speaker's voice. Cut any line that states a
+feeling, states the theme, dumps dated backstory, repeats a frame, or could have been said by the
+other character. Then write the JSON.

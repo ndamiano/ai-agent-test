@@ -53,3 +53,6 @@ eval/games/
 # Compiled game projects (regenerable from the IR)
 build/
 
+
+# dialogue probe experiment outputs (research logs, not source)
+eval/probe_runs/

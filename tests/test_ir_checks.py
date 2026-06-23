@@ -51,6 +51,52 @@ def test_all_characters_speak():
     assert not ok and "cy" in detail
 
 
+def test_beats_realized():
+    art = _vn_artifact()
+    art["outline"] = {"beats": [{"id": "beat_01"}, {"id": "beat_02"}]}
+    # no node tags a beat yet → both missing
+    ok, detail = c.check_beats_realized(art, {}, None)
+    assert not ok and "beat_01" in detail and "beat_02" in detail
+    art["nodes"]["nodes"]["n1"]["beat"] = "beat_01"
+    ok, detail = c.check_beats_realized(art, {}, None)
+    assert not ok and "beat_02" in detail and "beat_01" not in detail
+    art["nodes"]["nodes"]["n2"]["beat"] = "beat_02"
+    assert c.check_beats_realized(art, {}, None)[0] is True
+    # node_view surfaces the same worklist for the author loop
+    assert c.node_view(art)["beats_todo"] == []
+
+
+def test_beats_realized_noop_without_outline():
+    # NPC dialogue (no outline) — nothing to realize, never blocks.
+    assert c.check_beats_realized(_vn_artifact(), {}, None)[0] is True
+
+
+def test_no_dead_gates_passes_when_ungated():
+    # A lean arc with no `requires` anywhere — endings earned by the story — passes trivially.
+    assert c.check_no_dead_gates(_vn_artifact(), {}, None)[0] is True
+
+
+def test_no_dead_gates_catches_self_gated_choice():
+    # The exact trap: a choice gated on trust>=2 whose only +1 is on that SAME choice → trust is 0
+    # at the gate forever → dead branch.
+    art = _vn_artifact()
+    ch = art["nodes"]["nodes"]["n1"]["end"]["choices"][0]
+    ch["requires"] = {"var": "trust", "op": ">=", "value": 2}
+    ch["effects"] = [{"add_var": {"var": "trust", "delta": 1}}]
+    ok, detail = c.check_no_dead_gates(art, {}, None)
+    assert not ok and "trust" in detail and "n1" in detail
+
+
+def test_no_dead_gates_ok_when_raised_earlier():
+    # Same gate, but trust is raised by an effect in an EARLIER scene → the gate can open → ok.
+    art = _vn_artifact()
+    art["nodes"]["nodes"]["n1"]["end"]["choices"][0]["requires"] = {"var": "trust", "op": ">=", "value": 1}
+    # n2 is downstream of n1; put the raising effect on n1's OTHER choice's target... simplest: add a
+    # third node that sets trust and is referenced. Here just set it on n2 (a different node).
+    art["nodes"]["nodes"]["n2"]["lines"][0]["effects"] = [{"add_var": {"var": "trust", "delta": 1}}]
+    assert c.check_no_dead_gates(art, {}, None)[0] is True
+
+
 def test_node_view():
     v = c.node_view(_vn_artifact())
     assert v["node_ids"] == ["n1", "n2", "n3"]

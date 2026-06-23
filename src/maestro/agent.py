@@ -83,23 +83,29 @@ def _scoped_spec(ctx: Dict) -> Dict:
 def _render_open_slots(view: Dict) -> List[str]:
     """The author's worklist: the dangling targets a new node may fill, each with the path that
     leads to it so the scene continues the arc instead of repeating a sibling."""
+    out: List[str] = []
     slots = view.get("open_slots") or []
-    if not slots:
-        return []
-    out = ["",
-           "OPEN SLOTS — write ONE of these next, using its EXACT id. Each is a scene a written "
-           "node already leads into but that does not exist yet:"]
-    for s in slots:
-        srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in s.get("from", []))
-        out.append(f"  {s['id']}   (reached from: {srcs})")
-        path = s.get("path") or []
-        if path:
-            crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
-                               for p in path)
-            out.append(f"     path to here: {crumb}")
-    out.append("Continue from where that path leaves off — do NOT repeat a beat already shown "
-               "above. Your node's `end` opens the next slots (menu choices, a jump, or an ending "
-               "id from the outline).")
+    if slots:
+        out += ["",
+                "OPEN SLOTS — write ONE of these next, using its EXACT id. Each is a scene a written "
+                "node already leads into but that does not exist yet:"]
+        for s in slots:
+            srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in s.get("from", []))
+            out.append(f"  {s['id']}   (reached from: {srcs})")
+            path = s.get("path") or []
+            if path:
+                crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
+                                   for p in path)
+                out.append(f"     path to here: {crumb}")
+        out.append("Continue from where that path leaves off — do NOT repeat a beat already shown "
+                   "above. Your node's `end` opens the next slot: prefer a single `jump` (go deeper "
+                   "toward an ending); use a `menu` ONLY at a real fork, never to list places to visit.")
+    todo = view.get("beats_todo")
+    if todo:
+        out += ["",
+                "OUTLINE BEATS NOT YET REALIZED (see the outline in LOCKED COMPONENTS for what each "
+                "is): " + ", ".join(todo) + ". Write a scene that dramatizes one and set its `beat` "
+                "to that id. You are done building scenes when every beat has one — not at any node count."]
     return out
 
 
@@ -390,7 +396,7 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
         # the write tool with the author prompt; a fix target gets edit tools + the repair prompt.
         schemas = _schemas_for_target(target, base_schemas, target_tools)
         system = _prompt_for_target(target, prompts, target_jobs) + guide_suffix
-        if target["check"].get("type") == "count":
+        if target["check"].get("type") in cfg.get("create_targets", {"count"}):
             dispatch = _create_guard(dispatch, view_fn, count_tool, id_key, id_list_key, noun)
         mb = MessageBuilder(system).add_user(_render_context(ctx))
 

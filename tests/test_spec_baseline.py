@@ -31,13 +31,13 @@ def test_adds_missing_structure_and_quality_checks():
 
 def test_raises_min_to_floor_but_keeps_higher():
     spec = _node_comp([
-        {"type": "count", "path": "nodes.node_ids", "min": 6},     # below floor → raised
-        {"type": "each_node_min_lines", "min": 40},                       # above floor → kept
+        {"type": "each_node_min_lines", "min": 3},   # below floor (6) → raised
+        {"type": "min_branches", "min": 5},          # above floor (1) → kept
     ])
     enforce_baseline(spec)
     conds = {c["type"]: c for c in spec["components"][0]["done_conditions"]}
-    assert conds["count"]["min"] == 20
-    assert conds["each_node_min_lines"]["min"] == 40
+    assert conds["each_node_min_lines"]["min"] == 6
+    assert conds["min_branches"]["min"] == 5
 
 
 def test_does_not_duplicate_existing_checks():

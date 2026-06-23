@@ -109,7 +109,11 @@ def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
     nodes_map = nodes_comp.get("nodes", {}) or {}
     has_places = bool(places_comp.get("place_ids"))
 
-    nodes = [{"id": nid, **nodes_map.get(nid, {})} for nid in node_ids]
+    # `beat` is authoring provenance (which outline beat a scene realizes — drives the
+    # beats_realized done-condition on the on-disk component); it's not runtime IR, and the schema
+    # is additionalProperties:false, so drop it here.
+    nodes = [{k: v for k, v in {"id": nid, **nodes_map.get(nid, {})}.items() if k != "beat"}
+             for nid in node_ids]
     # A line may carry emotion: null (the model spelling out "neutral"); the schema enum has no
     # null, so drop the key — absent == neutral.
     for n in nodes:

@@ -156,9 +156,10 @@ def _node_schemas():
     return _schemas_for_mode("nodes", TOOL_SCHEMAS)
 
 
-def test_count_target_exposes_only_write_node():
+def test_create_target_exposes_only_write_node():
     names = {s["function"]["name"]
-             for s in _schemas_for_target({"check": {"type": "count"}}, _node_schemas(), _TARGET_TOOLS)}
+             for s in _schemas_for_target({"check": {"type": "beats_realized"}},
+                                          _node_schemas(), _TARGET_TOOLS)}
     assert names == {"write_node"}                       # can't waste a step reading/editing
 
 
@@ -179,7 +180,7 @@ def test_prompt_routes_author_vs_fix():
     # Content/structure targets author fresh scenes; wiring/compile targets repair them.
     def p(t):
         return _prompt_for_target({"check": {"type": t}}, _NODE_PROMPTS, _TARGET_PROMPT)
-    assert p("count") is _NODE_PROMPTS["author"]
+    assert p("beats_realized") is _NODE_PROMPTS["author"]
     assert p("each_node_min_lines") is _NODE_PROMPTS["author"]
     assert p("reachable_from_start") is _NODE_PROMPTS["fix"]
     assert p("compiles") is _NODE_PROMPTS["fix"]
@@ -208,7 +209,7 @@ def test_node_subloop_dispatches_and_stops_on_target():
 
     dispatched, reports = [], []
     runner(
-        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "beats_realized"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
         target_met=lambda: True,           # satisfied after the first write → loop stops
@@ -220,7 +221,7 @@ def test_node_subloop_dispatches_and_stops_on_target():
     assert dispatched and dispatched[0]["tool"] == "write_node"
     assert reports and reports[0].startswith("write_node(s1)")
     assert conn.i == 1                      # stopped after target met, didn't keep looping
-    # The subloop handed the connector tools gated to the target (count → write_node only).
+    # The subloop handed the connector tools gated to the target (beats_realized → write_node only).
     assert {s["function"]["name"] for s in conn.last_schemas} == {"write_node"}
     assert conn.reasoning_calls == [None]   # never escalated — it made progress immediately
 
@@ -332,16 +333,16 @@ def test_node_subloop_drops_reads_when_sightseeing():
     assert not (read_names & {s["function"]["name"] for s in conn.last_schemas})  # reads pulled
 
 
-def test_node_subloop_count_rejects_overwrite():
-    # During `count` the model keeps rewriting scene_01 — an overwrite never raises the count,
-    # so it's rejected and steered to a new id; only genuinely new ids reach dispatch.
+def test_node_subloop_create_rejects_overwrite():
+    # While creating scenes (beats_realized) the model keeps rewriting scene_01 — an overwrite
+    # fills no new slot, so it's rejected and steered to a new id; only new ids reach dispatch.
     tc = {"id": "tc", "function": {
         "name": "write_node", "arguments": '{"node_id": "scene_01", "content": "label scene_01:"}'}}
     conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}])
     runner = make_node_subloop(connector=conn, cap=3)
     dispatched, reports = [], []
     runner(
-        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "beats_realized"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
         target_met=lambda: False,
@@ -353,14 +354,14 @@ def test_node_subloop_count_rejects_overwrite():
     assert any("already exists" in r for r in reports)
 
 
-def test_node_subloop_count_allows_new_id():
+def test_node_subloop_create_allows_new_id():
     tc = {"id": "tc", "function": {
         "name": "write_node", "arguments": '{"node_id": "scene_02", "content": "label scene_02:"}'}}
     conn = _FakeConn([{"choices": [{"message": {"content": None, "tool_calls": [tc]}}]}])
     runner = make_node_subloop(connector=conn, cap=1)
     dispatched = []
     runner(
-        target={"component_id": "nodes", "check": {"type": "count"}, "detail": "x"},
+        target={"component_id": "nodes", "check": {"type": "beats_realized"}, "detail": "x"},
         context={"todo": []},
         dispatch=lambda action: (dispatched.append(action) or {"ok": True}),
         target_met=lambda: False,

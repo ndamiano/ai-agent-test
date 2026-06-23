@@ -104,6 +104,8 @@ def node_view(artifact: Dict) -> Dict:
         path_ids = _shortest_path(entry, parent, edges) if entry else []
         slot["path"] = [{"id": pid, "synopsis": synopses.get(pid, "")} for pid in path_ids]
 
+    beats = [b.get("id") for b in (artifact.get("outline", {}) or {}).get("beats", []) if b.get("id")]
+    covered = {nodes.get(nid, {}).get("beat") for nid in node_ids}
     return {
         "node_ids": node_ids,
         "edges": {nid: sorted(set(e)) for nid, e in edges.items()},
@@ -112,6 +114,7 @@ def node_view(artifact: Dict) -> Dict:
         "line_counts": {nid: len(nodes.get(nid, {}).get("lines", [])) for nid in node_ids},
         "synopses": synopses,
         "open_slots": sorted(slots.values(), key=lambda s: s["id"]),
+        "beats_todo": [b for b in beats if b not in covered],
     }
 
 
@@ -173,6 +176,90 @@ def check_each_node_has_location(artifact: Dict, check: Dict, run_dir) -> CheckR
     if missing:
         return False, (f"nodes with no location/background: {missing[:5]} — set each node's "
                        f"`location` to a background id (edit_node location='bg_...').")
+    return True, None
+
+
+def check_beats_realized(artifact: Dict, check: Dict, run_dir) -> CheckResult:
+    """Every outline beat is dramatized by at least one scene (a node whose `beat` names it). This
+    REPLACES a flat node-count quota: a fixed count rewards padding (filler rooms that funnel back),
+    so the loop hit the number by fanning out vignettes instead of realizing the arc. Anchoring nodes
+    to beats makes the outline the spine — you're done when the planned story is told, not at N nodes."""
+    beats = [b.get("id") for b in (artifact.get("outline", {}) or {}).get("beats", []) if b.get("id")]
+    if not beats:
+        return True, None  # no outline (NPC dialogue) — nothing to realize
+    _, nodes = _nodes(artifact)
+    covered = {n.get("beat") for n in nodes.values() if n.get("beat")}
+    missing = [b for b in beats if b not in covered]
+    if missing:
+        return False, (f"outline beats with no scene yet: {missing} — write a node that dramatizes "
+                       f"each (set the node's `beat` to that beat id). The outline (LOCKED COMPONENTS) "
+                       f"holds what each beat is; every beat needs at least one scene.")
+    return True, None
+
+
+def _node_effects(node: Dict) -> List[Dict]:
+    """Every effect a node fires — on its lines and on its menu choices."""
+    effs = list(e for ln in node.get("lines", []) or [] for e in (ln.get("effects") or []))
+    end = node.get("end", {}) or {}
+    if end.get("type") == "menu":
+        for ch in end.get("choices", []) or []:
+            effs += ch.get("effects") or []
+    return effs
+
+
+def _effect_targets(eff: Dict) -> set:
+    """The flag/variable ids an effect mutates."""
+    if not isinstance(eff, dict):
+        return set()
+    out = {eff[k] for k in ("set_flag", "clear_flag") if eff.get(k)}
+    for k in ("set_var", "add_var"):
+        sv = eff.get(k)
+        if isinstance(sv, dict) and sv.get("var"):
+            out.add(sv["var"])
+    return out
+
+
+def _cond_state_refs(cond) -> set:
+    """The flag/variable ids a `requires` condition reads (recursing all/any/not)."""
+    if not isinstance(cond, dict):
+        return set()
+    refs = {cond[k] for k in ("var", "flag") if cond.get(k)}
+    for key in ("all", "any"):
+        for c in cond.get(key, []) or []:
+            refs |= _cond_state_refs(c)
+    if "not" in cond:
+        refs |= _cond_state_refs(cond["not"])
+    return refs
+
+
+def check_no_dead_gates(artifact: Dict, check: Dict, run_dir) -> CheckResult:
+    """State is OPTIONAL, but it must not be broken. If a menu choice is gated by `requires` on a
+    var/flag, that state must be raised by an effect on a DIFFERENT (earlier) node — otherwise the
+    gate can never open at runtime and the branch is dead (the trap we hit: a choice gated on
+    trust>=2 whose only +1 is on that same gated choice, so trust is 0 at the gate forever). A game
+    with NO gated choices passes trivially — a lean arc whose endings are earned narratively (by the
+    beats), not mechanically, is fine. The escape from a bad gate is always a one-edit drop of the
+    `requires`, so this can't spiral the loop."""
+    _, nodes = _nodes(artifact)
+    set_in: Dict[str, set] = {}
+    for nid, node in nodes.items():
+        for eff in _node_effects(node):
+            for t in _effect_targets(eff):
+                set_in.setdefault(t, set()).add(nid)
+    dead = []
+    for nid, node in nodes.items():
+        end = node.get("end", {}) or {}
+        if end.get("type") != "menu":
+            continue
+        for ch in end.get("choices", []) or []:
+            for ref in _cond_state_refs(ch.get("requires")):
+                if not (set_in.get(ref, set()) - {nid}):  # only set here (or never) → unopenable
+                    dead.append(f"{nid} (gates on '{ref}')")
+    if dead:
+        return False, (f"choices gated on state that is never raised in an earlier scene: {dead[:5]} "
+                       f"— the gate can't open, so the branch is dead. Either raise it with an effect "
+                       f"in an EARLIER node (add_var/set_flag), or DROP the `requires` so the choice "
+                       f"is always available (endings can be earned by the story, not a variable).")
     return True, None
 
 
@@ -371,6 +458,8 @@ _CHECKS = {
     "min_branches": check_min_branches,
     "each_node_min_lines": check_each_node_min_lines,
     "each_node_has_location": check_each_node_has_location,
+    "beats_realized": check_beats_realized,
+    "no_dead_gates": check_no_dead_gates,
     "all_characters_speak": check_all_characters_speak,
     "places_reachable": check_places_reachable,
     "each_place_min_interactables": check_each_place_min_interactables,

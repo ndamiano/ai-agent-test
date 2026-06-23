@@ -76,9 +76,10 @@ def test_node_gating_lives_on_dialogue_module():
     for m in (SPINE, NPC):
         assert "write_node" in m.mode_tools and "write_component" not in m.mode_tools
         assert m.prompts == {"author": "write_node.txt", "fix": "fix_node.txt"}
-        assert m.target_jobs["count"] == "author" and m.target_jobs["compiles"] == "fix"
-        assert m.target_tools["count"] == frozenset({"write_node"})
+        assert m.target_jobs["beats_realized"] == "author" and m.target_jobs["compiles"] == "fix"
+        assert m.target_tools["beats_realized"] == frozenset({"write_node"})
         assert m.subloop["count_tool"] == "write_node"
+        assert m.subloop["create_targets"] == frozenset({"beats_realized"})
 
 
 def test_compose_exposes_mode_and_subloop_maps():

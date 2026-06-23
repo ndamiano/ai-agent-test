@@ -246,6 +246,63 @@ def test_write_node_enforces_min_lines_floor(tmp_path):
     assert tools["write_node"]("s1", fat)["ok"] is True
 
 
+def test_write_node_caps_menu_width(tmp_path):
+    # A wide menu is the hub-and-spoke star that guts the arc: rejected at write time so the
+    # slot-driven loop can't hit its node quota by fanning one node into many stub branches.
+    tools = build_tools(_spec(), RunState(tmp_path))
+    wide = {"lines": [{"speaker": "a", "text": "go where?"}],
+            "end": {"type": "menu", "choices": [
+                {"text": f"room {i}", "target": f"scene_{i}"} for i in range(5)]}}
+    res = tools["write_node"]("hub", wide)
+    assert res["ok"] is False and "dramatic fork" in res["error"].lower()
+
+    ok = {"lines": [{"speaker": "a", "text": "go where?"}],
+          "end": {"type": "menu", "choices": [
+              {"text": "open it", "target": "ending_truth"},
+              {"text": "leave it", "target": "ending_silence"}]}}
+    assert tools["write_node"]("fork", ok)["ok"] is True
+    # linear flow is unaffected — a jump can lead anywhere, no width limit applies.
+    assert tools["write_node"]("s1", _node(end={"type": "jump", "target": "s2"}))["ok"] is True
+
+
+def test_write_node_rejects_all_gated_menu(tmp_path):
+    # A menu where every choice is gated by `requires` can come up empty at runtime → dead-end.
+    # Require at least one unconditional fallback.
+    tools = build_tools(_spec(), RunState(tmp_path))
+    all_gated = {"lines": [{"speaker": "a", "text": "the crisis"}],
+                 "end": {"type": "menu", "choices": [
+                     {"text": "earned", "target": "ending_truth",
+                      "requires": {"var": "trust", "op": ">=", "value": 2}},
+                     {"text": "also gated", "target": "ending_silence",
+                      "requires": {"var": "trust", "op": "<", "value": 0}}]}}
+    res = tools["write_node"]("crisis", all_gated)
+    assert res["ok"] is False and "fallback" in res["error"].lower()
+
+    with_fallback = {"lines": [{"speaker": "a", "text": "the crisis"}],
+                     "end": {"type": "menu", "choices": [
+                         {"text": "earned", "target": "ending_truth",
+                          "requires": {"var": "trust", "op": ">=", "value": 2}},
+                         {"text": "fallback", "target": "ending_silence"}]}}
+    assert tools["write_node"]("crisis", with_fallback)["ok"] is True
+
+
+def test_write_node_rejects_fake_fork(tmp_path):
+    # A menu whose choices all lead to the same scene is illusory agency — rejected.
+    tools = build_tools(_spec(), RunState(tmp_path))
+    fake = {"lines": [{"speaker": "a", "text": "pick one"}],
+            "end": {"type": "menu", "choices": [
+                {"text": "left", "target": "scene_02"},
+                {"text": "right", "target": "scene_02"}]}}
+    res = tools["write_node"]("fork", fake)
+    assert res["ok"] is False and "same scene" in res["error"].lower()
+
+    real = {"lines": [{"speaker": "a", "text": "pick one"}],
+            "end": {"type": "menu", "choices": [
+                {"text": "left", "target": "scene_02"},
+                {"text": "right", "target": "scene_03"}]}}
+    assert tools["write_node"]("fork", real)["ok"] is True
+
+
 def test_read_node_returns_object(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)

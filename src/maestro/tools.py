@@ -34,6 +34,10 @@ _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
 
 _END_TYPES = {"jump", "menu", "return", "end"}
 _EMOTIONS = set(EMOTIONS)
+# A menu is a dramatic fork, not a location picker. Capped so the slot-driven loop can't satisfy
+# its node quota by fanning one node into a wide hub of stub branches (the hub-and-spoke star that
+# guts the arc); past this, the model must build DEPTH — scenes that lead into scenes — instead.
+_MAX_MENU_CHOICES = 3
 
 
 # The model intuitively writes a speaker STRING for narration ("narration"/"narrator") instead of
@@ -79,6 +83,23 @@ def _node_content_error(content) -> Optional[str]:
     end = content.get("end")
     if not isinstance(end, dict) or end.get("type") not in _END_TYPES:
         return f"node.end must be an object whose 'type' is one of {sorted(_END_TYPES)}"
+    if end.get("type") == "menu":
+        choices = end.get("choices") or []
+        n = len(choices)
+        if n > _MAX_MENU_CHOICES:
+            return (f"this menu has {n} choices — a menu is a DRAMATIC FORK, at most "
+                    f"{_MAX_MENU_CHOICES} divergent paths, not a room/location picker. Cut it to "
+                    f"the {_MAX_MENU_CHOICES} choices that actually matter; for linear flow use "
+                    f"end.type 'jump' and let the NEXT scene branch. Build depth, not width.")
+        if choices and all(isinstance(c, dict) and c.get("requires") for c in choices):
+            return ("every choice in this menu is gated by `requires` — if none match at runtime the "
+                    "menu is empty and the game dead-ends. Leave at least ONE choice ungated as a "
+                    "guaranteed fallback path.")
+        targets = {c.get("target") for c in choices if isinstance(c, dict) and c.get("target")}
+        if len(choices) >= 2 and len(targets) < 2:
+            return ("every choice in this menu leads to the SAME scene — that's a fake choice, not a "
+                    "fork. Either make the choices lead to DIFFERENT targets (a real branch), or drop "
+                    "the menu and use end.type 'jump' for a single continuation.")
     return None
 
 

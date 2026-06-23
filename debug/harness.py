@@ -2,8 +2,8 @@
 
 Reproduces ONE production LLM call for a chosen mode (same system prompt, same rendered context,
 same tool schema) so you can hand-climb that mode's prompt against the real local model without a
-full build. Adding a mode = one line in MODES (+ a show fn if its output shape is new), not a new
-file.
+full build. Adding a mode = one line in MODES, not a new file. The full tool-call output is printed
+as clean JSON.
 
   python debug/harness.py <mode> [N]        N fresh calls from the LIVE prompt (default 1)
   python debug/harness.py <mode> dump       write exact assembled system/user to work/<mode>_*.txt
@@ -18,7 +18,6 @@ copied from fixtures/. So you iterate ONLY that mode's prompt.
 """
 import json, shutil, sys, uuid
 from dataclasses import dataclass
-from typing import Callable, Optional
 import _bootstrap as B
 from maestro.spec import Spec
 from maestro.state import RunState
@@ -39,71 +38,23 @@ DEFAULT_REQ = ("Make a visual novel about two former bandmates, now strangers af
                "collapse really was")
 
 
-# ---- result display, per output shape -------------------------------------------------------
-def _content(args):
-    c = args.get("content", args)
-    return c.get(args.get("component_id", ""), c) if isinstance(c, dict) else c
-
-
-def show_premise(args):
-    p = _content(args)
-    print("CENTRAL QUESTION:", p.get("central_question"))
-    print("-" * 70)
-    for c in p.get("characters", []):
-        print(f"[{c.get('id')}] {c.get('name')} — {c.get('temperament')}")
-        print("  voice:", c.get("voice"))
-        print("  drive:", c.get("drive"))
-        for ln in c.get("example_lines", []):
-            print("   ·", ln)
-    print("ENDINGS:")
-    for e in p.get("endings", []):
-        print(f"  [{e.get('id')}] {e.get('description') or e.get('summary')}")
-
-
-def show_outline(args):
-    o = _content(args)
-    print("LOGLINE:", o.get("logline"))
-    print("-" * 70)
-    for b in o.get("beats", []):
-        print(f"[{b.get('id')}] {b.get('purpose')} — {b.get('summary')}")
-        print("   tension:", b.get("tension"))
-    print("ENDING PATHS:")
-    for ep in o.get("ending_paths", []):
-        print(f"  {ep.get('ending')} <- {ep.get('earned_by')}")
-
-
-def show_node(args):
-    c = args.get("content", args)
-    print("node_id:", args.get("node_id"), "| beat:", c.get("beat"), "| loc:", c.get("location"))
-    print("-" * 70)
-    for ln in c.get("lines", []):
-        sp = ln.get("speaker") or "NARRATION"
-        emo = ln.get("emotion")
-        print(f"  {sp}{'/' + emo if emo else ''}: {ln.get('text')}")
-    e = c.get("end", {}) or {}
-    if e.get("type") == "menu":
-        for ch in e.get("choices", []):
-            print(f"   > [{ch.get('text')}] -> {ch.get('target')}")
-    else:
-        print("   -> jump", e.get("target"))
-
-
-def show_json(args):
-    print(json.dumps(_content(args), ensure_ascii=False, indent=2)[:2000])
+# ---- result display -------------------------------------------------------------------------
+def render(args):
+    """Print everything the model emitted — the full tool-call arguments — as clean JSON."""
+    print(json.dumps(args, ensure_ascii=False, indent=2))
 
 
 @dataclass
 class Mode:
     component: str               # component id build_context must resolve to
     tool: str                    # tool whose schema is offered (write_component / write_node / ...)
-    show: Callable               # how to print the result
 
 
 MODES = {
-    "premise": Mode("premise", "write_component", show_premise),
-    "outline": Mode("outline", "write_component", show_outline),
-    "asset":   Mode("asset_manifest", "write_component", show_json),
-    "nodes":   Mode("nodes", "write_node", show_node),
+    "premise": Mode("premise", "write_component"),
+    "outline": Mode("outline", "write_component"),
+    "asset":   Mode("asset_manifest", "write_component"),
+    "nodes":   Mode("nodes", "write_node"),
 }
 
 
@@ -196,12 +147,12 @@ def main():
         system, user = sys_f.read_text(), usr_f.read_text()
         for i in range(n):
             print(f"\n========== SEND {i + 1} ==========")
-            mode.show(call(spec, mode, system, user) or {})
+            render(call(spec, mode, system, user) or {})
     else:
         for i in range(int(cmd)):
             print(f"\n========== ATTEMPT {i + 1} ==========")
             spec, system, user = assemble(mode)
-            mode.show(call(spec, mode, system, user) or {})
+            render(call(spec, mode, system, user) or {})
 
 
 if __name__ == "__main__":

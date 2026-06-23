@@ -34,10 +34,10 @@ downstream modes — outline/nodes — reseeding to a very different premise wil
 premise; for downstream, also refresh the relevant fixture.)
 
 ## Adding a mode
-One line in `MODES` (component id + tool name + a show fn). Add a `show_*` only if the output shape
-is new; reuse `show_json` otherwise. Subloop modes (nodes/places) are detected automatically — the
-`target` injection + graph projector are handled in `assemble()`. `places`/`matches` need fixtures
-for their preset (pnc/card) before they'll resolve; drop a finished run's components into `fixtures/`.
+One line in `MODES` (component id + tool name). The full tool-call output is rendered as clean JSON,
+so no per-mode display code. Subloop modes (nodes/places) are detected automatically — the `target`
+injection + graph projector are handled in `assemble()`. `places`/`matches` need fixtures for their
+preset (pnc/card) before they'll resolve; drop a finished run's components into `fixtures/`.
 
 ## Layout
 - `harness.py` — the driver + `MODES` registry.

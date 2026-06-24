@@ -24,6 +24,20 @@ def _premise_view(c):
     }
 
 
+def _render_context(ctx):
+    # Premise is the source of truth every later scene draws from — author it from the bare
+    # request, NOT from spec/skeleton noise (the shape rides on the system prompt). The cleanest
+    # possible context keeps the small model inventing a world, not parroting placeholder ids:
+    # title + request + ONLY premise's own failing checks.
+    spec = ctx.get("spec", {}) or {}
+    out = [f"TITLE: {spec.get('title', '')}", "", f"REQUEST: {spec.get('request', '')}"]
+    premise_todo = [f"- {f['check'].get('type')}: {f.get('detail')}"
+                    for f in ctx.get("todo", []) if f.get("component_id") == "premise"]
+    if premise_todo:
+        out += ["", "TO-DO (failing done-conditions for premise):", *premise_todo]
+    return "\n".join(out)
+
+
 MODULE = Module(
     id="cast",
     components=("premise",),
@@ -36,4 +50,5 @@ MODULE = Module(
     mode_tools=frozenset({"write_component", "update_scratchpad", "request_review"}),
     mode_prompt="mode_premise.txt",
     context_view=_premise_view,
+    render_context=_render_context,
 )

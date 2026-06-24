@@ -12,7 +12,22 @@ VN-only: it ships with the `vn` preset (the story-spine genre). A point-and-clic
 """
 
 from maestro.modules import Module
+from maestro import context_render as cr
 from maestro.discrete.validators import v_outline, SKEL_OUTLINE
+
+
+def _outline_view(c):
+    """Upstream view for the node author: drop the full beat list. The node sub-loop gets the
+    relevant beat WINDOW (previous/this/next) from its slot focus, so dumping every beat into its
+    locked-upstream context is dead weight. logline + ending_paths stay (the arc's anchors)."""
+    return {k: v for k, v in c.items() if k != "beats"}
+
+
+def _render_context(ctx):
+    return "\n".join(
+        cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        + cr.scratchpad_block(ctx) + cr.upstream_block(ctx.get("upstream") or {})
+        + cr.tail_block(ctx) + ["", "Call one tool to address the first to-do item."])
 
 # The VN build order: premise -> (asset_manifest, outline) -> nodes. Declared here (the new
 # participant) the way navigation declares its chain — so enforce_baseline sets nodes' dep on the
@@ -45,4 +60,6 @@ MODULE = Module(
     ]},
     mode_tools=frozenset({"write_component", "update_scratchpad", "request_review"}),
     mode_prompt="mode_outline.txt",
+    context_view=_outline_view,
+    render_context=_render_context,
 )

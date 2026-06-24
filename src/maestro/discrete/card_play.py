@@ -17,8 +17,16 @@ it adds `matches` to the navigation spine's build order so the play_match target
 from typing import Dict, Optional
 
 from maestro.modules import Module
+from maestro import context_render as cr
 
 _MODELS = {"high_card", "blackjack"}
+
+
+def _render_context(ctx):
+    return "\n".join(
+        cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        + cr.scratchpad_block(ctx) + cr.upstream_block(ctx.get("upstream") or {})
+        + cr.tail_block(ctx) + ["", "Call one tool to address the first to-do item."])
 
 
 def v_matches(c: Dict) -> Optional[str]:
@@ -79,6 +87,7 @@ MODULE = Module(
     mode_tools=frozenset({"write_component", "write_match", "edit_match", "read_match",
                           "read_component", "update_scratchpad", "request_review"}),
     mode_prompt="mode_matches.txt",
+    render_context=_render_context,
     action_verbs=("play_match",),
     ir_slices={"card_matches": "matches"},
     projected=True,

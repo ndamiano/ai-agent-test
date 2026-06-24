@@ -90,7 +90,7 @@ def test_executor_injects_trimmed_upstream(tmp_path):
 
 # ── Fix 3: scoped SPEC block ──────────────────────────────────────────────────
 def test_scoped_spec_drops_inactive_done_conditions():
-    from maestro.agent import _scoped_spec
+    from maestro.context_render import scoped_spec as _scoped_spec
     ctx = {"mode": "nodes", "spec": {"title": "T", "components": [
         {"id": "premise", "description": "cast", "done_conditions": [{"type": "count", "min": 3}]},
         {"id": "nodes", "description": "scenes", "done_conditions": [{"type": "count", "min": 20}]}]}}

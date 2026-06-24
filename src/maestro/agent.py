@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from llm_clients.message_builder import MessageBuilder
+from maestro.context_render import pick_slot, beat_for_new_node
 from maestro.tools import TOOL_SCHEMAS
 from renpy.templating import render_template
 
@@ -65,214 +66,6 @@ def _schemas_for_target(target: Optional[Dict], schemas: List[Dict],
     return _filter_schemas(allowed, schemas)
 
 
-def _scoped_spec(ctx: Dict) -> Dict:
-    """The spec, trimmed to what THIS step needs: the active component's full entry (its
-    done_conditions are the bar it's working to) plus id+description for the rest. The other
-    components' done_conditions are noise here — the TO-DO already names every failing check."""
-    spec = ctx.get("spec", {}) or {}
-    mode = ctx.get("mode")
-    comps = []
-    for c in spec.get("components", []):
-        if c.get("id") == mode:
-            comps.append(c)
-        else:
-            comps.append({"id": c.get("id"), "description": c.get("description", "")})
-    return {**{k: v for k, v in spec.items() if k != "components"}, "components": comps}
-
-
-def _scoped_upstream(ctx: Dict) -> Dict:
-    """Trim the locked components to what THIS step needs. The outline's full beat list would dump
-    every beat into the node author's context; it gets only the beat WINDOW for its assigned scene
-    (THIS NODE'S BEAT + the one before/after, from _render_slot_focus), so drop outline.beats here
-    and keep logline + ending_paths."""
-    upstream = ctx.get("upstream") or {}
-    outline = upstream.get("outline")
-    if isinstance(outline, dict) and "beats" in outline:
-        upstream = {**upstream, "outline": {k: v for k, v in outline.items() if k != "beats"}}
-    return upstream
-
-
-def _pick_slot(view: Dict) -> Optional[Dict]:
-    """The system — not the author — chooses which scene to write next: the open slot whose beat
-    comes earliest in the outline, so the spine is built in dramatic order. None when there are no
-    open slots (the entry node, or a fresh branch root is needed)."""
-    slots = view.get("open_slots") or []
-    if not slots:
-        return None
-    order = {b["id"]: i for i, b in enumerate(view.get("beats") or []) if b.get("id")}
-    last = len(order)
-    return sorted(slots, key=lambda s: (order.get(s.get("beat"), last), s["id"]))[0]
-
-
-def _beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) -> Optional[str]:
-    """The beat the system stamps on the node being written — it picked the slot, so it owns the
-    beat too (the author no longer guesses it). The assigned slot's beat; the first beat for the
-    opening node; the first still-unrealized beat for an escape-hatch branch root. None (e.g. an
-    ending slot, or a non-VN nodes build with no outline) → leave the node's beat unset."""
-    if chosen is not None:
-        return chosen.get("beat")
-    beat_ids = [b["id"] for b in (view.get("beats") or []) if b.get("id")]
-    if not has_existing:
-        return beat_ids[0] if beat_ids else None
-    todo = view.get("beats_todo") or []
-    return todo[0] if todo else None
-
-
-def _render_beat(b: Dict) -> str:
-    stake = f' (stake: {b["tension"]})' if b.get("tension") else ""
-    return f'{b.get("id")} — {b.get("summary", "")}{stake}'
-
-
-def _render_slot_focus(view: Dict) -> List[str]:
-    """Hand the author ONE scene to write: its node_id, the path that leads to it, and the beat
-    window (previous beat behind us, this node's beat to dramatize, next beat to aim at) so it
-    continues the arc. The list of every open slot is gone — the system picks the slot, the author
-    just writes it."""
-    out: List[str] = []
-    beats = view.get("beats") or []
-    by_id = {b["id"]: b for b in beats if b.get("id")}
-    beat_ids = [b["id"] for b in beats if b.get("id")]
-    slot = _pick_slot(view)
-
-    if slot:
-        srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in slot.get("from", []))
-        out += ["",
-                f"WRITE THIS NODE NEXT — node_id = {slot['id']} (use this EXACT id). It is the scene "
-                f"reached from: {srcs}."]
-        path = slot.get("path") or []
-        if path:
-            crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
-                               for p in path)
-            out.append(f"  PATH TO HERE (already happened — do NOT repeat it): {crumb}")
-        bid = slot.get("beat")
-        if bid and bid in by_id:
-            i = beat_ids.index(bid)
-            if i > 0:
-                out.append(f"  PREVIOUS BEAT (behind us): {_render_beat(by_id[beat_ids[i - 1]])}")
-            out.append(f"  THIS NODE'S BEAT (dramatize it): {_render_beat(by_id[bid])}")
-            if i + 1 < len(beat_ids):
-                out.append(f"  NEXT BEAT (aim here — your `end` opens a slot toward it): "
-                           f"{_render_beat(by_id[beat_ids[i + 1]])}")
-        else:
-            if beat_ids:
-                out.append(f"  PREVIOUS BEAT (behind us): {_render_beat(by_id[beat_ids[-1]])}")
-            out.append("  THIS NODE IS AN ENDING — realize a premise ending (end.type 'end'); the "
-                       "arc resolves here, so open no further slot.")
-        out.append("Your `end` continues the spine: prefer a single `jump` toward the next beat; "
-                   "use a `menu` ONLY at a real fork, never to list places to visit.")
-        return out
-
-    if not view.get("node_ids"):
-        out += ["", "WRITE THE OPENING NODE — no scenes exist yet. Choose its node_id."]
-        if beat_ids:
-            out.append(f"  FIRST BEAT (dramatize it): {_render_beat(by_id[beat_ids[0]])}")
-            if len(beat_ids) > 1:
-                out.append(f"  NEXT BEAT (aim here): {_render_beat(by_id[beat_ids[1]])}")
-        return out
-
-    todo = view.get("beats_todo")
-    if todo:
-        out += ["",
-                "Every existing scene's path is fully written, but these outline beats still have no "
-                "scene: " + ", ".join(todo) + ". Give an existing node a jump/menu to a NEW node id, "
-                "then write that node to dramatize one."]
-    return out
-
-
-def _render_context(ctx: Dict) -> str:
-    # Premise is the source of truth every later scene draws from — author it from the bare
-    # request, NOT from spec/to-do/skeleton noise (the shape rides on the system prompt). A clean
-    # prompt keeps the small model inventing a world, not parroting the scaffolding's placeholder ids.
-    if ctx.get("mode") == "premise":
-        spec = ctx.get("spec", {}) or {}
-        out = [f"TITLE: {spec.get('title', '')}", "", f"REQUEST: {spec.get('request', '')}"]
-        premise_todo = [f"- {f['check'].get('type')}: {f.get('detail')}"
-                        for f in ctx.get("todo", []) if f.get("component_id") == "premise"]
-        if premise_todo:
-            out += ["", "TO-DO (failing done-conditions for premise):", *premise_todo]
-        return "\n".join(out)
-    todo = ctx.get("todo", [])
-    todo_lines = [f"- [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}"
-                  for f in todo] or ["(none — build may be complete)"]
-    pad = ctx.get("scratchpad", {})
-    lines = [
-        f"SPEC: {json.dumps(_scoped_spec(ctx), ensure_ascii=False)}",
-        "",
-        "TO-DO (failing done-conditions):",
-        *todo_lines,
-    ]
-    target = ctx.get("target")
-    if target:
-        lines += [
-            "",
-            f"YOUR TARGET — finish ONLY when THIS check passes: "
-            f"[{target.get('component_id')}] {target['check'].get('type')}: {target.get('detail')}",
-            "Make the change that clears it. Don't chase other to-do items.",
-        ]
-    lines += ["", f"SCRATCHPAD: {json.dumps(pad, ensure_ascii=False)}"]
-    upstream = _scoped_upstream(ctx)
-    if upstream:
-        lines += [
-            "",
-            "LOCKED COMPONENTS (settled — use these EXACT ids, do not invent or rename):",
-            json.dumps(upstream, ensure_ascii=False),
-        ]
-    view = ctx.get("active_view")
-    if view and view.get("node_ids"):
-        edges = view.get("edges", {})
-        counts = view.get("line_counts", {})
-        synopses = view.get("synopses", {})
-        unreachable = set(view.get("unreachable", []))
-        node_lines = [
-            f"  {nid} -> {edges.get(nid, [])}"
-            f"  ({'UNREACHABLE' if nid in unreachable else 'reachable'}, {counts.get(nid, 0)} lines)"
-            + (f'  — "{synopses[nid]}"' if synopses.get(nid) else "")
-            for nid in view["node_ids"]
-        ]
-        lines += [
-            "",
-            "CURRENT NODES (these already exist — reuse these EXACT ids; jump ONLY to an id "
-            "listed here or to a node you also create this step):",
-            *node_lines,
-        ]
-        lines += _render_slot_focus(view)
-    if view and view.get("place_ids"):
-        edges = view.get("edges", {})
-        counts = view.get("interactable_counts", {})
-        unreachable = set(view.get("unreachable", []))
-        place_lines = [
-            f"  {pid} -> {edges.get(pid, [])}"
-            f"  ({'UNREACHABLE' if pid in unreachable else 'reachable'}, "
-            f"{counts.get(pid, 0)} interactables)"
-            for pid in view["place_ids"]
-        ]
-        extra = []
-        if view.get("items_never_taken"):
-            extra.append(f"items never taken: {view['items_never_taken']}")
-        if view.get("items_never_used"):
-            extra.append(f"items never used: {view['items_never_used']}")
-        lines += [
-            "",
-            "CURRENT PLACES (these already exist — reuse these EXACT ids; `move` ONLY to a place "
-            "id listed here or one you also create this step):",
-            *place_lines,
-            *(["  " + " | ".join(extra)] if extra else []),
-        ]
-    if ctx.get("story_state"):
-        lines.append(f"STORY STATE: {json.dumps(ctx['story_state'], ensure_ascii=False)}")
-    if ctx.get("last_read"):
-        lines += ["", f"LAST READ:\n{ctx['last_read']}"]
-    lines += [f"LAST RESULT: {ctx.get('last_result')}"]
-    if ctx.get("stalled"):
-        lines += [
-            "",
-            "⚠ You just repeated a read without changing anything. STOP reading — you have "
-            "the content above. Call a write/edit tool NOW to make a change.",
-        ]
-    lines += ["", "Call one tool to address the first to-do item."]
-    return "\n".join(lines)
-
-
 def _parse_action(response: Dict) -> Dict:
     if "error" in response:
         logger.warning("decider LLM error: %s", response["error"])
@@ -299,7 +92,8 @@ def _parse_action(response: Dict) -> Dict:
 def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
                      component_guide: str = "", mode_tools: Optional[Dict[str, frozenset]] = None,
                      mode_prompts: Optional[Dict[str, str]] = None,
-                     mode_guides: Optional[Dict[str, str]] = None) -> Callable:
+                     mode_guides: Optional[Dict[str, str]] = None,
+                     mode_renderers: Optional[Dict[str, Callable]] = None) -> Callable:
     from llm_clients.connector_selector import get_connector
     conn = connector or get_connector()
     all_schemas = tool_schemas or TOOL_SCHEMAS
@@ -310,6 +104,9 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
     # locked, the model isn't authoring them) — the small model's context stays on the task at hand.
     # component_guide is the fallback for a mode with no scoped entry.
     mode_guides = mode_guides or {}
+    # component-mode -> that module's OWN context renderer (maestro.context_render). Each mode
+    # decides what it sends — there is no shared frame here to special-case.
+    mode_renderers = mode_renderers or {}
 
     def decide(context: Dict) -> Dict:
         mode = context.get("mode")
@@ -324,8 +121,10 @@ def make_llm_decider(tool_schemas: Optional[List[Dict]] = None, connector=None,
         if stalled:
             schemas = [s for s in schemas
                        if not s.get("function", {}).get("name", "").startswith("read")]
+        render = mode_renderers.get(mode)
+        rendered = render(context) if render else json.dumps(context, ensure_ascii=False)
         messages = MessageBuilder(system).extend(
-            [MessageBuilder.user_msg(_render_context(context))]).build()
+            [MessageBuilder.user_msg(rendered)]).build()
         response = (conn.generate_with_tools(messages, schemas, reasoning="high",
                                              max_tokens=_BUILD_MAX_TOKENS)
                     if stalled else conn.generate_with_tools(messages, schemas,
@@ -416,7 +215,7 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
 
     1. No overwrite — driving `count` the job is to ADD; a small model loves to rewrite item #1,
        which never raises the count.
-    2. Fill THE ASSIGNED SLOT — the system picks one open slot (`_pick_slot`: earliest beat in
+    2. Fill THE ASSIGNED SLOT — the system picks one open slot (`pick_slot`: earliest beat in
        outline order) and the new node must take that exact id. This keeps every new scene
        reachable with a known parent, builds the spine in dramatic order, and stops the model
        inventing a sibling. The entry node (nothing written yet) and the escape case (no slots
@@ -434,7 +233,7 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
             return {"ok": False, "error":
                     f"{noun} {iid!r} already exists — to raise the COUNT write a NEW {noun} "
                     f"id; do not rewrite an existing one."}
-        chosen = _pick_slot(view) if view.get("open_slots") is not None else None
+        chosen = pick_slot(view) if view.get("open_slots") is not None else None
         if view.get("open_slots") is not None and existing and chosen is not None \
                 and iid != chosen["id"]:
             return {"ok": False, "error":
@@ -443,7 +242,7 @@ def _create_guard(dispatch: Callable, view_fn: Callable, tool: str,
         # The system owns the beat too: it picked the slot, so it stamps the beat the node
         # dramatizes (the author no longer sets it). Nodes only; None → left unset.
         if id_key == "node_id":
-            beat = _beat_for_new_node(view, chosen, bool(existing))
+            beat = beat_for_new_node(view, chosen, bool(existing))
             if beat:
                 action = {**action, "args": {**(action.get("args") or {}), "beat": beat}}
         return dispatch(action)
@@ -467,7 +266,9 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
     guide_suffix = f"\n\n{component_guide}" if component_guide else ""
     cfg = module.subloop
     count_tool, id_key, id_list_key = cfg["count_tool"], cfg["id_key"], cfg["id_list_key"]
-    noun, noun_plural = cfg["noun"], cfg["noun_plural"]
+    noun = cfg["noun"]
+    render_context = module.render_context
+    render_progress = module.render_progress
     prompts = {job: _load_prompt(fn) for job, fn in module.prompts.items()}
     target_jobs = module.target_jobs
     target_tools = module.target_tools
@@ -482,7 +283,7 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
         system = _prompt_for_target(target, prompts, target_jobs) + guide_suffix
         if target["check"].get("type") in cfg.get("create_targets", {"count"}):
             dispatch = _create_guard(dispatch, view_fn, count_tool, id_key, id_list_key, noun)
-        mb = MessageBuilder(system).add_user(_render_context(ctx))
+        mb = MessageBuilder(system).add_user(render_context(ctx))
 
         # Reasoning escalation: small local models build fine with thinking OFF, but once a
         # target stops progressing (tool calls erroring, no new node landing) they spiral and
@@ -562,18 +363,12 @@ def make_subloop(module, connector=None, component_guide: str = "", cap: int = 2
                                 stall, target["check"].get("type"))
 
             # The artifact changed; re-show the graph so the agent tracks ids as it builds. The
-            # sub-loop appends to its transcript (never rebuilds _render_context), so the live
-            # slot worklist + synopses must ride on this note or the author loses them after step 1.
-            view = view_fn() or {}
-            ids = view.get(id_list_key)
-            if ids:
-                syn = view.get("synopses") or {}
-                listing = ", ".join(f'{i} "{syn[i]}"' if syn.get(i) else i for i in ids)
-                note_lines = [f"CURRENT {noun_plural}: {listing}"]
-                if view.get("unreachable"):
-                    note_lines.append(f"UNREACHABLE: {view['unreachable']}")
-                note_lines += _render_slot_focus(view)
-                mb.add_user("\n".join(note_lines))
+            # sub-loop appends to its transcript (never rebuilds the seed context), so the live
+            # id list + slot focus must ride on this note or the author loses them after step 1.
+            # The module owns this render — dialogue adds slot focus, navigation just lists places.
+            note = render_progress(view_fn() or {}) if render_progress else ""
+            if note:
+                mb.add_user(note)
 
             if target_met():
                 break

@@ -12,8 +12,117 @@ roles (decomposition discipline: a thing that behaves differently IS a different
 Both own `nodes` (same schema/skeleton/sub-loop); they never appear in the same composition.
 """
 
+from typing import Dict, List
+
 from maestro.modules import Module
+from maestro import context_render as cr
 from maestro.discrete.validators import v_nodes, SKEL_NODES
+
+
+def _render_slot_focus(view: Dict) -> List[str]:
+    """Hand the author ONE scene to write: its node_id, the path that leads to it, and the beat
+    window (previous beat behind us, this node's beat to dramatize, next beat to aim at) so it
+    continues the arc. The list of every open slot is gone — the system picks the slot, the author
+    just writes it."""
+    out: List[str] = []
+    beats = view.get("beats") or []
+    by_id = {b["id"]: b for b in beats if b.get("id")}
+    beat_ids = [b["id"] for b in beats if b.get("id")]
+    slot = cr.pick_slot(view)
+
+    if slot:
+        srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in slot.get("from", []))
+        out += ["",
+                f"WRITE THIS NODE NEXT — node_id = {slot['id']} (use this EXACT id). It is the scene "
+                f"reached from: {srcs}."]
+        path = slot.get("path") or []
+        if path:
+            crumb = " → ".join(f'{p["id"]} "{p["synopsis"]}"' if p.get("synopsis") else p["id"]
+                               for p in path)
+            out.append(f"  PATH TO HERE (already happened — do NOT repeat it): {crumb}")
+        bid = slot.get("beat")
+        if bid and bid in by_id:
+            i = beat_ids.index(bid)
+            if i > 0:
+                out.append(f"  PREVIOUS BEAT (behind us): {cr.render_beat(by_id[beat_ids[i - 1]])}")
+            out.append(f"  THIS NODE'S BEAT (dramatize it): {cr.render_beat(by_id[bid])}")
+            if i + 1 < len(beat_ids):
+                out.append(f"  NEXT BEAT (aim here — your `end` opens a slot toward it): "
+                           f"{cr.render_beat(by_id[beat_ids[i + 1]])}")
+        else:
+            if beat_ids:
+                out.append(f"  PREVIOUS BEAT (behind us): {cr.render_beat(by_id[beat_ids[-1]])}")
+            out.append("  THIS NODE IS AN ENDING — realize a premise ending (end.type 'end'); the "
+                       "arc resolves here, so open no further slot.")
+        out.append("Your `end` continues the spine: prefer a single `jump` toward the next beat; "
+                   "use a `menu` ONLY at a real fork, never to list places to visit.")
+        return out
+
+    if not view.get("node_ids"):
+        out += ["", "WRITE THE OPENING NODE — no scenes exist yet. Choose its node_id."]
+        if beat_ids:
+            out.append(f"  FIRST BEAT (dramatize it): {cr.render_beat(by_id[beat_ids[0]])}")
+            if len(beat_ids) > 1:
+                out.append(f"  NEXT BEAT (aim here): {cr.render_beat(by_id[beat_ids[1]])}")
+        return out
+
+    todo = view.get("beats_todo")
+    if todo:
+        out += ["",
+                "Every existing scene's path is fully written, but these outline beats still have no "
+                "scene: " + ", ".join(todo) + ". Give an existing node a jump/menu to a NEW node id, "
+                "then write that node to dramatize one."]
+    return out
+
+
+def _node_view_block(view: Dict) -> List[str]:
+    edges = view.get("edges", {})
+    counts = view.get("line_counts", {})
+    synopses = view.get("synopses", {})
+    unreachable = set(view.get("unreachable", []))
+    node_lines = [
+        f"  {nid} -> {edges.get(nid, [])}"
+        f"  ({'UNREACHABLE' if nid in unreachable else 'reachable'}, {counts.get(nid, 0)} lines)"
+        + (f'  — "{synopses[nid]}"' if synopses.get(nid) else "")
+        for nid in view["node_ids"]
+    ]
+    return [
+        "",
+        "CURRENT NODES (these already exist — reuse these EXACT ids; jump ONLY to an id "
+        "listed here or to a node you also create this step):",
+        *node_lines,
+    ] + _render_slot_focus(view)
+
+
+def _render_context(ctx: Dict) -> str:
+    lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+    lines += cr.target_block(ctx)
+    lines += cr.scratchpad_block(ctx)
+    lines += cr.upstream_block(ctx.get("upstream") or {})
+    view = ctx.get("active_view") or {}
+    if view.get("node_ids"):
+        lines += _node_view_block(view)
+    lines += cr.story_state_block(ctx)
+    lines += cr.tail_block(ctx)
+    lines += ["", "Call one tool to address the first to-do item."]
+    return "\n".join(lines)
+
+
+def _render_progress(view: Dict) -> str:
+    """The note the sub-loop appends after each step: the live node list (with synopses) + the
+    next slot to write, so the author tracks ids and keeps building the spine without rebuilding
+    the whole context."""
+    ids = view.get("node_ids")
+    if not ids:
+        return ""
+    syn = view.get("synopses") or {}
+    listing = ", ".join(f'{i} "{syn[i]}"' if syn.get(i) else i for i in ids)
+    note = [f"CURRENT NODES: {listing}"]
+    if view.get("unreachable"):
+        note.append(f"UNREACHABLE: {view['unreachable']}")
+    note += _render_slot_focus(view)
+    return "\n".join(note)
+
 
 # Node sub-loop gating — shared by both configurations (both own `nodes`, same loop). The decider
 # and sub-loop expose these tools while in nodes mode; per-target gating narrows further.
@@ -47,10 +156,11 @@ _NODE_TARGET_TOOLS = {
 # create_targets: the targets that ADD nodes (vs. edit existing) — they get the slot guard (a new
 # node must fill an open slot / continue the spine). beats_realized is the node creator now.
 _NODE_SUBLOOP = {"count_tool": "write_node", "id_key": "node_id", "id_list_key": "node_ids",
-                 "noun": "node", "noun_plural": "NODES", "create_targets": frozenset({"beats_realized"})}
+                 "noun": "node", "create_targets": frozenset({"beats_realized"})}
 _NODE_GATING = dict(
     mode_tools=_NODE_MODE_TOOLS, mode_prompt="write_node.txt", prompts=_NODE_PROMPTS,
     target_jobs=_NODE_TARGET_JOBS, target_tools=_NODE_TARGET_TOOLS, subloop=_NODE_SUBLOOP,
+    render_context=_render_context, render_progress=_render_progress,
     # A dangling node reference (jump/start.node) routes to nodes mode, which has the node tools —
     # not to the navigation spine's compiles gate, where only place tools exist.
     ir_slices={"nodes": "nodes", "start.node": "nodes"},

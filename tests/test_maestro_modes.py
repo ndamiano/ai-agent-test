@@ -7,8 +7,10 @@ from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.executor import Executor
 from maestro.agent import (_filter_schemas, _schemas_for_target, _prompt_for_target,
-                           _render_context, _load_prompt, make_subloop, _create_guard,
-                           _render_slot_focus, _pick_slot)
+                           _load_prompt, make_subloop, _create_guard)
+from maestro.context_render import pick_slot as _pick_slot
+from maestro.discrete.dialogue import (_render_context, _render_slot_focus)
+from maestro.discrete.cast import _render_context as _render_premise_context
 from maestro.discrete.dialogue import SPINE as DIALOGUE
 from maestro.discrete.navigation import MODULE as NAVIGATION
 from maestro.modules import compose, PRESETS
@@ -143,23 +145,25 @@ def test_render_context_premise_is_title_request_and_own_todo():
            "todo": [{"component_id": "premise", "check": {"type": "count"}, "detail": "need 3 chars"},
                     {"component_id": "nodes", "check": {"type": "count"}, "detail": "need 5 nodes"}],
            "upstream": {"asset_manifest": {"backgrounds": ["bg"]}}}
-    rendered = _render_context(ctx)
+    rendered = _render_premise_context(ctx)
     assert rendered.startswith("TITLE: Attic\n\nREQUEST: two sisters clear")
     assert "count: need 3 chars" in rendered          # premise's own check
     assert "need 5 nodes" not in rendered              # other component's check withheld
     assert "asset_manifest" not in rendered and "SPEC" not in rendered
 
 
-def test_render_context_drops_outline_beats_from_locked_components():
-    # The full beat list must NOT leak into LOCKED COMPONENTS — the node author gets the beat
-    # window from slot focus. logline + ending_paths stay.
-    ctx = {"todo": [], "upstream": {"outline": {
+def test_outline_context_view_drops_beats_keeps_anchors():
+    # The full beat list must NOT reach the node author as locked upstream — it gets the beat
+    # window from slot focus instead. The outline's context_view (the upstream trimmer) drops
+    # beats; logline + ending_paths stay.
+    from maestro.discrete.outline import _outline_view
+    v = _outline_view({
         "logline": "two sisters, one house",
         "beats": [{"id": "beat_01", "summary": "secret summary"}],
-        "ending_paths": [{"ending": "sell", "earned_by": "x"}]}}}
-    rendered = _render_context(ctx)
-    assert "two sisters" in rendered and "ending_paths" in rendered
-    assert "secret summary" not in rendered and "beat_01" not in rendered
+        "ending_paths": [{"ending": "sell", "earned_by": "x"}]})
+    assert v == {"logline": "two sisters, one house",
+                 "ending_paths": [{"ending": "sell", "earned_by": "x"}]}
+    assert "beats" not in v
 
 
 def test_render_context_shows_last_read_and_stall_nudge():

@@ -5,6 +5,7 @@ on: dialogue requires character sprites have ids; navigation requires background
 """
 
 from maestro.modules import Module
+from maestro import context_render as cr
 from maestro.discrete.validators import v_asset_manifest, SKEL_ASSET_MANIFEST
 
 
@@ -20,6 +21,15 @@ def _asset_manifest_view(c):
     return view
 
 
+def _render_context(ctx):
+    # A one-shot authoring step (no sub-loop, no graph view): the scoped spec, this component's
+    # to-do, the locked premise, and the run tail. No node/place blocks — assets has no graph.
+    return "\n".join(
+        cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        + cr.scratchpad_block(ctx) + cr.upstream_block(ctx.get("upstream") or {})
+        + cr.tail_block(ctx) + ["", "Call one tool to address the first to-do item."])
+
+
 MODULE = Module(
     id="assets",
     components=("asset_manifest",),
@@ -31,4 +41,5 @@ MODULE = Module(
     mode_tools=frozenset({"write_component", "update_scratchpad", "request_review"}),
     mode_prompt="mode_asset.txt",
     context_view=_asset_manifest_view,
+    render_context=_render_context,
 )

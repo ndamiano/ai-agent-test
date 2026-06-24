@@ -18,7 +18,7 @@ be scattered, hardcoded-by-`genre` registries into one object:
   prompts     — sub-loop system prompts keyed by job ("author"/"fix") -> filename
   target_jobs — check-type -> job ("author"/"fix"); picks the sub-loop prompt + escalation
   target_tools— check-type -> allowed tool names inside the sub-loop (per-target gating)
-  subloop     — sub-loop scalar config (count_tool/id_key/id_list_key/noun/noun_plural); its
+  subloop     — sub-loop scalar config (count_tool/id_key/id_list_key/noun); its
                 presence is what marks the module as driving a stateful sub-loop
   projector   — executor view fn for its owned component
   action_verbs— action verb names this module adds to navigation's verb set
@@ -61,6 +61,13 @@ class Module:
     target_tools: Dict[str, frozenset] = field(default_factory=dict)
     subloop: Optional[Dict] = None
     projector: Optional[Callable] = None
+    # (ctx) -> str: this module's OWN build-step context render, composed from whatever blocks it
+    # wants (see maestro.context_render). There is no shared frame — a mode that needs less just
+    # composes less here. Every module that owns a buildable component supplies one.
+    render_context: Optional[Callable] = None
+    # (view) -> str: the per-step note a sub-loop module appends as it builds (the live id list +
+    # focus). Content modules (with a sub-loop) only; "" → nothing to append this step.
+    render_progress: Optional[Callable] = None
     # (content) -> trimmed content: a compact view of this module's component shown to DOWNSTREAM
     # steps when it's a settled/locked upstream (e.g. asset_manifest → just ids, dropping the
     # image-gen prose a node author never needs). None = inject the full component.
@@ -145,6 +152,7 @@ class Composed:
     subloop_modules: Dict[str, "Module"]  # component_id -> owning module (those with a sub-loop)
     projectors: Dict[str, Callable]    # component_id -> view fn
     context_views: Dict[str, Callable]  # component_id -> trimmer for upstream injection
+    render_contexts: Dict[str, Callable]  # component-mode -> that module's context renderer
     action_verbs: List[str]
     slice_owner: Dict[str, str]        # IR-slice token -> component a reference error routes to
 
@@ -165,6 +173,7 @@ def compose(module_ids) -> Composed:
     subloop_modules: Dict[str, "Module"] = {}
     projectors: Dict[str, Callable] = {}
     context_views: Dict[str, Callable] = {}
+    render_contexts: Dict[str, Callable] = {}
     action_verbs: List[str] = []
     slice_owner: Dict[str, str] = {}
 
@@ -203,6 +212,9 @@ def compose(module_ids) -> Composed:
         if m.context_view is not None:
             for c in m.components:
                 context_views[c] = m.context_view
+        if m.render_context is not None:
+            for c in m.components:
+                render_contexts[c] = m.render_context
         for v in m.action_verbs:
             if v not in action_verbs:
                 action_verbs.append(v)
@@ -213,7 +225,8 @@ def compose(module_ids) -> Composed:
         skeletons=skeletons, baseline=baseline, deps=deps, tool_names=tool_names,
         assemblers=assemblers, crossrefs=crossrefs, mode_tools=mode_tools,
         mode_prompts=mode_prompts, subloop_modules=subloop_modules,
-        projectors=projectors, context_views=context_views, action_verbs=action_verbs,
+        projectors=projectors, context_views=context_views,
+        render_contexts=render_contexts, action_verbs=action_verbs,
         slice_owner=slice_owner)
 
 

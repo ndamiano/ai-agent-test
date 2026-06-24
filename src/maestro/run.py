@@ -52,7 +52,8 @@ def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
     decider = decide or make_llm_decider(mode_guides=mode_guides,
                                          tool_schemas=tool_schemas_for(spec),
                                          mode_tools=composed.mode_tools,
-                                         mode_prompts=composed.mode_prompts)
+                                         mode_prompts=composed.mode_prompts,
+                                         mode_renderers=composed.render_contexts)
     # Each owned component with a sub-loop iterates until its target checks pass — a stateful
     # sub-loop, not one-shot steps. A scripted `decide` (tests) keeps the simple stateless path.
     # Projectors are the executor's engine-neutral graph views, keyed by the component in play.

@@ -10,7 +10,8 @@ from maestro.state import RunState
 from maestro import spec_tools
 from maestro.executor import Executor
 from maestro.tools import build_tools
-from maestro.agent import _parse_action, _render_context
+from maestro.agent import _parse_action
+from maestro.discrete.dialogue import _render_context
 
 
 # ── propose_spec / amend_spec / freeze (run dir under tmp) ───────────────────

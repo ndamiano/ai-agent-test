@@ -103,22 +103,62 @@ def test_pnc_composition_subloops_places():
 
 # ── single generated spec prompt (§9) ────────────────────────────────────────
 
-def test_spec_prompt_is_generated_per_genre():
+def test_spec_prompt_is_story_only():
+    # The proposer now writes ONLY the story — the prompt renders cleanly, varies by genre blurb,
+    # and carries NONE of the component-contract boilerplate (shapes / done-condition floor) that
+    # the code now constructs deterministically.
     from maestro.spec_tools import _spec_prompt_ctx
-    for genre in ["vn", "point_and_click", "card_ante"]:
+    for genre, marker in [("vn", "visual novel"), ("point_and_click", "point"),
+                          ("card_ante", "card")]:
         prompt = render_template(_PROMPTS / "propose_spec.txt", _spec_prompt_ctx("make a thing", genre))
-        assert "{{include" not in prompt and "{request}" not in prompt
-        assert "allowed done-condition" in prompt          # the shared allowed_checks partial
-        assert "central_question" in prompt                # the composed skeletons/baseline
+        assert "{{include" not in prompt and "{request}" not in prompt and "{genre_blurb}" not in prompt
+        assert "story_state_schema" in prompt and "branching endings" in prompt
+        assert marker.lower() in prompt.lower()
+        # none of the constructed-in-code contract leaks into the prompt
+        assert '"type": "exists"' not in prompt          # the baseline JSON dump is gone
+        assert "central_question" not in prompt          # the component shapes are gone
+        assert "each_node_min_lines" not in prompt
 
 
-def test_spec_prompt_embeds_composed_baseline():
-    # The default-condition set is rendered FROM the modules' baseline (one source), so the
-    # VN floor checks must appear in the prompt body, not be re-hardcoded in the template.
-    from maestro.spec_tools import _spec_prompt_ctx
-    prompt = render_template(_PROMPTS / "propose_spec.txt", _spec_prompt_ctx("a VN", "vn"))
-    for check in ["reachable_from_start", "all_characters_speak", "min_branches"]:
-        assert check in prompt
+def test_spec_components_built_from_composed_baseline():
+    # The contract is constructed in code from the modules' baseline (one source of truth), not
+    # authored by the LLM. Every VN floor check must land on its component, in dep order.
+    from maestro.spec_tools import _spec_components
+    import maestro.discrete  # noqa: F401
+    from maestro.modules import PRESETS
+
+    comps = _spec_components(PRESETS["vn"].modules)
+    by_id = {c["id"]: c for c in comps}
+    assert {"premise", "asset_manifest", "outline", "nodes"} <= set(by_id)
+    node_checks = {c["type"] for c in by_id["nodes"]["done_conditions"]}
+    assert {"reachable_from_start", "all_characters_speak", "min_branches"} <= node_checks
+    assert by_id["premise"]["description"]               # human-review blurb is populated
+    assert "premise" in by_id["nodes"]["deps"] or by_id["nodes"]["deps"]  # carries build-order deps
+
+
+def test_sizing_raises_mins_but_never_below_floor():
+    # The proposer's only size lever: a flat name->int that RAISES baseline mins. Below-floor
+    # values, unknown names, and non-ints are all ignored.
+    from maestro.spec_tools import _spec_components, _apply_sizing
+    import maestro.discrete  # noqa: F401
+    from maestro.modules import PRESETS
+
+    mods = PRESETS["vn"].modules
+    comps = _spec_components(mods)
+    _apply_sizing(comps, mods, {"endings": 5, "beats": 9, "branches": 4,
+                                "characters": 1, "bogus": 99, "scene_length": True})
+    by_id = {c["id"]: c for c in comps}
+
+    def m(cid, **match):
+        for c in by_id[cid]["done_conditions"]:
+            if all(c.get(k) == v for k, v in match.items()):
+                return c["min"]
+
+    assert m("premise", type="count", path="premise.endings") == 5     # raised 3 -> 5
+    assert m("outline", type="count", path="outline.beats") == 9        # raised 5 -> 9
+    assert m("nodes", type="min_branches") == 4                          # raised 1 -> 4
+    assert m("premise", type="count", path="premise.characters") == 2   # below-floor ignored (floor 2)
+    assert m("nodes", type="each_node_min_lines") == 6     # bool value ignored, floor holds
 
 
 def test_old_per_genre_spec_prompts_are_gone():

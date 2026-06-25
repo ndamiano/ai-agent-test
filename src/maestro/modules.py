@@ -46,6 +46,7 @@ class Module:
     id: str
     substrates: Tuple[str, ...] = ("discrete",)
     components: Tuple[str, ...] = ()
+    descriptions: Dict[str, str] = field(default_factory=dict)  # component_id -> human review blurb
     schemas: Dict[str, Callable] = field(default_factory=dict)
     skeletons: Dict[str, str] = field(default_factory=dict)
     baseline: Dict[str, List[Dict]] = field(default_factory=dict)
@@ -140,6 +141,7 @@ def _merge_baseline(into: Dict[str, List[Dict]], add: Dict[str, List[Dict]]) -> 
 class Composed:
     module_ids: Tuple[str, ...]
     components: List[str]
+    descriptions: Dict[str, str]
     schemas: Dict[str, Callable]
     skeletons: Dict[str, str]
     baseline: Dict[str, List[Dict]]
@@ -161,6 +163,7 @@ def compose(module_ids) -> Composed:
     """Union the active modules into one bundle. Order follows module_ids; later modules add to
     earlier ones (baseline merge dedupes/raises, never drops)."""
     components: List[str] = []
+    descriptions: Dict[str, str] = {}
     schemas: Dict[str, Callable] = {}
     skeletons: Dict[str, str] = {}
     baseline: Dict[str, List[Dict]] = {}
@@ -184,6 +187,7 @@ def compose(module_ids) -> Composed:
         for c in m.components:
             if c not in components:
                 components.append(c)
+        descriptions.update(m.descriptions)
         schemas.update(m.schemas)
         skeletons.update(m.skeletons)
         _merge_baseline(baseline, m.baseline)
@@ -221,8 +225,8 @@ def compose(module_ids) -> Composed:
         slice_owner.update(m.ir_slices)
 
     return Composed(
-        module_ids=tuple(module_ids), components=components, schemas=schemas,
-        skeletons=skeletons, baseline=baseline, deps=deps, tool_names=tool_names,
+        module_ids=tuple(module_ids), components=components, descriptions=descriptions,
+        schemas=schemas, skeletons=skeletons, baseline=baseline, deps=deps, tool_names=tool_names,
         assemblers=assemblers, crossrefs=crossrefs, mode_tools=mode_tools,
         mode_prompts=mode_prompts, subloop_modules=subloop_modules,
         projectors=projectors, context_views=context_views,

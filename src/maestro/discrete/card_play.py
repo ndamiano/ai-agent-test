@@ -76,6 +76,8 @@ SKEL_MATCHES = (
 MODULE = Module(
     id="card_play",
     components=("matches",),
+    descriptions={"matches": "The card matches — opponents, the ante/stakes, and the win/loss "
+                             "outcomes the player wagers against."},
     schemas={"matches": v_matches},
     skeletons={"matches": SKEL_MATCHES},
     baseline={"matches": [

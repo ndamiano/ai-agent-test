@@ -169,6 +169,8 @@ _NODE_GATING = dict(
 SPINE = Module(
     id="dialogue",
     components=("nodes",),
+    descriptions={"nodes": "The branching dialogue graph — scenes whose menu choices fork the "
+                           "story toward its distinct endings."},
     schemas={"nodes": v_nodes},
     skeletons={"nodes": SKEL_NODES},
     **_NODE_GATING,
@@ -218,6 +220,8 @@ SPINE = Module(
 NPC = Module(
     id="dialogue_npc",
     components=("nodes",),
+    descriptions={"nodes": "The NPC conversation nodes — dialogue the player triggers by talking "
+                           "to characters in the world."},
     schemas={"nodes": v_nodes},
     skeletons={"nodes": SKEL_NODES},
     **_NODE_GATING,

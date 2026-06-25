@@ -23,7 +23,9 @@ characters or independent, and they should be varied and interesting.
 VOICE — is one sentence on how they speak (vocabulary, sentence length, rhythm). 
 
 EXAMPLE LINES - 2+ lines that the character would say. In general, characters should speak plainly,
-and their lines shouldn't be steeped in their profession.
+and their lines shouldn't be steeped in their profession. These should be forgettable lines that show
+the character's word choice and rhythm. One should be a purely transactional, another should be reactive
+and a logistics complaint one.
 
 TEMPERAMENT — how they carry themselves day to day.
 

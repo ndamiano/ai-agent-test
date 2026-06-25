@@ -42,6 +42,8 @@ _DEPS = {
 MODULE = Module(
     id="outline",
     components=("outline",),
+    descriptions={"outline": "The dramatic arc — logline, ordered beats, and how each ending is "
+                             "earned; the scenes realize it."},
     schemas={"outline": v_outline},
     skeletons={"outline": SKEL_OUTLINE},
     deps=_DEPS,

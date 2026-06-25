@@ -90,24 +90,88 @@ _GENRE_BLURB = {"vn": "genre_blurb_vn.txt", "point_and_click": "genre_blurb_pnc.
                 "card_ante": "genre_blurb_card.txt"}
 
 
-def _spec_prompt_ctx(request: str, genre: str) -> Dict:
-    """Build the propose_spec prompt context from the preset's composed modules, so the spec
-    prompt is generated from the SAME baseline + skeletons the build enforces (one source of
-    truth), not a per-genre prompt that re-hardcodes them."""
-    import json
-    import maestro.discrete  # noqa: F401 — register modules + presets
-    from maestro.modules import PRESETS, compose
-    from renpy.component_schemas import skeleton_guide
+# Friendly knob names for the baseline's path-less `min` checks (count checks name themselves off
+# their path's last segment — "endings", "beats"). This is the ONLY size lever the proposer gets:
+# a flat name->int it may raise, instead of re-authoring the whole done-condition JSON.
+_TYPED_MIN_KNOBS = {"min_branches": "branches", "each_node_min_lines": "scene_length",
+                    "each_place_min_interactables": "interactables"}
 
-    preset = PRESETS.get(genre) or PRESETS["vn"]
-    composed = compose(preset.modules)
+
+def _knob_name(check: Dict) -> str:
+    path = check.get("path")
+    return path.split(".")[-1] if path else _TYPED_MIN_KNOBS.get(check["type"], check["type"])
+
+
+def _tunable_knobs(module_ids) -> Dict[str, Dict]:
+    """name -> {component, identity, floor} for every baseline check carrying a `min`. The
+    proposer raises these by name; code maps each back to the exact check to bump."""
+    import maestro.discrete  # noqa: F401 — register modules
+    from maestro.modules import compose, _identity
+
+    knobs: Dict[str, Dict] = {}
+    composed = compose(tuple(module_ids))
+    for cid, checks in composed.baseline.items():
+        for c in checks:
+            if "min" in c:
+                name = _knob_name(c)
+                assert name not in knobs, f"sizing knob name collision: {name!r}"
+                knobs[name] = {"component": cid, "identity": _identity(c), "floor": c["min"]}
+    return knobs
+
+
+def _apply_sizing(components: List[Dict], module_ids, sizing: Dict) -> None:
+    """Raise the named baseline mins the proposer asked for (never below floor). Unknown names and
+    non-int values are ignored — the floor still holds."""
+    from maestro.modules import _identity
+
+    knobs = _tunable_knobs(module_ids)
+    by_id = {c["id"]: c for c in components}
+    for name, value in (sizing or {}).items():
+        knob = knobs.get(name)
+        if knob is None or not isinstance(value, int) or isinstance(value, bool):
+            continue
+        comp = by_id.get(knob["component"])
+        for check in comp.get("done_conditions", []) if comp else []:
+            if _identity(check) == knob["identity"]:
+                check["min"] = max(knob["floor"], value)
+
+
+def _spec_prompt_ctx(request: str, genre: str) -> Dict:
+    """Build the propose_spec prompt context. The proposer now writes ONLY the story (title +
+    request paragraph + story_state_schema) plus an optional `sizing` dict that raises named
+    baseline mins; the component contract itself is constructed in code from the composed modules'
+    baseline (see `_spec_components`), so the prompt no longer carries the component shapes or the
+    done-condition floor — that boilerplate was the model's job to transcribe, and the code already
+    guarantees it."""
+    import maestro.discrete  # noqa: F401 — register modules + presets
+    from maestro.modules import PRESETS
+
     blurb = (_PROMPTS_DIR / _GENRE_BLURB.get(genre, "genre_blurb_vn.txt")).read_text(encoding="utf-8").strip()
-    return {
-        "request": request,
-        "genre_blurb": blurb,
-        "component_shapes": skeleton_guide(genre=genre),
-        "default_conditions": json.dumps(composed.baseline, indent=2),
-    }
+    modules = (PRESETS.get(genre) or PRESETS["vn"]).modules
+    knobs = _tunable_knobs(modules)
+    catalog = ", ".join(f"{name} (floor {k['floor']})" for name, k in knobs.items())
+    return {"request": request, "genre_blurb": blurb, "sizing_knobs": catalog}
+
+
+def _spec_components(module_ids) -> List[Dict]:
+    """Construct the spec's components straight from the composed modules — ids, build-order deps,
+    and the code-enforced baseline done-conditions. The proposer LLM no longer authors the
+    contract; the modules' baseline IS the contract, so build it deterministically. The human
+    still reviews and edits it at the freeze gate."""
+    import maestro.discrete  # noqa: F401 — register modules
+    from maestro.modules import compose
+
+    composed = compose(tuple(module_ids))
+    present = set(composed.components)
+    return [
+        {
+            "id": cid,
+            "description": composed.descriptions.get(cid, ""),
+            "deps": [d for d in composed.deps.get(cid, []) if d in present],
+            "done_conditions": [dict(c) for c in composed.baseline.get(cid, [])],
+        }
+        for cid in composed.components
+    ]
 
 
 def propose_spec(request: str, run_id: str) -> Dict:
@@ -132,6 +196,11 @@ def propose_spec(request: str, run_id: str) -> Dict:
         spec.setdefault("modules", list(preset.modules))
         spec.setdefault("engine", preset.engine)
     spec.setdefault("request", request)
+    # The proposer writes only the story (+ optional sizing) — construct the contract from the
+    # modules, then apply the proposer's requested min raises on top.
+    modules = spec.get("modules") or PRESETS["vn"].modules
+    spec["components"] = _spec_components(modules)
+    _apply_sizing(spec["components"], modules, spec.pop("sizing", None))
     _normalize_spec(spec)  # baseline done-conditions in, so the human reviews the real contract
     state = RunState.for_run(run_id)
     state.write_spec(spec)

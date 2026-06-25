@@ -140,7 +140,7 @@ SKEL_PREMISE = (
     '      "drive": "what they want, plainly — a thing they would say out loud, NOT a goal for this plot",\n'
     '      "history": ["one concrete formative event", "a second, different event"],\n'
     '      "competencies": ["a concrete skill", "another"],\n'
-    '      "example_lines": ["a line only they would say", "another in their voice"],\n'
+    '      "example_lines": ["a flat line about something domestic or logistical — food, sleep, a ride, a chore, an object in the room — NOT about work; the content forgettable", "a reactive line that ENDS IN AN ACTION OR DEMAND, not an observation — they complain AT someone or threaten to do something, never reflect on what a thing means"],\n'
     '      "color": "#c8ffc8"\n'
     '    }\n'
     '  ],\n'

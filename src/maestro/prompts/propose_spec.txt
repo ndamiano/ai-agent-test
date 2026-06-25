@@ -1,13 +1,13 @@
-You are drafting a build SPEC for {genre_blurb}
+You are inventing the STORY for {genre_blurb}
 
-The spec is a contract: a list of components to build, each with checkable done-conditions you
-commit to. A separate program (not you) builds the game and checks the artifact against these
-conditions. So every done-condition must be a typed check that code can run — never prose.
+A separate program turns your story into a buildable contract and builds the game from it — you do
+NOT design components or done-conditions. Your one job is to expand the request into a vivid,
+concrete story and the continuity it hinges on.
 
 Request:
 {request}
 
-FIRST, expand the request into a concrete story. The request is a seed, not a literal constraint —
+Expand the request into a concrete story. The request is a seed, not a literal constraint —
 invent the specifics that make it a real story:
 - 1-3 named characters, each with a specific backstory (who they were, what changed).
 - A central tension rooted in the characters' past or relationship. The literal request
@@ -27,52 +27,29 @@ The story starts with them traveling together by train to the funeral's location
 funeral, and resolves with one of: them going their separate ways, them becoming friends again,
 them reuniting as a band.
 
-Author this paragraph DIRECTLY into the "request" field of the JSON below — do not write it
-anywhere else. Every component you spec must be faithful to it.
-
 Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
 
 {
   "title": "short game title",
   "request": "<the full story paragraph you authored, per the requirements above>",
-  "frozen": false,
-  "components": [
-    {
-      "id": "premise",
-      "description": "what this component holds",
-      "deps": [],
-      "done_conditions": [ /* typed checks, see below */ ]
-    }
-  ],
   "story_state_schema": {
     "established_facts": [],                    // what continuity hinges on for THIS game
     "entity_states": {},
     "open_threads": []
-  }
+  },
+  "sizing": {}                                  // OPTIONAL: see SIZING below; omit or {} keeps the floor
 }
 
-{{include:allowed_checks}}
+- The 2-3 mutually exclusive branching endings MUST be present in the story paragraph — name them.
+- Declare in story_state_schema what continuity this particular game hinges on (the facts, entity
+  states, and open threads), derived from the story paragraph.
 
-THE COMPONENTS to build (use these exact ids and these shapes — the agent authors content in
-exactly these shapes, so your done-conditions must check against them):
+SIZING — the build enforces a minimum size for each part of the game. To make a BIGGER, richer
+story than the floor, raise any of these knobs in "sizing" (name -> integer). You may only RAISE
+them; a value below the floor is ignored. Omit a knob to keep its floor. Available knobs:
 
-{component_shapes}
+  {sizing_knobs}
 
-THE DEFAULT DONE-CONDITION SET (the code-enforced floor — every spec carries at least these; you
-may RAISE a `min` to fit a bigger game, but never drop one). Put these on the matching component:
-
-{default_conditions}
-
-Rules:
-- Include exactly the components shown above, with those exact ids. Do NOT invent extra components
-  and do NOT use refs_resolve to a component that won't exist.
-- The done-conditions ARE the quality bar: the builder does the minimum that satisfies them, so
-  demand a real game, not a stub. Tune counts to fit THIS request (a longer game = higher mins),
-  but keep every condition checkable; use only the listed check types. When uncertain, raise mins —
-  a stub that technically passes is a failure.
-- The 2-3 branching endings in the story paragraph must be enforced by a done-condition, not left
-  to prose. Ensure a check on the relevant component requires that branch count.
-- Declare in story_state_schema what continuity this particular game hinges on, derived from the
-  story paragraph.
+e.g. a sprawling saga: "sizing": {"endings": 6, "beats": 35, "branches": 6}
 
 Return only the JSON object.

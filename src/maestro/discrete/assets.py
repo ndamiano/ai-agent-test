@@ -33,6 +33,8 @@ def _render_context(ctx):
 MODULE = Module(
     id="assets",
     components=("asset_manifest",),
+    descriptions={"asset_manifest": "The image manifest — backgrounds, character sprites, and "
+                                    "inventory icons the build generates."},
     schemas={"asset_manifest": v_asset_manifest},
     skeletons={"asset_manifest": SKEL_ASSET_MANIFEST},
     baseline={"asset_manifest": [

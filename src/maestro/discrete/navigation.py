@@ -72,6 +72,8 @@ _DEPS = {
 MODULE = Module(
     id="navigation",
     components=("places",),
+    descriptions={"places": "The navigable world — places, their interactables, and the items "
+                            "they yield as the player clicks through."},
     schemas={"places": v_places},
     skeletons={"places": SKEL_PLACES},
     baseline={

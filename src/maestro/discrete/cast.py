@@ -41,6 +41,8 @@ def _render_context(ctx):
 MODULE = Module(
     id="cast",
     components=("premise",),
+    descriptions={"premise": "The cast and premise — named characters with their voices and the "
+                             "central dramatic question the endings answer differently."},
     schemas={"premise": v_premise},
     skeletons={"premise": SKEL_PREMISE},
     baseline={"premise": [

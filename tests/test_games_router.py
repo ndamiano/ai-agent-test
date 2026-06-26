@@ -140,9 +140,8 @@ def test_get_game_returns_spec_artifact_todo(tmp_path, monkeypatch):
     monkeypatch.setattr(RunState, "for_run",
                         classmethod(lambda cls, rid: RunState(tmp_path / rid)))
     state = RunState(tmp_path / "g1")
-    state.write_spec({"title": "G1", "frozen": True, "components": [
-        {"id": "premise", "done_conditions": [
-            {"type": "exists", "path": "premise.central_question"}]}]})
+    # no modules -> no checks, so the to-do is empty once the spec is frozen
+    state.write_spec({"title": "G1", "frozen": True, "modules": [], "params": {}})
     state.write_component("premise", {"central_question": "Q?"})
 
     result = asyncio.run(games.get_game("g1"))
@@ -150,4 +149,4 @@ def test_get_game_returns_spec_artifact_todo(tmp_path, monkeypatch):
     assert result["frozen"] is True
     assert result["spec"]["title"] == "G1"
     assert result["artifact"]["premise"]["central_question"] == "Q?"
-    assert result["todo"] == []  # the one done-condition passes
+    assert result["todo"] == []  # no modules -> nothing to do

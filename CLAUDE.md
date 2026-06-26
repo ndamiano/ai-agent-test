@@ -14,7 +14,7 @@ The user talks to Maestro via a chat interface. When asked to make something, Ma
 
 **The agentic loop + frozen spec is the key architectural idea.** Three layers:
 1. **Spec layer** (agentic, human-gated): the chat agent drafts a spec; the human reviews, edits, and freezes it. Build tools refuse until frozen.
-2. **Executor** (NOT an LLM): drives the loop. Each step rebuilds a *minimal* context from durable on-disk state (spec + validate's to-do + scratchpad + story state + last result) — the transcript is never used as memory, so context stays ~constant as the game grows. Completion is decided by `validate`, never by the agent claiming done.
+2. **Executor** (`maestro/agent_loop.py`, NOT an LLM): drives the loop. Each step rebuilds a *minimal* context from durable on-disk state (spec + the modules' to-do + scratchpad + story state + last result) — the transcript is never used as memory, so context stays ~constant as the game grows. Completion is decided by the modules' `get_errors` (minus the human's waivers), never by the agent claiming done.
 3. **Tools**: the bounded capabilities the agent composes (write_component / write_node, validate, compile_renpy, generate_asset, ...). The agent chooses the order.
 
 It steals the old pipeline's two good properties (completion guarantee, no context rot) without its rigidity: "done" = the artifact satisfies the frozen spec, not "all stages ran."
@@ -31,40 +31,41 @@ src/
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
                 inference.py — PipelineAgent, call_llm, json_with_correction (shared inference primitives)
   maestro/      The agentic build system:
-                spec.py — Spec (components, frozen flag, dep_order)
+                spec.py — Spec (modules, params, story_state_schema, frozen flag)
                 state.py — RunState: durable per-run dir <working_dir>/runs/<run_id>/
-                validate.py — typed done-condition checks → failure list (the to-do); a check may
-                  ATTRIBUTE its failure to the component that can fix it (not the one that declared
-                  it), so a cross-component reference error routes to a mode with the right tools
-                executor.py — the non-LLM loop (stateless per step, completion via validate);
-                  checks RunControl at each step boundary (pause/cancel), auto-pauses on a
-                  finished component when armed, and parks in `awaiting_human` when machine
-                  checks pass but human todos are still open
+                modules/ — THE module system (one `Module` ABC, no subclasses; see below):
+                  module.py — Module ABC + Error/ErrorType/CorrectionPrompt + MODULE_REGISTRY +
+                    compose() + Preset/PRESETS + the (engine,module) projection registry +
+                    load_prompt/skeleton_guide. A module's `get_fix(ctx,error)` returns a Fix
+                    (a callable the loop invokes); default = one correction step.
+                  checks.py — the check library a module's get_errors composes (path-addressed
+                    primitives + structural graph checks + crossref/compile wrappers)
+                  context.py — Context (durable per-step snapshot) + render_dict (the dict the
+                    renderers consume); views.py — node_view/place_view graph projections
+                  cast/assets/outline/dialogue/navigation/economy/card_play/goal/human.py — the
+                    mechanic-modules, each a direct Module subclass (dialogue = ONE class, two
+                    instances: spine + npc); each owns its component's structural write-time
+                    validator + authoring skeleton INLINE (no shared validators/skeletons file).
+                    human.py also holds the HITL todo/waiver store.
+                agent_loop.py — AgentLoop, the non-LLM loop that DRIVES the modules (not itself a
+                  module): collects each module's get_errors, subtracts the human's waivers,
+                  prioritizes by error TYPE (human>build>fix) then Module.priority, asks the module
+                  for a Fix and runs it. Keeps completion + cross-fix stall; auto-pauses a finished
+                  component.
+                services.py — Services, the BOUNDED gateway a Fix calls through (connector +
+                  tool dispatch + pause/cancel checkpoint + per-fix step budget; BudgetExhausted
+                  is a BaseException, so a fix can't churn past its cap). `author_loop` is the
+                  shared iterative Fix the content modules return for their count-driven target
+                  (slot-guarded item author, `_create_guard`).
+                rewrite.py — rewrite_node: regenerate ONE node from a human note (per-scene control)
                 run_control.py — cross-thread RunControl (pause/resume/cancel + auto_pause flag)
                   + per-run registry, the human-in-the-loop signal channel into the build thread
-                hitl.py — human-as-arbiter-of-done: human todos (block completion) + waivers
-                  (accept a red machine check). effective_failures = validate − waivers + open todos
-                agent.py — the build decider + sub-loop; also `rewrite_node` (regenerate ONE
-                  node from a human note, used by the per-scene "rewrite" control).
-                  Slot-driven node authoring: while driving `count`, a new node must fill an OPEN
-                  SLOT (a dangling target a written node already points at), enforced by
-                  `_create_guard`. The node graph grows only along declared edges — every scene is
-                  reachable, has a known parent, and is shown the synopsis breadcrumb of the path
-                  that leads to it (node_view's `open_slots`), so it continues the arc instead of
-                  re-treading a sibling. write_node persists each node's `event_summary` as its
-                  synopsis; entry + no-open-slots are exempt so the loop can't deadlock.
                 tools.py — artifact tools (build_tools) + TOOL_SCHEMAS. write_component/
                   write_node/edit_node take a human-only `force` to override the done-lock
                   (the agent never sets it — not in TOOL_SCHEMAS); edit_node also takes full
                   `content` to replace a whole node (the manual per-scene editor)
-                agent.py — the build agent (LLM decider: one tool call per step)
-                spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate)
-                modules.py — Module contract + MODULE_REGISTRY + compose() + PRESETS + the
-                  per-engine projection registry (the seam that replaced genre-keyed dispatch)
-                discrete/ — the discrete_state substrate's mechanic-modules (cast, assets,
-                  outline, dialogue, navigation, economy, card_play) + their validators/skeletons
-                  (outline = the vn-only beat-sheet stage: premise → outline → nodes, injected into
-                  write_node as a locked upstream so scenes realize a planned arc, not improvise)
+                spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate); resolves
+                  spec.params from each module's params() floors (int→max, list→union)
                 story_state.py — continuity bible (facts, entities, threads, recent tail)
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
                 chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
@@ -80,10 +81,9 @@ src/
                 compiler.py (compile_renpy — the spine, delegates to ir_compiler),
                 ir_compiler.py (assemble → crossref gate → ir_vn/ir_pnc → write project → lint),
                 ir_vn.py / ir_pnc.py (IR → script.rpy for VN / point-and-click),
-                ir_checks.py (structured done-condition checks + node_view/place_view projectors),
                 lint.py (SDK lint runner + line→component attribution),
-                component_schemas.py (per-component structural validators + IR skeletons),
-                spec_baseline.py (per-genre baseline floor), fns.py (two-pass image gen —
+                component_schemas.py (re-exports the modules' validators + IR skeletons),
+                fns.py (two-pass image gen —
                 neutral sprite + img2img expression variants — + manifest/expression
                 placeholder backfills), renpy_builder.py, templating.py, renpy_templates/
   web/          Self-contained browser backend (second engine). Same assemble_ir + crossref
@@ -99,17 +99,17 @@ src/
 
 The connector speaks **only** the OpenAI-compatible Responses API (`/v1/responses`) — the chat/completions path was removed. It's the only LM Studio endpoint that honors `reasoning.effort` (the lever that caps a local reasoning model's thinking tokens). `OpenAICompatibleConnector` translates the chat-shaped messages/tools callers pass into Responses `input`/`tools` and normalizes the response (and the SSE stream) back to chat shape, so call sites are unchanged. JSON mode rides on `text.format`, not `response_format`.
 
-**Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; declare the done-conditions that prove it in the spec.
+**Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; the owning module's `get_errors` proves it (and `get_correction_prompt` gates the tool to the fix).
 
-**Engines**: the IR is the pivot; a backend is a target it projects to. `spec["engine"]` (default `"renpy"`, also `"web"`) selects it; `maestro.engines.compile_for` maps the tag to a `compile_*(working_dir, distribute=bool) -> Dict` entry returning a uniform pass/fail. Both the in-loop compile tool and the final packaging dispatch through it, so the loop is engine-agnostic. `assemble_ir` + `ir_crossref` (maestro core) are the shared, engine-neutral seam; genre dispatch and `ir_checks` are also engine-neutral (they walk the IR graph). Adding an engine = a new `compile_*` in its own package (project the assembled IR to that engine's format) + one entry in `engines.py` — never branch the core.
+**Engines**: the IR is the pivot; a backend is a target it projects to. `spec["engine"]` (default `"renpy"`, also `"web"`) selects it; `maestro.engines.compile_for` maps the tag to a `compile_*(working_dir, distribute=bool) -> Dict` entry returning a uniform pass/fail. Both the in-loop compile tool and the final packaging dispatch through it, so the loop is engine-agnostic. `assemble_ir` + `ir_crossref` (maestro core) are the shared, engine-neutral seam; the modules' structural checks (`maestro/modules/checks.py`) are also engine-neutral (they walk the IR graph). Adding an engine = a new `compile_*` in its own package (project the assembled IR to that engine's format) + one entry in `engines.py` — never branch the core.
 
 **The Game IR**: the agent writes JSON, never engine source — `docs/game_ir.schema.json` is the engine-agnostic contract (nodes/places/actions/conditions/effects/combat); `docs/game_ir_decisions.md` is the rationale. The components are decomposed on disk (premise + asset_manifest + `nodes` [+ `places`]); at compile, `maestro.ir_assemble.assemble_ir` lifts them into one IR dict, `maestro.ir_crossref` gates that every id reference resolves — both as a cheap per-step `crossref` done-condition on the spine (a pure data-walk that ATTRIBUTES each failure to the component that can fix it: a *reference* error routes to the module owning its IR slice via `Module.ir_slices`, e.g. a dangling card opponent → matches mode; a *declaration* error stays on the spine where `set_*_meta` lives) and again inside the engine compile as a backstop — then the selected engine projects it (Ren'Py: `ir_vn`/`ir_pnc` → `script.rpy`; web: `game.json` + static runtime). This removes whole error classes (quote escaping, speaker format, menu indentation, dangling jumps) by construction and makes validation a data walk, not regex over engine source. A dialogue line carries an optional `emotion` (neutral/happy/sad/angry/surprised/worried); `ir_assemble` derives a per-character `expressions` map (only the emotions actually spoken), the asset pipeline img2img's each variant off the neutral base, and `ir_vn` swaps the speaker's sprite per line so faces change as they talk.
 
-**Substrates + mechanic-modules** (`docs/ir_architecture.md`): a game = one **substrate** (execution model — `discrete_state` today; `real_time_sim` designed, not built) + a composed set of **mechanic-modules** the spec selects. A `Module` (`maestro/modules.py`) bundles what used to be hardcoded per-`genre`: the components it owns, their structural schemas + authoring skeletons, baseline done-conditions, build-order deps, custom checks, decider tools, the per-mode/per-target tool+prompt gating (`mode_tools`/`mode_prompt`/`prompts`/`target_jobs`/`target_tools`/`subloop` — what used to be `agent.py`'s `_MODE_TOOLS`/`_TARGET_*` maps), projector, and action verbs. `compose(module_ids)` unions the active modules into the one bundle every build lookup reads (baselines merge per component — union checks, raise `min`, union `each_has` fields); `agent.py`'s decider + the single `make_subloop(module)` read the gating from that bundle, so they never branch on a component string. Prompts deduplicate via `{{include:NAME}}` partials (`maestro/prompts/partials/`, resolved by `render_template`) so a shared rule (tool-call rule, conditions/effects vocab) has one source; the spec drafter is one creative-only `propose_spec.txt` (it writes ONLY the story — title + request paragraph + story_state_schema); the component contract (ids, deps, baseline done-conditions, descriptions) is constructed deterministically in code from the composed modules (`spec_tools._spec_components`), not authored by the LLM, so the prompt no longer carries the done-condition floor or component shapes. Two flavors: **content** modules own a component (`dialogue`→nodes, `navigation`→places, `card_play`→matches); **vocabulary** modules own none (`economy` = flags/variables/items + effect/condition vocab riding inside other modules' beats). Engine **projections** register separately (`renpy/projections.py`, `web/projections.py`) keyed `(engine, module_id)` — a module's schema is substrate-agnostic, its projection is per-engine; a `projected` module with no projection for the chosen engine makes the compile **fail fast** (`unprojectable`), never silently drop content.
+**Substrates + mechanic-modules** (`docs/ir_architecture.md`): a game = one **substrate** (execution model — `discrete_state` today; `real_time_sim` designed, not built) + a composed set of **mechanic-modules** the spec selects. A `Module` (`maestro/modules/module.py`) is **behavior, not a data bag**: the single ABC every module subclasses directly (there are NO intermediate base classes), and the only required method is `get_errors(context) -> [Error]`. `get_correction_prompt` + `render_context` have working defaults on the base, off optional attrs (`mode_prompt`/`mode_tools`/`skeleton`/`prompts`/`target_jobs`/`target_tools`/`projector`). The core invariant is **detector = fixer**: a module reports an error only if *it* can fix it — there is no component "ownership" and no second-class "vocabulary module". economy is a real module (detects undeclared flag/var references, fixes them with edit tools on the host node/place); goal_flag detects `goal_reachable` and fixes it with place tools; "endless" is simply the absence of a goal module. **The loop never interprets sub-loop data.** It asks the module `get_fix(error) -> Fix`; the module decides per-error whether the Fix is one step (default) or its own iterative `author_loop` (a content module overrides `get_fix` and returns the author loop for its count-driven target). The Fix runs through a bounded `Services` (per-fix step budget + checkpoint; a fix physically cannot churn past its cap), so the module owns the SHAPE of the fix while the loop+Services own the LIMITS. dialogue is ONE class with two configured INSTANCES (`Dialogue(id=, spine=)`), not two subclasses. `compose(module_ids)` resolves ids → live module instances (the `human` module is always included). Sizing is data: each `Module.params()` declares its knob FLOORS (int→max, list→union when composed); `spec_tools` resolves them into `spec.params` (the proposer may raise, never lower) and `get_errors` reads the value — so "this game needs ≥4 characters" is durable spec data while the check that enforces it is code in the owning module. The spec drafter is one creative-only `propose_spec.txt` (title + request paragraph + story_state_schema + optional sizing); there is no per-component done-condition list. Engine **projections** register separately (`renpy/projections.py`, `web/projections.py`) keyed `(engine, module_id)`; a `projected` module with no projection for the chosen engine makes the compile **fail fast** (`unprojectable`), never silently drop content.
 
-**Presets**: `genre` is now a preset name the classifier emits (`spec_tools._classify_genre`), expanded to `spec["substrate"]` + `spec["modules"]` + `spec["engine"]`. `vn` = cast+assets+outline+dialogue+economy; `point_and_click` = cast+assets+dialogue_npc+navigation+economy; `card_ante` = the pnc set + card_play (→ web engine, since only web renders cards). `run.run_build`, baseline, skeletons, and tool-scoping all key off the composed modules; the maestro core never branches on a genre string.
+**Presets**: `genre` is a preset name the classifier emits (`spec_tools._classify_genre`), expanded to `spec["substrate"]` + `spec["modules"]` + `spec["engine"]` (registered in `maestro/modules/__init__.py`). `vn` = cast+assets+outline+dialogue+economy; `point_and_click` = cast+assets+dialogue_npc+navigation+economy+goal_flag; `card_ante` = cast+assets+dialogue_npc+navigation+economy+card_play (→ web engine, since only web renders cards; no goal module = open-ended). `run.run_build`, params, skeletons, and tool-scoping all key off the composed modules; the maestro core never branches on a genre string.
 
-**Adding a mechanic-module**: define a `Module` in `maestro/discrete/<name>.py` (schema + skeleton + baseline + deps + tools; plus `mode_tools`/`mode_prompt`, and for a content module with a sub-loop the `prompts`/`target_jobs`/`target_tools`/`subloop` gating), register it + a preset in `maestro/discrete/__init__.py`, register a projection per engine that renders it, and (for a new shape) add its IR slice to `ir_assemble`/`ir_crossref` + a schema fragment in `docs/game_ir.schema.json` + an `ir_slices` entry mapping the slice's path token → the owning component (so a dangling reference into it routes to this module's mode, not the spine's compile gate). No `agent.py` edit is needed — the gating rides on the module. `card_play` is the worked example.
+**Adding a mechanic-module**: subclass `Module` in `maestro/modules/<name>.py` — implement `get_errors` (emit only errors this module can itself fix), set the authoring attrs (`component`/`mode_prompt`/`mode_tools`/`skeleton`/`schemas`). The default `get_fix` runs one correction step; for a count-driven content module, override `get_fix` to return `partial(author_loop, ...)` for its create target (with `target_jobs`/`target_tools`/`projector` set), else fall through to `super().get_fix`. Declare `params()` floors for any sizing knobs. Register it (`register_module`) and add it to a preset in `maestro/modules/__init__.py`, register a projection per engine that renders it (`renpy/projections.py` / `web/projections.py`), and (for a new shape) extend `ir_assemble`/`ir_crossref` + a schema fragment in `docs/game_ir.schema.json`. No loop edit is needed — the loop only calls `get_errors` + `get_fix`. `dialogue`/`navigation` are the worked examples of an overridden `get_fix`.
 
 **Settings**: `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
 **Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `use_json_mode`. Use `small` for local models.

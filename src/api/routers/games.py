@@ -27,13 +27,12 @@ class ResolveBody(BaseModel):
 
 
 class WaiveBody(BaseModel):
-    component_id: str
-    check: Dict
+    idkey: str
     note: str = ""
 
 
 class UnwaiveBody(BaseModel):
-    sig: str
+    idkey: str
 
 
 class ComponentBody(BaseModel):
@@ -116,7 +115,7 @@ async def get_game(run_id: str):
     """Full detail for one game: spec, built artifact, and the current to-do."""
     from maestro.spec import Spec
     from maestro.state import RunState
-    from maestro.hitl import effective_failures
+    from maestro.modules.human import effective_failures
     from maestro.run_control import get as get_control
 
     state = RunState.for_run(run_id)
@@ -132,7 +131,7 @@ async def get_game(run_id: str):
         "run_id": run_id,
         "spec": spec_data,
         "artifact": state.load_artifact(),
-        "todo": effective_failures(spec, state),
+        "todo": effective_failures(spec_data, state),
         "human_todos": state.read_human_todos(),
         "waivers": state.read_waivers(),
         "frozen": spec.frozen,
@@ -147,7 +146,7 @@ async def get_game(run_id: str):
 @router.post("/{run_id}/freeze", response_model=Dict)
 async def freeze_game(run_id: str):
     """Human approval action — freeze the spec so the build can run."""
-    from maestro.spec_tools import freeze_spec
+    from tools.spec_tools import freeze_spec
     from maestro.state import RunState
 
     if RunState.for_run(run_id).read_spec() is None:
@@ -240,7 +239,7 @@ def _require_state(run_id: str):
 async def add_todo_game(run_id: str, body: TodoBody):
     """Add a human todo against a component — the build won't complete while it's open.
     A live build parks in `awaiting_human` once its machine checks pass."""
-    from maestro.hitl import add_todo
+    from maestro.modules.human import add_todo
 
     return add_todo(_require_state(run_id), body.component_id, body.text)
 
@@ -248,7 +247,7 @@ async def add_todo_game(run_id: str, body: TodoBody):
 @router.patch("/{run_id}/todos/{todo_id}", response_model=Dict)
 async def resolve_todo_game(run_id: str, todo_id: str, body: ResolveBody):
     """Mark a human todo done (or reopen it) — only the human arbitrates this."""
-    from maestro.hitl import resolve_todo
+    from maestro.modules.human import resolve_todo
 
     if not resolve_todo(_require_state(run_id), todo_id, body.done):
         raise HTTPException(status_code=404, detail=f"no todo {todo_id!r}")
@@ -257,21 +256,21 @@ async def resolve_todo_game(run_id: str, todo_id: str, body: ResolveBody):
 
 @router.post("/{run_id}/waive", response_model=Dict)
 async def waive_game(run_id: str, body: WaiveBody):
-    """Accept a machine check the validator still reports red — it leaves the to-do and
-    no longer blocks completion."""
-    from maestro.hitl import waive
+    """Accept a machine check still reported red — it leaves the to-do and no longer blocks
+    completion. Keyed on the error's `idkey` (from the detail endpoint's todo list)."""
+    from maestro.modules.human import waive
 
-    return waive(_require_state(run_id), body.component_id, body.check, body.note)
+    return waive(_require_state(run_id), body.idkey, body.note)
 
 
 @router.post("/{run_id}/unwaive", response_model=Dict)
 async def unwaive_game(run_id: str, body: UnwaiveBody):
     """Reinstate a previously waived check."""
-    from maestro.hitl import unwaive
+    from maestro.modules.human import unwaive
 
-    if not unwaive(_require_state(run_id), body.sig):
-        raise HTTPException(status_code=404, detail=f"no waiver {body.sig!r}")
-    return {"run_id": run_id, "sig": body.sig}
+    if not unwaive(_require_state(run_id), body.idkey):
+        raise HTTPException(status_code=404, detail=f"no waiver {body.idkey!r}")
+    return {"run_id": run_id, "idkey": body.idkey}
 
 
 def _require_editable(run_id: str):
@@ -287,11 +286,12 @@ def _require_editable(run_id: str):
 
 
 def _human_tools(spec, state):
-    """build_tools wired with the IR schemas, so a human edit is still schema-validated."""
+    """build_tools wired with the composed modules, so a human edit is still schema-validated."""
     from maestro.tools import build_tools
-    from renpy.component_schemas import SCHEMAS
+    from maestro.modules import compose
 
-    return build_tools(spec, state, schemas=SCHEMAS)
+    spec_data = getattr(spec, "data", spec)
+    return build_tools(spec_data, state, compose(spec_data.get("modules", [])))
 
 
 def _spec_state(run_id: str):

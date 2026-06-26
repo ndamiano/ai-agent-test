@@ -8,23 +8,18 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.spec import Spec
 from maestro.state import RunState
-from maestro.executor import Executor
 from maestro.run_control import RunControl
 from maestro.tools import build_tools
-from maestro.agent import rewrite_node
+from maestro.rewrite import rewrite_node
+from maestro.agent_loop import AgentLoop
 from api.routers import games
 from maestro import run_control
 
 
 def _spec():
-    return Spec({"title": "T", "frozen": True, "components": [
-        {"id": "premise", "deps": [], "done_conditions": [
-            {"type": "exists", "path": "premise.central_question"}]},
-        {"id": "nodes", "deps": ["premise"], "done_conditions": [
-            {"type": "count", "path": "nodes.node_ids", "min": 1}]},
-    ]})
+    # unconstrained: the rewrite path forces write_node, so no VN location/min-lines floor here
+    return {"title": "T", "frozen": True, "modules": [], "params": {}}
 
 
 _NODE = {"lines": [{"speaker": "a", "text": "old line one"}, {"speaker": "b", "text": "old line two"}],
@@ -64,17 +59,18 @@ def test_milestone_requests_pause_when_armed(tmp_path):
     control = RunControl()
     control.set_auto_pause(True)
     events = []
-    ex = Executor(_spec(), state, {}, decide=lambda c: {}, control=control, on_event=events.append)
+    loop = AgentLoop(_spec(), state, [], {}, connector=object(), control=control,
+                     on_event=events.append)
 
-    ex._fire_milestone("premise")
+    loop._fire_milestone("premise")
     assert control.paused is True
     assert any(e["type"] == "auto_paused" and e["component_id"] == "premise" for e in events)
 
 
 def test_milestone_no_pause_when_disarmed(tmp_path):
     control = RunControl()
-    ex = Executor(_spec(), RunState(tmp_path), {}, decide=lambda c: {}, control=control)
-    ex._fire_milestone("premise")
+    loop = AgentLoop(_spec(), RunState(tmp_path), [], {}, connector=object(), control=control)
+    loop._fire_milestone("premise")
     assert control.paused is False
 
 

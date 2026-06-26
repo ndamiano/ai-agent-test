@@ -1,9 +1,10 @@
 """The per-game spec — the frozen contract.
 
-Generated fresh per game by the agent (no human-authored genre schema). A list of
-components, each with a checkable done-condition the agent commits to. Once the
-human approves, `frozen` is set and the build runs against it: "done" = artifact
-satisfies every component's done-conditions (see maestro.validate).
+Generated fresh per game from the request: the story (title + request paragraph + story_state_schema),
+the composed `modules`, and the resolved sizing `params` (each module's knob floors, with the
+proposer's raises on top). The done-conditions are CODE — each module's `get_errors` enforces them
+reading `params`; the spec carries no per-component check list. Once the human approves, `frozen` is
+set and the build runs: "done" = every module's effective errors clear (see maestro.agent_loop).
 
 Freezing is the human's out-of-band action — there is no freeze tool.
 """
@@ -32,10 +33,14 @@ class Spec:
 
     @property
     def modules(self) -> List[str]:
-        """The mechanic-modules this spec composes — explicit if set, else the genre preset's
-        default set. This is what the build, checks, and baseline are driven by."""
-        from maestro.modules import modules_for
-        return list(modules_for(self.data))
+        """The mechanic-modules this spec composes (empty until chosen). This is what the build and
+        checks are driven by; the genre→modules classification happens once at propose time."""
+        return list(self.data.get("modules", []))
+
+    @property
+    def params(self) -> Dict:
+        """The resolved sizing knobs (>= each module's floor). The modules' get_errors read these."""
+        return self.data.get("params", {})
 
     @property
     def substrate(self) -> str:
@@ -58,33 +63,5 @@ class Spec:
         return bool(self.data.get("frozen"))
 
     @property
-    def components(self) -> List[Dict]:
-        return self.data.get("components", [])
-
-    @property
     def story_state_schema(self) -> Dict:
         return self.data.get("story_state_schema", {})
-
-    def dep_order(self) -> List[str]:
-        """Component ids in dependency order (topological). Raises on a cycle."""
-        order: List[str] = []
-        seen = set()
-        visiting = set()
-        by_id = {c["id"]: c for c in self.components}
-
-        def visit(cid: str):
-            if cid in seen:
-                return
-            if cid in visiting:
-                raise ValueError(f"dependency cycle through {cid!r}")
-            visiting.add(cid)
-            for dep in by_id.get(cid, {}).get("deps", []):
-                if dep in by_id:
-                    visit(dep)
-            visiting.discard(cid)
-            seen.add(cid)
-            order.append(cid)
-
-        for c in self.components:
-            visit(c["id"])
-        return order

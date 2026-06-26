@@ -10,7 +10,7 @@ from maestro.story_state import init_story_state, apply_delta
 
 
 def _spec():
-    return Spec({"frozen": True, "components": [{"id": "node_scripts", "done_conditions": []}],
+    return Spec({"frozen": True, "modules": [], "params": {},
                  "story_state_schema": {"entity_states": {"betta": {"trust": "wary"}}}})
 
 

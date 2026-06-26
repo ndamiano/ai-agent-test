@@ -10,26 +10,25 @@ export interface Game {
     mtime: number
 }
 
-export interface SpecComponent {
-    id: string
-    description?: string
-    deps?: string[]
-    done_conditions?: Array<Record<string, any>>
-}
-
 export interface Spec {
     title: string
     request?: string
     frozen: boolean
-    components: SpecComponent[]
+    modules: string[]
+    params?: Record<string, any>
+    engine?: string
+    genre?: string
     story_state_schema?: Record<string, any>
 }
 
+// One effective failure: a typed Error serialized. `type` is 'human' | 'build' | 'fix'.
 export interface TodoItem {
-    component_id: string
-    check: Record<string, any>
+    component: string
+    code: string
+    type: string
     detail: string | null
-    human?: boolean
+    idkey: string
+    path?: string | null   // the human-todo id when type === 'human'
 }
 
 export interface HumanTodo {
@@ -40,9 +39,7 @@ export interface HumanTodo {
 }
 
 export interface Waiver {
-    sig: string
-    component_id: string
-    check: Record<string, any>
+    idkey: string
     note?: string
 }
 

@@ -8,16 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.tools import build_tools, SpecNotFrozen
-from maestro.executor import Executor
 
 
 def _spec(frozen=True):
-    return Spec({"title": "T", "frozen": frozen, "components": [
-        {"id": "premise", "deps": [], "done_conditions": [
-            {"type": "exists", "path": "premise.central_question"},
-            {"type": "count", "path": "premise.characters", "min": 2},
-        ]},
-    ]})
+    # Unconstrained: no modules => no structural schemas / locks, so these tests exercise the tool
+    # mechanics (frozen gate, persistence, edits) without per-component validation getting in the way.
+    return Spec({"title": "T", "frozen": frozen, "modules": [], "params": {}})
 
 
 def _node(text="hi", end=None):
@@ -27,8 +23,7 @@ def _node(text="hi", end=None):
 # ── add_interactable: append a hotspot without clobbering siblings ────────────
 
 def _places_spec():
-    return Spec({"title": "T", "frozen": True,
-                 "components": [{"id": "places", "done_conditions": []}]})
+    return Spec({"title": "T", "frozen": True, "modules": [], "params": {}})
 
 
 def _seed_place(state):
@@ -102,10 +97,12 @@ def test_write_and_read_component(tmp_path):
 
 
 def test_validate_tool_reports_failures(tmp_path):
-    tools = build_tools(_spec(), RunState(tmp_path))
-    assert tools["validate"]()["ok"] is False
+    from maestro.modules import compose
+    spec = {"frozen": True, "modules": ["cast"], "params": {}}
+    tools = build_tools(spec, RunState(tmp_path), compose(("cast",)))
+    assert tools["validate"]()["ok"] is False        # empty premise -> cast reports errors
     tools["write_component"]("premise", {"central_question": "Q?",
-                                         "characters": [{"id": "a"}, {"id": "b"}]})
+                                         "characters": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]})
     assert tools["validate"]()["ok"] is True
 
 
@@ -143,23 +140,6 @@ def test_request_review_returns_pending(tmp_path):
     tools = build_tools(_spec(), RunState(tmp_path))
     res = tools["request_review"]("Romance or tragedy?", ["romance", "tragedy"])
     assert res["status"] == "review_requested" and res["options"] == ["romance", "tragedy"]
-
-
-def test_executor_drives_real_tools_to_completion(tmp_path):
-    state = RunState(tmp_path)
-    spec = _spec()
-    tools = build_tools(spec, state)
-
-    def decide(ctx):
-        if any(f["component_id"] == "premise" for f in ctx["todo"]):
-            return {"tool": "write_component", "args": {
-                "component_id": "premise",
-                "content": {"central_question": "Will it hold?", "characters": [{"id": "a"}, {"id": "b"}]},
-            }}
-        return {}
-
-    result = Executor(spec, state, tools, decide, max_steps=5).run()
-    assert result.ok is True and result.failures == []
 
 
 # ── structured node tools ────────────────────────────────────────────────────
@@ -243,9 +223,8 @@ def test_edit_node_errors(tmp_path):
 def test_write_node_enforces_min_lines_floor(tmp_path):
     # When the spec demands each_node_min_lines, a thin node is rejected at write time
     # (born-compliant) so the loop never enters a separate repair phase for it.
-    spec = Spec({"title": "T", "frozen": True, "components": [
-        {"id": "nodes", "deps": [], "done_conditions": [
-            {"type": "each_node_min_lines", "min": 3}]}]})
+    spec = Spec({"title": "T", "frozen": True, "modules": [],
+                 "params": {"each_node_min_lines": 3}})
     tools = build_tools(spec, RunState(tmp_path))
     thin = {"lines": [{"speaker": "a", "text": "hi"}], "end": {"type": "return"}}
     res = tools["write_node"]("s1", thin)
@@ -356,28 +335,34 @@ def test_set_places_meta_and_edit_place(tmp_path):
 
 # ── locking ──────────────────────────────────────────────────────────────────
 
-def _spec_with_dep():
-    return Spec({"title": "T", "frozen": True, "components": [
-        {"id": "premise", "deps": [], "done_conditions": [
-            {"type": "count", "path": "premise.characters", "min": 2}]},
-        {"id": "nodes", "deps": ["premise"], "done_conditions": [
-            {"type": "count", "path": "nodes.node_ids", "min": 1},
-            {"type": "compiles"}]},
-    ]})
+def _dep_spec():
+    # cast owns premise (locks once complete); the dialogue spine owns nodes as the compile
+    # terminal (emits_compile → never locks, stays writable to the end).
+    return {"title": "T", "frozen": True, "modules": ["cast", "dialogue"], "params": {}}
+
+
+def _dep_modules():
+    from maestro.modules import compose
+    return compose(("cast", "dialogue"))
+
+
+_FULL_PREMISE = {"central_question": "Q?",
+                 "characters": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]}
 
 
 def test_passing_component_locks_against_rewrite(tmp_path):
     state = RunState(tmp_path)
-    tools = build_tools(_spec_with_dep(), state)
-    assert tools["write_component"]("premise", {"characters": [{"id": "a"}, {"id": "b"}]})["ok"]
-    res = tools["write_component"]("premise", {"characters": [{"id": "a"}]})
+    tools = build_tools(_dep_spec(), state, _dep_modules())
+    assert tools["write_component"]("premise", _FULL_PREMISE)["ok"]   # premise now satisfies cast
+    res = tools["write_component"]("premise", {"central_question": "Q?", "characters": [{"id": "a", "name": "A"}]})
     assert res["ok"] is False and "locked" in res["error"]
     assert len(state.read_component("premise")["characters"]) == 2
 
 
 def test_leaf_component_never_locks(tmp_path):
     state = RunState(tmp_path)
-    tools = build_tools(_spec_with_dep(), state)
-    # nodes carries a `compiles` check → terminal → never locks, stays writable.
-    assert tools["write_node"]("s1", _node())["ok"]
-    assert tools["write_node"]("s2", _node())["ok"]
+    tools = build_tools(_dep_spec(), state, _dep_modules())
+    # nodes is the compile terminal (emits_compile) → never locks, stays writable.
+    n = {"location": "bg", "lines": [{"speaker": "a", "text": "x"}], "end": {"type": "return"}}
+    assert tools["write_node"]("s1", n)["ok"]
+    assert tools["write_node"]("s2", n)["ok"]

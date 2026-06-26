@@ -45,12 +45,12 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if missing:
         return {"ok": False, "reason": f"missing components: {missing}", **_FAIL}
 
-    from maestro.modules import modules_for, unprojectable
+    from maestro.modules import unprojectable
     from renpy.projections import register as register_renpy_projections
     register_renpy_projections()
 
     spec_data = inputs.get("spec", {}) or {}
-    module_ids = modules_for(spec_data)
+    module_ids = spec_data.get("modules", [])
     missing = unprojectable("renpy", module_ids)
     if missing:
         return {"ok": False, "reason":

@@ -6,7 +6,7 @@ can draft and amend specs in conversation. The build itself runs via the executo
 from typing import Dict
 
 from tools.tool_manager import tool_manager
-from maestro.spec_tools import propose_spec, amend_spec
+from tools.spec_tools import propose_spec, amend_spec
 from maestro.run import create_run
 
 

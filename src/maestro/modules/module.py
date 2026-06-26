@@ -1,0 +1,234 @@
+"""Module — the composable unit a game is built from.
+
+Modules depict a set of functionality that one of the projectors can build. They ensure that a
+set of context is valid, as well as help fix invalid context. They do this by reporting errors
+as well as how to fix those errors.
+
+  get_errors           — Returns the list of errors. Empty list means no errors.
+  get_correction_prompt— Returns a prompt and tool list to attempt to fix an error.
+  affected_components  — Returns a list of components this module can affect.
+"""
+
+from __future__ import annotations
+
+import functools
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
+
+# TODO:: Should this be in here or should we move this to an appropriate utility file?
+_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+_PROMPT_CACHE: Dict[str, str] = {}
+
+def load_prompt(name: str) -> str:
+    """A cached prompt-file load."""
+    if name not in _PROMPT_CACHE:
+        from renpy.templating import render_template
+        _PROMPT_CACHE[name] = render_template(_PROMPTS_DIR / name, {})
+    return _PROMPT_CACHE[name]
+
+
+def skeleton_guide(component: str, skeleton: str) -> str:
+    return f"`{component}` JSON SHAPE — fill this skeleton (invent the content):\n{skeleton}"
+
+
+class ErrorType(Enum):
+    HUMAN = "human"
+    BUILD = "build"
+    FIX = "fix"
+
+
+@dataclass(frozen=True)
+class Error:
+    type: ErrorType
+    code: str                 # check type, e.g. "min_count" / "dangling_ref" — the identity axis
+    component: str            # the on-disk component the failure lands in
+    message: str              # human-facing description; reword-safe, outside identity()
+    path: Optional[str] = None      # locator within the component (id / json path)
+    ref: Optional[str] = None       # for reference errors: the unresolved id
+
+    def identity(self) -> Tuple:
+        """Stable key the loop compares across steps for stall detection, across rewordings of
+        `message`."""
+        return (self.type, self.code, self.component, self.path, self.ref)
+
+
+def idkey(error: "Error") -> str:
+    """A JSON-serializable form of `Error.identity()` — the durable key a human waiver is stored
+    and matched under (survives process restarts and message rewordings)."""
+    import json
+    return json.dumps([error.type.value, error.code, error.component, error.path, error.ref],
+                      ensure_ascii=False)
+
+
+# ── The fix instruction a module hands the loop for one error ─────────────────
+@dataclass(frozen=True)
+class CorrectionPrompt:
+    system: str                       # load-bearing system prompt (from a .txt, never inlined)
+    user: str                         # the per-step user message (context + the target error)
+    allowed_tools: Tuple[str, ...]    # the tools this fix may call
+
+
+class Module(ABC):
+    """One mechanic-module. Sub classes are only required to implement `get_errors`; everything else
+     has a working default.
+    """
+
+    id: str
+    substrates: Tuple[str, ...] = ("discrete",)
+    priority: int = 100   # order within an error tier; lower acts first (cast < dialogue)
+
+    # ── authoring surface (defaults are inert) ───────────────────────────────
+    component: str = ""                  # the on-disk component this module authors (if any)
+    mode_prompt: str = ""                # the system prompt for a single correction step
+    mode_tools: frozenset = frozenset()  # the tools a correction step may call (fallback)
+    skeleton: str = ""                   # the component's authoring shape, appended to the prompt
+    schemas: Dict[str, Callable] = {}    # component_id -> structural write-time validator
+    skeletons: Dict[str, str] = {}       # component_id -> authoring shape (for the guide)
+    tool_names: Tuple[str, ...] = ()     # gated tool-schema names this module contributes
+    projected: bool = False              # needs an engine-specific renderer (see unprojectable)
+
+    # ── per-target gating (used by the default correction prompt + an author loop) ─────
+    prompts: Dict[str, str] = {}             # job ("author"/"fix") -> system prompt file
+    target_jobs: Dict[str, str] = {}         # check code -> job; picks prompt + escalation
+    target_tools: Dict[str, frozenset] = {}  # check code -> tools allowed for that target
+    projector: Optional[Callable] = None     # (artifact) -> the compact graph view for this component
+
+    @abstractmethod
+    def get_errors(self, context) -> List[Error]:
+        """The unmet issues this module is responsible for, as typed Errors. The only required
+        method — a module reports an error only if it can fix it (detector = fixer)."""
+        raise NotImplementedError
+
+    def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
+        """Default fix step, serving both the single-shot and the sub-loop's per-target case: the
+        prompt for this target's job + the tools gated to it, rendered with the live graph view.
+        Override for a bespoke fix (economy / goal / human)."""
+        from maestro.modules.context import render_dict
+        view = self.view(context.artifact)
+        rd = render_dict(context, active=error.component or None, target=error, active_view=view,
+                         upstream_views=getattr(context, "upstream_views", {}),
+                         available_tools=self.tools_for(error.code))
+        system = load_prompt(self.prompts.get(self.job_for(error.code), self.mode_prompt))
+        if self.skeleton:
+            system += "\n\n" + skeleton_guide(self.component, self.skeleton)
+        return CorrectionPrompt(system=system, user=self.render_context(rd),
+                                allowed_tools=tuple(sorted(self.tools_for(error.code))))
+
+    # ── overridable hooks (sensible defaults) ────────────────────────────────
+    def render_context(self, ctx: Dict) -> str:
+        """The per-step user message. Default composes the common blocks; a content module overrides
+        to add its graph view."""
+        from maestro import context_render as cr
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx) + cr.scratchpad_block(ctx)
+        lines += cr.upstream_block(ctx.get("upstream") or {})
+        lines += cr.story_state_block(ctx) + cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
+
+    def render_progress(self, view: Dict) -> str:
+        """The note a sub-loop appends after each step (live id list + focus). "" = nothing."""
+        return ""
+
+    def context_view(self, content: Dict) -> Dict:
+        """Trim this component for injection as a settled upstream. Default: inject whole."""
+        return content
+
+    def params(self) -> Dict:
+        """Tunable knobs -> FLOOR (int knobs take the max when composed, list knobs the union). The
+        spec stores the resolved value; get_errors reads it from `context.param(...)`."""
+        return {}
+
+    def affected_components(self) -> Tuple[str, ...]:
+        """The components this module touches when present. A soft surface for context injection —
+        not a gate. Defaults to the owned `component`."""
+        return (self.component,) if self.component else ()
+
+    def job_for(self, code: str) -> str:
+        return self.target_jobs.get(code, "author")
+
+    def tools_for(self, code: str) -> frozenset:
+        return self.target_tools.get(code, self.mode_tools)
+
+    def view(self, artifact: Dict) -> Optional[Dict]:
+        return self.projector(artifact) if self.projector else None
+
+    # ── the fix ──────────────────────────────────────────────────────────────
+    def get_fix(self, context, error: Error) -> Callable:
+        """Return a Fix — a callable `fix(services)` that resolves `error` (the loop builds the
+        Services and invokes it). Default: a single correction step. A content module overrides this
+        to return its iterative author loop for a count-driven target (see dialogue/navigation)."""
+        return functools.partial(self._single_fix, context, error)
+
+    def _single_fix(self, context, error: Error, services) -> None:
+        """One correction step: build the prompt for this error, let services run it (one LLM call +
+        dispatch). Bounded by the services budget like any fix."""
+        services.run(self.get_correction_prompt(context, error))
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+MODULE_REGISTRY: Dict[str, Module] = {}
+
+
+def register_module(m: Module) -> None:
+    MODULE_REGISTRY[m.id] = m
+
+
+def compose(module_ids: Tuple[str, ...]) -> List[Module]:
+    """Resolve ids -> live module instances, validating each is known. The human module is always
+    included (no composition can opt out of the human in the loop). Order is informational — the
+    loop sorts by error type + priority."""
+    ids = ("human",) + tuple(mid for mid in module_ids if mid != "human")
+    out: List[Module] = []
+    for mid in ids:
+        m = MODULE_REGISTRY.get(mid)
+        if m is None:
+            raise KeyError(f"unknown module {mid!r} (registered: {sorted(MODULE_REGISTRY)})")
+        out.append(m)
+    return out
+
+
+# ── Presets ───────────────────────────────────────────────────────────────────
+# A named preset = (substrate, module ids, default engine). The classifier emits one; `genre`
+# survives as the preset name for the UI, but the build keys off the composed modules.
+@dataclass(frozen=True)
+class Preset:
+    substrate: str
+    modules: Tuple[str, ...]
+    engine: str = "renpy"
+
+
+PRESETS: Dict[str, Preset] = {}
+
+
+def register_preset(name: str, preset: Preset) -> None:
+    PRESETS[name] = preset
+
+
+# ── Engine projection registry, keyed (engine, module_id) ─────────────────────
+# A module's checks are substrate-agnostic; its render is per-engine. Adding an engine registers
+# projections here. A `projected` module with no projection for the chosen engine fails the compile
+# fast (see `unprojectable`), never silently dropping content.
+_PROJECTIONS: Dict[Tuple[str, str], Callable] = {}
+
+
+def register_projection(engine: str, module_id: str, fn: Callable) -> None:
+    _PROJECTIONS[(engine, module_id)] = fn
+
+
+def projection_for(engine: str, module_id: str) -> Optional[Callable]:
+    return _PROJECTIONS.get((engine, module_id))
+
+
+def unprojectable(engine: str, module_ids) -> List[str]:
+    """The composed modules that need an engine-specific renderer but have none for this engine. A
+    non-empty result means the engine cannot build this game — fail fast, don't drop content."""
+    missing = []
+    for mid in module_ids:
+        m = MODULE_REGISTRY.get(mid)
+        if m is not None and m.projected and projection_for(engine, mid) is None:
+            missing.append(mid)
+    return missing

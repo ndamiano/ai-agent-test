@@ -34,9 +34,8 @@ async def startup_event():
         # Import tool modules — decorators register tools at import time
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
-        import maestro.chat_tools  # noqa: F401
-        from renpy.ir_checks import register_all as register_ir_checks
-        register_ir_checks()  # story-structure check types for specs
+        import tools.chat_tools  # noqa: F401
+        import maestro.modules  # noqa: F401 — registers mechanic-modules + presets
         logging.info("Tools registered successfully")
 
     except Exception as e:

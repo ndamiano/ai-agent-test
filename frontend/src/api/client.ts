@@ -73,10 +73,10 @@ export const api = {
         request<{ id: string }>(`/games/${runId}/todos`, { method: 'POST', body: JSON.stringify({ component_id, text }) }),
     resolveTodo: (runId: string, todoId: string, done = true) =>
         request<{ done: boolean }>(`/games/${runId}/todos/${todoId}`, { method: 'PATCH', body: JSON.stringify({ done }) }),
-    waiveCheck: (runId: string, component_id: string, check: Record<string, any>) =>
-        request<{ sig: string }>(`/games/${runId}/waive`, { method: 'POST', body: JSON.stringify({ component_id, check }) }),
-    unwaiveCheck: (runId: string, sig: string) =>
-        request<{ sig: string }>(`/games/${runId}/unwaive`, { method: 'POST', body: JSON.stringify({ sig }) }),
+    waiveCheck: (runId: string, idkey: string) =>
+        request<{ idkey: string }>(`/games/${runId}/waive`, { method: 'POST', body: JSON.stringify({ idkey }) }),
+    unwaiveCheck: (runId: string, idkey: string) =>
+        request<{ idkey: string }>(`/games/${runId}/unwaive`, { method: 'POST', body: JSON.stringify({ idkey }) }),
 
     // System
     getStatus: () =>

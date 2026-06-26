@@ -17,9 +17,9 @@ def _patch(monkeypatch, base):
                         classmethod(lambda cls, rid: RunState(base / rid)))
 
 
-def _frozen_run(base, run_id="g", components=None):
+def _frozen_run(base, run_id="g", modules=None, params=None):
     state = RunState(base / run_id)
-    state.write_spec({"title": "G", "frozen": True, "components": components or []})
+    state.write_spec({"title": "G", "frozen": True, "modules": modules or [], "params": params or {}})
     return state
 
 
@@ -66,31 +66,31 @@ def test_todo_endpoints(tmp_path, monkeypatch):
 
 def test_waive_endpoints(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
-    state = _frozen_run(tmp_path)
-    check = {"type": "exists", "path": "graph.nodes"}
+    state = _frozen_run(tmp_path, modules=["cast"])    # empty premise -> cast emits real errors
+    from maestro.modules.human import effective_failures
 
-    w = asyncio.run(games.waive_game("g", games.WaiveBody(component_id="graph", check=check)))
-    assert state.read_waivers()[0]["sig"] == w["sig"]
+    idkey = effective_failures(state.read_spec(), state)[0]["idkey"]
+    asyncio.run(games.waive_game("g", games.WaiveBody(idkey=idkey)))
+    assert state.read_waivers()[0]["idkey"] == idkey
 
-    asyncio.run(games.unwaive_game("g", games.UnwaiveBody(sig=w["sig"])))
+    asyncio.run(games.unwaive_game("g", games.UnwaiveBody(idkey=idkey)))
     assert state.read_waivers() == []
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(games.unwaive_game("g", games.UnwaiveBody(sig="nope")))
+        asyncio.run(games.unwaive_game("g", games.UnwaiveBody(idkey="nope")))
     assert exc.value.status_code == 404
 
 
 def test_detail_surfaces_human_todos_and_status(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
-    _frozen_run(tmp_path, components=[
-        {"id": "premise", "done_conditions": [{"type": "exists", "path": "premise.q"}]}])
+    _frozen_run(tmp_path, modules=["cast"])   # empty premise -> cast BUILD errors
     asyncio.run(games.add_todo_game("g", games.TodoBody(component_id="premise", text="x")))
 
     detail = asyncio.run(games.get_game("g"))
     assert detail["status"] == "idle"
     assert len(detail["human_todos"]) == 1
-    # the open premise check + the human todo both show in the effective to-do
-    assert {t["check"]["type"] for t in detail["todo"]} == {"exists", "human_todo"}
+    # the open premise (build) checks + the human todo both show in the effective to-do
+    assert {t["type"] for t in detail["todo"]} == {"build", "human"}
 
 
 # ── edit + regenerate + compile gating ──────────────────────────────────────────

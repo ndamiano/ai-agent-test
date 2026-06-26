@@ -51,12 +51,12 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if missing:
         return {"ok": False, "reason": f"missing components: {missing}", **_FAIL}
 
-    from maestro.modules import modules_for, unprojectable
+    from maestro.modules import unprojectable
     from web.projections import register as register_web_projections
     register_web_projections()
 
     spec_data = inputs.get("spec", {}) or {}
-    module_ids = modules_for(spec_data)
+    module_ids = spec_data.get("modules", [])
     miss = unprojectable("web", module_ids)
     if miss:
         return {"ok": False, "reason":

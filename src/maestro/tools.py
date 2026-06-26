@@ -15,7 +15,6 @@ import json
 from typing import Callable, Dict, List, Optional
 
 from maestro.ir_assemble import EMOTIONS, is_narration_speaker
-from maestro.validate import validate
 
 
 class SpecNotFrozen(RuntimeError):
@@ -347,69 +346,46 @@ TOOL_SCHEMAS: List[Dict] = [
         }, "required": ["question"]}}},
 ]
 
-def tool_schemas_for(spec) -> List[Dict]:
-    """Tool schemas for the decider, scoped to the spec's active modules. A tool a module *owns*
-    (e.g. navigation's place tools) is included only when that module is in the composition; every
-    ungated tool is always present. Keeps each game's tool set focused on what it can build.
+def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
+    """Bind the artifact tools to one run's state. `spec` is the spec dict (or a Spec); `modules` is
+    the composed module list — derived from `spec["modules"]` when omitted. Structural write-time
+    validators + the lock discipline are read from the modules."""
+    from maestro.modules.context import build_context
+    from maestro.modules import compose
 
-    `spec` may be a Spec, a spec dict, or a bare genre/preset string."""
-    from maestro.modules import compose, modules_for, MODULE_REGISTRY
+    spec = getattr(spec, "data", spec)
+    if modules is None:
+        modules = compose(spec.get("modules", []))
+    schemas = {cid: v for m in modules for cid, v in m.schemas.items()}
+    params = spec.get("params") or {}
 
-    spec_data = getattr(spec, "data", spec)
-    if isinstance(spec_data, str):
-        spec_data = {"genre": spec_data}
+    # Born-compliant nodes: write_node enforces each_node_min_lines at creation, so a thin node is
+    # rejected up front instead of passing as a stub and dragging the model through a repair phase.
+    _node_min_lines = params.get("each_node_min_lines", 0)
+    # VN (a dialogue spine, the compile terminal over `nodes`) demands a background per scene; reject
+    # an untagged node at creation rather than adding locations one edit at a time in a fix phase.
+    _node_needs_location = any(getattr(m, "emits_compile", False)
+                               and getattr(m, "component", None) == "nodes" for m in modules)
 
-    gated = {name for m in MODULE_REGISTRY.values() for name in m.tool_names}
-    active = set(compose(modules_for(spec_data)).tool_names)
-    return [s for s in TOOL_SCHEMAS
-            if s["function"]["name"] not in gated or s["function"]["name"] in active]
-
-
-def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> Dict[str, Callable]:
-    # schemas: component_id -> validator(content) -> error str | None. Injected by the
-    # caller (e.g. renpy) so maestro stays genre-agnostic. None = no structural checks.
-    schemas = schemas or {}
-
-    # Born-compliant nodes: write_node enforces the spec's each_node_min_lines floor, so a thin
-    # node is rejected at creation instead of passing `count` as a stub and then dragging the
-    # small model through a whack-a-mole each_node_min_lines repair phase (its worst failure mode).
-    _node_min_lines = next(
-        (dc.get("min", 0)
-         for c in spec.components if c.get("id") == "nodes"
-         for dc in c.get("done_conditions", []) if dc.get("type") == "each_node_min_lines"), 0)
-
-    # Same born-compliant logic for `location`: if the spec gates each_node_has_location (VN), make
-    # write_node reject a node with no background up front. Otherwise the model writes 20 untagged
-    # nodes that pass `count`, and the loop then spends ~20 steps adding a location one edit at a
-    # time in a separate fix phase (measured). Cheaper to demand it at creation.
-    _node_needs_location = any(
-        dc.get("type") == "each_node_has_location"
-        for c in spec.components if c.get("id") == "nodes"
-        for dc in c.get("done_conditions", []))
-
-    # A component LOCKS once its own done-conditions all pass: full rewrites would
-    # otherwise drop/rename ids that other components already reference, regressing
-    # previously-passing checks. EXCEPTION: a component whose "done" includes a
-    # `compiles` check is the terminal/integration piece (e.g. node_scripts) — its
-    # correctness depends on the whole artifact, so it must stay writable until the
-    # build ends, and we never run its expensive compile just to test a lock.
-    # Keying on the compiles check (not agent-declared deps) is robust to specs that
-    # leave deps empty.
-    def _has_compiles(c: Dict) -> bool:
-        return any(dc.get("type") == "compiles" for dc in c.get("done_conditions", []))
-    # Lockable = has a real contract (done_conditions) and is not the compiles-gated
-    # terminal component. A component with no contract never locks (it "passes" vacuously).
-    _lockable = {c["id"] for c in spec.components
-                 if c.get("done_conditions") and not _has_compiles(c)}
+    # A component LOCKS once its module reports no errors for it: a full rewrite would otherwise drop
+    # ids other components already reference. EXCEPTION: the compile terminal (emits_compile) stays
+    # writable until the build ends (its correctness depends on the whole artifact, and we never run
+    # its expensive compile just to test a lock).
+    _owner = {cid: m for m in modules for cid in m.affected_components()}
+    _terminal = {getattr(m, "component", None) for m in modules if getattr(m, "emits_compile", False)}
 
     def _require_frozen():
-        if not spec.frozen:
+        if not spec.get("frozen"):
             raise SpecNotFrozen("spec must be frozen before building the artifact")
 
     def _locked(component_id: str) -> bool:
-        return (component_id in _lockable
-                and state.read_component(component_id) is not None
-                and not validate(spec, state, component_id))
+        mod = _owner.get(component_id)
+        if mod is None or component_id in _terminal:
+            return False
+        if state.read_component(component_id) is None:
+            return False
+        ctx = build_context(spec, state)
+        return not [e for e in mod.get_errors(ctx) if e.component == component_id]
 
     def _locked_error(component_id: str) -> Dict:
         return {"ok": False, "error":
@@ -494,7 +470,7 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
         state.write_component("nodes", ns)
 
         if delta:
-            ss = state.read_story_state() or init_story_state(spec.story_state_schema)
+            ss = state.read_story_state() or init_story_state(spec.get("story_state_schema", {}))
             apply_delta(ss, delta)
             state.write_story_state(ss)
 
@@ -735,11 +711,17 @@ def build_tools(spec, state, schemas: Optional[Dict[str, Callable]] = None) -> D
 
     def read_story_state() -> Dict:
         from maestro.story_state import init_story_state
-        return {"ok": True, "story_state": state.read_story_state() or init_story_state(spec.story_state_schema)}
+        return {"ok": True,
+                "story_state": state.read_story_state() or init_story_state(spec.get("story_state_schema", {}))}
 
     def validate_tool(component_id: Optional[str] = None) -> Dict:
-        failures = validate(spec, state, component_id)
-        return {"ok": not failures, "failures": failures}
+        from maestro.agent_loop import effective_pairs
+        ctx = build_context(spec, state)
+        errs = [e for _, e in effective_pairs(modules, ctx)
+                if component_id is None or e.component == component_id]
+        return {"ok": not errs, "failures": [
+            {"component": e.component, "code": e.code, "type": e.type.value, "detail": e.message}
+            for e in errs]}
 
     # No compile tool: the executor already runs the `compiles` done-condition (a real build)
     # after every step, so a manual trigger only wastes a step — and lets the agent compile early,

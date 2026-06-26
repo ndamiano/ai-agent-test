@@ -17,9 +17,8 @@ from maestro.spec import Spec
 
 logger = logging.getLogger(__name__)
 from maestro.state import RunState
-from maestro.tools import build_tools, tool_schemas_for
-from maestro.agent import make_llm_decider, make_subloop
-from maestro.executor import Executor, ExecutorResult
+from maestro.tools import build_tools
+from maestro.agent_loop import AgentLoop, LoopResult
 
 
 def create_run() -> str:
@@ -28,73 +27,43 @@ def create_run() -> str:
     return run_id
 
 
-def run_build(run_id: str, max_steps: int = 300, decide=None) -> ExecutorResult:
-    # A spec that demands a real VN (many nodes + branching) needs more steps than a
-    # trivial one; the loop is cheap now (compile checks lint-only, steps run <15s), so
-    # budget for a 50-node game with wiring + compile-fix slack rather than starving it.
-    from maestro.spec_tools import _emit
-    from maestro.modules import compose, modules_for
-    from renpy.ir_checks import register_all as register_ir_checks, node_view, place_view
-    from renpy.component_schemas import SCHEMAS as ir_schemas, skeleton_guide
-
-    register_ir_checks()  # make reachable_from_start / places_reachable / ... available
+def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
+    # A spec that demands a real VN (many nodes + branching) needs more steps than a trivial one;
+    # the loop is cheap (compile checks lint-only, steps run <15s), so budget for a 50-node game.
+    from tools.spec_tools import _emit
+    from maestro.modules import compose
+    from maestro.run_control import get_or_create, remove
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
     if spec_data is None:
         raise ValueError(f"no spec for run {run_id!r} — propose one first")
-    spec = Spec(spec_data)
-    composed = compose(modules_for(spec.data))
-    # Per-mode skeletons: each authoring step gets ONLY its own component's shape, not all of them.
-    mode_guides = {cid: skeleton_guide(component_ids=[cid]) for cid in composed.components}
-
-    tools = build_tools(spec, state, schemas=ir_schemas)
-    decider = decide or make_llm_decider(mode_guides=mode_guides,
-                                         tool_schemas=tool_schemas_for(spec),
-                                         mode_tools=composed.mode_tools,
-                                         mode_prompts=composed.mode_prompts,
-                                         mode_renderers=composed.render_contexts)
-    # Each owned component with a sub-loop iterates until its target checks pass — a stateful
-    # sub-loop, not one-shot steps. A scripted `decide` (tests) keeps the simple stateless path.
-    # Projectors are the executor's engine-neutral graph views, keyed by the component in play.
-    _VIEWS = {"nodes": node_view, "places": place_view}
-    projectors = {cid: _VIEWS[cid] for cid in composed.components if cid in _VIEWS}
-    sub_runners = {}
-    if not decide:
-        for cid, module in composed.subloop_modules.items():
-            sub_runners[cid] = make_subloop(
-                module, component_guide=skeleton_guide(component_ids=list(module.components)))
-    from maestro.run_control import get_or_create, remove
+    modules = compose(spec_data.get("modules", []))   # human auto-included
+    tools = build_tools(spec_data, state, modules)
     control = get_or_create(run_id)
-    executor = Executor(
-        spec, state, tools, decider, max_steps=max_steps,
-        on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
+    loop = AgentLoop(
+        spec_data, state, modules, tools, max_steps=max_steps,
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
-        projectors=projectors,
-        sub_runners=sub_runners,
-        # Trim bulky upstream components to what a downstream author needs (drops asset_manifest's
-        # image-gen prose from every node step — the node author needs background ids, not prompts).
-        upstream_views=composed.context_views,
+        on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         control=control,
     )
 
     t0 = time.perf_counter()
     try:
-        result = executor.run()
+        result = loop.run()
     finally:
         remove(run_id)
 
     if result.ok:
-        # Generate real art (ComfyUI when up, placeholder fallback) then package once.
-        # The loop's compile checks are lint-only and the agent may never call
-        # generate_asset, so finalize assets here for delivery.
+        # Generate real art (ComfyUI when up, placeholder fallback) then package once. The loop's
+        # compile checks are lint-only and the agent may never call generate_asset, so finalize here.
         from renpy.fns import generate_images
         from maestro.engines import compile_for
         try:
             generate_images(state.load_artifact(), state.run_dir)
         except Exception:
             pass  # placeholders already cover the build; never fail delivery on art
-        compile_for(spec.engine)(state.run_dir, distribute=True)
+        compile_for(spec_data.get("engine", "renpy"))(state.run_dir, distribute=True)
 
     result.elapsed = time.perf_counter() - t0
     logger.info("build %s: ok=%s steps=%d elapsed=%.1fs",
@@ -106,24 +75,21 @@ def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
     """Regenerate one node from a human note, on its own (outside the build loop). Emits
     node_rewrite_started/done so the panel can react, and re-compiles so the output reflects
     the change. Meant to run on a background thread, like run_build."""
-    from maestro.spec_tools import _emit
-    from maestro.spec import Spec
-    from maestro.agent import rewrite_node
-    from renpy.ir_checks import register_all as register_ir_checks
-    from renpy.component_schemas import SCHEMAS as ir_schemas, skeleton_guide
+    from tools.spec_tools import _emit
+    from maestro.modules import compose
+    from maestro.rewrite import rewrite_node
     from maestro.engines import compile_for
 
-    register_ir_checks()
     state = RunState.for_run(run_id)
-    spec = Spec(state.read_spec())
-    tools = build_tools(spec, state, schemas=ir_schemas)
+    spec_data = state.read_spec()
+    modules = compose(spec_data.get("modules", []))
+    tools = build_tools(spec_data, state, modules)
     _emit("node_rewrite_started", run_id, node_id=node_id, note=note)
-    result = rewrite_node(spec, state, node_id, note, tools,
-                          component_guide=skeleton_guide(component_ids=["nodes"]),
+    result = rewrite_node(spec_data, state, node_id, note, tools,
                           report=lambda m: _emit("node_rewrite_step", run_id, node_id=node_id, summary=m))
     if result.get("ok"):
         try:
-            compile_for(spec.engine)(state.run_dir, distribute=False)
+            compile_for(spec_data.get("engine", "renpy"))(state.run_dir, distribute=False)
         except Exception:
             logger.exception("recompile after rewrite failed for %s", run_id)
     _emit("node_rewrite_done", run_id, node_id=node_id, ok=bool(result.get("ok")),
@@ -132,18 +98,12 @@ def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
 
 
 def _cli(request: str) -> int:
-    from maestro.spec_tools import propose_spec, freeze_spec
+    from tools.spec_tools import propose_spec, freeze_spec
     import json
 
     # Without this the whole maestro/llm_clients/renpy log tree is silent on the CLI
     # path — a 100-step build would emit nothing. INFO surfaces per-call + per-decision.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-
-    # Register the renpy checks + spec baseline before proposing, so the proposed spec the
-    # human reviews already carries the enforced contract (run_build registers too, but that
-    # is after freeze).
-    from renpy.ir_checks import register_all
-    register_all()
 
     run_id = create_run()
     print(f"run: {run_id}\nproposing spec for: {request!r}\n")
@@ -163,8 +123,8 @@ def _cli(request: str) -> int:
     print(f"\nok={result.ok}  steps={result.steps}  elapsed={mins}m{secs:02d}s "
           f"({result.elapsed:.1f}s)")
     if not result.ok:
-        for f in result.failures:
-            print(f"  unmet: [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}")
+        for e in result.failures:
+            print(f"  unmet: [{e.component}] {e.code}: {e.message}")
     project = (RunState.for_run(run_id).run_dir / "game_output").resolve()
     print(f"project: {project}")
     return 0 if result.ok else 1

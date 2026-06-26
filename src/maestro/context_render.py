@@ -11,28 +11,16 @@ import json
 from typing import Dict, List, Optional
 
 
-def scoped_spec(ctx: Dict) -> Dict:
-    """The spec, trimmed to what THIS step needs: the active component's full entry (its
-    done_conditions are the bar it's working to) plus id+description for the rest. The other
-    components' done_conditions are noise here — the TO-DO already names every failing check."""
-    spec = ctx.get("spec", {}) or {}
-    mode = ctx.get("mode")
-    comps = []
-    for c in spec.get("components", []):
-        if c.get("id") == mode:
-            comps.append(c)
-        else:
-            comps.append({"id": c.get("id"), "description": c.get("description", "")})
-    return {**{k: v for k, v in spec.items() if k != "components"}, "components": comps}
-
-
 def spec_block(ctx: Dict) -> List[str]:
-    return [f"SPEC: {json.dumps(scoped_spec(ctx), ensure_ascii=False)}"]
+    """The frozen spec: title, request, the resolved sizing `params`, and modules. (No per-component
+    done-conditions any more — the TO-DO names every failing check, and the checks live in code.)"""
+    return [f"SPEC: {json.dumps(ctx.get('spec', {}) or {}, ensure_ascii=False)}"]
 
 
-def todo_block(todo: List[Dict]) -> List[str]:
-    lines = [f"- [{f['component_id']}] {f['check'].get('type')}: {f.get('detail')}"
-             for f in todo] or ["(none — build may be complete)"]
+def todo_block(todo: List) -> List[str]:
+    """`todo` is a list of Error objects (the effective failures)."""
+    lines = [f"- [{e.component}] {e.code}: {e.message}" for e in todo] \
+        or ["(none — build may be complete)"]
     return ["TO-DO (failing done-conditions):", *lines]
 
 
@@ -43,7 +31,7 @@ def target_block(ctx: Dict) -> List[str]:
     return [
         "",
         f"YOUR TARGET — finish ONLY when THIS check passes: "
-        f"[{target.get('component_id')}] {target['check'].get('type')}: {target.get('detail')}",
+        f"[{target.component}] {target.code}: {target.message}",
         "Make the change that clears it. Don't chase other to-do items.",
     ]
 
@@ -84,7 +72,7 @@ def tail_block(ctx: Dict) -> List[str]:
     return out
 
 
-# ── node-graph slot math (shared: dialogue's renderer + agent._create_guard) ───────────────────
+# ── node-graph slot math (shared: dialogue's renderer + services._create_guard) ───────────────────
 def pick_slot(view: Dict) -> Optional[Dict]:
     """The system — not the author — chooses which scene to write next: the open slot whose beat
     comes earliest in the outline, so the spine is built in dramatic order. None when there are no

@@ -359,13 +359,14 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         setFeed(prev => [...prev.slice(-60), '✓ images regenerated (recompile to repackage)'])
     }, 'Regenerate failed')
     const reveal = () => act(() => api.revealGame(runId), 'Open folder failed', false)
+    const componentIds: string[] = Object.keys(detail?.artifact ?? {})
     const addTodo = () => act(async () => {
-        await api.addTodo(runId, newTodoComp || (detail?.spec.components[0]?.id ?? ''), newTodoText)
+        await api.addTodo(runId, newTodoComp || componentIds[0] || '', newTodoText)
         setNewTodoText('')
     }, 'Add todo failed')
     const resolveTodo = (id: string, done: boolean) => act(() => api.resolveTodo(runId, id, done), 'Update failed')
-    const waive = (t: TodoItem) => act(() => api.waiveCheck(runId, t.component_id, t.check), 'Waive failed')
-    const unwaive = (sig: string) => act(() => api.unwaiveCheck(runId, sig), 'Unwaive failed')
+    const waive = (t: TodoItem) => act(() => api.waiveCheck(runId, t.idkey), 'Waive failed')
+    const unwaive = (idkey: string) => act(() => api.unwaiveCheck(runId, idkey), 'Unwaive failed')
     const saveComponent = (id: string, v: any) => act(() => api.editComponent(runId, id, v), `Save ${id} failed`)
     const saveChar = (idx: number, char: any) => act(() => {
         const p = { ...premise, characters: (premise!.characters as any[]).map((c, i) => i === idx ? char : c) }
@@ -389,8 +390,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const activeId = (activeScene && rawSceneIds.includes(activeScene)) ? activeScene
         : (lastTouched && rawSceneIds.includes(lastTouched)) ? lastTouched : rawSceneIds[rawSceneIds.length - 1]
 
-    // Non-premise / non-nodes components are shown as editable JSON cards.
-    const otherComponents = detail.spec.components.filter(c => c.id !== 'premise' && c.id !== 'nodes')
+    // Non-premise / non-nodes on-disk components are shown as editable JSON cards.
+    const otherComponents = componentIds.filter(id => id !== 'premise' && id !== 'nodes')
 
     return (
         <div className="h-full flex flex-col">
@@ -450,7 +451,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 <div className="flex gap-2">
                     <select value={newTodoComp} onChange={e => setNewTodoComp(e.target.value)}
                         className="bg-black/40 border border-white/[0.1] rounded text-xs text-gray-300 px-1.5 py-1.5">
-                        {detail.spec.components.map(c => <option key={c.id} value={c.id}>{c.id}</option>)}
+                        {componentIds.map(id => <option key={id} value={id}>{id}</option>)}
                     </select>
                     <input value={newTodoText} onChange={e => setNewTodoText(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter' && newTodoText.trim()) addTodo() }}
@@ -474,18 +475,20 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                             To-do {todo.length === 0 ? '— complete ✓' : `(${todo.length})`}{liveTodo ? <span className="text-amber-400 ml-1 normal-case">· live</span> : null}
                         </div>
                         <div className="bg-black/40 border border-white/[0.06] rounded h-36 overflow-y-auto px-2.5 py-1.5 text-[11px] space-y-1">
-                            {todo.length === 0 ? <div className="text-green-400">Every done-condition passes.</div> : todo.map((t, i) => (
+                            {todo.length === 0 ? <div className="text-green-400">Every done-condition passes.</div> : todo.map((t, i) => {
+                                const human = t.type === 'human'
+                                return (
                                 <div key={i} className="flex items-start justify-between gap-2 group text-gray-300">
-                                    <span><span className={`font-mono ${t.human ? 'text-blue-400' : 'text-amber-400'}`}>[{t.component_id}]</span>{' '}
-                                        <span className="text-gray-500">{t.human ? 'todo' : String(t.check?.type)}</span>: {t.detail}</span>
-                                    {t.human ? (
-                                        <button onClick={() => resolveTodo(t.check.id, true)} disabled={acting} className="text-green-400 hover:text-green-300 shrink-0">done</button>
+                                    <span><span className={`font-mono ${human ? 'text-blue-400' : 'text-amber-400'}`}>[{t.component || '—'}]</span>{' '}
+                                        <span className="text-gray-500">{human ? 'todo' : t.code}</span>: {t.detail}</span>
+                                    {human ? (
+                                        <button onClick={() => t.path && resolveTodo(t.path, true)} disabled={acting} className="text-green-400 hover:text-green-300 shrink-0">done</button>
                                     ) : (
                                         <button onClick={() => waive(t)} disabled={acting} title="accept as-is (waive)"
                                             className="text-gray-600 hover:text-amber-400 shrink-0 opacity-0 group-hover:opacity-100">waive</button>
                                     )}
                                 </div>
-                            ))}
+                            )})}
                         </div>
                     </div>
                 </div>
@@ -540,9 +543,9 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                         {otherComponents.length > 0 && (
                             <section className="space-y-2">
                                 <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Components</h3>
-                                {otherComponents.map(c => (
-                                    <ArtifactCard key={c.id} id={c.id} description={c.description} doneConditions={c.done_conditions || []}
-                                        value={detail.artifact?.[c.id]} editable={editable} onSave={v => saveComponent(c.id, v)} />
+                                {otherComponents.map(id => (
+                                    <ArtifactCard key={id} id={id} description={undefined} doneConditions={[]}
+                                        value={detail.artifact?.[id]} editable={editable} onSave={v => saveComponent(id, v)} />
                                 ))}
                             </section>
                         )}
@@ -552,9 +555,9 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                                 <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Waived ({detail.waivers.length})</h3>
                                 <ul className="space-y-1">
                                     {detail.waivers.map(w => (
-                                        <li key={w.sig} className="text-sm text-gray-400 flex items-center justify-between gap-2">
-                                            <span><span className="font-mono text-xs text-gray-600">[{w.component_id}]</span> {String(w.check?.type)} {w.check?.path ?? ''}</span>
-                                            <button onClick={() => unwaive(w.sig)} disabled={acting} className="text-gray-600 hover:text-gray-300 text-[11px] shrink-0">Reinstate</button>
+                                        <li key={w.idkey} className="text-sm text-gray-400 flex items-center justify-between gap-2">
+                                            <span className="font-mono text-xs text-gray-600 truncate">{w.note || w.idkey}</span>
+                                            <button onClick={() => unwaive(w.idkey)} disabled={acting} className="text-gray-600 hover:text-gray-300 text-[11px] shrink-0">Reinstate</button>
                                         </li>
                                     ))}
                                 </ul>

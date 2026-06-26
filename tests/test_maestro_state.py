@@ -63,22 +63,3 @@ def test_run_dir_under_working_directory(tmp_path, monkeypatch):
     state = RunState.for_run("abc123")
     assert state.run_dir == tmp_path / "runs" / "abc123"
     assert state.run_dir.is_dir()
-
-
-def test_dep_order_topological():
-    spec = Spec({"components": [
-        {"id": "node_scripts", "deps": ["premise", "graph"]},
-        {"id": "graph", "deps": ["premise"]},
-        {"id": "premise", "deps": []},
-    ]})
-    order = spec.dep_order()
-    assert order.index("premise") < order.index("graph") < order.index("node_scripts")
-
-
-def test_dep_order_detects_cycle():
-    spec = Spec({"components": [
-        {"id": "a", "deps": ["b"]},
-        {"id": "b", "deps": ["a"]},
-    ]})
-    with pytest.raises(ValueError):
-        spec.dep_order()

@@ -53,31 +53,36 @@ def test_premise_skeleton_advertises_character_core():
 # ── write_component enforces injected schemas ────────────────────────────────
 
 def _frozen_spec():
-    return Spec({"frozen": True, "components": [{"id": "premise", "done_conditions": []}]})
+    # cast owns premise -> its v_premise validator gates write_component("premise", ...).
+    return Spec({"frozen": True, "modules": ["cast"], "params": {}})
+
+
+def _unconstrained_spec():
+    return Spec({"frozen": True, "modules": [], "params": {}})
 
 
 def test_write_component_rejects_invalid_shape(tmp_path):
     state = RunState(tmp_path)
-    tools = build_tools(_frozen_spec(), state, schemas=SCHEMAS)
+    tools = build_tools(_frozen_spec(), state)
 
     res = tools["write_component"]("premise", {"characters": [{"name": "NoId"}]})
     assert res["ok"] is False and "id" in res["error"]
     assert state.read_component("premise") is None    # not persisted
 
-    res = tools["write_component"]("premise", {"characters": [{"id": "a", "name": "A"}]})
+    res = tools["write_component"]("premise", {"central_question": "Q", "characters": [{"id": "a", "name": "A"}]})
     assert res["ok"] is True
     assert state.read_component("premise") is not None
 
 
 def test_write_component_without_schemas_is_unconstrained(tmp_path):
     state = RunState(tmp_path)
-    tools = build_tools(_frozen_spec(), state)   # no schemas injected
+    tools = build_tools(_unconstrained_spec(), state)   # no modules -> no schemas
     assert tools["write_component"]("premise", {"anything": 1})["ok"] is True
 
 
 def test_write_node_rejects_start_id(tmp_path):
     state = RunState(tmp_path)
-    tools = build_tools(_frozen_spec(), state, schemas=SCHEMAS)
+    tools = build_tools(_unconstrained_spec(), state)
     n = {"lines": [{"text": "x"}], "end": {"type": "return"}}
     assert tools["write_node"]("start", n)["ok"] is False
     assert tools["write_node"]("scene_01", "not an object")["ok"] is False   # wrong shape

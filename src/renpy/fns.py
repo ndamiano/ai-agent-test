@@ -41,14 +41,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     )
     from maestro.ir_assemble import used_emotions, expression_file
 
-    premise  = inputs.get("premise", {})
-    manifest = _merge_cast_into_manifest(premise, inputs.get("asset_manifest", {}))
+    cast     = inputs.get("characters", {})
+    manifest = _merge_cast_into_manifest(cast, inputs.get("asset_manifest", {}))
     manifest = _merge_items_into_manifest(inputs.get("places", {}), manifest)
 
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    premise_chars = {c["id"]: c for c in premise.get("characters", [])}
+    cast_chars = {c["id"]: c for c in cast.get("characters", [])}
     nodes = _nodes_list(inputs)
     generated: List[str] = []
     failed:    List[Dict] = []
@@ -85,7 +85,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     for char in manifest.get("characters", []):
         cid = char["id"]
         img_file = char.get("image_file", f"{cid}.png")
-        merged = {**premise_chars.get(cid, {}), **char}
+        merged = {**cast_chars.get(cid, {}), **char}
         base_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "char"})
         base_jobs.append(build_character_job(merged))
         char_bases.append({"id": cid, "char": merged, "base_file": img_file,
@@ -140,19 +140,14 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     return {"status": "ok", "generated": generated, "failed": failed}
 
 
-def _merge_cast_into_manifest(premise: Dict, manifest: Dict) -> Dict:
-    """premise.characters is the single source of truth for the cast.
-
-    Sprite defines, placeholder pngs, image generation and the lint's valid-speaker set
-    all key off asset_manifest.characters — but the cast's identity lives in premise. If
-    the agent leaves asset_manifest.characters incomplete, every premise speaker gets
-    flagged "not defined" even though Ren'Py defines it from premise. So backfill a
-    manifest entry for every premise character (existing manifest entries win as image
-    overrides). The agent never has to duplicate the cast into the manifest.
-    """
+def _merge_cast_into_manifest(cast: Dict, manifest: Dict) -> Dict:
+    """Backfill a manifest entry for every character so sprite defines, placeholder pngs, image
+    generation, and the lint's valid-speaker set (all keyed off asset_manifest.characters) cover
+    the whole cast even when asset_manifest.characters is left incomplete. Existing manifest
+    entries win as image overrides."""
     chars = list(manifest.get("characters", []))
     have = {c.get("id") for c in chars if isinstance(c, dict)}
-    for pc in premise.get("characters", []):
+    for pc in cast.get("characters", []):
         cid = pc.get("id")
         if cid and cid not in have:
             chars.append({"id": cid, "image_file": f"{cid}.png",

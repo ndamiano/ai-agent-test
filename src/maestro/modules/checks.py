@@ -159,15 +159,15 @@ def each_node_has_location(artifact: Dict) -> CheckResult:
 
 
 def beats_realized(artifact: Dict) -> CheckResult:
-    beats = [b.get("id") for b in (artifact.get("outline", {}) or {}).get("beats", []) if b.get("id")]
+    beats = [b.get("id") for b in (artifact.get("story", {}) or {}).get("beats", []) if b.get("id")]
     if not beats:
-        return True, None  # no outline (NPC dialogue) — nothing to realize
+        return True, None  # no story beats — nothing to realize
     _, nodes = views.nodes_of(artifact)
     covered = {n.get("beat") for n in nodes.values() if n.get("beat")}
     missing = [b for b in beats if b not in covered]
     if missing:
-        return False, (f"outline beats with no scene yet: {missing} — write a node that dramatizes "
-                       f"each (set the node's `beat` to that beat id). The outline (LOCKED COMPONENTS) "
+        return False, (f"story beats with no scene yet: {missing} — write a node that dramatizes "
+                       f"each (set the node's `beat` to that beat id). The story (LOCKED COMPONENTS) "
                        f"holds what each beat is; every beat needs at least one scene.")
     return True, None
 
@@ -229,9 +229,9 @@ def no_dead_gates(artifact: Dict) -> CheckResult:
 
 
 def all_characters_speak(artifact: Dict) -> CheckResult:
-    chars = {c.get("id") for c in artifact.get("premise", {}).get("characters", []) if c.get("id")}
+    chars = {c.get("id") for c in artifact.get("characters", {}).get("characters", []) if c.get("id")}
     if not chars:
-        return False, "premise has no characters"
+        return False, "characters component has no characters"
     _, nodes = views.nodes_of(artifact)
     spoke = {ln.get("speaker") for node in nodes.values()
              for ln in node.get("lines", []) if ln.get("speaker")}
@@ -269,112 +269,96 @@ def each_place_min_interactables(artifact: Dict, *, min=2) -> CheckResult:
     return True, None
 
 
-def items_obtainable(artifact: Dict) -> CheckResult:
-    _, places, pc = views.places_of(artifact)
-    items = {i.get("id") for i in pc.get("items", []) if i.get("id")}
-    taken = {a["item"] for a in views.all_actions(places) if a.get("type") == "take" and a.get("item")}
-    missing = sorted(items - taken)
-    if missing:
-        return False, f"items never obtainable (no take action): {missing} — add a take hotspot"
-    return True, None
+# ── state wiring: every declared scalar/item has a producer AND a consumer ────
+def _scan_effects(effs, host: str, rec) -> None:
+    for eff in effs or []:
+        if not isinstance(eff, dict):
+            continue
+        for k in ("set_flag", "clear_flag"):
+            if eff.get(k):
+                rec(eff[k], "flag", "prod", host)
+        for k in ("set_var", "add_var"):
+            sv = eff.get(k)
+            if isinstance(sv, dict):
+                rec(sv.get("var"), "variable", "prod", host)
+        if eff.get("add_item"):
+            rec(eff["add_item"], "item", "prod", host)
+        if eff.get("remove_item"):
+            rec(eff["remove_item"], "item", "cons", host)
 
 
-def items_used(artifact: Dict) -> CheckResult:
-    _, places, pc = views.places_of(artifact)
-    items = {i.get("id") for i in pc.get("items", []) if i.get("id")}
-    used = set()
-    for a in views.all_actions(places):
-        for c in views.action_conditions(a):
-            used |= views.cond_items(c)
-    missing = sorted(items - used)
-    if missing:
-        return False, f"items never used (no condition gates on them): {missing}"
-    return True, None
+def _scan_condition(cond, host: str, rec) -> None:
+    for ref in _cond_state_refs(cond):           # flags + variables read by a gate
+        rec(ref, None, "cons", host)
+    for it in views.cond_items(cond):            # items a clause requires
+        rec(it, "item", "cons", host)
 
 
-def goal_reachable(artifact: Dict) -> CheckResult:
-    place_ids, places, pc = views.places_of(artifact)
-    goal = pc.get("goal")
-    if not isinstance(goal, dict) or not goal.get("id"):
-        return False, ("rooms goal must be DECLARED — call set_places_meta(goal={'type':'flag'|"
-                       "'room','id':...})")
-    reach = views.reachable_places(place_ids, places, pc.get("start_place"))
-    if goal.get("type") == "room":
-        if goal["id"] not in reach:
-            return False, f"goal place '{goal['id']}' is not reachable"
-        return True, None
-    set_flags = set()
-    has_win = False
-    for pid in reach:
-        for h in places.get(pid, {}).get("interactables", []):
-            a = h.get("action", {}) or {}
-            if a.get("type") == "win":
-                has_win = True
-            for e in views.action_effects(a):
-                if e.get("set_flag"):
-                    set_flags.add(e["set_flag"])
-    srcs = sorted(reach)[:3] or [pc.get("start_place")]
-    if goal["id"] not in set_flags:
-        return False, (
-            f"the win flag '{goal['id']}' is never set by a reachable hotspot. ADD a `use` hotspot "
-            f"in a REACHABLE place ({srcs}) whose outcome sets it — e.g. "
-            f'add_interactable(place_id="{srcs[0]}", interactable={{"id":"h_win_{goal["id"]}",'
-            f'"label":"<thing>","position":{{"rect":{{"x":520,"y":300,"w":200,"h":160}}}},'
-            f'"action":{{"type":"use","clauses":[{{"requires":{{"flag":"<some flag>"}},'
-            f'"outcome":{{"text":"...","effects":[{{"set_flag":"{goal["id"]}"}}]}}}}],'
-            f'"fallback":{{"text":"Not yet."}}}}}}). The set_flag effect is what makes the goal reachable.')
-    if not has_win:
-        return False, (
-            f"no reachable hotspot has a 'win' action. ADD a hotspot whose action is "
-            f'{{"type":"win"}} to a REACHABLE place ({srcs}) — e.g. add_interactable(place_id='
-            f'"{srcs[0]}", interactable={{"id":"h_finish","label":"<thing>",'
-            f'"position":{{"rect":{{"x":540,"y":520,"w":200,"h":120}}}},'
-            f'"action":{{"type":"win"}}}}). The win action ends the game once the goal flag is set.')
-    return True, None
+def _walk_state(artifact: Dict) -> Dict:
+    """For every flag / variable / item id, gather the host components that PRODUCE it (set/add/take),
+    CONSUME it (gate/use), and DECLARE it (an explicit catalog/meta entry)."""
+    info: Dict = {}
 
+    def rec(sid, kind, slot: str, host: str) -> None:
+        if not sid or not isinstance(sid, str):
+            return
+        e = info.setdefault(sid, {"kind": kind or "state", "prod": set(), "cons": set(), "decl": set()})
+        if kind:
+            e["kind"] = kind
+        e[slot].add(host)
 
-# ── economy vocabulary: every referenced flag/variable is declared somewhere ──
-def _declared_state(artifact: Dict) -> set:
-    """Every flag/variable id that is SET (by an effect anywhere) or DECLARED (places meta)."""
-    declared: set = set()
     _, nodes = views.nodes_of(artifact)
     for n in nodes.values():
-        for eff in _node_effects(n):
-            declared |= _effect_targets(eff)
-    pc = artifact.get("places") or {}
-    declared |= {f for f in (pc.get("flags") or []) if f}
-    declared |= {(v.get("id") if isinstance(v, dict) else v) for v in (pc.get("variables") or [])}
-    for p in (pc.get("places") or {}).values():
-        for h in p.get("interactables", []):
-            for eff in views.action_effects(h.get("action", {}) or {}):
-                declared |= _effect_targets(eff)
-    return {d for d in declared if d}
-
-
-def economy_undeclared(artifact: Dict) -> List[Dict]:
-    """Every flag/variable a `requires` condition reads but that nothing ever sets/declares. Returns
-    [{component, ref, message}] — economy's own vocabulary integrity, fixed in the host component."""
-    declared = _declared_state(artifact)
-    out: List[Dict] = []
-    _, nodes = views.nodes_of(artifact)
-    for nid, n in nodes.items():
+        _scan_effects(_node_effects(n), "nodes", rec)
         end = n.get("end", {}) or {}
         if end.get("type") == "menu":
             for ch in end.get("choices", []) or []:
-                for ref in _cond_state_refs(ch.get("requires")):
-                    if ref not in declared:
-                        out.append({"component": "nodes", "ref": ref, "message":
-                                    f"node {nid} gates on '{ref}', a variable/flag nothing ever sets — "
-                                    f"declare it with an effect, or drop the requires"})
+                _scan_condition(ch.get("requires"), "nodes", rec)
+
     pc = artifact.get("places") or {}
-    for pid, p in (pc.get("places") or {}).items():
+    for f in (pc.get("flags") or []):
+        rec(f, "flag", "decl", "places")
+    for v in (pc.get("variables") or []):
+        rec(v.get("id") if isinstance(v, dict) else v, "variable", "decl", "places")
+    goal = pc.get("goal")
+    if isinstance(goal, dict) and goal.get("type") == "flag":
+        rec(goal.get("id"), "flag", "cons", "places")        # the win condition reads it
+    for p in (pc.get("places") or {}).values():
         for h in p.get("interactables", []):
-            for cond in views.action_conditions(h.get("action", {}) or {}):
-                for ref in _cond_state_refs(cond):
-                    if ref not in declared:
-                        out.append({"component": "places", "ref": ref, "message":
-                                    f"place {pid} gates on '{ref}', a variable/flag nothing ever sets — "
-                                    f"set it via set_places_meta or an effect, or drop the requires"})
+            a = h.get("action", {}) or {}
+            if a.get("type") == "take" and a.get("item"):
+                rec(a["item"], "item", "prod", "places")
+            _scan_effects(views.action_effects(a), "places", rec)
+            for cond in views.action_conditions(a):
+                _scan_condition(cond, "places", rec)
+
+    for it in (artifact.get("items") or {}).get("items", []) or []:
+        if isinstance(it, dict):
+            rec(it.get("id"), "item", "decl", "items")
+
+    return info
+
+
+def _pick_host(*slots: set) -> str:
+    union = set().union(*slots)
+    return sorted(union)[0] if union else "nodes"
+
+
+def state_wiring(artifact: Dict) -> List[Dict]:
+    """Every declared/used scalar or item must have BOTH a producer (a way it's set/added/taken) and
+    a consumer (a gate/use). Returns [{component, ref, message}] — a missing producer is a dangling
+    reference; a missing consumer is dead state to use or cut. Both are fixed on a host component."""
+    out: List[Dict] = []
+    for sid, e in sorted(_walk_state(artifact).items()):
+        kind = e["kind"]
+        if not e["prod"]:
+            out.append({"component": _pick_host(e["cons"], e["decl"]), "ref": sid, "message": (
+                f"{kind} '{sid}' is read or declared but nothing ever produces it — set/add/take it "
+                f"where it should change (an effect or a take hotspot), or drop the reference.")})
+        if not e["cons"]:
+            out.append({"component": _pick_host(e["prod"], e["decl"]), "ref": sid, "message": (
+                f"{kind} '{sid}' is produced or declared but never used — gate a choice/hotspot on it, "
+                f"or cut it. Use it or cut it.")})
     return out
 
 

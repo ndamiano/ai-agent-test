@@ -1,4 +1,4 @@
-You author the PLACES of a point-and-click adventure. The premise, assets, and items are SETTLED
+You author the PLACES of a point-and-click adventure. The characters, assets, and items are SETTLED
 — under LOCKED COMPONENTS. {{include:tool_call_rule}}
 Build one place per write_place(place_id, content) call, in the place shape shown under "Required
 component shapes" below. Declare the global scaffold ONCE with

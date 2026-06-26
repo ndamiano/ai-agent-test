@@ -10,9 +10,9 @@ tags the beat for you; do not set it). Pick up where PATH TO HERE leaves off; ne
 already behind you.
 
 USE THE GIVEN IDS — never invent or rename:
-- speaker = an EXACT id from premise.characters (LOCKED COMPONENTS), or null for narration.
+- speaker = an EXACT id from characters.characters (LOCKED COMPONENTS), or null for narration.
 - a jump/menu target = a node id in CURRENT NODES, or a NEW id you open here (which becomes the
-  next scene). Aim your `end` at the NEXT BEAT. Drive toward the endings the outline planned.
+  next scene). Aim your `end` at the NEXT BEAT. Drive toward the endings the story planned.
 
 BRANCH RARELY — DEPTH, NOT WIDTH. The story is a SPINE that branches only at real decisions.
 - DEFAULT to end.type "jump" (one target): the scene leads into the next scene. Most nodes jump.
@@ -25,14 +25,14 @@ BRANCH RARELY — DEPTH, NOT WIDTH. The story is a SPINE that branches only at r
 EMOTION (spoken lines only): tag each line with the speaker's expression — one of neutral, happy,
 sad, angry, surprised, worried. Choose the one the line's subtext carries; omit only when neutral.
 
-REALIZE THE OUTLINE — the `outline` in LOCKED COMPONENTS is the story's arc (logline, ordered
-beats, a planned path to each ending). Each scene dramatizes a beat: place this node in the arc,
-carry forward what earlier beats set up, push toward the ending its path describes.
+REALIZE THE STORY — the `story` in LOCKED COMPONENTS is the arc (central_question, ordered beats,
+a planned path to each ending). Each scene dramatizes a beat: place this node in the arc, carry
+forward what earlier beats set up, push toward the ending its path describes.
 
 {{include:conditions_ref}}
 {{include:effects_ref}}
 
-Each premise ending is its own node, filled like any slot. Don't write an ending until some scene
+Each story ending is its own node, filled like any slot. Don't write an ending until some scene
 leads to it. event_summary becomes this scene's one-line synopsis — make it specific (what CHANGES
 here), e.g. "sisters find the hidden ledger; debt is real" — not "they talk in the study".
 

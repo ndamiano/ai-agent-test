@@ -72,10 +72,10 @@ def tail_block(ctx: Dict) -> List[str]:
     return out
 
 
-# ── node-graph slot math (shared: dialogue's renderer + services._create_guard) ───────────────────
+# ── node-graph slot math (shared: scenes' renderer + services._create_guard) ───────────────────
 def pick_slot(view: Dict) -> Optional[Dict]:
     """The system — not the author — chooses which scene to write next: the open slot whose beat
-    comes earliest in the outline, so the spine is built in dramatic order. None when there are no
+    comes earliest in the story, so the spine is built in dramatic order. None when there are no
     open slots (the entry node, or a fresh branch root is needed)."""
     slots = view.get("open_slots") or []
     if not slots:
@@ -89,7 +89,7 @@ def beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) ->
     """The beat the system stamps on the node being written — it picked the slot, so it owns the
     beat too (the author no longer guesses it). The assigned slot's beat; the first beat for the
     opening node; the first still-unrealized beat for an escape-hatch branch root. None (e.g. an
-    ending slot, or a non-VN nodes build with no outline) → leave the node's beat unset."""
+    ending slot, or a nodes build with no story) → leave the node's beat unset."""
     if chosen is not None:
         return chosen.get("beat")
     beat_ids = [b["id"] for b in (view.get("beats") or []) if b.get("id")]

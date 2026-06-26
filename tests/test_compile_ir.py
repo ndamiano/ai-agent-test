@@ -16,16 +16,17 @@ _EXAMPLE = json.loads(
 def _write_run(run_dir: Path):
     ex = _EXAMPLE
     (run_dir / "spec.json").write_text(json.dumps({"genre": "vn", "title": ex["meta"]["title"]}))
-    (run_dir / "premise.json").write_text(json.dumps({"characters": ex["characters"]}))
+    (run_dir / "characters.json").write_text(json.dumps({"characters": ex["characters"]}))
     (run_dir / "asset_manifest.json").write_text(json.dumps({"backgrounds": [], "characters": []}))
     (run_dir / "nodes.json").write_text(json.dumps({
         "node_ids": [n["id"] for n in ex["nodes"]],
         "nodes": {n["id"]: {k: v for k, v in n.items() if k != "id"} for n in ex["nodes"]},
         "flags": ex.get("flags", []),
         "variables": ex.get("variables", []),
-        "items": ex.get("items", []),
         "start": ex["start"].get("node"),
     }))
+    if ex.get("items"):
+        (run_dir / "items.json").write_text(json.dumps({"items": ex["items"]}))
 
 
 def test_compile_ir_writes_script(tmp_path):

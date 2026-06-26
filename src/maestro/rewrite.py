@@ -1,5 +1,5 @@
 """rewrite_node — regenerate ONE node from a human note, outside the build loop (the per-scene
-"rewrite" control). A focused mini-loop: the dialogue author prompt + a forced write_node (so a
+"rewrite" control). A focused mini-loop: the scene author prompt + a forced write_node (so a
 locked nodes component is overwritten), a couple of retries if the model fumbles the tool call.
 """
 
@@ -9,7 +9,7 @@ from typing import Callable, Dict, Optional
 
 from maestro.services import filter_schemas, parse_action
 from maestro.modules.module import load_prompt, skeleton_guide
-from maestro.modules.dialogue import SKEL_NODES
+from maestro.modules.scenes import SKEL_NODES
 
 logger = logging.getLogger(__name__)
 _BUILD_MAX_TOKENS = 8000
@@ -26,7 +26,7 @@ def rewrite_node(spec: Dict, state, node_id: str, note: str, tools: Dict[str, Ca
         return {"ok": False, "error": f"no node {node_id!r} to rewrite"}
 
     say = report or (lambda _msg: None)
-    system = load_prompt("write_node.txt") + f"\n\n{skeleton_guide('nodes', SKEL_NODES)}"
+    system = load_prompt("nodes_write.txt") + f"\n\n{skeleton_guide('nodes', SKEL_NODES)}"
     schemas = filter_schemas({"write_node"})
     art = state.load_artifact()
     upstream = {cid: c for cid, c in art.items() if cid != "nodes"}

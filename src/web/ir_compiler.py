@@ -19,13 +19,14 @@ _REPO = Path(__file__).resolve().parents[2]
 _RUNTIME = Path(__file__).resolve().parent / "runtime"
 _SCHEMA_PATH = _REPO / "docs" / "game_ir.schema.json"
 
-_REQUIRED = ("premise", "asset_manifest")
+_REQUIRED = ("asset_manifest",)
 _FAIL = {"lint_error_count": None, "project_dir": None}
 
 
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
-    for stem in ("brief", "premise", "asset_manifest", "nodes", "places", "matches", "spec"):
+    for stem in ("brief", "characters", "story", "asset_manifest", "items", "nodes", "places",
+                 "matches", "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))

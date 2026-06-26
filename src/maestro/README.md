@@ -45,7 +45,7 @@ Three layers:
 | File | Role |
 |------|------|
 | `spec.py` | `Spec` — components, `frozen` flag, `dep_order()`. |
-| `spec_tools.py` | `propose_spec` (classify preset → draft story → build contract from modules → apply sizing), `amend_spec` (un-freezes for re-approval), `freeze_spec` (the human's out-of-band approval — deliberately not a tool). |
+| `spec_tools.py` | `propose_spec` (draft story + `concept` hook → pick modules from the catalog → resolve params), `amend_spec` (un-freezes for re-approval), `freeze_spec` (the human's out-of-band approval — deliberately not a tool). |
 | `chat_tools.py` | `propose_game_spec` / `amend_game_spec` — the chat-agent-facing wrappers. |
 | `state.py` | `RunState` — the durable per-run dir `<working_dir>/runs/<run_id>/`: component JSONs, scratchpad, story state, human todos, waivers. The source of truth; the transcript is never memory. |
 | `story_state.py` | The continuity bible (facts / entities / open threads / recent tail) — a snapshot, not a log. |
@@ -59,8 +59,8 @@ Three layers:
 ### Composition + IR
 | File | Role |
 |------|------|
-| `modules.py` | `Module` contract + `MODULE_REGISTRY` + `compose()` + `PRESETS` + the per-engine projection registry. A `Module` bundles what used to be hardcoded per-genre (components, schemas, skeletons, baseline checks, deps, tools, sub-loop, mode gating, verbs). `compose(ids)` unions active modules into the one bundle every build lookup reads. |
-| `discrete/` | The `discrete_state` substrate's mechanic-modules: `cast`, `assets`, `outline`, `dialogue`, `navigation`, `economy`, `card_play` (+ validators + skeletons). `__init__.py` registers them and the presets. |
+| `modules/module.py` | `Module` ABC + `MODULE_REGISTRY` + `compose()`/`resolve_modules()` + the per-engine projection registry. A `Module` is a set of `(error → fix)` over the shared components; `get_errors` is the only required method. |
+| `modules/` | The mechanic-modules, each a direct `Module` subclass: `cast`, `story`, `scenes`, `world`, `assets`, `inventory`, `state`, `card_play`, `human` (+ inline validators/skeletons). `human`/`assets`/`state` are always-on (`selectable=False`); `__init__.py` registers them all. |
 | `ir_assemble.py` | Lift the decomposed on-disk components → one engine-neutral IR dict. |
 | `ir_crossref.py` | Gate that every id reference in the IR resolves; emits structured records routed by `slice_owner`. |
 | `engines.py` | `compile_for(spec.engine)` — map engine tag → backend compile entry. |
@@ -72,21 +72,20 @@ Three layers:
 ## Substrate + modules, in one breath
 
 A game = one **substrate** (execution model — `discrete_state` today) + a composed set
-of **mechanic-modules** the spec selects. A `genre` is now just a **preset**: a named
-module set the classifier emits (`vn`, `point_and_click`, `card_ante`). `compose()` is
-the seam that replaced genre-keyed dispatch — the executor/agent never branch on a
-component string; they read the gating off the composed bundle.
+of **mechanic-modules** the spec selects. There is no genre/preset box and no exclusion:
+the proposer picks modules from the catalog directly (`world`+`scenes` compose), and the
+agent never branches on a component string — it reads the gating off the composed set.
 
-- **content** modules own a component (`dialogue`→nodes, `navigation`→places,
-  `card_play`→matches).
-- **vocabulary** modules own none (`economy` = flags/items + effect/condition vocab
-  riding inside other modules' beats).
+- **content** modules author a component (`scenes`→nodes, `world`→places,
+  `card_play`→matches, `cast`→characters, `story`→story, `inventory`→items).
+- **cross-cutting** modules author none: `state` is the always-on wiring invariant
+  (every declared flag/var/item needs a producer + consumer), `human` is the HITL channel.
 - Engine **projections** register separately, keyed `(engine, module_id)` — a module's
   schema is substrate-agnostic; its renderer is per-engine. A module with no projection
   for the chosen engine makes the compile **fail fast**, never silently drop content.
 
-Adding a module: see CLAUDE.md → "Adding a mechanic-module" (`card_play` is the worked
-example).
+Adding a module: see CLAUDE.md → "Adding a mechanic-module" (`inventory` is a small
+worked example; `scenes`/`world` show an overridden `get_fix`).
 
 ---
 

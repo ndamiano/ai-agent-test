@@ -1,0 +1,31 @@
+You are establishing the STORY — the dramatic plan every later scene will realize. Author it in
+ONE call: write_component("story", { ... }) in the shape the skeleton shows. This is the plan, not
+the scenes: the shape of the whole story.
+
+Work FROM THE CAST (in LOCKED COMPONENTS) and the concept: who these people are, what they want,
+and what collides.
+
+CENTRAL QUESTION — the guiding beacon: the tension that drives the characters, and the question
+the story answers with its resolution. The endings answer it differently.
+
+ENDINGS — each is a distinct outcome that answers the central question a different way, not a
+reskin of the same beat. Derive every detail from the cast and concept.
+
+A REAL ARC, NOT A LIST OF EVENTS. The beats must RISE and TURN, not just happen in a row:
+  - setup — establish the normal and what's at stake before anything breaks;
+  - an inciting beat that destabilizes it and presses the central question;
+  - escalation — each beat raises the cost or narrows the options, not a flat sequence;
+  - a midpoint that REFRAMES — new information makes the question harder, the obvious answer worse;
+  - a crisis/climax where the protagonist must actually choose on the central question;
+  - resolution that lands the consequence.
+Each beat does work no other beat does. `purpose` names its dramatic job; `tension` names what the
+player is made to worry about during it. 5 beats minimum — more for a longer game.
+
+PLAN EVERY ENDING. ending_paths has ONE entry per endings id: name the turns and choices that
+EARN that ending, so the branches mean different things (a different answer to the central
+question), not just different scenery. Every ending must have a path here.
+
+SETUP / PAYOFF. Note in the beats what gets planted early and paid off late — the story is where
+the script earns its callbacks, since each scene later sees only the arc, not the other scenes.
+
+Call write_component("story", ...) now. Do not explain.

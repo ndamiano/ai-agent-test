@@ -111,7 +111,7 @@ def propose_spec(request: str, run_id: str) -> Dict:
     import maestro.modules  # noqa: F401 — ensure modules registered
     from maestro.modules import resolve_modules
 
-    prompt = render_template(_PROMPTS_DIR / "propose_spec.txt", _spec_prompt_ctx(request))
+    prompt = render_template(_PROMPTS_DIR / "spec_write.txt", _spec_prompt_ctx(request))
     agent = PipelineAgent(JSON_SYSTEM, max_tokens=8000)
     spec = json_with_correction(agent, prompt, "propose_spec", attempts=3)
 

@@ -1,0 +1,40 @@
+You are establishing the CAST — the people of this game, the source of truth every later
+scene draws from. Author it in ONE call: write_component("characters", { ... }) in the shape
+the skeleton shows.
+
+ROLE — exactly one character is the protagonist (the story turns on their choices); if the
+story has opposition, one is the antagonist (give them a drive that COLLIDES with the
+protagonist's); everyone else is an npc. The role guides who drives and who resists.
+
+CHARACTERS PASS THE GRIMGONG TEST — specific enough to read as one particular person, not
+an archetype with adjectives.
+  FAILS:  "a gruff warrior haunted by war"
+  PASSES: "a purpose-bred imperial crusher, raised from birth as a killing machine; the war
+           is over and the thing he was built for no longer exists"
+Specificity comes from the character's SITUATION, not from stacking adjectives.
+
+DRIVE — what the character wants, stated plainly enough that they could say it out loud.
+Legible beats exotic. At the end of the story we should be able to know whether or not a
+character met their goal.
+
+HISTORY — a list of things that have happened in the character's life. These will be used to
+fulfil dialogue goals, and make the character feel alive. They can be connected to other
+characters or independent, and they should be varied and interesting.
+
+VOICE — one sentence on how they speak (vocabulary, sentence length, rhythm).
+
+EXAMPLE LINES — 2+ lines that the character would say. In general, characters should speak
+plainly, and their lines shouldn't be steeped in their profession. These should be forgettable
+lines that show the character's word choice and rhythm. One should be purely transactional,
+another reactive — a logistics complaint.
+
+TEMPERAMENT — how they carry themselves day to day.
+
+COMPETENCIES — a list of concrete skills drawn from the setting.
+
+HONOR THE REQUEST — same subject, same kind of cast, same spirit the user asked for. Find
+the drama inside what was asked for; do not graft on conspiracies, villains, or deadlines
+nobody asked for. Derive every detail from the concept and request, never from the skeleton's
+placeholder ids.
+
+Call write_component("characters", ...) now. Do not explain.

@@ -1,16 +1,16 @@
 """human — the human-in-the-loop, wearing the Module interface so its work rides the same loop.
 
-Always composed in. Two durable, human-only levers live on disk (no agent tools touch them):
-  - todos: the human adds a to-do against a component; `get_errors` emits each as ErrorType.HUMAN,
-    which outranks every build/fix error — so a todo preempts mid-build and is addressed next step.
-    `get_correction_prompt` wraps the note in a tunable prompt + broad edit tools (the human can
-    touch any component), so the loop never routes a human note into another module's narrow prompt.
-  - waivers: the human accepts a machine (build/fix) error as good-enough; `waived_idkeys` returns
-    their durable keys and the loop subtracts them. So the human's full delta is +todos / −waivers.
-    A waiver is keyed on Error.identity(), so it auto-expires when the situation changes.
+Always composed. Two durable, human-only levers (no agent tool touches them):
+  - todos:   a note the human adds against a component; emitted as an ErrorType.HUMAN that outranks
+             every build/fix error, so it preempts mid-build and is addressed next step.
+  - waivers: a build/fix error the human accepts as good-enough; its durable key is subtracted from
+             the loop's to-do. Keyed on Error.identity(), so it auto-expires when the situation changes.
 
-The module-level functions (add_todo / resolve_todo / open_todos / waive / unwaive / ...) are the
-API surface the games router calls; they read/write the same durable state the loop reads.
+The module-level functions (add_todo / resolve_todo / waive / ...) are the API the games router calls.
+
+Example games:
+  - "a two-hander visual novel"      — human + cast + story + scenes
+  - "a point-and-click escape room"  — human + world + inventory
 """
 
 import uuid

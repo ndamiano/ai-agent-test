@@ -86,7 +86,7 @@ def node_view(artifact: Dict) -> Dict:
         if tgt in written:
             continue
         slots.setdefault(tgt, {"id": tgt, "from": []})["from"].append({"node": src, "label": label})
-    beats_full = [b for b in (artifact.get("outline", {}) or {}).get("beats", []) if b.get("id")]
+    beats_full = [b for b in (artifact.get("story", {}) or {}).get("beats", []) if b.get("id")]
     beat_ids = [b["id"] for b in beats_full]
     beat_index = {bid: i for i, bid in enumerate(beat_ids)}
     covered = {nodes.get(nid, {}).get("beat") for nid in node_ids}
@@ -180,7 +180,7 @@ def reachable_places(place_ids, places_map, start):
 def place_view(artifact: Dict) -> Dict:
     place_ids, places, pc = places_of(artifact)
     reach = reachable_places(place_ids, places, pc.get("start_place"))
-    items = [i.get("id") for i in pc.get("items", []) if i.get("id")]
+    items = [i.get("id") for i in (artifact.get("items") or {}).get("items", []) if i.get("id")]
     taken = {a["item"] for a in all_actions(places) if a.get("type") == "take" and a.get("item")}
     used = set().union(*(cond_items(c) for a in all_actions(places)
                          for c in action_conditions(a))) if places else set()

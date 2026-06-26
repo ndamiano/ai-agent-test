@@ -111,7 +111,7 @@ def _match_content_error(content) -> Optional[str]:
     if content.get("card_model") not in _CARD_MODELS:
         return f"match.card_model must be one of {sorted(_CARD_MODELS)}"
     if not content.get("opponent"):
-        return "match needs an 'opponent' (a premise character id)"
+        return "match needs an 'opponent' (a characters component id)"
     ante = content.get("ante")
     if not isinstance(ante, dict) or not ante.get("var") or "amount" not in ante:
         return "match.ante must be {var, amount} — the staked variable and how much"
@@ -181,7 +181,7 @@ TOOL_SCHEMAS: List[Dict] = [
         "name": "write_component",
         "description": "Write (fill or overwrite) an artifact component by id. You author the content.",
         "parameters": {"type": "object", "properties": {
-            "component_id": {"type": "string", "description": "Component id, e.g. 'premise'"},
+            "component_id": {"type": "string", "description": "Component id, e.g. 'characters'"},
             "content": {"type": "object", "description": "The component's full content as JSON"},
         }, "required": ["component_id", "content"]}}},
     {"type": "function", "function": {
@@ -259,14 +259,12 @@ TOOL_SCHEMAS: List[Dict] = [
             "place_id": {"type": "string"}}, "required": ["place_id"]}}},
     {"type": "function", "function": {
         "name": "set_places_meta",
-        "description": "Declare the point-and-click game's global scaffold on `places`: the win "
-                       "`goal`, inventory `items`, puzzle `flags`, numeric `variables`, and "
-                       "`start_place`. Required for goal_reachable. Merges (pass only what changes).",
+        "description": "Declare the point-and-click game's global scaffold on `places`: the optional "
+                       "win `goal`, puzzle `flags`, numeric `variables`, and `start_place`. Merges "
+                       "(pass only what changes). Items live in the `items` catalogue, not here.",
         "parameters": {"type": "object", "properties": {
             "goal": {"type": "object", "description":
                      "{type: 'flag'|'room', id: '<winning flag or place id>'}"},
-            "items": {"type": "array", "items": {"type": "object"},
-                      "description": "[{id, name, examine}] — ids match take/use actions"},
             "flags": {"type": "array", "items": {"type": "string"},
                       "description": "puzzle boolean names, e.g. ['door_open', 'escaped']"},
             "variables": {"type": "array", "items": {"type": "object"},
@@ -276,7 +274,7 @@ TOOL_SCHEMAS: List[Dict] = [
     {"type": "function", "function": {
         "name": "write_match",
         "description": "Write one wagering card match into `matches`: its card_model (high_card or "
-                       "blackjack), opponent (a premise character id), ante {var, amount}, and "
+                       "blackjack), opponent (a characters component id), ante {var, amount}, and "
                        "on_win/on_lose payout. Adds it to match_ids. Card games only.",
         "parameters": {"type": "object", "properties": {
             "match_id": {"type": "string", "description": "e.g. 'match_gambler'"},
@@ -426,7 +424,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         job. Producing the dialogue and the continuity bookkeeping in one call keeps them
         consistent — the next node reads the updated story state, never prior script.
         force: a human-driven rewrite may overwrite a locked nodes component (override).
-        beat: the outline beat this scene realizes — system-stamped (the slot picker owns it),
+        beat: the story beat this scene realizes — system-stamped (the slot picker owns it),
         not in TOOL_SCHEMAS, so the author never sets it.
         """
         _require_frozen()
@@ -548,17 +546,17 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id}
 
-    def set_places_meta(goal=None, items=None, flags=None, variables=None, start_place=None,
+    def set_places_meta(goal=None, flags=None, variables=None, start_place=None,
                         **ignored) -> Dict:
-        """Declare the point-and-click scaffold on `places` — win goal, items, flags, variables,
+        """Declare the point-and-click scaffold on `places` — win goal, flags, variables,
         start_place. write_place never sets these. Merges: only the fields passed change. Stray
-        kwargs (e.g. the model jamming `nodes=` here) are ignored, not a crash — but note them so
-        the model learns this tool can't touch that."""
+        kwargs (e.g. the model jamming `nodes=` or `items=` here) are ignored, not a crash — but note
+        them so the model learns this tool can't touch that."""
         if ignored:
             return {"ok": False, "error":
-                    f"set_places_meta does not take {sorted(ignored)} — it only declares goal/items/"
-                    f"flags/variables/start_place. To change nodes use write_node/edit_node (in the "
-                    f"nodes step); for hotspots use add_interactable/edit_place."}
+                    f"set_places_meta does not take {sorted(ignored)} — it only declares goal/flags/"
+                    f"variables/start_place. Items live in the `items` catalogue "
+                    f"(write_component('items', ...)); for hotspots use add_interactable/edit_place."}
         _require_frozen()
         if _locked("places"):
             return _locked_error("places")
@@ -570,8 +568,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         places = state.read_component("places") or {"place_ids": [], "places": {}}
         if goal is not None:
             places["goal"] = goal
-        if items is not None:
-            places["items"] = items
         if flags is not None:
             places["flags"] = flags
         if variables is not None:
@@ -579,7 +575,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if start_place is not None:
             places["start_place"] = start_place
         state.write_component("places", places)
-        return {"ok": True, "goal": places.get("goal"), "items": places.get("items"),
+        return {"ok": True, "goal": places.get("goal"),
                 "flags": places.get("flags"), "start_place": places.get("start_place")}
 
     def edit_place(place_id: str, interactable_id: str, action: Optional[Dict] = None,

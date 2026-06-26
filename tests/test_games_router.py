@@ -139,15 +139,16 @@ def test_build_starts_thread_and_guards_double_build(tmp_path, monkeypatch):
 def test_amend_spec_reresolves_modules_and_unfreezes(tmp_path, monkeypatch):
     _patch_for_run(monkeypatch, tmp_path)
     RunState(tmp_path / "g").write_spec(
-        {"title": "G", "frozen": True, "modules": ["dialogue"], "params": {}})
+        {"title": "G", "frozen": True, "modules": ["scenes"], "params": {}})
 
-    body = games.AmendBody(changes={"modules": ["navigation"]}, reason="switch to point-and-click")
+    body = games.AmendBody(changes={"modules": ["world", "card_play"]},
+                           reason="switch to point-and-click cards")
     result = asyncio.run(games.amend_game_spec_route("g", body))
 
     mods = result["spec"]["modules"]
-    assert "navigation" in mods and "dialogue_npc" in mods  # navigation pulls its deps
-    assert "dialogue" not in mods                            # the VN spine was dropped
-    assert result["spec"]["engine"] == "renpy"
+    assert "world" in mods and "card_play" in mods          # card_play pulls world
+    assert "scenes" not in mods                              # the scene graph was dropped
+    assert result["spec"]["engine"] == "web"                # cards only render on web
     assert result["frozen"] is False                         # amend always un-freezes for re-approval
     assert set(result["spec"]["module_reasons"]) == set(mods)
 

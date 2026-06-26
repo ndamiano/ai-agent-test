@@ -1,19 +1,16 @@
-"""dialogue — the conversation graph. Authors `nodes`.
+"""scenes — the conversation/scene graph. Authors the `nodes` component.
 
-Two configurations of the same component (a thing that behaves differently IS a different module):
+The playable script: a graph of nodes, each a list of dialogue lines plus an `end` that jumps,
+branches (a menu), returns, or ends the game. A slot-guarded sub-loop grows the graph along
+declared edges — a new node must fill an OPEN SLOT (a dangling target a written node already
+points at), so the script grows in dramatic order instead of sprouting redundant siblings.
 
-  SPINE (`dialogue`)      — dialogue IS the game (visual novel): rich cast + endings + branching,
-                            and `nodes` is the compile terminal that stitches the whole script. It
-                            raises the premise/asset floors (via params) and owns crossref+compile.
-  NPC   (`dialogue_npc`)  — supporting barks a navigation game's talk-hotspots call: light floor,
-                            no compile terminal (navigation is the spine).
-
-Both drive `nodes` with the same slot-guarded sub-loop: a new node must fill an OPEN SLOT (a
-dangling target a written node already points at), so the graph grows along declared edges in
-dramatic order instead of sprouting redundant siblings.
+Example games:
+  - "a band reunites at their drummer's funeral"      — cast + story + scenes
+  - "explore a haunted manor and talk to its ghosts"  — cast + world + scenes
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from functools import partial
 
@@ -79,23 +76,24 @@ SKEL_NODES = (
     '// You write JSON, the compiler renders it (escaping/layout handled).\n'
     '// location = a background asset id from asset_manifest.backgrounds; it sets the scene\n'
     '//   image and every character who speaks in the node is shown over it. Tag EVERY node.\n'
-    '// speaker = an EXACT premise.characters id, or null for narration (no "narrator").\n'
+    '// speaker = an EXACT characters id, or null for narration (no "narrator").\n'
     '// emotion (spoken lines only) = the speaker\'s expression on this line: one of\n'
     '//   neutral, happy, sad, angry, surprised, worried. Pick the one the line conveys so\n'
     '//   the character\'s face changes as they talk; omit for neutral. Ignored on narration.\n'
     '// end.type is one of: jump {target}, menu {choices:[{text,target,requires?,effects?}]},\n'
     '//   return (back to caller), end {ending?} (a definitive ending).\n'
     '// Every jump/menu target MUST be a node you also create, AND every node must be\n'
-    '//   reachable: some node jumps/menus to it. Each premise.endings id is its own node.\n'
+    '//   reachable: some node jumps/menus to it. Each story.endings id is its own node.\n'
     '// effects (on a line / choice): set_flag, clear_flag, add_item, remove_item,\n'
     '//   set_var{var,value}, add_var{var,delta}. Declare flags/variables here.'
 )
 
 _NODE_MODE_TOOLS = frozenset({"write_node", "edit_node", "read_node", "read_story_state",
                               "validate", "update_scratchpad", "request_review"})
-_NODE_PROMPTS = {"author": "write_node.txt", "fix": "fix_node.txt"}
+_NODE_PROMPTS = {"author": "nodes_write.txt", "fix": "nodes_fix.txt"}
 _NODE_TARGET_JOBS = {
-    "beats_realized": "author", "each_node_min_lines": "author",
+    "beats_realized": "author", "build_nodes": "author",
+    "each_node_min_lines": "author",
     "min_branches": "author", "all_characters_speak": "author", "endings_are_nodes": "author",
     "reachable_from_start": "fix", "node_targets_resolve": "fix",
     "each_node_has_location": "fix", "no_dead_gates": "fix",
@@ -103,6 +101,7 @@ _NODE_TARGET_JOBS = {
 }
 _NODE_TARGET_TOOLS = {
     "beats_realized": frozenset({"write_node"}),
+    "build_nodes": frozenset({"write_node"}),
     "each_node_min_lines": frozenset({"read_node", "write_node", "edit_node"}),
     "no_dead_gates": frozenset({"read_node", "edit_node"}),
     "reachable_from_start": frozenset({"read_node", "edit_node"}),
@@ -114,12 +113,10 @@ _NODE_TARGET_TOOLS = {
     "crossref": frozenset({"read_node", "edit_node", "write_node"}),
     "compiles": frozenset({"read_node", "edit_node", "write_node"}),
 }
-# The slot guard for the author loop — the params that turn write_node into "add ONE new scene".
 _NODE_GUARD = {"count_tool": "write_node", "id_key": "node_id", "id_list_key": "node_ids",
                "noun": "node"}
 
 
-# ── render helpers (shared by both configs) ──────────────────────────────────
 def _render_slot_focus(view: Dict) -> List[str]:
     out: List[str] = []
     beats = view.get("beats") or []
@@ -149,7 +146,7 @@ def _render_slot_focus(view: Dict) -> List[str]:
         else:
             if beat_ids:
                 out.append(f"  PREVIOUS BEAT (behind us): {cr.render_beat(by_id[beat_ids[-1]])}")
-            out.append("  THIS NODE IS AN ENDING — realize a premise ending (end.type 'end'); the "
+            out.append("  THIS NODE IS AN ENDING — realize a story ending (end.type 'end'); the "
                        "arc resolves here, so open no further slot.")
         out.append("Your `end` continues the spine: prefer a single `jump` toward the next beat; "
                    "use a `menu` ONLY at a real fork, never to list places to visit.")
@@ -166,7 +163,7 @@ def _render_slot_focus(view: Dict) -> List[str]:
     todo = view.get("beats_todo")
     if todo:
         out += ["",
-                "Every existing scene's path is fully written, but these outline beats still have no "
+                "Every existing scene's path is fully written, but these story beats still have no "
                 "scene: " + ", ".join(todo) + ". Give an existing node a jump/menu to a NEW node id, "
                 "then write that node to dramatize one."]
     return out
@@ -191,13 +188,27 @@ def _node_view_block(view: Dict) -> List[str]:
     ] + _render_slot_focus(view)
 
 
-class Dialogue(Module):
-    """`nodes` authoring, in two configurations selected at construction (NOT by subclassing):
-    SPINE (the VN — rich floor, the compile terminal) and NPC (supporting barks for a navigation
-    game — light floor, no compile terminal). Both drive the same slot-guarded sub-loop."""
+def _has_story(art: Dict) -> bool:
+    return bool((art.get("story") or {}).get("central_question"))
 
+
+def _owns_compile(art: Dict) -> bool:
+    """scenes holds the compile/crossref terminal when there are nodes and no places (a pure scene
+    graph). When places exist, `world` owns the IR entry and the whole-IR backstop."""
+    has_nodes = bool((art.get("nodes") or {}).get("node_ids"))
+    has_places = bool((art.get("places") or {}).get("place_ids"))
+    return not has_places and (has_nodes or "nodes" not in art)
+
+
+class Scenes(Module):
+    id = "scenes"
+    description = ("A branching, choice-driven dialogue/scene graph — the playable script. With "
+                   "`story` it IS the game (a visual novel); with `world` it supplies room "
+                   "conversations.")
+    requires = ("cast",)
+    priority = 50
     component = "nodes"
-    mode_prompt = "write_node.txt"
+    mode_prompt = "nodes_write.txt"
     mode_tools = _NODE_MODE_TOOLS
     skeleton = SKEL_NODES
     skeletons = {"nodes": SKEL_NODES}
@@ -207,40 +218,22 @@ class Dialogue(Module):
     target_tools = _NODE_TARGET_TOOLS
     projector = staticmethod(views.node_view)
     projected = True
-
-    def __init__(self, *, id: str, spine: bool):
-        self.id = id
-        self.spine = spine                # the VN story spine vs supporting NPC barks
-        self.emits_compile = spine        # only the spine owns the compile terminal
-        self.priority = 50 if spine else 55
-        if spine:
-            self.description = ("Visual-novel spine: a branching, choice-driven script IS the game. "
-                               "The terminal for story-forward games. Needs characters.")
-            self.requires = ("cast",)
-            self.conflicts = ("dialogue_npc", "navigation")
-        else:
-            self.description = ("Talkable NPCs inside an explorable world — supporting conversation "
-                               "reached from rooms. Used with navigation, not on its own.")
-            self.requires = ("cast", "navigation")
-            self.conflicts = ("dialogue",)
+    emits_compile = True   # a realization terminal: `nodes` stays writable to the end + needs locations
 
     def get_fix(self, context, error: Error):
-        # Realizing the beat sheet means ADDING scenes — drive the slot-guarded author loop. Every
-        # other node error (wiring, lines, locations) is a single edit.
-        if self.spine and error.code == "beats_realized":
+        # Realizing the beats / bootstrapping the first scenes means ADDING nodes — drive the
+        # slot-guarded author loop. Every other node error (wiring, lines, locations) is a single edit.
+        if error.code in ("beats_realized", "build_nodes"):
             return partial(author_loop, context, error, module=self, guard=_NODE_GUARD)
         return super().get_fix(context, error)
 
     def params(self) -> Dict:
-        if self.spine:
-            return {"min_characters": 2, "min_endings": 3,
-                    "premise_fields": ["voice", "temperament", "drive", "history",
-                                       "competencies", "example_lines"],
-                    "min_branches": 1, "each_node_min_lines": 6}
-        return {"each_node_min_lines": 3}
+        return {"min_branches": 1, "each_node_min_lines": 3}
 
     def get_errors(self, context) -> List[Error]:
         art = context.artifact
+        story = _has_story(art)
+        owns = _owns_compile(art)
         errs: List[Error] = []
 
         def add(result, code):
@@ -249,26 +242,29 @@ class Dialogue(Module):
             if e:
                 errs.append(e)
 
-        if self.spine:
+        with_world = "world" in (context.spec.get("modules") or [])
+        if story:
             add(checks.beats_realized(art), "beats_realized")
-            add(checks.refs_resolve(art, "premise.endings", "nodes.node_ids", from_key="id"),
+            add(checks.refs_resolve(art, "story.endings", "nodes.node_ids", from_key="id"),
                 "endings_are_nodes")
-            add(checks.node_targets_resolve(art), "node_targets_resolve")
-            add(checks.reachable_from_start(art), "reachable_from_start")
-            add(checks.min_branches(art, min=context.param("min_branches", 1)), "min_branches")
-            add(checks.no_dead_gates(art), "no_dead_gates")
-            add(checks.each_node_min_lines(art, min=context.param("each_node_min_lines", 6)),
-                "each_node_min_lines")
-            add(checks.each_node_has_location(art), "each_node_has_location")
-            add(checks.all_characters_speak(art), "all_characters_speak")
-        else:
-            add(checks.each_node_min_lines(art, min=context.param("each_node_min_lines", 3)),
-                "each_node_min_lines")
-            add(checks.node_targets_resolve(art), "node_targets_resolve")
+        elif owns and not with_world:
+            # No story to realize and we own the entry: still need at least one scene to play.
+            # (With `world`, nodes are demand-driven by talk-hotspots, so don't bootstrap orphans.)
+            add(checks.count(art, "nodes.node_ids", min=1), "build_nodes")
 
-        # The compile terminal (spine only) appends crossref + the real build once the cheaper
-        # checks pass — kept last so a stubborn lint can't starve node creation.
-        if self.emits_compile and not errs:
+        add(checks.node_targets_resolve(art), "node_targets_resolve")
+        add(checks.reachable_from_start(art), "reachable_from_start")
+        add(checks.each_node_min_lines(art, min=context.param("each_node_min_lines", 3)),
+            "each_node_min_lines")
+        add(checks.each_node_has_location(art), "each_node_has_location")
+        add(checks.no_dead_gates(art), "no_dead_gates")
+        if story:
+            add(checks.min_branches(art, min=context.param("min_branches", 1)), "min_branches")
+            add(checks.all_characters_speak(art), "all_characters_speak")
+
+        # The compile terminal (when scenes owns the entry) appends crossref + the real build once
+        # the cheaper checks pass — kept last so a stubborn lint can't starve node creation.
+        if owns and not errs:
             for rec in checks.crossref_failures(art):
                 errs.append(Error(type=ErrorType.FIX, code="crossref", component="nodes",
                                   message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
@@ -305,7 +301,5 @@ class Dialogue(Module):
         return "\n".join(note)
 
 
-SPINE = Dialogue(id="dialogue", spine=True)
-NPC = Dialogue(id="dialogue_npc", spine=False)
-register_module(SPINE)
-register_module(NPC)
+MODULE = Scenes()
+register_module(MODULE)

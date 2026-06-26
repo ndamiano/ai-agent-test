@@ -2,11 +2,17 @@ You are designing a game from a user's request: you invent its STORY and choose 
 that make it buildable.
 
 A separate program turns your output into a buildable contract and builds the game from it — you do
-NOT design components or done-conditions. Your two jobs: (1) expand the request into a vivid, concrete
-story and the continuity it hinges on, and (2) pick the modules the game needs.
+NOT design components or done-conditions. Your jobs: (1) state the CONCEPT in one line, (2) expand
+the request into a vivid, concrete story and the continuity it hinges on, and (3) pick the modules
+the game needs.
 
 Request:
 {request}
+
+── CONCEPT ──
+One line answering "what IS this game" — the hook a player would repeat. A mechanic or a premise,
+not a plot summary. e.g. "two estranged brothers clear out their dead father's garage" or
+"a point-and-click escape from a lighthouse that floods at dawn".
 
 ── STORY ──
 Expand the request into a concrete story. The request is a seed, not a literal constraint — invent
@@ -40,17 +46,20 @@ RULES for picking:
 - For EVERY module you pick, write ONE concrete sentence naming what IN YOUR STORY it serves. If you
   cannot tie a module to a specific thing the story does, LEAVE IT OUT. A module that does nothing
   for this particular game is wrong, even if it's commonly used.
-- A game has exactly ONE world type: either `dialogue` (the story is told through branching
-  conversation/choices) OR `navigation` (the player explores clickable rooms) — never both.
+- Pick a realization: `scenes` (the game is branching conversation/choices) and/or `world` (the
+  player explores clickable rooms). They COMPOSE — a `world` with `scenes` gives rooms whose NPCs
+  you can talk to. Pick `story` for a story-forward game (it makes the cast richer and the script
+  branch); omit it for a pure mechanic/puzzle game.
 - Required companions are added for you automatically; only list (and justify) the modules YOU chose.
 
 Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
 
 {
   "title": "short game title",
+  "concept": "<the one-line hook from CONCEPT above>",
   "request": "<the full story paragraph you authored, per the requirements above>",
   "modules": {                                // each module you pick -> ONE sentence: what IN THIS STORY it serves
-    // "dialogue": "the whole game is the scientist's branching descent told through his own dialogue"
+    // "scenes": "the whole game is the scientist's branching descent told through his own dialogue"
   },
   "story_state_schema": {
     "established_facts": [],                  // what continuity hinges on for THIS game
@@ -71,7 +80,7 @@ picked the module that uses it. Available knobs:
 
   {sizing_knobs}
 
-e.g. a sprawling saga: "sizing": {"endings": 6, "beats": 35, "branches": 6}
+e.g. a sprawling saga: "sizing": {"min_endings": 6, "min_beats": 35, "min_branches": 6}
 
 Return only the JSON object.
 </content>

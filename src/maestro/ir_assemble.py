@@ -1,9 +1,10 @@
 """Lift the decomposed on-disk components into one schema-valid Game IR dict.
 
-The agent authors the game as separate components (premise + asset_manifest + nodes [+ places])
+The agent authors the game as separate components (characters + asset_manifest + nodes [+ places])
 so each write stays small and the context stays constant. The IR linter (ir_crossref) and every
 engine backend (renpy.ir_vn / ir_pnc, web, …) want ONE whole IR document. assemble_ir is the seam:
-a pure, engine-neutral projection that maps premise→characters, the body components→nodes/places,
+a pure, engine-neutral projection that maps the characters component→IR characters, the body
+components→nodes/places,
 and the body's declared state→top-level flags/variables/items/goal/start. It lives in maestro core
 (next to ir_crossref) so every engine depends on it, not on each other.
 """
@@ -49,11 +50,11 @@ def used_emotions(char_id: str, nodes: List[Dict]) -> List[str]:
     return [e for e in EMOTIONS if e in seen]
 
 
-def _characters(premise: Dict, manifest: Dict, nodes: List[Dict]) -> List[Dict]:
+def _characters(cast: Dict, manifest: Dict, nodes: List[Dict]) -> List[Dict]:
     sprites = {c.get("id"): c.get("image_file")
                for c in manifest.get("characters", []) if c.get("id")}
     out = []
-    for c in premise.get("characters", []):
+    for c in cast.get("characters", []):
         if not c.get("id"):
             continue
         ch = {"id": c["id"], "name": c.get("name") or c["id"]}
@@ -96,9 +97,9 @@ def _scan_refs(obj, flags: set, variables: set) -> None:
 
 def assemble_ir(artifact: Dict) -> Dict:
     """Build the full IR dict from the component artifact. Presence-driven: a `places` component
-    means a navigation game (IR genre point_and_click, entry = start.place); otherwise a dialogue
-    game (visual_novel, entry = start.node). The components present decide the shape."""
-    premise = artifact.get("premise", {}) or {}
+    gives IR genre point_and_click (entry = start.place); otherwise visual_novel (entry =
+    start.node). The components present decide the shape."""
+    cast = artifact.get("characters", {}) or {}
     manifest = artifact.get("asset_manifest", {}) or {}
     nodes_comp = artifact.get("nodes", {}) or {}
     places_comp = artifact.get("places", {}) or {}
@@ -108,7 +109,7 @@ def assemble_ir(artifact: Dict) -> Dict:
     nodes_map = nodes_comp.get("nodes", {}) or {}
     has_places = bool(places_comp.get("place_ids"))
 
-    # `beat` is authoring provenance (which outline beat a scene realizes — drives the
+    # `beat` is authoring provenance (which story beat a scene realizes — drives the
     # beats_realized done-condition on the on-disk component); it's not runtime IR, and the schema
     # is additionalProperties:false, so drop it here.
     nodes = [{k: v for k, v in {"id": nid, **nodes_map.get(nid, {})}.items() if k != "beat"}
@@ -124,7 +125,7 @@ def assemble_ir(artifact: Dict) -> Dict:
     ir: Dict = {
         "version": "0.1",
         "genre": "point_and_click" if has_places else "visual_novel",
-        "characters": _characters(premise, manifest, nodes),
+        "characters": _characters(cast, manifest, nodes),
         "nodes": nodes,
     }
 
@@ -132,15 +133,16 @@ def assemble_ir(artifact: Dict) -> Dict:
     if backgrounds:
         ir["backgrounds"] = backgrounds
 
-    title = brief.get("title") or premise.get("title")
+    title = brief.get("title") or cast.get("title")
     if title:
         ir["meta"] = {"title": title}
 
-    # Gameplay state is authored on the body components; merge it to the top level.
+    # Gameplay state is authored on the body components; merge it to the top level. The item
+    # catalogue is its own `inventory` component.
     flags = list(nodes_comp.get("flags", []) or []) + list(places_comp.get("flags", []) or [])
     variables = (list(nodes_comp.get("variables", []) or [])
                  + list(places_comp.get("variables", []) or []))
-    items = list(nodes_comp.get("items", []) or []) + list(places_comp.get("items", []) or [])
+    items = list((artifact.get("items", {}) or {}).get("items", []) or [])
     if flags:
         ir["flags"] = flags
     if variables:

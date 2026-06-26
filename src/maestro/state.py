@@ -2,13 +2,13 @@
 
 Each game gets its own run directory under <working_directory>/runs/<run_id>/.
 Inside it:
-  - <component_id>.json   one file per artifact component (premise, node_scripts, ...)
+  - <component_id>.json   one file per artifact component (characters, nodes, ...)
   - spec.json             the frozen contract
   - scratchpad.json       structured working memory (replaced, never appended)
   - story_state.json      continuity bible (Phase 6)
 
-Component ids map directly to the filenames compile_renpy reads (premise.json,
-asset_manifest.json, node_scripts.json, brief.json), so the run dir IS a valid
+Component ids map directly to the filenames the compiler reads (characters.json,
+asset_manifest.json, nodes.json, brief.json), so the run dir IS a valid
 compile working dir.
 
 This is the source of truth. The agent's transcript is not used as memory; each

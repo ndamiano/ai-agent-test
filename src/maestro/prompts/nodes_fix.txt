@@ -20,4 +20,4 @@ COMMON FAILURES:
 - all_characters_speak: a character never speaks — give them a line (edit a line's speaker, or add
   a beat) in some node.
 - compiles: the error names the node in brackets, e.g. [scene_3] ... — fix that node's lines/end.
-  A speaker must be an EXACT premise character id (or null for narration).
+  A speaker must be an EXACT cast character id (or null for narration).

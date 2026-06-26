@@ -22,13 +22,14 @@ from renpy.fns import (_get_sdk_path, _merge_cast_into_manifest, _ensure_placeho
                        _ensure_expression_placeholders)
 from renpy.renpy_builder import _copy_templates, _distribute, write_options_rpy
 
-_REQUIRED = ("premise", "asset_manifest")
+_REQUIRED = ("asset_manifest",)
 _FAIL = {"lint_error_count": None, "project_dir": None}
 
 
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
-    for stem in ("brief", "premise", "asset_manifest", "nodes", "places", "matches", "spec"):
+    for stem in ("brief", "characters", "story", "asset_manifest", "items", "nodes", "places",
+                 "matches", "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))
@@ -86,7 +87,7 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if ir["genre"] == "point_and_click":
         _write_pnc_placeholders(ir, game_dir)
     else:
-        manifest = _merge_cast_into_manifest(inputs.get("premise", {}),
+        manifest = _merge_cast_into_manifest(inputs.get("characters", {}),
                                              inputs.get("asset_manifest", {}))
         _ensure_placeholder_images(manifest, game_dir)
         _ensure_expression_placeholders(ir, game_dir)

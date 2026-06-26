@@ -14,7 +14,6 @@ from maestro.modules.module import (  # noqa: F401
     compose,
     engine_for,
     expand_modules,
-    module_conflict,
     projection_for,
     register_module,
     register_projection,
@@ -24,15 +23,15 @@ from maestro.modules.module import (  # noqa: F401
 )
 from maestro.modules import views, checks, context  # noqa: F401
 
-# Mechanic modules (registration side effects) — human is always present.
+# Mechanic modules (registration side effects) — human, assets, state are always present (forced).
 from maestro.modules import (  # noqa: F401
     human,
     assets,
+    state,
     card_play,
     cast,
-    dialogue,
-    economy,
-    goal,
-    navigation,
-    outline,
+    inventory,
+    scenes,
+    story,
+    world,
 )

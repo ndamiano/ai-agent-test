@@ -100,9 +100,9 @@ def test_validate_tool_reports_failures(tmp_path):
     from maestro.modules import compose
     spec = {"frozen": True, "modules": ["cast"], "params": {}}
     tools = build_tools(spec, RunState(tmp_path), compose(("cast",)))
-    assert tools["validate"]()["ok"] is False        # empty premise -> cast reports errors
-    tools["write_component"]("premise", {"central_question": "Q?",
-                                         "characters": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]})
+    assert tools["validate"]()["ok"] is False        # empty cast -> cast reports errors
+    tools["write_component"]("characters",
+                             {"characters": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]})
     assert tools["validate"]()["ok"] is True
 
 
@@ -321,10 +321,10 @@ def test_set_places_meta_and_edit_place(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
     tools["write_place"]("room_a", _place())
-    tools["set_places_meta"](goal={"type": "flag", "id": "escaped"}, flags=["escaped"],
-                             items=[{"id": "key", "name": "Key"}])
+    tools["set_places_meta"](goal={"type": "flag", "id": "escaped"}, flags=["escaped"])
     pl = state.read_component("places")
     assert pl["goal"] == {"type": "flag", "id": "escaped"} and pl["flags"] == ["escaped"]
+    assert tools["set_places_meta"](items=[{"id": "key"}])["ok"] is False  # items live in `items` now
     # repoint the move target
     assert tools["edit_place"]("room_a", "hs_door",
                                action={"type": "move", "target": "room_c"})["ok"] is True
@@ -336,27 +336,26 @@ def test_set_places_meta_and_edit_place(tmp_path):
 # ── locking ──────────────────────────────────────────────────────────────────
 
 def _dep_spec():
-    # cast owns premise (locks once complete); the dialogue spine owns nodes as the compile
-    # terminal (emits_compile → never locks, stays writable to the end).
-    return {"title": "T", "frozen": True, "modules": ["cast", "dialogue"], "params": {}}
+    # cast's `characters` locks once complete; the scenes terminal owns `nodes`
+    # (emits_compile → never locks, stays writable to the end).
+    return {"title": "T", "frozen": True, "modules": ["cast", "scenes"], "params": {}}
 
 
 def _dep_modules():
     from maestro.modules import compose
-    return compose(("cast", "dialogue"))
+    return compose(("cast", "scenes"))
 
 
-_FULL_PREMISE = {"central_question": "Q?",
-                 "characters": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]}
+_FULL_CAST = {"characters": [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]}
 
 
 def test_passing_component_locks_against_rewrite(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_dep_spec(), state, _dep_modules())
-    assert tools["write_component"]("premise", _FULL_PREMISE)["ok"]   # premise now satisfies cast
-    res = tools["write_component"]("premise", {"central_question": "Q?", "characters": [{"id": "a", "name": "A"}]})
+    assert tools["write_component"]("characters", _FULL_CAST)["ok"]   # now satisfies cast
+    res = tools["write_component"]("characters", {"characters": [{"id": "a", "name": "A"}]})
     assert res["ok"] is False and "locked" in res["error"]
-    assert len(state.read_component("premise")["characters"]) == 2
+    assert len(state.read_component("characters")["characters"]) == 2
 
 
 def test_leaf_component_never_locks(tmp_path):

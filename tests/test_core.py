@@ -19,10 +19,10 @@ from tools.spec_tools import _resolve_params
 
 # ── checks ───────────────────────────────────────────────────────────────────
 def test_count_check_min():
-    art = {"premise": {"characters": [{"id": "a"}]}}
-    ok, _ = checks.count(art, "premise.characters", min=2)
+    art = {"characters": {"characters": [{"id": "a"}]}}
+    ok, _ = checks.count(art, "characters.characters", min=2)
     assert ok is False
-    ok, _ = checks.count(art, "premise.characters", min=1)
+    ok, _ = checks.count(art, "characters.characters", min=1)
     assert ok is True
 
 
@@ -42,12 +42,13 @@ def test_as_error_wraps_failure_only():
 
 # ── params resolution (floors + proposer raise) ──────────────────────────────
 def test_params_union_and_raise():
-    vn = _resolve_params(["cast", "dialogue"], {"each_node_min_lines": 9})
-    assert vn["min_characters"] == 2          # dialogue raises cast's floor of 1
+    vn = _resolve_params(["cast", "story", "scenes"], {"each_node_min_lines": 9})
+    assert vn["min_characters"] == 2          # story raises cast's floor of 1
     assert vn["each_node_min_lines"] == 9     # proposer raise above floor 6
-    assert "voice" in vn["premise_fields"]    # list floors UNION
+    assert "voice" in vn["character_fields"]  # list floors UNION
     # proposer may not lower below floor
-    assert _resolve_params(["cast", "dialogue"], {"each_node_min_lines": 2})["each_node_min_lines"] == 6
+    assert _resolve_params(["cast", "story", "scenes"],
+                           {"each_node_min_lines": 2})["each_node_min_lines"] == 6
 
 
 # ── cast get_errors reads spec.params ────────────────────────────────────────
@@ -64,16 +65,77 @@ def _ctx(spec, art):
 
 def test_cast_errors_param_driven():
     cast = MODULE_REGISTRY["cast"]
-    art = {"premise": {"central_question": "Q", "characters": [{"id": "a", "name": "A"}]}}
+    art = {"characters": {"characters": [{"id": "a", "name": "A"}]}}
     # floor 1 -> satisfied; floor 2 -> a BUILD min_characters error
     assert not any(e.code == "min_characters" for e in cast.get_errors(_ctx({"params": {}}, art)))
     errs = cast.get_errors(_ctx({"params": {"min_characters": 2}}, art))
     assert any(e.code == "min_characters" and e.type is ErrorType.BUILD for e in errs)
 
 
+def test_state_wiring_demands_producer_and_consumer():
+    # A flag set but never read (orphan) and a flag read but never set (dangling) both fail.
+    art = {"nodes": {"node_ids": ["n1", "n2"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x", "effects": [{"set_flag": "orphan"}]}],
+               "end": {"type": "jump", "target": "n2"}},
+        "n2": {"lines": [{"speaker": "a", "text": "y"}], "end": {"type": "menu", "choices": [
+            {"text": "go", "target": "n1", "requires": {"flag": "never_set"}},
+            {"text": "stay", "target": "n1"}]}}}}}
+    refs = {r["ref"] for r in checks.state_wiring(art)}
+    assert "orphan" in refs        # produced, never consumed -> use it or cut it
+    assert "never_set" in refs     # consumed, never produced -> dangling
+
+    # A flag both set and gated is fully wired -> no error.
+    ok = {"nodes": {"node_ids": ["n1", "n2"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x", "effects": [{"set_flag": "f"}]}],
+               "end": {"type": "jump", "target": "n2"}},
+        "n2": {"lines": [{"speaker": "a", "text": "y"}], "end": {"type": "menu", "choices": [
+            {"text": "go", "target": "n1", "requires": {"flag": "f"}},
+            {"text": "stay", "target": "n1"}]}}}}}
+    assert checks.state_wiring(ok) == []
+
+
+def test_state_is_forced_and_detects_via_get_errors():
+    state = MODULE_REGISTRY["state"]
+    assert state.selectable is False
+    art = {"nodes": {"node_ids": ["n1"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x", "effects": [{"set_flag": "lonely"}]}],
+               "end": {"type": "return"}}}}}
+    errs = state.get_errors(_ctx({"params": {}}, art))
+    assert errs and all(e.type is ErrorType.FIX and e.component == "nodes" for e in errs)
+
+
+def test_inventory_catalog_checks():
+    inv = MODULE_REGISTRY["inventory"]
+    bad = {"items": {"items": [{"name": "Key"}]}}        # missing id
+    assert any(e.code == "item_fields" for e in inv.get_errors(_ctx({"params": {}}, bad)))
+    good = {"items": {"items": [{"id": "item_key", "name": "Key"}]}}
+    assert inv.get_errors(_ctx({"params": {}}, good)) == []
+
+
+def test_scenes_floor_gated_on_story_presence():
+    # scenes reads the artifact (not a flag): the narrative floor fires ONLY when a `story`
+    # component is present. The same nodes graph, with/without story, gets different bars.
+    scenes = MODULE_REGISTRY["scenes"]
+    # A dangling jump keeps a structural error open, so get_errors never reaches the compile
+    # backstop — we're only inspecting which checks fire, not building.
+    nodes = {"nodes": {"node_ids": ["n1"], "nodes": {
+        "n1": {"location": "bg", "lines": [{"speaker": "a", "text": "x"}],
+               "end": {"type": "jump", "target": "ghost"}}}}}
+    story = {"story": {"central_question": "Q", "beats": [{"id": "b1"}],
+                       "endings": [{"id": "e1"}]}}
+    params = {"params": {"each_node_min_lines": 1, "min_branches": 1}}
+
+    light = {e.code for e in scenes.get_errors(_ctx(params, dict(nodes)))}
+    rich = {e.code for e in scenes.get_errors(_ctx(params, {**nodes, **story}))}
+
+    narrative = {"beats_realized", "endings_are_nodes", "min_branches", "all_characters_speak"}
+    assert not (narrative & light)        # no story -> no narrative floor
+    assert narrative & rich               # story present -> narrative floor fires
+
+
 # ── compose always includes human; prioritization ───────────────────────────
 def test_compose_includes_human():
-    ids = [m.id for m in compose(("cast", "dialogue"))]
+    ids = [m.id for m in compose(("cast", "scenes"))]
     assert ids[0] == "human" and "cast" in ids
 
 
@@ -152,7 +214,7 @@ class _Counter(Module):
     """Needs 2 items; its create-target fix is the author_loop adding one per call."""
     id = "_counter_test"
     component = "items"
-    mode_prompt = "write_node.txt"      # any existing prompt; content irrelevant to the test
+    mode_prompt = "nodes_write.txt"     # any existing prompt; content irrelevant to the test
     mode_tools = frozenset({"add"})
 
     def get_errors(self, ctx):

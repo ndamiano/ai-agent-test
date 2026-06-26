@@ -1,11 +1,11 @@
-"""card_play — wagering card matches. Authors `matches`.
+"""card_play
 
-An overworld hotspot's play_match action enters a known card game (engine-implemented rules) against
-an NPC for a stake; resolution flows back via on_win/on_lose. The IR only parameterizes
-card_model + opponent + ante + payout; the engine owns the rules. Only the web runtime renders it
-(runMatch in engine.js) — `projected=True` with no Ren'Py projection makes a Ren'Py build fail fast.
-Reference integrity (opponent is a premise char, ante.var is a declared variable) is caught by the
-spine's crossref/compile.
+This module defines everything needed to create a card game. Currently, we do not have a
+custom built system that supports any type of card game. This is a future todo.
+
+Example games:
+  - "a riverboat gambler bets his way to freedom"  — cast + world + card_play
+  - "a back-alley blackjack hustle for rent money"  — cast + world + card_play
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -30,7 +30,7 @@ def v_matches(c: Dict) -> Optional[str]:
         if m.get("card_model") not in _MODELS:
             return f"matches.matches['{mid}'].card_model must be one of {sorted(_MODELS)}"
         if not m.get("opponent"):
-            return f"matches.matches['{mid}'] needs an 'opponent' (a premise character id)"
+            return f"matches.matches['{mid}'] needs an 'opponent' (a characters component id)"
         ante = m.get("ante")
         if not isinstance(ante, dict) or not ante.get("var") or "amount" not in ante:
             return f"matches.matches['{mid}'].ante must be {{var, amount}} (the staked variable)"
@@ -44,7 +44,7 @@ SKEL_MATCHES = (
     '    "match_<opponent>": {\n'
     '      "card_model": "blackjack",            // one of: high_card, blackjack\n'
     '      "deck_model": "standard_52",\n'
-    '      "opponent": "<a premise character id>",\n'
+    '      "opponent": "<a characters component id>",\n'
     '      "ante": {"var": "<gold-like variable>", "amount": 50},\n'
     '      "rounds": 1,\n'
     '      "on_win":  {"effects": [{"add_var": {"var": "<gold>", "delta": 50}}], "end": {"type": "return"}},\n'
@@ -54,7 +54,7 @@ SKEL_MATCHES = (
     '}\n'
     '// A MATCH is a card game an overworld hotspot starts via a play_match action.\n'
     '// card_model picks engine-implemented rules; you only set the stake + payout.\n'
-    '// opponent MUST be a premise character id; ante.var MUST be a declared variable\n'
+    '// opponent MUST be a characters component id; ante.var MUST be a declared variable\n'
     '//   (declare it on places via set_places_meta, like any other variable).\n'
     '// on_win/on_lose: apply the payout (add_var the ante variable) then end:return to\n'
     '//   the overworld. Some place interactable must have action {type:"play_match", match:"<id>"}.'
@@ -65,10 +65,10 @@ class CardPlay(Module):
     id = "card_play"
     description = ("Wagering card matches against an NPC for a stake (blackjack/poker-style). "
                    "Web engine only.")
-    requires = ("navigation",)
+    requires = ("world",)
     priority = 40
     component = "matches"
-    mode_prompt = "mode_matches.txt"
+    mode_prompt = "matches_write.txt"
     mode_tools = frozenset({"write_component", "write_match", "edit_match", "read_match",
                             "read_component", "update_scratchpad", "request_review"})
     skeleton = SKEL_MATCHES

@@ -11,7 +11,7 @@ from renpy.compiler import compile_renpy
 
 
 def _write_vn(run_dir: Path, *, dangling=False, broken=False):
-    (run_dir / "premise.json").write_text(json.dumps({
+    (run_dir / "characters.json").write_text(json.dumps({
         "characters": [{"id": "al", "name": "Al"}, {"id": "bo", "name": "Bo"}]
     }))
     (run_dir / "asset_manifest.json").write_text(json.dumps({
@@ -48,7 +48,7 @@ def test_compile_web_writes_project(tmp_path):
 
     game = json.loads((out / "game.json").read_text())
     expected = assemble_ir({
-        "premise": json.loads((tmp_path / "premise.json").read_text()),
+        "characters": json.loads((tmp_path / "characters.json").read_text()),
         "asset_manifest": json.loads((tmp_path / "asset_manifest.json").read_text()),
         "nodes": json.loads((tmp_path / "nodes.json").read_text()),
     })

@@ -14,7 +14,7 @@ _VALIDATOR = jsonschema.Draft202012Validator({k: v for k, v in _SCHEMA.items() i
 
 def _vn_artifact():
     return {
-        "premise": {"characters": [{"id": "al", "name": "Al"}, {"id": "bo", "name": "Bo"}]},
+        "characters": {"characters": [{"id": "al", "name": "Al"}, {"id": "bo", "name": "Bo"}]},
         "asset_manifest": {"backgrounds": [], "characters": []},
         "nodes": {
             "node_ids": ["n1", "n2"],
@@ -73,14 +73,14 @@ def test_crossref_catches_dangling_ref_after_assemble():
 def test_example_roundtrips_through_components():
     ex = json.loads((Path(__file__).parent.parent / "docs" / "examples" / "vn_crappy.json").read_text())
     art = {
-        "premise": {"characters": ex["characters"]},
+        "characters": {"characters": ex["characters"]},
         "asset_manifest": {"backgrounds": [], "characters": []},
+        "items": {"items": ex.get("items", [])},
         "nodes": {
             "node_ids": [n["id"] for n in ex["nodes"]],
             "nodes": {n["id"]: {k: v for k, v in n.items() if k != "id"} for n in ex["nodes"]},
             "flags": ex.get("flags", []),
             "variables": ex.get("variables", []),
-            "items": ex.get("items", []),
             "start": ex["start"].get("node"),
         },
     }

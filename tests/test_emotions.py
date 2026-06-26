@@ -12,7 +12,7 @@ from utils.image import write_solid_png
 
 def _artifact():
     return {
-        "premise": {"characters": [{"id": "al", "name": "Al"}, {"id": "bo", "name": "Bo"}]},
+        "characters": {"characters": [{"id": "al", "name": "Al"}, {"id": "bo", "name": "Bo"}]},
         "asset_manifest": {"characters": [
             {"id": "al", "image_file": "al.png"},
             {"id": "bo", "image_file": "bo.png"},
@@ -129,7 +129,7 @@ def test_generate_images_two_pass_builds_variants_off_neutral(tmp_path, monkeypa
     monkeypatch.setattr(ct, "run_jobs", fake_run)
 
     inputs = {
-        "premise": {"characters": [{"id": "al", "name": "Al"}]},
+        "characters": {"characters": [{"id": "al", "name": "Al"}]},
         "asset_manifest": {"characters": [{"id": "al", "image_file": "al.png"}]},
         "nodes": {"node_ids": ["n1"], "nodes": {"n1": {
             "lines": [{"speaker": "al", "text": "x", "emotion": "happy"}],

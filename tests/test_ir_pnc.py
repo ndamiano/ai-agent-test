@@ -48,7 +48,7 @@ def test_compile_pnc_structure():
 def _write_run(run_dir: Path):
     ex = _EXAMPLE
     (run_dir / "spec.json").write_text(json.dumps({"genre": "point_and_click", "title": ex["meta"]["title"]}))
-    (run_dir / "premise.json").write_text(json.dumps({"characters": ex["characters"]}))
+    (run_dir / "characters.json").write_text(json.dumps({"characters": ex["characters"]}))
     (run_dir / "asset_manifest.json").write_text(json.dumps({"backgrounds": [], "characters": []}))
     (run_dir / "nodes.json").write_text(json.dumps({
         "node_ids": [n["id"] for n in ex["nodes"]],
@@ -57,11 +57,11 @@ def _write_run(run_dir: Path):
     (run_dir / "places.json").write_text(json.dumps({
         "place_ids": [p["id"] for p in ex["places"]],
         "places": {p["id"]: {k: v for k, v in p.items() if k != "id"} for p in ex["places"]},
-        "items": ex["items"],
         "flags": ex["flags"],
         "goal": ex["goal"],
         "start_place": ex["start"]["place"],
     }))
+    (run_dir / "items.json").write_text(json.dumps({"items": ex["items"]}))
 
 
 def test_compile_ir_dispatches_pnc(tmp_path):

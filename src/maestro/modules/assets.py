@@ -1,8 +1,12 @@
-"""assets — the image manifest. Authors `asset_manifest`.
+"""assets
 
-Owns the manifest checks: backgrounds must exist, and every listed background / character sprite
-needs an id (the compiler keys art off ids). Injected downstream as ids-only — the image-generation
-prose is the biggest chunk of dead weight in a node step's context.
+This module defines all of the assets required to build a game. Currently, we only support
+2d games that only need images, but this will eventually expand to include everything needed to
+create a full 3d game as well. This module defines art direction, prompts, which assets are needed
+
+Example games:
+  - "a quiet two-hander visual novel" — assets + cast + story + scenes
+  - "a point-and-click escape room"    — assets + cast + world + inventory
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -20,7 +24,7 @@ def v_asset_manifest(c: Dict) -> Optional[str]:
             return f"asset_manifest.backgrounds[{i}] needs an 'id' (e.g. 'bg_office')"
     for i, ch in enumerate(c.get("characters", [])):
         if not isinstance(ch, dict) or not ch.get("id"):
-            return f"asset_manifest.characters[{i}] needs an 'id' matching a premise character id"
+            return f"asset_manifest.characters[{i}] needs an 'id' matching a characters component id"
     if "items" in c:
         if not isinstance(c["items"], list):
             return "asset_manifest.items must be a list (use [] if none)"
@@ -35,13 +39,13 @@ def v_asset_manifest(c: Dict) -> Optional[str]:
 SKEL_ASSET_MANIFEST = (
     '{\n'
     '  "backgrounds": [ {"id": "bg_<place>", "image_file": "<place>.png", "description": "..."} ],\n'
-    '  "characters":  [ {"id": "<same id as premise>", "image_file": "<id>.png", "description": "..."} ],\n'
+    '  "characters":  [ {"id": "<same id as in the characters component>", "image_file": "<id>.png", "description": "..."} ],\n'
     '  "items": [ {"id": "<same id as a places item>", "image_file": "<id>.png", "description": "..."} ],\n'
     '  "cgs": [],\n'
     '  "title_card": {"image_file": "title_card.png", "description": "..."}\n'
     '}\n'
     '// asset_manifest holds IMAGES, not speakers. character ids here MUST match\n'
-    '//   premise.characters ids exactly. items hold inventory ICONS; their ids MUST match\n'
+    '//   characters component ids exactly. items hold inventory ICONS; their ids MUST match\n'
     '//   places items ids. Omit "items" (or use []) for a visual novel with no inventory.'
 )
 
@@ -51,7 +55,7 @@ class Assets(Module):
     selectable = False   # always-on: every engine keys art off the manifest's ids
     priority = 20
     component = "asset_manifest"
-    mode_prompt = "mode_asset.txt"
+    mode_prompt = "assets_write.txt"
     mode_tools = frozenset({"write_component", "update_scratchpad", "request_review"})
     skeleton = SKEL_ASSET_MANIFEST
     schemas = {"asset_manifest": v_asset_manifest}

@@ -1,11 +1,15 @@
-"""navigation — clickable rooms/screens. Authors `places`.
+"""world — clickable rooms/screens. Authors the `places` component.
 
-The spine when present: `places` stitches the whole script (the compile terminal), its talk-hotspots
-call dialogue_npc nodes, and it carries the place tools. A `move` graph connects places; items are
-taken and used; an optional win goal (composed via goal_flag) must be reachable.
+A point-and-click world: places connected by `move`, hotspots that examine / take / use / talk,
+items that are taken and used, and an optional win goal. A slot-guarded sub-loop grows the map one
+room at a time, wiring each new place into the reachable graph.
+
+Example games:
+  - "escape a locked observatory before dawn"            — cast + world + inventory
+  - "wander a night market solving each vendor's problem" — cast + world + scenes
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from functools import partial
 
@@ -24,11 +28,6 @@ def v_places(c: Dict) -> Optional[str]:
         return "places.places must be an object mapping place_id -> {background, interactables}"
     if c.get("start_place") and c["start_place"] not in place_ids:
         return f"places.start_place {c['start_place']!r} is not in place_ids"
-    if not isinstance(c.get("items", []), list):
-        return "places.items must be a list (use [] if none)"
-    for i, it in enumerate(c.get("items", [])):
-        if not isinstance(it, dict) or not it.get("id"):
-            return f"places.items[{i}] needs an 'id' (e.g. 'item_key')"
     goal = c.get("goal")
     if goal is not None and (not isinstance(goal, dict) or not goal.get("type") or not goal.get("id")):
         return "places.goal must be an object with 'type' ('flag' or 'room') and 'id'"
@@ -50,7 +49,6 @@ def v_places(c: Dict) -> Optional[str]:
 SKEL_PLACES = (
     '{\n'
     '  "start_place": "room_<first>",\n'
-    '  "items": [ {"id": "item_<thing>", "name": "<Display Name>", "examine": "..."} ],\n'
     '  "flags": ["<flag_set_by_a_puzzle>"],\n'
     '  "goal": {"type": "flag", "id": "<flag_that_means_you_won>"},\n'
     '  "place_ids": ["room_<first>", "room_<second>"],\n'
@@ -73,9 +71,11 @@ SKEL_PLACES = (
     '//   A `use` clause\'s requires MUST be a real condition (flag/item/var) — NEVER {}. For an\n'
     '//   effect that fires UNCONDITIONALLY (e.g. a lever that always sets a flag), use a\n'
     '//   fallback ONLY and no clauses: {"type":"use","fallback":{"text":"...","effects":[...]}}.\n'
-    '// background must exist in asset_manifest.backgrounds; item ids must be declared in\n'
-    '//   items; a talk node must exist in `nodes`; move/win targets resolve to places/win.\n'
-    '// goal flag must be set by a reachable use-outcome, and some hotspot must have a win action.'
+    '// background must exist in asset_manifest.backgrounds; a take/requires item id must be\n'
+    '//   declared in the `items` catalogue (compose `inventory`); a talk node must exist in\n'
+    '//   `nodes` (compose `scenes`); move/win targets resolve.\n'
+    '// goal is OPTIONAL: if you want a win, declare a goal flag set by a reachable use-outcome\n'
+    '//   and give some hotspot a win action; omit it for an open-ended world.'
 )
 
 _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "add_interactable",
@@ -83,25 +83,21 @@ _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "
                                "update_scratchpad", "request_review"})
 _PLACE_TARGET_JOBS = {
     "min_places": "author", "each_place_min_interactables": "author",
-    "items_obtainable": "author", "items_used": "author",
     "places_reachable": "fix",
     "crossref": "fix", "compiles": "fix",
 }
 _PLACE_TARGET_TOOLS = {
     "min_places": frozenset({"write_component", "write_place"}),
     "each_place_min_interactables": frozenset({"read_place", "add_interactable", "edit_place"}),
-    "items_obtainable": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta"}),
-    "items_used": frozenset({"read_place", "add_interactable", "edit_place", "set_places_meta"}),
     "places_reachable": frozenset({"read_place", "add_interactable", "edit_place", "read_component"}),
     # crossref/compiles are the terminal backstop over the WHOLE IR — a dangling reference can be a
     # talk-node (needs write_node/edit_node) as well as a place wiring error, so the fixer gets the
-    # broad set rather than routing per-slice (the old ir_slices map).
+    # broad set rather than routing per-slice.
     "crossref": frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
                            "write_place", "read_component", "write_node", "edit_node", "read_node"}),
     "compiles": frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
                            "write_place", "read_component", "write_node", "edit_node", "read_node"}),
 }
-# The slot guard for the author loop — the params that turn write_place into "add ONE new place".
 _PLACE_GUARD = {"count_tool": "write_place", "id_key": "place_id", "id_list_key": "place_ids",
                 "noun": "place"}
 
@@ -130,39 +126,34 @@ def _place_view_block(view: Dict) -> List[str]:
     ]
 
 
-class Navigation(Module):
-    id = "navigation"
+class World(Module):
+    id = "world"
     description = ("Clickable rooms/screens you move between — a point-and-click world with "
-                   "hotspots, items, and movement. The terminal for explorable games.")
-    requires = ("cast", "dialogue_npc")
-    conflicts = ("dialogue",)
+                   "hotspots, items, and movement. Pair with `scenes` for talkable NPCs.")
     priority = 50
     component = "places"
-    mode_prompt = "write_place.txt"
+    mode_prompt = "places_write.txt"
     mode_tools = _PLACE_MODE_TOOLS
     skeleton = SKEL_PLACES
     schemas = {"places": v_places}
     skeletons = {"places": SKEL_PLACES}
-    prompts = {"author": "write_place.txt", "fix": "fix_place.txt"}
+    prompts = {"author": "places_write.txt", "fix": "places_fix.txt"}
     target_jobs = _PLACE_TARGET_JOBS
     target_tools = _PLACE_TARGET_TOOLS
     projector = staticmethod(views.place_view)
     projected = True
-    emits_compile = True
+    emits_compile = True   # a realization terminal: `places` stays writable to the end
     tool_names = ("write_place", "edit_place", "add_interactable", "read_place", "set_places_meta")
 
     def get_fix(self, context, error: Error):
         # Reaching the place count means ADDING rooms — drive the slot-guarded author loop. Every
-        # other place error (reachability, items, the win) is a single edit.
+        # other place error (reachability, items) is a single edit.
         if error.code == "min_places":
             return partial(author_loop, context, error, module=self, guard=_PLACE_GUARD)
         return super().get_fix(context, error)
 
     def params(self) -> Dict:
         return {"min_places": 3, "min_interactables": 2}
-
-    def affected_components(self) -> Tuple[str, ...]:
-        return ("places",)
 
     def _add(self, errs, result, code):
         tier = ErrorType.BUILD if self.job_for(code) == "author" else ErrorType.FIX
@@ -179,8 +170,6 @@ class Navigation(Module):
         self._add(errs, checks.each_place_min_interactables(
             art, min=context.param("min_interactables", 2)), "each_place_min_interactables")
         self._add(errs, checks.places_reachable(art), "places_reachable")
-        self._add(errs, checks.items_obtainable(art), "items_obtainable")
-        self._add(errs, checks.items_used(art), "items_used")
         if not errs:
             for rec in checks.crossref_failures(art):
                 errs.append(Error(type=ErrorType.FIX, code="crossref", component="places",
@@ -192,7 +181,6 @@ class Navigation(Module):
                     errs.append(ce)
         return errs
 
-    # start_place / start_place exists is BUILD; classify the two unlisted codes here.
     def job_for(self, code: str) -> str:
         if code == "start_place":
             return "author"
@@ -221,5 +209,5 @@ class Navigation(Module):
         return "\n".join(note)
 
 
-MODULE = Navigation()
+MODULE = World()
 register_module(MODULE)

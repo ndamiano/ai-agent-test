@@ -84,7 +84,6 @@ class Module(ABC):
     description: str = ""               # one-line, LLM-facing: what this mechanic adds
     selectable: bool = True             # False = always-on foundation, hidden from the catalog
     requires: Tuple[str, ...] = ()      # modules pulled in automatically when this is chosen
-    conflicts: Tuple[str, ...] = ()     # modules that cannot be composed alongside this one
 
     # ── authoring surface (defaults are inert) ───────────────────────────────
     component: str = ""                  # the on-disk component this module authors (if any)
@@ -111,7 +110,7 @@ class Module(ABC):
     def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
         """Default fix step, serving both the single-shot and the sub-loop's per-target case: the
         prompt for this target's job + the tools gated to it, rendered with the live graph view.
-        Override for a bespoke fix (economy / goal / human)."""
+        Override for a bespoke fix (state / human)."""
         from maestro.modules.context import render_dict
         view = self.view(context.artifact)
         rd = render_dict(context, active=error.component or None, target=error, active_view=view,
@@ -166,7 +165,7 @@ class Module(ABC):
     def get_fix(self, context, error: Error) -> Callable:
         """Return a Fix — a callable `fix(services)` that resolves `error` (the loop builds the
         Services and invokes it). Default: a single correction step. A content module overrides this
-        to return its iterative author loop for a count-driven target (see dialogue/navigation)."""
+        to return its iterative author loop for a count-driven target (see scenes/world)."""
         return functools.partial(self._single_fix, context, error)
 
     def _single_fix(self, context, error: Error, services) -> None:
@@ -198,10 +197,12 @@ def compose(module_ids: Tuple[str, ...]) -> List[Module]:
 
 
 # ── Spec composition — the proposer picks modules from the catalog ──────────────
-# There is no genre/preset box: the proposer is shown the selectable modules and chooses them.
-# Code force-includes the always-on foundation, pulls each pick's `requires` deps, rejects
-# `conflicts`, and derives the engine from what can project the resulting set.
-_DEFAULT_MODULES: Tuple[str, ...] = ("cast", "economy", "outline", "dialogue")  # the safe fallback
+# There is no genre/preset box, and no ownership/terminal/exclusion: the proposer is shown the
+# selectable modules and chooses any subset. Code force-includes the always-on foundation, pulls
+# each pick's `requires` deps, and derives the engine from what can project the resulting set. A set
+# is buildable if it has a realization module (one that produces a compile entry) and an engine.
+_DEFAULT_MODULES: Tuple[str, ...] = ("cast", "story", "scenes")  # the safe fallback
+_REALIZATION: Tuple[str, ...] = ("scenes", "world")  # modules that produce a playable compile entry
 
 
 def selectable_catalog() -> List[Tuple[str, str]]:
@@ -231,17 +232,6 @@ def expand_modules(ids) -> List[str]:
     return want
 
 
-def module_conflict(ids) -> Optional[str]:
-    """The first conflicting pair in a composed set, or None if the set is consistent."""
-    present = set(ids)
-    for i in ids:
-        m = MODULE_REGISTRY.get(i)
-        clash = present & set(m.conflicts) if m else set()
-        if clash:
-            return f"{i} conflicts with {', '.join(sorted(clash))}"
-    return None
-
-
 def engine_for(ids) -> Optional[str]:
     """The engine that can project every module in the set (Ren'Py preferred; web is the
     fallback for web-only mechanics like cards). None means no engine can build it."""
@@ -255,12 +245,12 @@ def engine_for(ids) -> Optional[str]:
 
 def resolve_modules(ids) -> Tuple[List[str], str]:
     """Turn the proposer's raw module picks into a buildable (modules, engine) pair: force the
-    foundation, expand deps, then validate (a content terminal present, no conflicts, projectable).
-    On any inconsistency, fall back to the default visual-novel bundle so a build always exists."""
+    foundation, expand deps, then validate (a realization module present + projectable). On any
+    inconsistency, fall back to the default visual-novel bundle so a build always exists."""
     modules = expand_modules(ids)
-    has_terminal = {"dialogue", "dialogue_npc", "navigation"} & set(modules)
+    has_realization = set(_REALIZATION) & set(modules)
     engine = engine_for(modules)
-    if has_terminal and module_conflict(modules) is None and engine is not None:
+    if has_realization and engine is not None:
         return modules, engine
     fallback = expand_modules(_DEFAULT_MODULES)
     return fallback, engine_for(fallback) or "renpy"

@@ -3,12 +3,12 @@ whole component in ONE call: write_component("matches", { ... }) in the shape th
 shows. Do NOT write the JSON as a message — it MUST be the argument of a write_component tool
 call, or nothing is saved.
 
-The LOCKED COMPONENTS block holds the settled premise. Every match's `opponent` MUST be an
-EXACT premise character id from there — an opponent that isn't a premise character is a bug.
+The LOCKED COMPONENTS block holds the settled cast. Every match's `opponent` MUST be an
+EXACT `characters` component id from there — an opponent that isn't a cast character is a bug.
 
 Each match is a known card game for a stake:
   card_model  — "high_card" (each draws one card, higher wins) or "blackjack" (draw toward 21).
-  opponent    — the premise character id you wager against.
+  opponent    — the cast character id you wager against.
   ante        — {var, amount}: the currency variable staked and how much. Use ONE currency
                 variable across the game (e.g. "gold"); the places component declares it.
   on_win      — the payout: add_var the ante variable UP by the winnings, then end: return.

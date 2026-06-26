@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -77,6 +78,8 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
 
     title = (inputs.get("spec", {}) or {}).get("title") or \
         (inputs.get("brief", {}) or {}).get("title") or "Untitled"
+    tc = (inputs.get("asset_manifest", {}) or {}).get("title_card", {}) or {}
+    menu_bg = tc.get("image_file", "title_card.png") if tc.get("description") else ""
     write_options_rpy(game_dir, title)
     with open(os.path.join(game_dir, "script.rpy"), "w", encoding="utf-8") as f:
         f.write(script)
@@ -91,6 +94,20 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
                                              inputs.get("asset_manifest", {}))
         _ensure_placeholder_images(manifest, game_dir)
         _ensure_expression_placeholders(ir, game_dir)
+
+    # Wire the generated title card onto the main menu. The stock `main_menu` screen does
+    # `add gui.main_menu_background`, and Ren'Py's screen language CONST-FOLDS that `define`d
+    # name — so reassigning gui.main_menu_background at runtime is ignored. Instead we overwrite
+    # the asset the const already points at (gui/main_menu.png), after _copy_templates has laid
+    # down the stock one. game_menu_background is left stock.
+    if menu_bg:
+        from utils.image import write_solid_png
+        tc_path = Path(game_dir) / "images" / menu_bg
+        if not tc_path.exists():
+            write_solid_png(tc_path, 1280, 720, (20, 30, 60))
+        gui_bg = Path(game_dir) / "gui" / "main_menu.png"
+        gui_bg.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(tc_path, gui_bg)
 
     build_result: Dict = {"project_dir": os.path.abspath(output_dir)}
     if sdk_path:

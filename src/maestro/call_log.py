@@ -22,7 +22,10 @@ class LoggingConnector:
         self._inner = inner
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._n = 0
+        # Resume after any existing calls (a rewrite logs into the same dir the build wrote)
+        # so we append rather than clobber 0001.json onward.
+        self._n = max((int(p.stem) for p in self._log_dir.glob("*.json") if p.stem.isdigit()),
+                      default=0)
         self._lock = threading.Lock()
 
     def __getattr__(self, name):

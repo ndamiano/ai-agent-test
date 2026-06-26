@@ -229,6 +229,20 @@ const NodeCard: React.FC<{
                             <span className="text-gray-300">: {ln.text}</span>
                         </div>
                     ))}
+                    {node?.end?.type === 'menu' && Array.isArray(node.end.choices) && (
+                        <div className="mt-2 pt-2 border-t border-white/[0.05] space-y-1">
+                            <div className="text-gray-500 text-[10px] uppercase tracking-wide">Choices</div>
+                            {node.end.choices.map((c: any, i: number) => (
+                                <div key={i} className="text-[13px] leading-snug flex gap-1.5">
+                                    <span className="text-purple-300">▸</span>
+                                    <span className="text-gray-200">{c.text}</span>
+                                    <span className="text-gray-600 font-mono text-[11px]">→ {c.target}</span>
+                                    {c.requires && <span className="text-amber-500/70 text-[10px]">[if]</span>}
+                                    {Array.isArray(c.effects) && c.effects.length > 0 && <span className="text-emerald-500/70 text-[10px]">[fx]</span>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
             {err && <p className="text-red-400 text-[11px] mt-1">{err}</p>}
@@ -418,9 +432,9 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
     const cancel = () => act(() => api.cancelGame(runId), 'Cancel failed', false)
     const compile = () => act(async () => {
-        const r = await api.compileGame(runId)
-        setFeed(prev => [...prev.slice(-60), r.ok ? '✓ compiled' : `✗ compile failed: ${r.reason}`])
-    }, 'Compile failed')
+        const r = await api.compileGame(runId, true)
+        setFeed(prev => [...prev.slice(-60), r.ok ? '✓ packaged' : `✗ package failed: ${r.reason}`])
+    }, 'Package failed')
     const regenerate = () => act(async () => {
         await api.regenerateAssets(runId)
         setFeed(prev => [...prev.slice(-60), '✓ images regenerated (recompile to repackage)'])
@@ -624,7 +638,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     {bodyTab === 'scenes' && (
                         nodesComp && rawSceneIds.length > 0 ? (
                             <SceneNavigator runId={runId} nodesComp={nodesComp} orderedIds={orderedIds} activeId={activeId}
-                                editable={editable} rewriting={rewriting} onPick={setActiveScene} onRewrite={rewrite} onSaved={touch} />
+                                editable={editable} rewriting={rewriting} onPick={setActiveScene} onRewrite={rewrite} onSaved={id => { touch(id); load() }} />
                         ) : (
                             <p className="text-gray-600 text-sm">No scenes yet — they appear here once the build writes nodes.</p>
                         )

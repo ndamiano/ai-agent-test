@@ -22,7 +22,7 @@ from maestro.state import RunState
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
+_PROMPTS_DIR = Path(__file__).parent.parent / "maestro" / "prompts"
 
 
 def _emit(event_type: str, run_id: str, **payload) -> None:

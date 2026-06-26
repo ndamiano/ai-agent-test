@@ -33,6 +33,8 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
     from tools.spec_tools import _emit
     from maestro.modules import compose
     from maestro.run_control import get_or_create, remove
+    from maestro.call_log import LoggingConnector
+    from llm_clients.connector_selector import get_connector
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
@@ -41,8 +43,9 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
     modules = compose(spec_data.get("modules", []))   # human auto-included
     tools = build_tools(spec_data, state, modules)
     control = get_or_create(run_id)
+    conn = LoggingConnector(get_connector(), state.run_dir / "llm_calls")
     loop = AgentLoop(
-        spec_data, state, modules, tools, max_steps=max_steps,
+        spec_data, state, modules, tools, connector=conn, max_steps=max_steps,
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         control=control,
@@ -79,13 +82,16 @@ def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
     from maestro.modules import compose
     from maestro.rewrite import rewrite_node
     from maestro.engines import compile_for
+    from maestro.call_log import LoggingConnector
+    from llm_clients.connector_selector import get_connector
 
     state = RunState.for_run(run_id)
     spec_data = state.read_spec()
     modules = compose(spec_data.get("modules", []))
     tools = build_tools(spec_data, state, modules)
+    conn = LoggingConnector(get_connector(), state.run_dir / "llm_calls")
     _emit("node_rewrite_started", run_id, node_id=node_id, note=note)
-    result = rewrite_node(spec_data, state, node_id, note, tools,
+    result = rewrite_node(spec_data, state, node_id, note, tools, connector=conn,
                           report=lambda m: _emit("node_rewrite_step", run_id, node_id=node_id, summary=m))
     if result.get("ok"):
         try:

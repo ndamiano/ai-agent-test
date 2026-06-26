@@ -59,14 +59,40 @@ def parse_args(raw: str) -> Dict:
         return {}
 
 
-def parse_action(response: Dict) -> Dict:
+def salvage_tool_call(content: str, schemas) -> Optional[Dict]:
+    """Local models sometimes emit a tool's arguments as raw JSON in message content instead of as a
+    function call. If that JSON uniquely fits one available tool's parameters, rebuild the call so the
+    work isn't thrown away (and we skip a wasted nudge round-trip). Bail when ambiguous — let the
+    nudge path handle it."""
+    args = parse_args(content) if content else {}
+    if not isinstance(args, dict) or not args:
+        return None
+    keys = set(args)
+    matches = []
+    for s in schemas or []:
+        f = s.get("function", {})
+        params = f.get("parameters", {}) or {}
+        props = set(params.get("properties", {}) or {})
+        required = set(params.get("required", []) or [])
+        if required <= keys <= props:
+            matches.append(f.get("name"))
+    if len(matches) != 1:
+        return None
+    return {"id": "salvaged", "type": "function",
+            "function": {"name": matches[0], "arguments": json.dumps(args, ensure_ascii=False)}}
+
+
+def parse_action(response: Dict, schemas=None) -> Dict:
     if "error" in response:
         logger.warning("decider LLM error: %s", response["error"])
         return {}
     message = (response.get("choices") or [{}])[0].get("message", {})
     tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
     if not tcs:
-        return {}
+        salvaged = salvage_tool_call(message.get("content"), schemas)
+        if not salvaged:
+            return {}
+        tcs = [salvaged]
     fn = tcs[0]["function"]
     return {"tool": fn["name"], "args": parse_args(fn.get("arguments"))}
 
@@ -200,7 +226,7 @@ class Services:
         if self.escalate:
             schemas = [s for s in schemas if not s.get("function", {}).get("name", "").startswith("read")]
         msgs = MessageBuilder(prompt.system).add_user(prompt.user).build()
-        action = parse_action(self.infer(msgs, schemas))
+        action = parse_action(self.infer(msgs, schemas), schemas)
         if not action.get("tool"):
             self._report("no tool call — model returned prose")
             return
@@ -244,15 +270,21 @@ def author_loop(context, error, services: Services, *, module, guard: Dict) -> N
         message = (response.get("choices") or [{}])[0].get("message", {})
         tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
         if not tcs:
-            stall += 1
-            services._report("no tool call — model returned text; nudging")
-            if not escalated and stall >= _STALL_LIMIT:
-                escalated = True
-            if stall > _STALL_LIMIT + 1:
-                return
-            mb.add_user("You MUST respond with a tool call, not prose. Pick one of the available "
-                        "tools and pass the content as its arguments.")
-            continue
+            salvaged = salvage_tool_call(message.get("content"), schemas)
+            if salvaged:
+                services._report("salvaged tool call from text response")
+                tcs = [salvaged]
+                message = {**message, "content": None}
+            else:
+                stall += 1
+                services._report("no tool call — model returned text; nudging")
+                if not escalated and stall >= _STALL_LIMIT:
+                    escalated = True
+                if stall > _STALL_LIMIT + 1:
+                    return
+                mb.add_user("You MUST respond with a tool call, not prose. Pick one of the available "
+                            "tools and pass the content as its arguments.")
+                continue
 
         mb.add_assistant(message.get("content"), tool_calls=tcs)
         made_progress = False

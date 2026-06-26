@@ -1,6 +1,7 @@
 """The new module core: checks, per-module get_errors, params resolution, composition + human,
 error prioritization, waivers, and the agent loop driving to completion."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -195,3 +196,60 @@ def test_author_loop_drives_create_target_to_green(tmp_path):
     result = loop.run()
     assert result.ok is True
     assert state.read_component("items")["ids"] == ["item_1", "item_2"]  # stopped at the target, not forever
+
+
+# ── salvage: model emits args as content text, not a tool call ────────────────
+from maestro.services import salvage_tool_call, parse_action
+
+_WRITE_NODE_SCHEMA = {"type": "function", "function": {
+    "name": "write_node",
+    "parameters": {"type": "object",
+                   "properties": {"node_id": {}, "content": {}, "story_state_delta": {}},
+                   "required": ["node_id", "content"]}}}
+_EDIT_NODE_SCHEMA = {"type": "function", "function": {
+    "name": "edit_node",
+    "parameters": {"type": "object",
+                   "properties": {"node_id": {}, "line_index": {}, "text": {}, "speaker": {}},
+                   "required": ["node_id"]}}}
+
+
+def test_salvage_unique_match():
+    content = '{"node_id": "beat_04", "content": {"lines": []}, "story_state_delta": {}}'
+    tc = salvage_tool_call(content, [_WRITE_NODE_SCHEMA, _EDIT_NODE_SCHEMA])
+    assert tc is not None
+    assert tc["function"]["name"] == "write_node"
+    assert json.loads(tc["function"]["arguments"])["node_id"] == "beat_04"
+
+
+def test_salvage_strips_code_fence():
+    content = '```json\n{"node_id": "b", "content": {}}\n```'
+    tc = salvage_tool_call(content, [_WRITE_NODE_SCHEMA])
+    assert tc is not None and tc["function"]["name"] == "write_node"
+
+
+def test_salvage_bails_on_foreign_keys():
+    # extra key not in any tool's properties -> not a clean fit -> no salvage
+    content = '{"node_id": "b", "content": {}, "bogus": 1}'
+    assert salvage_tool_call(content, [_WRITE_NODE_SCHEMA]) is None
+
+
+def test_salvage_bails_when_required_missing():
+    # only edit_node's required (node_id) is satisfiable, but content key is foreign to edit_node
+    content = '{"line_index": 0, "text": "hi"}'
+    assert salvage_tool_call(content, [_WRITE_NODE_SCHEMA, _EDIT_NODE_SCHEMA]) is None
+
+
+def test_salvage_bails_on_prose():
+    assert salvage_tool_call("I will now write the node.", [_WRITE_NODE_SCHEMA]) is None
+
+
+def test_parse_action_salvages_text_response():
+    resp = {"choices": [{"message": {
+        "content": '{"node_id": "beat_04", "content": {"lines": []}}'}}]}
+    action = parse_action(resp, [_WRITE_NODE_SCHEMA])
+    assert action == {"tool": "write_node", "args": {"node_id": "beat_04", "content": {"lines": []}}}
+
+
+def test_parse_action_no_schemas_no_salvage():
+    resp = {"choices": [{"message": {"content": '{"node_id": "x", "content": {}}'}}]}
+    assert parse_action(resp) == {}

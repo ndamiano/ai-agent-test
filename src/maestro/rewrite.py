@@ -50,7 +50,7 @@ def rewrite_node(spec: Dict, state, node_id: str, note: str, tools: Dict[str, Ca
 
     for _ in range(cap):
         action = parse_action(conn.generate_with_tools(mb.build(), schemas, reasoning="high",
-                                                        max_tokens=_BUILD_MAX_TOKENS))
+                                                        max_tokens=_BUILD_MAX_TOKENS), schemas)
         if action.get("tool") != "write_node":
             say("no write_node tool call — nudging")
             mb.add_user("Respond with a write_node TOOL CALL (not prose), passing the rewritten "

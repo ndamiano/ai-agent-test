@@ -6,6 +6,7 @@ compile per row). The detail view runs validate once on demand to surface the to
 Build orchestration (freeze/build/streaming) lives in the next phase.
 """
 
+import asyncio
 import logging
 import threading
 from typing import Dict, List
@@ -157,7 +158,7 @@ async def amend_game_spec_route(run_id: str, body: AmendBody):
 
     if RunState.for_run(run_id).read_spec() is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
-    amend_spec(run_id, body.changes, body.reason)
+    await asyncio.to_thread(amend_spec, run_id, body.changes, body.reason)
     return await get_game(run_id)
 
 
@@ -169,7 +170,7 @@ async def freeze_game(run_id: str):
 
     if RunState.for_run(run_id).read_spec() is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
-    return freeze_spec(run_id)
+    return await asyncio.to_thread(freeze_spec, run_id)
 
 
 @router.post("/{run_id}/build", response_model=Dict)

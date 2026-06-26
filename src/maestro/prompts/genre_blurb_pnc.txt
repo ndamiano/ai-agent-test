@@ -1,4 +1,0 @@
-a point-and-click adventure — PLACES the player clicks around in: examining objects, taking
-items into an inventory, using items to solve puzzles, talking to characters, moving between
-places, and reaching a goal that wins. It is NOT a dialogue-menu visual novel. The body is
-`places`, so its done-conditions ARE the quality bar — demand a real adventure, not a stub.

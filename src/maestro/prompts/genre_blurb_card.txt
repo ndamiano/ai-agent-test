@@ -1,5 +1,0 @@
-a wander-and-wager card game — a point-and-click OVERWORLD you wander (places + move) where some
-interactables start a CARD MATCH: you ante a variable (gold) and play a known card game against
-an NPC; winning pays out, losing forfeits the stake. It reuses the point-and-click shape and ADDS
-card `matches`. This genre is OPEN-ENDED — the player wanders and plays for ante indefinitely;
-do NOT declare a goal or a win state.

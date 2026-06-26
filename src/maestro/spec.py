@@ -26,15 +26,9 @@ class Spec:
         return self.data.get("request", "")
 
     @property
-    def genre(self) -> str:
-        """The preset name this spec was classified as ('vn' default, 'point_and_click', …).
-        Kept as a UI/back-compat tag; the build actually keys off the composed `modules`."""
-        return self.data.get("genre", "vn")
-
-    @property
     def modules(self) -> List[str]:
         """The mechanic-modules this spec composes (empty until chosen). This is what the build and
-        checks are driven by; the genre→modules classification happens once at propose time."""
+        checks are driven by; the proposer picks them directly from the module catalog."""
         return list(self.data.get("modules", []))
 
     @property
@@ -44,12 +38,8 @@ class Spec:
 
     @property
     def substrate(self) -> str:
-        """The execution substrate ('discrete' today). Explicit if set, else the preset's."""
-        from maestro.modules import PRESETS
-        if self.data.get("substrate"):
-            return self.data["substrate"]
-        preset = PRESETS.get(self.genre)
-        return preset.substrate if preset else "discrete"
+        """The execution substrate ('discrete' is the only one built today)."""
+        return self.data.get("substrate", "discrete")
 
     @property
     def engine(self) -> str:

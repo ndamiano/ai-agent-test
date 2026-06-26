@@ -57,6 +57,11 @@ class BuildBody(BaseModel):
     auto_pause: bool = False
 
 
+class AmendBody(BaseModel):
+    changes: Dict
+    reason: str = "human edited the plan"
+
+
 class AutoPauseBody(BaseModel):
     enabled: bool
 
@@ -141,6 +146,19 @@ async def get_game(run_id: str):
         "auto_pause": ctrl.auto_pause if ctrl else False,
         "assets_exist": images.is_dir() and any(images.glob("*.png")),
     }
+
+
+@router.patch("/{run_id}/spec", response_model=Dict)
+async def amend_game_spec_route(run_id: str, body: AmendBody):
+    """Edit a draft's plan before freeze — change modules / sizing / title. Un-freezes + re-resolves
+    (foundation forced, deps expanded, engine re-derived). Returns the fresh detail."""
+    from tools.spec_tools import amend_spec
+    from maestro.state import RunState
+
+    if RunState.for_run(run_id).read_spec() is None:
+        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    amend_spec(run_id, body.changes, body.reason)
+    return await get_game(run_id)
 
 
 @router.post("/{run_id}/freeze", response_model=Dict)

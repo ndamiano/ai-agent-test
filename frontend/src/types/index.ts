@@ -15,9 +15,10 @@ export interface Spec {
     request?: string
     frozen: boolean
     modules: string[]
+    module_reasons?: Record<string, string>
     params?: Record<string, any>
     engine?: string
-    genre?: string
+    substrate?: string
     story_state_schema?: Record<string, any>
 }
 

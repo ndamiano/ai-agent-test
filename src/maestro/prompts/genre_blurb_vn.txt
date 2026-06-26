@@ -1,3 +1,0 @@
-a visual novel — a branching dialogue story. The body is `nodes`: a graph of dialogue scenes
-whose menu choices branch the script toward several distinct endings. The done-conditions on
-`nodes` ARE the quality bar (enough scenes, real branching, every character speaking).

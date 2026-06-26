@@ -55,6 +55,8 @@ SKEL_PREMISE = (
 
 class Cast(Module):
     id = "cast"
+    description = ("Named characters with backstory, voice, and temperament. Include whenever the "
+                   "game has people who speak or act.")
     priority = 10
     component = "premise"
     mode_prompt = "mode_premise.txt"

@@ -43,7 +43,7 @@ def test_used_emotions_scans_only_that_speaker():
 
 
 def test_assemble_emits_expressions_for_used_only():
-    ir = assemble_ir(_artifact(), "vn")
+    ir = assemble_ir(_artifact())
     al = next(c for c in ir["characters"] if c["id"] == "al")
     bo = next(c for c in ir["characters"] if c["id"] == "bo")
     assert al["sprite"] == "al.png"
@@ -57,7 +57,7 @@ def test_assemble_emits_expressions_for_used_only():
 # --- ir_vn: projection to per-expression shows with a stable as-tag ----------------------------
 
 def test_emotion_variants_declared():
-    out = compile_vn(assemble_ir(_artifact(), "vn"))
+    out = compile_vn(assemble_ir(_artifact()))
     assert 'image char_al_happy:\n    "images/al_happy.png"\n    zoom 0.55' in out
     assert 'image char_al_angry:\n    "images/al_angry.png"\n    zoom 0.55' in out
     assert 'image char_al_neutral:\n    "images/al.png"\n    zoom 0.55' in out
@@ -65,7 +65,7 @@ def test_emotion_variants_declared():
 
 
 def test_emotion_swaps_in_place_via_stable_tag():
-    out = compile_vn(assemble_ir(_artifact(), "vn"))
+    out = compile_vn(assemble_ir(_artifact()))
     # al's expression swaps happy -> angry, always under the same `as char_al` tag
     assert "show char_al_happy as char_al at stage(0.3333), speaking" in out
     assert "show char_al_angry as char_al at stage(0.3333), speaking" in out

@@ -51,7 +51,7 @@ def test_compile_web_writes_project(tmp_path):
         "premise": json.loads((tmp_path / "premise.json").read_text()),
         "asset_manifest": json.loads((tmp_path / "asset_manifest.json").read_text()),
         "nodes": json.loads((tmp_path / "nodes.json").read_text()),
-    }, "vn")
+    })
     assert game == expected
 
     # placeholder art for every referenced image, so it renders with zero real assets

@@ -35,7 +35,7 @@ async def startup_event():
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
         import tools.chat_tools  # noqa: F401
-        import maestro.modules  # noqa: F401 — registers mechanic-modules + presets
+        import maestro.modules  # noqa: F401 — registers mechanic-modules
         logging.info("Tools registered successfully")
 
     except Exception as e:

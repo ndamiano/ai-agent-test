@@ -136,6 +136,30 @@ def test_build_starts_thread_and_guards_double_build(tmp_path, monkeypatch):
     assert "g" not in games._active_builds
 
 
+def test_amend_spec_reresolves_modules_and_unfreezes(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    RunState(tmp_path / "g").write_spec(
+        {"title": "G", "frozen": True, "modules": ["dialogue"], "params": {}})
+
+    body = games.AmendBody(changes={"modules": ["navigation"]}, reason="switch to point-and-click")
+    result = asyncio.run(games.amend_game_spec_route("g", body))
+
+    mods = result["spec"]["modules"]
+    assert "navigation" in mods and "dialogue_npc" in mods  # navigation pulls its deps
+    assert "dialogue" not in mods                            # the VN spine was dropped
+    assert result["spec"]["engine"] == "renpy"
+    assert result["frozen"] is False                         # amend always un-freezes for re-approval
+    assert set(result["spec"]["module_reasons"]) == set(mods)
+
+
+def test_amend_spec_404_for_unknown(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.amend_game_spec_route("ghost", games.AmendBody(changes={}, reason="x")))
+    assert exc.value.status_code == 404
+
+
 def test_get_game_returns_spec_artifact_todo(tmp_path, monkeypatch):
     monkeypatch.setattr(RunState, "for_run",
                         classmethod(lambda cls, rid: RunState(tmp_path / rid)))

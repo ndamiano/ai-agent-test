@@ -5,7 +5,7 @@
 with place tools. Detector = fixer — goal owns the win check and its repair, not navigation.
 
 "Endless" (no win) is simply the absence of a goal module — there is nothing to detect or fix, so
-there is no goal_endless object. A preset that wants an open-ended game just composes no goal.
+there is no goal_endless object. An open-ended game just composes no goal module.
 """
 
 from typing import Dict, List, Tuple
@@ -21,6 +21,9 @@ _GOAL_TOOLS = ("read_place", "add_interactable", "edit_place", "set_places_meta"
 
 class GoalFlag(Module):
     id = "goal_flag"
+    description = ("A win condition for an explorable game: a reachable goal that ends the game "
+                   "(escape-room style). Omit for an open-ended world.")
+    requires = ("navigation",)
     priority = 60   # after navigation has authored the places it adds the win to
 
     def affected_components(self) -> Tuple[str, ...]:

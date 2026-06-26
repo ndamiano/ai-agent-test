@@ -78,11 +78,17 @@ per-engine. A `projected` module with no projection for the chosen engine makes 
 (nodes, supporting barks) · `navigation` (places) · `economy` (vocabulary) · `card_play`
 (matches — wagering card games).
 
-### Presets (what the classifier emits; `genre` survives as the preset name)
+### Module selection (the proposer picks from the catalog — no genre/preset box)
 
-- `vn` = cast + assets + dialogue + economy → engine renpy
-- `point_and_click` = cast + assets + dialogue_npc + navigation + economy → engine renpy
-- `card_ante` = cast + assets + dialogue_npc + navigation + economy + card_play → engine **web**
+The spec drafter is shown the selectable modules (`id` + `description`) and picks them directly.
+Code (`Module.resolve_modules`) force-includes the always-on foundation (`human`, `assets`), expands
+each pick's `requires`, rejects `conflicts` / terminal-less sets (falling back to a VN bundle), and
+derives the engine = the first engine that can project the whole set. Typical resulting shapes:
+
+- story-forward → cast + assets + dialogue (+ outline + economy) → engine renpy
+- explorable world → cast + assets + dialogue_npc + navigation (+ goal_flag, economy) → engine renpy
+- wagering cards → cast + assets + dialogue_npc + navigation + card_play → engine **web** (only web
+  renders cards; the Ren'Py build fails fast via `unprojectable`)
 
 ## Unique mechanics — the completeness valve
 

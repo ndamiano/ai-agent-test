@@ -132,6 +132,10 @@ def _place_view_block(view: Dict) -> List[str]:
 
 class Navigation(Module):
     id = "navigation"
+    description = ("Clickable rooms/screens you move between — a point-and-click world with "
+                   "hotspots, items, and movement. The terminal for explorable games.")
+    requires = ("cast", "dialogue_npc")
+    conflicts = ("dialogue",)
     priority = 50
     component = "places"
     mode_prompt = "write_place.txt"
@@ -178,7 +182,7 @@ class Navigation(Module):
         self._add(errs, checks.items_obtainable(art), "items_obtainable")
         self._add(errs, checks.items_used(art), "items_used")
         if not errs:
-            for rec in checks.crossref_failures(art, context.spec):
+            for rec in checks.crossref_failures(art):
                 errs.append(Error(type=ErrorType.FIX, code="crossref", component="places",
                                   message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
             if not errs:

@@ -32,7 +32,7 @@ def _vn_artifact():
 
 
 def test_assemble_vn_is_schema_valid_and_clean():
-    ir = assemble_ir(_vn_artifact(), "vn")
+    ir = assemble_ir(_vn_artifact())
     assert ir["genre"] == "visual_novel"
     assert ir["start"] == {"node": "n1"}
     assert [n["id"] for n in ir["nodes"]] == ["n1", "n2"]
@@ -47,7 +47,7 @@ def test_manifest_backgrounds_and_sprites_lifted():
         "backgrounds": [{"id": "bg_room", "image_file": "room.png", "description": "x"}],
         "characters": [{"id": "al", "image_file": "al.png"}],  # bo has no asset
     }
-    ir = assemble_ir(art, "vn")
+    ir = assemble_ir(art)
     _VALIDATOR.validate(ir)
     assert ir["backgrounds"] == [{"id": "bg_room", "image_file": "room.png"}]
     al = next(c for c in ir["characters"] if c["id"] == "al")
@@ -59,14 +59,14 @@ def test_manifest_backgrounds_and_sprites_lifted():
 def test_start_defaults_to_first_node():
     art = _vn_artifact()
     del art["nodes"]["start"]
-    ir = assemble_ir(art, "vn")
+    ir = assemble_ir(art)
     assert ir["start"] == {"node": "n1"}
 
 
 def test_crossref_catches_dangling_ref_after_assemble():
     art = _vn_artifact()
     art["nodes"]["nodes"]["n1"]["end"] = {"type": "jump", "target": "ghost"}
-    ir = assemble_ir(art, "vn")
+    ir = assemble_ir(art)
     assert any("ghost" in e and "node" in e for e in crossref_errors(ir))
 
 
@@ -84,7 +84,7 @@ def test_example_roundtrips_through_components():
             "start": ex["start"].get("node"),
         },
     }
-    ir = assemble_ir(art, "vn")
+    ir = assemble_ir(art)
     _VALIDATOR.validate(ir)
     assert crossref_errors(ir) == []
     assert len(ir["nodes"]) == len(ex["nodes"])

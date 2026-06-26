@@ -94,11 +94,10 @@ def _scan_refs(obj, flags: set, variables: set) -> None:
             _scan_refs(v, flags, variables)
 
 
-def assemble_ir(artifact: Dict, genre: str = "vn") -> Dict:
+def assemble_ir(artifact: Dict) -> Dict:
     """Build the full IR dict from the component artifact. Presence-driven: a `places` component
     means a navigation game (IR genre point_and_click, entry = start.place); otherwise a dialogue
-    game (visual_novel, entry = start.node). `genre` is accepted for back-compat but not consulted
-    — the components present decide the shape."""
+    game (visual_novel, entry = start.node). The components present decide the shape."""
     premise = artifact.get("premise", {}) or {}
     manifest = artifact.get("asset_manifest", {}) or {}
     nodes_comp = artifact.get("nodes", {}) or {}

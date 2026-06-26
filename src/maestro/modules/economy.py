@@ -24,6 +24,9 @@ _FIX_TOOLS = {
 
 class Economy(Module):
     id = "economy"
+    description = ("Flags, variables, and items — persistent state that gates choices and tracks "
+                   "progress. Include when the story needs memory (a choice that matters later, an "
+                   "inventory, a counter).")
     priority = 70   # after the content modules have authored the beats it inspects
 
     def affected_components(self) -> Tuple[str, ...]:

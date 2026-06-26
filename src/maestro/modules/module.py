@@ -80,6 +80,12 @@ class Module(ABC):
     substrates: Tuple[str, ...] = ("discrete",)
     priority: int = 100   # order within an error tier; lower acts first (cast < dialogue)
 
+    # ── spec-composition surface (what the proposer picks from) ──────────────
+    description: str = ""               # one-line, LLM-facing: what this mechanic adds
+    selectable: bool = True             # False = always-on foundation, hidden from the catalog
+    requires: Tuple[str, ...] = ()      # modules pulled in automatically when this is chosen
+    conflicts: Tuple[str, ...] = ()     # modules that cannot be composed alongside this one
+
     # ── authoring surface (defaults are inert) ───────────────────────────────
     component: str = ""                  # the on-disk component this module authors (if any)
     mode_prompt: str = ""                # the system prompt for a single correction step
@@ -191,21 +197,73 @@ def compose(module_ids: Tuple[str, ...]) -> List[Module]:
     return out
 
 
-# ── Presets ───────────────────────────────────────────────────────────────────
-# A named preset = (substrate, module ids, default engine). The classifier emits one; `genre`
-# survives as the preset name for the UI, but the build keys off the composed modules.
-@dataclass(frozen=True)
-class Preset:
-    substrate: str
-    modules: Tuple[str, ...]
-    engine: str = "renpy"
+# ── Spec composition — the proposer picks modules from the catalog ──────────────
+# There is no genre/preset box: the proposer is shown the selectable modules and chooses them.
+# Code force-includes the always-on foundation, pulls each pick's `requires` deps, rejects
+# `conflicts`, and derives the engine from what can project the resulting set.
+_DEFAULT_MODULES: Tuple[str, ...] = ("cast", "economy", "outline", "dialogue")  # the safe fallback
 
 
-PRESETS: Dict[str, Preset] = {}
+def selectable_catalog() -> List[Tuple[str, str]]:
+    """(id, description) for every module the proposer may choose — the always-on foundation
+    (human/assets) is hidden because it is force-included regardless."""
+    return [(m.id, m.description) for m in MODULE_REGISTRY.values() if m.selectable]
 
 
-def register_preset(name: str, preset: Preset) -> None:
-    PRESETS[name] = preset
+def _forced_ids() -> List[str]:
+    return [m.id for m in MODULE_REGISTRY.values() if not m.selectable]
+
+
+def expand_modules(ids) -> List[str]:
+    """Force the always-on foundation in, then pull every chosen module's `requires` deps
+    (transitively). Unknown ids are dropped. Order is informational — `compose` re-sorts."""
+    want = _forced_ids()
+    for i in list(ids):
+        if i in MODULE_REGISTRY and i not in want:
+            want.append(i)
+    cursor = 0
+    while cursor < len(want):
+        m = MODULE_REGISTRY.get(want[cursor])
+        for r in (m.requires if m else ()):
+            if r not in want:
+                want.append(r)
+        cursor += 1
+    return want
+
+
+def module_conflict(ids) -> Optional[str]:
+    """The first conflicting pair in a composed set, or None if the set is consistent."""
+    present = set(ids)
+    for i in ids:
+        m = MODULE_REGISTRY.get(i)
+        clash = present & set(m.conflicts) if m else set()
+        if clash:
+            return f"{i} conflicts with {', '.join(sorted(clash))}"
+    return None
+
+
+def engine_for(ids) -> Optional[str]:
+    """The engine that can project every module in the set (Ren'Py preferred; web is the
+    fallback for web-only mechanics like cards). None means no engine can build it."""
+    from maestro.engines import ENGINE_TAGS, ensure_projections_registered
+    ensure_projections_registered()
+    for engine in ENGINE_TAGS:
+        if not unprojectable(engine, ids):
+            return engine
+    return None
+
+
+def resolve_modules(ids) -> Tuple[List[str], str]:
+    """Turn the proposer's raw module picks into a buildable (modules, engine) pair: force the
+    foundation, expand deps, then validate (a content terminal present, no conflicts, projectable).
+    On any inconsistency, fall back to the default visual-novel bundle so a build always exists."""
+    modules = expand_modules(ids)
+    has_terminal = {"dialogue", "dialogue_npc", "navigation"} & set(modules)
+    engine = engine_for(modules)
+    if has_terminal and module_conflict(modules) is None and engine is not None:
+        return modules, engine
+    fallback = expand_modules(_DEFAULT_MODULES)
+    return fallback, engine_for(fallback) or "renpy"
 
 
 # ── Engine projection registry, keyed (engine, module_id) ─────────────────────

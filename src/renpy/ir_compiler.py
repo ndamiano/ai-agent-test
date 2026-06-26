@@ -57,7 +57,7 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
                 f"the renpy engine has no projection for module(s) {missing} — "
                 f"this game needs an engine that renders them (e.g. web)", **_FAIL}
 
-    ir = assemble_ir(inputs, spec_data.get("genre", "vn"))
+    ir = assemble_ir(inputs)
 
     # Hard gate: every id reference must resolve. Replaces the legacy _find_script_issues.
     errs = crossref_errors(ir)

@@ -379,7 +379,7 @@ def economy_undeclared(artifact: Dict) -> List[Dict]:
 
 
 # ── reference integrity + terminal build (the two heavy checks) ──────────────
-def crossref_failures(artifact: Dict, spec_data: Dict):
+def crossref_failures(artifact: Dict):
     """Every IR id reference resolves — a cheap data-walk, no engine build. Returns a list of
     {message, path, ref} for the unresolved references (empty = clean). The IR may not be
     assemblable mid-build (structure still forming); that's not a crossref failure, so it returns
@@ -387,7 +387,7 @@ def crossref_failures(artifact: Dict, spec_data: Dict):
     from maestro.ir_assemble import assemble_ir
     from maestro.ir_crossref import crossref_records
     try:
-        records = crossref_records(assemble_ir(artifact, spec_data.get("genre", "vn")))
+        records = crossref_records(assemble_ir(artifact))
     except Exception:
         return []
     return [{"message": r["message"], "path": r.get("path"), "ref": r.get("ref")} for r in records]

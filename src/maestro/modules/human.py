@@ -94,6 +94,7 @@ def effective_failures(spec: Dict, state) -> List[Dict]:
 
 class Human(Module):
     id = "human"
+    selectable = False   # always-on: the human-in-the-loop channel is never optional
     priority = 0   # irrelevant to ordering (HUMAN type ranks first), but explicit
 
     def get_errors(self, context) -> List[Error]:

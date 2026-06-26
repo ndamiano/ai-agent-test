@@ -2,7 +2,7 @@
 
 A beat-sheet stage between premise and nodes: a small frozen arc (logline + ordered beats + a
 planned path to each ending) the node sub-loop then realizes, so the script has a global shape
-instead of being improvised scene-by-scene. VN-only (ships with the `vn` preset).
+instead of being improvised scene-by-scene. VN-only (pairs with the `dialogue` spine).
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -52,6 +52,9 @@ SKEL_OUTLINE = (
 
 class Outline(Module):
     id = "outline"
+    description = ("A beat-sheet arc planned before scenes are written, giving the script a global "
+                   "shape. Pairs with the visual-novel spine for longer, well-paced stories.")
+    requires = ("dialogue",)
     priority = 30
     component = "outline"
     mode_prompt = "mode_outline.txt"

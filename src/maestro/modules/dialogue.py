@@ -73,14 +73,10 @@ SKEL_NODES = (
     '    }\n'
     '  }\n'
     '}\n'
-    '// The system tags each node with the outline beat it dramatizes — do NOT set "beat"\n'
-    '//   yourself. Every outline beat needs a scene; that — not a node count — is when done.\n'
-    '// ENDINGS ARE EARNED BY THE ARC: the rising scenes make each ending inevitable; a climactic\n'
-    '//   menu then forks to them. You usually need NO variable — ungated choices are fine.\n'
     '// OPTIONAL state: you MAY add "flags"/"variables" and move them with `effects`; but a choice\n'
     '//   with `requires` opens only if that state was raised by an effect in an EARLIER scene —\n'
     '//   never gate on a value it can\'t reach, and always leave one ungated choice in a menu.\n'
-    '// You write JSON, never Ren\'Py — the compiler renders it (escaping/layout handled).\n'
+    '// You write JSON, the compiler renders it (escaping/layout handled).\n'
     '// location = a background asset id from asset_manifest.backgrounds; it sets the scene\n'
     '//   image and every character who speaks in the node is shown over it. Tag EVERY node.\n'
     '// speaker = an EXACT premise.characters id, or null for narration (no "narrator").\n'
@@ -217,6 +213,16 @@ class Dialogue(Module):
         self.spine = spine                # the VN story spine vs supporting NPC barks
         self.emits_compile = spine        # only the spine owns the compile terminal
         self.priority = 50 if spine else 55
+        if spine:
+            self.description = ("Visual-novel spine: a branching, choice-driven script IS the game. "
+                               "The terminal for story-forward games. Needs characters.")
+            self.requires = ("cast",)
+            self.conflicts = ("dialogue_npc", "navigation")
+        else:
+            self.description = ("Talkable NPCs inside an explorable world — supporting conversation "
+                               "reached from rooms. Used with navigation, not on its own.")
+            self.requires = ("cast", "navigation")
+            self.conflicts = ("dialogue",)
 
     def get_fix(self, context, error: Error):
         # Realizing the beat sheet means ADDING scenes — drive the slot-guarded author loop. Every
@@ -263,7 +269,7 @@ class Dialogue(Module):
         # The compile terminal (spine only) appends crossref + the real build once the cheaper
         # checks pass — kept last so a stubborn lint can't starve node creation.
         if self.emits_compile and not errs:
-            for rec in checks.crossref_failures(art, context.spec):
+            for rec in checks.crossref_failures(art):
                 errs.append(Error(type=ErrorType.FIX, code="crossref", component="nodes",
                                   message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
             if not errs:

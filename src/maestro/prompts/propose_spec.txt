@@ -1,14 +1,16 @@
-You are inventing the STORY for {genre_blurb}
+You are designing a game from a user's request: you invent its STORY and choose the MECHANIC-MODULES
+that make it buildable.
 
-A separate program turns your story into a buildable contract and builds the game from it — you do
-NOT design components or done-conditions. Your one job is to expand the request into a vivid,
-concrete story and the continuity it hinges on.
+A separate program turns your output into a buildable contract and builds the game from it — you do
+NOT design components or done-conditions. Your two jobs: (1) expand the request into a vivid, concrete
+story and the continuity it hinges on, and (2) pick the modules the game needs.
 
 Request:
 {request}
 
-Expand the request into a concrete story. The request is a seed, not a literal constraint —
-invent the specifics that make it a real story:
+── STORY ──
+Expand the request into a concrete story. The request is a seed, not a literal constraint — invent
+the specifics that make it a real story:
 - 1-3 named characters, each with a specific backstory (who they were, what changed).
 - A central tension rooted in the characters' past or relationship. The literal request
   (e.g. "car problems") is a VEHICLE for this deeper conflict, not the point of the story.
@@ -27,17 +29,35 @@ The story starts with them traveling together by train to the funeral's location
 funeral, and resolves with one of: them going their separate ways, them becoming friends again,
 them reuniting as a band.
 
+── MODULES ──
+Pick the mechanic-modules this game is built from. (Characters and image assets are always included;
+you don't list them.) Choose from this catalog:
+
+{module_catalog}
+
+RULES for picking:
+- Pick the SMALLEST set that delivers the game you described — nothing speculative.
+- For EVERY module you pick, write ONE concrete sentence naming what IN YOUR STORY it serves. If you
+  cannot tie a module to a specific thing the story does, LEAVE IT OUT. A module that does nothing
+  for this particular game is wrong, even if it's commonly used.
+- A game has exactly ONE world type: either `dialogue` (the story is told through branching
+  conversation/choices) OR `navigation` (the player explores clickable rooms) — never both.
+- Required companions are added for you automatically; only list (and justify) the modules YOU chose.
+
 Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
 
 {
   "title": "short game title",
   "request": "<the full story paragraph you authored, per the requirements above>",
+  "modules": {                                // each module you pick -> ONE sentence: what IN THIS STORY it serves
+    // "dialogue": "the whole game is the scientist's branching descent told through his own dialogue"
+  },
   "story_state_schema": {
-    "established_facts": [],                    // what continuity hinges on for THIS game
+    "established_facts": [],                  // what continuity hinges on for THIS game
     "entity_states": {},
     "open_threads": []
   },
-  "sizing": {}                                  // OPTIONAL: see SIZING below; omit or {} keeps the floor
+  "sizing": {}                                // OPTIONAL: see SIZING below; omit or {} keeps the floor
 }
 
 - The 2-3 mutually exclusive branching endings MUST be present in the story paragraph — name them.
@@ -46,10 +66,13 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
 
 SIZING — the build enforces a minimum size for each part of the game. To make a BIGGER, richer
 story than the floor, raise any of these knobs in "sizing" (name -> integer). You may only RAISE
-them; a value below the floor is ignored. Omit a knob to keep its floor. Available knobs:
+them; a value below the floor is ignored. Omit a knob to keep its floor. A knob only applies if you
+picked the module that uses it. Available knobs:
 
   {sizing_knobs}
 
 e.g. a sprawling saga: "sizing": {"endings": 6, "beats": 35, "branches": 6}
 
 Return only the JSON object.
+</content>
+</invoke>

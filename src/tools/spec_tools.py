@@ -35,39 +35,6 @@ def _emit(event_type: str, run_id: str, **payload) -> None:
         logger.debug("event bus unavailable for %s", event_type)
 
 
-_PNC_KEYWORDS = ("point-and-click", "point and click", "point'n'click", "pointandclick",
-                 "point & click", "adventure game", "escape room", "escape-room",
-                 "room escape", "hidden object", "inventory puzzle")
-_CARD_KEYWORDS = ("card game", "card-game", "card battle", "play for ante", "for ante",
-                  "blackjack", "poker", "wager", "gambl")
-_GENRES = ("vn", "point_and_click", "card_ante")
-
-
-def _classify_genre(request: str) -> str:
-    """Pick the preset a request wants. Keyword match first (cheap, deterministic); only an
-    ambiguous request costs a classification call. Any failure falls back to 'vn'."""
-    low = request.lower()
-    if any(k in low for k in _CARD_KEYWORDS):
-        return "card_ante"
-    if any(k in low for k in _PNC_KEYWORDS):
-        return "point_and_click"
-    try:
-        from renpy.templating import render_template
-        from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
-        prompt = render_template(_PROMPTS_DIR / "classify_genre.txt", {"request": request})
-        agent = PipelineAgent(JSON_SYSTEM, max_tokens=200)
-        result = json_with_correction(agent, prompt, "classify_genre", attempts=2) or {}
-        genre = result.get("genre")
-        return genre if genre in _GENRES else "vn"
-    except Exception:
-        logger.warning("genre classification failed; defaulting to vn", exc_info=True)
-        return "vn"
-
-
-_GENRE_BLURB = {"vn": "genre_blurb_vn.txt", "point_and_click": "genre_blurb_pnc.txt",
-                "card_ante": "genre_blurb_card.txt"}
-
-
 def _param_floors(module_ids) -> Dict:
     """The union of every composed module's `params()` floors: int knobs take the max, list knobs
     (field-set requirements) take the union — the same merge the old baseline used."""
@@ -102,46 +69,66 @@ def _resolve_params(module_ids, sizing: Dict) -> Dict:
     return floors
 
 
-def _spec_prompt_ctx(request: str, genre: str) -> Dict:
-    import maestro.modules  # noqa: F401
-    from maestro.modules import PRESETS
+_AUTO_REASON = "auto-included (foundation or required dependency)"
 
-    blurb = (_PROMPTS_DIR / _GENRE_BLURB.get(genre, "genre_blurb_vn.txt")).read_text(
-        encoding="utf-8").strip()
-    modules = (PRESETS.get(genre) or PRESETS["vn"]).modules
-    floors = _param_floors(modules)
-    catalog = ", ".join(f"{name} (floor {v})" for name, v in floors.items()
-                        if isinstance(v, int) and not isinstance(v, bool))
-    return {"request": request, "genre_blurb": blurb, "sizing_knobs": catalog}
+
+def _picks(raw) -> Dict:
+    """Normalize the proposer's `modules` (a {id: reason} map — or a bare id list as a fallback)
+    into {id: reason}. The reason is the proposer's justification, kept for the human freeze gate."""
+    if isinstance(raw, dict):
+        return {k: (v if isinstance(v, str) else "") for k, v in raw.items()}
+    if isinstance(raw, list):
+        return {k: "" for k in raw if isinstance(k, str)}
+    return {}
+
+
+def _module_reasons(final_modules, picks: Dict) -> Dict:
+    """A justification per resolved module: the proposer's reason for what it chose, an auto note
+    for the foundation/deps it didn't, so the human sees WHY each module is in the set."""
+    return {m: (picks[m] or "(reason missing)") if m in picks else _AUTO_REASON
+            for m in final_modules}
+
+
+def _spec_prompt_ctx(request: str) -> Dict:
+    """The proposer is shown the selectable module catalog (it picks from this directly — there is
+    no genre box) and the union of every module's sizing knobs."""
+    import maestro.modules  # noqa: F401
+    from maestro.modules import selectable_catalog, MODULE_REGISTRY
+
+    catalog = "\n".join(f"- {mid}: {desc}" for mid, desc in selectable_catalog())
+    floors = _param_floors(list(MODULE_REGISTRY))
+    knobs = ", ".join(f"{name} (floor {v})" for name, v in floors.items()
+                      if isinstance(v, int) and not isinstance(v, bool))
+    return {"request": request, "module_catalog": catalog, "sizing_knobs": knobs}
 
 
 def propose_spec(request: str, run_id: str) -> Dict:
-    """Draft a spec for the request and persist it (unfrozen). Returns the spec."""
+    """Draft a spec for the request and persist it (unfrozen). Returns the spec. The proposer picks
+    the mechanic-modules itself; code force-includes the foundation, expands their requires, and
+    derives the engine (falling back to a visual-novel bundle if the picks don't compose)."""
     from renpy.templating import render_template
     from llm_clients.inference import PipelineAgent, JSON_SYSTEM, json_with_correction
-    import maestro.modules  # noqa: F401 — ensure modules + presets registered
-    from maestro.modules import PRESETS
+    import maestro.modules  # noqa: F401 — ensure modules registered
+    from maestro.modules import resolve_modules
 
-    genre = _classify_genre(request)
-    prompt = render_template(_PROMPTS_DIR / "propose_spec.txt", _spec_prompt_ctx(request, genre))
+    prompt = render_template(_PROMPTS_DIR / "propose_spec.txt", _spec_prompt_ctx(request))
     agent = PipelineAgent(JSON_SYSTEM, max_tokens=8000)
     spec = json_with_correction(agent, prompt, "propose_spec", attempts=3)
 
     spec["frozen"] = False
-    spec["genre"] = genre
-    preset = PRESETS.get(genre)
-    if preset:
-        spec.setdefault("substrate", preset.substrate)
-        spec.setdefault("modules", list(preset.modules))
-        spec.setdefault("engine", preset.engine)
+    picks = _picks(spec.pop("modules", None))
+    modules, engine = resolve_modules(list(picks))
+    spec["modules"] = modules
+    spec["module_reasons"] = _module_reasons(modules, picks)
+    spec["engine"] = engine
+    spec["substrate"] = "discrete"
     spec.setdefault("request", request)
-    modules = spec.get("modules") or list(PRESETS["vn"].modules)
     spec["params"] = _resolve_params(modules, spec.pop("sizing", None))
     spec.pop("components", None)  # contract is code now, not a per-component list
 
     state = RunState.for_run(run_id)
     state.write_spec(spec)
-    _emit("spec_proposed", run_id, title=spec.get("title", ""), genre=genre)
+    _emit("spec_proposed", run_id, title=spec.get("title", ""), modules=modules, engine=engine)
     return spec
 
 
@@ -156,6 +143,12 @@ def amend_spec(run_id: str, changes: Dict, reason: str) -> Dict:
         raise ValueError(f"no spec for run {run_id!r}")
 
     _apply_changes(spec, changes)
+    # A module change re-derives the buildable set + engine (foundation forced, deps expanded).
+    if "modules" in changes:
+        from maestro.modules import resolve_modules
+        prev = spec.get("module_reasons", {})
+        spec["modules"], spec["engine"] = resolve_modules(spec.get("modules") or [])
+        spec["module_reasons"] = {m: prev.get(m, _AUTO_REASON) for m in spec["modules"]}
     # Re-resolve params in case modules / sizing changed, so floors always hold.
     if "modules" in changes or "sizing" in changes or "params" in changes:
         spec["params"] = _resolve_params(spec.get("modules") or [], spec.get("params"))

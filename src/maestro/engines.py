@@ -7,7 +7,27 @@ contract (compile_renpy / compile_web): a `(working_dir, distribute=bool) -> Dic
 its `compile_*` in its own package; no core branching.
 """
 
-from typing import Callable, Dict
+from typing import Callable, Dict, Tuple
+
+# The engine tags the core knows about, in preference order (the engine a spec gets is the first
+# one that can project all its modules — see maestro.modules.engine_for).
+ENGINE_TAGS: Tuple[str, ...] = ("renpy", "web")
+
+_projections_registered = False
+
+
+def ensure_projections_registered() -> None:
+    """Populate the (engine, module) projection registry from every backend. Idempotent. Compile
+    paths register their own engine, but engine selection at propose time needs all of them, so
+    this is the one place the core eagerly pulls them in."""
+    global _projections_registered
+    if _projections_registered:
+        return
+    from renpy.projections import register as register_renpy
+    from web.projections import register as register_web
+    register_renpy()
+    register_web()
+    _projections_registered = True
 
 
 def compile_for(engine: str) -> Callable[..., Dict]:

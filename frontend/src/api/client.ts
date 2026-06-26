@@ -41,8 +41,12 @@ export const api = {
         request<Game[]>('/games'),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
+    amendSpec: (runId: string, changes: Record<string, any>, reason = 'human edited the plan') =>
+        request<GameDetail>(`/games/${runId}/spec`, { method: 'PATCH', body: JSON.stringify({ changes, reason }) }),
     freezeGame: (runId: string) =>
         request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
+    listModules: () =>
+        request<{ id: string; description: string }[]>('/system/modules'),
     buildGame: (runId: string, autoPause = false) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ auto_pause: autoPause }) }),
 

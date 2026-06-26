@@ -62,7 +62,7 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
         return {"ok": False, "reason":
                 f"the web engine has no projection for module(s) {miss}", **_FAIL}
 
-    ir = assemble_ir(inputs, spec_data.get("genre", "vn"))
+    ir = assemble_ir(inputs)
 
     # Schema first: crossref assumes a well-formed IR, so a structural error must surface here
     # rather than crash the reference walk.

@@ -63,6 +63,9 @@ SKEL_MATCHES = (
 
 class CardPlay(Module):
     id = "card_play"
+    description = ("Wagering card matches against an NPC for a stake (blackjack/poker-style). "
+                   "Web engine only.")
+    requires = ("navigation",)
     priority = 40
     component = "matches"
     mode_prompt = "mode_matches.txt"

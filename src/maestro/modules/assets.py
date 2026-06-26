@@ -48,6 +48,7 @@ SKEL_ASSET_MANIFEST = (
 
 class Assets(Module):
     id = "assets"
+    selectable = False   # always-on: every engine keys art off the manifest's ids
     priority = 20
     component = "asset_manifest"
     mode_prompt = "mode_asset.txt"

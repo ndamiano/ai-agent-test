@@ -60,6 +60,8 @@ def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
     import tools.comfyui_tools as comfyui_tools
     from renpy.fns import generate_images
 
+    import contextlib
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)  # no live ComfyUI/LM Studio
     monkeypatch.setattr(
         comfyui_tools, "run_jobs",
         lambda jobs: [{"success": False, "error": "no comfyui"} for _ in jobs],

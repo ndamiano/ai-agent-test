@@ -119,6 +119,9 @@ def test_generate_images_two_pass_builds_variants_off_neutral(tmp_path, monkeypa
     src = tmp_path / "src.png"
     write_solid_png(src, 64, 64, (10, 20, 30))
 
+    import contextlib
+    monkeypatch.setattr(ct, "vram_bracket", contextlib.nullcontext)  # don't touch live ComfyUI/LM Studio
+
     calls = {"uploads": [], "passes": []}
     monkeypatch.setattr(ct, "upload_image",
                         lambda p, endpoint=None: calls["uploads"].append(p) or "uploaded.png")

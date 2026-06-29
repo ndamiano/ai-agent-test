@@ -11,7 +11,7 @@ from typing import Callable, Dict, Tuple
 
 # The engine tags the core knows about, in preference order (the engine a spec gets is the first
 # one that can project all its modules — see maestro.modules.engine_for).
-ENGINE_TAGS: Tuple[str, ...] = ("renpy", "web")
+ENGINE_TAGS: Tuple[str, ...] = ("renpy", "web", "godot")
 
 _projections_registered = False
 
@@ -25,8 +25,10 @@ def ensure_projections_registered() -> None:
         return
     from renpy.projections import register as register_renpy
     from web.projections import register as register_web
+    from godot.projections import register as register_godot
     register_renpy()
     register_web()
+    register_godot()
     _projections_registered = True
 
 
@@ -34,5 +36,8 @@ def compile_for(engine: str) -> Callable[..., Dict]:
     if engine == "web":
         from web.compiler import compile_web
         return compile_web
+    if engine == "godot":
+        from godot.compiler import compile_godot
+        return compile_godot
     from renpy.compiler import compile_renpy
     return compile_renpy

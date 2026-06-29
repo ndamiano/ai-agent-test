@@ -92,6 +92,14 @@ src/
                 runtime (runtime/index.html,engine.js,style.css) that interprets the IR live —
                 no per-game codegen. "lint" gate = JSON-Schema + crossref. Output opens in any
                 browser / drops on any static host. Covers VN + point-and-click (combat pending).
+  godot/        Godot 4 backend (third engine). Same assemble_ir + crossref pivot;
+                compiler.py/ir_compiler.py write game.json (the IR) + a static, pre-tested
+                GDScript runtime (runtime/*.gd) that interprets the IR live — no per-game codegen.
+                "lint" gate = JSON-Schema + crossref (web model). Native export is best-effort
+                (needs the godot binary + templates; absence never fails the build). Its REASON to
+                exist is combat: combat.gd plays turn_based encounters web/renpy stub out. Routed
+                explicitly for now (appended LAST in ENGINE_TAGS, never auto-selected); the combat
+                authoring module + assemble_ir lift + auto-routing are the next step.
   tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 
@@ -102,7 +110,7 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 
 **Adding an artifact capability**: add a tool to `maestro/tools.py` (`build_tools` + `TOOL_SCHEMAS`). The agent composes it; the owning module's `get_errors` proves it (and `get_correction_prompt` gates the tool to the fix).
 
-**Engines**: the IR is the pivot; a backend is a target it projects to. `spec["engine"]` (default `"renpy"`, also `"web"`) selects it; `maestro.engines.compile_for` maps the tag to a `compile_*(working_dir, distribute=bool) -> Dict` entry returning a uniform pass/fail. Both the in-loop compile tool and the final packaging dispatch through it, so the loop is engine-agnostic. `assemble_ir` + `ir_crossref` (maestro core) are the shared, engine-neutral seam; the modules' structural checks (`maestro/modules/checks.py`) are also engine-neutral (they walk the IR graph). Adding an engine = a new `compile_*` in its own package (project the assembled IR to that engine's format) + one entry in `engines.py` — never branch the core.
+**Engines**: the IR is the pivot; a backend is a target it projects to. `spec["engine"]` (default `"renpy"`, also `"web"`/`"godot"`) selects it; `maestro.engines.compile_for` maps the tag to a `compile_*(working_dir, distribute=bool) -> Dict` entry returning a uniform pass/fail. Both the in-loop compile tool and the final packaging dispatch through it, so the loop is engine-agnostic. `assemble_ir` + `ir_crossref` (maestro core) are the shared, engine-neutral seam; the modules' structural checks (`maestro/modules/checks.py`) are also engine-neutral (they walk the IR graph). Adding an engine = a new `compile_*` in its own package (project the assembled IR to that engine's format) + one entry in `engines.py` — never branch the core.
 
 **The Game IR**: the agent writes JSON, never engine source — `docs/game_ir.schema.json` is the engine-agnostic contract (nodes/places/actions/conditions/effects/combat); `docs/game_ir_decisions.md` is the rationale. The components are decomposed on disk (characters + asset_manifest + `nodes` [+ `places`/`items`/`story`]); at compile, `maestro.ir_assemble.assemble_ir` lifts them into one IR dict, `maestro.ir_crossref` gates that every id reference resolves — both as a cheap per-step `crossref` done-condition emitted by whichever realization module (`scenes`/`world`) owns the IR entry, and again inside the engine compile as a backstop — then the selected engine projects it (Ren'Py: `ir_vn`/`ir_pnc` → `script.rpy`; web: `game.json` + static runtime). This removes whole error classes (quote escaping, speaker format, menu indentation, dangling jumps) by construction and makes validation a data walk, not regex over engine source. A dialogue line carries an optional `emotion` (neutral/happy/sad/angry/surprised/worried); `ir_assemble` derives a per-character `expressions` map (only the emotions actually spoken), the asset pipeline img2img's each variant off the neutral base, and `ir_vn` swaps the speaker's sprite per line so faces change as they talk.
 
@@ -118,7 +126,7 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 **Run backend**: `source venv/bin/activate && python run.py`
 **Run frontend**: `cd frontend && npm run dev`
 **Run a build (CLI)**: `cd src && python -m maestro.run "<request>"` (propose → freeze → build)
-**Recompile a finished run (CLI)**: `cd src && python -c "from renpy.compiler import compile_renpy; print(compile_renpy('<run_dir>', distribute=True))"` (re-projects the on-disk JSON components → Ren'Py, lints, packages). Web target: swap `from web.compiler import compile_web` / `compile_web(...)` → writes `<run_dir>/game_output/` (open `index.html` over HTTP, e.g. `python -m http.server` in that dir — `fetch` is blocked over `file://`).
+**Recompile a finished run (CLI)**: `cd src && python -c "from renpy.compiler import compile_renpy; print(compile_renpy('<run_dir>', distribute=True))"` (re-projects the on-disk JSON components → Ren'Py, lints, packages). Web target: swap `from web.compiler import compile_web` / `compile_web(...)` → writes `<run_dir>/game_output/` (open `index.html` over HTTP, e.g. `python -m http.server` in that dir — `fetch` is blocked over `file://`). Godot target: swap `from godot.compiler import compile_godot` / `compile_godot(...)` → writes `<run_dir>/godot_output/` (open `project.godot` in Godot 4 and run, or use the best-effort native export).
 **Run tests**: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
 
 ---

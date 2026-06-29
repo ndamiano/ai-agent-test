@@ -64,11 +64,11 @@ src/
                   write_node/edit_node take a human-only `force` to override the done-lock
                   (the agent never sets it — not in TOOL_SCHEMAS); edit_node also takes full
                   `content` to replace a whole node (the manual per-scene editor)
-                spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate); resolves
+                tools/spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate); resolves
                   spec.params from each module's params() floors (int→max, list→union)
                 story_state.py — continuity bible (facts, entities, threads, recent tail)
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
-                chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
+                tools/chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
                 ir_assemble.py — lift the decomposed components → one engine-neutral IR dict
                 ir_crossref.py — gate that every id reference in the IR resolves (crossref_records:
                   structured {path,ref,kind} → routing). Runs both as a cheap per-step `crossref`
@@ -116,7 +116,7 @@ The connector speaks **only** the OpenAI-compatible Responses API (`/v1/response
 **Model categories**: `large` / `medium` / `small` — controls `message_budget_chars`, `max_iterations`, `use_json_mode`. Use `small` for local models.
 
 **Run backend**: `source venv/bin/activate && python run.py`
-**Run frontend**: `cd frontend && npm run dev`  *(frontend is mid-rebuild — see ROADMAP)*
+**Run frontend**: `cd frontend && npm run dev`
 **Run a build (CLI)**: `cd src && python -m maestro.run "<request>"` (propose → freeze → build)
 **Recompile a finished run (CLI)**: `cd src && python -c "from renpy.compiler import compile_renpy; print(compile_renpy('<run_dir>', distribute=True))"` (re-projects the on-disk JSON components → Ren'Py, lints, packages). Web target: swap `from web.compiler import compile_web` / `compile_web(...)` → writes `<run_dir>/game_output/` (open `index.html` over HTTP, e.g. `python -m http.server` in that dir — `fetch` is blocked over `file://`).
 **Run tests**: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`

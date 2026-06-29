@@ -12,22 +12,24 @@ from chat to a packaged game, naming the function at each hop.
 
 ## The one idea
 
-**Agentic loop + frozen spec.** A spec is a per-game contract: a list of components,
-each carrying typed, code-checkable *done-conditions*. A human freezes it. Then a
-non-LLM **executor** loops: rebuild a minimal context from durable on-disk state → ask
-the agent for one tool call → run it → recompute the to-do with `validate`. "Done" is
-decided by `validate` returning an empty failure list, **never** by the agent claiming
-it. The growing artifact lives on disk, out of the context window, so context stays
-roughly constant as the game grows.
+**Agentic loop + frozen spec.** A spec is a per-game contract: a composed set of
+modules, each emitting code-checkable *errors* over the shared components. A human
+freezes it. Then a non-LLM **loop** (`AgentLoop`) runs: rebuild a minimal context from
+durable on-disk state → collect every module's `get_errors` → ask the owning module to
+fix the highest-priority one → run that fix through a budget-capped `Services`. "Done" is
+decided by `get_errors` coming back empty (minus the human's waivers), **never** by the
+agent claiming it. The growing artifact lives on disk, out of the context window, so
+context stays roughly constant as the game grows.
 
 Three layers:
 
 1. **Spec layer** (agentic, human-gated) — the chat agent drafts a spec; the human
    reviews/edits/freezes it. Build tools refuse until `frozen: true`.
-2. **Executor** (NOT an LLM) — drives the loop; completion via `validate`; minimal
-   context rebuilt each step from durable state.
-3. **Tools** — the bounded capabilities the agent composes (`write_node`, `validate`,
-   `compile_*`, `generate_asset`, …). The agent chooses order, not the menu.
+2. **Loop** (`AgentLoop`, NOT an LLM) — drives the build; completion via `get_errors`;
+   minimal context rebuilt each step from durable state; each fix runs through a
+   budget-capped `Services`.
+3. **Tools** — the bounded capabilities the fixes compose (`write_node`, `edit_node`,
+   `compile_*`, `generate_asset`, …). The module chooses order, not the menu.
 
 ---
 
@@ -37,16 +39,17 @@ Three layers:
 | File | Role |
 |------|------|
 | `run.py` | Orchestrator + CLI. `create_run` → `run_build` → packaged project. `python -m maestro.run "<request>"` proposes, freezes (with your ok), builds. |
-| `executor.py` | The non-LLM loop. Stateless per step; rebuilds context; routes to the failing component lowest in dep-order; runs a **sub-loop** for components that iterate-until-done (nodes); decides completion via `validate`. Also the pause/cancel/awaiting-human boundaries. |
-| `agent.py` | The LLM decider (`make_llm_decider`: one tool call per step) and the node **sub-loop** (`make_subloop`: a bounded tool conversation driving ONE target check to green). Also `rewrite_node` (regenerate one node from a human note). |
-| `validate.py` | The steering signal + completion guarantee. Runs the spec's typed done-conditions against durable state → structured failure list (the to-do). Closed check set: `exists / count / distinct / each_has / refs_resolve / crossref / compiles`, plus registered engine checks. A check may **attribute** its failure to the component that can fix it. |
+| `agent_loop.py` | The non-LLM loop (`AgentLoop`). Stateless per step; rebuilds context; collects every module's `get_errors`; prioritizes by error **type** (`HUMAN`→`BUILD`→`FIX`) then `Module.priority`; asks the owning module for a `Fix` and runs it. Keeps completion + cross-fix stall; auto-pauses a finished component. Also the pause/cancel/awaiting-human boundaries. |
+| `services.py` | The bounded gateway a `Fix` calls through (connector + tool dispatch + pause/cancel checkpoint + **per-fix step budget**; `BudgetExhausted` is a `BaseException`, so a fix can't churn past its cap). `author_loop` is the shared iterative Fix the content modules return for their count-driven target. |
+| `context.py` / `views.py` | `Context` (durable per-step snapshot) + `render_dict` (the dict the per-module prompts consume); `views.py` `node_view`/`place_view` graph projections. |
+| `rewrite.py` | `rewrite_node` — regenerate ONE node from a human note, outside the build loop (per-scene control). |
 
 ### Spec + state
 | File | Role |
 |------|------|
 | `spec.py` | `Spec` — components, `frozen` flag, `dep_order()`. |
-| `spec_tools.py` | `propose_spec` (draft story + `concept` hook → pick modules from the catalog → resolve params), `amend_spec` (un-freezes for re-approval), `freeze_spec` (the human's out-of-band approval — deliberately not a tool). |
-| `chat_tools.py` | `propose_game_spec` / `amend_game_spec` — the chat-agent-facing wrappers. |
+| `tools/spec_tools.py` | `propose_spec` (draft story + `concept` hook → pick modules from the catalog → resolve params), `amend_spec` (un-freezes for re-approval), `freeze_spec` (the human's out-of-band approval — deliberately not a tool). *(lives in `tools/`, not `maestro/`.)* |
+| `tools/chat_tools.py` | `propose_game_spec` / `amend_game_spec` — the chat-agent-facing wrappers. |
 | `state.py` | `RunState` — the durable per-run dir `<working_dir>/runs/<run_id>/`: component JSONs, scratchpad, story state, human todos, waivers. The source of truth; the transcript is never memory. |
 | `story_state.py` | The continuity bible (facts / entities / open threads / recent tail) — a snapshot, not a log. |
 

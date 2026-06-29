@@ -29,10 +29,10 @@ is the price of that floor.
   reachability/goal need "add one hotspot," and the floor model thrashes with the coarse tools
   (`write_place` clobbers siblings, `edit_place` cannibalizes an existing hotspot's route). Watched
   it fail; the tool clears `places_reachable` / `goal_reachable` / `each_place_min_interactables`.
-- `add_character` → **not justified.** `premise` is a one-shot — the floor model writes it in a
+- `add_character` → **not justified.** `characters` is a one-shot — the floor model writes it in a
   single `write_component` call. A granular tool buys nothing for the build.
 
-The discriminator for the second clause: **one-shot vs. repaired collection.** One-shots (premise,
+The discriminator for the second clause: **one-shot vs. repaired collection.** One-shots (characters,
 asset_manifest, matches) need no granular tools. Collections the loop builds/fixes item-by-item
 under sub-loop targets (nodes, places, interactables) earn them.
 
@@ -40,7 +40,7 @@ under sub-loop targets (nodes, places, interactables) earn them.
 
 A granular tool is not permanent architecture. Raise the floor to a model that one-shots a clean
 place, and `add_interactable` should be **deleted**, not kept. Module-ownership makes pruning local:
-a mechanic-module owns its tools (`navigation` owns the place tools), so a mechanic sheds tools when
+a mechanic-module owns its tools (`world` owns the place tools), so a mechanic sheds tools when
 the floor outgrows them, without touching the core.
 
 This *bounds* the surface and trends it **down**: tool count ≈ (mechanics in the library) ×

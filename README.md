@@ -34,7 +34,7 @@ pip install -r requirements.txt
 cp src/config/settings.example.json src/config/settings.json   # then edit
 python run.py
 
-# Frontend (mid-rebuild — see ROADMAP)
+# Frontend
 cd frontend
 npm install
 npm run dev
@@ -132,7 +132,7 @@ src/
   renpy/        Ren'Py engine backend (IR → script.rpy → packaged project)
   web/          Web engine backend (IR → game.json + static runtime)
   tools/        tool manager, ComfyUI, system tools, execution context
-frontend/       chat-first React + Vite UI (mid-rebuild)
+frontend/       chat-first React + Vite UI
 eval/           rubrics, briefs, judge, scoring CLI
 tests/          pytest suite
 docs/           Game IR schema + rationale

@@ -42,6 +42,65 @@ npm run dev
 
 Settings live in `src/config/settings.json` (gitignored) and can also be edited from the web UI. Maestro talks to any OpenAI-compatible endpoint (LM Studio, etc.) via its Responses API; image generation uses ComfyUI. Set `model_category` to `small` when running local models. Building a Ren'Py game into a distributable requires the Ren'Py SDK (`renpy_sdk_path` setting or `RENPY_SDK` env var).
 
+### Local model server
+
+Maestro speaks the OpenAI-compatible `/v1/responses` API. Two known-good local servers; the `lmstudio` settings block is just that label — it points at either.
+
+**LM Studio** — load a model, start its local server, point `lmstudio.base_url` at it (default `http://localhost:1234`).
+
+**llama.cpp** (`llama-server`) — run in **router mode** so VRAM management can evict the LLM (see below). Router mode exposes the native `/models/load` + `/models/unload` endpoints; a single-model `llama-server -m model.gguf` pins its model in VRAM for the whole process lifetime and cannot be evicted.
+
+```bash
+llama-server \
+  --models-dir /path/to/your/gguf/dir \   # router mode (NOT -m): enables load/unload
+  --host 127.0.0.1 --port 8080 \
+  -ngl 99 \                                # all layers on GPU
+  -c 32768 \                               # context size
+  --jinja \                                # tool calling (the build agent is tool-driven)
+  --reasoning-budget 0                     # thinking off (small-model strategy)
+```
+
+The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). Set the block to:
+
+```json
+"lmstudio": {
+  "base_url": "http://localhost:8080",
+  "model": "Qwen3.6-35B-A3B-UD-Q4_K_XL",
+  "reasoning": "none"
+}
+```
+
+The server flavor (LM Studio native REST vs llama.cpp router) is **auto-detected** from the endpoint — no flag to set.
+
+### VRAM management
+
+`comfyui.vram_management: true` makes image generation evict the LLM from VRAM first and reload it after, so one GPU time-shares between the language model and SDXL. It works with **both** LM Studio and a llama.cpp **router** (a single-model llama-server can't be evicted, so the LLM stays resident — leave this `false` and make sure the LLM + image model both fit at once).
+
+### Voice (text-to-speech)
+
+Optional per-line voice. Maestro POSTs each spoken line to a local OpenAI-compatible `/v1/audio/speech` server (e.g. **Kokoro-FastAPI**) and projects the clips into the Ren'Py build; a silent placeholder backfills any line that fails to synthesize.
+
+```bash
+# Kokoro-FastAPI, CPU image (tiny model — near real-time, zero GPU/VRAM contention).
+# No --restart, so it never autostarts; manage it manually.
+docker run -d -p 8880:8880 --name kokoro ghcr.io/remsky/kokoro-fastapi-cpu:latest
+docker start kokoro   # when you want voice
+docker stop  kokoro   # frees it
+```
+
+The GPU image's bundled PyTorch lacks Blackwell/sm_120 kernels, so use the CPU image on RTX 50-series. Settings:
+
+```json
+"tts": {
+  "endpoint": "http://localhost:8880",
+  "model": "kokoro",
+  "voices": ["af_heart", "am_michael", "bf_emma", "bm_george"],
+  "format": "wav"
+}
+```
+
+`voices` are mapped onto cast members deterministically by id (empty → the server's default voice). Omit the whole `tts` block to disable voice. List the server's voices with `curl -s localhost:8880/v1/audio/voices`.
+
 ## Build a game from the CLI
 
 ```bash

@@ -32,6 +32,15 @@ class ComfyUISettings(BaseModel):
     vram_management: bool = Field(False)
 
 
+class TTSSettings(BaseModel):
+    endpoint: str = Field("http://localhost:8880", min_length=1)
+    model: str = Field("", description="Optional model id the TTS server expects.")
+    # Speaker presets the local TTS server exposes; cast members are mapped onto these
+    # deterministically by id. Empty -> the server's default voice for every speaker.
+    voices: list[str] = Field(default_factory=list)
+    format: Literal["wav", "ogg", "mp3", "opus"] = "wav"
+
+
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
     max_iterations: int = Field(10, ge=1)
@@ -55,3 +64,4 @@ class AppSettings(BaseModel):
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None
     comfyui: Optional[ComfyUISettings] = None
+    tts: Optional[TTSSettings] = None

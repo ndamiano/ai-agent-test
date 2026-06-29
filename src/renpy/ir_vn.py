@@ -97,18 +97,25 @@ def _end(end: Dict, ind: str) -> List[str]:
 
 
 def node_block(node: Dict, preamble: Optional[List[str]] = None,
-               restage: Optional[Callable[[str, str], List[str]]] = None) -> List[str]:
+               restage: Optional[Callable[[str, str], List[str]]] = None,
+               voiced: bool = False) -> List[str]:
     """`label <id>:` + optional staging preamble (scene/show) + the node's lines (with per-line
     effects) + its terminal control. `restage(speaker, emotion)` (VN only) returns the show-lines
     that re-stage the cast — swapping the speaker to their line's expression, brightening them, and
-    dimming the rest — emitted before each spoken line. Shared with the point-and-click compiler
-    (NPC dialogue nodes pass neither: they play over the place they were called from)."""
+    dimming the rest — emitted before each spoken line. `voiced` (VN only) emits a `voice` for each
+    spoken line, the per-line clip the TTS pipeline writes (a silent placeholder backfills any that
+    didn't generate). Shared with the point-and-click compiler (NPC dialogue nodes pass neither:
+    they play over the place they were called from)."""
+    from maestro.ir_assemble import voice_file
+
     out = [f"label {node['id']}:"]
     out.extend(preamble or [])
-    for line in node.get("lines", []):
+    for i, line in enumerate(node.get("lines", [])):
         sp = line.get("speaker")
         if restage and sp:
             out.extend(restage(sp, line.get("emotion") or "neutral"))
+        if voiced and sp:
+            out.append(f'{_IND}voice "audio/voice/{voice_file(node["id"], i)}"')
         out.append(f"{_IND}{_line(line)}")
         for eff in line.get("effects", []):
             out.append(f"{_IND}{_effect(eff)}")
@@ -188,8 +195,9 @@ def _staging(ir: Dict):
     return stage, decls
 
 
-def compile_vn(ir: Dict) -> str:
-    """Return the Ren'Py script.rpy source for a visual_novel IR."""
+def compile_vn(ir: Dict, voiced: bool = False) -> str:
+    """Return the Ren'Py script.rpy source for a visual_novel IR. `voiced` emits a per-line
+    `voice` statement (the TTS pipeline fills the clips; placeholders backfill the rest)."""
     out: List[str] = []
 
     stage, image_decls = _staging(ir)
@@ -226,7 +234,7 @@ def compile_vn(ir: Dict) -> str:
     current_bg: Optional[str] = None
     for node in ir.get("nodes", []):
         pre, restage, current_bg = stage(node, current_bg)
-        out.extend(node_block(node, pre, restage))
+        out.extend(node_block(node, pre, restage, voiced=voiced))
         out.append("")
 
     return "\n".join(out).rstrip() + "\n"

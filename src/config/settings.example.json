@@ -17,5 +17,11 @@
   "comfyui": {
     "endpoint": "http://localhost:8188",
     "vram_management": false
+  },
+  "tts": {
+    "endpoint": "http://localhost:8880",
+    "model": "",
+    "voices": [],
+    "format": "wav"
   }
 }

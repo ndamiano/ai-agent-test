@@ -35,6 +35,27 @@ def expression_file(image_file: str, emotion: str) -> str:
     return f"{stem}_{emotion}.png"
 
 
+def voice_file(node_id: str, line_index: int) -> str:
+    """Per-line voice clip filename, derived from node id + line position. Shared by the IR
+    projection (the `voice` reference), the TTS pipeline (what it writes), and the placeholder
+    backfill (so a missing clip still resolves) — same contract as expression_file for sprites."""
+    return f"vo_{node_id}_{line_index}.wav"
+
+
+def voiced_lines(nodes: List[Dict]):
+    """Yield (node_id, line_index, line) for every spoken (non-narration) line across nodes.
+    The single source of truth for WHICH lines get a clip, so the projection and the pipeline
+    iterate identically."""
+    for node in nodes:
+        lines = node.get("lines")
+        if not isinstance(lines, list):
+            continue
+        for i, line in enumerate(lines):
+            if isinstance(line, dict) and not is_narration_speaker(line.get("speaker")) \
+                    and line.get("speaker"):
+                yield node["id"], i, line
+
+
 def used_emotions(char_id: str, nodes: List[Dict]) -> List[str]:
     """Distinct emotions this character actually speaks with, in EMOTIONS order, always
     including neutral. Bounds how many sprite variants get generated per cast member."""

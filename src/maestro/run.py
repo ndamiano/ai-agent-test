@@ -60,12 +60,17 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
     if result.ok:
         # Generate real art (ComfyUI when up, placeholder fallback) then package once. The loop's
         # compile checks are lint-only and the agent may never call generate_asset, so finalize here.
-        from renpy.fns import generate_images
+        from renpy.fns import generate_images, generate_voices
         from maestro.engines import compile_for
+        artifact = state.load_artifact()
         try:
-            generate_images(state.load_artifact(), state.run_dir)
+            generate_images(artifact, state.run_dir)
         except Exception:
             pass  # placeholders already cover the build; never fail delivery on art
+        try:
+            generate_voices(artifact, state.run_dir)
+        except Exception:
+            pass  # silent placeholders cover the script; never fail delivery on voice
         compile_for(spec_data.get("engine", "renpy"))(state.run_dir, distribute=True)
 
     result.elapsed = time.perf_counter() - t0

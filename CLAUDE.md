@@ -85,7 +85,8 @@ src/
                 component_schemas.py (re-exports the modules' validators + IR skeletons),
                 fns.py (two-pass image gen —
                 neutral sprite + img2img expression variants — + manifest/expression
-                placeholder backfills), renpy_builder.py, templating.py, renpy_templates/
+                placeholder backfills; generate_voices — best-effort per-line TTS for VN, silent
+                .wav placeholder backfill), renpy_builder.py, templating.py, renpy_templates/
   web/          Self-contained browser backend (second engine). Same assemble_ir + crossref
                 pivot; compiler.py/ir_compiler.py write game.json (the IR) + a static, pre-tested
                 runtime (runtime/index.html,engine.js,style.css) that interprets the IR live —

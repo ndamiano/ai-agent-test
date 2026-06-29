@@ -333,6 +333,121 @@ def _lmstudio_load(model_id: str) -> bool:
         return False
 
 
+def _llamacpp_get_loaded_model() -> Optional[str]:
+    """Return the id of the first model the llama.cpp router reports as loaded, or None."""
+    try:
+        base_url = _get_lmstudio_base_url()
+        data = _http_get(f"{base_url}/models")
+        for m in data.get("data", []):
+            if m.get("status", {}).get("value") == "loaded":
+                return m.get("id")
+        return None
+    except Exception as e:
+        logger.warning(f"Could not query llama.cpp models: {e}")
+        return None
+
+
+def _llamacpp_unload(model_id: str, wait_timeout: int = 30) -> bool:
+    """Unload a model from the llama.cpp router and wait until it reports unloaded."""
+    try:
+        base_url = _get_lmstudio_base_url()
+        _http_post(f"{base_url}/models/unload", {"model": model_id})
+        logger.info(f"llama.cpp: unload requested for {model_id}, waiting for VRAM release...")
+    except Exception as e:
+        logger.warning(f"llama.cpp unload failed: {e}")
+        return False
+
+    deadline = time.time() + wait_timeout
+    while time.time() < deadline:
+        try:
+            base_url = _get_lmstudio_base_url()
+            data = _http_get(f"{base_url}/models")
+            for m in data.get("data", []):
+                if m.get("id") == model_id and m.get("status", {}).get("value") == "unloaded":
+                    logger.info(f"llama.cpp: {model_id} confirmed unloaded")
+                    return True
+        except Exception:
+            pass
+        time.sleep(1)
+
+    logger.warning(f"llama.cpp: {model_id} did not confirm unload within {wait_timeout}s — proceeding anyway")
+    return False
+
+
+def _llamacpp_load(model_id: str) -> bool:
+    """Load a model into the llama.cpp router. Returns True on success."""
+    try:
+        base_url = _get_lmstudio_base_url()
+        _http_post(f"{base_url}/models/load", {"model": model_id})
+        logger.info(f"llama.cpp: loaded {model_id}")
+        return True
+    except Exception as e:
+        logger.warning(f"llama.cpp load failed: {e}")
+        return False
+
+
+# The LLM server flavor is auto-detected from the endpoint, never configured: `connector_type`
+# stays the OpenAI-compatible label while the actual server is either LM Studio (native /api/v0
+# REST) or a llama.cpp router (/models with per-model status). Whichever route answers wins; a
+# plain single-model llama-server answers neither -> no VRAM management (its model is pinned for
+# the process lifetime, so the LLM simply stays resident alongside the image model).
+_llm_flavor: Optional[str] = None
+
+
+def _detect_llm_flavor() -> str:
+    global _llm_flavor
+    if _llm_flavor is not None:
+        return _llm_flavor
+    base_url = _get_lmstudio_base_url()
+    try:
+        _http_get(f"{base_url}/api/v0/models")
+        _llm_flavor = "lmstudio"
+        return _llm_flavor
+    except Exception:
+        pass
+    try:
+        data = _http_get(f"{base_url}/models")
+        if any("status" in (m or {}) for m in data.get("data", [])):
+            _llm_flavor = "llamacpp"
+            return _llm_flavor
+    except Exception:
+        pass
+    return "none"  # not cached: re-probe next call (server may not be up yet)
+
+
+def reset_llm_flavor_cache() -> None:
+    """Drop the cached LLM-server flavor. Call after the LLM endpoint changes."""
+    global _llm_flavor
+    _llm_flavor = None
+
+
+def _llm_get_loaded_model() -> Optional[str]:
+    flavor = _detect_llm_flavor()
+    if flavor == "lmstudio":
+        return _lmstudio_get_loaded_model()
+    if flavor == "llamacpp":
+        return _llamacpp_get_loaded_model()
+    return None
+
+
+def _llm_unload(model_id: str) -> bool:
+    flavor = _detect_llm_flavor()
+    if flavor == "lmstudio":
+        return _lmstudio_unload(model_id)
+    if flavor == "llamacpp":
+        return _llamacpp_unload(model_id)
+    return False
+
+
+def _llm_load(model_id: str) -> bool:
+    flavor = _detect_llm_flavor()
+    if flavor == "lmstudio":
+        return _lmstudio_load(model_id)
+    if flavor == "llamacpp":
+        return _llamacpp_load(model_id)
+    return False
+
+
 def _comfyui_free_vram(endpoint: str, timeout: int = 60) -> None:
     """Ask ComfyUI to release models from VRAM, then poll until VRAM usage stabilizes."""
     try:
@@ -444,16 +559,16 @@ def vram_bracket():
     unloaded_model: Optional[str] = None
     if vram_management:
         _comfyui_free_vram(endpoint)
-        unloaded_model = _lmstudio_get_loaded_model()
+        unloaded_model = _llm_get_loaded_model()
         if unloaded_model:
-            _lmstudio_unload(unloaded_model)
+            _llm_unload(unloaded_model)
     try:
         yield
     finally:
         if vram_management:
             _comfyui_free_vram(endpoint)
             if unloaded_model:
-                _lmstudio_load(unloaded_model)
+                _llm_load(unloaded_model)
 
 
 def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -484,30 +599,30 @@ def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dic
     try:
         if vram_management:
             _comfyui_free_vram(endpoint)
-            unloaded_model = _lmstudio_get_loaded_model()
+            unloaded_model = _llm_get_loaded_model()
             if unloaded_model:
-                _lmstudio_unload(unloaded_model)
+                _llm_unload(unloaded_model)
 
         result = _run_comfyui_job(endpoint, prompt, workflow_override)
 
         if vram_management:
             _comfyui_free_vram(endpoint)
             if unloaded_model:
-                _lmstudio_load(unloaded_model)
+                _llm_load(unloaded_model)
 
         return result
 
     except urllib.error.URLError as e:
         if vram_management and unloaded_model:
-            _lmstudio_load(unloaded_model)
+            _llm_load(unloaded_model)
         return {"success": False, "error": f"Cannot reach ComfyUI at {endpoint}: {e.reason}. Is ComfyUI running with --listen?"}
     except TimeoutError as e:
         if vram_management and unloaded_model:
-            _lmstudio_load(unloaded_model)
+            _llm_load(unloaded_model)
         return {"success": False, "error": str(e)}
     except Exception as e:
         if vram_management and unloaded_model:
-            _lmstudio_load(unloaded_model)
+            _llm_load(unloaded_model)
         logger.error(f"generate_image failed: {e}")
         return {"success": False, "error": str(e)}
 

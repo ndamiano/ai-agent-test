@@ -73,6 +73,7 @@ Small local models fail in specific, detectable ways: repetition loops, channel 
 - [ ] **World building pipeline** — world bible → factions → nations/cities → characters. Each layer its own sub-pipeline. Eventual target: explorable artifact.
 - [ ] **Long-form fiction / novel pipeline** — outline → chapters → continuity tracking across generations
 - [ ] **Comic / manga pipeline** — story → scenes → panels → dialogue + images per panel
+- [x] **Voice generation (VN)** — best-effort per-line TTS post-build pass (`renpy.fns.generate_voices` → local TTS server via `tools/tts_tools.py`, `settings.tts`). `ir_vn` emits a Ren'Py `voice` per spoken line; silent `.wav` placeholders backfill any clip that didn't generate. Cast→speaker preset mapped deterministically by id. VRAM freed via the shared `vram_bracket`.
 - [ ] **Music generation pipeline** — integrate with a music model (MusicGen, Suno API)
 - [ ] **VR world pipeline** — see North Star below
 

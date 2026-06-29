@@ -140,6 +140,70 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     return {"status": "ok", "generated": generated, "failed": failed}
 
 
+def generate_voices(inputs: Dict, working_dir: Path) -> Dict:
+    """Best-effort voice-over pass: one TTS clip per spoken line of a visual_novel, written to
+    game/audio/voice/ where the `voice` statements ir_vn emits reference them. No-op unless a TTS
+    server is configured (settings.tts) and the game is a VN. Wrapped by the caller so a failure
+    never blocks delivery; any clip that fails degrades to a silent placeholder. Mirrors
+    generate_images: assemble the IR, batch through the VRAM bracket, place or fall back."""
+    from tools.tts_tools import voice_enabled, pick_voice, synthesize
+    from tools.comfyui_tools import vram_bracket
+    from maestro.ir_assemble import assemble_ir, voiced_lines, voice_file
+    from utils.audio import write_silent_wav
+
+    if not voice_enabled():
+        return {"status": "skipped", "reason": "no tts endpoint configured"}
+
+    ir = assemble_ir(inputs)
+    if ir.get("genre") != "visual_novel":
+        return {"status": "skipped", "reason": f"voice unsupported for genre {ir.get('genre')}"}
+
+    voices = _tts_voices()
+    char_voice = {c["id"]: pick_voice(c["id"], voices) for c in ir.get("characters", [])}
+
+    audio_dir = working_dir / "game_output" / "game" / "audio" / "voice"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    lines = list(voiced_lines(ir.get("nodes", [])))
+    generated: List[str] = []
+    failed: List[Dict] = []
+    with vram_bracket():
+        print(f"    [voice]  generating {len(lines)} clip(s)")
+        for node_id, i, line in lines:
+            fname = voice_file(node_id, i)
+            dest = audio_dir / fname
+            try:
+                data = synthesize(line["text"], char_voice.get(line["speaker"]))
+                dest.write_bytes(data)
+                generated.append(fname)
+            except Exception as e:
+                write_silent_wav(dest)
+                failed.append({"file": fname, "error": str(e)})
+                print(f"    [voice]  failed ({e}), silent placeholder: {fname}")
+    return {"status": "ok", "generated": generated, "failed": failed}
+
+
+def _tts_voices() -> List[str]:
+    try:
+        from config.settings_manager import settings_manager
+        return (settings_manager.get_settings().get("tts") or {}).get("voices", []) or []
+    except Exception:
+        return []
+
+
+def _ensure_voice_placeholders(ir: Dict, game_dir: str) -> None:
+    """Every spoken line the voiced VN script references must have an audio file on disk or Ren'Py
+    lint flags it. The TTS pass fills these with real clips; where it didn't run or failed, write a
+    silent placeholder. Mirrors _ensure_expression_placeholders for the per-line voice clips."""
+    from maestro.ir_assemble import voiced_lines, voice_file
+    from utils.audio import write_silent_wav
+    audio_dir = Path(game_dir) / "audio" / "voice"
+    for node_id, i, _line in voiced_lines(ir.get("nodes", [])):
+        path = audio_dir / voice_file(node_id, i)
+        if not path.exists():
+            write_silent_wav(path)
+
+
 def _merge_cast_into_manifest(cast: Dict, manifest: Dict) -> Dict:
     """Backfill a manifest entry for every character so sprite defines, placeholder pngs, image
     generation, and the lint's valid-speaker set (all keyed off asset_manifest.characters) cover

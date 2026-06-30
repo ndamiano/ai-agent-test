@@ -30,7 +30,7 @@ _FAIL = {"lint_error_count": None, "project_dir": None}
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
     for stem in ("brief", "characters", "story", "asset_manifest", "items", "nodes", "places",
-                 "matches", "spec"):
+                 "matches", "combat", "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))

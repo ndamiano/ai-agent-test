@@ -317,6 +317,25 @@ def test_write_and_read_place(tmp_path):
     assert tools["write_place"]("room_b", {"interactables": []})["ok"] is False  # empty
 
 
+def test_write_component_rejects_place_ids_without_entries(tmp_path):
+    # A places component listing place_ids with no matching `places` entry is internally
+    # inconsistent: the create-guard sees the id (already-exists) while add_interactable/
+    # edit_place can't find it (no place) — an unfixable stall. Reject it at write time.
+    from maestro.modules import compose
+    spec = {"frozen": True, "modules": ["world"], "params": {}}
+    tools = build_tools(spec, RunState(tmp_path), compose(("world",)))
+    res = tools["write_component"]("places", {"place_ids": ["room_a", "room_b"], "places": {}})
+    assert res["ok"] is False and "no entry in places.places" in res["error"]
+    # The reverse mismatch (entry not listed in place_ids) is rejected too.
+    res = tools["write_component"]("places",
+                                   {"place_ids": ["room_a"], "places": {"room_a": _place(),
+                                                                        "room_b": _place()}})
+    assert res["ok"] is False and "not listed in place_ids" in res["error"]
+    # A consistent component passes.
+    assert tools["write_component"]("places",
+                                    {"place_ids": ["room_a"], "places": {"room_a": _place()}})["ok"]
+
+
 def test_set_places_meta_and_edit_place(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)

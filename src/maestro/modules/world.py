@@ -26,6 +26,14 @@ def v_places(c: Dict) -> Optional[str]:
         return "places.place_ids must be a non-empty list of place id strings"
     if not isinstance(places, dict):
         return "places.places must be an object mapping place_id -> {background, interactables}"
+    missing = [p for p in place_ids if p not in places]
+    if missing:
+        return (f"places.place_ids lists {missing} with no entry in places.places — every "
+                f"place_id needs a matching {{background, interactables}} object (or drop it "
+                f"from place_ids)")
+    extra = [p for p in places if p not in place_ids]
+    if extra:
+        return f"places.places has entries {extra} not listed in place_ids — add them to place_ids"
     if c.get("start_place") and c["start_place"] not in place_ids:
         return f"places.start_place {c['start_place']!r} is not in place_ids"
     goal = c.get("goal")
@@ -171,7 +179,12 @@ class World(Module):
             art, min=context.param("min_interactables", 2)), "each_place_min_interactables")
         self._add(errs, checks.places_reachable(art), "places_reachable")
         if not errs:
+            from maestro.ir_crossref import slice_token
             for rec in checks.crossref_failures(art):
+                # combat owns its slices' refs (it can rewrite the combat doc; world cannot).
+                if slice_token(rec.get("path", "")) in ("stats", "statuses", "abilities",
+                                                         "combatants", "encounters"):
+                    continue
                 errs.append(Error(type=ErrorType.FIX, code="crossref", component="places",
                                   message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
             if not errs:

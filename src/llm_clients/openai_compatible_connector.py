@@ -108,14 +108,14 @@ def _chat_messages_to_responses_input(messages):
                           "call_id": m.get("tool_call_id"), "output": content or ""})
         elif role == "assistant":
             if content:
-                items.append({"role": "assistant",
+                items.append({"type": "message", "role": "assistant",
                               "content": [{"type": "output_text", "text": content}]})
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function", {})
                 items.append({"type": "function_call", "call_id": tc.get("id"),
                               "name": fn.get("name"), "arguments": fn.get("arguments", "")})
         else:  # user / other
-            items.append({"role": role or "user", "content": content or ""})
+            items.append({"type": "message", "role": role or "user", "content": content or ""})
     return instructions, items
 
 

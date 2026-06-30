@@ -30,6 +30,7 @@ from maestro.modules import (  # noqa: F401
     state,
     card_play,
     cast,
+    combat,
     inventory,
     scenes,
     story,

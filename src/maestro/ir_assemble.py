@@ -178,6 +178,17 @@ def assemble_ir(artifact: Dict) -> Dict:
     if match_ids:
         ir["card_matches"] = [{"id": mid, **matches_map.get(mid, {})} for mid in match_ids]
 
+    # combat: the combat component holds the whole combat block as one document (the slices are
+    # too interdependent to author piecemeal). Lift each present slice to the top level + the
+    # combat_model projection hint (presence-driven, like card_matches).
+    combat_comp = artifact.get("combat", {}) or {}
+    if combat_comp.get("combat_model"):
+        ir["combat_model"] = combat_comp["combat_model"]
+    for slice_key in ("stats", "statuses", "abilities", "combatants", "encounters"):
+        rows = combat_comp.get(slice_key)
+        if rows:
+            ir[slice_key] = rows
+
     if has_places:
         place_ids = places_comp.get("place_ids", []) or []
         places_map = places_comp.get("places", {}) or {}

@@ -52,12 +52,12 @@ Maestro speaks the OpenAI-compatible `/v1/responses` API. Two known-good local s
 
 ```bash
 llama-server \
-  --models-dir /path/to/your/gguf/dir \   # router mode (NOT -m): enables load/unload
+  --models-dir /path/to/your/gguf/dir \
   --host 127.0.0.1 --port 8080 \
-  -ngl 99 \                                # all layers on GPU
-  -c 32768 \                               # context size
-  --jinja \                                # tool calling (the build agent is tool-driven)
-  --reasoning-budget 0                     # thinking off (small-model strategy)
+  -ngl 99 \
+  -c 32768 \
+  --jinja \
+  --reasoning-budget 0
 ```
 
 The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). Set the block to:

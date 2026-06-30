@@ -197,13 +197,13 @@ class Services:
             c.set_status("running")
             self._emit("build_resumed", step=self.spent)
 
-    def infer(self, messages, schemas, reasoning: Optional[str] = None):
+    def infer(self, messages, schemas, reasoning: Optional[str] = None, max_tokens: Optional[int] = None):
         """One LLM call — checkpointed, budgeted. Raises BudgetExhausted when the per-fix cap is hit."""
         self.checkpoint()
         if self.spent >= self.budget:
             raise BudgetExhausted()
         self.spent += 1
-        kw = {"max_tokens": _BUILD_MAX_TOKENS}
+        kw = {"max_tokens": max_tokens or _BUILD_MAX_TOKENS}
         eff = reasoning or ("high" if self.escalate else None)
         if eff:
             kw["reasoning"] = eff
@@ -226,7 +226,7 @@ class Services:
         if self.escalate:
             schemas = [s for s in schemas if not s.get("function", {}).get("name", "").startswith("read")]
         msgs = MessageBuilder(prompt.system).add_user(prompt.user).build()
-        action = parse_action(self.infer(msgs, schemas), schemas)
+        action = parse_action(self.infer(msgs, schemas, max_tokens=prompt.max_tokens), schemas)
         if not action.get("tool"):
             self._report("no tool call — model returned prose")
             return

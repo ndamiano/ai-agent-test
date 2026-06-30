@@ -69,6 +69,7 @@ class CorrectionPrompt:
     system: str                       # load-bearing system prompt (from a .txt, never inlined)
     user: str                         # the per-step user message (context + the target error)
     allowed_tools: Tuple[str, ...]    # the tools this fix may call
+    max_tokens: Optional[int] = None  # per-target output ceiling; None = the build default
 
 
 class Module(ABC):
@@ -99,6 +100,7 @@ class Module(ABC):
     prompts: Dict[str, str] = {}             # job ("author"/"fix") -> system prompt file
     target_jobs: Dict[str, str] = {}         # check code -> job; picks prompt + escalation
     target_tools: Dict[str, frozenset] = {}  # check code -> tools allowed for that target
+    target_max_tokens: Dict[str, int] = {}   # check code -> output ceiling (default: the build cap)
     projector: Optional[Callable] = None     # (artifact) -> the compact graph view for this component
 
     @abstractmethod
@@ -120,7 +122,8 @@ class Module(ABC):
         if self.skeleton:
             system += "\n\n" + skeleton_guide(self.component, self.skeleton)
         return CorrectionPrompt(system=system, user=self.render_context(rd),
-                                allowed_tools=tuple(sorted(self.tools_for(error.code))))
+                                allowed_tools=tuple(sorted(self.tools_for(error.code))),
+                                max_tokens=self.target_max_tokens.get(error.code))
 
     # ── overridable hooks (sensible defaults) ────────────────────────────────
     def render_context(self, ctx: Dict) -> str:

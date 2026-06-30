@@ -150,13 +150,42 @@
       "type": "object",
       "required": ["id", "kind", "interactables"],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["world_map", "town", "interior"] } } },
+          "then": { "required": ["grid"] }
+        }
+      ],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "kind": {
           "enum": ["room", "world_map", "town", "interior"],
-          "description": "room = PnC scene; world_map/town/interior = RPG. The compiler picks the engine projection from this."
+          "description": "room = PnC scene (click hotspots); world_map/town/interior = RPG (a walkable tile grid). The runtime picks the presenter from this — room => point-and-click, the rest => the WASD overworld. The compiler picks the engine projection from it too."
         },
         "background": { "type": "string", "description": "Asset id for the backdrop/map image." },
+        "grid": {
+          "type": "object",
+          "description": "RPG tile dimensions in cells. Required for world_map/town/interior; ignored for room. interactable/spawn cells must lie within [0,w) x [0,h).",
+          "required": ["w", "h"],
+          "additionalProperties": false,
+          "properties": {
+            "w": { "type": "integer", "exclusiveMinimum": 0 },
+            "h": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        "impassable": {
+          "type": "array",
+          "description": "RPG wall cells the avatar cannot step onto. Pure navigation — no interactable, no action.",
+          "items": {
+            "type": "object",
+            "required": ["x", "y"],
+            "additionalProperties": false,
+            "properties": {
+              "x": { "type": "integer", "minimum": 0 },
+              "y": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
         "interactables": {
           "type": "array",
           "description": "Everything the player can click (PnC) or step on / talk to (RPG). At least one must lead elsewhere or the place is a dead end.",
@@ -823,64 +852,6 @@
         },
         { "id": "node_together", "lines": [{ "speaker": "mara", "text": "Thank you." }], "end": { "type": "end", "ending": "together" } },
         { "id": "node_alone", "lines": [{ "speaker": null, "text": "The door clicks shut behind you." }], "end": { "type": "end", "ending": "alone" } }
-      ]
-    },
-    {
-      "version": "0.1",
-      "genre": "rpg",
-      "meta": { "title": "The Crypt" },
-      "characters": [
-        { "id": "hero", "name": "Hero" },
-        { "id": "skeleton", "name": "Skeleton" }
-      ],
-      "flags": ["learned_fire", "spared_boss"],
-      "combat_model": "turn_based",
-      "stats": [
-        { "id": "hp", "default": 30, "min": 0, "max": 30, "role": "resource_depletable" },
-        { "id": "mp", "default": 10, "min": 0, "max": 10, "role": "resource_regenerating" },
-        { "id": "atk", "default": 5, "role": "modifier" }
-      ],
-      "statuses": [
-        { "id": "poison", "name": "Poison", "tick": [{ "stat": "hp", "op": "damage", "formula": { "base": 2 } }] }
-      ],
-      "abilities": [
-        { "id": "slash", "name": "Slash",
-          "targeting": { "shape": "single", "faction": "enemy", "range": "melee" },
-          "effects": [{ "stat": "hp", "op": "damage", "formula": { "base": 4, "scales_with": "atk", "scale": 1 } }] },
-        { "id": "firebolt", "name": "Firebolt",
-          "cost": [{ "stat": "mp", "amount": 3 }],
-          "targeting": { "shape": "single", "faction": "enemy", "range": "ranged" },
-          "effects": [
-            { "stat": "hp", "op": "damage", "formula": { "base": 6 } },
-            { "status": "poison", "duration": 3 },
-            { "world": { "set_flag": "spared_boss" } }
-          ],
-          "requires": { "flag": "learned_fire" } }
-      ],
-      "combatants": [
-        { "id": "cb_hero", "character": "hero", "stats": [{ "stat": "hp", "value": 30 }], "abilities": ["slash", "firebolt"] },
-        { "id": "cb_skeleton", "character": "skeleton", "stats": [{ "stat": "hp", "value": 12 }], "abilities": ["slash"] }
-      ],
-      "encounters": [
-        { "id": "enc_crypt", "background": "bg_crypt",
-          "combatants": [
-            { "ref": "cb_hero", "faction": "player", "position": { "cell": { "x": 1, "y": 2 } } },
-            { "ref": "cb_skeleton", "faction": "enemy", "position": { "cell": { "x": 5, "y": 2 } } }
-          ],
-          "victory": { "all_defeated": "enemy" },
-          "defeat": { "all_defeated": "player" },
-          "on_victory": { "type": "jump", "target": "node_loot" },
-          "on_defeat": { "type": "end", "ending": "game_over" } }
-      ],
-      "start": { "place": "room_crypt" },
-      "places": [
-        { "id": "room_crypt", "kind": "interior", "background": "bg_crypt", "interactables": [
-          { "id": "hs_skeleton", "label": "Skeleton", "position": { "cell": { "x": 4, "y": 2 } },
-            "action": { "type": "start_combat", "encounter": "enc_crypt" } }
-        ] }
-      ],
-      "nodes": [
-        { "id": "node_loot", "lines": [{ "speaker": null, "text": "Bones rattle to the floor. Gold glints beneath them." }], "end": { "type": "end", "ending": "cleared" } }
       ]
     }
   ]

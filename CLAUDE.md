@@ -100,7 +100,16 @@ src/
                 exist is combat: combat.gd plays turn_based encounters web/renpy stub out. The
                 `combat` module authors the encounter IR; since it registers a projection ONLY here
                 (none for renpy/web), any spec that picks it auto-routes to Godot via
-                Module.engine_for — no explicit routing.
+                Module.engine_for — no explicit routing. runtime/Game.gd drives a PRESENTERS
+                registry keyed on place.kind: `room` => pnc.gd (click hotspots), `world_map/town/
+                interior` => overworld.gd (a WASD/arrow-key walkable tile grid — step ONTO a
+                move/start_combat cell to fire it, press E on a talk/examine/take/use/win cell).
+                Game.run_action is the one shared verb dispatch both presenters call, so a new
+                navigation modality = a new presenter + one registry entry, never a router edit.
+                docs/examples/combat_game.json is the hand-authored showcase exercising the full
+                combat spec + the walkable world (multi-zone move tiles, walls, potion picked up on
+                the map then drunk IN a fight via an ability gated on `requires:{item}` that
+                consumes it with a `combat_effect.world` remove_item).
   tools/        tool_manager.py, system_tools, comfyui_tools, file_tools, execution_context
 ```
 

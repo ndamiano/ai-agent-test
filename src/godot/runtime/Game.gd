@@ -1,11 +1,28 @@
 # Game — the runtime driver. Loads game.json, indexes the IR, owns shared UI presenters, and
 # dispatches to the vn/pnc/combat interpreters. Mirrors the boot + presenter layer of
-# web/runtime/engine.js; the genre loops live in vn.gd / pnc.gd / combat.gd.
+# web/runtime/engine.js; the navigation/genre loops live in vn.gd / pnc.gd / overworld.gd /
+# combat.gd, selected per place by the PRESENTERS registry below.
 extends Control
 
 const IRCore = preload("res://ir.gd")
 const Vn = preload("res://vn.gd")
 const Pnc = preload("res://pnc.gd")
+const Overworld = preload("res://overworld.gd")
+const Combat = preload("res://combat.gd")
+
+# Presenter registry keyed by place.kind. Adding a navigation modality = a new presenter + one
+# entry here; the world router below stays untouched. room => point-and-click, the RPG kinds =>
+# the WASD overworld. The default keeps an unknown kind playable as PnC.
+const PRESENTERS := {
+	"room": Pnc,
+	"world_map": Overworld,
+	"town": Overworld,
+	"interior": Overworld,
+}
+
+# Sentinels returned up the presenter -> world-router chain (a place id can never collide).
+const WIN := "__win__"
+const END := "__end__"
 
 var ir: Dictionary = {}
 var state: Dictionary = {}
@@ -37,11 +54,31 @@ var _menu_pick := -1
 
 
 func _ready() -> void:
+	_setup_input()
 	_build_ui()
 	ir = _load_game()
 	state = IRCore.make_state(ir)
 	_index()
 	await _boot()
+
+
+# Bind movement/interact to physical keys (layout-independent) in code, so project.godot stays free
+# of the brittle InputEvent serialization. WASD + arrows move; E / Space interact.
+func _setup_input() -> void:
+	var binds := {
+		"move_up": [KEY_W, KEY_UP],
+		"move_down": [KEY_S, KEY_DOWN],
+		"move_left": [KEY_A, KEY_LEFT],
+		"move_right": [KEY_D, KEY_RIGHT],
+		"interact": [KEY_E, KEY_SPACE],
+	}
+	for action in binds:
+		if not InputMap.has_action(action):
+			InputMap.add_action(action)
+		for kc in binds[action]:
+			var ev := InputEventKey.new()
+			ev.physical_keycode = kc
+			InputMap.action_add_event(action, ev)
 
 
 func _load_game() -> Dictionary:
@@ -74,10 +111,104 @@ func _index() -> void:
 
 func _boot() -> void:
 	var start = ir.get("start", {})
-	if ir.get("genre") == "point_and_click" or start.has("place"):
-		await Pnc.new(self).run()
+	if start.has("place"):
+		await _run_world(start["place"], start.get("spawn"))
 	elif start.has("node"):
 		await Vn.new(self).play_node(start["node"])
+
+
+# The place loop, presenter-agnostic. Picks the presenter for each place by kind (PRESENTERS),
+# runs it, and follows the result: a {move} hops to the next place (carrying the RPG arrival
+# spawn), WIN/END terminate. Moving between an RPG zone and a PnC room just swaps presenters here.
+func _run_world(place_id, spawn) -> void:
+	while true:
+		var kind = place_by_id[place_id].get("kind", "room")
+		var presenter = (PRESENTERS.get(kind, Pnc)).new(self)
+		var r = await presenter.run_place(place_id, spawn)
+		# Match the {move} dict BEFORE the string compares — Godot 4 errors on Dictionary == String.
+		if typeof(r) == TYPE_DICTIONARY and r.has("move"):
+			place_id = r["move"]
+			spawn = r.get("spawn")
+		elif r == WIN:
+			show_ending("escaped" if ir.has("goal") else null)
+			return
+		else:
+			return
+
+
+# The closed verb vocabulary, shared by every navigation presenter (pnc/overworld). Returns
+# null = stay in the place; a {move,spawn} dict = leave for another place; WIN/END = terminate.
+# Combat and dialogue resolve THROUGH here so a presenter never re-implements a verb.
+func run_action(act) -> Variant:
+	match act["type"]:
+		"examine":
+			await show_line(null, act["text"])
+			hide_dialogue()
+			return null
+		"take":
+			if not (act["item"] in state["inv"]):
+				state["inv"].append(act["item"])
+			if act.has("text"):
+				await show_line(null, act["text"])
+				hide_dialogue()
+			return null
+		"talk":
+			await Vn.new(self).play_node(act["node"])
+			return null
+		"move":
+			if act.has("requires") and not IRCore.eval_cond(state, act["requires"]):
+				await show_line(null, "You can't go that way yet.")
+				hide_dialogue()
+				return null
+			return {"move": act["target"], "spawn": act.get("spawn")}
+		"use":
+			var outcome = act.get("fallback")
+			for clause in act.get("clauses", []):
+				if IRCore.eval_cond(state, clause["requires"]):
+					outcome = clause["outcome"]
+					break
+			if outcome != null:
+				IRCore.apply_effects(state, outcome.get("effects"))
+				if outcome.has("text"):
+					await show_line(null, outcome["text"])
+					hide_dialogue()
+			return null
+		"win":
+			var gate = act.get("requires", ir.get("goal"))
+			if gate != null and not IRCore.eval_cond(state, gate):
+				await show_line(null, "Not yet.")
+				hide_dialogue()
+				return null
+			return WIN
+		"start_combat":
+			if act.has("requires") and not IRCore.eval_cond(state, act["requires"]):
+				await show_line(null, "Not now.")
+				hide_dialogue()
+				return null
+			var resolution = await Combat.new(self).run(act["encounter"])
+			return await _flow(resolution)
+		"play_match":
+			await show_line(null, "[Card matches play in the web build.]")
+			hide_dialogue()
+			return null
+		_:
+			return null
+
+
+# A node_end flowing out of combat: jump/return play through Vn and fall back to the place (null);
+# end terminates the whole run (END). Mirrors how dialogue ends elsewhere.
+func _flow(end) -> Variant:
+	if end == null:
+		return null
+	match end.get("type"):
+		"jump":
+			await Vn.new(self).play_node(end["target"])
+			return null
+		"end":
+			show_ending(end.get("ending"))
+			return END
+		_:
+			return null
 
 
 # ── UI construction (built in code so Main.tscn stays trivial and correct) ──────────────────

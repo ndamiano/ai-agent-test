@@ -11,7 +11,9 @@ from godot.compiler import compile_godot
 from godot.ir_compiler import write_godot_project
 
 _SCHEMA = Path(__file__).parent.parent / "docs" / "game_ir.schema.json"
-_RUNTIME_FILES = ("project.godot", "Main.tscn", "Game.gd", "ir.gd", "vn.gd", "pnc.gd", "combat.gd")
+_COMBAT_EXAMPLE = Path(__file__).parent.parent / "docs" / "examples" / "combat_game.json"
+_RUNTIME_FILES = ("project.godot", "Main.tscn", "Game.gd", "ir.gd", "vn.gd", "pnc.gd",
+                  "overworld.gd", "combat.gd")
 
 
 def _write_vn(run_dir: Path, *, dangling=False, broken=False):
@@ -41,8 +43,7 @@ def _write_vn(run_dir: Path, *, dangling=False, broken=False):
 
 
 def _rpg_example() -> dict:
-    schema = json.loads(_SCHEMA.read_text())
-    return next(ex for ex in schema["examples"] if ex["genre"] == "rpg")
+    return json.loads(_COMBAT_EXAMPLE.read_text())
 
 
 def test_compile_godot_writes_project(tmp_path):
@@ -92,22 +93,50 @@ def test_missing_components_fails(tmp_path):
     assert "missing components" in result["reason"]
 
 
-def test_combat_ir_lifts_into_project(tmp_path):
-    """Godot's reason to exist: it projects combat the other engines stub. The schema's turn_based
-    crypt example is a valid, complete IR; write it straight into a project (the v1 combat path,
-    since no module authors encounters on disk yet) and prove the fight data survives."""
+def test_combat_example_is_valid_ir():
+    """The walkable combat showcase must be a complete, schema-valid IR with every reference
+    resolving — it doubles as the spec's worked example, so a drift here is a doc+engine bug."""
     ir = _rpg_example()
+    assert _schema_errors(ir) == []
     assert crossref_errors(ir) == []
 
+
+def _schema_errors(ir: dict) -> list:
+    import jsonschema
+    schema = json.loads(_SCHEMA.read_text())
+    v = jsonschema.Draft202012Validator({k: val for k, val in schema.items() if k != "examples"})
+    return [f"{'/'.join(str(p) for p in e.path) or '<root>'}: {e.message}"
+            for e in v.iter_errors(ir)]
+
+
+def test_combat_ir_lifts_into_project(tmp_path):
+    """Godot's reason to exist: it projects combat the other engines stub. Write the showcase IR
+    straight into a project and prove the fight data + the walkable-world wiring survive."""
+    ir = _rpg_example()
     out = tmp_path / "godot_output"
     write_godot_project(ir, out)
 
     game = json.loads((out / "game.json").read_text())
-    assert game["encounters"][0]["id"] == "enc_crypt"
+    assert {e["id"] for e in game["encounters"]} == {"enc_slimes", "enc_boss"}
     assert game["combatants"] and game["abilities"] and game["stats"]
     assert (out / "combat.gd").exists()
-    # arena + combatant sprite placeholders rendered so it plays with zero real art
-    assert (out / "images" / "bg_crypt.png").exists()
+    assert (out / "overworld.gd").exists()
+    # arena/map placeholders rendered so it plays with zero real art
+    assert (out / "images" / "bg_crypt.png").exists() or (out / "images" / "crypt.png").exists()
+
+    # The walkable world: RPG places carry a grid + walls, and a tile starts each fight.
+    ov = next(p for p in game["places"] if p["id"] == "overworld")
+    assert ov["kind"] == "world_map" and ov["grid"]["w"] > 0 and ov["impassable"]
+    combat_tiles = [it for p in game["places"] for it in p["interactables"]
+                    if it["action"]["type"] == "start_combat"]
+    assert combat_tiles, "no tile starts combat"
+
+    # Inventory <-> combat bridge: a potion item, a take tile that grants it, and an ability gated
+    # on holding it that consumes it via a world remove_item — proves inventory flows into a fight.
+    assert any(i["id"] == "potion" for i in game["items"])
+    quaff = next(a for a in game["abilities"] if a["id"] == "quaff")
+    assert quaff["requires"] == {"item": "potion"}
+    assert any(e.get("world") == {"remove_item": "potion"} for e in quaff["effects"])
 
 
 def test_engine_dispatch():

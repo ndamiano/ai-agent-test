@@ -8,10 +8,10 @@ Example games:
   - "escape a flooding lighthouse, talking past its keeper"        — cast + world + scenes + inventory
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 from maestro.modules import checks
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Module, register_module
 
 _KEEP = ("id", "name", "role", "voice", "temperament", "drive", "example_lines")
 
@@ -68,27 +68,18 @@ class Cast(Module):
     schemas = {"characters": v_characters}
     skeletons = {"characters": SKEL_CHARACTERS}
 
+    checks = [
+        Check("min_characters", lambda chk, m, ctx: m.wrap(chk, checks.count(
+            ctx.artifact, "characters.characters", min=ctx.param("min_characters", 1)))),
+        Check("character_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
+            ctx.artifact, "characters.characters",
+            fields=ctx.param("character_fields", ["id", "name"])))),
+        Check("distinct_characters", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
+            ctx.artifact, "characters.characters", key="id"))),
+    ]
+
     def params(self) -> Dict:
         return {"min_characters": 1, "character_fields": ["id", "name"]}
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-
-        def build(result, code):
-            return checks.as_error(result, type=ErrorType.BUILD, code=code, component="characters")
-
-        errs: List[Error] = []
-        for e in (
-            build(checks.count(art, "characters.characters",
-                               min=context.param("min_characters", 1)), "min_characters"),
-            build(checks.each_has(art, "characters.characters",
-                                  fields=context.param("character_fields", ["id", "name"])),
-                  "character_fields"),
-            build(checks.distinct(art, "characters.characters", key="id"), "distinct_characters"),
-        ):
-            if e:
-                errs.append(e)
-        return errs
 
     def context_view(self, c: Dict) -> Dict:
         return {"characters": [{k: ch[k] for k in _KEEP if ch.get(k) is not None}

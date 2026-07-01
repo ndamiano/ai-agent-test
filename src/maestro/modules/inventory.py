@@ -9,10 +9,10 @@ Example games:
   - "a fetch-quest through a night market"                    — cast + world + inventory + scenes
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from maestro.modules import checks
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Module, register_module
 
 
 def v_items(c: Dict) -> Optional[str]:
@@ -53,24 +53,17 @@ class Inventory(Module):
     schemas = {"items": v_items}
     skeletons = {"items": SKEL_ITEMS}
 
+    checks = [
+        Check("min_items", lambda chk, m, ctx: m.wrap(chk, checks.count(
+            ctx.artifact, "items.items", min=ctx.param("min_items", 1)))),
+        Check("item_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
+            ctx.artifact, "items.items", fields=["id", "name"]))),
+        Check("distinct_items", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
+            ctx.artifact, "items.items", key="id"))),
+    ]
+
     def params(self) -> Dict:
         return {"min_items": 1}
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-
-        def build(result, code):
-            return checks.as_error(result, type=ErrorType.BUILD, code=code, component="items")
-
-        errs: List[Error] = []
-        for e in (
-            build(checks.count(art, "items.items", min=context.param("min_items", 1)), "min_items"),
-            build(checks.each_has(art, "items.items", fields=["id", "name"]), "item_fields"),
-            build(checks.distinct(art, "items.items", key="id"), "distinct_items"),
-        ):
-            if e:
-                errs.append(e)
-        return errs
 
 
 MODULE = Inventory()

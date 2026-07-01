@@ -212,15 +212,17 @@ class _Ctx:
 
 
 def test_combat_game_selects_rpg_skeleton_and_prompt():
-    WORLD._apply_style(_Ctx(["world", "scenes", "combat"]))
-    assert WORLD.skeleton is SKEL_RPG
-    assert WORLD.prompts["author"] == "places_rpg_write.txt"
+    ctx = _Ctx(["world", "scenes", "combat"])
+    author = WORLD._check_for("start_place")   # a style-dependent author check
+    assert author.skeleton(ctx) is SKEL_RPG
+    assert author.prompt(ctx) == "places_rpg_write.txt"
 
 
 def test_non_combat_game_selects_pnc_skeleton_and_prompt():
-    WORLD._apply_style(_Ctx(["world", "scenes"]))
-    assert WORLD.skeleton is SKEL_PLACES
-    assert WORLD.prompts["author"] == "places_write.txt"
+    ctx = _Ctx(["world", "scenes"])
+    author = WORLD._check_for("start_place")
+    assert author.skeleton(ctx) is SKEL_PLACES
+    assert author.prompt(ctx) == "places_write.txt"
 
 
 def test_get_errors_emits_rpg_layout_for_broken_map():

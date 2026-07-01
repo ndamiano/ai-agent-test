@@ -204,19 +204,19 @@ def test_unreachable_encounter_detected():
 
 
 def test_count_target_declares_its_slice_guard():
-    # Each count target is slot-guarded: the module declares the create tool + id keys per code, and
-    # the base single fix installs that guard so a step can only ADD the next slice item.
-    assert COMBAT.create_guards["min_abilities"]["count_tool"] == "write_ability"
-    assert COMBAT.create_guards["min_combatants"]["count_tool"] == "write_combatant"
-    assert COMBAT.create_guards["min_encounters"]["count_tool"] == "write_encounter"
+    # Each count target is slot-guarded: its check declares the create tool + id keys, and the base
+    # single fix installs that guard so a step can only ADD the next slice item.
+    assert COMBAT._check_for("min_abilities").guard["count_tool"] == "write_ability"
+    assert COMBAT._check_for("min_combatants").guard["count_tool"] == "write_combatant"
+    assert COMBAT._check_for("min_encounters").guard["count_tool"] == "write_encounter"
 
 
 def test_target_selects_its_own_skeleton():
     from maestro.modules.combat import SKEL_COMBATANT, SKEL_ABILITY
     err = next(e for e in COMBAT.get_errors(_ctx(_art(_combat(combatants=[], encounters=[]))))
                if e.code == "min_combatants")
-    COMBAT.get_correction_prompt(_ctx(_art(_combat(combatants=[]))), err)
-    assert COMBAT.skeleton is SKEL_COMBATANT and COMBAT.skeleton is not SKEL_ABILITY
+    cp = COMBAT.get_correction_prompt(_ctx(_art(_combat(combatants=[]))), err)
+    assert SKEL_COMBATANT in cp.system and SKEL_ABILITY not in cp.system
 
 
 # ── slice tools: incremental, id-merged, validated against declared upstream ──────

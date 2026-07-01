@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 from maestro import context_render as cr
 from maestro.ir_assemble import EMOTIONS as _EMOTIONS_TUPLE
 from maestro.modules import checks, views
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Error, Module, register_module
 
 _END_TYPES = {"jump", "menu", "return", "end"}
 _EMOTIONS = set(_EMOTIONS_TUPLE)
@@ -87,31 +87,65 @@ SKEL_NODES = (
 
 _NODE_MODE_TOOLS = frozenset({"write_node", "edit_node", "read_node", "read_story_state",
                               "validate", "update_scratchpad", "request_review"})
-_NODE_PROMPTS = {"author": "nodes_write.txt", "fix": "nodes_fix.txt"}
-_NODE_TARGET_JOBS = {
-    "beats_realized": "author", "build_nodes": "author",
-    "each_node_min_lines": "author",
-    "min_branches": "author", "all_characters_speak": "author", "endings_are_nodes": "author",
-    "reachable_from_start": "fix", "node_targets_resolve": "fix",
-    "each_node_has_location": "fix", "no_dead_gates": "fix",
-    "crossref": "fix", "compiles": "fix",
-}
-_NODE_TARGET_TOOLS = {
-    "beats_realized": frozenset({"write_node"}),
-    "build_nodes": frozenset({"write_node"}),
-    "each_node_min_lines": frozenset({"read_node", "write_node", "edit_node"}),
-    "no_dead_gates": frozenset({"read_node", "edit_node"}),
-    "reachable_from_start": frozenset({"read_node", "edit_node"}),
-    "each_node_has_location": frozenset({"read_node", "edit_node"}),
-    "node_targets_resolve": frozenset({"read_node", "edit_node", "write_node"}),
-    "min_branches": frozenset({"read_node", "edit_node", "write_node"}),
-    "all_characters_speak": frozenset({"read_node", "edit_node", "write_node"}),
-    "endings_are_nodes": frozenset({"read_node", "write_node", "edit_node"}),
-    "crossref": frozenset({"read_node", "edit_node", "write_node"}),
-    "compiles": frozenset({"read_node", "edit_node", "write_node"}),
-}
+_T_WRITE = frozenset({"write_node"})                                 # add a node
+_T_EDIT = frozenset({"read_node", "edit_node"})                      # correct an existing node
+_T_EDIT_WRITE = frozenset({"read_node", "edit_node", "write_node"})  # correct OR add
 _NODE_GUARD = {"count_tool": "write_node", "id_key": "node_id", "id_list_key": "node_ids",
                "noun": "node"}
+
+
+def _d_beats_realized(chk, m, ctx):
+    art = ctx.artifact
+    if not _has_story(art):
+        return []
+    missing = checks.unrealized_beats(art)
+    return checks.slot_errors(len(missing), type=chk.tier, code=chk.code,
+                              component="nodes", noun="scene") if missing else []
+
+
+def _d_build_nodes(chk, m, ctx):
+    # No story to realize and scenes owns the entry: still need one scene to play. (With `world`,
+    # nodes are demand-driven by talk-hotspots, so don't bootstrap orphans.)
+    art = ctx.artifact
+    with_world = "world" in (ctx.spec.get("modules") or [])
+    if _has_story(art) or not _owns_compile(art) or with_world:
+        return []
+    if checks.length(art, "nodes.node_ids") < 1:
+        return checks.slot_errors(1, type=chk.tier, code=chk.code, component="nodes", noun="scene")
+    return []
+
+
+def _d_endings_are_nodes(chk, m, ctx):
+    if not _has_story(ctx.artifact):
+        return []
+    return m.wrap(chk, checks.refs_resolve(ctx.artifact, "story.endings", "nodes.node_ids",
+                                           from_key="id"))
+
+
+def _d_min_branches(chk, m, ctx):
+    if not _has_story(ctx.artifact):
+        return []
+    return m.wrap(chk, checks.min_branches(ctx.artifact, min=ctx.param("min_branches", 1)))
+
+
+def _d_all_characters_speak(chk, m, ctx):
+    if not _has_story(ctx.artifact):
+        return []
+    return m.wrap(chk, checks.all_characters_speak(ctx.artifact))
+
+
+def _d_crossref(chk, m, ctx):
+    if not _owns_compile(ctx.artifact):
+        return []
+    return [Error(type=chk.tier, code=chk.code, component="nodes", message=rec["message"],
+                  path=rec.get("path"), ref=rec.get("ref"))
+            for rec in checks.crossref_failures(ctx.artifact)]
+
+
+def _d_compiles(chk, m, ctx):
+    if not _owns_compile(ctx.artifact):
+        return []
+    return m.wrap(chk, checks.compile_failure(ctx.run_dir, ctx.engine))
 
 
 def _render_slot_focus(view: Dict) -> List[str]:
@@ -210,68 +244,38 @@ class Scenes(Module):
     skeleton = SKEL_NODES
     skeletons = {"nodes": SKEL_NODES}
     schemas = {"nodes": v_nodes}
-    prompts = _NODE_PROMPTS
-    target_jobs = _NODE_TARGET_JOBS
-    target_tools = _NODE_TARGET_TOOLS
     projector = staticmethod(views.node_view)
     projected = True
     emits_compile = True   # a realization terminal: `nodes` stays writable to the end + needs locations
-    # Adding nodes (realizing beats / bootstrapping the first scene) is slot-guarded; every other
-    # node error (wiring, lines, locations) is a single edit through the plain fix.
-    create_guards = {"beats_realized": _NODE_GUARD, "build_nodes": _NODE_GUARD}
+
+    # Collect the whole batch of node errors (nothing blocks); the compile terminal (crossref then
+    # the real build) is `when_clean` — it appends only once the cheaper checks pass, so a stubborn
+    # lint can't starve node creation. Adding a node (realizing a beat / bootstrapping the first
+    # scene) is slot-guarded; every other error is a single edit.
+    checks = [
+        Check("beats_realized", _d_beats_realized, tools=_T_WRITE, guard=_NODE_GUARD),
+        Check("build_nodes", _d_build_nodes, tools=_T_WRITE, guard=_NODE_GUARD),
+        Check("endings_are_nodes", _d_endings_are_nodes, tools=_T_EDIT_WRITE),
+        Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, checks.node_targets_resolve(
+            ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT_WRITE),
+        Check("reachable_from_start", lambda chk, m, ctx: m.wrap(chk, checks.reachable_from_start(
+            ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
+        Check("each_node_min_lines", lambda chk, m, ctx: m.wrap(chk, checks.each_node_min_lines(
+            ctx.artifact, min=ctx.param("each_node_min_lines", 3))), tools=_T_EDIT_WRITE),
+        Check("each_node_has_location", lambda chk, m, ctx: m.wrap(chk, checks.each_node_has_location(
+            ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
+        Check("no_dead_gates", lambda chk, m, ctx: m.wrap(chk, checks.no_dead_gates(ctx.artifact)),
+              job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
+        Check("min_branches", _d_min_branches, tools=_T_EDIT_WRITE),
+        Check("all_characters_speak", _d_all_characters_speak, tools=_T_EDIT_WRITE),
+        Check("crossref", _d_crossref, job="fix", when_clean=True, prompt="nodes_fix.txt",
+              tools=_T_EDIT_WRITE),
+        Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="nodes_fix.txt",
+              tools=_T_EDIT_WRITE),
+    ]
 
     def params(self) -> Dict:
         return {"min_branches": 1, "each_node_min_lines": 3}
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-        story = _has_story(art)
-        owns = _owns_compile(art)
-        errs: List[Error] = []
-
-        def add(result, code):
-            tier = ErrorType.BUILD if self.job_for(code) == "author" else ErrorType.FIX
-            e = checks.as_error(result, type=tier, code=code, component="nodes")
-            if e:
-                errs.append(e)
-
-        with_world = "world" in (context.spec.get("modules") or [])
-        if story:
-            missing = checks.unrealized_beats(art)
-            if missing:
-                errs += checks.slot_errors(len(missing), type=ErrorType.BUILD, code="beats_realized",
-                                           component="nodes", noun="scene")
-            add(checks.refs_resolve(art, "story.endings", "nodes.node_ids", from_key="id"),
-                "endings_are_nodes")
-        elif owns and not with_world:
-            # No story to realize and we own the entry: still need at least one scene to play.
-            # (With `world`, nodes are demand-driven by talk-hotspots, so don't bootstrap orphans.)
-            if checks.length(art, "nodes.node_ids") < 1:
-                errs += checks.slot_errors(1, type=ErrorType.BUILD, code="build_nodes",
-                                           component="nodes", noun="scene")
-
-        add(checks.node_targets_resolve(art), "node_targets_resolve")
-        add(checks.reachable_from_start(art), "reachable_from_start")
-        add(checks.each_node_min_lines(art, min=context.param("each_node_min_lines", 3)),
-            "each_node_min_lines")
-        add(checks.each_node_has_location(art), "each_node_has_location")
-        add(checks.no_dead_gates(art), "no_dead_gates")
-        if story:
-            add(checks.min_branches(art, min=context.param("min_branches", 1)), "min_branches")
-            add(checks.all_characters_speak(art), "all_characters_speak")
-
-        # The compile terminal (when scenes owns the entry) appends crossref + the real build once
-        # the cheaper checks pass — kept last so a stubborn lint can't starve node creation.
-        if owns and not errs:
-            for rec in checks.crossref_failures(art):
-                errs.append(Error(type=ErrorType.FIX, code="crossref", component="nodes",
-                                  message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
-            if not errs:
-                ce = checks.as_error(checks.compile_failure(context.run_dir, context.engine),
-                                     type=ErrorType.FIX, code="compiles", component="nodes")
-                if ce:
-                    errs.append(ce)
-        return errs
 
     def render_context(self, ctx: Dict) -> str:
         lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))

@@ -12,12 +12,12 @@ Example games:
   - "a branching romance that remembers what you chose"        — cast + story + scenes + state
 """
 
-from typing import Dict, List, Tuple
+from typing import Tuple
 
 from maestro import context_render as cr
 from maestro.modules import checks
 from maestro.modules.context import render_dict
-from maestro.modules.module import (CorrectionPrompt, Error, ErrorType, Module, load_prompt,
+from maestro.modules.module import (Check, CorrectionPrompt, Error, Module, load_prompt,
                                      register_module)
 
 # The tools state uses to wire (or cut) a value, by the host component it lives in.
@@ -33,33 +33,35 @@ _FIX_TOOLS = {
 _WIRING_TOOLS = tuple(sorted(set(t for tools in _FIX_TOOLS.values() for t in tools)))
 
 
+def _d_state_wiring(chk, m, ctx):
+    # The failure lands on the host the value lives in (a node/place/items), not one fixed component.
+    return [Error(type=chk.tier, code=chk.code, component=rec["component"],
+                  message=rec["message"], ref=rec["ref"])
+            for rec in checks.state_wiring(ctx.artifact)]
+
+
+def _wiring_prompt(m, context, error: Error) -> CorrectionPrompt:
+    rd = render_dict(context, active=error.component, target=error,
+                     upstream_views=getattr(context, "upstream_views", {}),
+                     available_tools=_WIRING_TOOLS)
+    system = load_prompt("state_fix.txt")
+    user = "\n".join(
+        cr.spec_block(rd) + [""] + cr.todo_block(rd.get("todo", []))
+        + cr.target_block(rd) + cr.upstream_block(rd.get("upstream") or {})
+        + cr.tail_block(rd) + ["", "Make the one edit that wires the value (give it the missing "
+                              "producer or consumer), or cut it. Tool call only."])
+    return CorrectionPrompt(system=system, user=user, allowed_tools=_WIRING_TOOLS)
+
+
 class State(Module):
     id = "state"
     selectable = False   # always-on: the wiring invariant holds for every game
     priority = 70        # after the content modules have authored the values it inspects
 
+    checks = [Check("state_wiring", _d_state_wiring, job="fix", build_prompt=_wiring_prompt)]
+
     def affected_components(self) -> Tuple[str, ...]:
         return ("nodes", "places", "items")
-
-    def get_errors(self, context) -> List[Error]:
-        return [
-            Error(type=ErrorType.FIX, code="state_wiring", component=rec["component"],
-                  message=rec["message"], ref=rec["ref"])
-            for rec in checks.state_wiring(context.artifact)
-        ]
-
-    def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
-        tools = _WIRING_TOOLS
-        rd = render_dict(context, active=error.component, target=error,
-                         upstream_views=getattr(context, "upstream_views", {}),
-                         available_tools=tools)
-        system = load_prompt("state_fix.txt")
-        user = "\n".join(
-            cr.spec_block(rd) + [""] + cr.todo_block(rd.get("todo", []))
-            + cr.target_block(rd) + cr.upstream_block(rd.get("upstream") or {})
-            + cr.tail_block(rd) + ["", "Make the one edit that wires the value (give it the missing "
-                                  "producer or consumer), or cut it. Tool call only."])
-        return CorrectionPrompt(system=system, user=user, allowed_tools=tools)
 
 
 MODULE = State()

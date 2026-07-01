@@ -9,10 +9,10 @@ Example games:
   - "rival chefs in a failing restaurant, three ways the night ends"  — cast + story + scenes
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from maestro.modules import checks
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Module, register_module
 
 
 def v_story(c: Dict) -> Optional[str]:
@@ -74,6 +74,26 @@ class Story(Module):
     schemas = {"story": v_story}
     skeletons = {"story": SKEL_STORY}
 
+    checks = [
+        Check("central_question", lambda chk, m, ctx: m.wrap(chk, checks.exists(
+            ctx.artifact, "story.central_question"))),
+        Check("min_endings", lambda chk, m, ctx: m.wrap(chk, checks.count(
+            ctx.artifact, "story.endings", min=ctx.param("min_endings", 3)))),
+        Check("distinct_endings", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
+            ctx.artifact, "story.endings", key="id")), job="fix"),
+        Check("min_beats", lambda chk, m, ctx: m.wrap(chk, checks.count(
+            ctx.artifact, "story.beats", min=ctx.param("min_beats", 5)))),
+        Check("beat_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
+            ctx.artifact, "story.beats", fields=["id", "summary", "purpose", "tension"]))),
+        Check("distinct_beats", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
+            ctx.artifact, "story.beats", key="id")), job="fix"),
+        Check("ending_path_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
+            ctx.artifact, "story.ending_paths", fields=["ending", "earned_by"]))),
+        Check("endings_planned", lambda chk, m, ctx: m.wrap(chk, checks.refs_resolve(
+            ctx.artifact, "story.endings", "story.ending_paths",
+            from_key="id", to_key="ending")), job="fix"),
+    ]
+
     def params(self) -> Dict:
         # Story-forward floors raised on the neighbours: a richer/larger cast, meatier branching
         # scenes, and a minimum spread of endings/beats. cast/scenes read these via param union.
@@ -81,29 +101,6 @@ class Story(Module):
                 "min_branches": 1, "each_node_min_lines": 6,
                 "character_fields": ["voice", "temperament", "drive", "history",
                                      "competencies", "example_lines"]}
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-        errs: List[Error] = []
-
-        def add(result, code, tier):
-            e = checks.as_error(result, type=tier, code=code, component="story")
-            if e:
-                errs.append(e)
-
-        B, F = ErrorType.BUILD, ErrorType.FIX
-        add(checks.exists(art, "story.central_question"), "central_question", B)
-        add(checks.count(art, "story.endings", min=context.param("min_endings", 3)), "min_endings", B)
-        add(checks.distinct(art, "story.endings", key="id"), "distinct_endings", F)
-        add(checks.count(art, "story.beats", min=context.param("min_beats", 5)), "min_beats", B)
-        add(checks.each_has(art, "story.beats", fields=["id", "summary", "purpose", "tension"]),
-            "beat_fields", B)
-        add(checks.distinct(art, "story.beats", key="id"), "distinct_beats", F)
-        add(checks.each_has(art, "story.ending_paths", fields=["ending", "earned_by"]),
-            "ending_path_fields", B)
-        add(checks.refs_resolve(art, "story.endings", "story.ending_paths",
-                                from_key="id", to_key="ending"), "endings_planned", F)
-        return errs
 
     def context_view(self, c: Dict) -> Dict:
         return {k: v for k, v in c.items() if k != "beats"}

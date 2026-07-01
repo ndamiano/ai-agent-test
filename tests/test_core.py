@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.state import RunState
 from maestro.modules import checks, compose
 from maestro.modules.context import Context, build_context
-from maestro.modules.module import (CorrectionPrompt, Error, ErrorType, MODULE_REGISTRY,
+from maestro.modules.module import (Check, CorrectionPrompt, Error, ErrorType, MODULE_REGISTRY,
                                      idkey, register_module, Module)
 from maestro.agent_loop import AgentLoop, effective_pairs, prioritize
 from maestro.modules import human
@@ -209,22 +209,22 @@ def test_loop_completes_when_errors_clear(tmp_path):
 from maestro.modules import checks
 
 
+def _need_items(chk, m, ctx):
+    n = len((ctx.artifact.get("items") or {}).get("ids", []))
+    return checks.slot_errors(max(0, 2 - n), type=chk.tier, code=chk.code,
+                              component="items", noun="item")
+
+
 class _Counter(Module):
     """Needs 2 items; a shortfall fans into per-slot create-errors, and the base single fix (with
-    the slot guard installed from create_guards) adds one item per step."""
+    the slot guard from its check) adds one item per step."""
     id = "_counter_test"
     component = "items"
     mode_prompt = "nodes_write.txt"     # any existing prompt; content irrelevant to the test
     mode_tools = frozenset({"add"})
-    create_guards = {"need_items": {"count_tool": "add", "id_key": "id", "id_list_key": "ids",
-                                    "noun": "item"}}
-
-    def get_errors(self, ctx):
-        n = len((ctx.artifact.get("items") or {}).get("ids", []))
-        if n >= 2:
-            return []
-        return checks.slot_errors(2 - n, type=ErrorType.BUILD, code="need_items",
-                                  component="items", noun="item")
+    checks = [Check("need_items", _need_items,
+                    guard={"count_tool": "add", "id_key": "id", "id_list_key": "ids",
+                           "noun": "item"})]
 
     def view(self, artifact):
         return {"ids": (artifact.get("items") or {}).get("ids", []), "open_slots": None}

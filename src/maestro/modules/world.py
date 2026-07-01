@@ -15,7 +15,7 @@ from collections import deque
 
 from maestro import context_render as cr
 from maestro.modules import checks, views
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Error, Module, register_module
 
 _RPG_KINDS = {"world_map", "town", "interior"}
 
@@ -337,28 +337,90 @@ SKEL_RPG = (
 _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "add_interactable",
                                "read_place", "set_places_meta", "read_component", "validate",
                                "update_scratchpad", "request_review"})
-_PLACE_TARGET_JOBS = {
-    "min_places": "author", "each_place_min_interactables": "author",
-    "places_reachable": "fix", "rpg_layout": "fix", "rpg_connectivity": "fix",
-    "crossref": "fix", "compiles": "fix",
-}
-_PLACE_TARGET_TOOLS = {
-    "min_places": frozenset({"write_component", "write_place"}),
-    "each_place_min_interactables": frozenset({"read_place", "add_interactable", "edit_place"}),
-    "places_reachable": frozenset({"read_place", "add_interactable", "edit_place", "read_component"}),
-    "rpg_connectivity": frozenset({"read_place", "add_interactable", "edit_place", "read_component"}),
-    "rpg_layout": frozenset({"read_place", "edit_place", "add_interactable", "write_place",
-                             "set_places_meta", "read_component"}),
-    # crossref/compiles are the terminal backstop over the WHOLE IR — a dangling reference can be a
-    # talk-node (needs write_node/edit_node) as well as a place wiring error, so the fixer gets the
-    # broad set rather than routing per-slice.
-    "crossref": frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
-                           "write_place", "read_component", "write_node", "edit_node", "read_node"}),
-    "compiles": frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
-                           "write_place", "read_component", "write_node", "edit_node", "read_node"}),
-}
+_T_MIN_PLACES = frozenset({"write_component", "write_place"})
+_T_INTERACT = frozenset({"read_place", "add_interactable", "edit_place"})
+_T_REACH = frozenset({"read_place", "add_interactable", "edit_place", "read_component"})
+_T_LAYOUT = frozenset({"read_place", "edit_place", "add_interactable", "write_place",
+                       "set_places_meta", "read_component"})
+# The terminal backstop covers the WHOLE IR — a dangling reference can be a talk-node (needs
+# write_node/edit_node) as well as a place wiring error, so the fixer gets the broad set.
+_T_TERMINAL = frozenset({"read_place", "edit_place", "add_interactable", "set_places_meta",
+                         "write_place", "read_component", "write_node", "edit_node", "read_node"})
 _PLACE_GUARD = {"count_tool": "write_place", "id_key": "place_id", "id_list_key": "place_ids",
                 "noun": "place"}
+# A `combat` game is walkable (tile map + WASD); anything else is point-and-click. The nav style
+# picks the authoring skeleton + prompt (tiles XOR pixels, never mixed — no second module needed).
+_COMBAT_SLICES = ("stats", "statuses", "abilities", "combatants", "encounters")
+
+
+def _is_rpg(ctx) -> bool:
+    return "combat" in (ctx.spec.get("modules") or [])
+
+
+def _w_author_prompt(ctx) -> str:
+    return "places_rpg_write.txt" if _is_rpg(ctx) else "places_write.txt"
+
+
+def _w_skeleton(ctx) -> str:
+    return SKEL_RPG if _is_rpg(ctx) else SKEL_PLACES
+
+
+def _d_min_places(chk, m, ctx):
+    gap = ctx.param("min_places", 3) - checks.length(ctx.artifact, "places.place_ids")
+    return checks.slot_errors(gap, type=chk.tier, code=chk.code, component="places",
+                              noun="place") if gap > 0 else []
+
+
+def _d_rpg_layout(chk, m, ctx):
+    art = ctx.artifact
+    errs = []
+    # A walkable (combat) game must be ALL walkable — a leftover point-and-click `room` starts the
+    # game as a click screen instead of WASD; rewrite it as a tile grid.
+    if _is_rpg(ctx):
+        places_map = (art.get("places") or {}).get("places") or {}
+        room = next((pid for pid, pl in places_map.items()
+                     if isinstance(pl, dict) and pl.get("kind") == "room"), None)
+        if room:
+            errs.append(Error(
+                type=chk.tier, code=chk.code, component="places", path=room,
+                message=(f"place {room!r} is a point-and-click 'room', but this is a WALKABLE game "
+                         f"(the player moves an avatar with WASD). Rewrite it with write_place as "
+                         f"kind 'world_map'/'town'/'interior': add a \"tiles\":{{\"legend\":..,"
+                         f"\"rows\":[\"..\"]}} grid and give every interactable a "
+                         f"{{\"cell\":{{\"x\":..,\"y\":..}}}} tile position (not a rect).")))
+    # Walkable-map spatial integrity (grid, no overlap, not-on-wall, spawn-reachable). Returns None
+    # for PnC. v_places only runs on a whole-component write; the loop authors per-place, so this is
+    # what actually GATES a tile map. Surface before crossref/compile.
+    layout = _rpg_world_error(art.get("places") or {})
+    if layout:
+        errs.append(Error(type=chk.tier, code=chk.code, component="places", message=layout))
+    return errs
+
+
+def _d_rpg_connectivity(chk, m, ctx):
+    # No stranding: once the layout is sound, every enterable zone must get back to start. Only
+    # meaningful when the maps themselves are valid.
+    art = ctx.artifact
+    if not _is_rpg(ctx) or _rpg_world_error(art.get("places") or {}):
+        return []
+    conn = _return_path_error(art.get("places") or {})
+    return [Error(type=chk.tier, code=chk.code, component="places", message=conn)] if conn else []
+
+
+def _d_crossref(chk, m, ctx):
+    from maestro.ir_crossref import slice_token
+    out = []
+    for rec in checks.crossref_failures(ctx.artifact):
+        # combat owns its slices' refs (it can rewrite the combat doc; world cannot).
+        if slice_token(rec.get("path", "")) in _COMBAT_SLICES:
+            continue
+        out.append(Error(type=chk.tier, code=chk.code, component="places", message=rec["message"],
+                         path=rec.get("path"), ref=rec.get("ref")))
+    return out
+
+
+def _d_compiles(chk, m, ctx):
+    return m.wrap(chk, checks.compile_failure(ctx.run_dir, ctx.engine))
 
 
 def _place_view_block(view: Dict) -> List[str]:
@@ -396,103 +458,37 @@ class World(Module):
     skeleton = SKEL_PLACES
     schemas = {"places": v_places}
     skeletons = {"places": SKEL_PLACES}
-    prompts = {"author": "places_write.txt", "fix": "places_fix.txt"}
-    target_jobs = _PLACE_TARGET_JOBS
-    target_tools = _PLACE_TARGET_TOOLS
     projector = staticmethod(views.place_view)
     projected = True
     emits_compile = True   # a realization terminal: `places` stays writable to the end
     tool_names = ("write_place", "edit_place", "add_interactable", "read_place", "set_places_meta")
-    create_guards = {"min_places": _PLACE_GUARD}   # adding rooms is slot-guarded; everything else edits
 
-    @staticmethod
-    def _is_rpg(context) -> bool:
-        # The navigation style is already in context — the composed module set: a `combat` game is
-        # walkable (tile map + WASD), anything else is point-and-click.
-        return "combat" in (context.spec.get("modules") or [])
-
-    def _apply_style(self, context) -> None:
-        # Set the skeleton + author prompt the correction prompt reads, so each emitted prompt shows
-        # exactly ONE mental model — tiles XOR pixels, never mixed. No second module needed.
-        rpg = self._is_rpg(context)
-        self.skeleton = SKEL_RPG if rpg else SKEL_PLACES
-        self.skeletons = {"places": self.skeleton}
-        self.prompts = {"author": "places_rpg_write.txt" if rpg else "places_write.txt",
-                        "fix": "places_fix.txt"}
-
-    def get_correction_prompt(self, context, error: Error):
-        self._apply_style(context)
-        return super().get_correction_prompt(context, error)
+    # Every step's skeleton is style-dependent (tiles for a walkable/combat game, pixels for PnC);
+    # author steps also swap the prompt. Collect the batch, then the crossref/compile terminal runs
+    # `when_clean`. Adding a room is slot-guarded; everything else edits.
+    checks = [
+        Check("start_place", lambda chk, m, ctx: m.wrap(chk, checks.exists(
+            ctx.artifact, "places.start_place")), prompt=_w_author_prompt, skeleton=_w_skeleton),
+        Check("min_places", _d_min_places, prompt=_w_author_prompt, skeleton=_w_skeleton,
+              tools=_T_MIN_PLACES, guard=_PLACE_GUARD),
+        Check("each_place_min_interactables", lambda chk, m, ctx: m.wrap(
+            chk, checks.each_place_min_interactables(ctx.artifact,
+                                                     min=ctx.param("min_interactables", 2))),
+              prompt=_w_author_prompt, skeleton=_w_skeleton, tools=_T_INTERACT),
+        Check("places_reachable", lambda chk, m, ctx: m.wrap(chk, checks.places_reachable(
+            ctx.artifact)), job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_REACH),
+        Check("rpg_layout", _d_rpg_layout, job="fix", prompt="places_fix.txt", skeleton=_w_skeleton,
+              tools=_T_LAYOUT),
+        Check("rpg_connectivity", _d_rpg_connectivity, job="fix", prompt="places_fix.txt",
+              skeleton=_w_skeleton, tools=_T_REACH),
+        Check("crossref", _d_crossref, job="fix", when_clean=True, prompt="places_fix.txt",
+              skeleton=_w_skeleton, tools=_T_TERMINAL),
+        Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="places_fix.txt",
+              skeleton=_w_skeleton, tools=_T_TERMINAL),
+    ]
 
     def params(self) -> Dict:
         return {"min_places": 3, "min_interactables": 2}
-
-    def _add(self, errs, result, code):
-        tier = ErrorType.BUILD if self.job_for(code) == "author" else ErrorType.FIX
-        e = checks.as_error(result, type=tier, code=code, component="places")
-        if e:
-            errs.append(e)
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-        errs: List[Error] = []
-        self._add(errs, checks.exists(art, "places.start_place"), "start_place")
-        gap = context.param("min_places", 3) - checks.length(art, "places.place_ids")
-        if gap > 0:
-            errs += checks.slot_errors(gap, type=ErrorType.BUILD, code="min_places",
-                                       component="places", noun="place")
-        self._add(errs, checks.each_place_min_interactables(
-            art, min=context.param("min_interactables", 2)), "each_place_min_interactables")
-        self._add(errs, checks.places_reachable(art), "places_reachable")
-        # A walkable (combat) game must be ALL walkable — no point-and-click `room` zones mixed in,
-        # or the game starts as a click screen instead of WASD. Enforce the kind the RPG skeleton asks
-        # for; the fix rewrites that place with a grid + cell positions.
-        if self._is_rpg(context):
-            places_map = (art.get("places") or {}).get("places") or {}
-            room = next((pid for pid, pl in places_map.items()
-                         if isinstance(pl, dict) and pl.get("kind") == "room"), None)
-            if room:
-                errs.append(Error(
-                    type=ErrorType.FIX, code="rpg_layout", component="places", path=room,
-                    message=(f"place {room!r} is a point-and-click 'room', but this is a WALKABLE game "
-                             f"(the player moves an avatar with WASD). Rewrite it with write_place as "
-                             f"kind 'world_map'/'town'/'interior': add a \"tiles\":{{\"legend\":..,"
-                             f"\"rows\":[\"..\"]}} grid and give every interactable a "
-                             f"{{\"cell\":{{\"x\":..,\"y\":..}}}} tile position (not a rect).")))
-        # Walkable-map layout (tile grid, no overlap, not-on-wall, spawn-reachable). Returns None
-        # for PnC. v_places only runs on a whole-component write; the loop authors per-place, so this
-        # is what actually GATES a tile map's spatial integrity. Surface before crossref/compile.
-        layout = _rpg_world_error(art.get("places") or {})
-        if layout:
-            errs.append(Error(type=ErrorType.FIX, code="rpg_layout", component="places",
-                              message=layout))
-        # No stranding: once the layout is sound, every enterable zone must be able to get back to
-        # start (bidirectional move graph). Only meaningful when the maps themselves are valid.
-        elif self._is_rpg(context):
-            conn = _return_path_error(art.get("places") or {})
-            if conn:
-                errs.append(Error(type=ErrorType.FIX, code="rpg_connectivity", component="places",
-                                  message=conn))
-        if not errs:
-            from maestro.ir_crossref import slice_token
-            for rec in checks.crossref_failures(art):
-                # combat owns its slices' refs (it can rewrite the combat doc; world cannot).
-                if slice_token(rec.get("path", "")) in ("stats", "statuses", "abilities",
-                                                         "combatants", "encounters"):
-                    continue
-                errs.append(Error(type=ErrorType.FIX, code="crossref", component="places",
-                                  message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
-            if not errs:
-                ce = checks.as_error(checks.compile_failure(context.run_dir, context.engine),
-                                     type=ErrorType.FIX, code="compiles", component="places")
-                if ce:
-                    errs.append(ce)
-        return errs
-
-    def job_for(self, code: str) -> str:
-        if code == "start_place":
-            return "author"
-        return super().job_for(code)
 
     def render_context(self, ctx: Dict) -> str:
         lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))

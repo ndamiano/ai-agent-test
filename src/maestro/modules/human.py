@@ -17,8 +17,9 @@ import uuid
 from typing import Dict, List, Set, Tuple
 
 from maestro.modules import context as ctxmod
-from maestro.modules.module import load_prompt, skeleton_guide
+from maestro.modules.module import load_prompt
 from maestro.modules.module import (
+    Check,
     CorrectionPrompt,
     Error,
     ErrorType,
@@ -92,32 +93,36 @@ def effective_failures(spec: Dict, state) -> List[Dict]:
             for _, e in effective_pairs(modules, ctx)]
 
 
+def _d_human_todo(chk, m, context):
+    return [
+        Error(type=ErrorType.HUMAN, code="human_todo", component=t.get("component_id") or "",
+              message=t.get("text", ""), path=t.get("id"))
+        for t in open_todos(context.state)
+    ]
+
+
+def _human_prompt(m, context, error: Error) -> CorrectionPrompt:
+    rd = ctxmod.render_dict(context, active=error.component or None, target=error,
+                            upstream_views=getattr(context, "upstream_views", {}),
+                            available_tools=_HUMAN_TOOLS)
+    system = load_prompt("human_edit.txt")
+    user = "\n".join([
+        f"HUMAN DIRECTION (do exactly this): {error.message}",
+        f"TARGET COMPONENT: {error.component or '(any)'}",
+        "",
+        "Make the change with one tool call. Tool call only, not prose.",
+        "",
+        f"CONTEXT: {rd}",
+    ])
+    return CorrectionPrompt(system=system, user=user, allowed_tools=_HUMAN_TOOLS)
+
+
 class Human(Module):
     id = "human"
     selectable = False   # always-on: the human-in-the-loop channel is never optional
     priority = 0   # irrelevant to ordering (HUMAN type ranks first), but explicit
 
-    def get_errors(self, context) -> List[Error]:
-        return [
-            Error(type=ErrorType.HUMAN, code="human_todo", component=t.get("component_id") or "",
-                  message=t.get("text", ""), path=t.get("id"))
-            for t in open_todos(context.state)
-        ]
-
-    def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
-        rd = ctxmod.render_dict(context, active=error.component or None, target=error,
-                                upstream_views=getattr(context, "upstream_views", {}),
-                                available_tools=_HUMAN_TOOLS)
-        system = load_prompt("human_edit.txt")
-        user = "\n".join([
-            f"HUMAN DIRECTION (do exactly this): {error.message}",
-            f"TARGET COMPONENT: {error.component or '(any)'}",
-            "",
-            "Make the change with one tool call. Tool call only, not prose.",
-            "",
-            f"CONTEXT: {rd}",
-        ])
-        return CorrectionPrompt(system=system, user=user, allowed_tools=_HUMAN_TOOLS)
+    checks = [Check("human_todo", _d_human_todo, tier=ErrorType.HUMAN, build_prompt=_human_prompt)]
 
 
 MODULE = Human()

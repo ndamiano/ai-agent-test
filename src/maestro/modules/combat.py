@@ -20,7 +20,7 @@ Example games:
 from typing import Dict, List, Optional
 
 from maestro.modules import checks
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Error, Module, register_module
 
 _ROLES = {"resource_depletable", "resource_regenerating", "modifier", "rating"}
 _OPS = {"damage", "heal", "set", "add"}
@@ -363,13 +363,6 @@ SKEL_FIX = (
     '// An unreachable encounter => add a start_combat interactable on a world place (add_interactable).'
 )
 
-_TARGET_SKELETON = {
-    "build_combat_meta": SKEL_META,
-    "min_abilities": SKEL_ABILITY,
-    "min_combatants": SKEL_COMBATANT,
-    "min_encounters": SKEL_ENCOUNTER,
-}
-
 _META_TOOLS = frozenset({"set_combat_meta", "read_component", "update_scratchpad", "request_review"})
 _ABILITY_TOOLS = frozenset({"write_ability", "read_component", "update_scratchpad", "request_review"})
 _COMBATANT_TOOLS = frozenset({"write_combatant", "read_component", "update_scratchpad", "request_review"})
@@ -410,6 +403,57 @@ def _start_combat_targets(art: Dict) -> set:
     return targets
 
 
+# ── detectors (dependency order: stat foundation, then the count slices, then the structural /
+#    reachability / crossref backstops) ─────────────────────────────────────────────────────────
+def _d_meta(chk, m, ctx):
+    combat = ctx.artifact.get("combat") or {}
+    meta = combat_meta_error(combat.get("combat_model", "turn_based"),
+                             combat.get("stats"), combat.get("statuses"))
+    return [Error(type=chk.tier, code=chk.code, component="combat",
+                  message="declare the stat system first — " + meta)] if meta else []
+
+
+def _floor_detector(path: str, noun: str):
+    """A count slice's detector: fan the shortfall (`param(code) - len(path)`) into per-slot creates."""
+    def detect(chk, m, ctx):
+        gap = ctx.param(chk.code, 1) - checks.length(ctx.artifact, path)
+        return checks.slot_errors(gap, type=chk.tier, code=chk.code, component="combat",
+                                  noun=noun) if gap > 0 else []
+    return detect
+
+
+def _d_structural(chk, m, ctx):
+    sv = v_combat(ctx.artifact.get("combat") or {})
+    return [Error(type=chk.tier, code=chk.code, component="combat", message=sv)] if sv else []
+
+
+def _d_reachable(chk, m, ctx):
+    art = ctx.artifact
+    entered = _start_combat_targets(art)
+    out = []
+    for e in (art.get("combat") or {}).get("encounters", []):
+        eid = e.get("id")
+        if isinstance(eid, str) and eid not in entered:
+            out.append(Error(
+                type=chk.tier, code=chk.code, component="combat", path=eid,
+                message=(f"encounter '{eid}' is never started — give a place interactable an "
+                         f"action {{type: 'start_combat', encounter: '{eid}'}} "
+                         f"(add_interactable on a world place).")))
+    return out
+
+
+def _d_crossref(chk, m, ctx):
+    # Combat-slice external refs (a combatant's character, an ability's flag gate) surface as combat's
+    # own crossref so the fix rewrites the owning slice, not a place.
+    from maestro.ir_crossref import slice_token
+    out = []
+    for rec in checks.crossref_failures(ctx.artifact):
+        if slice_token(rec.get("path", "")) in _COMBAT_SLICES:
+            out.append(Error(type=chk.tier, code=chk.code, component="combat",
+                             message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
+    return out
+
+
 class Combat(Module):
     id = "combat"
     description = ("Turn-based combat: stats, abilities, and encounters the player fights through. "
@@ -420,77 +464,30 @@ class Combat(Module):
     mode_prompt = "combat_write.txt"
     mode_tools = _MODE_TOOLS
     schemas = {"combat": v_combat}
-    prompts = {"author": "combat_write.txt", "fix": "combat_write.txt"}
-    target_jobs = {"build_combat_meta": "author", "min_abilities": "author",
-                   "min_combatants": "author", "min_encounters": "author",
-                   "crossref": "fix", "combat_structural": "fix", "encounters_reachable": "fix"}
-    target_tools = {"build_combat_meta": _META_TOOLS, "min_abilities": _ABILITY_TOOLS,
-                    "min_combatants": _COMBATANT_TOOLS, "min_encounters": _ENCOUNTER_TOOLS,
-                    "crossref": _CROSSREF_TOOLS, "combat_structural": _CROSSREF_TOOLS,
-                    "encounters_reachable": _REACH_TOOLS}
     projector = staticmethod(combat_view)
     projected = True
     tool_names = ("set_combat_meta", "write_ability", "write_combatant", "write_encounter")
-    create_guards = _GUARDS   # each count target (abilities/combatants/encounters) is slot-guarded
+
+    # Dependency order, ONE slice at a time: the stat foundation, then abilities/combatants/encounters
+    # (each a slot-guarded count target), then the structural backstop — all `blocking`, so a gap in
+    # an upstream slice suppresses the downstream checks that reference it. Reachability + crossref
+    # collect together once the slices are sound. Each check's skeleton shows exactly its one slice.
+    checks = [
+        Check("build_combat_meta", _d_meta, blocking=True, tools=_META_TOOLS, skeleton=SKEL_META),
+        Check("min_abilities", _floor_detector("combat.abilities", "ability"), blocking=True,
+              tools=_ABILITY_TOOLS, skeleton=SKEL_ABILITY, guard=_GUARDS["min_abilities"]),
+        Check("min_combatants", _floor_detector("combat.combatants", "combatant"), blocking=True,
+              tools=_COMBATANT_TOOLS, skeleton=SKEL_COMBATANT, guard=_GUARDS["min_combatants"]),
+        Check("min_encounters", _floor_detector("combat.encounters", "encounter"), blocking=True,
+              tools=_ENCOUNTER_TOOLS, skeleton=SKEL_ENCOUNTER, guard=_GUARDS["min_encounters"]),
+        Check("combat_structural", _d_structural, job="fix", blocking=True, tools=_CROSSREF_TOOLS,
+              skeleton=SKEL_FIX),
+        Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS, skeleton=SKEL_FIX),
+        Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS, skeleton=SKEL_FIX),
+    ]
 
     def params(self) -> Dict:
         return {"min_abilities": 2, "min_combatants": 2, "min_encounters": 1}
-
-    def _apply_target(self, code: str) -> None:
-        # One mental model per call: the skeleton (+ tool) for the slice this target authors/fixes.
-        self.skeleton = _TARGET_SKELETON.get(code, SKEL_FIX)
-        self.skeletons = {"combat": self.skeleton}
-
-    def get_correction_prompt(self, context, error: Error):
-        self._apply_target(error.code)
-        return super().get_correction_prompt(context, error)
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-        combat = art.get("combat") or {}
-
-        # Dependency order, ONE target at a time: the stat foundation, then abilities, combatants,
-        # encounters — each grown by its own author loop — then the cross-slice/structural backstops.
-        meta = combat_meta_error(combat.get("combat_model", "turn_based"),
-                                 combat.get("stats"), combat.get("statuses"))
-        if meta:
-            return [Error(type=ErrorType.BUILD, code="build_combat_meta", component="combat",
-                          message="declare the stat system first — " + meta)]
-
-        for code, path, floor in (("min_abilities", "combat.abilities", "min_abilities"),
-                                  ("min_combatants", "combat.combatants", "min_combatants"),
-                                  ("min_encounters", "combat.encounters", "min_encounters")):
-            gap = context.param(floor, 1) - checks.length(art, path)
-            if gap > 0:
-                return checks.slot_errors(gap, type=ErrorType.BUILD, code=code, component="combat",
-                                          noun=_GUARDS[code]["noun"])
-
-        errs: List[Error] = []
-        # Structural backstop: cross-slice consistency the per-item writes can't all see at once.
-        sv = v_combat(combat)
-        if sv:
-            return [Error(type=ErrorType.FIX, code="combat_structural", component="combat",
-                          message=sv)]
-
-        # Each encounter must be reachable — entered by some place's start_combat hotspot.
-        entered = _start_combat_targets(art)
-        for e in combat.get("encounters", []):
-            eid = e.get("id")
-            if isinstance(eid, str) and eid not in entered:
-                errs.append(Error(
-                    type=ErrorType.FIX, code="encounters_reachable", component="combat", path=eid,
-                    message=(f"encounter '{eid}' is never started — give a place interactable an "
-                             f"action {{type: 'start_combat', encounter: '{eid}'}} "
-                             f"(add_interactable on a world place).")))
-
-        # Combat-slice external references (a combatant's character, an ability's flag gate) surface
-        # as combat's own crossref errors so the fix rewrites the owning slice, not a place.
-        from maestro.ir_crossref import slice_token
-        for rec in checks.crossref_failures(art):
-            if slice_token(rec.get("path", "")) in _COMBAT_SLICES:
-                errs.append(Error(type=ErrorType.FIX, code="crossref", component="combat",
-                                  message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
-        return errs
 
 
 MODULE = Combat()

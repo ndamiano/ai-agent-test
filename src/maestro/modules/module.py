@@ -4,15 +4,16 @@ Modules depict a set of functionality that one of the projectors can build. They
 set of context is valid, as well as help fix invalid context. They do this by reporting errors
 as well as how to fix those errors.
 
-  get_errors           — Returns the list of errors. Empty list means no errors.
-  get_correction_prompt— Returns a prompt and tool list to attempt to fix an error.
-  affected_components  — Returns a list of components this module can affect.
+A module IS a list of `Check`s — each a (detector -> fix) pair over the shared components. The base
+runs them: `get_errors` sweeps the checks; `get_correction_prompt`/`get_fix` build the fix for an
+emitted error from the check it came from (indexed by `Error.code`). A subclass declares `checks`
+and the authoring attrs; it overrides no method.
 """
 
 from __future__ import annotations
 
 import functools
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -72,6 +73,41 @@ class CorrectionPrompt:
     max_tokens: Optional[int] = None  # per-target output ceiling; None = the build default
 
 
+# ── The (detector -> fix) pair a module is a list of ──────────────────────────
+@dataclass(frozen=True)
+class Check:
+    """One check: a detector plus how to fix what it detects.
+
+    `detect(check, module, context) -> [Error]` reports 0..N errors (a count shortfall fans into N
+    via `checks.slot_errors`; a clean check returns []). The remaining fields declare the FIX for an
+    error this check emits (the loop finds the check by `Error.code`): the prompt/tools/skeleton the
+    correction step runs with (each falls back to the module default when None), an optional slot
+    `guard` for a create tool, or a `build_prompt` that assembles the whole CorrectionPrompt bespoke
+    (state/human). `prompt`/`skeleton` may be a `callable(context)->str` for a style-dependent step.
+
+    Sweep order is the declared list order. `blocking` = if this check emits, stop and suppress every
+    later check (a hard dependency tier — combat's stats before abilities). `when_clean` = skip this
+    check unless nothing has been emitted yet (a terminal check — crossref/compile is only meaningful
+    once the cheaper checks pass)."""
+    code: str
+    detect: Callable                       # (check, module, context) -> [Error]
+    job: str = "author"                    # author => BUILD tier, else FIX (unless `tier` is set)
+    tier: Optional[ErrorType] = None       # error type; defaults from `job`
+    blocking: bool = False
+    when_clean: bool = False
+    prompt: object = None                  # str | callable(ctx)->str | None (=> module.mode_prompt)
+    tools: Optional[frozenset] = None      # None => module.mode_tools
+    skeleton: object = None                # str | callable(ctx)->str | None (=> module.skeleton)
+    guard: Optional[Dict] = None           # slot guard for a create tool (count targets)
+    max_tokens: Optional[int] = None
+    build_prompt: Optional[Callable] = None   # (module, ctx, error) -> CorrectionPrompt
+
+    def __post_init__(self):
+        if self.tier is None:
+            object.__setattr__(self, "tier",
+                               ErrorType.BUILD if self.job == "author" else ErrorType.FIX)
+
+
 class Module(ABC):
     """One mechanic-module. Sub classes are only required to implement `get_errors`; everything else
      has a working default.
@@ -96,35 +132,64 @@ class Module(ABC):
     tool_names: Tuple[str, ...] = ()     # gated tool-schema names this module contributes
     projected: bool = False              # needs an engine-specific renderer (see unprojectable)
 
-    # ── per-target gating (used by the default correction prompt + an author loop) ─────
-    prompts: Dict[str, str] = {}             # job ("author"/"fix") -> system prompt file
-    target_jobs: Dict[str, str] = {}         # check code -> job; picks prompt + escalation
-    target_tools: Dict[str, frozenset] = {}  # check code -> tools allowed for that target
-    target_max_tokens: Dict[str, int] = {}   # check code -> output ceiling (default: the build cap)
     projector: Optional[Callable] = None     # (artifact) -> the compact graph view for this component
-    create_guards: Dict[str, Dict] = {}      # count-error code -> slot guard for its create tool
+    checks: List[Check] = []                 # the (detector -> fix) pairs this module IS (see get_errors)
 
-    @abstractmethod
     def get_errors(self, context) -> List[Error]:
-        """The unmet issues this module is responsible for, as typed Errors. The only required
-        method — a module reports an error only if it can fix it (detector = fixer)."""
-        raise NotImplementedError
+        """Sweep the module's checks in declared order, accumulating their errors. A `blocking` check
+        that emits stops the sweep (its tier is a hard dependency for everything below); a
+        `when_clean` check is skipped once anything has been emitted (a terminal check). This makes
+        the detector=fixer contract literal: a module reports only what its checks can fix."""
+        errs: List[Error] = []
+        for chk in self.checks:
+            if chk.when_clean and errs:
+                continue
+            got = chk.detect(chk, self, context)
+            errs += got
+            if chk.blocking and got:
+                break
+        return errs
+
+    def wrap(self, chk: Check, result, **kw) -> List[Error]:
+        """A CheckResult `(ok, detail)` -> `[Error]` (empty when ok), stamped with the check's code +
+        tier and this module's component — the common one-line detector body."""
+        ok, detail = result
+        if ok:
+            return []
+        return [Error(type=chk.tier, code=chk.code, component=self.component,
+                      message=detail or chk.code, **kw)]
+
+    def _check_for(self, code: str) -> Optional[Check]:
+        return next((c for c in self.checks if c.code == code), None)
 
     def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
-        """Default fix step, serving both the single-shot and the sub-loop's per-target case: the
-        prompt for this target's job + the tools gated to it, rendered with the live graph view.
-        Override for a bespoke fix (state / human)."""
+        """Build the fix step for `error` from the check it came from (found by code): a bespoke
+        `build_prompt` if the check declares one (state/human), else the default author/fix step —
+        the check's prompt + tools + skeleton (each falling back to the module default), rendered
+        with the live graph view."""
+        chk = self._check_for(error.code)
+        if chk and chk.build_prompt:
+            return chk.build_prompt(self, context, error)
         from maestro.modules.context import render_dict
+        tools = chk.tools if (chk and chk.tools is not None) else self.mode_tools
+        prompt = chk.prompt if chk else None
+        skel = chk.skeleton if chk else None
+        if callable(prompt):
+            prompt = prompt(context)
+        if callable(skel):
+            skel = skel(context)
+        if skel is None:
+            skel = self.skeleton
         view = self.view(context.artifact)
         rd = render_dict(context, active=error.component or None, target=error, active_view=view,
                          upstream_views=getattr(context, "upstream_views", {}),
-                         available_tools=self.tools_for(error.code))
-        system = load_prompt(self.prompts.get(self.job_for(error.code), self.mode_prompt))
-        if self.skeleton:
-            system += "\n\n" + skeleton_guide(self.component, self.skeleton)
+                         available_tools=tools)
+        system = load_prompt(prompt or self.mode_prompt)
+        if skel:
+            system += "\n\n" + skeleton_guide(self.component, skel)
         return CorrectionPrompt(system=system, user=self.render_context(rd),
-                                allowed_tools=tuple(sorted(self.tools_for(error.code))),
-                                max_tokens=self.target_max_tokens.get(error.code))
+                                allowed_tools=tuple(sorted(tools)),
+                                max_tokens=(chk.max_tokens if chk else None))
 
     # ── overridable hooks (sensible defaults) ────────────────────────────────
     def render_context(self, ctx: Dict) -> str:
@@ -152,29 +217,21 @@ class Module(ABC):
         not a gate. Defaults to the owned `component`."""
         return (self.component,) if self.component else ()
 
-    def job_for(self, code: str) -> str:
-        return self.target_jobs.get(code, "author")
-
-    def tools_for(self, code: str) -> frozenset:
-        return self.target_tools.get(code, self.mode_tools)
-
     def view(self, artifact: Dict) -> Optional[Dict]:
         return self.projector(artifact) if self.projector else None
 
     # ── the fix ──────────────────────────────────────────────────────────────
     def get_fix(self, context, error: Error) -> Callable:
-        """Return a Fix — a callable `fix(services)` that resolves `error` (the loop builds the
-        Services and invokes it). Default: a single correction step. A content module overrides this
-        to return its iterative author loop for a count-driven target (see scenes/world)."""
+        """Return a Fix — a callable `fix(services)` the loop invokes (it builds the Services). One
+        correction step; a count/create error whose check declares a slot `guard` gets its write tool
+        wrapped so the step can only ADD the next owed item (no overwrite, right slot)."""
         return functools.partial(self._single_fix, context, error)
 
     def _single_fix(self, context, error: Error, services) -> None:
         """One correction step: build the prompt for this error, let services run it (one LLM call +
-        dispatch). For a count/create error the module registered a slot guard for, the write tool
-        is wrapped so the step can only ADD the next owed item (no overwrite, right slot) — the same
-        invariant the deleted author loop enforced, now on the single step. Bounded by the services
-        budget like any fix."""
-        guard = self.create_guards.get(error.code)
+        dispatch). Bounded by the services budget like any fix."""
+        chk = self._check_for(error.code)
+        guard = chk.guard if chk else None
         dispatch = None
         if guard:
             from maestro.services import _create_guard

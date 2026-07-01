@@ -8,10 +8,10 @@ Example games:
   - "a back-alley blackjack hustle for rent money"  — cast + world + card_play
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from maestro.modules import checks
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Module, register_module
 
 _MODELS = {"high_card", "blackjack"}
 
@@ -77,17 +77,16 @@ class CardPlay(Module):
     projected = True
     tool_names = ("write_match", "edit_match", "read_match")
 
+    checks = [
+        Check("min_matches", lambda chk, m, ctx: m.wrap(chk, checks.count(
+            ctx.artifact, "matches.match_ids", min=ctx.param("min_matches", 1)))),
+    ]
+
     def params(self) -> Dict:
         return {"min_matches": 1}
 
     def affected_components(self) -> Tuple[str, ...]:
         return ("matches",)
-
-    def get_errors(self, context) -> List[Error]:
-        e = checks.as_error(
-            checks.count(context.artifact, "matches.match_ids", min=context.param("min_matches", 1)),
-            type=ErrorType.BUILD, code="min_matches", component="matches")
-        return [e] if e else []
 
 
 MODULE = CardPlay()

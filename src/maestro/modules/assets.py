@@ -9,10 +9,17 @@ Example games:
   - "a point-and-click escape room"    — assets + cast + world + inventory
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from maestro.modules import checks
-from maestro.modules.module import Error, ErrorType, Module, register_module
+from maestro.modules.module import Check, Module, register_module
+
+
+def _d_character_ids(chk, m, ctx):
+    chars = (ctx.artifact.get("asset_manifest") or {}).get("characters")
+    if not (isinstance(chars, list) and chars):
+        return []
+    return m.wrap(chk, checks.each_has(ctx.artifact, "asset_manifest.characters", fields=["id"]))
 
 
 def v_asset_manifest(c: Dict) -> Optional[str]:
@@ -61,29 +68,17 @@ class Assets(Module):
     schemas = {"asset_manifest": v_asset_manifest}
     skeletons = {"asset_manifest": SKEL_ASSET_MANIFEST}
 
+    checks = [
+        # Backgrounds must exist before any id-check is meaningful — blocking.
+        Check("backgrounds_exist", lambda chk, m, ctx: m.wrap(chk, checks.exists(
+            ctx.artifact, "asset_manifest.backgrounds")), blocking=True),
+        Check("background_ids", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
+            ctx.artifact, "asset_manifest.backgrounds", fields=["id"]))),
+        Check("character_ids", _d_character_ids),
+    ]
+
     def affected_components(self) -> Tuple[str, ...]:
         return ("asset_manifest",)
-
-    def get_errors(self, context) -> List[Error]:
-        art = context.artifact
-        errs: List[Error] = []
-
-        def build(result, code):
-            return checks.as_error(result, type=ErrorType.BUILD, code=code, component="asset_manifest")
-
-        e = build(checks.exists(art, "asset_manifest.backgrounds"), "backgrounds_exist")
-        if e:
-            errs.append(e)
-            return errs  # nothing to id-check until backgrounds exist
-        ie = build(checks.each_has(art, "asset_manifest.backgrounds", fields=["id"]), "background_ids")
-        if ie:
-            errs.append(ie)
-        chars = (art.get("asset_manifest") or {}).get("characters")
-        if isinstance(chars, list) and chars:
-            ce = build(checks.each_has(art, "asset_manifest.characters", fields=["id"]), "character_ids")
-            if ce:
-                errs.append(ce)
-        return errs
 
     def context_view(self, c: Dict) -> Dict:
         def ids(key):

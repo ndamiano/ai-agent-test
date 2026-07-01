@@ -11,12 +11,124 @@ Example games:
 
 from typing import Dict, List, Optional
 
+from collections import deque
 from functools import partial
 
 from maestro import context_render as cr
 from maestro.modules import checks, views
 from maestro.modules.module import Error, ErrorType, Module, register_module
 from maestro.services import author_loop
+
+_RPG_KINDS = {"world_map", "town", "interior"}
+
+
+def _cell_xy(pos) -> Optional[tuple]:
+    """The (x, y) of a {cell:{x,y}} position, or None if it isn't an integer tile."""
+    if isinstance(pos, dict) and isinstance(pos.get("cell"), dict):
+        cell = pos["cell"]
+        if isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int):
+            return (cell["x"], cell["y"])
+    return None
+
+
+def _reachable(free: set, sources: list) -> set:
+    """4-neighbour flood-fill over the free (non-wall, in-bounds) tiles from the entry tiles."""
+    seen = {s for s in sources if s in free}
+    dq = deque(seen)
+    while dq:
+        x, y = dq.popleft()
+        for nxt in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if nxt in free and nxt not in seen:
+                seen.add(nxt)
+                dq.append(nxt)
+    return seen
+
+
+def _rpg_world_error(c: Dict) -> Optional[str]:
+    """Spatial invariants a walkable (world_map/town/interior) map must hold so it actually plays:
+    a grid, in-bounds non-overlapping tiles, no interactable on a wall, and — the load-bearing one —
+    every interactable tile WALKABLE-reachable from where the avatar arrives. A small model can't be
+    trusted to lay this out; the loop self-corrects off these messages."""
+    places = c.get("places") or {}
+    start_place = c.get("start_place")
+
+    # Where the avatar arrives in each place: the start spawn + every move that carries a spawn.
+    entries: Dict[str, list] = {}
+    start_spawn = _cell_xy(c.get("start_spawn"))
+    if start_place and start_spawn:
+        entries.setdefault(start_place, []).append(start_spawn)
+    for place in places.values():
+        if not isinstance(place, dict):
+            continue
+        for h in place.get("interactables") or []:
+            act = h.get("action") if isinstance(h, dict) else None
+            if isinstance(act, dict) and act.get("type") == "move" and act.get("target"):
+                sp = _cell_xy(act.get("spawn"))
+                if sp:
+                    entries.setdefault(act["target"], []).append(sp)
+
+    for pid, place in places.items():
+        if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS:
+            continue
+        grid = place.get("grid")
+        if not isinstance(grid, dict) or not isinstance(grid.get("w"), int) \
+                or not isinstance(grid.get("h"), int) or grid["w"] < 1 or grid["h"] < 1:
+            return (f"places[{pid!r}] is a walkable {place.get('kind')} map — it needs a "
+                    f"'grid': {{'w': <cols>, 'h': <rows>}} of positive integers")
+        w, h = grid["w"], grid["h"]
+
+        walls = set()
+        for cell in place.get("impassable") or []:
+            xy = (cell.get("x"), cell.get("y")) if isinstance(cell, dict) else (None, None)
+            if not isinstance(xy[0], int) or not isinstance(xy[1], int):
+                return f"places[{pid!r}].impassable entries must be {{'x': int, 'y': int}} wall tiles"
+            if not (0 <= xy[0] < w and 0 <= xy[1] < h):
+                return f"places[{pid!r}].impassable tile {xy} is outside the {w}x{h} grid"
+            walls.add(xy)
+
+        used: Dict[tuple, str] = {}
+        for h_ in place.get("interactables") or []:
+            iid = h_.get("id")
+            xy = _cell_xy(h_.get("position"))
+            if xy is None:
+                return (f"places[{pid!r}].interactables[{iid!r}] needs a tile position "
+                        f"'position': {{'cell': {{'x': int, 'y': int}}}} — this is a walkable map")
+            if not (0 <= xy[0] < w and 0 <= xy[1] < h):
+                return f"places[{pid!r}].interactables[{iid!r}] tile {xy} is outside the {w}x{h} grid"
+            if xy in walls:
+                return (f"places[{pid!r}].interactables[{iid!r}] sits on a wall tile {xy} — the "
+                        f"avatar could never reach it; move it or drop that 'impassable' tile")
+            if xy in used:
+                return (f"places[{pid!r}] puts two interactables on tile {xy} ({used[xy]} and "
+                        f"{iid}) — give each its own tile")
+            used[xy] = iid
+            act = h_.get("action") or {}
+            if act.get("type") == "move" and act.get("target") in places \
+                    and places[act["target"]].get("kind") in _RPG_KINDS \
+                    and _cell_xy(act.get("spawn")) is None:
+                return (f"places[{pid!r}].interactables[{iid!r}] moves to walkable place "
+                        f"{act['target']!r} but has no 'spawn': {{'cell': {{'x','y'}}}} — the avatar "
+                        f"needs an arrival tile in the destination")
+
+        sources = entries.get(pid, [])
+        if not sources:
+            if pid == start_place:
+                return (f"places[{pid!r}] is the walkable start place — declare where the player "
+                        f"spawns with set_places_meta(start_spawn={{'cell': {{'x': .., 'y': ..}}}})")
+            continue  # an orphan (no entry): places_reachable owns that
+        for sp in sources:
+            if not (0 <= sp[0] < w and 0 <= sp[1] < h):
+                return f"places[{pid!r}] has a start/arrival spawn {sp} outside the {w}x{h} grid"
+            if sp in walls:
+                return f"places[{pid!r}] has a start/arrival spawn {sp} on a wall tile"
+
+        free = {(x, y) for x in range(w) for y in range(h) if (x, y) not in walls}
+        reachable = _reachable(free, sources)
+        for xy, iid in used.items():
+            if xy not in reachable:
+                return (f"places[{pid!r}].interactables[{iid!r}] at tile {xy} is walled off from the "
+                        f"spawn — no walkable path reaches it; open the 'impassable' walls between them")
+    return None
 
 
 def v_places(c: Dict) -> Optional[str]:
@@ -51,7 +163,7 @@ def v_places(c: Dict) -> Optional[str]:
             act = h.get("action")
             if not isinstance(act, dict) or not act.get("type"):
                 return f"places.places[{pid!r}].interactables[{j}].action needs a 'type'"
-    return None
+    return _rpg_world_error(c)
 
 
 SKEL_PLACES = (
@@ -86,18 +198,59 @@ SKEL_PLACES = (
     '//   and give some hotspot a win action; omit it for an open-ended world.'
 )
 
+SKEL_RPG = (
+    '{\n'
+    '  "start_place": "zone_<first>",\n'
+    '  "flags": ["<flag_set_by_a_rune_or_fight>"],\n'
+    '  "goal": {"type": "flag", "id": "<flag_that_means_you_won>"},\n'
+    '  "place_ids": ["zone_<first>", "zone_<second>"],\n'
+    '  "places": {\n'
+    '    "zone_<first>": {\n'
+    '      "kind": "world_map",\n'
+    '      "background": "bg_<zone>",\n'
+    '      "grid": {"w": 8, "h": 6},\n'
+    '      "impassable": [{"x": 4, "y": 0}, {"x": 4, "y": 1}, {"x": 4, "y": 4}, {"x": 4, "y": 5}],\n'
+    '      "interactables": [\n'
+    '        {"id": "h_<enemy>", "label": "<short noun>",\n'
+    '         "position": {"cell": {"x": 5, "y": 3}},\n'
+    '         "action": {"type": "start_combat", "encounter": "enc_<slug>"}},\n'
+    '        {"id": "h_<exit>", "label": "<where it leads>",\n'
+    '         "position": {"cell": {"x": 0, "y": 3}},\n'
+    '         "action": {"type": "move", "target": "zone_<second>", "spawn": {"cell": {"x": 7, "y": 3}}}}\n'
+    '      ]\n'
+    '    }\n'
+    '  }\n'
+    '}\n'
+    '// A WALKABLE map: the player avatar walks a tile GRID with WASD. A position is a {cell:{x,y}}\n'
+    '//   TILE (0<=x<grid.w, 0<=y<grid.h) — grid coordinates, NOT pixels.\n'
+    '// grid {w,h} is REQUIRED. impassable lists WALL tiles the avatar cannot enter (carve the\n'
+    '//   rooms/corridors with them). NEVER place an interactable on a wall, and NEVER wall an\n'
+    '//   interactable off — every interactable tile must be reachable by walking from the spawn.\n'
+    '// Set the START tile ONCE with set_places_meta(start_spawn={"cell":{"x":..,"y":..}}) — a free,\n'
+    '//   non-wall tile in start_place.\n'
+    '// TRIGGERING: walking ONTO a move/start_combat tile fires it; talk/examine/take/use/win fire\n'
+    '//   when the player presses E while standing on the tile.\n'
+    '// action.type: examine {text}; take {item,text?}; talk {node}; use {clauses/fallback};\n'
+    '//   win {requires?}; move {target, spawn:{cell:{x,y}}}  (spawn = the arrival TILE in the\n'
+    '//   destination zone, REQUIRED when moving into a walkable place); start_combat {encounter}\n'
+    '//   (step onto the tile to enter that fight — compose `combat`).\n'
+    '// background in asset_manifest.backgrounds; talk node in `nodes`; item in `items`; refs resolve.'
+)
+
 _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "add_interactable",
                                "read_place", "set_places_meta", "read_component", "validate",
                                "update_scratchpad", "request_review"})
 _PLACE_TARGET_JOBS = {
     "min_places": "author", "each_place_min_interactables": "author",
-    "places_reachable": "fix",
+    "places_reachable": "fix", "rpg_layout": "fix",
     "crossref": "fix", "compiles": "fix",
 }
 _PLACE_TARGET_TOOLS = {
     "min_places": frozenset({"write_component", "write_place"}),
     "each_place_min_interactables": frozenset({"read_place", "add_interactable", "edit_place"}),
     "places_reachable": frozenset({"read_place", "add_interactable", "edit_place", "read_component"}),
+    "rpg_layout": frozenset({"read_place", "edit_place", "add_interactable", "write_place",
+                             "set_places_meta", "read_component"}),
     # crossref/compiles are the terminal backstop over the WHOLE IR — a dangling reference can be a
     # talk-node (needs write_node/edit_node) as well as a place wiring error, so the fixer gets the
     # broad set rather than routing per-slice.
@@ -153,7 +306,28 @@ class World(Module):
     emits_compile = True   # a realization terminal: `places` stays writable to the end
     tool_names = ("write_place", "edit_place", "add_interactable", "read_place", "set_places_meta")
 
+    @staticmethod
+    def _is_rpg(context) -> bool:
+        # The navigation style is already in context — the composed module set: a `combat` game is
+        # walkable (tile map + WASD), anything else is point-and-click.
+        return "combat" in (context.spec.get("modules") or [])
+
+    def _apply_style(self, context) -> None:
+        # Set the skeleton + author prompt both fix paths read (get_correction_prompt AND author_loop,
+        # which reads module.skeleton/prompts directly), so each emitted prompt shows exactly ONE
+        # mental model — tiles XOR pixels, never mixed. No second module needed.
+        rpg = self._is_rpg(context)
+        self.skeleton = SKEL_RPG if rpg else SKEL_PLACES
+        self.skeletons = {"places": self.skeleton}
+        self.prompts = {"author": "places_rpg_write.txt" if rpg else "places_write.txt",
+                        "fix": "places_fix.txt"}
+
+    def get_correction_prompt(self, context, error: Error):
+        self._apply_style(context)
+        return super().get_correction_prompt(context, error)
+
     def get_fix(self, context, error: Error):
+        self._apply_style(context)
         # Reaching the place count means ADDING rooms — drive the slot-guarded author loop. Every
         # other place error (reachability, items) is a single edit.
         if error.code == "min_places":
@@ -178,6 +352,28 @@ class World(Module):
         self._add(errs, checks.each_place_min_interactables(
             art, min=context.param("min_interactables", 2)), "each_place_min_interactables")
         self._add(errs, checks.places_reachable(art), "places_reachable")
+        # A walkable (combat) game must be ALL walkable — no point-and-click `room` zones mixed in,
+        # or the game starts as a click screen instead of WASD. Enforce the kind the RPG skeleton asks
+        # for; the fix rewrites that place with a grid + cell positions.
+        if self._is_rpg(context):
+            places_map = (art.get("places") or {}).get("places") or {}
+            room = next((pid for pid, pl in places_map.items()
+                         if isinstance(pl, dict) and pl.get("kind") == "room"), None)
+            if room:
+                errs.append(Error(
+                    type=ErrorType.FIX, code="rpg_layout", component="places", path=room,
+                    message=(f"place {room!r} is a point-and-click 'room', but this is a WALKABLE game "
+                             f"(the player moves an avatar with WASD). Rewrite it with write_place as "
+                             f"kind 'world_map'/'town'/'interior': add \"grid\":{{\"w\":..,\"h\":..}} and "
+                             f"give every interactable a {{\"cell\":{{\"x\":..,\"y\":..}}}} tile position "
+                             f"(not a rect).")))
+        # Walkable-map layout (grid bounds, no overlap, not-on-wall, spawn-reachable). Returns None
+        # for PnC. v_places only runs on a whole-component write; the loop authors per-place, so this
+        # is what actually GATES a tile map's spatial integrity. Surface before crossref/compile.
+        layout = _rpg_world_error(art.get("places") or {})
+        if layout:
+            errs.append(Error(type=ErrorType.FIX, code="rpg_layout", component="places",
+                              message=layout))
         if not errs:
             from maestro.ir_crossref import slice_token
             for rec in checks.crossref_failures(art):

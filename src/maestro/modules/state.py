@@ -26,6 +26,11 @@ _FIX_TOOLS = {
     "places": ("read_place", "edit_place", "add_interactable", "set_places_meta", "read_component"),
     "items": ("write_component", "read_component"),
 }
+# A value's PRODUCER and CONSUMER can live in different hosts — a flag consumed by a place gate is
+# naturally SET by a narrative node choice (set_flag effect). So the wiring fix offers every host's
+# tools, not just the consumer component's; otherwise the prompt tells the model to "edit a node"
+# while only place tools are in scope, and it thrashes on the wrong tool.
+_WIRING_TOOLS = tuple(sorted(set(t for tools in _FIX_TOOLS.values() for t in tools)))
 
 
 class State(Module):
@@ -44,7 +49,7 @@ class State(Module):
         ]
 
     def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
-        tools = _FIX_TOOLS.get(error.component, ("read_component",))
+        tools = _WIRING_TOOLS
         rd = render_dict(context, active=error.component, target=error,
                          upstream_views=getattr(context, "upstream_views", {}),
                          available_tools=tools)

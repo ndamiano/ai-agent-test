@@ -139,5 +139,57 @@ def test_combat_ir_lifts_into_project(tmp_path):
     assert any(e.get("world") == {"remove_item": "potion"} for e in quaff["effects"])
 
 
+def test_decomposed_rpg_combat_compiles(tmp_path):
+    """The shape a REAL build writes: separate on-disk components (a walkable places map with
+    grid/walls/spawn + a combat block + nodes) must assemble + compile to a Godot project — proving
+    the module-authored walkable-combat game is buildable, not just the hand-authored showcase IR."""
+    (tmp_path / "characters.json").write_text(json.dumps({"characters": [
+        {"id": "hero", "name": "Hero"}, {"id": "skel", "name": "Skeleton"}]}))
+    (tmp_path / "asset_manifest.json").write_text(json.dumps({
+        "backgrounds": [{"id": "bg_z", "image_file": "z.png"}], "characters": []}))
+    (tmp_path / "nodes.json").write_text(json.dumps({"node_ids": ["n_win"], "nodes": {
+        "n_win": {"lines": [{"speaker": None, "text": "The bones fall still."}],
+                  "end": {"type": "return"}}}, "flags": []}))
+    (tmp_path / "combat.json").write_text(json.dumps({
+        "combat_model": "turn_based",
+        "stats": [{"id": "hp", "default": 20, "min": 0, "max": 20, "role": "resource_depletable"}],
+        "abilities": [{"id": "slash", "name": "Slash",
+                       "targeting": {"shape": "single", "faction": "enemy", "range": "melee"},
+                       "effects": [{"stat": "hp", "op": "damage", "formula": {"base": 5}}]}],
+        "combatants": [
+            {"id": "cb_hero", "character": "hero", "stats": [{"stat": "hp", "value": 20}],
+             "abilities": ["slash"]},
+            {"id": "cb_skel", "character": "skel", "stats": [{"stat": "hp", "value": 10}],
+             "abilities": ["slash"]}],
+        "encounters": [{"id": "enc1", "background": "bg_z", "combatants": [
+            {"ref": "cb_hero", "faction": "player", "position": {"cell": {"x": 1, "y": 1}}},
+            {"ref": "cb_skel", "faction": "enemy", "position": {"cell": {"x": 4, "y": 1}}}],
+            "victory": {"all_defeated": "enemy"}, "defeat": {"all_defeated": "player"},
+            "on_victory": {"type": "jump", "target": "n_win"},
+            "on_defeat": {"type": "end", "ending": "game_over"}}]}))
+    (tmp_path / "places.json").write_text(json.dumps({
+        "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 1}}, "place_ids": ["z1"],
+        "places": {"z1": {"kind": "world_map", "background": "bg_z", "grid": {"w": 6, "h": 3},
+            "impassable": [{"x": 3, "y": 0}, {"x": 3, "y": 2}],
+            "interactables": [
+                {"id": "foe", "label": "Skeleton", "position": {"cell": {"x": 4, "y": 1}},
+                 "action": {"type": "start_combat", "encounter": "enc1"}},
+                {"id": "sign", "label": "Sign", "position": {"cell": {"x": 1, "y": 1}},
+                 "action": {"type": "examine", "text": "Danger ahead."}}]}}}))
+    (tmp_path / "spec.json").write_text(json.dumps(
+        {"modules": ["world", "scenes", "combat"], "engine": "godot"}))
+
+    result = compile_godot(tmp_path, distribute=False)
+    assert result["ok"], result.get("reason")
+
+    game = json.loads((tmp_path / "godot_output" / "game.json").read_text())
+    assert game["genre"] == "rpg"
+    assert game["start"] == {"place": "z1", "spawn": {"cell": {"x": 0, "y": 1}}}
+    z1 = next(p for p in game["places"] if p["id"] == "z1")
+    assert z1["kind"] == "world_map" and z1["grid"] == {"w": 6, "h": 3} and len(z1["impassable"]) == 2
+    assert {e["id"] for e in game["encounters"]} == {"enc1"}
+    assert (tmp_path / "godot_output" / "overworld.gd").exists()
+
+
 def test_engine_dispatch():
     assert compile_for("godot") is compile_godot

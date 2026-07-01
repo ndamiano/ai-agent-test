@@ -56,7 +56,10 @@ src/
                   tool dispatch + pause/cancel checkpoint + per-fix step budget; BudgetExhausted
                   is a BaseException, so a fix can't churn past its cap). `author_loop` is the
                   shared iterative Fix the content modules return for their count-driven target
-                  (slot-guarded item author, `_create_guard`).
+                  (slot-guarded item author, `_create_guard`). The author_loop ENFORCES the target's
+                  tool scope (`module.tools_for`): a tool not scoped to this step is rejected, not
+                  dispatched — a small model learns other tool names from the prompt prose and will
+                  call them otherwise, thrashing on an off-phase tool.
                 rewrite.py — rewrite_node: regenerate ONE node from a human note (per-scene control)
                 run_control.py — cross-thread RunControl (pause/resume/cancel + auto_pause flag)
                   + per-run registry, the human-in-the-loop signal channel into the build thread
@@ -98,9 +101,13 @@ src/
                 "lint" gate = JSON-Schema + crossref (web model). Native export is best-effort
                 (needs the godot binary + templates; absence never fails the build). Its REASON to
                 exist is combat: combat.gd plays turn_based encounters web/renpy stub out. The
-                `combat` module authors the encounter IR; since it registers a projection ONLY here
-                (none for renpy/web), any spec that picks it auto-routes to Godot via
-                Module.engine_for — no explicit routing. runtime/Game.gd drives a PRESENTERS
+                `combat` module authors the encounter IR ONE slice at a time in dependency order
+                (set_combat_meta lays stats/statuses, then write_ability/write_combatant/
+                write_encounter grow the list slices, each validated against the declared upstream
+                ids at write time — so a small model fixes one item, never re-authors the whole
+                block); since it registers a projection ONLY here (none for renpy/web), any spec that
+                picks it auto-routes to Godot via Module.engine_for — no explicit routing.
+                runtime/Game.gd drives a PRESENTERS
                 registry keyed on place.kind: `room` => pnc.gd (click hotspots), `world_map/town/
                 interior` => overworld.gd (a WASD/arrow-key walkable tile grid — step ONTO a
                 move/start_combat cell to fire it, press E on a talk/examine/take/use/win cell).

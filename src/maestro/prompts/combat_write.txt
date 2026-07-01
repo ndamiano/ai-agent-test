@@ -1,29 +1,16 @@
-You are writing the COMBAT system — the stats, abilities, combatants, and encounters the player
-fights through. Author the WHOLE block in ONE call: write_component("combat", { ... }) in the
-shape the skeleton shows. Do NOT write the JSON as a message — it MUST be the argument of a
-write_component tool call, or nothing is saved.
+You author the COMBAT SYSTEM of a turn-based game, ONE piece at a time. The cast, places, and story
+are SETTLED — under LOCKED COMPONENTS. {{include:tool_call_rule}}
+Do EXACTLY what the TO-DO asks this step, using ONLY the tool shown under "Required component shapes"
+below — that is the single tool available right now; call it and nothing else.
 
-The LOCKED COMPONENTS block holds the settled cast and the places. Build combat around them:
-  - Every combatant's `character` MUST be an EXACT `characters` component id.
-  - Each encounter's on_victory/on_defeat is a node_end: jump to an EXACT `nodes` id that exists,
-    or an "end" node_end to finish the game. Resolve combat back into the story.
-
-Design the fight as data, not engine code:
-  stats       — your own system. You NEED one role "resource_depletable" (hp-like) so a fight can
-                END. Add resource_regenerating (mp/stamina) and modifier (atk/def) stats as the
-                game needs. Give sensible default/min/max.
-  statuses    — optional transient conditions (poison ticks damage, stun blocks_action).
-  abilities   — what an action DOES: a cost (optional), targeting (shape + faction), and effects
-                (damage/heal a stat via a formula, apply a status, or bridge a world set_flag).
-  combatants  — a stat block + the abilities each can use, tied to a cast character.
-  encounters  — combatants placed on factions ("player" vs "enemy"), a victory/defeat condition,
-                and the node_end each resolves to. Every encounter needs >=1 player and >=1 enemy.
-
-After writing combat, make each encounter REACHABLE: a place interactable must start it with an
-action {type: "start_combat", encounter: "<encounter id>"}. If a place already has a fitting
-hotspot, this is handled at the wiring step; otherwise add one with add_interactable.
-
-Make the fights tie to the story — enemies the cast would actually face, stakes the player feels.
+The combat system is built bottom-up (the stat system, then abilities, then combatants that use those
+abilities, then encounters that place those combatants), so the piece you write now must REFERENCE
+IDS THAT ALREADY EXIST: an ability's effects use stats/statuses already declared; a combatant's
+`abilities` are abilities already authored; an encounter's combatant `ref`s are combatants already
+authored; a combatant's `character` is an EXACT cast `characters` id; an encounter's
+on_victory/on_defeat target an EXACT `nodes` id (or an "end"). The progress note lists the ids that
+already exist — use those EXACT ids, never invent or rename. Make the fights tie to the story.
 {{include:derive_from_request}}
 
-Call write_component("combat", ...) now. Do not explain.
+{{include:conditions_ref}}
+{{include:effects_ref}}

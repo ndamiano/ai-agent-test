@@ -63,3 +63,20 @@ def test_run_dir_under_working_directory(tmp_path, monkeypatch):
     state = RunState.for_run("abc123")
     assert state.run_dir == tmp_path / "runs" / "abc123"
     assert state.run_dir.is_dir()
+
+
+def test_state_wiring_fix_offers_all_host_tools(tmp_path):
+    # A flag consumed in a place is naturally SET by a node choice — so the wiring fix must offer
+    # node tools even for a places-attributed error, or the model can't produce it (live-build thrash).
+    from maestro.modules.state import MODULE as STATE
+    from maestro.modules.module import Error, ErrorType
+    from maestro.modules.context import build_context
+    state = RunState(tmp_path)
+    state.write_component("places", {"place_ids": ["p1"],
+                                     "places": {"p1": {"kind": "room", "interactables": []}}})
+    ctx = build_context(Spec({"title": "T", "frozen": True,
+                              "modules": ["world", "scenes", "state"], "params": {}}).data, state)
+    err = Error(type=ErrorType.FIX, code="state_wiring", component="places",
+                message="flag 'x' read but never produced", ref="x")
+    cp = STATE.get_correction_prompt(ctx, err)
+    assert "edit_node" in cp.allowed_tools and "edit_place" in cp.allowed_tools

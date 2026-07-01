@@ -229,12 +229,15 @@ def no_dead_gates(artifact: Dict) -> CheckResult:
 
 
 def all_characters_speak(artifact: Dict) -> CheckResult:
-    chars = {c.get("id") for c in artifact.get("characters", {}).get("characters", []) if c.get("id")}
+    # `isinstance str` guards: a mis-typed speaker/id (the model nesting an object) must not crash the
+    # set build with `unhashable type: 'dict'` — it's excluded and caught by the schema/other checks.
+    chars = {c.get("id") for c in artifact.get("characters", {}).get("characters", [])
+             if isinstance(c, dict) and isinstance(c.get("id"), str)}
     if not chars:
         return False, "characters component has no characters"
     _, nodes = views.nodes_of(artifact)
     spoke = {ln.get("speaker") for node in nodes.values()
-             for ln in node.get("lines", []) if ln.get("speaker")}
+             for ln in node.get("lines", []) if isinstance(ln, dict) and isinstance(ln.get("speaker"), str)}
     silent = sorted(chars - spoke)
     if silent:
         return False, f"characters who never speak: {silent} — give them lines"

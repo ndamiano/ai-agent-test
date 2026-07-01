@@ -246,6 +246,7 @@ def author_loop(context, error, services: Services, *, module, guard: Dict) -> N
     if module.skeleton:
         system += "\n\n" + skeleton_guide(module.component, module.skeleton)
     schemas = filter_schemas(module.tools_for(error.code))
+    allowed = set(module.tools_for(error.code))   # the canonical scope (a tool may lack a schema)
     view_fn = lambda: module.view(services.state.load_artifact())
     dispatch = _create_guard(services.dispatch, view_fn, guard["count_tool"], guard["id_key"],
                              guard["id_list_key"], guard["noun"])
@@ -287,9 +288,18 @@ def author_loop(context, error, services: Services, *, module, guard: Dict) -> N
                 continue
 
         mb.add_assistant(message.get("content"), tool_calls=tcs)
+        # ENFORCE the scope: a small model ignores the scoped tools and calls one from another phase
+        # (e.g. re-running set_combat_meta while the target is "author one ability") — it knows the
+        # name from the prose, not the schema. dispatch would happily run it, so the loop thrashes.
         made_progress = False
         for tc in tcs:
             name = tc["function"]["name"]
+            if name not in allowed:
+                result = {"ok": False, "error":
+                          f"{name!r} is not available for this step — call one of {sorted(allowed)}"}
+                mb.add_tool_result(tc.get("id", ""), json.dumps(result, ensure_ascii=False)[:800])
+                services._report(_summarize({"tool": name, "args": {}}, result))
+                continue
             args = parse_args(tc.get("function", {}).get("arguments"))
             result = dispatch(name, args)
             mb.add_tool_result(tc.get("id", ""), json.dumps(result, ensure_ascii=False)[:800])
@@ -304,6 +314,7 @@ def author_loop(context, error, services: Services, *, module, guard: Dict) -> N
             if not reads_dropped:
                 reads_dropped = True
                 schemas = [s for s in schemas if s.get("function", {}).get("name") not in _READ_TOOLS]
+                allowed -= _READ_TOOLS
 
         note = module.render_progress(view_fn() or {})
         if note:

@@ -129,6 +129,9 @@ def assemble_ir(artifact: Dict) -> Dict:
     node_ids = nodes_comp.get("node_ids", []) or []
     nodes_map = nodes_comp.get("nodes", {}) or {}
     has_places = bool(places_comp.get("place_ids"))
+    is_rpg = has_places and any(
+        isinstance(p, dict) and p.get("kind") in ("world_map", "town", "interior")
+        for p in (places_comp.get("places") or {}).values())
 
     # `beat` is authoring provenance (which story beat a scene realizes — drives the
     # beats_realized done-condition on the on-disk component); it's not runtime IR, and the schema
@@ -145,7 +148,7 @@ def assemble_ir(artifact: Dict) -> Dict:
                 ln["speaker"] = None
     ir: Dict = {
         "version": "0.1",
-        "genre": "point_and_click" if has_places else "visual_novel",
+        "genre": "rpg" if is_rpg else ("point_and_click" if has_places else "visual_novel"),
         "characters": _characters(cast, manifest, nodes),
         "nodes": nodes,
     }
@@ -195,6 +198,9 @@ def assemble_ir(artifact: Dict) -> Dict:
         ir["places"] = [{"id": pid, **places_map.get(pid, {})} for pid in place_ids]
         start_place = places_comp.get("start_place") or (place_ids[0] if place_ids else None)
         ir["start"] = {"place": start_place} if start_place else {}
+        start_spawn = places_comp.get("start_spawn")
+        if start_place and isinstance(start_spawn, dict) and isinstance(start_spawn.get("cell"), dict):
+            ir["start"]["spawn"] = start_spawn
         goal = places_comp.get("goal")
         if isinstance(goal, dict):
             # The IR goal is a CONDITION. A flag goal maps to {flag: id}; a goal already in

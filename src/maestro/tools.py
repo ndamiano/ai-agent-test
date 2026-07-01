@@ -159,6 +159,15 @@ def _action_struct_error(action) -> Optional[str]:
     return None
 
 
+def _cell_xy(pos) -> Optional[tuple]:
+    """The (x, y) of a {cell:{x,y}} tile position, or None if it isn't an integer tile."""
+    if isinstance(pos, dict) and isinstance(pos.get("cell"), dict):
+        cell = pos["cell"]
+        if isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int):
+            return (cell["x"], cell["y"])
+    return None
+
+
 def _place_content_error(content) -> Optional[str]:
     if not isinstance(content, dict):
         return "place content must be a JSON object {kind, background, interactables}"
@@ -218,39 +227,43 @@ TOOL_SCHEMAS: List[Dict] = [
         }, "required": ["node_id"]}}},
     {"type": "function", "function": {
         "name": "write_place",
-        "description": "Write one place (room/map) into `places`: its background plus clickable "
-                       "interactables (each a screen rect + a structured `action`). Adds it to "
-                       "place_ids. Point-and-click only.",
+        "description": "Write one place into `places`: its background plus interactables (each a "
+                       "position + a structured `action`). Adds it to place_ids. A place is either "
+                       "a point-and-click room (kind 'room', pixel-rect hotspots) OR a walkable RPG "
+                       "tile map (kind 'world_map'/'town'/'interior', cell positions + a grid).",
         "parameters": {"type": "object", "properties": {
-            "place_id": {"type": "string", "description": "e.g. 'room_kitchen'"},
+            "place_id": {"type": "string", "description": "e.g. 'room_kitchen' or 'zone_crypt'"},
             "content": {"type": "object", "description":
-                "{kind: 'room', background: <asset id>, interactables: [{id, label, "
-                "position:{rect:{x,y,w,h}}, action:{type, ...}}]}"},
+                "{kind: 'room' (point-and-click) | 'world_map'|'town'|'interior' (walkable RPG), "
+                "background: <asset id>, interactables: [{id, label, position, action:{type, ...}}], "
+                "grid:{w,h} (RPG ONLY, required), impassable:[{x,y}] (RPG wall tiles)}. A position is "
+                "{rect:{x,y,w,h}} for a room or {cell:{x,y}} for an RPG tile."},
         }, "required": ["place_id", "content"]}}},
     {"type": "function", "function": {
         "name": "edit_place",
         "description": "Patch ONE interactable in a place without rewriting it: replace its "
                        "`action` (e.g. repoint a move target / fix a use clause), `position`, or "
-                       "`label`. Point-and-click only.",
+                       "`label`.",
         "parameters": {"type": "object", "properties": {
             "place_id": {"type": "string"},
             "interactable_id": {"type": "string"},
             "action": {"type": "object", "description": "replacement structured action"},
-            "position": {"type": "object", "description": "replacement {rect:{x,y,w,h}}"},
+            "position": {"type": "object", "description":
+                         "replacement {rect:{x,y,w,h}} (room) or {cell:{x,y}} (RPG tile)"},
             "label": {"type": "string"},
         }, "required": ["place_id", "interactable_id"]}}},
     {"type": "function", "function": {
         "name": "add_interactable",
-        "description": "APPEND one new interactable (hotspot) to an existing place — without "
-                       "rewriting it (write_place clobbers the others) and without repointing an "
-                       "existing hotspot (edit_place breaks that hotspot's route). The right tool "
-                       "to add a move hotspot for an unreachable place, or a use/win hotspot to set "
-                       "the goal flag. Point-and-click only.",
+        "description": "APPEND one new interactable to an existing place — without rewriting it "
+                       "(write_place clobbers the others) and without repointing an existing one "
+                       "(edit_place breaks that hotspot's route). The right tool to add a move "
+                       "hotspot for an unreachable place, a use/win hotspot to set the goal flag, or "
+                       "a start_combat tile to enter a fight.",
         "parameters": {"type": "object", "properties": {
             "place_id": {"type": "string", "description": "the existing place to add to"},
             "interactable": {"type": "object", "description":
-                "{id, label, position:{rect:{x,y,w,h}}, action:{type, ...}} — a new hotspot; its "
-                "id must not already exist in the place"},
+                "{id, label, position, action:{type, ...}} — a new interactable; position is "
+                "{rect:{x,y,w,h}} (room) or {cell:{x,y}} (RPG tile); its id must not already exist"},
         }, "required": ["place_id", "interactable"]}}},
     {"type": "function", "function": {
         "name": "read_place",
@@ -259,9 +272,10 @@ TOOL_SCHEMAS: List[Dict] = [
             "place_id": {"type": "string"}}, "required": ["place_id"]}}},
     {"type": "function", "function": {
         "name": "set_places_meta",
-        "description": "Declare the point-and-click game's global scaffold on `places`: the optional "
-                       "win `goal`, puzzle `flags`, numeric `variables`, and `start_place`. Merges "
-                       "(pass only what changes). Items live in the `items` catalogue, not here.",
+        "description": "Declare the game's global scaffold on `places`: the optional win `goal`, "
+                       "puzzle `flags`, numeric `variables`, `start_place`, and (walkable RPG only) "
+                       "`start_spawn` — the player's start TILE. Merges (pass only what changes). "
+                       "Items live in the `items` catalogue, not here.",
         "parameters": {"type": "object", "properties": {
             "goal": {"type": "object", "description":
                      "{type: 'flag'|'room', id: '<winning flag or place id>'}"},
@@ -270,6 +284,8 @@ TOOL_SCHEMAS: List[Dict] = [
             "variables": {"type": "array", "items": {"type": "object"},
                           "description": "[{id, default}] numeric state"},
             "start_place": {"type": "string"},
+            "start_spawn": {"type": "object", "description":
+                            "RPG only: the player's start tile, {cell:{x,y}} in start_place"},
         }, "required": []}}},
     {"type": "function", "function": {
         "name": "write_match",
@@ -301,6 +317,49 @@ TOOL_SCHEMAS: List[Dict] = [
         "description": "Read one card match's current definition.",
         "parameters": {"type": "object", "properties": {
             "match_id": {"type": "string"}}, "required": ["match_id"]}}},
+    {"type": "function", "function": {
+        "name": "set_combat_meta",
+        "description": "Lay the combat foundation on `combat`: combat_model + the stat SYSTEM (you "
+                       "need an hp-like resource_depletable stat so a fight can end) + optional "
+                       "statuses. Call ONCE before authoring abilities. Combat games only.",
+        "parameters": {"type": "object", "properties": {
+            "combat_model": {"type": "string", "description": "'turn_based' (plays today)"},
+            "stats": {"type": "array", "items": {"type": "object"}, "description":
+                "[{id, default, role, min?, max?}] — role: resource_depletable | "
+                "resource_regenerating | modifier | rating"},
+            "statuses": {"type": "array", "items": {"type": "object"}, "description":
+                "optional [{id, name, tick?:[{stat,op,formula}], blocks_action?}]"},
+        }, "required": ["stats"]}}},
+    {"type": "function", "function": {
+        "name": "write_ability",
+        "description": "Author ONE combat ability into `combat` (raises the ability count). Combat "
+                       "games only; stats/statuses must already be declared via set_combat_meta.",
+        "parameters": {"type": "object", "properties": {
+            "ability_id": {"type": "string", "description": "e.g. 'firebolt'"},
+            "content": {"type": "object", "description":
+                "{name, targeting:{shape,faction,range?}, effects:[{stat,op,formula} | "
+                "{status,duration} | {world:{...}}], cost?:[{stat,amount}], requires?:<condition>}"},
+        }, "required": ["ability_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "write_combatant",
+        "description": "Author ONE combatant into `combat` (raises the combatant count). Its "
+                       "abilities must already exist (write_ability). Combat games only.",
+        "parameters": {"type": "object", "properties": {
+            "combatant_id": {"type": "string", "description": "e.g. 'cb_hero'"},
+            "content": {"type": "object", "description":
+                "{character:<a cast id>, stats:[{stat,value}], abilities:[<ability ids>]}"},
+        }, "required": ["combatant_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "write_encounter",
+        "description": "Author ONE encounter into `combat` (raises the encounter count). Its "
+                       "combatants must already exist (write_combatant). Combat games only.",
+        "parameters": {"type": "object", "properties": {
+            "encounter_id": {"type": "string", "description": "e.g. 'enc_crypt'"},
+            "content": {"type": "object", "description":
+                "{background?, combatants:[{ref:<combatant id>, faction:player|enemy|ally|neutral, "
+                "position?}], victory:{all_defeated:<faction>} | {when:<cond>}, defeat?, "
+                "on_victory?:<node_end>, on_defeat?:<node_end>}"},
+        }, "required": ["encounter_id", "content"]}}},
     {"type": "function", "function": {
         "name": "read_component",
         "description": "Read a component you previously wrote.",
@@ -350,6 +409,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     validators + the lock discipline are read from the modules."""
     from maestro.modules.context import build_context
     from maestro.modules import compose
+    from maestro.modules.combat import (combat_meta_error, ability_write_error,
+                                        combatant_write_error, encounter_write_error)
 
     spec = getattr(spec, "data", spec)
     if modules is None:
@@ -516,6 +577,9 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             if text is not None:
                 lines[line_index]["text"] = text
             if speaker is not _UNSET:
+                if not is_narration_speaker(speaker) and not isinstance(speaker, str):
+                    return {"ok": False, "error": "speaker must be a character id STRING (or null "
+                            "for narration), not an object/list"}
                 lines[line_index]["speaker"] = None if is_narration_speaker(speaker) else speaker
             if emotion is not None:
                 if emotion not in _EMOTIONS:
@@ -547,16 +611,21 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         return {"ok": True, "place_id": place_id}
 
     def set_places_meta(goal=None, flags=None, variables=None, start_place=None,
-                        **ignored) -> Dict:
-        """Declare the point-and-click scaffold on `places` — win goal, flags, variables,
-        start_place. write_place never sets these. Merges: only the fields passed change. Stray
-        kwargs (e.g. the model jamming `nodes=` or `items=` here) are ignored, not a crash — but note
-        them so the model learns this tool can't touch that."""
+                        start_spawn=None, **ignored) -> Dict:
+        """Declare the scaffold on `places` — win goal, flags, variables, start_place, and (walkable
+        RPG only) start_spawn, the player's arrival TILE in start_place. write_place never sets these.
+        Merges: only the fields passed change. Stray kwargs (e.g. the model jamming `nodes=` or
+        `items=` here) are ignored, not a crash — but note them so the model learns this tool can't
+        touch that."""
         if ignored:
             return {"ok": False, "error":
                     f"set_places_meta does not take {sorted(ignored)} — it only declares goal/flags/"
-                    f"variables/start_place. Items live in the `items` catalogue "
+                    f"variables/start_place/start_spawn. Items live in the `items` catalogue "
                     f"(write_component('items', ...)); for hotspots use add_interactable/edit_place."}
+        if start_spawn is not None and _cell_xy(start_spawn) is None:
+            return {"ok": False, "error":
+                    "start_spawn must be a tile {\"cell\": {\"x\": <int>, \"y\": <int>}} — the "
+                    "player's start tile on a walkable map"}
         _require_frozen()
         if _locked("places"):
             return _locked_error("places")
@@ -574,9 +643,12 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             places["variables"] = variables
         if start_place is not None:
             places["start_place"] = start_place
+        if start_spawn is not None:
+            places["start_spawn"] = start_spawn
         state.write_component("places", places)
         return {"ok": True, "goal": places.get("goal"),
-                "flags": places.get("flags"), "start_place": places.get("start_place")}
+                "flags": places.get("flags"), "start_place": places.get("start_place"),
+                "start_spawn": places.get("start_spawn")}
 
     def edit_place(place_id: str, interactable_id: str, action: Optional[Dict] = None,
                    position: Optional[Dict] = None, label: Optional[str] = None) -> Dict:
@@ -685,6 +757,76 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": f"no match {match_id!r}"}
         return {"ok": True, "match_id": match_id, "content": m}
 
+    # ── combat: the doc is grown ONE slice at a time (dependency order), each validated against the
+    #    already-declared upstream ids at write time. set_combat_meta lays stats/statuses; the write_*
+    #    tools id-merge into the list slices (replace-by-id, else append). ──────────────────────────
+    def _combat_write(slice_key, item_id, content, validate):
+        _require_frozen()
+        if _locked("combat"):
+            return _locked_error("combat")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object"}
+        combat = state.read_component("combat") or {}
+        if not combat.get("stats"):
+            return {"ok": False, "error": "declare the stat system first with "
+                    "set_combat_meta(combat_model=..., stats=[...]) before authoring " + slice_key}
+        full = {**content, "id": item_id}
+        err = validate(full, combat)
+        if err:
+            return {"ok": False, "error": err}
+        rows = combat.setdefault(slice_key, [])
+        for i, row in enumerate(rows):
+            if isinstance(row, dict) and row.get("id") == item_id:
+                rows[i] = full
+                break
+        else:
+            rows.append(full)
+        state.write_component("combat", combat)
+        return {"ok": True, "id": item_id}
+
+    def set_combat_meta(combat_model=None, stats=None, statuses=None, **ignored) -> Dict:
+        """Lay the combat foundation on `combat`: the combat_model + the stat SYSTEM (you need an
+        hp-like resource_depletable stat) + any statuses. Merges (pass only what changes). The
+        abilities/combatants/encounters are grown by write_ability/write_combatant/write_encounter."""
+        if ignored:
+            return {"ok": False, "error":
+                    f"set_combat_meta does not take {sorted(ignored)} — only combat_model/stats/"
+                    f"statuses. Abilities/combatants/encounters use write_ability/write_combatant/"
+                    f"write_encounter."}
+        _require_frozen()
+        if _locked("combat"):
+            return _locked_error("combat")
+        combat = state.read_component("combat") or {}
+        model = combat_model if combat_model is not None else combat.get("combat_model", "turn_based")
+        new_stats = stats if stats is not None else combat.get("stats")
+        new_statuses = statuses if statuses is not None else combat.get("statuses", [])
+        err = combat_meta_error(model, new_stats, new_statuses)
+        if err:
+            return {"ok": False, "error": err}
+        combat["combat_model"] = model
+        if stats is not None:
+            combat["stats"] = stats
+        if statuses is not None:
+            combat["statuses"] = statuses
+        combat.setdefault("statuses", new_statuses or [])
+        state.write_component("combat", combat)
+        return {"ok": True, "combat_model": model,
+                "stats": [s.get("id") for s in combat.get("stats", [])],
+                "statuses": [s.get("id") for s in combat.get("statuses", [])]}
+
+    def write_ability(ability_id: str, content) -> Dict:
+        """Author ONE combat ability into `combat` (validated against the declared stats/statuses)."""
+        return _combat_write("abilities", ability_id, content, ability_write_error)
+
+    def write_combatant(combatant_id: str, content) -> Dict:
+        """Author ONE combatant into `combat` (validated against the declared stats/abilities)."""
+        return _combat_write("combatants", combatant_id, content, combatant_write_error)
+
+    def write_encounter(encounter_id: str, content) -> Dict:
+        """Author ONE encounter into `combat` (validated against the declared combatants)."""
+        return _combat_write("encounters", encounter_id, content, encounter_write_error)
+
     def generate_asset() -> Dict:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
         _require_frozen()
@@ -748,6 +890,10 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "write_match": write_match,
         "edit_match": edit_match,
         "read_match": read_match,
+        "set_combat_meta": set_combat_meta,
+        "write_ability": write_ability,
+        "write_combatant": write_combatant,
+        "write_encounter": write_encounter,
         "read_component": read_component,
         "read_node": read_node,
         "read_story_state": read_story_state,

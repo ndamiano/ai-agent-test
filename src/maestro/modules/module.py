@@ -102,6 +102,7 @@ class Module(ABC):
     target_tools: Dict[str, frozenset] = {}  # check code -> tools allowed for that target
     target_max_tokens: Dict[str, int] = {}   # check code -> output ceiling (default: the build cap)
     projector: Optional[Callable] = None     # (artifact) -> the compact graph view for this component
+    create_guards: Dict[str, Dict] = {}      # count-error code -> slot guard for its create tool
 
     @abstractmethod
     def get_errors(self, context) -> List[Error]:
@@ -137,10 +138,6 @@ class Module(ABC):
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
 
-    def render_progress(self, view: Dict) -> str:
-        """The note a sub-loop appends after each step (live id list + focus). "" = nothing."""
-        return ""
-
     def context_view(self, content: Dict) -> Dict:
         """Trim this component for injection as a settled upstream. Default: inject whole."""
         return content
@@ -173,8 +170,18 @@ class Module(ABC):
 
     def _single_fix(self, context, error: Error, services) -> None:
         """One correction step: build the prompt for this error, let services run it (one LLM call +
-        dispatch). Bounded by the services budget like any fix."""
-        services.run(self.get_correction_prompt(context, error))
+        dispatch). For a count/create error the module registered a slot guard for, the write tool
+        is wrapped so the step can only ADD the next owed item (no overwrite, right slot) — the same
+        invariant the deleted author loop enforced, now on the single step. Bounded by the services
+        budget like any fix."""
+        guard = self.create_guards.get(error.code)
+        dispatch = None
+        if guard:
+            from maestro.services import _create_guard
+            view_fn = lambda: self.view(services.state.load_artifact())
+            dispatch = _create_guard(services.dispatch, view_fn, guard["count_tool"],
+                                     guard["id_key"], guard["id_list_key"], guard["noun"])
+        services.run(self.get_correction_prompt(context, error), dispatch=dispatch)
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────

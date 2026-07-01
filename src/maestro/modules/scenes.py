@@ -12,13 +12,10 @@ Example games:
 
 from typing import Dict, List, Optional
 
-from functools import partial
-
 from maestro import context_render as cr
 from maestro.ir_assemble import EMOTIONS as _EMOTIONS_TUPLE
 from maestro.modules import checks, views
 from maestro.modules.module import Error, ErrorType, Module, register_module
-from maestro.services import author_loop
 
 _END_TYPES = {"jump", "menu", "return", "end"}
 _EMOTIONS = set(_EMOTIONS_TUPLE)
@@ -219,13 +216,9 @@ class Scenes(Module):
     projector = staticmethod(views.node_view)
     projected = True
     emits_compile = True   # a realization terminal: `nodes` stays writable to the end + needs locations
-
-    def get_fix(self, context, error: Error):
-        # Realizing the beats / bootstrapping the first scenes means ADDING nodes — drive the
-        # slot-guarded author loop. Every other node error (wiring, lines, locations) is a single edit.
-        if error.code in ("beats_realized", "build_nodes"):
-            return partial(author_loop, context, error, module=self, guard=_NODE_GUARD)
-        return super().get_fix(context, error)
+    # Adding nodes (realizing beats / bootstrapping the first scene) is slot-guarded; every other
+    # node error (wiring, lines, locations) is a single edit through the plain fix.
+    create_guards = {"beats_realized": _NODE_GUARD, "build_nodes": _NODE_GUARD}
 
     def params(self) -> Dict:
         return {"min_branches": 1, "each_node_min_lines": 3}
@@ -244,13 +237,18 @@ class Scenes(Module):
 
         with_world = "world" in (context.spec.get("modules") or [])
         if story:
-            add(checks.beats_realized(art), "beats_realized")
+            missing = checks.unrealized_beats(art)
+            if missing:
+                errs += checks.slot_errors(len(missing), type=ErrorType.BUILD, code="beats_realized",
+                                           component="nodes", noun="scene")
             add(checks.refs_resolve(art, "story.endings", "nodes.node_ids", from_key="id"),
                 "endings_are_nodes")
         elif owns and not with_world:
             # No story to realize and we own the entry: still need at least one scene to play.
             # (With `world`, nodes are demand-driven by talk-hotspots, so don't bootstrap orphans.)
-            add(checks.count(art, "nodes.node_ids", min=1), "build_nodes")
+            if checks.length(art, "nodes.node_ids") < 1:
+                errs += checks.slot_errors(1, type=ErrorType.BUILD, code="build_nodes",
+                                           component="nodes", noun="scene")
 
         add(checks.node_targets_resolve(art), "node_targets_resolve")
         add(checks.reachable_from_start(art), "reachable_from_start")
@@ -287,18 +285,6 @@ class Scenes(Module):
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
-
-    def render_progress(self, view: Dict) -> str:
-        ids = view.get("node_ids")
-        if not ids:
-            return ""
-        syn = view.get("synopses") or {}
-        listing = ", ".join(f'{i} "{syn[i]}"' if syn.get(i) else i for i in ids)
-        note = [f"CURRENT NODES: {listing}"]
-        if view.get("unreachable"):
-            note.append(f"UNREACHABLE: {view['unreachable']}")
-        note += _render_slot_focus(view)
-        return "\n".join(note)
 
 
 MODULE = Scenes()

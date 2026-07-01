@@ -40,7 +40,7 @@ Three layers:
 |------|------|
 | `run.py` | Orchestrator + CLI. `create_run` → `run_build` → packaged project. `python -m maestro.run "<request>"` proposes, freezes (with your ok), builds. |
 | `agent_loop.py` | The non-LLM loop (`AgentLoop`). Stateless per step; rebuilds context; collects every module's `get_errors`; prioritizes by error **type** (`HUMAN`→`BUILD`→`FIX`) then `Module.priority`; asks the owning module for a `Fix` and runs it. Keeps completion + cross-fix stall; auto-pauses a finished component. Also the pause/cancel/awaiting-human boundaries. |
-| `services.py` | The bounded gateway a `Fix` calls through (connector + tool dispatch + pause/cancel checkpoint + **per-fix step budget**; `BudgetExhausted` is a `BaseException`, so a fix can't churn past its cap). `author_loop` is the shared iterative Fix the content modules return for their count-driven target. |
+| `services.py` | The bounded gateway a `Fix` calls through (connector + tool dispatch + pause/cancel checkpoint + **per-fix step budget**; `BudgetExhausted` is a `BaseException`, so a fix can't churn past its cap). `dispatch` enforces the step's tool scope; a count target is driven by per-slot create-errors (`checks.slot_errors`) one item per step, each write slot-guarded (`_create_guard`). |
 | `context.py` / `views.py` | `Context` (durable per-step snapshot) + `render_dict` (the dict the per-module prompts consume); `views.py` `node_view`/`place_view` graph projections. |
 | `rewrite.py` | `rewrite_node` — regenerate ONE node from a human note, outside the build loop (per-scene control). |
 

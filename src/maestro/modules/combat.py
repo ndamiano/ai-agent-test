@@ -17,12 +17,10 @@ Example games:
   - "duel the four elemental masters of the tower" — cast + world + scenes + combat
 """
 
-from functools import partial
 from typing import Dict, List, Optional
 
 from maestro.modules import checks
 from maestro.modules.module import Error, ErrorType, Module, register_module
-from maestro.services import author_loop
 
 _ROLES = {"resource_depletable", "resource_regenerating", "modifier", "rating"}
 _OPS = {"damage", "heal", "set", "add"}
@@ -433,6 +431,7 @@ class Combat(Module):
     projector = staticmethod(combat_view)
     projected = True
     tool_names = ("set_combat_meta", "write_ability", "write_combatant", "write_encounter")
+    create_guards = _GUARDS   # each count target (abilities/combatants/encounters) is slot-guarded
 
     def params(self) -> Dict:
         return {"min_abilities": 2, "min_combatants": 2, "min_encounters": 1}
@@ -445,13 +444,6 @@ class Combat(Module):
     def get_correction_prompt(self, context, error: Error):
         self._apply_target(error.code)
         return super().get_correction_prompt(context, error)
-
-    def get_fix(self, context, error: Error):
-        self._apply_target(error.code)
-        guard = _GUARDS.get(error.code)
-        if guard:
-            return partial(author_loop, context, error, module=self, guard=guard)
-        return super().get_fix(context, error)
 
     def get_errors(self, context) -> List[Error]:
         art = context.artifact
@@ -468,10 +460,10 @@ class Combat(Module):
         for code, path, floor in (("min_abilities", "combat.abilities", "min_abilities"),
                                   ("min_combatants", "combat.combatants", "min_combatants"),
                                   ("min_encounters", "combat.encounters", "min_encounters")):
-            c = checks.as_error(checks.count(art, path, min=context.param(floor, 1)),
-                                type=ErrorType.BUILD, code=code, component="combat")
-            if c:
-                return [c]
+            gap = context.param(floor, 1) - checks.length(art, path)
+            if gap > 0:
+                return checks.slot_errors(gap, type=ErrorType.BUILD, code=code, component="combat",
+                                          noun=_GUARDS[code]["noun"])
 
         errs: List[Error] = []
         # Structural backstop: cross-slice consistency the per-item writes can't all see at once.
@@ -499,15 +491,6 @@ class Combat(Module):
                 errs.append(Error(type=ErrorType.FIX, code="crossref", component="combat",
                                   message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
         return errs
-
-    def render_progress(self, view: Dict) -> str:
-        if not view:
-            return ""
-        return ("CURRENT COMBAT — "
-                f"abilities: {view.get('ability_ids', [])} | "
-                f"combatants: {view.get('combatant_ids', [])} | "
-                f"encounters: {view.get('encounter_ids', [])}\n"
-                f"DECLARED stats: {view.get('stat_ids', [])} statuses: {view.get('status_ids', [])}")
 
 
 MODULE = Combat()

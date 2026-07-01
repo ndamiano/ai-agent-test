@@ -205,32 +205,32 @@ def test_loop_completes_when_errors_clear(tmp_path):
     assert state.read_component("premise") == {"ok": 1}
 
 
-# ── the author_loop Fix: a create-target driven one item per call ────────────
-from functools import partial
-from maestro.services import author_loop
+# ── count target: fanned to one per-slot create-error, one item authored per step ────
+from maestro.modules import checks
 
 
 class _Counter(Module):
-    """Needs 2 items; its create-target fix is the author_loop adding one per call."""
+    """Needs 2 items; a shortfall fans into per-slot create-errors, and the base single fix (with
+    the slot guard installed from create_guards) adds one item per step."""
     id = "_counter_test"
     component = "items"
     mode_prompt = "nodes_write.txt"     # any existing prompt; content irrelevant to the test
     mode_tools = frozenset({"add"})
+    create_guards = {"need_items": {"count_tool": "add", "id_key": "id", "id_list_key": "ids",
+                                    "noun": "item"}}
 
     def get_errors(self, ctx):
         n = len((ctx.artifact.get("items") or {}).get("ids", []))
-        return [] if n >= 2 else [Error(ErrorType.BUILD, "need_items", "items", "need 2 items")]
+        if n >= 2:
+            return []
+        return checks.slot_errors(2 - n, type=ErrorType.BUILD, code="need_items",
+                                  component="items", noun="item")
 
     def view(self, artifact):
         return {"ids": (artifact.get("items") or {}).get("ids", []), "open_slots": None}
 
     def render_context(self, ctx):
         return "add an item"
-
-    def get_fix(self, context, error):
-        return partial(author_loop, context, error, module=self,
-                       guard={"count_tool": "add", "id_key": "id", "id_list_key": "ids",
-                              "noun": "item"})
 
 
 class _AddConn:
@@ -244,7 +244,7 @@ class _AddConn:
             "name": "add", "arguments": f'{{"id": "item_{self.i}"}}'}}]}}]}
 
 
-def test_author_loop_drives_create_target_to_green(tmp_path):
+def test_count_target_authors_one_item_per_step_to_green(tmp_path):
     state = RunState(tmp_path)
 
     def add(id, **kw):

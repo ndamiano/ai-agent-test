@@ -203,13 +203,12 @@ def test_unreachable_encounter_detected():
     assert any(e.code == "encounters_reachable" and e.path == "enc_1" for e in errs)
 
 
-def test_count_target_drives_the_author_loop_with_a_slice_guard():
-    from functools import partial
-    err = next(e for e in COMBAT.get_errors(_ctx(_art(_combat(abilities=[], combatants=[],
-                                                              encounters=[]))))
-               if e.code == "min_abilities")
-    fix = COMBAT.get_fix(_ctx(_art(_combat(abilities=[]))), err)
-    assert isinstance(fix, partial) and fix.keywords["guard"]["count_tool"] == "write_ability"
+def test_count_target_declares_its_slice_guard():
+    # Each count target is slot-guarded: the module declares the create tool + id keys per code, and
+    # the base single fix installs that guard so a step can only ADD the next slice item.
+    assert COMBAT.create_guards["min_abilities"]["count_tool"] == "write_ability"
+    assert COMBAT.create_guards["min_combatants"]["count_tool"] == "write_combatant"
+    assert COMBAT.create_guards["min_encounters"]["count_tool"] == "write_encounter"
 
 
 def test_target_selects_its_own_skeleton():
@@ -288,7 +287,7 @@ class _StubConn:
         return {"choices": [{"message": {"content": None, "tool_calls": self._tc}}]}
 
 
-def test_author_loop_rejects_a_tool_it_was_not_offered(tmp_path):
+def test_off_scope_tool_is_refused_by_dispatch(tmp_path):
     # The thrash fix: a small model calls a tool named in the prose but NOT offered this step
     # (write_combatant while the target is "author one ability"). dispatch must refuse it.
     from maestro.services import Services, BudgetExhausted

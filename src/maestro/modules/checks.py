@@ -28,6 +28,22 @@ def as_error(result: CheckResult, *, type: ErrorType, code: str, component: str,
                  path=path, ref=ref)
 
 
+def length(artifact: Dict, path: str) -> int:
+    v = _resolve(artifact, path)
+    return len(v) if isinstance(v, (list, dict, str)) else 0
+
+
+def slot_errors(n: int, *, type: ErrorType, code: str, component: str, noun: str) -> List[Error]:
+    """Fan a count shortfall into N per-slot create-errors — one authored item per step, instead of
+    one opaque 'need N' error the loop couldn't see progress on. A distinct `path` per slot gives
+    each a stable identity, so authoring one shrinks the set (visible progress, no false stall)
+    while every still-owed slot persists. The write tool's slot guard decides WHICH concrete item
+    each slot becomes; the slot error only says 'one more is owed'."""
+    return [Error(type=type, code=code, component=component, path=f"#{k:03d}",
+                  message=f"author one more {noun} — {n} still needed to reach the target")
+            for k in range(1, n + 1)]
+
+
 # ── generic primitives (path-addressed data checks) ──────────────────────────
 def _resolve(artifact: Dict, path: str):
     cur = artifact
@@ -158,18 +174,15 @@ def each_node_has_location(artifact: Dict) -> CheckResult:
     return True, None
 
 
-def beats_realized(artifact: Dict) -> CheckResult:
+def unrealized_beats(artifact: Dict) -> List[str]:
+    """Story beats with no scene dramatizing them yet (empty when there's no story). Each one is a
+    slot the scene author still owes a node for."""
     beats = [b.get("id") for b in (artifact.get("story", {}) or {}).get("beats", []) if b.get("id")]
     if not beats:
-        return True, None  # no story beats — nothing to realize
+        return []
     _, nodes = views.nodes_of(artifact)
     covered = {n.get("beat") for n in nodes.values() if n.get("beat")}
-    missing = [b for b in beats if b not in covered]
-    if missing:
-        return False, (f"story beats with no scene yet: {missing} — write a node that dramatizes "
-                       f"each (set the node's `beat` to that beat id). The story (LOCKED COMPONENTS) "
-                       f"holds what each beat is; every beat needs at least one scene.")
-    return True, None
+    return [b for b in beats if b not in covered]
 
 
 def _node_effects(node: Dict) -> List[Dict]:

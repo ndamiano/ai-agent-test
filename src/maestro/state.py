@@ -16,6 +16,8 @@ step rebuilds context from here.
 """
 
 import json
+import os
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -105,8 +107,13 @@ class RunState:
 
     # ── io ────────────────────────────────────────────────────────────────────
     def _write(self, filename: str, data) -> None:
-        (self.run_dir / filename).write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Atomic: a concurrent load_artifact() (parallel fixes) must never read a half-written
+        # file. Write a unique temp in the same dir, then os.replace (atomic on POSIX) — a reader
+        # sees either the old complete file or the new one, never a truncated one.
+        path = self.run_dir / filename
+        tmp = self.run_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
 
     def _read(self, filename: str):
         path = self.run_dir / filename

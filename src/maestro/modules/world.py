@@ -12,12 +12,10 @@ Example games:
 from typing import Dict, List, Optional
 
 from collections import deque
-from functools import partial
 
 from maestro import context_render as cr
 from maestro.modules import checks, views
 from maestro.modules.module import Error, ErrorType, Module, register_module
-from maestro.services import author_loop
 
 _RPG_KINDS = {"world_map", "town", "interior"}
 
@@ -405,6 +403,7 @@ class World(Module):
     projected = True
     emits_compile = True   # a realization terminal: `places` stays writable to the end
     tool_names = ("write_place", "edit_place", "add_interactable", "read_place", "set_places_meta")
+    create_guards = {"min_places": _PLACE_GUARD}   # adding rooms is slot-guarded; everything else edits
 
     @staticmethod
     def _is_rpg(context) -> bool:
@@ -413,9 +412,8 @@ class World(Module):
         return "combat" in (context.spec.get("modules") or [])
 
     def _apply_style(self, context) -> None:
-        # Set the skeleton + author prompt both fix paths read (get_correction_prompt AND author_loop,
-        # which reads module.skeleton/prompts directly), so each emitted prompt shows exactly ONE
-        # mental model — tiles XOR pixels, never mixed. No second module needed.
+        # Set the skeleton + author prompt the correction prompt reads, so each emitted prompt shows
+        # exactly ONE mental model — tiles XOR pixels, never mixed. No second module needed.
         rpg = self._is_rpg(context)
         self.skeleton = SKEL_RPG if rpg else SKEL_PLACES
         self.skeletons = {"places": self.skeleton}
@@ -425,14 +423,6 @@ class World(Module):
     def get_correction_prompt(self, context, error: Error):
         self._apply_style(context)
         return super().get_correction_prompt(context, error)
-
-    def get_fix(self, context, error: Error):
-        self._apply_style(context)
-        # Reaching the place count means ADDING rooms — drive the slot-guarded author loop. Every
-        # other place error (reachability, items) is a single edit.
-        if error.code == "min_places":
-            return partial(author_loop, context, error, module=self, guard=_PLACE_GUARD)
-        return super().get_fix(context, error)
 
     def params(self) -> Dict:
         return {"min_places": 3, "min_interactables": 2}
@@ -447,8 +437,10 @@ class World(Module):
         art = context.artifact
         errs: List[Error] = []
         self._add(errs, checks.exists(art, "places.start_place"), "start_place")
-        self._add(errs, checks.count(art, "places.place_ids", min=context.param("min_places", 3)),
-                  "min_places")
+        gap = context.param("min_places", 3) - checks.length(art, "places.place_ids")
+        if gap > 0:
+            errs += checks.slot_errors(gap, type=ErrorType.BUILD, code="min_places",
+                                       component="places", noun="place")
         self._add(errs, checks.each_place_min_interactables(
             art, min=context.param("min_interactables", 2)), "each_place_min_interactables")
         self._add(errs, checks.places_reachable(art), "places_reachable")
@@ -514,15 +506,6 @@ class World(Module):
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
-
-    def render_progress(self, view: Dict) -> str:
-        ids = view.get("place_ids")
-        if not ids:
-            return ""
-        note = [f"CURRENT PLACES: {', '.join(ids)}"]
-        if view.get("unreachable"):
-            note.append(f"UNREACHABLE: {view['unreachable']}")
-        return "\n".join(note)
 
 
 MODULE = World()

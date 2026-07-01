@@ -6,9 +6,9 @@ per fix and invokes it. The module owns the SHAPE of the fix (one call or an ite
 step budget. When the budget hits zero `infer` raises `BudgetExhausted`, a BaseException a fix cannot
 catch, so even a naive `while True:` fix unwinds back to the loop. Modules never see the connector.
 
-`author_loop` is the shared iterative Fix the content modules return for their count-driven target:
-author ONE item per call behind the slot guard, with working memory, until the target clears (or the
-budget runs out).
+Count-driven targets don't need a bespoke loop: `get_errors` fans a shortfall into one per-slot
+create-error each, so the outer loop authors one item per step (the slot guard, installed on the
+step's dispatch by `Module._single_fix`, keeps each write additive + in order).
 """
 
 import json
@@ -16,16 +16,12 @@ import logging
 from typing import Dict, Optional
 
 from maestro import context_render as cr
-from maestro.modules.context import build_context, render_dict
-from maestro.modules.module import load_prompt, skeleton_guide
 from maestro.run_control import BuildCancelled
 
 logger = logging.getLogger(__name__)
 
 _READ_TOOLS = {"read_node", "read_place", "read_component", "read_story_state"}
 _BUILD_MAX_TOKENS = 8000
-_STALL_LIMIT = 2
-_STALL_HARD = 6   # consecutive no-progress steps after which an author loop abandons the attempt
 
 
 class BudgetExhausted(BaseException):
@@ -169,6 +165,7 @@ class Services:
         self.spent = 0
         self.last_result: Optional[str] = None
         self.last_read: Optional[str] = None
+        self.allowed: Optional[frozenset] = None   # tools in scope for the current step (None = all)
 
     def _report(self, summary: str) -> None:
         self.last_result = summary
@@ -211,6 +208,13 @@ class Services:
         return self.conn.generate_with_tools(messages, schemas, **kw)
 
     def dispatch(self, name, args) -> Dict:
+        # Scope enforcement — the single gate for every fix shape. A small model learns other tool
+        # names from the prompt prose and calls an off-phase tool (e.g. write_combatant while the
+        # step authors an ability); dispatch refuses it rather than thrashing on it. Same source as
+        # the offered schemas, so offer and enforcement can't drift.
+        if self.allowed is not None and name not in self.allowed:
+            return {"ok": False, "error":
+                    f"{name!r} is not available for this step — call one of {sorted(self.allowed)}"}
         fn = self.tools.get(name)
         if fn is None:
             return {"error": f"unknown tool: {name!r}"}
@@ -220,9 +224,12 @@ class Services:
             logger.exception("tool %s failed", name)
             return {"error": f"{name} failed: {e}"}
 
-    def run(self, prompt) -> None:
-        """A stateless single step: infer one tool call from `prompt` and dispatch it."""
+    def run(self, prompt, *, dispatch=None) -> None:
+        """A stateless single step: infer one tool call from `prompt` and dispatch it. `dispatch`
+        overrides self.dispatch — a create fix installs its slot guard this way."""
         from llm_clients.message_builder import MessageBuilder
+        dispatch = dispatch or self.dispatch
+        self.allowed = frozenset(prompt.allowed_tools) or None   # what dispatch enforces this step
         schemas = filter_schemas(prompt.allowed_tools)
         if self.escalate:
             schemas = [s for s in schemas if not s.get("function", {}).get("name", "").startswith("read")]
@@ -231,100 +238,7 @@ class Services:
         if not action.get("tool"):
             self._report("no tool call — model returned prose")
             return
-        result = self.dispatch(action["tool"], action.get("args", {}))
+        result = dispatch(action["tool"], action.get("args", {}))
         self.last_read = _read_payload(action, result)
         self._report(_summarize(action, result))
 
-
-# ── author_loop: the shared iterative Fix ────────────────────────────────────
-def author_loop(context, error, services: Services, *, module, guard: Dict) -> None:
-    """Drive a count-target to green: ONE guarded item per call, with working memory, until the
-    target's error clears. Bounded by `services` (infer raises BudgetExhausted at the cap)."""
-    from llm_clients.message_builder import MessageBuilder
-
-    job = module.job_for(error.code)
-    system = load_prompt(module.prompts.get(job, module.mode_prompt))
-    if module.skeleton:
-        system += "\n\n" + skeleton_guide(module.component, module.skeleton)
-    schemas = filter_schemas(module.tools_for(error.code))
-    allowed = set(module.tools_for(error.code))   # the canonical scope (a tool may lack a schema)
-    view_fn = lambda: module.view(services.state.load_artifact())
-    dispatch = _create_guard(services.dispatch, view_fn, guard["count_tool"], guard["id_key"],
-                             guard["id_list_key"], guard["noun"])
-
-    rd = render_dict(build_context(services.spec, services.state, errors=[error]),
-                     active=module.component, target=error, active_view=view_fn(),
-                     available_tools=module.tools_for(error.code))
-    mb = MessageBuilder(system).add_user(module.render_context(rd))
-
-    def target_met() -> bool:
-        c = build_context(services.spec, services.state)
-        return not any(e.identity() == error.identity() for e in module.get_errors(c))
-
-    escalated = job == "fix"
-    reads_dropped = False
-    stall = 0
-    while True:   # bounded by services.budget — infer() raises BudgetExhausted at the cap
-        response = services.infer(mb.build(), schemas, reasoning="high" if escalated else None)
-        if "error" in response:
-            logger.warning("author_loop LLM error: %s", response["error"])
-            return
-        message = (response.get("choices") or [{}])[0].get("message", {})
-        tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
-        if not tcs:
-            salvaged = salvage_tool_call(message.get("content"), schemas)
-            if salvaged:
-                services._report("salvaged tool call from text response")
-                tcs = [salvaged]
-                message = {**message, "content": None}
-            else:
-                stall += 1
-                services._report("no tool call — model returned text; nudging")
-                if not escalated and stall >= _STALL_LIMIT:
-                    escalated = True
-                if stall > _STALL_LIMIT + 1:
-                    return
-                mb.add_user("You MUST respond with a tool call, not prose. Pick one of the available "
-                            "tools and pass the content as its arguments.")
-                continue
-
-        mb.add_assistant(message.get("content"), tool_calls=tcs)
-        # ENFORCE the scope: a small model ignores the scoped tools and calls one from another phase
-        # (e.g. re-running set_combat_meta while the target is "author one ability") — it knows the
-        # name from the prose, not the schema. dispatch would happily run it, so the loop thrashes.
-        made_progress = False
-        for tc in tcs:
-            name = tc["function"]["name"]
-            if name not in allowed:
-                result = {"ok": False, "error":
-                          f"{name!r} is not available for this step — call one of {sorted(allowed)}"}
-                mb.add_tool_result(tc.get("id", ""), json.dumps(result, ensure_ascii=False)[:800])
-                services._report(_summarize({"tool": name, "args": {}}, result))
-                continue
-            args = parse_args(tc.get("function", {}).get("arguments"))
-            result = dispatch(name, args)
-            mb.add_tool_result(tc.get("id", ""), json.dumps(result, ensure_ascii=False)[:800])
-            err = result.get("error") if isinstance(result, dict) else None
-            if not err and name not in _READ_TOOLS:
-                made_progress = True
-            services._report(_summarize({"tool": name, "args": args}, result))
-
-        stall = 0 if made_progress else stall + 1
-        if stall >= _STALL_LIMIT:
-            escalated = True
-            if not reads_dropped:
-                reads_dropped = True
-                schemas = [s for s in schemas if s.get("function", {}).get("name") not in _READ_TOOLS]
-                allowed -= _READ_TOOLS
-        if stall >= _STALL_HARD:
-            # Genuinely stuck (only tool-rejections, escalation didn't help). Abandon this attempt so
-            # the target doesn't burn its whole budget spinning; the outer loop recollects and can try
-            # a different tack. made_progress resets stall, so a slow-but-advancing target never trips.
-            services._report(f"no progress in {stall} steps — abandoning this fix attempt")
-            return
-
-        note = module.render_progress(view_fn() or {})
-        if note:
-            mb.add_user(note)
-        if target_met():
-            return

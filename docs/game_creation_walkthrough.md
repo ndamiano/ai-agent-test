@@ -91,10 +91,11 @@ The loop is **not an LLM.** Each iteration:
 3. **Prioritize** — sort by error **type** first (`_TYPE_RANK`:
    `HUMAN` → `BUILD` → `FIX`), then by `Module.priority`. So a human todo or a missing
    build artifact is addressed before a content nit.
-4. **Ask the owning module for a fix** — `module.get_fix(error) → Fix`. The module
-   decides the *shape*: the default is one correction step; a count-driven content module
-   (`scenes`, `world`) overrides `get_fix` to return its iterative **`author_loop`** for
-   the create target.
+4. **Ask the owning module for a fix** — `module.get_fix(error) → Fix`. There is one
+   shape: a single correction step. A count-driven target isn't special — its `get_errors`
+   fans the shortfall into one **per-slot create-error** each (`checks.slot_errors`), and
+   the loop authors them one at a time. Each create step's write tool is slot-guarded
+   (`_create_guard`, installed from the module's `create_guards`).
 5. **Run the fix through `Services`** — the bounded gateway (connector + tool dispatch +
    pause/cancel checkpoint + **per-fix step budget**). `BudgetExhausted` is a
    `BaseException`, so a fix physically cannot churn past its cap. The module owns the
@@ -118,7 +119,7 @@ artifact are **never** in here — that's what keeps context ~constant as the ga
 Kill the loop after any step and the next step reconstructs everything from disk.
 
 ### 7. Slot-driven node authoring (why scenes connect)
-While `scenes`' `author_loop` drives the node `count`, a new node must fill an **open
+As `scenes` works through its per-slot node create-errors, a new node must fill an **open
 slot** — a dangling target a written node already points at (`_create_guard`). The graph
 grows only along declared edges, so every scene is reachable, has a known parent, and is
 shown the synopsis breadcrumb of the path leading to it. The `story` component (arc +
@@ -182,7 +183,7 @@ done  ⇔  effective errors empty
 | 4 | `run_build` | `compose` modules + `build_tools` + construct `AgentLoop` |
 | 5 | `AgentLoop.run` | the loop: collect `get_errors` → `get_fix` → run through `Services` |
 | 6 | `context.py` / `render_dict` | minimal context rebuilt from disk each step |
-| 7 | `author_loop` / `_create_guard` | slot-driven node authoring |
+| 7 | `checks.slot_errors` / `_create_guard` | per-slot create-errors, slot-guarded authoring |
 | 8 | `assemble_ir` → `ir_crossref` → project → lint | JSON IR → engine |
 | 9 | `generate_images` + `generate_voices` + `compile_for(distribute=True)` | art + voice + package |
 

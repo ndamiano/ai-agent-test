@@ -205,6 +205,20 @@ def build_background_job(description: str) -> dict:
     }
 
 
+def build_tile_job(theme: str) -> dict:
+    """Return a job for ONE walkable-map terrain tile: a top-down, tileable texture of `theme`
+    (e.g. 'frozen stream', 'temple stone'), via the background t2i workflow. The overworld tiles it
+    across a grid, so ask for a seamless overhead texture with no characters/perspective."""
+    positive = (f"{_BG_QUALITY}, top-down overhead map tile, orthographic bird's-eye view, "
+                f"seamless tileable terrain texture, game map asset, flat even lighting, "
+                f"no characters, no people, no horizon, no text, {theme}")
+    return {
+        "prompt": positive,
+        "workflow_override": _build_background_workflow(
+            _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _BG_NEGATIVE),
+    }
+
+
 def build_cg_job(description: str) -> dict:
     """Return a {prompt, workflow_override} job dict for a full-screen CG illustration."""
     positive = (

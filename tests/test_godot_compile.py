@@ -124,9 +124,9 @@ def test_combat_ir_lifts_into_project(tmp_path):
     # arena/map placeholders rendered so it plays with zero real art
     assert (out / "images" / "bg_crypt.png").exists() or (out / "images" / "crypt.png").exists()
 
-    # The walkable world: RPG places carry a grid + walls, and a tile starts each fight.
+    # The walkable world: RPG places carry a painted tile grid, and a tile starts each fight.
     ov = next(p for p in game["places"] if p["id"] == "overworld")
-    assert ov["kind"] == "world_map" and ov["grid"]["w"] > 0 and ov["impassable"]
+    assert ov["kind"] == "world_map" and ov["tiles"]["rows"]
     combat_tiles = [it for p in game["places"] for it in p["interactables"]
                     if it["action"]["type"] == "start_combat"]
     assert combat_tiles, "no tile starts combat"
@@ -141,7 +141,7 @@ def test_combat_ir_lifts_into_project(tmp_path):
 
 def test_decomposed_rpg_combat_compiles(tmp_path):
     """The shape a REAL build writes: separate on-disk components (a walkable places map with
-    grid/walls/spawn + a combat block + nodes) must assemble + compile to a Godot project — proving
+    tiles/spawn + a combat block + nodes) must assemble + compile to a Godot project — proving
     the module-authored walkable-combat game is buildable, not just the hand-authored showcase IR."""
     (tmp_path / "characters.json").write_text(json.dumps({"characters": [
         {"id": "hero", "name": "Hero"}, {"id": "skel", "name": "Skeleton"}]}))
@@ -169,8 +169,8 @@ def test_decomposed_rpg_combat_compiles(tmp_path):
             "on_defeat": {"type": "end", "ending": "game_over"}}]}))
     (tmp_path / "places.json").write_text(json.dumps({
         "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 1}}, "place_ids": ["z1"],
-        "places": {"z1": {"kind": "world_map", "background": "bg_z", "grid": {"w": 6, "h": 3},
-            "impassable": [{"x": 3, "y": 0}, {"x": 3, "y": 2}],
+        "places": {"z1": {"kind": "world_map",
+            "tiles": {"legend": {}, "rows": ["...#..", "......", "...#.."]},
             "interactables": [
                 {"id": "foe", "label": "Skeleton", "position": {"cell": {"x": 4, "y": 1}},
                  "action": {"type": "start_combat", "encounter": "enc1"}},
@@ -186,7 +186,7 @@ def test_decomposed_rpg_combat_compiles(tmp_path):
     assert game["genre"] == "rpg"
     assert game["start"] == {"place": "z1", "spawn": {"cell": {"x": 0, "y": 1}}}
     z1 = next(p for p in game["places"] if p["id"] == "z1")
-    assert z1["kind"] == "world_map" and z1["grid"] == {"w": 6, "h": 3} and len(z1["impassable"]) == 2
+    assert z1["kind"] == "world_map" and z1["tiles"]["rows"] == ["...#..", "......", "...#.."]
     assert {e["id"] for e in game["encounters"]} == {"enc1"}
     assert (tmp_path / "godot_output" / "overworld.gd").exists()
 

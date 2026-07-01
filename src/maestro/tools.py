@@ -227,17 +227,20 @@ TOOL_SCHEMAS: List[Dict] = [
         }, "required": ["node_id"]}}},
     {"type": "function", "function": {
         "name": "write_place",
-        "description": "Write one place into `places`: its background plus interactables (each a "
-                       "position + a structured `action`). Adds it to place_ids. A place is either "
-                       "a point-and-click room (kind 'room', pixel-rect hotspots) OR a walkable RPG "
-                       "tile map (kind 'world_map'/'town'/'interior', cell positions + a grid).",
+        "description": "Write one place into `places`: its interactables (each a position + a "
+                       "structured `action`), plus a backdrop (room) or a tile map (walkable). Adds "
+                       "it to place_ids. A place is either a point-and-click room (kind 'room', "
+                       "pixel-rect hotspots + background) OR a walkable RPG map (kind "
+                       "'world_map'/'town'/'interior', a `tiles` char grid + cell positions).",
         "parameters": {"type": "object", "properties": {
             "place_id": {"type": "string", "description": "e.g. 'room_kitchen' or 'zone_crypt'"},
             "content": {"type": "object", "description":
                 "{kind: 'room' (point-and-click) | 'world_map'|'town'|'interior' (walkable RPG), "
-                "background: <asset id>, interactables: [{id, label, position, action:{type, ...}}], "
-                "grid:{w,h} (RPG ONLY, required), impassable:[{x,y}] (RPG wall tiles)}. A position is "
-                "{rect:{x,y,w,h}} for a room or {cell:{x,y}} for an RPG tile."},
+                "interactables: [{id, label, position, action:{type, ...}}], "
+                "background: <asset id> (ROOM only), "
+                "tiles: {legend:{<char>:{role:'open'|'blocked', theme}}, rows:['..','..']} (RPG "
+                "ONLY, required — the map painted as char rows; grid size = shape of rows). A "
+                "position is {rect:{x,y,w,h}} for a room or {cell:{x,y}} for an RPG tile."},
         }, "required": ["place_id", "content"]}}},
     {"type": "function", "function": {
         "name": "edit_place",

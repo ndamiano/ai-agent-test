@@ -1,15 +1,55 @@
-# Overworld presenter — a walkable RPG tile grid. Renders place.grid as cells, drops the avatar at
-# the arrival spawn, and steps it one cell per WASD/arrow press (blocked by place.impassable and the
-# grid edge). Triggering is HYBRID: walking ONTO a move/start_combat cell auto-fires it (you walk
-# through the doorway / into the monster); for talk/examine/take/use/win you stand on the cell and
-# press E. Every verb resolves through the shared Game.run_action — this file owns only movement +
-# layout. One place at a time, mirroring pnc.run_place's signature/return contract.
+# Overworld presenter — a walkable RPG tile grid. Renders place.tiles (rows of chars, each resolved
+# via tiles.legend to an open/blocked role + a cosmetic theme) as coloured tiles, drops the avatar at
+# the arrival spawn, and steps it one cell per WASD/arrow press (blocked by wall tiles and the grid
+# edge). The map IS the scene — no background image behind it. Grid is any size (it's just the shape
+# of rows). Triggering is HYBRID: walking ONTO a move/start_combat cell auto-fires it; for
+# talk/examine/take/use/win you stand on the cell and press E. Every verb resolves through the shared
+# Game.run_action — this file owns only movement + layout. One place at a time, mirroring
+# pnc.run_place's signature/return contract.
 extends RefCounted
 
-const _TILE_MAX := 96
+const _TILE_MAX := 88
 const _HINT := "WASD / Arrows: move    E: interact"
 
+# The built-in tile vocabulary (mirrors world.DEFAULT_LEGEND) — chars a map can use without a legend
+# entry. A place's own tiles.legend overrides/extends this per char.
+const _DEFAULTS := {
+	".": {"role": "open", "theme": "ground"},
+	",": {"role": "open", "theme": "path"},
+	"#": {"role": "blocked", "theme": "wall"},
+	"T": {"role": "blocked", "theme": "tree"},
+	"~": {"role": "blocked", "theme": "water"},
+	"%": {"role": "blocked", "theme": "rock"},
+}
+
+# Keyword -> base colour, scanned against a tile's theme so common terrain reads right (water blue,
+# tree green, snow white). An unknown theme falls back to a hash of the string, so distinct themes
+# still get distinct, stable colours.
+const _PALETTE := {
+	"water": Color(0.20, 0.38, 0.62), "river": Color(0.20, 0.38, 0.62),
+	"stream": Color(0.22, 0.40, 0.60), "sea": Color(0.18, 0.36, 0.60),
+	"tree": Color(0.20, 0.42, 0.24), "forest": Color(0.18, 0.40, 0.22),
+	"pine": Color(0.20, 0.40, 0.26), "grass": Color(0.30, 0.52, 0.30),
+	"snow": Color(0.80, 0.84, 0.90), "ice": Color(0.66, 0.78, 0.85),
+	"path": Color(0.52, 0.42, 0.28), "road": Color(0.50, 0.40, 0.28),
+	"trail": Color(0.50, 0.42, 0.30), "dirt": Color(0.46, 0.36, 0.26),
+	"ground": Color(0.42, 0.44, 0.34), "sand": Color(0.72, 0.64, 0.42),
+	"wall": Color(0.34, 0.32, 0.36), "stone": Color(0.40, 0.40, 0.44),
+	"rock": Color(0.36, 0.36, 0.40), "cliff": Color(0.34, 0.33, 0.36),
+	"lava": Color(0.66, 0.24, 0.16), "ash": Color(0.34, 0.31, 0.31),
+	"floor": Color(0.40, 0.38, 0.42), "mud": Color(0.40, 0.33, 0.24),
+}
+
+# Marker colour by the interactable's verb, so exits/fights/NPCs read at a glance.
+const _MARKERS := {
+	"move": Color(0.35, 0.80, 0.45), "start_combat": Color(0.86, 0.32, 0.30),
+	"talk": Color(0.34, 0.70, 0.92), "win": Color(0.96, 0.82, 0.24),
+	"take": Color(0.92, 0.60, 0.26), "examine": Color(0.78, 0.78, 0.82),
+	"use": Color(0.66, 0.56, 0.90),
+}
+
 var g  # Game driver
+var _tex_cache := {}  # theme -> texture-or-null, so a map of many same-theme cells loads art once
 
 
 func _init(game) -> void:
@@ -18,13 +58,24 @@ func _init(game) -> void:
 
 func run_place(place_id, spawn):
 	var place = g.place_by_id[place_id]
-	var grid = place.get("grid", {"w": 8, "h": 6})
-	var gw := int(grid.get("w", 8))
-	var gh := int(grid.get("h", 6))
+	var tiles = place.get("tiles", {})
+	var rows: Array = tiles.get("rows", [])
+	var legend: Dictionary = tiles.get("legend", {})
+
+	var gh := rows.size()
+	var gw := 0
+	for r in rows:
+		gw = max(gw, String(r).length())
+	if gw == 0 or gh == 0:
+		gw = 8
+		gh = 6
 
 	var blocked := {}
-	for cell in place.get("impassable", []):
-		blocked[_key(cell["x"], cell["y"])] = true
+	for y in rows.size():
+		var row := String(rows[y])
+		for x in row.length():
+			if _spec_of(row[x], legend).get("role", "open") == "blocked":
+				blocked[_key(x, y)] = true
 
 	var inter := {}  # "x,y" -> interactable, for cells that carry one
 	for it in place.get("interactables", []):
@@ -37,7 +88,7 @@ func run_place(place_id, spawn):
 	var ox := (1280 - tile * gw) / 2
 	var oy := (720 - tile * gh) / 2
 
-	var layer := _build_layer(place, gw, gh, tile, ox, oy, blocked, inter)
+	var layer := _build_layer(rows, legend, gw, gh, tile, ox, oy, inter)
 
 	var ax := 0
 	var ay := 0
@@ -72,21 +123,21 @@ func run_place(place_id, spawn):
 				_place_avatar(avatar, ax, ay, tile, ox, oy)
 				var it = inter.get(_key(ax, ay))
 				if it != null and it["action"]["type"] in ["move", "start_combat"]:
-					var r = await _fire(layer, place, it)
+					var r = await _fire(layer, it)
 					if r != null:
 						return r
 
 		if Input.is_action_just_pressed("interact"):
 			var it = inter.get(_key(ax, ay))
 			if it != null and not (it["action"]["type"] in ["move", "start_combat"]):
-				var r = await _fire(layer, place, it)
+				var r = await _fire(layer, it)
 				if r != null:
 					return r
 
 
 # Run a verb through Game, hiding the grid while dialogue/combat owns the screen. Returns a
 # WIN/END/{move} result to bubble up, or null to keep exploring (and restores the map).
-func _fire(layer: Control, place, it) -> Variant:
+func _fire(layer: Control, it) -> Variant:
 	layer.visible = false
 	var r = await g.run_action(it["action"])
 	# Check the {move} dict BEFORE the string compares — Godot 4 errors on Dictionary == String.
@@ -96,47 +147,130 @@ func _fire(layer: Control, place, it) -> Variant:
 	elif r == g.WIN or r == g.END:
 		layer.queue_free()
 		return r
-	g.set_scene(place.get("background"))
+	g.set_scene(null)
 	layer.visible = true
 	g.set_hud(_HINT)
 	return null
 
 
 # ── rendering ────────────────────────────────────────────────────────────────────────────────
-func _build_layer(place, gw, gh, tile, ox, oy, blocked, inter) -> Control:
-	g.set_scene(place.get("background"))
+func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
+	g.set_scene(null)  # the tiles ARE the scene — no backdrop image
 	for c in g.sprites_node().get_children():
 		c.queue_free()
 	var layer := Control.new()
 	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.add_child(layer)
+
 	for cy in gh:
+		var row := String(rows[cy]) if cy < rows.size() else ""
 		for cx in gw:
-			var cell := ColorRect.new()
-			cell.position = Vector2(ox + cx * tile + 1, oy + cy * tile + 1)
-			cell.size = Vector2(tile - 2, tile - 2)
-			cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			var k := _key(cx, cy)
-			if blocked.has(k):
-				cell.color = Color(0.18, 0.18, 0.24)
-			elif inter.has(k):
-				cell.color = Color(0.28, 0.34, 0.5)
+			var ch := row.substr(cx, 1) if cx < row.length() else "."
+			var spec = _spec_of(ch, legend)
+			var role := String(spec.get("role", "open"))
+			var theme := String(spec.get("theme", ""))
+			# inset 1px so the dark scene shows through as thin grid lines
+			var pos := Vector2(ox + cx * tile + 1, oy + cy * tile + 1)
+			var siz := Vector2(tile - 2, tile - 2)
+			var tex = _tile_texture(theme)
+			if tex != null:
+				var tr := TextureRect.new()
+				tr.texture = tex
+				tr.position = pos
+				tr.size = siz
+				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				tr.stretch_mode = TextureRect.STRETCH_SCALE
+				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if role == "blocked":
+					tr.modulate = Color(0.68, 0.68, 0.74)  # dim walls so they still read as walls
+				layer.add_child(tr)
 			else:
-				cell.color = Color(0.16, 0.5, 0.32, 0.55)
-			layer.add_child(cell)
-			if inter.has(k):
-				var lbl := Label.new()
-				lbl.text = inter[k].get("label", "")
-				lbl.position = cell.position
-				lbl.size = cell.size
-				lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-				lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-				lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				lbl.add_theme_font_size_override("font_size", 14)
-				lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-				layer.add_child(lbl)
+				var cell := ColorRect.new()
+				cell.position = pos
+				cell.size = siz
+				cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				cell.color = _tile_color(role, theme)
+				layer.add_child(cell)
+
+	for k in inter:
+		var it = inter[k]
+		var cell = it["position"]["cell"]
+		var cx := int(cell["x"])
+		var cy := int(cell["y"])
+		var m = tile * 0.52
+		var marker := ColorRect.new()
+		marker.position = Vector2(ox + cx * tile + (tile - m) / 2, oy + cy * tile + (tile - m) / 3)
+		marker.size = Vector2(m, m)
+		marker.color = _MARKERS.get(it["action"].get("type", ""), Color(0.85, 0.85, 0.85))
+		marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(marker)
+		var lbl := Label.new()
+		lbl.text = it.get("label", "")
+		lbl.position = Vector2(ox + cx * tile - tile * 0.5, oy + cy * tile + tile * 0.66)
+		lbl.size = Vector2(tile * 2.0, tile * 0.34)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		lbl.add_theme_font_size_override("font_size", 12)
+		lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+		lbl.add_theme_constant_override("shadow_offset_x", 1)
+		lbl.add_theme_constant_override("shadow_offset_y", 1)
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(lbl)
 	return layer
+
+
+func _spec_of(ch, legend: Dictionary) -> Dictionary:
+	if legend.has(ch):
+		return legend[ch]
+	return _DEFAULTS.get(ch, {"role": "open", "theme": ""})
+
+
+# Generated terrain texture for a theme (tile_<slug>.png), or null when there's no art — the caller
+# colour-fills instead. Cached per theme so a big same-theme map loads the file once.
+func _tile_texture(theme: String):
+	if _tex_cache.has(theme):
+		return _tex_cache[theme]
+	var tex = null
+	if theme != "":
+		tex = g._texture_file("tile_%s.png" % _slug(theme))
+	_tex_cache[theme] = tex
+	return tex
+
+
+# Byte-for-byte the same rule as renpy/fns.tile_slug so the filename the generator wrote matches.
+func _slug(s: String) -> String:
+	var out := ""
+	var prev_us := false
+	for i in s.length():
+		var c := s.substr(i, 1).to_lower()
+		if (c >= "a" and c <= "z") or (c >= "0" and c <= "9"):
+			out += c
+			prev_us = false
+		elif not prev_us:
+			out += "_"
+			prev_us = true
+	return out.trim_prefix("_").trim_suffix("_")
+
+
+func _tile_color(role: String, theme: String) -> Color:
+	var t := theme.to_lower()
+	var col := Color(0.40, 0.42, 0.38)
+	var hit := false
+	for kw in _PALETTE:
+		if t.contains(kw):
+			col = _PALETTE[kw]
+			hit = true
+			break
+	if not hit and theme != "":
+		var h := 0
+		for i in theme.length():
+			h = (h * 31 + theme.unicode_at(i)) % 360
+		col = Color.from_hsv(h / 360.0, 0.32, 0.48)
+	if role == "blocked":
+		col = col.darkened(0.28)
+	return col
 
 
 func _make_avatar(tile) -> Control:

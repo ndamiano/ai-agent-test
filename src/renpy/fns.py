@@ -34,10 +34,48 @@ def _nodes_list(inputs: Dict) -> List[Dict]:
             for nid in (nodes_comp.get("node_ids", []) or [])]
 
 
+_TILE_SLUG_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def tile_slug(theme: str) -> str:
+    """Filename slug for a tile theme (a walkable map's `theme` string) -> `tile_<slug>.png`. Kept
+    byte-for-byte in sync with overworld.gd's _slug so the generator and the runtime agree on the
+    filename: lowercase, [a-z0-9] kept, every other run collapses to one '_', ends trimmed."""
+    out: List[str] = []
+    prev_us = False
+    for ch in theme.lower():
+        if ch in _TILE_SLUG_CHARS:
+            out.append(ch)
+            prev_us = False
+        elif not prev_us:
+            out.append("_")
+            prev_us = True
+    return "".join(out).strip("_")
+
+
+def _collect_tile_themes(places_comp: Dict) -> List[str]:
+    """Every distinct tile `theme` a walkable map renders (legend entries + the default chars its
+    rows actually use), so each gets one generated terrain texture. Empty for VN/PnC games."""
+    from maestro.modules.world import DEFAULT_LEGEND, _RPG_KINDS
+
+    themes: Dict[str, bool] = {}
+    for place in ((places_comp or {}).get("places") or {}).values():
+        if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS:
+            continue
+        tiles = place.get("tiles") or {}
+        merged = {**DEFAULT_LEGEND, **(tiles.get("legend") or {})}
+        for row in tiles.get("rows") or []:
+            for ch in row:
+                spec = merged.get(ch)
+                if isinstance(spec, dict) and spec.get("theme"):
+                    themes[spec["theme"]] = True
+    return list(themes)
+
+
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     from tools.comfyui_tools import (
         build_character_job, build_background_job, build_cg_job, build_title_card_job,
-        build_character_emotion_job, upload_image, vram_bracket, run_jobs,
+        build_character_emotion_job, build_tile_job, upload_image, vram_bracket, run_jobs,
     )
     from maestro.ir_assemble import used_emotions, expression_file
 
@@ -136,6 +174,23 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
             print(f"    [images]  generating {len(emo_jobs)} expression variant(s)")
             for meta, result in zip(emo_meta, run_jobs(emo_jobs)):
                 _place(meta, result)
+
+        # --- tile pass: one terrain texture per distinct walkable-map theme. On failure we skip
+        # (no placeholder) so the overworld falls back to its computed theme colour — a solid block
+        # is no better than the colour, and this keeps a no-ComfyUI build looking intentional. ----
+        tile_themes = _collect_tile_themes(inputs.get("places", {}))
+        if tile_themes:
+            tile_meta = [{"file": f"tile_{tile_slug(t)}.png",
+                          "dest": images_dir / f"tile_{tile_slug(t)}.png"} for t in tile_themes]
+            print(f"    [images]  generating {len(tile_themes)} map tile(s)")
+            for meta, result in zip(tile_meta, run_jobs([build_tile_job(t) for t in tile_themes])):
+                if result.get("success") and result.get("saved_paths"):
+                    shutil.copy2(result["saved_paths"][0], meta["dest"])
+                    generated.append(meta["file"])
+                    print(f"    [images]  ok: {meta['file']}")
+                else:
+                    print(f"    [images]  tile failed ({result.get('error', 'unknown')}), "
+                          f"colour fallback: {meta['file']}")
 
     return {"status": "ok", "generated": generated, "failed": failed}
 

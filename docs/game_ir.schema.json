@@ -153,7 +153,7 @@
       "allOf": [
         {
           "if": { "properties": { "kind": { "enum": ["world_map", "town", "interior"] } } },
-          "then": { "required": ["grid"] }
+          "then": { "required": ["tiles"] }
         }
       ],
       "properties": {
@@ -162,27 +162,31 @@
           "enum": ["room", "world_map", "town", "interior"],
           "description": "room = PnC scene (click hotspots); world_map/town/interior = RPG (a walkable tile grid). The runtime picks the presenter from this — room => point-and-click, the rest => the WASD overworld. The compiler picks the engine projection from it too."
         },
-        "background": { "type": "string", "description": "Asset id for the backdrop/map image." },
-        "grid": {
+        "background": { "type": "string", "description": "Asset id for a PnC room's backdrop. Walkable maps render their tiles and need no background." },
+        "tiles": {
           "type": "object",
-          "description": "RPG tile dimensions in cells. Required for world_map/town/interior; ignored for room. interactable/spawn cells must lie within [0,w) x [0,h).",
-          "required": ["w", "h"],
+          "description": "RPG map painted as a char grid. Required for world_map/town/interior; ignored for room. Grid size = the shape of `rows`. Each char resolves via `legend` (or the built-in defaults) to a role: open (walkable) or blocked (wall). interactable/spawn cells must be open tiles within [0,width) x [0,height).",
+          "required": ["rows"],
           "additionalProperties": false,
           "properties": {
-            "w": { "type": "integer", "exclusiveMinimum": 0 },
-            "h": { "type": "integer", "exclusiveMinimum": 0 }
-          }
-        },
-        "impassable": {
-          "type": "array",
-          "description": "RPG wall cells the avatar cannot step onto. Pure navigation — no interactable, no action.",
-          "items": {
-            "type": "object",
-            "required": ["x", "y"],
-            "additionalProperties": false,
-            "properties": {
-              "x": { "type": "integer", "minimum": 0 },
-              "y": { "type": "integer", "minimum": 0 }
+            "rows": {
+              "type": "array",
+              "description": "One string per grid row (top to bottom); each char is a tile. All rows same length.",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "legend": {
+              "type": "object",
+              "description": "Maps a single tile char -> its role + theme. Built-in defaults ('.'ground ','path '#'wall 'T'tree '~'water '%'rock) need no entry; declare only new chars or overrides.",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["role"],
+                "additionalProperties": false,
+                "properties": {
+                  "role": { "enum": ["open", "blocked"], "description": "open = walkable, blocked = wall/obstacle. The only tile property the engine reads." },
+                  "theme": { "type": "string", "description": "Free cosmetic label (drives the tile's look), e.g. 'frozen stream', 'neon barrier'." }
+                }
+              }
             }
           }
         },

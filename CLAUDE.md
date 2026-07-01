@@ -110,7 +110,14 @@ src/
                 runtime/Game.gd drives a PRESENTERS
                 registry keyed on place.kind: `room` => pnc.gd (click hotspots), `world_map/town/
                 interior` => overworld.gd (a WASD/arrow-key walkable tile grid — step ONTO a
-                move/start_combat cell to fire it, press E on a talk/examine/take/use/win cell).
+                move/start_combat cell to fire it, press E on a talk/examine/take/use/win cell). A
+                walkable place is PAINTED as `tiles` (a char grid: `rows` of tile chars + a `legend`
+                mapping each char to a role — open/blocked = the only thing play reads — plus a free
+                `theme` string). The grid size is just the shape of rows (any size), passability is
+                derived from role (no separate `impassable`), and the map renders from the tiles —
+                no background image. Each distinct theme gets one generated top-down terrain texture
+                (renpy/fns.generate_images tile pass via comfyui build_tile_job → tile_<slug>.png);
+                the presenter loads it per cell and colour-fills when art is absent.
                 Game.run_action is the one shared verb dispatch both presenters call, so a new
                 navigation modality = a new presenter + one registry entry, never a router edit.
                 docs/examples/combat_game.json is the hand-authored showcase exercising the full

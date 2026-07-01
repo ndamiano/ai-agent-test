@@ -8,9 +8,12 @@ HOLD ONE ART DIRECTION across everything — a single style, palette, and lighti
 fold it into every description so the game looks coherent rather than like clip art from
 five sources.
 
-BACKGROUNDS — one per distinct location the story uses, id prefixed `bg_`. Each description
-is a SELF-CONTAINED image-generation prompt (2-3 sentences) that bakes in the style,
-palette, and lighting inline (the generator sees only this text).
+BACKGROUNDS — id prefixed `bg_`. Each description is a SELF-CONTAINED image-generation prompt
+(2-3 sentences) that bakes in the style, palette, and lighting inline (the generator sees only
+this text). Author a background for each full-screen setting the game DISPLAYS: a point-and-click
+room, a full-screen story scene, and a distinct COMBAT ARENA (one per encounter setting). Do NOT
+author a background per walkable RPG zone — a world_map/town/interior map is drawn from its own
+tiles and shows no backdrop image, so a per-zone `bg_` would be generated and never seen.
 
 CHARACTERS — one per cast character, id EXACTLY matching the `characters` component id. Describe
 appearance concretely — hair, eyes, build, clothing, distinguishing marks — so the sprite

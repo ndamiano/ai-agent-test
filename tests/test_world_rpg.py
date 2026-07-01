@@ -1,7 +1,8 @@
-"""Walkable RPG authoring: the `world` module emits/validates tile maps (cell/grid/impassable/spawn)
-when `combat` is in the module set, and point-and-click rooms otherwise. Covers the spatial validator
-(the loop's gate against a small model's bad layout), the tool plumbing (set_places_meta start_spawn),
-the assemble lift (start.spawn + genre), and the context-driven style selection."""
+"""Walkable RPG authoring: the `world` module emits/validates tile maps (tiles.legend/rows + cell
+spawns) when `combat` is in the module set, and point-and-click rooms otherwise. Covers the spatial
+validator (the loop's gate against a small model's bad layout), the return-trip connectivity gate,
+the tool plumbing (set_places_meta start_spawn), the assemble lift (start.spawn + genre), and the
+context-driven style selection."""
 import copy
 import sys
 from pathlib import Path
@@ -14,16 +15,20 @@ from maestro.tools import build_tools
 from maestro.ir_assemble import assemble_ir
 from maestro.modules.module import Error, ErrorType, load_prompt
 from maestro.modules.world import (
-    MODULE as WORLD, SKEL_RPG, SKEL_PLACES, _rpg_world_error)
+    MODULE as WORLD, SKEL_RPG, SKEL_PLACES, _rpg_world_error, _return_path_error)
 
 
-# A valid 4x3 interior: spawn (0,1), enemy tile (3,1), sign (1,1), two walls that don't seal anyone.
+def _tiles(rows):
+    return {"legend": {}, "rows": rows}
+
+
+# A valid 4x3 interior: spawn (0,1), enemy tile (3,1), sign (1,1), two walls (default '#') that don't
+# seal anyone (col 2 is open on the middle row).
 _VALID = {
     "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 1}},
     "place_ids": ["z1"],
     "places": {"z1": {
-        "kind": "interior", "background": "bg_z", "grid": {"w": 4, "h": 3},
-        "impassable": [{"x": 2, "y": 0}, {"x": 2, "y": 2}],
+        "kind": "interior", "tiles": _tiles(["..#.", "....", "..#."]),
         "interactables": [
             {"id": "enemy", "label": "Foe", "position": {"cell": {"x": 3, "y": 1}},
              "action": {"type": "start_combat", "encounter": "e"}},
@@ -56,8 +61,23 @@ def test_overlapping_tiles_caught():
     assert "two interactables on tile" in _rpg_world_error(bad)
 
 
-def test_interactable_on_wall_caught():
-    assert "on a wall tile" in _rpg_world_error(_z1(impassable=[{"x": 3, "y": 1}]))
+def test_interactable_on_blocked_tile_caught():
+    # Re-paint so the enemy's tile (3,1) is a wall — an interactable can't sit on a blocked tile.
+    assert "on a blocked tile" in _rpg_world_error(_z1(tiles=_tiles(["..#.", "...#", "..#."])))
+
+
+def test_ragged_rows_caught():
+    assert "ragged" in _rpg_world_error(_z1(tiles=_tiles(["....", "..", "...."])))
+
+
+def test_unknown_char_caught():
+    assert "no legend entry" in _rpg_world_error(_z1(tiles=_tiles(["..Q.", "....", "...."])))
+
+
+def test_custom_legend_char_passes():
+    v = _z1(tiles={"legend": {"W": {"role": "blocked", "theme": "hedge"}},
+                   "rows": ["..W.", "....", "..W."]})
+    assert _rpg_world_error(v) is None
 
 
 def test_walled_off_interactable_caught():
@@ -66,18 +86,17 @@ def test_walled_off_interactable_caught():
     corridor = {
         "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}},
         "place_ids": ["z1"],
-        "places": {"z1": {"kind": "world_map", "grid": {"w": 5, "h": 1},
-            "impassable": [{"x": 2, "y": 0}],
+        "places": {"z1": {"kind": "world_map", "tiles": _tiles(["..#.."]),
             "interactables": [
                 {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
                  "action": {"type": "examine", "text": "t"}}]}}}
     assert "walled off from the spawn" in _rpg_world_error(corridor)
 
 
-def test_missing_grid_caught():
+def test_missing_tiles_caught():
     bad = copy.deepcopy(_VALID)
-    del bad["places"]["z1"]["grid"]
-    assert "needs a 'grid'" in _rpg_world_error(bad)
+    del bad["places"]["z1"]["tiles"]
+    assert "'tiles'" in _rpg_world_error(bad)
 
 
 def test_walkable_start_place_needs_spawn():
@@ -89,7 +108,7 @@ def test_walkable_start_place_needs_spawn():
 def test_move_into_walkable_place_needs_spawn():
     two = copy.deepcopy(_VALID)
     two["place_ids"].append("z2")
-    two["places"]["z2"] = {"kind": "interior", "grid": {"w": 3, "h": 3},
+    two["places"]["z2"] = {"kind": "interior", "tiles": _tiles(["...", "...", "..."]),
         "interactables": [{"id": "back", "position": {"cell": {"x": 0, "y": 0}},
                            "action": {"type": "examine", "text": "t"}}]}
     # a move from z1 -> z2 (walkable) WITHOUT a spawn must be rejected
@@ -103,6 +122,32 @@ def test_pnc_room_is_untouched_by_rpg_checks():
     assert _rpg_world_error({"places": {"r": {"kind": "room", "interactables": [
         {"id": "h", "position": {"rect": {"x": 1, "y": 1, "w": 9, "h": 9}},
          "action": {"type": "examine", "text": "t"}}]}}}) is None
+
+
+# ── return-trip connectivity ───────────────────────────────────────────────────
+
+def _two_zone(z1_moves_back: bool):
+    z1_inter = [{"id": "fwd", "position": {"cell": {"x": 1, "y": 0}},
+                 "action": {"type": "move", "target": "z2", "spawn": {"cell": {"x": 0, "y": 0}}}}]
+    z2_inter = [{"id": "sign", "position": {"cell": {"x": 1, "y": 0}},
+                 "action": {"type": "examine", "text": "t"}}]
+    if z1_moves_back:
+        z2_inter.append({"id": "back", "position": {"cell": {"x": 0, "y": 0}},
+                         "action": {"type": "move", "target": "z1", "spawn": {"cell": {"x": 0, "y": 0}}}})
+    return {"start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}},
+            "place_ids": ["z1", "z2"],
+            "places": {
+                "z1": {"kind": "world_map", "tiles": _tiles([".."]), "interactables": z1_inter},
+                "z2": {"kind": "world_map", "tiles": _tiles([".."]), "interactables": z2_inter}}}
+
+
+def test_one_way_trip_flagged():
+    err = _return_path_error(_two_zone(z1_moves_back=False))
+    assert err and "no way back" in err.lower() and "z2" in err
+
+
+def test_round_trip_passes():
+    assert _return_path_error(_two_zone(z1_moves_back=True)) is None
 
 
 # ── tool plumbing: set_places_meta start_spawn ────────────────────────────────
@@ -129,11 +174,11 @@ def test_set_places_meta_rejects_bad_spawn(tmp_path):
 def test_assemble_lifts_start_spawn_and_genre():
     places = {"place_ids": ["z1"], "start_place": "z1",
               "start_spawn": {"cell": {"x": 1, "y": 2}},
-              "places": {"z1": {"kind": "interior", "grid": {"w": 3, "h": 3}, "background": "bg",
+              "places": {"z1": {"kind": "interior", "tiles": _tiles(["...", "...", "..."]),
                   "interactables": [{"id": "h", "position": {"cell": {"x": 0, "y": 0}},
                                      "action": {"type": "examine", "text": "t"}}]}}}
     ir = assemble_ir({"places": places, "characters": {"characters": []},
-                      "asset_manifest": {"backgrounds": [{"id": "bg", "image_file": "b.png"}]}})
+                      "asset_manifest": {"backgrounds": []}})
     assert ir["genre"] == "rpg"
     assert ir["start"] == {"place": "z1", "spawn": {"cell": {"x": 1, "y": 2}}}
 
@@ -182,8 +227,7 @@ def test_get_errors_emits_rpg_layout_for_broken_map():
     # a combat game whose only zone walls its enemy off — get_errors must surface rpg_layout
     art = {"places": {
         "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}}, "place_ids": ["z1"],
-        "places": {"z1": {"kind": "world_map", "grid": {"w": 5, "h": 1},
-            "impassable": [{"x": 2, "y": 0}],
+        "places": {"z1": {"kind": "world_map", "tiles": _tiles(["..#.."]),
             "interactables": [
                 {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
                  "action": {"type": "start_combat", "encounter": "e"}},
@@ -195,12 +239,20 @@ def test_get_errors_emits_rpg_layout_for_broken_map():
     assert "rpg_layout" in codes
 
 
+def test_get_errors_emits_rpg_connectivity_for_one_way_map():
+    art = {"places": _two_zone(z1_moves_back=False)}
+    ctx = _Ctx(["world", "scenes", "combat"], artifact=art)
+    ctx.spec["params"] = {"min_places": 1, "min_interactables": 1}
+    codes = [e.code for e in WORLD.get_errors(ctx)]
+    assert "rpg_connectivity" in codes
+
+
 def test_combat_game_rejects_a_point_and_click_room():
     # a walkable (combat) game must be all-walkable — a `room` zone starts as a click screen.
     art = {"places": {
         "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}}, "place_ids": ["z1", "r1"],
         "places": {
-            "z1": {"kind": "world_map", "grid": {"w": 3, "h": 3}, "interactables": [
+            "z1": {"kind": "world_map", "tiles": _tiles(["..."]), "interactables": [
                 {"id": "a", "position": {"cell": {"x": 0, "y": 0}}, "action": {"type": "examine", "text": "t"}}]},
             "r1": {"kind": "room", "interactables": [
                 {"id": "b", "position": {"rect": {"x": 1, "y": 1, "w": 9, "h": 9}},

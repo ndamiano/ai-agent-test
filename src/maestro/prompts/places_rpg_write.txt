@@ -6,12 +6,23 @@ component shapes" below. Declare the global scaffold ONCE with
 set_places_meta(goal={"type":"flag","id":"<win_flag>"}, flags=[...], start_place="<first zone id>",
 start_spawn={"cell":{"x":<col>,"y":<row>}}).
 
-A ZONE is a tile grid. Each zone needs:
+You PAINT each zone as a tile map — a grid of chars, one string per row. This is how you actually
+design the space: lay ground and paths where the player walks, and obstacles (trees, walls, water) to
+shape it into rooms, corridors, and clearings. A bordered empty box is a FAILURE — carve real terrain.
+
+A ZONE needs:
 - "kind": "world_map", "town", or "interior" (NOT "room" — that is point-and-click).
-- "grid": {"w": <columns>, "h": <rows>} — REQUIRED.
-- "impassable": [{"x","y"}, ...] — WALL tiles the avatar cannot enter. Carve corridors/rooms with
-  them. A tile is at column x (0..w-1), row y (0..h-1).
-- "interactables": each at a {"cell":{"x","y"}} TILE (grid coordinates, NOT pixels).
+- "tiles": { "legend": {<char>: {"role": ..., "theme": ...}}, "rows": ["...", "..."] }
+  - "rows": one string per grid row, top to bottom. Every row MUST be the same length. The grid size
+    is just the shape of rows — make it as big as the zone needs (e.g. 8-14 wide, 6-10 tall).
+  - "legend": maps each tile char to {"role": "open"|"blocked", "theme": "<what it looks like>"}.
+    role is the ONLY thing that affects play: open = the avatar can walk on it, blocked = a wall it
+    cannot enter. theme is free flavour that drives the tile's look (e.g. "frozen stream", "ash
+    pine", "temple stone"). Use theme to make each zone LOOK like its place.
+  - These default chars need NO legend entry (use them freely): "." ground, "," path, "#" wall,
+    "T" tree, "~" water, "%" rock. Add a legend entry only for a NEW char or to re-theme a default.
+- "interactables": each at a {"cell":{"x","y"}} TILE — x = column (0..width-1), y = row
+  (0..height-1), counting from the TOP-LEFT. It must sit on an OPEN tile.
 
 THE ACTION verbs (one per interactable):
 - examine: {"type": "examine", "text": "what the player sees"}
@@ -30,19 +41,23 @@ TRIGGERING: walking ONTO a move/start_combat tile fires it; talk/examine/take/us
 player presses E while standing on that tile.
 
 LAYOUT RULES (the build will reject a map that breaks these):
-- Every interactable tile and every spawn tile must be INSIDE the grid (0<=x<w, 0<=y<h).
-- Never put an interactable on a wall tile, and never put two interactables on the same tile.
-- Every interactable must be WALKABLE-reachable from the spawn — do not wall it off. Keep walls
-  simple; leave clear paths between the spawn, the exits, and every interactable.
+- rows must be rectangular (all the same length); every char must be a default or in the legend.
+- Put every interactable and every spawn on an OPEN tile, INSIDE the grid.
+- Never put two interactables on the same tile.
+- Every interactable must be WALKABLE-reachable from the spawn over open tiles — do not wall it off.
+  Leave clear paths between the spawn, the exits, and every interactable.
+- Make it a ROUND TRIP: besides its forward exit, give each zone a `move` BACK toward where the
+  player came from, so no zone is a one-way strand.
 
-USE THE GIVEN IDS — background ∈ asset_manifest.backgrounds; item ∈ declared items; talk node ∈
-`nodes`; move target ∈ a zone id (or one you create); start_combat encounter ∈ `combat`; never
-invent or rename.
+USE THE GIVEN IDS — item ∈ declared items; talk node ∈ `nodes`; move target ∈ a zone id (or one you
+create); start_combat encounter ∈ `combat`; never invent or rename. Walkable maps render their tiles
+and need no background image.
 {{include:derive_from_request}}
 
 {{include:conditions_ref}}
 {{include:effects_ref}}
 
-MAKE EACH ZONE REAL — 2+ interactables, each doing something. At least one must `move` (or `win`) so
-no zone is a dead end, and a combat game wires at least one `start_combat` tile. The win flag must be
-set by a reachable use-outcome or a fight, and some interactable must have a `win` action.
+MAKE EACH ZONE REAL — a carved tile layout plus 2+ interactables, each doing something. At least one
+must `move` (or `win`) so no zone is a dead end, and a combat game wires at least one `start_combat`
+tile. The win flag must be set by a reachable use-outcome or a fight, and some interactable must have
+a `win` action.

@@ -165,34 +165,44 @@ def _combatant_error(cb: Dict, stat_ids: set, ability_ids: set) -> Optional[str]
 
 
 def _encounter_error(e: Dict, combatant_ids: set) -> Optional[str]:
+    # Collect ALL independent problems in one pass and report them together. A single encounter
+    # commonly has two at once (a phantom combatant ref AND a bare-string on_victory); surfacing them
+    # one at a time makes a small model ping-pong — fix one, re-introduce the other, forever.
     if not isinstance(e, dict) or not isinstance(e.get("id"), str):
         return "an encounter needs a string 'id'"
+    eid = e["id"]
+    issues: List[str] = []
     ecbs = e.get("combatants")
     if not isinstance(ecbs, list) or not ecbs:
-        return f"encounter['{e['id']}'].combatants must be a non-empty list"
+        issues.append(f"encounter['{eid}'].combatants must be a non-empty list")
+        ecbs = []
     seen_factions = set()
     for slot in ecbs:
         ref = slot.get("ref") if isinstance(slot, dict) else None
         if not isinstance(ref, str) or ref not in combatant_ids:
-            avail = sorted(combatant_ids) or "NONE yet — write_combatant first"
-            return (f"encounter['{e['id']}'] places undeclared combatant {ref!r} — \"ref\" must be "
-                    f"one of the authored combatants {avail}, used EXACTLY. Do not invent ids from "
-                    f"the story/cast.")
+            avail = sorted(combatant_ids) or "NONE yet"
+            issues.append(
+                f"encounter['{eid}'] places undeclared combatant {ref!r} — either reference an "
+                f"already-authored combatant ({avail}) EXACTLY, or author this enemy NOW with "
+                f"write_combatant(combatant_id={ref!r}, ...) and then reference it. Do not leave a "
+                f"ref that no combatant defines.")
+            continue
         if slot.get("faction") not in _FACTIONS:
-            return (f"encounter['{e['id']}'] combatant {ref!r} needs a faction (a string) in "
-                    f"{sorted(_FACTIONS)}")
-        seen_factions.add(slot["faction"])
+            issues.append(f"encounter['{eid}'] combatant {ref!r} needs a faction (a string) in "
+                          f"{sorted(_FACTIONS)}")
+        else:
+            seen_factions.add(slot["faction"])
     if "player" not in seen_factions or not (seen_factions & {"enemy", "neutral"}):
-        return (f"encounter['{e['id']}'] needs at least one 'player' combatant and one opponent "
-                f"('enemy') — otherwise there is no fight")
+        issues.append(f"encounter['{eid}'] needs at least one 'player' combatant and one opponent "
+                      f"('enemy') — otherwise there is no fight")
     if not isinstance(e.get("victory"), dict):
-        return f"encounter['{e['id']}'] needs a 'victory' condition, e.g. {{\"all_defeated\": \"enemy\"}}"
+        issues.append(f"encounter['{eid}'] needs a 'victory' condition, e.g. {{\"all_defeated\": \"enemy\"}}")
     for key in ("on_victory", "on_defeat"):
         if e.get(key) is not None:
-            err = _node_end_error(e[key], f"encounter['{e['id']}'].{key}")
+            err = _node_end_error(e[key], f"encounter['{eid}'].{key}")
             if err:
-                return err
-    return None
+                issues.append(err)
+    return "; ".join(issues) if issues else None
 
 
 def v_combat(c: Dict) -> Optional[str]:
@@ -340,7 +350,9 @@ SKEL_ENCOUNTER = (
     '  "on_defeat":  {"type": "end",  "ending": "game_over"}\n'
     '}\n'
     '// call write_encounter(encounter_id="enc_<slug>", content={...}) — ONE encounter per call.\n'
-    '// combatants.ref MUST be combatant ids you already authored. Need >=1 player and >=1 enemy.\n'
+    '// combatants.ref MUST resolve to a combatant. If this fight needs an enemy you have NOT authored\n'
+    '//   yet, author it FIRST in this same phase with write_combatant(combatant_id="cb_<foe>", ...),\n'
+    '//   then reference it. Need >=1 player and >=1 enemy. Reuse the player combatant across fights.\n'
     '// victory/defeat: {all_defeated:<faction>} or {when:<condition>}. on_victory/on_defeat are\n'
     '//   node_ends (jump to a `nodes` id, or end{ending}) — combat resolves back into the story.\n'
     '// ENTRY: a place interactable needs action {type:start_combat, encounter:"enc_<slug>"} to start it.'
@@ -363,8 +375,12 @@ _TARGET_SKELETON = {
 _META_TOOLS = frozenset({"set_combat_meta", "read_component", "update_scratchpad", "request_review"})
 _ABILITY_TOOLS = frozenset({"write_ability", "read_component", "update_scratchpad", "request_review"})
 _COMBATANT_TOOLS = frozenset({"write_combatant", "read_component", "update_scratchpad", "request_review"})
-_ENCOUNTER_TOOLS = frozenset({"write_encounter", "read_component", "read_node", "update_scratchpad",
-                              "request_review"})
+# Encounters place combatants — but an encounter often wants an enemy the combatant floor never
+# authored (three fights, three distinct monsters). So the encounter phase can ALSO write_combatant:
+# author the missing enemy, then reference it. Without this the loop deadlocks — write_encounter
+# rejects the phantom ref and write_combatant is out of scope, so no allowed tool can fix it.
+_ENCOUNTER_TOOLS = frozenset({"write_encounter", "write_combatant", "read_component", "read_node",
+                              "update_scratchpad", "request_review"})
 _MODE_TOOLS = frozenset({"set_combat_meta", "write_ability", "write_combatant", "write_encounter",
                          "read_component", "update_scratchpad", "request_review"})
 # A combat-slice crossref (a combatant's external character, an ability's flag gate) is fixed by

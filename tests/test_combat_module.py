@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.modules import resolve_modules
 from maestro.modules.context import Context
-from maestro.modules.combat import v_combat, MODULE as COMBAT
+from maestro.modules.combat import v_combat, _encounter_error, _ENCOUNTER_TOOLS, MODULE as COMBAT
 from maestro.modules.module import ErrorType
 from maestro.ir_crossref import slice_token
 from maestro.spec import Spec
@@ -139,6 +139,26 @@ def test_v_combat_requires_two_factions():
     bad = _combat()
     bad["encounters"][0]["combatants"] = [{"ref": "cb_hero", "faction": "player"}]
     assert "fight" in v_combat(bad)
+
+
+def test_encounter_reports_all_issues_at_once():
+    # A phantom ref AND a bare-string on_victory: both must surface in ONE message, or a small model
+    # ping-pongs (fix ref, re-break on_victory, forever). This is the churn we hit live.
+    e = {"id": "enc1",
+         "combatants": [{"ref": "cb_hero", "faction": "player"},
+                        {"ref": "cb_ghost", "faction": "enemy"}],
+         "victory": {"all_defeated": "enemy"}, "on_victory": "end"}
+    msg = _encounter_error(e, {"cb_hero"})
+    assert "cb_ghost" in msg and "on_victory" in msg   # both, not one-at-a-time
+
+
+def test_encounter_undeclared_ref_offers_authoring_path():
+    # The fix for a missing enemy is to author it — the message must say write_combatant, and the
+    # encounter phase must actually scope that tool, or the loop deadlocks.
+    msg = _encounter_error({"id": "e", "combatants": [{"ref": "cb_wraith", "faction": "enemy"}],
+                            "victory": {"all_defeated": "enemy"}}, set())
+    assert "write_combatant" in msg
+    assert "write_combatant" in _ENCOUNTER_TOOLS
 
 
 # ── get_errors detection (decomposed: staged count targets in dependency order) ───

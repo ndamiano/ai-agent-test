@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 _READ_TOOLS = {"read_node", "read_place", "read_component", "read_story_state"}
 _BUILD_MAX_TOKENS = 8000
 _STALL_LIMIT = 2
+_STALL_HARD = 6   # consecutive no-progress steps after which an author loop abandons the attempt
 
 
 class BudgetExhausted(BaseException):
@@ -315,6 +316,12 @@ def author_loop(context, error, services: Services, *, module, guard: Dict) -> N
                 reads_dropped = True
                 schemas = [s for s in schemas if s.get("function", {}).get("name") not in _READ_TOOLS]
                 allowed -= _READ_TOOLS
+        if stall >= _STALL_HARD:
+            # Genuinely stuck (only tool-rejections, escalation didn't help). Abandon this attempt so
+            # the target doesn't burn its whole budget spinning; the outer loop recollects and can try
+            # a different tack. made_progress resets stall, so a slow-but-advancing target never trips.
+            services._report(f"no progress in {stall} steps — abandoning this fix attempt")
+            return
 
         note = module.render_progress(view_fn() or {})
         if note:

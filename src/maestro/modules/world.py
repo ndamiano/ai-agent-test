@@ -112,11 +112,15 @@ def _rpg_world_error(c: Dict) -> Optional[str]:
     issues: List[str] = []
 
     # Where the avatar arrives in each place: the start spawn + every move that carries a spawn.
+    # Each entry keeps WHERE it was declared — an arrival-spawn defect is fixed on the SOURCE move
+    # hotspot, and a message that names only the destination zone sends the model rewriting the
+    # wrong place (live-build thrash: five rewrites of the destination, zero of the move).
     entries: Dict[str, list] = {}
     start_spawn = _cell_xy(c.get("start_spawn"))
     if start_place and start_spawn:
-        entries.setdefault(start_place, []).append(start_spawn)
-    for place in places.values():
+        entries.setdefault(start_place, []).append(
+            (start_spawn, "set_places_meta(start_spawn=...)"))
+    for src_pid, place in places.items():
         if not isinstance(place, dict):
             continue
         for h in place.get("interactables") or []:
@@ -124,7 +128,8 @@ def _rpg_world_error(c: Dict) -> Optional[str]:
             if isinstance(act, dict) and act.get("type") == "move" and act.get("target"):
                 sp = _cell_xy(act.get("spawn"))
                 if sp:
-                    entries.setdefault(act["target"], []).append(sp)
+                    entries.setdefault(act["target"], []).append(
+                        (sp, f"the move interactable {h.get('id')!r} in place {src_pid!r}"))
 
     for pid, place in places.items():
         if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS:
@@ -172,11 +177,15 @@ def _rpg_world_error(c: Dict) -> Optional[str]:
                               f"{{'cell': {{'x': .., 'y': ..}}}})")
             continue  # an orphan (no entry): places_reachable owns that
         good_sources = []
-        for sp in sources:
+        for sp, src in sources:
             if not (0 <= sp[0] < w and 0 <= sp[1] < h):
-                issues.append(f"places[{pid!r}] has a start/arrival spawn {sp} outside the {w}x{h} grid")
+                issues.append(f"the arrival spawn {sp} declared on {src} is outside "
+                              f"{pid!r}'s {w}x{h} grid — fix the spawn on THAT declaration (an open "
+                              f"in-bounds tile of {pid!r}); do not rewrite {pid!r} itself")
             elif sp in walls:
-                issues.append(f"places[{pid!r}] has a start/arrival spawn {sp} on a blocked tile")
+                issues.append(f"the arrival spawn {sp} declared on {src} lands on a blocked tile of "
+                              f"{pid!r} — fix the spawn on THAT declaration (an open tile), or open "
+                              f"the tile")
             else:
                 good_sources.append(sp)
         if not good_sources:

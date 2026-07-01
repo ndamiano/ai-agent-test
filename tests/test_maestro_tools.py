@@ -62,6 +62,19 @@ def test_action_validation_rejects_empty_requires_with_hint():
     assert err and "requires" in err and "fallback" in err   # actionable: use fallback instead
 
 
+def test_action_validation_names_the_bad_key():
+    # 'place_id' instead of 'target' burned 26 live-build steps against the oneOf validator's
+    # nameless rejection — the message must say which key is wrong and what the shape is.
+    from maestro.tools import _action_struct_error
+    msg = _action_struct_error({"type": "move", "place_id": "z2",
+                                "spawn": {"cell": {"x": 1, "y": 1}}})
+    assert "place_id" in msg and "target" in msg
+    msg = _action_struct_error({"type": "take"})
+    assert "item" in msg
+    msg = _action_struct_error({"type": "teleport"})
+    assert "teleport" in msg and "move" in msg
+
+
 def test_action_validation_allows_unconditional_fallback_use():
     from maestro.tools import _action_struct_error
     # The unconditional pattern the model wanted (always set a flag) is fallback-only, no clauses.

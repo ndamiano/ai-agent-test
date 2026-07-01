@@ -54,6 +54,21 @@ def test_out_of_bounds_cell_caught():
     assert "outside the 4x3 grid" in _rpg_world_error(bad)
 
 
+def test_bad_arrival_spawn_names_the_source_move():
+    # The spawn is DECLARED on a move hotspot in another zone; a message naming only the
+    # destination sends the model rewriting the wrong place (live-build thrash).
+    two = copy.deepcopy(_VALID)
+    two["place_ids"] = ["z1", "z2"]
+    two["places"]["z2"] = {"kind": "interior", "tiles": _tiles(["....", "....", "...."]),
+                           "interactables": [{"id": "sign", "position": {"cell": {"x": 1, "y": 1}},
+                                              "action": {"type": "examine", "text": "t"}}]}
+    two["places"]["z1"]["interactables"].append(
+        {"id": "h_to_z2", "label": "door", "position": {"cell": {"x": 2, "y": 1}},
+         "action": {"type": "move", "target": "z2", "spawn": {"cell": {"x": 9, "y": 9}}}})
+    msg = _rpg_world_error(two)
+    assert "'h_to_z2'" in msg and "'z1'" in msg   # the source move, not just the destination
+
+
 def test_all_layout_issues_reported_together():
     # Two independent defects (one out-of-bounds, one on a wall) surface in ONE message — reporting
     # them one at a time makes the model ping-pong.

@@ -118,18 +118,33 @@ def _match_content_error(content) -> Optional[str]:
     return None
 
 
+def _ir_defs():
+    import json
+    from pathlib import Path
+    return json.loads((Path(__file__).resolve().parents[2] / "docs" / "game_ir.schema.json")
+                      .read_text(encoding="utf-8"))["$defs"]
+
+
 def _action_validator():
     """A JSON-Schema validator for a single interactable action, built once from the IR schema's
     $defs/action — so write-time checks stay sourced from the one schema, not a hand-rolled copy."""
-    import json
-    from pathlib import Path
     import jsonschema
-    schema = json.loads((Path(__file__).resolve().parents[2] / "docs" / "game_ir.schema.json")
-                        .read_text(encoding="utf-8"))
-    return jsonschema.Draft202012Validator({"$ref": "#/$defs/action", "$defs": schema["$defs"]})
+    return jsonschema.Draft202012Validator({"$ref": "#/$defs/action", "$defs": _ir_defs()})
+
+
+def _action_shapes() -> Dict:
+    """type -> (allowed keys, required keys), read from the schema's per-type action defs."""
+    shapes = {}
+    for name, d in _ir_defs().items():
+        if name.startswith("action_"):
+            props = d.get("properties", {})
+            t = (props.get("type", {}) or {}).get("const") or name[len("action_"):]
+            shapes[t] = (set(props), set(d.get("required", [])))
+    return shapes
 
 
 _ACTION_VALIDATOR = None
+_ACTION_SHAPES = None
 
 
 def _action_struct_error(action) -> Optional[str]:
@@ -149,7 +164,23 @@ def _action_struct_error(action) -> Optional[str]:
                         f'{{"flag":"x"}}, {{"item":"y"}}, or {{"var":"g","op":">=","value":10}}. '
                         f"For an outcome that ALWAYS fires, DROP the clause and put it in `fallback`: "
                         f'{{"type":"use","fallback":{{"text":"...","effects":[...]}}}}.')
-    global _ACTION_VALIDATOR
+    # Name the wrong/missing KEY before falling back to the oneOf validator — its "not valid under
+    # any of the given schemas" names nothing, and a small model retried the same bad key
+    # ('place_id' for a move's 'target') 26 steps straight against it.
+    global _ACTION_VALIDATOR, _ACTION_SHAPES
+    if _ACTION_SHAPES is None:
+        _ACTION_SHAPES = _action_shapes()
+    t = action["type"]
+    if t not in _ACTION_SHAPES:
+        return f"unknown action type {t!r} — one of {sorted(_ACTION_SHAPES)}"
+    allowed, required = _ACTION_SHAPES[t]
+    unknown = sorted(set(action) - allowed)
+    if unknown:
+        return (f"a {t!r} action does not take {unknown} — its keys are {sorted(allowed)} "
+                f"(required: {sorted(required)})")
+    missing = sorted(required - set(action))
+    if missing:
+        return f"a {t!r} action requires {missing} — its keys are {sorted(allowed)}"
     if _ACTION_VALIDATOR is None:
         _ACTION_VALIDATOR = _action_validator()
     errs = sorted(_ACTION_VALIDATOR.iter_errors(action), key=lambda e: len(list(e.path)))

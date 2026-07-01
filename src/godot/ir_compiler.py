@@ -148,23 +148,37 @@ def _write_placeholders(ir: Dict, images_dir: Path) -> None:
         put(f"{it['id']}.png", 128, 128, (120, 100, 40))
 
 
-def export_native(project_dir, preset: str = "Linux", out_name: str = "game") -> Optional[str]:
-    """Best-effort native export. Needs a `godot` binary + export templates; on any absence or
-    failure returns None (the project dir remains the deliverable). Never raises."""
+# Per-preset output path (relative to the project). Web emits a folder of files (index.html + wasm
+# + pck) you host or zip; the desktop presets emit one self-contained binary.
+_EXPORT_OUT = {
+    "Web": ("web", "index.html"),
+    "Linux": ("export", "game.x86_64"),
+    "Windows": ("export", "game.exe"),
+    "macOS": ("export", "game.zip"),
+}
+
+
+def export_build(project_dir, preset: str = "Web") -> Optional[str]:
+    """Best-effort export to a distributable. Needs a `godot` binary + the matching export TEMPLATES
+    installed; on any absence or failure returns None (the project dir remains the deliverable).
+    Returns the directory containing the artifact. Never raises."""
     godot = shutil.which("godot") or shutil.which("godot4")
     if not godot:
         return None
     project_dir = Path(project_dir)
-    out_path = project_dir / "export" / out_name
+    subdir, fname = _EXPORT_OUT.get(preset, ("export", "game"))
+    out_path = project_dir / subdir / fname
     out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        # Import first so the resource cache exists, then export against the named preset.
+        subprocess.run([godot, "--headless", "--path", str(project_dir), "--import"],
+                       capture_output=True, text=True, timeout=300)
         proc = subprocess.run(
-            [godot, "--headless", "--path", str(project_dir),
-             "--export-release", preset, str(out_path)],
-            capture_output=True, text=True, timeout=300)
+            [godot, "--headless", "--path", str(project_dir), "--export-release", preset, str(out_path)],
+            capture_output=True, text=True, timeout=600)
     except (subprocess.SubprocessError, OSError):
         return None
-    return str(out_path) if proc.returncode == 0 and out_path.exists() else None
+    return str(out_path.parent) if proc.returncode == 0 and out_path.exists() else None
 
 
 def _zip(output_dir: Path) -> Optional[str]:

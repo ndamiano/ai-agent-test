@@ -446,6 +446,32 @@ def test_batch_is_single_on_an_empty_graph(tmp_path):
     assert len(batch) == 1
 
 
+# ── empty response (reasoning overran max_tokens) retries once with reasoning off ──
+class _EmptyThenToolConn:
+    def __init__(self):
+        self.calls = []
+
+    def generate_with_tools(self, messages, schemas, **kw):
+        self.calls.append(kw)
+        if len(self.calls) == 1:
+            return {"choices": [{"message": {"content": ""}}]}   # truncated: all reasoning
+        return {"choices": [{"message": {"tool_calls": [{"id": "1", "function": {
+            "name": "add", "arguments": '{"id": "item_1"}'}}]}}]}
+
+
+def test_empty_response_retries_with_reasoning_off(tmp_path):
+    from maestro.services import Services
+    from maestro.modules.module import CorrectionPrompt
+    state = RunState(tmp_path)
+    added = []
+    conn = _EmptyThenToolConn()
+    services = Services(conn, {"add": lambda id, **kw: added.append(id) or {"ok": True}},
+                        {"frozen": True}, state, budget=5)
+    services.run(CorrectionPrompt("s", "u", ("add",)))
+    assert added == ["item_1"]
+    assert len(conn.calls) == 2 and conn.calls[1].get("reasoning") == "none"
+
+
 # ── salvage: model emits args as content text, not a tool call ────────────────
 from maestro.services import salvage_tool_call, parse_action
 

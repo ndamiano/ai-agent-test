@@ -377,6 +377,33 @@ def test_passing_component_locks_against_rewrite(tmp_path):
     assert len(state.read_component("characters")["characters"]) == 2
 
 
+def test_state_wiring_error_on_component_keeps_it_writable(tmp_path):
+    # items passes its OWN checks but a state_wiring error lands on it ("cut the declaration") —
+    # the lock must not refuse the very fix the error asks for.
+    from maestro.modules import compose
+    spec = {"title": "T", "frozen": True, "modules": ["cast", "world", "inventory", "state"],
+            "params": {}}
+    modules = compose(("cast", "world", "inventory", "state"))
+    state = RunState(tmp_path)
+    tools = build_tools(spec, state, modules)
+    assert tools["write_component"]("items", {"items": [
+        {"id": "item_orphan", "name": "Orphan"}]})["ok"]   # satisfies inventory's checks
+    # state_wiring: item_orphan declared, never produced/consumed → error hosted on items
+    res = tools["write_component"]("items", {"items": [
+        {"id": "item_orphan2", "name": "Other"}]})
+    assert res["ok"] is True   # cut/rewrite allowed while the wiring error is open
+
+
+def test_human_todo_on_component_keeps_it_writable(tmp_path):
+    from maestro.modules import human
+    state = RunState(tmp_path)
+    tools = build_tools(_dep_spec(), state, _dep_modules())
+    assert tools["write_component"]("characters", _FULL_CAST)["ok"]   # locks
+    human.add_todo(state, "characters", "make the villain meaner")
+    res = tools["write_component"]("characters", _FULL_CAST)
+    assert res["ok"] is True   # open human note targets it → writable
+
+
 def test_leaf_component_never_locks(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_dep_spec(), state, _dep_modules())

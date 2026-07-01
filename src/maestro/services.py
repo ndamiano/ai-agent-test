@@ -237,6 +237,14 @@ class Services:
         msgs = MessageBuilder(prompt.system).add_user(prompt.user).build()
         action = parse_action(self.infer(msgs, schemas, max_tokens=prompt.max_tokens), schemas)
         if not action.get("tool"):
+            # The common cause is an EMPTY response: the model burned the whole max_tokens budget
+            # on reasoning and was truncated before emitting the call. One retry with reasoning
+            # forced off converts a wasted step into the intended tool call.
+            self._report("no tool call (likely reasoning overran max_tokens) — retrying with "
+                         "reasoning off")
+            action = parse_action(self.infer(msgs, schemas, reasoning="none",
+                                             max_tokens=prompt.max_tokens), schemas)
+        if not action.get("tool"):
             self._report("no tool call — model returned prose")
             return
         # The lock covers the whole guarded dispatch (view read + validate + write), so parallel

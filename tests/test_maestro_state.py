@@ -80,3 +80,21 @@ def test_state_wiring_fix_offers_all_host_tools(tmp_path):
                 message="flag 'x' read but never produced", ref="x")
     cp = STATE.get_correction_prompt(ctx, err)
     assert "edit_node" in cp.allowed_tools and "edit_place" in cp.allowed_tools
+
+
+def test_state_wiring_fix_shows_full_wiring_report(tmp_path):
+    # The fixer must see EVERY still-unwired value, or it re-gates another value's wiring to fix
+    # this one and the hole just moves (live-build oscillation).
+    from maestro.modules.state import MODULE as STATE
+    from maestro.modules.module import Error, ErrorType
+    from maestro.modules.context import build_context
+    state = RunState(tmp_path)
+    state.write_component("items", {"items": [{"id": "item_a", "name": "A"},
+                                              {"id": "item_b", "name": "B"}]})
+    ctx = build_context(Spec({"title": "T", "frozen": True,
+                              "modules": ["world", "inventory", "state"], "params": {}}).data, state)
+    err = Error(type=ErrorType.FIX, code="state_wiring", component="items",
+                message="item 'item_a' ...", ref="item_a")
+    cp = STATE.get_correction_prompt(ctx, err)
+    assert "WIRING REPORT" in cp.user
+    assert "item_a" in cp.user and "item_b" in cp.user   # the sibling hole is visible too

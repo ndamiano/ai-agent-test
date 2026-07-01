@@ -13,5 +13,15 @@ The error names the value and which half is missing. Make ONE edit that resolves
       value actually matters;
     - OR cut it — remove the declaration / the effect that produces it. Use it or cut it.
 
+  Never produced AND never consumed (a bare declaration): CUT IT — rewrite the catalog/list
+  without it. Do not invent new scenes just to justify a value nobody uses.
+
+NEVER UN-WIRE ANOTHER VALUE TO WIRE THIS ONE. The wiring report lists every value that still
+needs a producer or consumer — a `requires` or effect that already references some OTHER value is
+THAT value's wiring; replacing it just moves the hole (the loop will send you back here). ADD a
+new gate/effect on a line, choice, or hotspot that has none, or CUT this value instead. If every
+choice in a menu is already gated, gate something else (another node's choice, a place hotspot) —
+do not touch the existing gates.
+
 Use the existing ids in the context (do not invent or rename them). Respond with a tool call only,
 never prose.

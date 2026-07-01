@@ -312,6 +312,31 @@ def test_off_scope_tool_is_refused_by_dispatch(tmp_path):
     assert not (state.read_component("combat") or {}).get("combatants")
 
 
+def test_slice_skeletons_list_live_declared_ids(tmp_path):
+    # The skeleton's example ids ("hp"/"slash") are what a small model copies — every slice
+    # skeleton must end with the ACTUAL declared ids (7 rejected writes in the live build).
+    from maestro.modules.context import build_context
+    state = RunState(tmp_path)
+    state.write_component("characters", {"characters": [{"id": "sister_elara", "name": "E"}]})
+    state.write_component("combat", {"combat_model": "turn_based",
+        "stats": [{"id": "faith", "default": 9, "role": "resource_depletable"}],
+        "abilities": [{"id": "warden_bane", "targeting": {"shape": "single", "faction": "enemy"},
+                       "effects": [{"stat": "faith", "op": "damage", "formula": {"base": 2}}]}]})
+    spec = Spec({"title": "T", "frozen": True, "modules": ["combat"],
+                 "params": {"min_abilities": 2, "min_combatants": 1, "min_encounters": 1}})
+    ctx = build_context(spec.data, state)
+    ab = next(e for e in COMBAT.get_errors(ctx) if e.code == "min_abilities")
+    p = COMBAT.get_correction_prompt(ctx, ab)
+    assert "THE DECLARED IDS" in p.system and "faith" in p.system
+
+    ctx2 = build_context(Spec({"title": "T", "frozen": True, "modules": ["combat"],
+                               "params": {"min_abilities": 1, "min_combatants": 1,
+                                          "min_encounters": 1}}).data, state)
+    cb = next(e for e in COMBAT.get_errors(ctx2) if e.code == "min_combatants")
+    p2 = COMBAT.get_correction_prompt(ctx2, cb)
+    assert "warden_bane" in p2.system and "sister_elara" in p2.system
+
+
 def test_dangling_character_routes_to_combat_as_crossref():
     # foe is referenced by cb_foe.character but not declared in cast -> a combat-slice crossref.
     errs = COMBAT.get_errors(_ctx(_art(_combat(), foe=False)))

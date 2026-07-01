@@ -61,3 +61,8 @@ MAKE EACH ZONE REAL — a carved tile layout plus 2+ interactables, each doing s
 must `move` (or `win`) so no zone is a dead end, and a combat game wires at least one `start_combat`
 tile. The win flag must be set by a reachable use-outcome or a fight, and some interactable must have
 a `win` action.
+
+WIRE THE DECLARED ITEMS AS YOU BUILD — every item in the catalogue must end up TAKEN somewhere (a
+`take` hotspot) and USED somewhere (a `requires` on a move/use/win). The context lists which items
+are still never taken / never used: place them in YOUR zones now; an item left dangling comes back
+as a fix later, one slow edit at a time.

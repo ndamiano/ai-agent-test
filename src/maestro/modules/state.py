@@ -40,6 +40,17 @@ def _d_state_wiring(chk, m, ctx):
             for rec in checks.state_wiring(ctx.artifact)]
 
 
+def _wiring_report(context) -> list:
+    """Every still-unwired value, so ONE fix sees the whole field: wiring value A by re-gating the
+    thing that wires value B just moves the hole (the live-build oscillation)."""
+    recs = checks.state_wiring(context.artifact)
+    if not recs:
+        return []
+    return ["", "WIRING REPORT — every value still missing a producer or consumer (existing gates "
+            "and effects belong to OTHER values on this list; never replace them):"] + [
+        f"  - {r['ref']}: {r['message']}" for r in recs]
+
+
 def _wiring_prompt(m, context, error: Error) -> CorrectionPrompt:
     rd = render_dict(context, active=error.component, target=error,
                      upstream_views=getattr(context, "upstream_views", {}),
@@ -47,9 +58,11 @@ def _wiring_prompt(m, context, error: Error) -> CorrectionPrompt:
     system = load_prompt("state_fix.txt")
     user = "\n".join(
         cr.spec_block(rd) + [""] + cr.todo_block(rd.get("todo", []))
-        + cr.target_block(rd) + cr.upstream_block(rd.get("upstream") or {})
-        + cr.tail_block(rd) + ["", "Make the one edit that wires the value (give it the missing "
-                              "producer or consumer), or cut it. Tool call only."])
+        + cr.target_block(rd) + _wiring_report(context)
+        + cr.upstream_block(rd.get("upstream") or {})
+        + cr.tail_block(rd) + ["", "Make the one edit that wires the TARGET value (give it the "
+                              "missing producer or consumer) WITHOUT touching another value's "
+                              "wiring, or cut it. Tool call only."])
     return CorrectionPrompt(system=system, user=user, allowed_tools=_WIRING_TOOLS)
 
 

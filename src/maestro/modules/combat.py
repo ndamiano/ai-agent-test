@@ -363,6 +363,39 @@ SKEL_FIX = (
     '// An unreachable encounter => add a start_combat interactable on a world place (add_interactable).'
 )
 
+
+# ── live-id skeletons: the skeleton's example ids ("hp"/"slash") are the #1 thing a small model
+#    copies, so every slice skeleton ends with the ACTUAL declared ids to use instead ─────────────
+def _cast_ids(art: Dict) -> list:
+    return sorted(c["id"] for c in (art.get("characters") or {}).get("characters", [])
+                  if isinstance(c, dict) and isinstance(c.get("id"), str))
+
+
+def _node_ids(art: Dict) -> list:
+    return list((art.get("nodes") or {}).get("node_ids") or [])
+
+
+def _skel_with_ids(base: str, fields):
+    """skeleton -> callable(ctx) appending 'THE DECLARED IDS' — `fields` is (label, art->ids)."""
+    def render(ctx):
+        art = ctx.artifact
+        lines = []
+        for label, fn in fields:
+            ids = fn(art)
+            lines.append(f"//   {label}: {', '.join(ids) if ids else '(none authored yet)'}")
+        return (base + "\n// THE DECLARED IDS — copy these EXACTLY, character for character. The "
+                "example ids above\n//   are placeholders, NOT yours; an id not on this list will "
+                "be REJECTED:\n" + "\n".join(lines))
+    return render
+
+
+_F_STATS = ("stats", lambda a: sorted(_ids(a.get("combat") or {}, "stats")))
+_F_STATUSES = ("statuses", lambda a: sorted(_ids(a.get("combat") or {}, "statuses")))
+_F_ABILITIES = ("abilities", lambda a: sorted(_ids(a.get("combat") or {}, "abilities")))
+_F_COMBATANTS = ("combatants", lambda a: sorted(_ids(a.get("combat") or {}, "combatants")))
+_F_CAST = ("cast character ids (for `character`)", _cast_ids)
+_F_NODES = ("node ids (for on_victory/on_defeat jump targets)", _node_ids)
+
 _META_TOOLS = frozenset({"set_combat_meta", "read_component", "update_scratchpad", "request_review"})
 _ABILITY_TOOLS = frozenset({"write_ability", "read_component", "update_scratchpad", "request_review"})
 _COMBATANT_TOOLS = frozenset({"write_combatant", "read_component", "update_scratchpad", "request_review"})
@@ -475,15 +508,21 @@ class Combat(Module):
     checks = [
         Check("build_combat_meta", _d_meta, blocking=True, tools=_META_TOOLS, skeleton=SKEL_META),
         Check("min_abilities", _floor_detector("combat.abilities", "ability"), blocking=True,
-              tools=_ABILITY_TOOLS, skeleton=SKEL_ABILITY, guard=_GUARDS["min_abilities"]),
+              tools=_ABILITY_TOOLS, guard=_GUARDS["min_abilities"],
+              skeleton=_skel_with_ids(SKEL_ABILITY, [_F_STATS, _F_STATUSES])),
         Check("min_combatants", _floor_detector("combat.combatants", "combatant"), blocking=True,
-              tools=_COMBATANT_TOOLS, skeleton=SKEL_COMBATANT, guard=_GUARDS["min_combatants"]),
+              tools=_COMBATANT_TOOLS, guard=_GUARDS["min_combatants"],
+              skeleton=_skel_with_ids(SKEL_COMBATANT, [_F_STATS, _F_ABILITIES, _F_CAST])),
         Check("min_encounters", _floor_detector("combat.encounters", "encounter"), blocking=True,
-              tools=_ENCOUNTER_TOOLS, skeleton=SKEL_ENCOUNTER, guard=_GUARDS["min_encounters"]),
+              tools=_ENCOUNTER_TOOLS, guard=_GUARDS["min_encounters"],
+              skeleton=_skel_with_ids(SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES])),
         Check("combat_structural", _d_structural, job="fix", blocking=True, tools=_CROSSREF_TOOLS,
-              skeleton=SKEL_FIX),
+              skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
+                                                 _F_COMBATANTS, _F_CAST, _F_NODES])),
         Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS, skeleton=SKEL_FIX),
-        Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS, skeleton=SKEL_FIX),
+        Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS,
+              skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
+                                                 _F_COMBATANTS, _F_CAST, _F_NODES])),
     ]
 
     def params(self) -> Dict:

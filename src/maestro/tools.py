@@ -429,10 +429,13 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     _node_needs_location = any(getattr(m, "emits_compile", False)
                                and getattr(m, "component", None) == "nodes" for m in modules)
 
-    # A component LOCKS once its module reports no errors for it: a full rewrite would otherwise drop
-    # ids other components already reference. EXCEPTION: the compile terminal (emits_compile) stays
-    # writable until the build ends (its correctness depends on the whole artifact, and we never run
-    # its expensive compile just to test a lock).
+    # A component LOCKS once no module reports an error ON it: a full rewrite would otherwise drop
+    # ids other components already reference. The sweep covers every module that AFFECTS the
+    # component (owner + cross-cutting like `state` — a state_wiring error saying "cut the
+    # declaration" on `items` must keep `items` writable) and open human todos targeting it.
+    # EXCEPTION: the compile terminal (emits_compile) stays writable until the build ends (its
+    # correctness depends on the whole artifact, and we never run its expensive compile just to
+    # test a lock).
     _owner = {cid: m for m in modules for cid in m.affected_components()}
     _terminal = {getattr(m, "component", None) for m in modules if getattr(m, "emits_compile", False)}
 
@@ -441,13 +444,17 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             raise SpecNotFrozen("spec must be frozen before building the artifact")
 
     def _locked(component_id: str) -> bool:
-        mod = _owner.get(component_id)
-        if mod is None or component_id in _terminal:
+        from maestro.modules import human as human_mod
+        if _owner.get(component_id) is None or component_id in _terminal:
             return False
         if state.read_component(component_id) is None:
             return False
+        if any((t.get("component_id") or "") == component_id for t in human_mod.open_todos(state)):
+            return False
         ctx = build_context(spec, state)
-        return not [e for e in mod.get_errors(ctx) if e.component == component_id]
+        return not any(e.component == component_id
+                       for m in modules if component_id in m.affected_components()
+                       for e in m.get_errors(ctx))
 
     def _locked_error(component_id: str) -> Dict:
         return {"ok": False, "error":

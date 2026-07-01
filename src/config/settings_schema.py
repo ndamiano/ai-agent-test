@@ -59,6 +59,9 @@ class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline"]
     working_directory: Optional[str] = "outputs"
     refine_before_execution: bool = False
+    # Concurrent build fixes (parallel LLM calls per loop step). >1 needs an inference server that
+    # batches concurrent requests (LM Studio does); tool writes stay serialized either way.
+    parallel_fixes: int = Field(1, ge=1, le=8)
     renpy_sdk_path: Optional[str] = None
     model_category: Literal["large", "medium", "small"] = "large"
     lmstudio: LLMStudioSettings

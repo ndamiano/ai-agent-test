@@ -148,12 +148,12 @@ def _d_compiles(chk, m, ctx):
     return m.wrap(chk, checks.compile_failure(ctx.run_dir, ctx.engine))
 
 
-def _render_slot_focus(view: Dict) -> List[str]:
+def _render_slot_focus(view: Dict, slot_index: int = 0) -> List[str]:
     out: List[str] = []
     beats = view.get("beats") or []
     by_id = {b["id"]: b for b in beats if b.get("id")}
     beat_ids = [b["id"] for b in beats if b.get("id")]
-    slot = cr.pick_slot(view)
+    slot = cr.pick_slot(view, slot_index)
 
     if slot:
         srcs = ", ".join(f'{r["node"]} → "{r["label"]}"' for r in slot.get("from", []))
@@ -200,7 +200,7 @@ def _render_slot_focus(view: Dict) -> List[str]:
     return out
 
 
-def _node_view_block(view: Dict) -> List[str]:
+def _node_view_block(view: Dict, slot_index: int = 0) -> List[str]:
     edges = view.get("edges", {})
     counts = view.get("line_counts", {})
     synopses = view.get("synopses", {})
@@ -216,7 +216,7 @@ def _node_view_block(view: Dict) -> List[str]:
         "CURRENT NODES (these already exist — reuse these EXACT ids; jump ONLY to an id "
         "listed here or to a node you also create this step):",
         *node_lines,
-    ] + _render_slot_focus(view)
+    ] + _render_slot_focus(view, slot_index)
 
 
 def _has_story(art: Dict) -> bool:
@@ -284,7 +284,7 @@ class Scenes(Module):
         lines += cr.upstream_block(ctx.get("upstream") or {})
         view = ctx.get("active_view") or {}
         if view.get("node_ids"):
-            lines += _node_view_block(view)
+            lines += _node_view_block(view, ctx.get("slot_index", 0))
         lines += cr.story_state_block(ctx)
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]

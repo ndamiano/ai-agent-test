@@ -44,11 +44,13 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
     tools = build_tools(spec_data, state, modules)
     control = get_or_create(run_id)
     conn = LoggingConnector(get_connector(), state.run_dir / "llm_calls")
+    from config.settings_manager import settings_manager
     loop = AgentLoop(
         spec_data, state, modules, tools, connector=conn, max_steps=max_steps,
         on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
         on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid),
         control=control,
+        parallel=settings_manager.get_settings().get("parallel_fixes", 1),
     )
 
     t0 = time.perf_counter()

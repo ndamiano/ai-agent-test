@@ -52,8 +52,9 @@ class Error:
 
     def identity(self) -> Tuple:
         """Stable key the loop compares across steps for stall detection, across rewordings of
-        `message`."""
-        return (self.type, self.code, self.component, self.path, self.ref)
+        `message`. All-string so tuples are totally orderable (None path/ref would TypeError
+        against a str one in `prioritize`)."""
+        return (self.type.value, self.code, self.component, self.path or "", self.ref or "")
 
 
 def idkey(error: "Error") -> str:
@@ -162,11 +163,19 @@ class Module(ABC):
     def _check_for(self, code: str) -> Optional[Check]:
         return next((c for c in self.checks if c.code == code), None)
 
-    def get_correction_prompt(self, context, error: Error) -> CorrectionPrompt:
+    def check_rank(self, code: str) -> int:
+        """The declared position of an error's check — the fix-priority axis within this module.
+        Declaration order is the author's intent (author before wire before polish); without this
+        the loop would order ties alphabetically by code, fixing polish checks into a half-written
+        artifact."""
+        return next((i for i, c in enumerate(self.checks) if c.code == code), len(self.checks))
+
+    def get_correction_prompt(self, context, error: Error, slot: int = 0) -> CorrectionPrompt:
         """Build the fix step for `error` from the check it came from (found by code): a bespoke
         `build_prompt` if the check declares one (state/human), else the default author/fix step —
         the check's prompt + tools + skeleton (each falling back to the module default), rendered
-        with the live graph view."""
+        with the live graph view. `slot` is this fix's assigned slot index when the loop runs
+        several same-code creates in parallel (worker i authors slot i)."""
         chk = self._check_for(error.code)
         if chk and chk.build_prompt:
             return chk.build_prompt(self, context, error)
@@ -183,7 +192,7 @@ class Module(ABC):
         view = self.view(context.artifact)
         rd = render_dict(context, active=error.component or None, target=error, active_view=view,
                          upstream_views=getattr(context, "upstream_views", {}),
-                         available_tools=tools)
+                         available_tools=tools, slot_index=slot)
         system = load_prompt(prompt or self.mode_prompt)
         if skel:
             system += "\n\n" + skeleton_guide(self.component, skel)
@@ -221,24 +230,29 @@ class Module(ABC):
         return self.projector(artifact) if self.projector else None
 
     # ── the fix ──────────────────────────────────────────────────────────────
-    def get_fix(self, context, error: Error) -> Callable:
+    def get_fix(self, context, error: Error, slot: int = 0) -> Callable:
         """Return a Fix — a callable `fix(services)` the loop invokes (it builds the Services). One
         correction step; a count/create error whose check declares a slot `guard` gets its write tool
-        wrapped so the step can only ADD the next owed item (no overwrite, right slot)."""
-        return functools.partial(self._single_fix, context, error)
+        wrapped so the step can only ADD the next owed item (no overwrite, right slot). `slot` is the
+        assigned slot index for a parallel batch of same-code creates."""
+        return functools.partial(self._single_fix, context, error, slot)
 
-    def _single_fix(self, context, error: Error, services) -> None:
+    def _single_fix(self, context, error: Error, slot: int, services) -> None:
         """One correction step: build the prompt for this error, let services run it (one LLM call +
         dispatch). Bounded by the services budget like any fix."""
         chk = self._check_for(error.code)
         guard = chk.guard if chk else None
         dispatch = None
         if guard:
+            from maestro import context_render as cr
             from maestro.services import _create_guard
+            view0 = self.view(context.artifact) or {}
+            assigned = cr.pick_slot(view0, slot) if view0.get("open_slots") is not None else None
             view_fn = lambda: self.view(services.state.load_artifact())
             dispatch = _create_guard(services.dispatch, view_fn, guard["count_tool"],
-                                     guard["id_key"], guard["id_list_key"], guard["noun"])
-        services.run(self.get_correction_prompt(context, error), dispatch=dispatch)
+                                     guard["id_key"], guard["id_list_key"], guard["noun"],
+                                     assigned=assigned)
+        services.run(self.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────

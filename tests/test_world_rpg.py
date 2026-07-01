@@ -54,6 +54,18 @@ def test_out_of_bounds_cell_caught():
     assert "outside the 4x3 grid" in _rpg_world_error(bad)
 
 
+def test_all_layout_issues_reported_together():
+    # Two independent defects (one out-of-bounds, one on a wall) surface in ONE message — reporting
+    # them one at a time makes the model ping-pong.
+    bad = _z1(interactables=[
+        {"id": "oob", "position": {"cell": {"x": 9, "y": 1}},
+         "action": {"type": "examine", "text": "t"}},
+        {"id": "walled", "position": {"cell": {"x": 2, "y": 0}},
+         "action": {"type": "examine", "text": "t"}}])
+    msg = _rpg_world_error(bad)
+    assert "outside the 4x3 grid" in msg and "on a blocked tile" in msg
+
+
 def test_overlapping_tiles_caught():
     bad = _z1(interactables=[
         {"id": "a", "position": {"cell": {"x": 1, "y": 1}}, "action": {"type": "examine", "text": "t"}},

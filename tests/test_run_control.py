@@ -24,7 +24,7 @@ class _WritePremise(Module):
             return []
         return [Error(ErrorType.BUILD, "make", "premise", "write premise")]
 
-    def get_correction_prompt(self, ctx, error):
+    def get_correction_prompt(self, ctx, error, slot=0):
         return CorrectionPrompt(system="s", user="u", allowed_tools=("write_component",))
 
 

@@ -73,16 +73,17 @@ def tail_block(ctx: Dict) -> List[str]:
 
 
 # ── node-graph slot math (shared: scenes' renderer + services._create_guard) ───────────────────
-def pick_slot(view: Dict) -> Optional[Dict]:
+def pick_slot(view: Dict, index: int = 0) -> Optional[Dict]:
     """The system — not the author — chooses which scene to write next: the open slot whose beat
-    comes earliest in the story, so the spine is built in dramatic order. None when there are no
-    open slots (the entry node, or a fresh branch root is needed)."""
+    comes earliest in the story, so the spine is built in dramatic order. `index` selects the
+    index-th slot in that order — parallel fixes each get their own (worker i writes slot i). None
+    when there is no slot at that index (the entry node, or a fresh branch root is needed)."""
     slots = view.get("open_slots") or []
-    if not slots:
+    if index >= len(slots):
         return None
     order = {b["id"]: i for i, b in enumerate(view.get("beats") or []) if b.get("id")}
     last = len(order)
-    return sorted(slots, key=lambda s: (order.get(s.get("beat"), last), s["id"]))[0]
+    return sorted(slots, key=lambda s: (order.get(s.get("beat"), last), s["id"]))[index]
 
 
 def beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) -> Optional[str]:

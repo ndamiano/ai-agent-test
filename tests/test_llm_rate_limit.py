@@ -116,10 +116,9 @@ class TestLLMRateLimiterIntegration:
         limiter = get_llm_rate_limiter()
         limiter.reset()  # Start fresh
 
-        # Try to acquire 3 tokens rapidly
-        assert limiter.acquire(blocking=False) is True
-        assert limiter.acquire(blocking=False) is True
-        # Third should fail (rate limit)
+        # Burst capacity covers a full parallel-fix batch (8), then the rate gates.
+        for _ in range(8):
+            assert limiter.acquire(blocking=False) is True
         assert limiter.acquire(blocking=False) is False
 
         # Wait and try again

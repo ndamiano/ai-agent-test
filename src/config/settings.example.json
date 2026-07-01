@@ -1,5 +1,6 @@
 {
   "connector_type": "lmstudio",
+  "parallel_fixes": 4,
   "lmstudio": {
     "base_url": "http://localhost:1234",
     "model": "local-model",

@@ -208,7 +208,7 @@ def _effect_targets(eff: Dict) -> set:
 def _cond_state_refs(cond) -> set:
     if not isinstance(cond, dict):
         return set()
-    refs = {cond[k] for k in ("var", "flag") if cond.get(k)}
+    refs = {cond[k] for k in ("var", "flag") if isinstance(cond.get(k), str)}
     for key in ("all", "any"):
         for c in cond.get(key, []) or []:
             refs |= _cond_state_refs(c)
@@ -367,6 +367,14 @@ def state_wiring(artifact: Dict) -> List[Dict]:
     out: List[Dict] = []
     for sid, e in sorted(_walk_state(artifact).items()):
         kind = e["kind"]
+        if not e["prod"] and not e["cons"]:
+            # A bare declaration nothing touches: two errors here (add a producer / add a consumer)
+            # would race each other — one fix wires it while the other cuts it. One verdict: cut it.
+            out.append({"component": _pick_host(e["decl"]), "ref": sid, "message": (
+                f"{kind} '{sid}' is declared but never produced or consumed — it does nothing. "
+                f"Cut the declaration, or wire it fully (an effect that sets it AND a gate that "
+                f"reads it).")})
+            continue
         if not e["prod"]:
             out.append({"component": _pick_host(e["cons"], e["decl"]), "ref": sid, "message": (
                 f"{kind} '{sid}' is read or declared but nothing ever produces it — set/add/take it "

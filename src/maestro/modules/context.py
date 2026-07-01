@@ -50,7 +50,7 @@ def build_context(spec: Dict, state, errors: Optional[List] = None, last_result:
 
 def render_dict(ctx: Context, *, active: Optional[str], target=None, active_view: Optional[Dict] = None,
                 upstream_views: Optional[Dict[str, Callable]] = None,
-                available_tools: Optional[List[str]] = None) -> Dict:
+                available_tools: Optional[List[str]] = None, slot_index: int = 0) -> Dict:
     """The dict the renderers read. `active` is the component being fixed; every OTHER component
     that has no open error is a settled/locked upstream (trimmed by its module's `context_view`)."""
     failing = {e.component for e in ctx.errors}
@@ -73,4 +73,5 @@ def render_dict(ctx: Context, *, active: Optional[str], target=None, active_view
         "last_read": ctx.last_read,
         "stalled": ctx.stalled,
         "available_tools": sorted(available_tools or []),
+        "slot_index": slot_index,
     }

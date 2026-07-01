@@ -94,6 +94,28 @@ def test_state_wiring_demands_producer_and_consumer():
     assert checks.state_wiring(ok) == []
 
 
+def test_state_wiring_survives_model_shaped_junk_conditions():
+    # A model may emit "requires": {"item": [list]} or {"flag": {...}} — detectors must report,
+    # never crash (this killed a live build at step 101).
+    art = {"nodes": {"node_ids": ["n1"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x"}], "end": {"type": "menu", "choices": [
+            {"text": "a", "target": "n1", "requires": {"item": ["item_key", "item_ash"]}},
+            {"text": "b", "target": "n1", "requires": {"flag": {"nested": "junk"}}}]}}}}}
+    refs = {r["ref"] for r in checks.state_wiring(art)}
+    assert {"item_key", "item_ash"} <= refs      # list items still counted as consumers
+    from maestro.modules import views
+    assert views.cond_items({"item": 42}) == set()
+
+
+def test_state_wiring_fully_orphaned_value_gets_one_error():
+    # A declared flag nothing produces AND nothing consumes: one "cut it" error, not a
+    # missing-producer error and a missing-consumer error that would fight each other.
+    art = {"places": {"place_ids": [], "places": {}, "flags": ["untouched"]}}
+    errs = [r for r in checks.state_wiring(art) if r["ref"] == "untouched"]
+    assert len(errs) == 1
+    assert "never produced or consumed" in errs[0]["message"]
+
+
 def test_state_is_forced_and_detects_via_get_errors():
     state = MODULE_REGISTRY["state"]
     assert state.selectable is False
@@ -147,6 +169,28 @@ def test_prioritize_human_then_build_then_fix():
     assert prioritize(pairs)[1].type is ErrorType.HUMAN
 
 
+def test_prioritize_survives_mixed_none_and_str_paths():
+    # Two same-code errors, one with path=None and one with a str path, must not TypeError on the
+    # identity tiebreak (None < str is unorderable).
+    m = MODULE_REGISTRY["scenes"]
+    pairs = [(m, Error(ErrorType.FIX, "crossref", "nodes", "a", path=None)),
+             (m, Error(ErrorType.FIX, "crossref", "nodes", "b", path="nodes.n1"))]
+    assert prioritize(pairs)[1].code == "crossref"
+
+
+def test_prioritize_follows_check_declaration_order():
+    # Within a module, fix order = the checks list's declared order, NOT alphabetical code order:
+    # authoring (beats_realized, first check) must outrank polish (all_characters_speak, later),
+    # even though "all_characters_speak" sorts first alphabetically.
+    scenes = MODULE_REGISTRY["scenes"]
+    pairs = [(scenes, Error(ErrorType.BUILD, "all_characters_speak", "nodes", "silent cast")),
+             (scenes, Error(ErrorType.BUILD, "beats_realized", "nodes", "one more scene",
+                            path="#001"))]
+    assert prioritize(pairs)[1].code == "beats_realized"
+    assert scenes.check_rank("beats_realized") < scenes.check_rank("all_characters_speak")
+    assert scenes.check_rank("no_such_code") == len(scenes.checks)
+
+
 # ── human todos + waivers ────────────────────────────────────────────────────
 def test_human_todo_becomes_top_priority(tmp_path):
     state = RunState(tmp_path)
@@ -183,7 +227,7 @@ class _OneShot(Module):
     def get_errors(self, ctx):
         return [] if ctx.artifact.get("premise") else [Error(ErrorType.BUILD, "mk", "premise", "write it")]
 
-    def get_correction_prompt(self, ctx, error):
+    def get_correction_prompt(self, ctx, error, slot=0):
         return CorrectionPrompt("s", "u", ("write_component",))
 
 
@@ -258,6 +302,148 @@ def test_count_target_authors_one_item_per_step_to_green(tmp_path):
     result = loop.run()
     assert result.ok is True
     assert state.read_component("items")["ids"] == ["item_1", "item_2"]  # stopped at the target, not forever
+
+
+# ── parallel fixes: same-code slot creates run concurrently, writes stay serial ──
+import threading
+import time as _time
+
+from maestro import context_render as cr
+from maestro.services import _create_guard
+
+
+def test_pick_slot_indexed_in_dramatic_order():
+    view = {"open_slots": [{"id": "z_late", "beat": "beat_02"}, {"id": "a_early", "beat": "beat_01"}],
+            "beats": [{"id": "beat_01"}, {"id": "beat_02"}]}
+    assert cr.pick_slot(view, 0)["id"] == "a_early"
+    assert cr.pick_slot(view, 1)["id"] == "z_late"
+    assert cr.pick_slot(view, 2) is None
+
+
+def test_create_guard_enforces_the_assigned_slot():
+    calls = []
+    ok = lambda name, args: (calls.append((name, args)), {"ok": True})[1]
+    view = {"node_ids": ["n1"], "open_slots": [{"id": "s1"}, {"id": "s2"}], "beats": []}
+    g = _create_guard(ok, lambda: view, "write_node", "node_id", "node_ids", "node",
+                      assigned={"id": "s2", "beat": "beat_02"})
+    refused = g("write_node", {"node_id": "s1"})
+    assert refused["ok"] is False and "'s2'" in refused["error"]
+    g("write_node", {"node_id": "s2"})
+    assert calls and calls[0][1]["node_id"] == "s2"
+    assert calls[0][1]["beat"] == "beat_02"   # system stamps the assigned slot's beat
+
+
+def _need3(chk, m, ctx):
+    n = len((ctx.artifact.get("items") or {}).get("ids", []))
+    return checks.slot_errors(max(0, 3 - n), type=chk.tier, code=chk.code,
+                              component="items", noun="item")
+
+
+class _Counter3(Module):
+    id = "_counter3_test"
+    component = "items"
+    mode_prompt = "nodes_write.txt"
+    mode_tools = frozenset({"add"})
+    checks = [Check("need3", _need3,
+                    guard={"count_tool": "add", "id_key": "id", "id_list_key": "ids",
+                           "noun": "item"})]
+
+    def view(self, artifact):
+        return {"ids": (artifact.get("items") or {}).get("ids", [])}
+
+    def render_context(self, ctx):
+        return "add an item"
+
+
+class _SlowAddConn:
+    """Each call sleeps so overlap is observable; records the max in-flight calls."""
+    def __init__(self):
+        self.i = 0
+        self.inflight = 0
+        self.max_inflight = 0
+        self.lock = threading.Lock()
+
+    def generate_with_tools(self, messages, schemas, **kw):
+        with self.lock:
+            self.i += 1
+            n = self.i
+            self.inflight += 1
+            self.max_inflight = max(self.max_inflight, self.inflight)
+        _time.sleep(0.05)
+        with self.lock:
+            self.inflight -= 1
+        return {"choices": [{"message": {"tool_calls": [{"id": "1", "function": {
+            "name": "add", "arguments": f'{{"id": "item_{n}"}}'}}]}}]}
+
+
+def test_parallel_slot_creates_overlap_llm_calls_and_serialize_writes(tmp_path):
+    state = RunState(tmp_path)
+
+    def add(id, **kw):
+        # Deliberately non-atomic read-modify-write: the dispatch lock is what keeps it safe.
+        items = state.read_component("items") or {"ids": []}
+        items["ids"].append(id)
+        state.write_component("items", items)
+        return {"ok": True, "id": id}
+
+    conn = _SlowAddConn()
+    loop = AgentLoop({"frozen": True}, state, [_Counter3()], {"add": add},
+                     connector=conn, max_steps=20, parallel=3)
+    result = loop.run()
+    assert result.ok is True
+    assert sorted(state.read_component("items")["ids"]) == ["item_1", "item_2", "item_3"]
+    assert conn.max_inflight >= 2      # the LLM calls actually overlapped
+    assert conn.i == 3                 # one call per owed slot, no retries lost to write races
+
+
+def test_batch_is_single_for_unguarded_errors(tmp_path):
+    state = RunState(tmp_path)
+    loop = AgentLoop({"frozen": True}, state, [_Counter3()], {}, connector=_SlowAddConn(),
+                     max_steps=1, parallel=4)
+    ctx = build_context({"params": {}}, state)
+    m = MODULE_REGISTRY["cast"]
+    e = Error(ErrorType.BUILD, "min_characters", "characters", "need more")
+    assert loop._batch(ctx, [(m, e)], m, e) == [(m, e, 0)]
+
+
+def test_batch_capped_by_open_slots(tmp_path):
+    # A nodes-style view publishes open_slots: the batch never exceeds the slots that exist,
+    # however many creates are owed.
+    state = RunState(tmp_path)
+
+    class _Slotted(_Counter3):
+        id = "_slotted_test"
+
+        def view(self, artifact):
+            return {"ids": ["n1"], "node_ids": ["n1"], "open_slots": [{"id": "s1"}], "beats": []}
+
+    mod = _Slotted()
+    loop = AgentLoop({"frozen": True}, state, [mod], {}, connector=_SlowAddConn(),
+                     max_steps=1, parallel=4)
+    ctx = build_context({"params": {}}, state)
+    errs = checks.slot_errors(3, type=ErrorType.BUILD, code="need3", component="items", noun="item")
+    pairs = [(mod, e) for e in errs]
+    batch = loop._batch(ctx, pairs, mod, errs[0])
+    assert len(batch) == 1
+
+
+def test_batch_is_single_on_an_empty_graph(tmp_path):
+    # No nodes yet: one worker writes the opening node; parallel roots would make a forest.
+    state = RunState(tmp_path)
+
+    class _Empty(_Counter3):
+        id = "_empty_graph_test"
+
+        def view(self, artifact):
+            return {"ids": [], "node_ids": [], "open_slots": [], "beats": []}
+
+    mod = _Empty()
+    loop = AgentLoop({"frozen": True}, state, [mod], {}, connector=_SlowAddConn(),
+                     max_steps=1, parallel=4)
+    ctx = build_context({"params": {}}, state)
+    errs = checks.slot_errors(3, type=ErrorType.BUILD, code="need3", component="items", noun="item")
+    batch = loop._batch(ctx, [(mod, e) for e in errs], mod, errs[0])
+    assert len(batch) == 1
 
 
 # ── salvage: model emits args as content text, not a tool call ────────────────

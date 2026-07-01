@@ -9,7 +9,9 @@ detection (the same top error after a full fix attempt → start the next fix es
 """
 
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -48,7 +50,8 @@ def effective_pairs(modules: List[Module], context) -> List[Tuple[Module, Error]
 
 
 def prioritize(pairs: List[Tuple[Module, Error]]) -> Tuple[Module, Error]:
-    return min(pairs, key=lambda p: (_TYPE_RANK[p[1].type], p[0].priority, p[1].identity()))
+    return min(pairs, key=lambda p: (_TYPE_RANK[p[1].type], p[0].priority,
+                                     p[0].check_rank(p[1].code), p[1].identity()))
 
 
 def _same(a, b) -> bool:
@@ -63,7 +66,8 @@ class AgentLoop:
     """
 
     def __init__(self, spec: dict, state, modules: List[Module], tools: dict, *, connector=None,
-                 max_steps: int = 300, on_event=None, on_milestone=None, control=None):
+                 max_steps: int = 300, on_event=None, on_milestone=None, control=None,
+                 parallel: int = 1):
         from llm_clients.connector_selector import get_connector
         self.spec = spec
         self.state = state
@@ -74,6 +78,9 @@ class AgentLoop:
         self.on_event = on_event
         self.on_milestone = on_milestone
         self.control = control
+        self.parallel = max(1, parallel)
+        self._dispatch_lock = threading.Lock()   # serializes tool writes across parallel fixes
+        self._step_lock = threading.Lock()       # serializes the step counter + progress events
         self.last_result: Optional[str] = None
         self.last_read: Optional[str] = None
         self.upstream_views = {cid: m.context_view for m in modules
@@ -123,12 +130,68 @@ class AgentLoop:
 
     def _on_step(self, summary: str) -> None:
         """The per-action progress sink Services calls. The loop owns the running step count + the
-        last-known failing count, so it's the single emitter of build_step (per LLM call)."""
-        self.step += 1
-        self.last_result = summary
-        self._emit("build_step", step=self.step, max_steps=self.max_steps,
-                   summary=summary, n_failing=self._n_failing)
-        print(f"  step {self.step}: {summary}", flush=True)
+        last-known failing count, so it's the single emitter of build_step (per LLM call). Locked:
+        parallel fixes report from their own threads."""
+        with self._step_lock:
+            self.step += 1
+            step = self.step
+            self.last_result = summary
+            self._emit("build_step", step=step, max_steps=self.max_steps,
+                       summary=summary, n_failing=self._n_failing)
+        print(f"  step {step}: {summary}", flush=True)
+
+    def _batch(self, ctx, pairs, module: Module, error: Error) -> List[Tuple[Module, Error, int]]:
+        """The fixes to run this step: the top error alone, or — when its check is a slot-guarded
+        create — up to `parallel` same-code siblings, each with its own slot index. Only guarded
+        creates batch: they are independent by construction (distinct owed slots); everything else
+        (edits, crossref, human notes) may touch the same target, so it stays serial. A view that
+        publishes `open_slots` (nodes) caps the batch at the open slots actually available — a
+        worker without a real slot would free-write an orphan."""
+        chk = module._check_for(error.code)
+        if self.parallel <= 1 or chk is None or chk.guard is None:
+            return [(module, error, 0)]
+        cap = self.parallel
+        view = module.view(ctx.artifact) or {}
+        if view.get("open_slots") is not None:
+            # Empty graph: exactly one worker writes the opening node (parallel roots would each
+            # free-choose an id — a forest, not a story).
+            cap = min(cap, max(1, len(view["open_slots"])) if view.get("node_ids") else 1)
+        group = sorted((e for m, e in pairs if m is module and e.code == error.code),
+                       key=lambda e: e.identity())
+        return [(module, e, i) for i, e in enumerate(group[:cap])]
+
+    def _run_fixes(self, ctx, batch: List[Tuple[Module, Error, int]], stalled: bool) -> int:
+        """Run the batch — one thread per fix (LLM calls overlap; tool dispatch serializes on the
+        loop's lock). Returns the total steps spent. BuildCancelled from any worker re-raises after
+        the others finish (they see the same cancel at their next checkpoint)."""
+        budget = min(_FIX_CAP, self.max_steps - self.step)
+
+        def one(module: Module, error: Error, slot: int) -> Services:
+            services = Services(self.conn, self.tools, self.spec, self.state, budget=budget,
+                                control=self.control, on_event=self.on_event,
+                                report=self._on_step, escalate=stalled,
+                                lock=self._dispatch_lock if len(batch) > 1 else None)
+            try:
+                module.get_fix(ctx, error, slot=slot)(services)
+            except BudgetExhausted:
+                pass   # the fix used its whole budget; recollect and move on
+            return services
+
+        if len(batch) == 1:
+            done = [one(*batch[0])]
+        else:
+            cancelled: Optional[BuildCancelled] = None
+            done = []
+            with ThreadPoolExecutor(max_workers=len(batch)) as ex:
+                for f in [ex.submit(one, m, e, s) for m, e, s in batch]:
+                    try:
+                        done.append(f.result())
+                    except BuildCancelled as exc:
+                        cancelled = exc
+            if cancelled is not None:
+                raise cancelled
+        self.last_read = next((s.last_read for s in reversed(done) if s.last_read), None)
+        return sum(s.spent for s in done)
 
     def run(self) -> LoopResult:
         if not self.spec.get("frozen"):
@@ -148,19 +211,9 @@ class AgentLoop:
                     return LoopResult(ok=True, steps=self.step)
                 stalled = prev is not None and _same(prev, pairs)
                 module, error = prioritize(pairs)
-
-                # The module owns the SHAPE of the fix; Services owns the LIMITS.
-                services = Services(self.conn, self.tools, self.spec, self.state,
-                                    budget=min(_FIX_CAP, self.max_steps - self.step),
-                                    control=self.control, on_event=self.on_event,
-                                    report=self._on_step, escalate=stalled)
-                try:
-                    module.get_fix(ctx, error)(services)
-                except BudgetExhausted:
-                    pass   # the fix used its whole budget; recollect and move on
-                if services.spent == 0:
-                    self.step += 1   # a fix that made no LLM call still advances, so we can't spin
-                self.last_read = services.last_read
+                batch = self._batch(ctx, pairs, module, error)
+                if self._run_fixes(ctx, batch, stalled) == 0:
+                    self.step += 1   # a batch that made no LLM call still advances, so we can't spin
 
                 prev = pairs
                 ctx, pairs = self._context()

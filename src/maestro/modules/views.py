@@ -128,10 +128,17 @@ def move_targets(place: Dict) -> List[str]:
 
 
 def cond_items(cond) -> set:
+    # Tolerant of model-shaped junk: "item" may arrive as a list (or worse) — collect the string
+    # refs, never crash the detector; the schema/compile gate owns rejecting the malformed shape.
     if not isinstance(cond, dict):
         return set()
     if "item" in cond:
-        return {cond["item"]}
+        it = cond["item"]
+        if isinstance(it, str):
+            return {it}
+        if isinstance(it, list):
+            return {x for x in it if isinstance(x, str)}
+        return set()
     out = set()
     if "not" in cond:
         out |= cond_items(cond["not"])

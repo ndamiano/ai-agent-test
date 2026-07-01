@@ -104,9 +104,12 @@ def _rpg_world_error(c: Dict) -> Optional[str]:
     """Spatial invariants a walkable (world_map/town/interior) map must hold so it actually plays:
     a valid tile grid, in-bounds non-overlapping interactables, none on a blocked tile, and — the
     load-bearing one — every interactable tile WALKABLE-reachable from where the avatar arrives. A
-    small model can't be trusted to lay this out; the loop self-corrects off these messages."""
+    small model can't be trusted to lay this out; the loop self-corrects off these messages.
+    Collects ALL independent problems and reports them together — one at a time makes the model
+    ping-pong (fix one, re-introduce another)."""
     places = c.get("places") or {}
     start_place = c.get("start_place")
+    issues: List[str] = []
 
     # Where the avatar arrives in each place: the start spawn + every move that carries a spawn.
     entries: Dict[str, list] = {}
@@ -128,51 +131,65 @@ def _rpg_world_error(c: Dict) -> Optional[str]:
             continue
         w, h, walls = _tiles_dims_walls(pid, place)
         if w is None:
-            return walls  # error string
+            issues.append(walls)  # error string
+            continue
 
         used: Dict[tuple, str] = {}
         for h_ in place.get("interactables") or []:
             iid = h_.get("id")
             xy = _cell_xy(h_.get("position"))
             if xy is None:
-                return (f"places[{pid!r}].interactables[{iid!r}] needs a tile position "
-                        f"'position': {{'cell': {{'x': int, 'y': int}}}} — this is a walkable map")
+                issues.append(f"places[{pid!r}].interactables[{iid!r}] needs a tile position "
+                              f"'position': {{'cell': {{'x': int, 'y': int}}}} — this is a walkable map")
+                continue
             if not (0 <= xy[0] < w and 0 <= xy[1] < h):
-                return f"places[{pid!r}].interactables[{iid!r}] tile {xy} is outside the {w}x{h} grid"
+                issues.append(f"places[{pid!r}].interactables[{iid!r}] tile {xy} is outside the "
+                              f"{w}x{h} grid")
+                continue
             if xy in walls:
-                return (f"places[{pid!r}].interactables[{iid!r}] sits on a blocked tile {xy} — the "
-                        f"avatar can't stand there; move it onto an open tile or make that tile open")
+                issues.append(f"places[{pid!r}].interactables[{iid!r}] sits on a blocked tile {xy} — "
+                              f"the avatar can't stand there; move it onto an open tile or make that "
+                              f"tile open")
+                continue
             if xy in used:
-                return (f"places[{pid!r}] puts two interactables on tile {xy} ({used[xy]} and "
-                        f"{iid}) — give each its own tile")
+                issues.append(f"places[{pid!r}] puts two interactables on tile {xy} ({used[xy]} and "
+                              f"{iid}) — give each its own tile")
+                continue
             used[xy] = iid
             act = h_.get("action") or {}
             if act.get("type") == "move" and act.get("target") in places \
                     and places[act["target"]].get("kind") in _RPG_KINDS \
                     and _cell_xy(act.get("spawn")) is None:
-                return (f"places[{pid!r}].interactables[{iid!r}] moves to walkable place "
-                        f"{act['target']!r} but has no 'spawn': {{'cell': {{'x','y'}}}} — the avatar "
-                        f"needs an arrival tile in the destination")
+                issues.append(f"places[{pid!r}].interactables[{iid!r}] moves to walkable place "
+                              f"{act['target']!r} but has no 'spawn': {{'cell': {{'x','y'}}}} — the "
+                              f"avatar needs an arrival tile in the destination")
 
         sources = entries.get(pid, [])
         if not sources:
             if pid == start_place:
-                return (f"places[{pid!r}] is the walkable start place — declare where the player "
-                        f"spawns with set_places_meta(start_spawn={{'cell': {{'x': .., 'y': ..}}}})")
+                issues.append(f"places[{pid!r}] is the walkable start place — declare where the "
+                              f"player spawns with set_places_meta(start_spawn="
+                              f"{{'cell': {{'x': .., 'y': ..}}}})")
             continue  # an orphan (no entry): places_reachable owns that
+        good_sources = []
         for sp in sources:
             if not (0 <= sp[0] < w and 0 <= sp[1] < h):
-                return f"places[{pid!r}] has a start/arrival spawn {sp} outside the {w}x{h} grid"
-            if sp in walls:
-                return f"places[{pid!r}] has a start/arrival spawn {sp} on a blocked tile"
+                issues.append(f"places[{pid!r}] has a start/arrival spawn {sp} outside the {w}x{h} grid")
+            elif sp in walls:
+                issues.append(f"places[{pid!r}] has a start/arrival spawn {sp} on a blocked tile")
+            else:
+                good_sources.append(sp)
+        if not good_sources:
+            continue  # no valid entry tile: reachability would flag every interactable, all noise
 
         free = {(x, y) for x in range(w) for y in range(h) if (x, y) not in walls}
-        reachable = _reachable(free, sources)
+        reachable = _reachable(free, good_sources)
         for xy, iid in used.items():
             if xy not in reachable:
-                return (f"places[{pid!r}].interactables[{iid!r}] at tile {xy} is walled off from the "
-                        f"spawn — no walkable path reaches it; open the blocked tiles between them")
-    return None
+                issues.append(f"places[{pid!r}].interactables[{iid!r}] at tile {xy} is walled off "
+                              f"from the spawn — no walkable path reaches it; open the blocked tiles "
+                              f"between them")
+    return "; ".join(issues) if issues else None
 
 
 def _return_path_error(c: Dict) -> Optional[str]:

@@ -5,3 +5,4 @@ pydantic
 ddgs
 beautifulsoup4
 slowapi
+jsonschema

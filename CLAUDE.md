@@ -50,9 +50,14 @@ src/
                     state is the always-on wiring invariant, human holds the HITL todo/waiver store.
                 agent_loop.py — AgentLoop, the non-LLM loop that DRIVES the modules (not itself a
                   module): collects each module's get_errors, subtracts the human's waivers,
-                  prioritizes by error TYPE (human>build>fix) then Module.priority, asks the module
-                  for a Fix and runs it. Keeps completion + cross-fix stall; auto-pauses a finished
-                  component.
+                  prioritizes by error TYPE (human>build>fix) then Module.priority then the check's
+                  DECLARED order (`Module.check_rank` — author before wire before polish), asks the
+                  module for a Fix and runs it. When the top error is a slot-guarded create, up to
+                  `parallel_fixes` (settings) same-code siblings run CONCURRENTLY — one thread per
+                  fix, each with its own slot index (prompt + guard agree on the assigned slot,
+                  picked from the same pre-batch snapshot); LLM calls overlap, tool dispatch
+                  serializes on one lock, and a nodes-style view caps the batch at its real
+                  open_slots. Keeps completion + cross-fix stall; auto-pauses a finished component.
                 services.py — Services, the BOUNDED gateway a Fix calls through (connector +
                   tool dispatch + pause/cancel checkpoint + per-fix step budget; BudgetExhausted
                   is a BaseException, so a fix can't churn past its cap). A count-driven target

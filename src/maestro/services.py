@@ -120,11 +120,13 @@ def _read_payload(action: Dict, result: Dict) -> Optional[str]:
     return None
 
 
-def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun):
+def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun, assigned=None):
     """Wrap the count-driving write tool so the graph grows by DESIGN: no overwrite, and a new node
-    must fill THE ASSIGNED SLOT (the system-picked open slot). Entry + no-open-slots are exempt so it
-    can't deadlock. Slot rule fires only for a view that publishes `open_slots` (nodes); places keep
-    the no-overwrite rule alone."""
+    must fill THE ASSIGNED SLOT. `assigned` is the slot dict picked at prompt-build time — the SAME
+    snapshot the prompt rendered, so prompt and guard agree by construction (a sibling parallel fix
+    landing in between shifts live slot indices, so the guard must not re-pick from the live view).
+    Entry + no-open-slots are exempt so it can't deadlock; a view without `open_slots` (places)
+    keeps the no-overwrite rule alone (assigned stays None)."""
     def guarded(name, args) -> Dict:
         if name != tool:
             return dispatch(name, args)
@@ -135,14 +137,12 @@ def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun):
             return {"ok": False, "error":
                     f"{noun} {iid!r} already exists — to raise the COUNT write a NEW {noun} id; do "
                     f"not rewrite an existing one."}
-        chosen = cr.pick_slot(view) if view.get("open_slots") is not None else None
-        if view.get("open_slots") is not None and existing and chosen is not None \
-                and iid != chosen["id"]:
+        if assigned is not None and existing and iid != assigned["id"]:
             return {"ok": False, "error":
-                    f"{noun} {iid!r} is not the assigned slot — write {chosen['id']!r} next (the "
+                    f"{noun} {iid!r} is not the assigned slot — write {assigned['id']!r} next (the "
                     f"scene the story leads into). Use that EXACT id as the {noun} id."}
         if id_key == "node_id":
-            beat = cr.beat_for_new_node(view, chosen, bool(existing))
+            beat = cr.beat_for_new_node(view, assigned, bool(existing))
             if beat:
                 args = {**(args or {}), "beat": beat}
         return dispatch(name, args)
@@ -152,7 +152,7 @@ def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun):
 # ── Services: the bounded gateway ────────────────────────────────────────────
 class Services:
     def __init__(self, conn, tools, spec: Dict, state, *, budget: int, control=None,
-                 on_event=None, report=None, escalate: bool = False):
+                 on_event=None, report=None, escalate: bool = False, lock=None):
         self.conn = conn
         self.tools = tools
         self.spec = spec
@@ -162,6 +162,7 @@ class Services:
         self.on_event = on_event
         self.report = report         # (summary) -> None : the loop's per-action progress sink
         self.escalate = escalate     # the loop saw a cross-fix stall — start hot
+        self.lock = lock             # serializes tool dispatch across parallel fixes (LLM calls don't)
         self.spent = 0
         self.last_result: Optional[str] = None
         self.last_read: Optional[str] = None
@@ -238,7 +239,13 @@ class Services:
         if not action.get("tool"):
             self._report("no tool call — model returned prose")
             return
-        result = dispatch(action["tool"], action.get("args", {}))
+        # The lock covers the whole guarded dispatch (view read + validate + write), so parallel
+        # fixes' read-modify-write cycles on the artifact can't interleave.
+        if self.lock is not None:
+            with self.lock:
+                result = dispatch(action["tool"], action.get("args", {}))
+        else:
+            result = dispatch(action["tool"], action.get("args", {}))
         self.last_read = _read_payload(action, result)
         self._report(_summarize(action, result))
 

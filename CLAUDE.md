@@ -86,6 +86,10 @@ src/
                   step is refused, not dispatched — a small model learns other tool names from the
                   prompt prose and would otherwise thrash on an off-phase tool.
                 rewrite.py — rewrite_node: regenerate ONE node from a human note (per-scene control)
+                climb.py — module re-runner for prompt hill-climbing: clone a finished run, wipe ONE
+                  module's component, drive the loop with only that module composed (same upstream
+                  artifact + a candidate prompt = a comparable output).
+                  `python -m maestro.climb <src_run_id> <module_id> [--label tag] [--keep]`
                 run_control.py — cross-thread RunControl (pause/resume/cancel + auto_pause flag)
                   + per-run registry, the human-in-the-loop signal channel into the build thread
                 tools.py — artifact tools (build_tools) + TOOL_SCHEMAS. write_component/

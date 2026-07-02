@@ -42,9 +42,6 @@ Each story ending is its own node, filled like any slot. Don't write an ending u
 leads to it. event_summary becomes this scene's one-line synopsis — make it specific (what CHANGES
 here), e.g. "sisters find the hidden ledger; debt is real" — not "they talk in the study".
 
-DO NOT USE EXAMPLE DIALOGUE AS IS: Every dialogue created should reflect the example dialogue, but
-not repeat it.
-
 =====================================================================================
 
 STUDY THIS SCENE — it is the TEXTURE to match (different characters, different objects; do NOT copy
@@ -62,6 +59,9 @@ its content). Two estranged brothers clearing a dead father's garage, fighting o
   B: Then I'll carry it on my lap.
   A: ...Fine. One tool. Don't make it a thing.
   B: It's already a thing.
+
+That scene is from a DIFFERENT game. It shows the TEXTURE to hit — none of its lines, objects,
+or phrasings may appear in your scene. A scene that reuses a line from it is rejected.
 
 THE SAME SCENE, RUINED — each line below is a failure kind; never write its kind:
 

@@ -41,8 +41,24 @@ src/
                     `get_correction_prompt` build the fix for an emitted error from its check.
                   checks.py — the check library a module's Check detectors compose (path-addressed
                     primitives + structural graph checks + crossref/compile wrappers)
-                  context.py — Context (durable per-step snapshot) + render_dict (the dict the
-                    renderers consume); views.py — node_view/place_view graph projections
+                  context.py — Context (durable per-step snapshot) + render_dict (the run-state
+                    frame + raw artifact); views.py — the shared graph/condition GRAMMAR only
+                    (nodes_of/reachable/move_targets/cond_items...), no projections.
+                    A MODULE IS THE ONE-STOP SHOP FOR ITS DOMAIN: it owns its checks (policy
+                    detectors live in the module, checks.py keeps only generic primitives +
+                    crossref/compile wrappers), its write-time tool policy (scenes.node_write_error,
+                    world.action_error, card_play.match_write_error — tools.py just dispatches),
+                    its graph projection (scenes.node_view / world.place_view), its slot policy
+                    (a guard dict carries the module's assign/prepare/cap callables — the loop and
+                    services know no module's view shape), AND its presentation block — how its
+                    component appears in OTHER modules' prompts (cast.character_cards,
+                    assets.locations_block, inventory.items_block, story.story_block,
+                    scenes.nodes_index_block, world.places_index_block, combat.combat_index_block).
+                    There is NO generic upstream/component dump: every module's render_context
+                    CRAFTS its own prompt from the raw artifact by composing sibling modules'
+                    blocks + the run-state frame (maestro/context_render.py holds ONLY that frame)
+                    — the consumer knows what its call needs and owns the window budget that
+                    implies (scene text never enters a prompt except the assigned slot's lead-in).
                   cast/story/scenes/world/assets/inventory/state/card_play/combat/human.py — the
                     mechanic-modules, each a direct Module subclass; each owns its component's
                     structural write-time validator + authoring skeleton INLINE (no shared
@@ -205,6 +221,6 @@ Small models aren't dumb — they're easily distracted. They follow the most rec
 
 1. **Decompose over one-shot** — produce N items with N calls (one node per `write_node`), not all at once. Prevents truncation, keeps each call focused.
 2. **Output skeleton before field descriptions** — show exact JSON structure first with inline comments, not a bullet list then a separate example. Model fills a skeleton rather than constructing from scratch (see `prompts/spec_write.txt`).
-3. **Minimum context per step** — the executor injects only the to-do, scratchpad, and story-state snapshot; never the full transcript or prior script.
+3. **Crafted context per step** — each module's `render_context` composes exactly the blocks its call needs (the dialogue author gets full character cards + locations + story + lead-in lines; the places author gets the item catalogue + scene index); never the full transcript, never another component dumped whole.
 4. **Use `model_category: "small"`** in settings — tighter context budget, fewer iterations, JSON mode.
 5. **Reasoning off by default, escalate on stall** — local reasoning models build initial content fine with `reasoning: "none"` (fast, no thinking tokens), but spiral when a target stops progressing and rarely recover on their own. So `generate_with_tools(..., reasoning=...)` takes a per-call override: the node sub-loop and the decider keep effort off until they stall (no clean tool call for a couple iterations), then flip it to `high` for the rest of that target. Set `reasoning: "none"` in settings as the floor; escalation rides on top. Note some local models (e.g. qwen3.6) only honor on/off — graded efforts (low/medium) collapse to the same budget.

@@ -16,7 +16,6 @@ Example games:
 import uuid
 from typing import Dict, List, Set, Tuple
 
-from maestro.modules import context as ctxmod
 from maestro.modules.module import load_prompt
 from maestro.modules.module import (
     Check,
@@ -102,19 +101,27 @@ def _d_human_todo(chk, m, context):
 
 
 def _human_prompt(m, context, error: Error) -> CorrectionPrompt:
-    rd = ctxmod.render_dict(context, active=error.component or None, target=error,
-                            upstream_views=getattr(context, "upstream_views", {}),
-                            available_tools=_HUMAN_TOOLS)
+    import json
+    from maestro.modules import cast as cast_mod, inventory, scenes, world
     system = load_prompt("human_edit.txt")
-    user = "\n".join([
+    art = context.artifact
+    # The note usually targets ONE component: show that component in full, everything else as
+    # crafted indexes (the note may reference a scene, an item, a place by name).
+    target_content = art.get(error.component) if error.component else None
+    lines = [
         f"HUMAN DIRECTION (do exactly this): {error.message}",
         f"TARGET COMPONENT: {error.component or '(any)'}",
-        "",
-        "Make the change with one tool call. Tool call only, not prose.",
-        "",
-        f"CONTEXT: {rd}",
-    ])
-    return CorrectionPrompt(system=system, user=user, allowed_tools=_HUMAN_TOOLS)
+    ]
+    # nodes/places grow unbounded — their index is below and the fixer has read tools.
+    if target_content is not None and error.component not in ("nodes", "places"):
+        lines += ["", f"CURRENT {error.component} CONTENT:",
+                  json.dumps(target_content, ensure_ascii=False)]
+    lines += cast_mod.character_cards(art) if error.component != "characters" else []
+    lines += scenes.nodes_index_block(art) if error.component != "nodes" else []
+    lines += world.places_index_block(art) if error.component != "places" else []
+    lines += inventory.items_block(art) if error.component != "items" else []
+    lines += ["", "Make the change with one tool call. Tool call only, not prose."]
+    return CorrectionPrompt(system=system, user="\n".join(lines), allowed_tools=_HUMAN_TOOLS)
 
 
 class Human(Module):

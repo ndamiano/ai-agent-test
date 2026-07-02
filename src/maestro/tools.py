@@ -36,7 +36,6 @@ _EMOTIONS = set(EMOTIONS)
 # A menu is a dramatic fork, not a location picker. Capped so the slot-driven loop can't satisfy
 # its node quota by fanning one node into a wide hub of stub branches (the hub-and-spoke star that
 # guts the arc); past this, the model must build DEPTH — scenes that lead into scenes — instead.
-_MAX_MENU_CHOICES = 3
 
 
 # The model intuitively writes a speaker STRING for narration ("narration"/"narrator") instead of
@@ -59,135 +58,15 @@ def _coerce_json(value):
     return value
 
 
-def _normalize_narration(content):
-    """In-place: any line whose speaker reads as narration becomes speaker:null."""
-    if isinstance(content, dict):
-        for ln in content.get("lines", []) or []:
-            if isinstance(ln, dict) and is_narration_speaker(ln.get("speaker")):
-                ln["speaker"] = None
-    return content
 
 
-def _node_content_error(content) -> Optional[str]:
-    """Reject a malformed IR node object up front so a wrong shape steers immediately
-    instead of failing schema/crossref/compile later."""
-    if not isinstance(content, dict):
-        return "node content must be a JSON object {lines, end}"
-    lines = content.get("lines")
-    if not isinstance(lines, list) or not lines:
-        return "node.lines must be a non-empty list of {speaker, text} objects"
-    for j, ln in enumerate(lines):
-        if not isinstance(ln, dict) or not ln.get("text"):
-            return f"node.lines[{j}] needs a non-empty 'text' (speaker is optional; null = narration)"
-    end = content.get("end")
-    if not isinstance(end, dict) or end.get("type") not in _END_TYPES:
-        return f"node.end must be an object whose 'type' is one of {sorted(_END_TYPES)}"
-    if end.get("type") == "menu":
-        choices = end.get("choices") or []
-        n = len(choices)
-        if n > _MAX_MENU_CHOICES:
-            return (f"this menu has {n} choices — a menu is a DRAMATIC FORK, at most "
-                    f"{_MAX_MENU_CHOICES} divergent paths, not a room/location picker. Cut it to "
-                    f"the {_MAX_MENU_CHOICES} choices that actually matter; for linear flow use "
-                    f"end.type 'jump' and let the NEXT scene branch. Build depth, not width.")
-        if choices and all(isinstance(c, dict) and c.get("requires") for c in choices):
-            return ("every choice in this menu is gated by `requires` — if none match at runtime the "
-                    "menu is empty and the game dead-ends. Leave at least ONE choice ungated as a "
-                    "guaranteed fallback path.")
-        targets = {c.get("target") for c in choices if isinstance(c, dict) and c.get("target")}
-        if len(choices) >= 2 and len(targets) < 2:
-            return ("every choice in this menu leads to the SAME scene — that's a fake choice, not a "
-                    "fork. Either make the choices lead to DIFFERENT targets (a real branch), or drop "
-                    "the menu and use end.type 'jump' for a single continuation.")
-    return None
 
 
-_CARD_MODELS = {"high_card", "blackjack"}
 
 
-def _match_content_error(content) -> Optional[str]:
-    if not isinstance(content, dict):
-        return "match content must be a JSON object {card_model, opponent, ante}"
-    if content.get("card_model") not in _CARD_MODELS:
-        return f"match.card_model must be one of {sorted(_CARD_MODELS)}"
-    if not content.get("opponent"):
-        return "match needs an 'opponent' (a characters component id)"
-    ante = content.get("ante")
-    if not isinstance(ante, dict) or not ante.get("var") or "amount" not in ante:
-        return "match.ante must be {var, amount} — the staked variable and how much"
-    return None
 
 
-def _ir_defs():
-    import json
-    from pathlib import Path
-    return json.loads((Path(__file__).resolve().parents[2] / "docs" / "game_ir.schema.json")
-                      .read_text(encoding="utf-8"))["$defs"]
 
-
-def _action_validator():
-    """A JSON-Schema validator for a single interactable action, built once from the IR schema's
-    $defs/action — so write-time checks stay sourced from the one schema, not a hand-rolled copy."""
-    import jsonschema
-    return jsonschema.Draft202012Validator({"$ref": "#/$defs/action", "$defs": _ir_defs()})
-
-
-def _action_shapes() -> Dict:
-    """type -> (allowed keys, required keys), read from the schema's per-type action defs."""
-    shapes = {}
-    for name, d in _ir_defs().items():
-        if name.startswith("action_"):
-            props = d.get("properties", {})
-            t = (props.get("type", {}) or {}).get("const") or name[len("action_"):]
-            shapes[t] = (set(props), set(d.get("required", [])))
-    return shapes
-
-
-_ACTION_VALIDATOR = None
-_ACTION_SHAPES = None
-
-
-def _action_struct_error(action) -> Optional[str]:
-    """Reject a malformed action at write time with an ACTIONABLE message — so the sub-loop fixes
-    it in one edit instead of discovering it at compile 20 steps later with the schema's opaque
-    'not valid under any of the given schemas'. Friendly hints for the common traps; the schema is
-    the backstop for the rest."""
-    if not isinstance(action, dict) or not action.get("type"):
-        return "action needs an object with a 'type'"
-    # The trap we keep hitting: a use clause with an empty `requires` ({}), which is not a valid
-    # condition. An unconditional outcome belongs in `fallback`, not a clause.
-    if action.get("type") == "use":
-        for i, cl in enumerate(action.get("clauses", []) or []):
-            req = cl.get("requires") if isinstance(cl, dict) else None
-            if not isinstance(req, dict) or not req:
-                return (f"use clause[{i}].requires must be a REAL condition — e.g. "
-                        f'{{"flag":"x"}}, {{"item":"y"}}, or {{"var":"g","op":">=","value":10}}. '
-                        f"For an outcome that ALWAYS fires, DROP the clause and put it in `fallback`: "
-                        f'{{"type":"use","fallback":{{"text":"...","effects":[...]}}}}.')
-    # Name the wrong/missing KEY before falling back to the oneOf validator — its "not valid under
-    # any of the given schemas" names nothing, and a small model retried the same bad key
-    # ('place_id' for a move's 'target') 26 steps straight against it.
-    global _ACTION_VALIDATOR, _ACTION_SHAPES
-    if _ACTION_SHAPES is None:
-        _ACTION_SHAPES = _action_shapes()
-    t = action["type"]
-    if t not in _ACTION_SHAPES:
-        return f"unknown action type {t!r} — one of {sorted(_ACTION_SHAPES)}"
-    allowed, required = _ACTION_SHAPES[t]
-    unknown = sorted(set(action) - allowed)
-    if unknown:
-        return (f"a {t!r} action does not take {unknown} — its keys are {sorted(allowed)} "
-                f"(required: {sorted(required)})")
-    missing = sorted(required - set(action))
-    if missing:
-        return f"a {t!r} action requires {missing} — its keys are {sorted(allowed)}"
-    if _ACTION_VALIDATOR is None:
-        _ACTION_VALIDATOR = _action_validator()
-    errs = sorted(_ACTION_VALIDATOR.iter_errors(action), key=lambda e: len(list(e.path)))
-    if errs:
-        loc = "/".join(str(p) for p in errs[0].path) or "action"
-        return f"action invalid at {loc}: {errs[0].message}"
-    return None
 
 
 def _cell_xy(pos) -> Optional[tuple]:
@@ -208,7 +87,8 @@ def _place_content_error(content) -> Optional[str]:
     for j, h in enumerate(inter):
         if not isinstance(h, dict) or not h.get("id"):
             return f"place.interactables[{j}] needs an 'id'"
-        err = _action_struct_error(h.get("action"))
+        from maestro.modules.world import action_error
+        err = action_error(h.get("action"))
         if err:
             return f"place.interactables[{j}] ({h.get('id')}): {err}"
     return None
@@ -507,6 +387,13 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         # force: a human edit may overwrite a locked component (explicit override). The agent
         # never sets it — force isn't in TOOL_SCHEMAS — so its lock discipline is unchanged.
         _require_frozen()
+        if _owner and not force and component_id not in _owner:
+            # An unknown id (a model writing module-name "inventory" for the `items` component)
+            # must fail loudly — an "ok" for a junk file is a false success signal it loops on.
+            # force (human editor) and a module-less spec stay unconstrained.
+            return {"ok": False, "error":
+                    f"no component {component_id!r} — the components of this game are "
+                    f"{sorted(_owner)}. Write the one your target names."}
         if not force and _locked(component_id):
             return _locked_error(component_id)
         content = _coerce_json(content)
@@ -538,19 +425,12 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         content = _coerce_json(content)
         if beat and isinstance(content, dict):
             content["beat"] = beat
-        err = _node_content_error(content)
+        from maestro.modules.scenes import node_write_error, normalize_narration
+        err = node_write_error(content, min_lines=_node_min_lines,
+                               needs_location=_node_needs_location)
         if err:
             return {"ok": False, "error": err}
-        _normalize_narration(content)
-        if len(content["lines"]) < _node_min_lines:
-            return {"ok": False, "error":
-                    f"a node needs at least {_node_min_lines} lines/beats — this has "
-                    f"{len(content['lines'])}. Write the FULL scene now (several dialogue beats "
-                    f"with subtext), not a stub; thin nodes are rejected."}
-        if _node_needs_location and not content.get("location"):
-            return {"ok": False, "error":
-                    "this node has no `location` — set it to a background id from asset_manifest "
-                    "(e.g. 'bg_room'); every scene needs a background. Add \"location\" and resend."}
+        normalize_narration(content)
         from maestro.story_state import init_story_state, apply_delta
 
         # Tolerate a malformed story_state_delta (the model sometimes passes a list/str).
@@ -597,10 +477,12 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": f"no node {node_id!r} to edit"}
         if content is not None:
             content = _coerce_json(content)
-            err = _node_content_error(content)
+            from maestro.modules.scenes import node_write_error, normalize_narration
+            err = node_write_error(content, min_lines=_node_min_lines,
+                                   needs_location=_node_needs_location)
             if err:
                 return {"ok": False, "error": err}
-            nodes[node_id] = _normalize_narration(content)
+            nodes[node_id] = normalize_narration(content)
             state.write_component("nodes", ns)
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
@@ -706,7 +588,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if h is None:
             return {"ok": False, "error": f"no interactable {interactable_id!r} in place {place_id!r}"}
         if action is not None:
-            err = _action_struct_error(action)
+            from maestro.modules.world import action_error
+            err = action_error(action)
             if err:
                 return {"ok": False, "error": err}
             h["action"] = action
@@ -727,7 +610,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return _locked_error("places")
         if not isinstance(interactable, dict) or not interactable.get("id"):
             return {"ok": False, "error": "interactable must be an object with an 'id'"}
-        err = _action_struct_error(interactable.get("action"))
+        from maestro.modules.world import action_error
+        err = action_error(interactable.get("action"))
         if err:
             return {"ok": False, "error": err}
         places = state.read_component("places") or {}
@@ -755,7 +639,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if _locked("matches"):
             return _locked_error("matches")
         content = _coerce_json(content)
-        err = _match_content_error(content)
+        from maestro.modules.card_play import match_write_error
+        err = match_write_error(content)
         if err:
             return {"ok": False, "error": err}
         matches = state.read_component("matches") or {"match_ids": [], "matches": {}}

@@ -15,6 +15,16 @@ from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
 
+def locations_block(artifact: Dict) -> list:
+    """Backgrounds with their descriptions — the only sense of PLACE an author has."""
+    bgs = [b for b in (artifact.get("asset_manifest") or {}).get("backgrounds", [])
+           if isinstance(b, dict) and b.get("id")]
+    if not bgs:
+        return []
+    return ["", "LOCATIONS (a node's `location` / a room's `background` is one of these EXACT ids):",
+            *(f"  {b['id']} — {b.get('description', '')}" for b in bgs)]
+
+
 def _d_character_ids(chk, m, ctx):
     chars = (ctx.artifact.get("asset_manifest") or {}).get("characters")
     if not (isinstance(chars, list) and chars):
@@ -80,13 +90,21 @@ class Assets(Module):
     def affected_components(self) -> Tuple[str, ...]:
         return ("asset_manifest",)
 
-    def context_view(self, c: Dict) -> Dict:
-        def ids(key):
-            return [x["id"] for x in (c.get(key) or []) if isinstance(x, dict) and x.get("id")]
-        view = {"backgrounds": ids("backgrounds"), "characters": ids("characters")}
-        if c.get("items"):
-            view["items"] = ids("items")
-        return view
+    def render_context(self, ctx: Dict) -> str:
+        # The manifest derives from who and what exists: character cards (sprite descriptions come
+        # from the person), the story (backgrounds come from where it happens), the item catalogue
+        # (inventory icons).
+        from maestro import context_render as cr
+        from maestro.modules import cast, inventory, story
+        art = ctx.get("artifact") or {}
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx)
+        lines += cast.character_cards(art)
+        lines += story.story_block(art)
+        lines += inventory.items_block(art)
+        lines += cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
 
 
 MODULE = Assets()

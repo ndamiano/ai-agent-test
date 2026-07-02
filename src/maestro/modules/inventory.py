@@ -15,6 +15,17 @@ from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
 
+def items_block(artifact: Dict) -> list:
+    """The full item catalogue as prompt context — what a world/state author places, takes,
+    and gates on."""
+    items = [i for i in (artifact.get("items") or {}).get("items", [])
+             if isinstance(i, dict) and i.get("id")]
+    if not items:
+        return []
+    return ["", "ITEMS (the declared catalogue — take/require these EXACT ids):",
+            *(f"  {i['id']} — {i.get('name', '')}: {i.get('examine', '')}" for i in items)]
+
+
 def v_items(c: Dict) -> Optional[str]:
     items = c.get("items")
     if not isinstance(items, list) or not items:
@@ -64,6 +75,20 @@ class Inventory(Module):
 
     def params(self) -> Dict:
         return {"min_items": 1}
+
+    def render_context(self, ctx: Dict) -> str:
+        # Items serve the story: the catalogue is invented against the plan (question/endings)
+        # and the cast, so every item can matter to someone's want.
+        from maestro import context_render as cr
+        from maestro.modules import cast, story
+        art = ctx.get("artifact") or {}
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx)
+        lines += story.story_block(art)
+        lines += cast.character_cards(art)
+        lines += cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
 
 
 MODULE = Inventory()

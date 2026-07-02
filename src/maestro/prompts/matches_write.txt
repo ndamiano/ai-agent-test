@@ -3,7 +3,7 @@ whole component in ONE call: write_component("matches", { ... }) in the shape th
 shows. Do NOT write the JSON as a message — it MUST be the argument of a write_component tool
 call, or nothing is saved.
 
-The LOCKED COMPONENTS block holds the settled cast. Every match's `opponent` MUST be an
+The CHARACTERS block holds the settled cast. Every match's `opponent` MUST be an
 EXACT `characters` component id from there — an opponent that isn't a cast character is a bug.
 
 Each match is a known card game for a stake:

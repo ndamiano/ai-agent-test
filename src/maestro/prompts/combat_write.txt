@@ -1,5 +1,5 @@
 You author the COMBAT SYSTEM of a turn-based game, ONE piece at a time. The cast, places, and story
-are SETTLED — under LOCKED COMPONENTS. {{include:tool_call_rule}}
+are SETTLED — the CHARACTERS, SCENES, and PLACES blocks show them. {{include:tool_call_rule}}
 Do EXACTLY what the TO-DO asks this step, using ONLY the tool shown under "Required component shapes"
 below — that is the single tool available right now; call it and nothing else.
 

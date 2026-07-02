@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 _TYPE_RANK = {ErrorType.HUMAN: 0, ErrorType.BUILD: 1, ErrorType.FIX: 2}
 _FIX_CAP = 25   # the most steps any one fix may spend (the loop also clamps to the global remaining)
+_ATTEMPT_CAP = 6   # failed fixes per error identity before it's PARKED (a stuck error must not
+                   # monopolize the budget — a live build burned 26 steps on one wrong field name)
 
 
 @dataclass
@@ -83,13 +85,10 @@ class AgentLoop:
         self._step_lock = threading.Lock()       # serializes the step counter + progress events
         self.last_result: Optional[str] = None
         self.last_read: Optional[str] = None
-        self.upstream_views = {cid: m.context_view for m in modules
-                               if hasattr(m, "context_view") for cid in m.affected_components()}
 
     def _context(self, stalled: bool = False):
         ctx = build_context(self.spec, self.state, last_result=self.last_result,
                             last_read=self.last_read, stalled=stalled)
-        ctx.upstream_views = self.upstream_views
         pairs = effective_pairs(self.modules, ctx)
         ctx.errors = [e for _, e in pairs]
         return ctx, pairs
@@ -144,18 +143,16 @@ class AgentLoop:
         """The fixes to run this step: the top error alone, or — when its check is a slot-guarded
         create — up to `parallel` same-code siblings, each with its own slot index. Only guarded
         creates batch: they are independent by construction (distinct owed slots); everything else
-        (edits, crossref, human notes) may touch the same target, so it stays serial. A view that
-        publishes `open_slots` (nodes) caps the batch at the open slots actually available — a
-        worker without a real slot would free-write an orphan."""
+        (edits, crossref, human notes) may touch the same target, so it stays serial. A guard may
+        declare its own `cap(view)` (scenes: one per open slot, one on an empty graph) — the loop
+        knows no module's view shape."""
         chk = module._check_for(error.code)
         if self.parallel <= 1 or chk is None or chk.guard is None:
             return [(module, error, 0)]
         cap = self.parallel
-        view = module.view(ctx.artifact) or {}
-        if view.get("open_slots") is not None:
-            # Empty graph: exactly one worker writes the opening node (parallel roots would each
-            # free-choose an id — a forest, not a story).
-            cap = min(cap, max(1, len(view["open_slots"])) if view.get("node_ids") else 1)
+        cap_fn = chk.guard.get("cap")
+        if cap_fn:
+            cap = min(cap, max(1, cap_fn(module.view(ctx.artifact) or {})))
         group = sorted((e for m, e in pairs if m is module and e.code == error.code),
                        key=lambda e: e.identity())
         return [(module, e, i) for i, e in enumerate(group[:cap])]
@@ -201,6 +198,7 @@ class AgentLoop:
         passed = all_components - {e.component for _, e in pairs}
         self.step = 0
         self._n_failing = len(pairs)
+        self._attempts: dict = {}
         self._emit("build_started", n_failing=len(pairs), max_steps=self.max_steps)
         prev: Optional[List] = None
         while self.step < self.max_steps:
@@ -209,15 +207,38 @@ class AgentLoop:
                 if not pairs:
                     self._emit("build_done", ok=True, steps=self.step)
                     return LoopResult(ok=True, steps=self.step)
+                # An error that survived _ATTEMPT_CAP fix attempts is PARKED — it needs a human,
+                # and every further step spent on it starves the rest of the build.
+                active = [(m, e) for m, e in pairs
+                          if self._attempts.get(e.identity(), 0) < _ATTEMPT_CAP]
+                if not active:
+                    self._emit("build_done", ok=False, steps=self.step)
+                    return LoopResult(ok=False, steps=self.step, failures=[e for _, e in pairs])
                 stalled = prev is not None and _same(prev, pairs)
-                module, error = prioritize(pairs)
-                batch = self._batch(ctx, pairs, module, error)
+                module, error = prioritize(active)
+                batch = self._batch(ctx, active, module, error)
                 if self._run_fixes(ctx, batch, stalled) == 0:
                     self.step += 1   # a batch that made no LLM call still advances, so we can't spin
 
                 prev = pairs
                 ctx, pairs = self._context()
                 self._n_failing = len(pairs)
+                if len(pairs) < len(prev):
+                    # Forward progress un-parks everything: slot identities are POSITIONAL
+                    # (#001 persists while siblings land), so counters only mean "stuck" while
+                    # the build as a whole isn't moving.
+                    self._attempts.clear()
+                else:
+                    still = {e.identity() for _, e in pairs}
+                    for _m, e, _s in batch:
+                        if e.identity() in still:
+                            n = self._attempts[e.identity()] = \
+                                self._attempts.get(e.identity(), 0) + 1
+                            if n == _ATTEMPT_CAP:
+                                self._emit("error_parked", identity=list(e.identity()),
+                                           message=e.message)
+                                print(f"  parked after {n} failed fixes: [{e.component}] "
+                                      f"{e.code}: {e.message[:120]}", flush=True)
                 now_failing = {e.component for _, e in pairs}
                 for cid in (all_components - now_failing) - passed:
                     self._fire_milestone(cid)

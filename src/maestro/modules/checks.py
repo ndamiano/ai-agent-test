@@ -126,66 +126,7 @@ def refs_resolve(artifact: Dict, frm: str, to: str, *, from_key=None, to_key="id
 
 
 # ── structural story/game checks (graph walks over nodes / places) ───────────
-def reachable_from_start(artifact: Dict) -> CheckResult:
-    node_ids, nodes = views.nodes_of(artifact)
-    if not node_ids:
-        return False, "no nodes to reach"
-    edges = {nid: views.node_targets(nodes.get(nid, {})) for nid in node_ids}
-    orphans = [n for n in node_ids if n not in views.reachable(node_ids, edges)]
-    if orphans:
-        return False, f"nodes unreachable from '{node_ids[0]}': {orphans[:5]}"
-    return True, None
-
-
-def node_targets_resolve(artifact: Dict) -> CheckResult:
-    node_ids, nodes = views.nodes_of(artifact)
-    ids = set(node_ids)
-    bad = [f"{nid} -> {tgt}" for nid in node_ids
-           for tgt in views.node_targets(nodes.get(nid, {})) if tgt not in ids]
-    if bad:
-        return False, (f"node jump/menu targets that don't exist: {bad[:5]} — either create those "
-                       f"nodes (write_node) or repoint the jump to an existing node (edit_node).")
-    return True, None
-
-
-def min_branches(artifact: Dict, *, min=1) -> CheckResult:
-    _, nodes = views.nodes_of(artifact)
-    n = sum(1 for node in nodes.values() if (node.get("end", {}) or {}).get("type") == "menu")
-    if n < min:
-        return False, f"only {n} menu(s), need {min} — add player choices (end.type 'menu')"
-    return True, None
-
-
-def each_node_min_lines(artifact: Dict, *, min=3) -> CheckResult:
-    node_ids, nodes = views.nodes_of(artifact)
-    thin = [f"{nid} ({len(nodes.get(nid, {}).get('lines', []))})"
-            for nid in node_ids if len(nodes.get(nid, {}).get("lines", [])) < min]
-    if thin:
-        return False, f"nodes with < {min} lines: {thin[:5]} — give them more beats"
-    return True, None
-
-
-def each_node_has_location(artifact: Dict) -> CheckResult:
-    node_ids, nodes = views.nodes_of(artifact)
-    missing = [nid for nid in node_ids if not nodes.get(nid, {}).get("location")]
-    if missing:
-        return False, (f"nodes with no location/background: {missing[:5]} — set each node's "
-                       f"`location` to a background id (edit_node location='bg_...').")
-    return True, None
-
-
-def unrealized_beats(artifact: Dict) -> List[str]:
-    """Story beats with no scene dramatizing them yet (empty when there's no story). Each one is a
-    slot the scene author still owes a node for."""
-    beats = [b.get("id") for b in (artifact.get("story", {}) or {}).get("beats", []) if b.get("id")]
-    if not beats:
-        return []
-    _, nodes = views.nodes_of(artifact)
-    covered = {n.get("beat") for n in nodes.values() if n.get("beat")}
-    return [b for b in beats if b not in covered]
-
-
-def _node_effects(node: Dict) -> List[Dict]:
+def node_effects(node: Dict) -> List[Dict]:
     effs = list(e for ln in node.get("lines", []) or [] for e in (ln.get("effects") or []))
     end = node.get("end", {}) or {}
     if end.get("type") == "menu":
@@ -194,7 +135,7 @@ def _node_effects(node: Dict) -> List[Dict]:
     return effs
 
 
-def _effect_targets(eff: Dict) -> set:
+def effect_targets(eff: Dict) -> set:
     if not isinstance(eff, dict):
         return set()
     out = {eff[k] for k in ("set_flag", "clear_flag") if eff.get(k)}
@@ -205,187 +146,19 @@ def _effect_targets(eff: Dict) -> set:
     return out
 
 
-def _cond_state_refs(cond) -> set:
+def cond_state_refs(cond) -> set:
     if not isinstance(cond, dict):
         return set()
     refs = {cond[k] for k in ("var", "flag") if isinstance(cond.get(k), str)}
     for key in ("all", "any"):
         for c in cond.get(key, []) or []:
-            refs |= _cond_state_refs(c)
+            refs |= cond_state_refs(c)
     if "not" in cond:
-        refs |= _cond_state_refs(cond["not"])
+        refs |= cond_state_refs(cond["not"])
     return refs
 
 
-def no_dead_gates(artifact: Dict) -> CheckResult:
-    _, nodes = views.nodes_of(artifact)
-    set_in: Dict[str, set] = {}
-    for nid, node in nodes.items():
-        for eff in _node_effects(node):
-            for t in _effect_targets(eff):
-                set_in.setdefault(t, set()).add(nid)
-    dead = []
-    for nid, node in nodes.items():
-        end = node.get("end", {}) or {}
-        if end.get("type") != "menu":
-            continue
-        for ch in end.get("choices", []) or []:
-            for ref in _cond_state_refs(ch.get("requires")):
-                if not (set_in.get(ref, set()) - {nid}):
-                    dead.append(f"{nid} (gates on '{ref}')")
-    if dead:
-        return False, (f"choices gated on state that is never raised in an earlier scene: {dead[:5]} "
-                       f"— the gate can't open, so the branch is dead. Either raise it with an effect "
-                       f"in an EARLIER node (add_var/set_flag), or DROP the `requires` so the choice "
-                       f"is always available (endings can be earned by the story, not a variable).")
-    return True, None
-
-
-def all_characters_speak(artifact: Dict) -> CheckResult:
-    # `isinstance str` guards: a mis-typed speaker/id (the model nesting an object) must not crash the
-    # set build with `unhashable type: 'dict'` — it's excluded and caught by the schema/other checks.
-    chars = {c.get("id") for c in artifact.get("characters", {}).get("characters", [])
-             if isinstance(c, dict) and isinstance(c.get("id"), str)}
-    if not chars:
-        return False, "characters component has no characters"
-    _, nodes = views.nodes_of(artifact)
-    spoke = {ln.get("speaker") for node in nodes.values()
-             for ln in node.get("lines", []) if isinstance(ln, dict) and isinstance(ln.get("speaker"), str)}
-    silent = sorted(chars - spoke)
-    if silent:
-        return False, f"characters who never speak: {silent} — give them lines"
-    return True, None
-
-
-def places_reachable(artifact: Dict) -> CheckResult:
-    place_ids, places, pc = views.places_of(artifact)
-    if not place_ids:
-        return False, "no places to reach"
-    reach = views.reachable_places(place_ids, places, pc.get("start_place"))
-    orphans = [p for p in place_ids if p not in reach]
-    if orphans:
-        srcs = sorted(reach)[:3] or [pc.get("start_place")]
-        return False, (
-            f"places unreachable from start: {orphans[:5]}. In a REACHABLE place (one of {srcs}) "
-            f"ADD a NEW move hotspot pointing AT the orphan — do NOT repoint an existing hotspot "
-            f"(that breaks its current route). e.g. add_interactable(place_id=\"{srcs[0]}\", "
-            f'interactable={{"id":"h_to_{orphans[0]}","label":"<exit>",'
-            f'"position":{{"rect":{{"x":1040,"y":560,"w":180,"h":120}}}},'
-            f'"action":{{"type":"move","target":"{orphans[0]}"}}}}). '
-            f"The move must live in a REACHABLE place and point AT the orphan, not the reverse.")
-    return True, None
-
-
-def each_place_min_interactables(artifact: Dict, *, min=2) -> CheckResult:
-    place_ids, places, _ = views.places_of(artifact)
-    thin = [f"{pid} ({len(places.get(pid, {}).get('interactables', []))})"
-            for pid in place_ids if len(places.get(pid, {}).get("interactables", [])) < min]
-    if thin:
-        return False, f"places with < {min} interactables: {thin[:5]}"
-    return True, None
-
-
 # ── state wiring: every declared scalar/item has a producer AND a consumer ────
-def _scan_effects(effs, host: str, rec) -> None:
-    for eff in effs or []:
-        if not isinstance(eff, dict):
-            continue
-        for k in ("set_flag", "clear_flag"):
-            if eff.get(k):
-                rec(eff[k], "flag", "prod", host)
-        for k in ("set_var", "add_var"):
-            sv = eff.get(k)
-            if isinstance(sv, dict):
-                rec(sv.get("var"), "variable", "prod", host)
-        if eff.get("add_item"):
-            rec(eff["add_item"], "item", "prod", host)
-        if eff.get("remove_item"):
-            rec(eff["remove_item"], "item", "cons", host)
-
-
-def _scan_condition(cond, host: str, rec) -> None:
-    for ref in _cond_state_refs(cond):           # flags + variables read by a gate
-        rec(ref, None, "cons", host)
-    for it in views.cond_items(cond):            # items a clause requires
-        rec(it, "item", "cons", host)
-
-
-def _walk_state(artifact: Dict) -> Dict:
-    """For every flag / variable / item id, gather the host components that PRODUCE it (set/add/take),
-    CONSUME it (gate/use), and DECLARE it (an explicit catalog/meta entry)."""
-    info: Dict = {}
-
-    def rec(sid, kind, slot: str, host: str) -> None:
-        if not sid or not isinstance(sid, str):
-            return
-        e = info.setdefault(sid, {"kind": kind or "state", "prod": set(), "cons": set(), "decl": set()})
-        if kind:
-            e["kind"] = kind
-        e[slot].add(host)
-
-    _, nodes = views.nodes_of(artifact)
-    for n in nodes.values():
-        _scan_effects(_node_effects(n), "nodes", rec)
-        end = n.get("end", {}) or {}
-        if end.get("type") == "menu":
-            for ch in end.get("choices", []) or []:
-                _scan_condition(ch.get("requires"), "nodes", rec)
-
-    pc = artifact.get("places") or {}
-    for f in (pc.get("flags") or []):
-        rec(f, "flag", "decl", "places")
-    for v in (pc.get("variables") or []):
-        rec(v.get("id") if isinstance(v, dict) else v, "variable", "decl", "places")
-    goal = pc.get("goal")
-    if isinstance(goal, dict) and goal.get("type") == "flag":
-        rec(goal.get("id"), "flag", "cons", "places")        # the win condition reads it
-    for p in (pc.get("places") or {}).values():
-        for h in p.get("interactables", []):
-            a = h.get("action", {}) or {}
-            if a.get("type") == "take" and a.get("item"):
-                rec(a["item"], "item", "prod", "places")
-            _scan_effects(views.action_effects(a), "places", rec)
-            for cond in views.action_conditions(a):
-                _scan_condition(cond, "places", rec)
-
-    for it in (artifact.get("items") or {}).get("items", []) or []:
-        if isinstance(it, dict):
-            rec(it.get("id"), "item", "decl", "items")
-
-    return info
-
-
-def _pick_host(*slots: set) -> str:
-    union = set().union(*slots)
-    return sorted(union)[0] if union else "nodes"
-
-
-def state_wiring(artifact: Dict) -> List[Dict]:
-    """Every declared/used scalar or item must have BOTH a producer (a way it's set/added/taken) and
-    a consumer (a gate/use). Returns [{component, ref, message}] — a missing producer is a dangling
-    reference; a missing consumer is dead state to use or cut. Both are fixed on a host component."""
-    out: List[Dict] = []
-    for sid, e in sorted(_walk_state(artifact).items()):
-        kind = e["kind"]
-        if not e["prod"] and not e["cons"]:
-            # A bare declaration nothing touches: two errors here (add a producer / add a consumer)
-            # would race each other — one fix wires it while the other cuts it. One verdict: cut it.
-            out.append({"component": _pick_host(e["decl"]), "ref": sid, "message": (
-                f"{kind} '{sid}' is declared but never produced or consumed — it does nothing. "
-                f"Cut the declaration, or wire it fully (an effect that sets it AND a gate that "
-                f"reads it).")})
-            continue
-        if not e["prod"]:
-            out.append({"component": _pick_host(e["cons"], e["decl"]), "ref": sid, "message": (
-                f"{kind} '{sid}' is read or declared but nothing ever produces it — set/add/take it "
-                f"where it should change (an effect or a take hotspot), or drop the reference.")})
-        if not e["cons"]:
-            out.append({"component": _pick_host(e["prod"], e["decl"]), "ref": sid, "message": (
-                f"{kind} '{sid}' is produced or declared but never used — gate a choice/hotspot on it, "
-                f"or cut it. Use it or cut it.")})
-    return out
-
-
 # ── reference integrity + terminal build (the two heavy checks) ──────────────
 def crossref_failures(artifact: Dict):
     """Every IR id reference resolves — a cheap data-walk, no engine build. Returns a list of

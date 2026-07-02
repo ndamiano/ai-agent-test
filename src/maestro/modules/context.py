@@ -7,7 +7,7 @@ own `render_context` consume when building a `get_correction_prompt`.
 """
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -49,23 +49,15 @@ def build_context(spec: Dict, state, errors: Optional[List] = None, last_result:
 
 
 def render_dict(ctx: Context, *, active: Optional[str], target=None, active_view: Optional[Dict] = None,
-                upstream_views: Optional[Dict[str, Callable]] = None,
                 available_tools: Optional[List[str]] = None, slot_index: int = 0) -> Dict:
-    """The dict the renderers read. `active` is the component being fixed; every OTHER component
-    that has no open error is a settled/locked upstream (trimmed by its module's `context_view`)."""
-    failing = {e.component for e in ctx.errors}
-    upstream: Dict = {}
-    for cid, content in ctx.artifact.items():
-        if cid == active or cid in failing or content is None:
-            continue
-        trim = (upstream_views or {}).get(cid)
-        upstream[cid] = trim(content) if trim else content
+    """The dict the renderers read. There is NO generic upstream dump: each module's
+    `render_context` composes its own component blocks from `ctx.artifact` (the consumer knows
+    what its call needs; a producer-side trim starved the dialogue author of the character card)."""
     return {
         "spec": {k: v for k, v in ctx.spec.items() if k != "frozen"},
         "mode": active,
         "todo": ctx.errors,
         "target": target,
-        "upstream": upstream,
         "active_view": active_view,
         "scratchpad": ctx.scratchpad(),
         "story_state": ctx.story_state(),

@@ -54,6 +54,28 @@ def test_out_of_bounds_cell_caught():
     assert "outside the 4x3 grid" in _rpg_world_error(bad)
 
 
+def test_phantom_start_place_flagged_and_not_seeded():
+    # start_place set to an id that was never authored: the check must name it, and the
+    # reachability walk must not seed it (its message told the model to wire hotspots into a
+    # nonexistent place — live-build loop poison).
+    from maestro.modules import views
+    from maestro.modules.context import Context
+
+    class _S:
+        run_dir = "/tmp/none"
+        def load_artifact(self): return {}
+        def read_story_state(self): return {}
+        def read_scratchpad(self): return {}
+
+    art = {"places": {"start_place": "phantom", "place_ids": ["p1"],
+                      "places": {"p1": {"kind": "room", "interactables": [
+                          {"id": "h1", "action": {"type": "examine", "text": "t"}}]}}}}
+    chk = next(c for c in WORLD.checks if c.code == "start_authored")
+    errs = chk.detect(chk, WORLD, Context(spec={"params": {}}, state=_S(), artifact=art))
+    assert errs and "phantom" in errs[0].message and "p1" in errs[0].message
+    assert views.reachable_places(["p1"], art["places"]["places"], "phantom") == {"p1"}
+
+
 def test_bad_arrival_spawn_names_the_source_move():
     # The spawn is DECLARED on a move hotspot in another zone; a message naming only the
     # destination sends the model rewriting the wrong place (live-build thrash).
@@ -227,7 +249,6 @@ class _Ctx:
     def __init__(self, modules, artifact=None):
         self.spec = {"modules": modules, "params": {}, "engine": "godot"}
         self.artifact = artifact or {}
-        self.upstream_views = {}
         self.run_dir = None
 
     def param(self, name, default=None):

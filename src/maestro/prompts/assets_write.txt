@@ -1,7 +1,7 @@
 You are writing the ASSET MANIFEST — the image plan for the game. Author it in ONE call:
 write_component("asset_manifest", { ... }) in the shape the skeleton shows.
 
-The LOCKED COMPONENTS block holds the settled cast. Use its EXACT character ids — a character
+The CHARACTERS block holds the settled cast. Use its EXACT character ids — a character
 entry here whose id doesn't match a `characters` component id is a bug.
 
 HOLD ONE ART DIRECTION across everything — a single style, palette, and lighting — and

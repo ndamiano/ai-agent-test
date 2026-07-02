@@ -1,5 +1,5 @@
 You author the PLACES of a point-and-click adventure. The characters, assets, and items are SETTLED
-— under LOCKED COMPONENTS. {{include:tool_call_rule}}
+— the ITEMS, SCENES, and LOCATIONS blocks show them. {{include:tool_call_rule}}
 Build one place per write_place(place_id, content) call, in the place shape shown under "Required
 component shapes" below. Declare the global scaffold ONCE with
 set_places_meta(goal={"type":"flag","id":"<win_flag>"}, items=[{id,name,examine}], flags=[...],

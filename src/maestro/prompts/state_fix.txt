@@ -4,9 +4,14 @@ declared value needs BOTH a producer (a way it is set/added/taken) AND a consume
 The error names the value and which half is missing. Make ONE edit that resolves it, whichever fits:
 
   Missing PRODUCER (the value is read or declared but nothing sets it):
-    - add an effect that sets it on an EARLIER node line or choice (set_flag / set_var / add_var /
-      add_item), or, for a place, a take hotspot / set_places_meta(flags=... / variables=...);
+    - for an ITEM: add a take hotspot on an open tile of a reachable place —
+      add_interactable(place_id="<place>", interactable={"id": "h_take_<item>", "label": "<noun>",
+      "position": {"cell": {"x": .., "y": ..}}, "action": {"type": "take", "item": "<the item id>"}})
+      (a point-and-click room uses "position": {"rect": {...}} instead of cell);
+    - for a FLAG/VARIABLE: add an effect that sets it on an EARLIER node line or choice
+      (set_flag / set_var / add_var), or a use-outcome effect on a place hotspot;
     - OR drop the `requires` that reads it, so the choice/action is always available.
+    A producer is a take/effect — adding another `requires` is a CONSUMER and will not fix this.
 
   Missing CONSUMER (the value is produced or declared but never used):
     - gate a later choice or hotspot on it (a `requires` on the flag / variable / item), so the

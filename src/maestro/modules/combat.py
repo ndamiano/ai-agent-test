@@ -273,6 +273,19 @@ def encounter_write_error(content: Dict, combat: Dict) -> Optional[str]:
     return _encounter_error(content, _ids(combat, "combatants"))
 
 
+def combat_index_block(artifact: Dict) -> list:
+    """Declared combat ids per slice as prompt context — what a start_combat / encounter
+    reference resolves to."""
+    c = artifact.get("combat") or {}
+    slices = {k: sorted(x["id"] for x in (c.get(k) or [])
+                        if isinstance(x, dict) and isinstance(x.get("id"), str))
+              for k in ("stats", "statuses", "abilities", "combatants", "encounters")}
+    if not any(slices.values()):
+        return []
+    return ["", "COMBAT (declared ids):",
+            *(f"  {k}: {v}" for k, v in slices.items() if v)]
+
+
 def combat_view(artifact: Dict) -> Dict:
     """The live id lists the author loop's slot-guard + progress note read."""
     c = artifact.get("combat") or {}
@@ -527,6 +540,23 @@ class Combat(Module):
 
     def params(self) -> Dict:
         return {"min_abilities": 2, "min_combatants": 2, "min_encounters": 1}
+
+    def render_context(self, ctx: Dict) -> str:
+        # The combat author's context, crafted: the character cards (a combatant IS a cast member
+        # — competencies inform abilities, drives inform who fights), the scenes that exist
+        # (on_victory/on_defeat jump targets), and the places (a fight is entered from a map).
+        # The declared combat ids ride on each step's skeleton, not here.
+        from maestro import context_render as cr
+        from maestro.modules import cast, scenes, world
+        art = ctx.get("artifact") or {}
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx)
+        lines += cast.character_cards(art)
+        lines += scenes.nodes_index_block(art)
+        lines += world.places_index_block(art)
+        lines += cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
 
 
 MODULE = Combat()

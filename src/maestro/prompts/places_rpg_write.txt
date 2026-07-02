@@ -1,6 +1,6 @@
 You author the WALKABLE WORLD of a tile-based RPG. The player moves an AVATAR around a grid of tiles
 with WASD; certain tiles move them to another zone or start a fight. The characters, assets, items,
-and the combat encounters are SETTLED — under LOCKED COMPONENTS. {{include:tool_call_rule}}
+and the combat encounters are SETTLED — the ITEMS, SCENES, COMBAT, and LOCATIONS blocks show them. {{include:tool_call_rule}}
 Build one zone per write_place(place_id, content) call, in the place shape shown under "Required
 component shapes" below. Declare the global scaffold ONCE with
 set_places_meta(goal={"type":"flag","id":"<win_flag>"}, flags=[...], start_place="<first zone id>",

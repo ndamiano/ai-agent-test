@@ -16,6 +16,20 @@ from maestro.modules.module import Check, Module, register_module
 _MODELS = {"high_card", "blackjack"}
 
 
+def match_write_error(content) -> Optional[str]:
+    """Write-time policy for one match (what write_match/edit_match enforce)."""
+    if not isinstance(content, dict):
+        return "match content must be a JSON object {card_model, opponent, ante}"
+    if content.get("card_model") not in _MODELS:
+        return f"match.card_model must be one of {sorted(_MODELS)}"
+    if not content.get("opponent"):
+        return "match needs an 'opponent' (a characters component id)"
+    ante = content.get("ante")
+    if not isinstance(ante, dict) or not ante.get("var") or "amount" not in ante:
+        return "match.ante must be {var, amount} — the staked variable and how much"
+    return None
+
+
 def v_matches(c: Dict) -> Optional[str]:
     match_ids = c.get("match_ids")
     matches = c.get("matches")
@@ -84,6 +98,20 @@ class CardPlay(Module):
 
     def params(self) -> Dict:
         return {"min_matches": 1}
+
+    def render_context(self, ctx: Dict) -> str:
+        # A match is against a PERSON for a STAKE: cards for the opponents, the map for where
+        # the play_match hotspot lives.
+        from maestro import context_render as cr
+        from maestro.modules import cast, world
+        art = ctx.get("artifact") or {}
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx)
+        lines += cast.character_cards(art)
+        lines += world.places_index_block(art)
+        lines += cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
 
     def affected_components(self) -> Tuple[str, ...]:
         return ("matches",)

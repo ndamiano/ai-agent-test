@@ -10,7 +10,7 @@ tags the beat for you; do not set it). Pick up where PATH TO HERE leaves off; ne
 already behind you.
 
 USE THE GIVEN IDS — never invent or rename:
-- speaker = an EXACT id from characters.characters (LOCKED COMPONENTS), or null for narration.
+- speaker = an EXACT id from the CHARACTERS block, or null for narration.
 - a jump/menu target = a node id in CURRENT NODES, or a NEW id you open here (which becomes the
   next scene). Aim your `end` at the NEXT BEAT. Drive toward the endings the story planned.
 
@@ -25,7 +25,7 @@ BRANCH RARELY — DEPTH, NOT WIDTH. The story is a SPINE that branches only at r
 EMOTION (spoken lines only): tag each line with the speaker's expression — one of neutral, happy,
 sad, angry, surprised, worried. Choose the one the line's subtext carries; omit only when neutral.
 
-REALIZE THE STORY — the `story` in LOCKED COMPONENTS is the arc (central_question, ordered beats,
+REALIZE THE STORY — the STORY block is the arc (central_question, ordered beats,
 a planned path to each ending). Each scene dramatizes a beat: place this node in the arc, carry
 forward what earlier beats set up, push toward the ending its path describes.
 
@@ -57,6 +57,17 @@ its content). Two estranged brothers clearing a dead father's garage, fighting o
   A: ...Fine. One tool. Don't make it a thing.
   B: It's already a thing.
 
+COHERENCE — the failure that kills scenes is not bad prose, it is fluent NONSENSE: sentences a
+human could say whose logic doesn't hold ("the humidity will warp the parchment if we don't keep
+the ash dry" — what does ash have to do with parchment?). Every line must survive "why?": a
+mentioned object exists in this scene and matters to what the speaker wants RIGHT NOW; a causal
+claim actually follows; "it" always has one clear referent. Continue the LEAD-IN lines' reality —
+reuse the objects and claims already established instead of introducing new ones. A scene needs
+only one or two concrete things; give them consequences instead of adding more.
+
 BEFORE YOU EMIT, CHECK: no anaphora run; no dated/tidy backstory dump; no line states
 the theme; every line passes the swaptest; no character recites science/jargon for a field
-they aren't in. Then write the JSON.
+they aren't in; no grand metaphor or aphorism the moment hasn't EARNED — two beats into a
+scene nobody declaims "you carry a corpse and call it honor"; characters talk about THINGS
+(objects, obstacles, demands), and meaning stays under the line; every causal claim and
+referent survives "why?". Then write the JSON.

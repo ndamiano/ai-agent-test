@@ -1,14 +1,14 @@
-"""Leaf helpers for rendering a build step's context.
+"""The run-state FRAME every build step shares: spec, to-do, target, scratchpad, story state,
+and the trailing result/stall nudge.
 
-There is NO shared context frame: each owning Module defines its own `render_context(ctx)` and
-composes the blocks it wants, in the order it wants. Trimming what a mode sends to the model
-touches only that module — no central function to special-case. These are the formatting and
-graph-math primitives those renderers draw from (a todo line looks the same everywhere; the slot
-math is the same wherever it runs), not policy about which blocks a mode carries.
+Nothing module-specific lives here. Each module is the one-stop shop for its own domain — it
+owns its checks, its skeletons, its write-time policy, AND the block that presents its component
+as context for other modules' prompts (e.g. `cast.character_cards`, `inventory.items_block`).
+A consumer module composes its prompt from the sibling modules' blocks plus this frame.
 """
 
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
 def spec_block(ctx: Dict) -> List[str]:
@@ -40,16 +40,6 @@ def scratchpad_block(ctx: Dict) -> List[str]:
     return ["", f"SCRATCHPAD: {json.dumps(ctx.get('scratchpad', {}) or {}, ensure_ascii=False)}"]
 
 
-def upstream_block(upstream: Dict) -> List[str]:
-    if not upstream:
-        return []
-    return [
-        "",
-        "LOCKED COMPONENTS (settled — use these EXACT ids, do not invent or rename):",
-        json.dumps(upstream, ensure_ascii=False),
-    ]
-
-
 def story_state_block(ctx: Dict) -> List[str]:
     if not ctx.get("story_state"):
         return []
@@ -70,36 +60,3 @@ def tail_block(ctx: Dict) -> List[str]:
             "the content above. Call a write/edit tool NOW to make a change.",
         ]
     return out
-
-
-# ── node-graph slot math (shared: scenes' renderer + services._create_guard) ───────────────────
-def pick_slot(view: Dict, index: int = 0) -> Optional[Dict]:
-    """The system — not the author — chooses which scene to write next: the open slot whose beat
-    comes earliest in the story, so the spine is built in dramatic order. `index` selects the
-    index-th slot in that order — parallel fixes each get their own (worker i writes slot i). None
-    when there is no slot at that index (the entry node, or a fresh branch root is needed)."""
-    slots = view.get("open_slots") or []
-    if index >= len(slots):
-        return None
-    order = {b["id"]: i for i, b in enumerate(view.get("beats") or []) if b.get("id")}
-    last = len(order)
-    return sorted(slots, key=lambda s: (order.get(s.get("beat"), last), s["id"]))[index]
-
-
-def beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) -> Optional[str]:
-    """The beat the system stamps on the node being written — it picked the slot, so it owns the
-    beat too (the author no longer guesses it). The assigned slot's beat; the first beat for the
-    opening node; the first still-unrealized beat for an escape-hatch branch root. None (e.g. an
-    ending slot, or a nodes build with no story) → leave the node's beat unset."""
-    if chosen is not None:
-        return chosen.get("beat")
-    beat_ids = [b["id"] for b in (view.get("beats") or []) if b.get("id")]
-    if not has_existing:
-        return beat_ids[0] if beat_ids else None
-    todo = view.get("beats_todo") or []
-    return todo[0] if todo else None
-
-
-def render_beat(b: Dict) -> str:
-    stake = f' (stake: {b["tension"]})' if b.get("tension") else ""
-    return f'{b.get("id")} — {b.get("summary", "")}{stake}'

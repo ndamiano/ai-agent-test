@@ -29,8 +29,10 @@ def rewrite_node(spec: Dict, state, node_id: str, note: str, tools: Dict[str, Ca
     system = load_prompt("nodes_write.txt") + f"\n\n{skeleton_guide('nodes', SKEL_NODES)}"
     schemas = filter_schemas({"write_node"})
     art = state.load_artifact()
-    upstream = {cid: c for cid, c in art.items() if cid != "nodes"}
 
+    # The scene author's crafted context (cards/locations/story/items), same as the build loop —
+    # never a raw dump of every component (that overflowed the window on a live build).
+    from maestro.modules import assets, cast, inventory, story
     task = "\n".join([
         f"Rewrite the dialogue node '{node_id}'. Keep this exact node id.",
         f"Unless the direction says otherwise, keep its `end` "
@@ -39,9 +41,10 @@ def rewrite_node(spec: Dict, state, node_id: str, note: str, tools: Dict[str, Ca
         f"HUMAN DIRECTION (the change to make): {note}",
         "",
         f"CURRENT NODE:\n{json.dumps(existing, ensure_ascii=False)}",
-        "",
-        "LOCKED UPSTREAM (use these EXACT ids):",
-        json.dumps(upstream, ensure_ascii=False),
+        *cast.character_cards(art),
+        *assets.locations_block(art),
+        *story.story_block(art),
+        *inventory.items_block(art),
         f"STORY STATE: {json.dumps(state.read_story_state() or {}, ensure_ascii=False)}",
         "",
         f"Call write_node with node_id='{node_id}' and the full rewritten content. Tool call only.",

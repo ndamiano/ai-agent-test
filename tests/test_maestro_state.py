@@ -98,3 +98,5 @@ def test_state_wiring_fix_shows_full_wiring_report(tmp_path):
     cp = STATE.get_correction_prompt(ctx, err)
     assert "WIRING REPORT" in cp.user
     assert "item_a" in cp.user and "item_b" in cp.user   # the sibling hole is visible too
+    # the failing host is excluded from upstream, so the fix must carry the catalog itself
+    assert "CURRENT CATALOG" in cp.user and "never an empty list" in cp.user

@@ -27,11 +27,12 @@ def test_count_check_min():
 
 
 def test_reachable_from_start():
+    from maestro.modules.scenes import reachable_from_start
     art = {"nodes": {"node_ids": ["a", "b"], "nodes": {
         "a": {"end": {"type": "jump", "target": "b"}}, "b": {"end": {"type": "end"}}}}}
-    assert checks.reachable_from_start(art)[0] is True
+    assert reachable_from_start(art)[0] is True
     art["nodes"]["nodes"]["a"]["end"] = {"type": "end"}  # b now orphaned
-    assert checks.reachable_from_start(art)[0] is False
+    assert reachable_from_start(art)[0] is False
 
 
 def test_as_error_wraps_failure_only():
@@ -80,7 +81,8 @@ def test_state_wiring_demands_producer_and_consumer():
         "n2": {"lines": [{"speaker": "a", "text": "y"}], "end": {"type": "menu", "choices": [
             {"text": "go", "target": "n1", "requires": {"flag": "never_set"}},
             {"text": "stay", "target": "n1"}]}}}}}
-    refs = {r["ref"] for r in checks.state_wiring(art)}
+    from maestro.modules.state import state_wiring
+    refs = {r["ref"] for r in state_wiring(art)}
     assert "orphan" in refs        # produced, never consumed -> use it or cut it
     assert "never_set" in refs     # consumed, never produced -> dangling
 
@@ -91,7 +93,7 @@ def test_state_wiring_demands_producer_and_consumer():
         "n2": {"lines": [{"speaker": "a", "text": "y"}], "end": {"type": "menu", "choices": [
             {"text": "go", "target": "n1", "requires": {"flag": "f"}},
             {"text": "stay", "target": "n1"}]}}}}}
-    assert checks.state_wiring(ok) == []
+    assert state_wiring(ok) == []
 
 
 def test_state_wiring_survives_model_shaped_junk_conditions():
@@ -101,7 +103,8 @@ def test_state_wiring_survives_model_shaped_junk_conditions():
         "n1": {"lines": [{"speaker": "a", "text": "x"}], "end": {"type": "menu", "choices": [
             {"text": "a", "target": "n1", "requires": {"item": ["item_key", "item_ash"]}},
             {"text": "b", "target": "n1", "requires": {"flag": {"nested": "junk"}}}]}}}}}
-    refs = {r["ref"] for r in checks.state_wiring(art)}
+    from maestro.modules.state import state_wiring
+    refs = {r["ref"] for r in state_wiring(art)}
     assert {"item_key", "item_ash"} <= refs      # list items still counted as consumers
     from maestro.modules import views
     assert views.cond_items({"item": 42}) == set()
@@ -111,7 +114,8 @@ def test_state_wiring_fully_orphaned_value_gets_one_error():
     # A declared flag nothing produces AND nothing consumes: one "cut it" error, not a
     # missing-producer error and a missing-consumer error that would fight each other.
     art = {"places": {"place_ids": [], "places": {}, "flags": ["untouched"]}}
-    errs = [r for r in checks.state_wiring(art) if r["ref"] == "untouched"]
+    from maestro.modules.state import state_wiring
+    errs = [r for r in state_wiring(art) if r["ref"] == "untouched"]
     assert len(errs) == 1
     assert "never produced or consumed" in errs[0]["message"]
 
@@ -308,16 +312,16 @@ def test_count_target_authors_one_item_per_step_to_green(tmp_path):
 import threading
 import time as _time
 
-from maestro import context_render as cr
+from maestro.modules.scenes import _stamp_beat, pick_slot
 from maestro.services import _create_guard
 
 
 def test_pick_slot_indexed_in_dramatic_order():
     view = {"open_slots": [{"id": "z_late", "beat": "beat_02"}, {"id": "a_early", "beat": "beat_01"}],
             "beats": [{"id": "beat_01"}, {"id": "beat_02"}]}
-    assert cr.pick_slot(view, 0)["id"] == "a_early"
-    assert cr.pick_slot(view, 1)["id"] == "z_late"
-    assert cr.pick_slot(view, 2) is None
+    assert pick_slot(view, 0)["id"] == "a_early"
+    assert pick_slot(view, 1)["id"] == "z_late"
+    assert pick_slot(view, 2) is None
 
 
 def test_create_guard_enforces_the_assigned_slot():
@@ -325,7 +329,7 @@ def test_create_guard_enforces_the_assigned_slot():
     ok = lambda name, args: (calls.append((name, args)), {"ok": True})[1]
     view = {"node_ids": ["n1"], "open_slots": [{"id": "s1"}, {"id": "s2"}], "beats": []}
     g = _create_guard(ok, lambda: view, "write_node", "node_id", "node_ids", "node",
-                      assigned={"id": "s2", "beat": "beat_02"})
+                      assigned={"id": "s2", "beat": "beat_02"}, prepare=_stamp_beat)
     refused = g("write_node", {"node_id": "s1"})
     assert refused["ok"] is False and "'s2'" in refused["error"]
     g("write_node", {"node_id": "s2"})
@@ -411,8 +415,13 @@ def test_batch_capped_by_open_slots(tmp_path):
     # however many creates are owed.
     state = RunState(tmp_path)
 
+    from maestro.modules.scenes import _parallel_cap
+
     class _Slotted(_Counter3):
         id = "_slotted_test"
+        checks = [Check("need3", _need3,
+                        guard={"count_tool": "add", "id_key": "id", "id_list_key": "ids",
+                               "noun": "item", "cap": _parallel_cap})]
 
         def view(self, artifact):
             return {"ids": ["n1"], "node_ids": ["n1"], "open_slots": [{"id": "s1"}], "beats": []}
@@ -431,8 +440,13 @@ def test_batch_is_single_on_an_empty_graph(tmp_path):
     # No nodes yet: one worker writes the opening node; parallel roots would make a forest.
     state = RunState(tmp_path)
 
+    from maestro.modules.scenes import _parallel_cap
+
     class _Empty(_Counter3):
         id = "_empty_graph_test"
+        checks = [Check("need3", _need3,
+                        guard={"count_tool": "add", "id_key": "id", "id_list_key": "ids",
+                               "noun": "item", "cap": _parallel_cap})]
 
         def view(self, artifact):
             return {"ids": [], "node_ids": [], "open_slots": [], "beats": []}
@@ -444,6 +458,163 @@ def test_batch_is_single_on_an_empty_graph(tmp_path):
     errs = checks.slot_errors(3, type=ErrorType.BUILD, code="need3", component="items", noun="item")
     batch = loop._batch(ctx, [(mod, e) for e in errs], mod, errs[0])
     assert len(batch) == 1
+
+
+# ── consumer-crafted context: each module composes its own blocks from the raw artifact ──
+_RICH_ART = {
+    "characters": {"characters": [{"id": "ana", "name": "Ana", "role": "protagonist",
+                                   "voice": "curt", "drive": "keep the farm",
+                                   "history": ["lost the farm to the bank"],
+                                   "competencies": ["lockpicking"],
+                                   "example_lines": ["Hand me the crowbar."]}]},
+    "asset_manifest": {"backgrounds": [{"id": "bg_barn", "description": "a collapsing barn"}],
+                       "characters": [], "cgs": []},
+    "story": {"central_question": "Can the farm be saved?",
+              "endings": [{"id": "ending_saved", "description": "she keeps it"}],
+              "beats": [{"id": "b1", "summary": "the notice arrives"}]},
+    "items": {"items": [{"id": "item_deed", "name": "Deed", "examine": "the farm's deed"}]},
+    "nodes": {"node_ids": ["s1"], "synopses": {"s1": "the reveal"},
+              "nodes": {"s1": {"lines": [{"speaker": None, "text": "sekritlongtext " * 200}],
+                               "end": {"type": "end"}}}},
+}
+
+
+def test_scene_author_context_is_crafted_and_bounded():
+    # The dialogue author gets the FULL character card, locations with descriptions, the story
+    # plan, and the item list — but never another scene's full text (that's what overflowed the
+    # context window in a live build).
+    scenes = MODULE_REGISTRY["scenes"]
+    ctx = _ctx({"title": "T", "params": {}}, _RICH_ART)
+    err = Error(ErrorType.BUILD, "beats_realized", "nodes", "one more scene", path="#001")
+    p = scenes.get_correction_prompt(ctx, err)
+    assert "history: lost the farm to the bank" in p.user   # full card, not a trim
+    assert "bg_barn — a collapsing barn" in p.user           # location has its description
+    assert "central question: Can the farm be saved?" in p.user
+    assert "item_deed" in p.user
+    assert "sekritlongtext" not in p.user                    # scene text stays out
+
+
+def test_world_author_context_is_crafted_and_bounded():
+    world = MODULE_REGISTRY["world"]
+    ctx = _ctx({"title": "T", "params": {}}, _RICH_ART)
+    err = Error(ErrorType.BUILD, "min_places", "places", "one more place", path="#001")
+    p = world.get_correction_prompt(ctx, err)
+    assert "item_deed — Deed" in p.user       # full catalogue to place takes/gates
+    assert 's1 — "the reveal"' in p.user      # scene index for talk targets
+    assert "sekritlongtext" not in p.user     # never the scene text
+
+
+def test_open_slot_carries_parent_lead_in_lines():
+    from maestro.modules.scenes import node_view
+    art = {"nodes": {"node_ids": ["s1"], "nodes": {
+        "s1": {"lines": [{"speaker": "a", "text": f"line {i}"} for i in range(9)],
+               "end": {"type": "jump", "target": "s2"}}}}}
+    slot = node_view(art)["open_slots"][0]
+    assert slot["id"] == "s2"
+    assert [l["text"] for l in slot["lead_in"]] == [f"line {i}" for i in range(3, 9)]
+
+
+# ── nodes must be enterable from the world (talk / encounter resolution) ─────
+def test_nodes_world_entered():
+    from maestro.modules.world import nodes_world_entered
+    places = {"places": {"place_ids": ["p1"], "places": {"p1": {"kind": "room", "interactables": [
+        {"id": "h1", "action": {"type": "examine", "text": "t"}}]}}}}
+    nodes = {"nodes": {"node_ids": ["s1", "s2"], "nodes": {
+        "s1": {"lines": [{"speaker": None, "text": "x"}], "end": {"type": "jump", "target": "s2"}},
+        "s2": {"lines": [{"speaker": None, "text": "y"}], "end": {"type": "end"}}}}}
+    ok, msg = nodes_world_entered({**places, **nodes})
+    assert ok is False and "NEVER entered" in msg
+    # a talk hotspot at s1 makes the whole chain reachable
+    places["places"]["places"]["p1"]["interactables"].append(
+        {"id": "h2", "action": {"type": "talk", "node": "s1"}})
+    assert nodes_world_entered({**places, **nodes})[0] is True
+    # an on_victory jump also counts as an entry
+    combat = {"combat": {"encounters": [{"id": "e1", "combatants": [],
+                                         "on_victory": {"type": "jump", "target": "s1"}}]}}
+    places["places"]["places"]["p1"]["interactables"].pop()
+    assert nodes_world_entered({**places, **nodes, **combat})[0] is True
+    # a node OFF the entered graph is called out by id
+    nodes["nodes"]["node_ids"].append("s3")
+    nodes["nodes"]["nodes"]["s3"] = {"lines": [{"speaker": None, "text": "z"}],
+                                     "end": {"type": "end"}}
+    ok, msg = nodes_world_entered({**places, **nodes, **combat})
+    assert ok is False and "s3" in msg
+    # no places -> VN entry rules apply, check is silent
+    assert nodes_world_entered(nodes)[0] is True
+
+
+# ── parked errors: a stuck error stops monopolizing the budget ────────────────
+class _Stuck(Module):
+    id = "_stuck_test"
+    component = "premise"
+    mode_prompt = "nodes_write.txt"
+    mode_tools = frozenset({"noop"})
+
+    def affected_components(self):
+        return ("premise",)
+
+    def get_errors(self, ctx):
+        return [Error(ErrorType.BUILD, "unfixable", "premise", "never clears")]
+
+    def get_correction_prompt(self, ctx, error, slot=0):
+        return CorrectionPrompt("s", "u", ("noop",))
+
+
+def test_stuck_error_parks_instead_of_burning_budget(tmp_path):
+    state = RunState(tmp_path)
+    conn = _AddConn()   # emits an `add` call; only `noop` is allowed, so every fix whiffs
+    loop = AgentLoop({"frozen": True}, state, [_Stuck()], {"noop": lambda **kw: {"ok": True}},
+                     connector=conn, max_steps=100)
+    result = loop.run()
+    assert result.ok is False
+    assert result.steps < 15                      # parked long before max_steps
+    assert result.failures and result.failures[0].code == "unfixable"
+
+
+def test_progress_unparks_attempt_counters(tmp_path):
+    # Slot identities are positional (#001 persists while siblings land), so counters reset on
+    # any forward progress — a retryable authoring slot must not get parked mid-build.
+    state = RunState(tmp_path)
+
+    class _FlakyAdd:
+        """Every write attempt fails 5x then succeeds — under the cap only because progress
+        (an eventual success) clears the counters."""
+        def __init__(self):
+            self.i = 0
+
+        def generate_with_tools(self, messages, schemas, **kw):
+            self.i += 1
+            return {"choices": [{"message": {"tool_calls": [{"id": "1", "function": {
+                "name": "add", "arguments": f'{{"id": "item_{self.i}"}}'}}]}}]}
+
+    fails = {"n": 0}
+
+    def add(id, **kw):
+        fails["n"] += 1
+        if fails["n"] % 6 != 0:   # 5 failures, then one success, repeatedly
+            return {"ok": False, "error": "rejected"}
+        items = state.read_component("items") or {"ids": []}
+        items["ids"].append(id)
+        state.write_component("items", items)
+        return {"ok": True}
+
+    loop = AgentLoop({"frozen": True}, state, [_Counter3()], {"add": add},
+                     connector=_FlakyAdd(), max_steps=60)
+    result = loop.run()
+    assert result.ok is True   # never parked: each success resets the counters
+
+
+# ── parallel create prompts differentiate by slot ordinal ────────────────────
+def test_guarded_create_prompt_names_its_slot(tmp_path):
+    state = RunState(tmp_path)
+    mod = _Counter3()
+    ctx = build_context({"params": {}}, state)
+    err = checks.slot_errors(3, type=ErrorType.BUILD, code="need3", component="items",
+                             noun="item")[1]
+    p0 = mod.get_correction_prompt(ctx, err, slot=0)
+    p1 = mod.get_correction_prompt(ctx, err, slot=1)
+    assert "PARALLEL AUTHORING" not in p0.user
+    assert "PARALLEL AUTHORING" in p1.user and "#2" in p1.user
 
 
 # ── empty response (reasoning overran max_tokens) retries once with reasoning off ──

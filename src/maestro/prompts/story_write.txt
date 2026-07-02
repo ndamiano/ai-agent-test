@@ -2,7 +2,7 @@ You are establishing the STORY — the dramatic plan every later scene will real
 ONE call: write_component("story", { ... }) in the shape the skeleton shows. This is the plan, not
 the scenes: the shape of the whole story.
 
-Work FROM THE CAST (in LOCKED COMPONENTS) and the concept: who these people are, what they want,
+Work FROM THE CAST (the CHARACTERS block) and the concept: who these people are, what they want,
 and what collides.
 
 CENTRAL QUESTION — the guiding beacon: the tension that drives the characters, and the question

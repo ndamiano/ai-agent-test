@@ -15,6 +15,28 @@ from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
 
+def story_block(artifact: Dict) -> list:
+    """The dramatic plan as prompt context: question + endings (+ beat one-liners). What
+    realization steps aim at."""
+    story = artifact.get("story") or {}
+    if not story.get("central_question"):
+        return []
+    out = ["", f"STORY — central question: {story['central_question']}"]
+    for e in story.get("endings") or []:
+        if isinstance(e, dict) and e.get("id"):
+            out.append(f"  ending {e['id']}: {e.get('description', '')}")
+    beats = [b for b in story.get("beats") or [] if isinstance(b, dict) and b.get("id")]
+    if beats:
+        out.append("  beats: " + " → ".join(b["id"] for b in beats))
+    return out
+
+
+def render_beat(b: Dict) -> str:
+    """One story beat as a prompt line (the scene author's brief for a slot)."""
+    stake = f' (stake: {b["tension"]})' if b.get("tension") else ""
+    return f'{b.get("id")} — {b.get("summary", "")}{stake}'
+
+
 def v_story(c: Dict) -> Optional[str]:
     if not c.get("central_question"):
         return "story.central_question is required (the dramatic question the endings answer)"
@@ -102,8 +124,17 @@ class Story(Module):
                 "character_fields": ["voice", "temperament", "drive", "history",
                                      "competencies", "example_lines"]}
 
-    def context_view(self, c: Dict) -> Dict:
-        return {k: v for k, v in c.items() if k != "beats"}
+    def render_context(self, ctx: Dict) -> str:
+        # The story is planned FROM the cast: full character cards (drives are what collide into
+        # a plot), nothing else but the request frame.
+        from maestro import context_render as cr
+        from maestro.modules import cast
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx)
+        lines += cast.character_cards(ctx.get("artifact") or {})
+        lines += cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
 
 
 MODULE = Story()

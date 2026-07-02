@@ -191,30 +191,37 @@ class Module(ABC):
             skel = self.skeleton
         view = self.view(context.artifact)
         rd = render_dict(context, active=error.component or None, target=error, active_view=view,
-                         upstream_views=getattr(context, "upstream_views", {}),
                          available_tools=tools, slot_index=slot)
+        rd["artifact"] = context.artifact   # renderers compose their own blocks from the raw components
         system = load_prompt(prompt or self.mode_prompt)
         if skel:
             system += "\n\n" + skeleton_guide(self.component, skel)
-        return CorrectionPrompt(system=system, user=self.render_context(rd),
+        user = self.render_context(rd)
+        # Parallel siblings each pick the single most obvious id (everyone writes the hero) and
+        # collide on the no-overwrite guard; a view with open_slots already differentiates via the
+        # assigned slot, everything else gets told its ordinal.
+        if chk and chk.guard and slot > 0 and not (view or {}).get("open_slots"):
+            noun = chk.guard.get("noun", "item")
+            user += (f"\n\nPARALLEL AUTHORING — you are writing {noun} #{slot + 1}; siblings are "
+                     f"writing the others RIGHT NOW, and the most obvious {noun} (the protagonist, "
+                     f"the starter one) is #1's job. Author a DIFFERENT {noun} with a distinct id — "
+                     f"the {slot + 1}-th one the game needs, e.g. an enemy or a variant.")
+        return CorrectionPrompt(system=system, user=user,
                                 allowed_tools=tuple(sorted(tools)),
                                 max_tokens=(chk.max_tokens if chk else None))
 
     # ── overridable hooks (sensible defaults) ────────────────────────────────
     def render_context(self, ctx: Dict) -> str:
-        """The per-step user message. Default composes the common blocks; a content module overrides
-        to add its graph view."""
+        """The per-step user message. There is no generic component dump — every module is
+        expected to override this and CRAFT the context its call needs from `ctx['artifact']`
+        (the cr.*_block helpers are the shared formats). This default carries only the
+        run-state frame."""
         from maestro import context_render as cr
         lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
         lines += cr.target_block(ctx) + cr.scratchpad_block(ctx)
-        lines += cr.upstream_block(ctx.get("upstream") or {})
         lines += cr.story_state_block(ctx) + cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
-
-    def context_view(self, content: Dict) -> Dict:
-        """Trim this component for injection as a settled upstream. Default: inject whole."""
-        return content
 
     def params(self) -> Dict:
         """Tunable knobs -> FLOOR (int knobs take the max when composed, list knobs the union). The
@@ -244,14 +251,15 @@ class Module(ABC):
         guard = chk.guard if chk else None
         dispatch = None
         if guard:
-            from maestro import context_render as cr
             from maestro.services import _create_guard
-            view0 = self.view(context.artifact) or {}
-            assigned = cr.pick_slot(view0, slot) if view0.get("open_slots") is not None else None
+            # The guard's slot policy is the MODULE's: `assign` picks this worker's slot from the
+            # prompt-time view, `prepare` finishes the write args (e.g. scenes stamps the beat).
+            assign = guard.get("assign")
+            assigned = assign(self.view(context.artifact) or {}, slot) if assign else None
             view_fn = lambda: self.view(services.state.load_artifact())
             dispatch = _create_guard(services.dispatch, view_fn, guard["count_tool"],
                                      guard["id_key"], guard["id_list_key"], guard["noun"],
-                                     assigned=assigned)
+                                     assigned=assigned, prepare=guard.get("prepare"))
         services.run(self.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
 
 

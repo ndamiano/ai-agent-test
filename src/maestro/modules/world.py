@@ -34,6 +34,186 @@ DEFAULT_LEGEND = {
 }
 
 
+# ── the compact graph projection + presentation block ─────────────────────────
+def place_view(artifact: Dict) -> Dict:
+    place_ids, places, pc = views.places_of(artifact)
+    reach = views.reachable_places(place_ids, places, pc.get("start_place"))
+    items = [i.get("id") for i in (artifact.get("items") or {}).get("items", []) if i.get("id")]
+    taken = {a["item"] for a in views.all_actions(places) if a.get("type") == "take" and a.get("item")}
+    used = set().union(*(views.cond_items(c) for a in views.all_actions(places)
+                         for c in views.action_conditions(a))) if places else set()
+    return {
+        "place_ids": place_ids,
+        "edges": {pid: sorted(set(views.move_targets(places.get(pid, {})))) for pid in place_ids},
+        "reachable": sorted(reach),
+        "unreachable": [p for p in place_ids if p not in reach],
+        "interactable_counts": {pid: len(places.get(pid, {}).get("interactables", []))
+                                for pid in place_ids},
+        "items": items,
+        "items_never_taken": [i for i in items if i not in taken],
+        "items_never_used": [i for i in items if i not in used],
+    }
+
+
+def places_index_block(artifact: Dict) -> List[str]:
+    """The map's shape as prompt context: place ids, start, and each place's hotspot ids —
+    never tile rows."""
+    pc = artifact.get("places") or {}
+    ids = pc.get("place_ids") or []
+    if not ids:
+        return []
+    places = pc.get("places") or {}
+    out = ["", f"PLACES (start: {pc.get('start_place')}):"]
+    for pid in ids:
+        hs = [h.get("id") for h in (places.get(pid, {}) or {}).get("interactables", [])
+              if isinstance(h, dict)]
+        out.append(f"  {pid} — hotspots: {hs}")
+    return out
+
+
+# ── map policy checks ──────────────────────────────────────────────────────────
+def places_reachable(artifact: Dict):
+    place_ids, places, pc = views.places_of(artifact)
+    if not place_ids:
+        return False, "no places to reach"
+    reach = views.reachable_places(place_ids, places, pc.get("start_place"))
+    orphans = [p for p in place_ids if p not in reach]
+    if orphans:
+        srcs = sorted(reach)[:3] or [pc.get("start_place")]
+        return False, (
+            f"places unreachable from start: {orphans[:5]}. In a REACHABLE place (one of {srcs}) "
+            f"ADD a NEW move hotspot pointing AT the orphan — do NOT repoint an existing hotspot "
+            f"(that breaks its current route). e.g. add_interactable(place_id=\"{srcs[0]}\", "
+            f'interactable={{"id":"h_to_{orphans[0]}","label":"<exit>",'
+            f'"position":{{"rect":{{"x":1040,"y":560,"w":180,"h":120}}}},'
+            f'"action":{{"type":"move","target":"{orphans[0]}"}}}}). '
+            f"The move must live in a REACHABLE place and point AT the orphan, not the reverse.")
+    return True, None
+
+
+def each_place_min_interactables(artifact: Dict, *, min=2):
+    place_ids, places, _ = views.places_of(artifact)
+    thin = [f"{pid} ({len(places.get(pid, {}).get('interactables', []))})"
+            for pid in place_ids if len(places.get(pid, {}).get("interactables", [])) < min]
+    if thin:
+        return False, f"places with < {min} interactables: {thin[:5]}"
+    return True, None
+
+
+def nodes_world_entered(artifact: Dict):
+    """When places exist the game STARTS in the world, and the node graph plays only through world
+    entry points: talk actions and encounter/match resolution jumps. Every node must be reachable
+    from those entries — otherwise it's authored story the player can never see (both live builds
+    shipped their whole opening unreachable; run 2 shipped ALL 12 nodes dead)."""
+    node_ids, nodes = views.nodes_of(artifact)
+    place_ids, places, _ = views.places_of(artifact)
+    if not node_ids or not place_ids:
+        return True, None
+    entries = set()
+    for a in views.all_actions(places):
+        if a.get("type") == "talk" and a.get("node"):
+            entries.add(a["node"])
+    for e in (artifact.get("combat") or {}).get("encounters", []) or []:
+        for key in ("on_victory", "on_defeat"):
+            ne = e.get(key) if isinstance(e, dict) else None
+            if isinstance(ne, dict) and ne.get("type") == "jump" and isinstance(ne.get("target"), str):
+                entries.add(ne["target"])
+    for m in ((artifact.get("matches") or {}).get("matches") or {}).values():
+        for key in ("on_win", "on_lose"):
+            ne = (m.get(key) or {}).get("end") if isinstance(m, dict) else None
+            if isinstance(ne, dict) and ne.get("type") == "jump" and isinstance(ne.get("target"), str):
+                entries.add(ne["target"])
+    valid = sorted(e for e in entries if e in nodes)
+    if not valid:
+        return False, (
+            "the dialogue graph is NEVER entered — no place interactable has a talk action and no "
+            "encounter resolves into a node, so none of the authored scenes can play. Wire an "
+            'entry: give an interactable a talk action ({"type":"talk","node":"<the opening '
+            'scene id>"}), and/or give an encounter an on_victory {"type":"jump","target":"<a '
+            'node id>"}.')
+    edges = {nid: views.node_targets(nodes.get(nid, {})) for nid in node_ids}
+    seen = {v for v in valid}
+    frontier = list(seen)
+    while frontier:
+        for t in edges.get(frontier.pop(), []):
+            if t in edges and t not in seen:
+                seen.add(t)
+                frontier.append(t)
+    dead = [n for n in node_ids if n not in seen]
+    if dead:
+        return False, (
+            f"scenes the player can NEVER reach through play: {dead[:6]} — the world enters the "
+            f"dialogue only at {valid[:4]}. Add a talk hotspot pointing at the first dead scene "
+            f"(add_interactable), or repoint an entered scene's end/menu to lead into them "
+            f"(edit_node).")
+    return True, None
+
+
+# ── write-time action policy (what add_interactable/edit_place enforce) ────────
+def _ir_defs():
+    import json
+    from pathlib import Path
+    return json.loads((Path(__file__).resolve().parents[3] / "docs" / "game_ir.schema.json")
+                      .read_text(encoding="utf-8"))["$defs"]
+
+
+def _action_validator():
+    import jsonschema
+    return jsonschema.Draft202012Validator({"$ref": "#/$defs/action", "$defs": _ir_defs()})
+
+
+def _action_shapes() -> Dict:
+    """type -> (allowed keys, required keys), read from the schema's per-type action defs."""
+    shapes = {}
+    for name, d in _ir_defs().items():
+        if name.startswith("action_"):
+            props = d.get("properties", {})
+            t = (props.get("type", {}) or {}).get("const") or name[len("action_"):]
+            shapes[t] = (set(props), set(d.get("required", [])))
+    return shapes
+
+
+_ACTION_VALIDATOR = None
+_ACTION_SHAPES = None
+
+
+def action_error(action) -> Optional[str]:
+    """Reject a malformed interactable action at write time with an ACTIONABLE message. Names the
+    wrong/missing KEY before the oneOf backstop — its 'not valid under any of the given schemas'
+    names nothing, and a small model retried the same bad key 26 steps straight against it."""
+    if not isinstance(action, dict) or not action.get("type"):
+        return "action needs an object with a 'type'"
+    if action.get("type") == "use":
+        for i, cl in enumerate(action.get("clauses", []) or []):
+            req = cl.get("requires") if isinstance(cl, dict) else None
+            if not isinstance(req, dict) or not req:
+                return (f"use clause[{i}].requires must be a REAL condition — e.g. "
+                        f'{{"flag":"x"}}, {{"item":"y"}}, or {{"var":"g","op":">=","value":10}}. '
+                        f"For an outcome that ALWAYS fires, DROP the clause and put it in `fallback`: "
+                        f'{{"type":"use","fallback":{{"text":"...","effects":[...]}}}}.')
+    global _ACTION_VALIDATOR, _ACTION_SHAPES
+    if _ACTION_SHAPES is None:
+        _ACTION_SHAPES = _action_shapes()
+    t = action["type"]
+    if t not in _ACTION_SHAPES:
+        return f"unknown action type {t!r} — one of {sorted(_ACTION_SHAPES)}"
+    allowed, required = _ACTION_SHAPES[t]
+    unknown = sorted(set(action) - allowed)
+    if unknown:
+        return (f"a {t!r} action does not take {unknown} — its keys are {sorted(allowed)} "
+                f"(required: {sorted(required)})")
+    missing = sorted(required - set(action))
+    if missing:
+        return f"a {t!r} action requires {missing} — its keys are {sorted(allowed)}"
+    if _ACTION_VALIDATOR is None:
+        _ACTION_VALIDATOR = _action_validator()
+    errs = sorted(_ACTION_VALIDATOR.iter_errors(action), key=lambda e: len(list(e.path)))
+    if errs:
+        loc = "/".join(str(p) for p in errs[0].path) or "action"
+        return f"action invalid at {loc}: {errs[0].message}"
+    return None
+
+
 def _cell_xy(pos) -> Optional[tuple]:
     """The (x, y) of a {cell:{x,y}} position, or None if it isn't an integer tile."""
     if isinstance(pos, dict) and isinstance(pos.get("cell"), dict):
@@ -391,6 +571,17 @@ def _w_skeleton(ctx) -> str:
     return SKEL_RPG if _is_rpg(ctx) else SKEL_PLACES
 
 
+def _d_start_authored(chk, m, ctx):
+    pc = ctx.artifact.get("places") or {}
+    start, ids = pc.get("start_place"), pc.get("place_ids") or []
+    if not start or not ids or start in ids:
+        return []
+    return [Error(type=chk.tier, code=chk.code, component="places", ref=start, message=(
+        f"start_place {start!r} is not an authored place — the game starts nowhere, and every "
+        f"other place reads as unreachable. Either call set_places_meta(start_place=<one of "
+        f"{ids[:6]}>), or write_place a place with EXACTLY the id {start!r}."))]
+
+
 def _d_min_places(chk, m, ctx):
     gap = ctx.param("min_places", 3) - checks.length(ctx.artifact, "places.place_ids")
     return checks.slot_errors(gap, type=chk.tier, code=chk.code, component="places",
@@ -484,7 +675,7 @@ class World(Module):
     skeleton = SKEL_PLACES
     schemas = {"places": v_places}
     skeletons = {"places": SKEL_PLACES}
-    projector = staticmethod(views.place_view)
+    projector = staticmethod(place_view)
     projected = True
     emits_compile = True   # a realization terminal: `places` stays writable to the end
     tool_names = ("write_place", "edit_place", "add_interactable", "read_place", "set_places_meta")
@@ -497,16 +688,19 @@ class World(Module):
             ctx.artifact, "places.start_place")), prompt=_w_author_prompt, skeleton=_w_skeleton),
         Check("min_places", _d_min_places, prompt=_w_author_prompt, skeleton=_w_skeleton,
               tools=_T_MIN_PLACES, guard=_PLACE_GUARD),
+        Check("start_authored", _d_start_authored, job="fix", prompt="places_fix.txt",
+              skeleton=_w_skeleton, tools=_T_LAYOUT),
         Check("each_place_min_interactables", lambda chk, m, ctx: m.wrap(
-            chk, checks.each_place_min_interactables(ctx.artifact,
+            chk, each_place_min_interactables(ctx.artifact,
                                                      min=ctx.param("min_interactables", 2))),
               prompt=_w_author_prompt, skeleton=_w_skeleton, tools=_T_INTERACT),
-        Check("places_reachable", lambda chk, m, ctx: m.wrap(chk, checks.places_reachable(
-            ctx.artifact)), job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_REACH),
+        Check("places_reachable", lambda chk, m, ctx: m.wrap(chk, places_reachable(ctx.artifact)), job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_REACH),
         Check("rpg_layout", _d_rpg_layout, job="fix", prompt="places_fix.txt", skeleton=_w_skeleton,
               tools=_T_LAYOUT),
         Check("rpg_connectivity", _d_rpg_connectivity, job="fix", prompt="places_fix.txt",
               skeleton=_w_skeleton, tools=_T_REACH),
+        Check("nodes_entered", lambda chk, m, ctx: m.wrap(chk, nodes_world_entered(ctx.artifact)), job="fix", prompt="places_fix.txt", skeleton=_w_skeleton,
+            tools=_T_TERMINAL),
         Check("crossref", _d_crossref, job="fix", when_clean=True, prompt="places_fix.txt",
               skeleton=_w_skeleton, tools=_T_TERMINAL),
         Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="places_fix.txt",
@@ -517,10 +711,19 @@ class World(Module):
         return {"min_places": 3, "min_interactables": 2}
 
     def render_context(self, ctx: Dict) -> str:
+        # The world author's context, crafted: the items to place (full catalogue — takes and
+        # gates reference them), the scenes that exist (talk targets), declared encounters
+        # (start_combat), locations (a room's background id), the story's shape (what winning
+        # means), plus the map view. Tile rows and scene text never enter.
+        from maestro.modules import assets, combat, inventory, scenes, story
+        art = ctx.get("artifact") or {}
         lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
         lines += cr.target_block(ctx)
-        lines += cr.scratchpad_block(ctx)
-        lines += cr.upstream_block(ctx.get("upstream") or {})
+        lines += inventory.items_block(art)
+        lines += scenes.nodes_index_block(art)
+        lines += combat.combat_index_block(art)
+        lines += assets.locations_block(art)
+        lines += story.story_block(art)
         view = ctx.get("active_view") or {}
         if view.get("place_ids"):
             lines += _place_view_block(view)

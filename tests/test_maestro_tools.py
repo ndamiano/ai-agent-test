@@ -56,7 +56,7 @@ def test_add_interactable_rejects_dupe_and_bad_shape(tmp_path):
 # ── write-time action validation: catch malformed IR at the tool call ────────
 
 def test_action_validation_rejects_empty_requires_with_hint():
-    from maestro.tools import _action_struct_error
+    from maestro.modules.world import action_error as _action_struct_error
     err = _action_struct_error({"type": "use", "clauses": [
         {"requires": {}, "outcome": {"text": "pray", "effects": [{"set_flag": "f"}]}}]})
     assert err and "requires" in err and "fallback" in err   # actionable: use fallback instead
@@ -65,7 +65,7 @@ def test_action_validation_rejects_empty_requires_with_hint():
 def test_action_validation_names_the_bad_key():
     # 'place_id' instead of 'target' burned 26 live-build steps against the oneOf validator's
     # nameless rejection — the message must say which key is wrong and what the shape is.
-    from maestro.tools import _action_struct_error
+    from maestro.modules.world import action_error as _action_struct_error
     msg = _action_struct_error({"type": "move", "place_id": "z2",
                                 "spawn": {"cell": {"x": 1, "y": 1}}})
     assert "place_id" in msg and "target" in msg
@@ -76,7 +76,7 @@ def test_action_validation_names_the_bad_key():
 
 
 def test_action_validation_allows_unconditional_fallback_use():
-    from maestro.tools import _action_struct_error
+    from maestro.modules.world import action_error as _action_struct_error
     # The unconditional pattern the model wanted (always set a flag) is fallback-only, no clauses.
     assert _action_struct_error({"type": "use",
         "fallback": {"text": "pray", "effects": [{"set_flag": "f"}]}}) is None
@@ -99,6 +99,17 @@ def test_write_component_refuses_when_unfrozen(tmp_path):
     tools = build_tools(_spec(frozen=False), RunState(tmp_path))
     with pytest.raises(SpecNotFrozen):
         tools["write_component"]("premise", {"x": 1})
+
+
+def test_write_component_refuses_unknown_id(tmp_path):
+    # A model wrote module-name "inventory" for the `items` component and got an "ok" for a junk
+    # file — a false success it looped on. Unknown ids must fail and list the real components.
+    state = RunState(tmp_path)
+    tools = build_tools({"title": "T", "frozen": True,
+                         "modules": ["cast", "world", "inventory"], "params": {}}, state)
+    res = tools["write_component"]("inventory", {"items": [{"id": "item_x", "name": "X"}]})
+    assert res["ok"] is False and "'items'" in res["error"]
+    assert state.read_component("inventory") is None
 
 
 def test_write_and_read_component(tmp_path):

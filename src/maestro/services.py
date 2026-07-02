@@ -15,7 +15,6 @@ import json
 import logging
 from typing import Dict, Optional
 
-from maestro import context_render as cr
 from maestro.run_control import BuildCancelled
 
 logger = logging.getLogger(__name__)
@@ -120,13 +119,13 @@ def _read_payload(action: Dict, result: Dict) -> Optional[str]:
     return None
 
 
-def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun, assigned=None):
+def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun, assigned=None, prepare=None):
     """Wrap the count-driving write tool so the graph grows by DESIGN: no overwrite, and a new node
     must fill THE ASSIGNED SLOT. `assigned` is the slot dict picked at prompt-build time — the SAME
     snapshot the prompt rendered, so prompt and guard agree by construction (a sibling parallel fix
     landing in between shifts live slot indices, so the guard must not re-pick from the live view).
-    Entry + no-open-slots are exempt so it can't deadlock; a view without `open_slots` (places)
-    keeps the no-overwrite rule alone (assigned stays None)."""
+    `prepare` is the owning module's arg-finisher (scenes stamps the system-picked beat) — this
+    guard knows no module's policy. Entry + no-open-slots are exempt so it can't deadlock."""
     def guarded(name, args) -> Dict:
         if name != tool:
             return dispatch(name, args)
@@ -141,10 +140,8 @@ def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun, assigned=N
             return {"ok": False, "error":
                     f"{noun} {iid!r} is not the assigned slot — write {assigned['id']!r} next (the "
                     f"scene the story leads into). Use that EXACT id as the {noun} id."}
-        if id_key == "node_id":
-            beat = cr.beat_for_new_node(view, assigned, bool(existing))
-            if beat:
-                args = {**(args or {}), "beat": beat}
+        if prepare is not None:
+            args = prepare(view, assigned, args or {})
         return dispatch(name, args)
     return guarded
 

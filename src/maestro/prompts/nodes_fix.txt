@@ -15,7 +15,7 @@ COMMON FAILURES:
   is the orphan. Do NOT rename or recreate the orphan.
 - each_node_min_lines: a node is too thin — edit_node to add beats, or rewrite it with write_node.
 - each_node_has_location: a node has no background — edit_node(node_id, location="bg_...") with a
-  background id from asset_manifest (LOCKED COMPONENTS lists them).
+  background id from asset_manifest (the LOCATIONS block lists them).
 - min_branches: not enough choices — give a node an end of type "menu" with 2+ choices.
 - all_characters_speak: a character never speaks — give them a line (edit a line's speaker, or add
   a beat) in some node.

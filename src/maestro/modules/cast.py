@@ -13,7 +13,26 @@ from typing import Dict, Optional
 from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
-_KEEP = ("id", "name", "role", "voice", "temperament", "drive", "example_lines")
+def character_cards(artifact: Dict, only=None) -> list:
+    """Full RP-style character cards — how the cast presents itself in OTHER modules' prompts
+    (dialogue/story/combat authors). Bounded by cast size; never trimmed (a card with no history
+    writes a person with no past)."""
+    chars = [c for c in (artifact.get("characters") or {}).get("characters", [])
+             if isinstance(c, dict) and c.get("id") and (only is None or c["id"] in only)]
+    if not chars:
+        return []
+    out = ["", "CHARACTERS (use these EXACT ids as speakers; write each person from their card):"]
+    for c in chars:
+        out.append(f"  {c['id']} — {c.get('name', '')} ({c.get('role', 'npc')})")
+        for key in ("voice", "temperament", "drive"):
+            if c.get(key):
+                out.append(f"    {key}: {c[key]}")
+        for key in ("history", "competencies"):
+            for v in c.get(key) or []:
+                out.append(f"    {key}: {v}")
+        for ln in c.get("example_lines") or []:
+            out.append(f'    says: "{ln}"')
+    return out
 
 
 def v_characters(c: Dict) -> Optional[str]:
@@ -80,10 +99,6 @@ class Cast(Module):
 
     def params(self) -> Dict:
         return {"min_characters": 1, "character_fields": ["id", "name"]}
-
-    def context_view(self, c: Dict) -> Dict:
-        return {"characters": [{k: ch[k] for k in _KEEP if ch.get(k) is not None}
-                               for ch in c.get("characters", []) if isinstance(ch, dict)]}
 
     def render_context(self, ctx: Dict) -> str:
         # The cast is the source every later scene draws from — author it from the bare request, not

@@ -106,18 +106,9 @@ def normalize_narration(content):
     return content
 
 
-def node_write_error(content, *, min_lines: int = 0, needs_location: bool = False):
-    """Reject a malformed/thin IR node up front so a wrong shape steers immediately instead of
-    failing schema/crossref/compile later."""
-    if not isinstance(content, dict):
-        return "node content must be a JSON object {lines, end}"
-    lines = content.get("lines")
-    if not isinstance(lines, list) or not lines:
-        return "node.lines must be a non-empty list of {speaker, text} objects"
-    for j, ln in enumerate(lines):
-        if not isinstance(ln, dict) or not ln.get("text"):
-            return f"node.lines[{j}] needs a non-empty 'text' (speaker is optional; null = narration)"
-    end = content.get("end")
+def end_error(end) -> Optional[str]:
+    """Menu/end policy for BOTH write paths — write_node and edit_node's end patch. A fake
+    menu written via the end-patch path games min_branches, so the gate must hold there too."""
     if not isinstance(end, dict) or end.get("type") not in _END_TYPES:
         return f"node.end must be an object whose 'type' is one of {sorted(_END_TYPES)}"
     if end.get("type") == "menu":
@@ -137,13 +128,34 @@ def node_write_error(content, *, min_lines: int = 0, needs_location: bool = Fals
             return ("every choice in this menu leads to the SAME scene — that's a fake choice, not a "
                     "fork. Either make the choices lead to DIFFERENT targets (a real branch), or drop "
                     "the menu and use end.type 'jump' for a single continuation.")
+    return None
+
+
+def node_write_error(content, *, min_lines: int = 0):
+    """Reject a malformed/thin IR node up front so a wrong shape steers immediately instead of
+    failing schema/crossref/compile later. Patchable fields (location) are NOT rejected here:
+    a reject forces the model to regenerate the whole scene and retries degrade (scrambled
+    speakers, prose-mode drift) — the each_node_has_location check repairs them with a
+    single-field edit instead."""
+    if not isinstance(content, dict):
+        return "node content must be a JSON object {lines, end}"
+    lines = content.get("lines")
+    if not isinstance(lines, list) or not lines:
+        return "node.lines must be a non-empty list of {speaker, text} objects"
+    for j, ln in enumerate(lines):
+        if not isinstance(ln, dict) or not ln.get("text"):
+            return f"node.lines[{j}] needs a non-empty 'text' (speaker is optional; null = narration)"
+        emo = ln.get("emotion")
+        if emo and emo not in _EMOTIONS:
+            return (f"node.lines[{j}] has emotion {emo!r} — use EXACTLY one of "
+                    f"{sorted(_EMOTIONS)} (or omit for neutral)")
+    err = end_error(content.get("end"))
+    if err:
+        return err
     if len(lines) < min_lines:
         return (f"a node needs at least {min_lines} lines/beats — this has {len(lines)}. Write the "
                 f"FULL scene now (several dialogue beats with subtext), not a stub; thin nodes are "
                 f"rejected.")
-    if needs_location and not content.get("location"):
-        return ("this node has no `location` — set it to a background id from asset_manifest "
-                "(e.g. 'bg_room'); every scene needs a background. Add \"location\" and resend.")
     return None
 
 
@@ -292,10 +304,17 @@ def each_node_min_lines(artifact: Dict, *, min=3):
 
 def each_node_has_location(artifact: Dict):
     node_ids, nodes = views.nodes_of(artifact)
+    known = [b.get("id") for b in (artifact.get("asset_manifest") or {}).get("backgrounds", [])
+             if b.get("id")]
     missing = [nid for nid in node_ids if not nodes.get(nid, {}).get("location")]
     if missing:
         return False, (f"nodes with no location/background: {missing[:5]} — set each node's "
-                       f"`location` to a background id (edit_node location='bg_...').")
+                       f"`location` to a background id from {known} (edit_node location='bg_...').")
+    if known:
+        bad = [nid for nid in node_ids if nodes.get(nid, {}).get("location") not in known]
+        if bad:
+            return False, (f"nodes whose location is not in asset_manifest: {bad[:5]} — set each "
+                           f"to one of {known} (edit_node location='bg_...').")
     return True, None
 
 
@@ -378,6 +397,39 @@ def _d_endings_are_nodes(chk, m, ctx):
                                            from_key="id"))
 
 
+def _d_premature_endings(chk, m, ctx):
+    """An UNPLANNED ending is fine — a good exit can evolve naturally from play. What's not fine
+    is ending the game while the arc is barely started: an unplanned end node whose path never
+    reaches the story's final beats cuts the player off from the whole story."""
+    if not _has_story(ctx.artifact):
+        return []
+    story = ctx.artifact.get("story") or {}
+    planned = {e.get("id") for e in story.get("endings", [])}
+    beat_index = {b["id"]: i for i, b in enumerate(story.get("beats", [])) if b.get("id")}
+    if len(beat_index) < 3:
+        return []
+    node_ids, nodes = views.nodes_of(ctx.artifact)
+    entry = node_ids[0] if node_ids else None
+    edges = {nid: views.node_targets(nodes.get(nid, {})) for nid in node_ids}
+    out = []
+    for nid in node_ids:
+        if (nodes.get(nid, {}).get("end") or {}).get("type") != "end" or nid in planned:
+            continue
+        path = views.shortest_path(entry, nid, edges) if entry else []
+        if not path:
+            continue  # unreachable — reachable_from_start owns that failure
+        reached = max((beat_index.get(nodes.get(p, {}).get("beat"), -1) for p in path),
+                      default=-1)
+        if reached < len(beat_index) - 2:
+            out.append(Error(
+                type=chk.tier, code=chk.code, component="nodes", path=nid,
+                message=f"scene '{nid}' ends the game while the story has barely started (its "
+                        f"path only reaches beat {reached + 1} of {len(beat_index)}). An "
+                        f"unplanned ending is welcome only once the arc has played out — change "
+                        f"this `end` to a jump that continues the story instead."))
+    return out
+
+
 def _d_min_branches(chk, m, ctx):
     if not _has_story(ctx.artifact):
         return []
@@ -452,10 +504,13 @@ def _render_slot_focus(view: Dict, slot_index: int = 0) -> List[str]:
     if not view.get("node_ids"):
         out += ["", "WRITE THE OPENING NODE — no scenes exist yet. Choose its node_id.",
                 "  There is NO prior text to continue: this scene ESTABLISHES the game's reality, "
-                "and every later scene builds on what it claims. Anchor it in the CHARACTER CARDS "
-                "(what would these specific people be doing here, mid-task, right now?) and the "
-                "location's description. Introduce at most one or two concrete objects and make "
-                "them matter — each claim here is one the rest of the story must live with."]
+                "and every later scene builds on what it claims. The player arrives knowing "
+                "NOTHING — open with one or two narration lines (speaker null) that orient them: "
+                "who these people are to each other, where they are, and why tonight (the "
+                "premise). THEN the dialogue starts mid-task. Anchor it in the CHARACTER CARDS "
+                "and the location's description. Introduce at most one or two concrete objects "
+                "and make them matter — each claim here is one the rest of the story must live "
+                "with."]
         if beat_ids:
             out.append(f"  FIRST BEAT (dramatize it): {render_beat(by_id[beat_ids[0]])}")
             if len(beat_ids) > 1:
@@ -527,6 +582,8 @@ class Scenes(Module):
         Check("beats_realized", _d_beats_realized, tools=_T_WRITE, guard=_NODE_GUARD),
         Check("build_nodes", _d_build_nodes, tools=_T_WRITE, guard=_NODE_GUARD),
         Check("endings_are_nodes", _d_endings_are_nodes, tools=_T_EDIT_WRITE),
+        Check("premature_endings", _d_premature_endings, job="fix", prompt="nodes_fix.txt",
+              tools=_T_EDIT),
         Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, node_targets_resolve(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT_WRITE),
         Check("reachable_from_start", lambda chk, m, ctx: m.wrap(chk, reachable_from_start(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
         Check("each_node_min_lines", lambda chk, m, ctx: m.wrap(chk, each_node_min_lines(ctx.artifact, min=ctx.param("each_node_min_lines", 3))), tools=_T_EDIT_WRITE),

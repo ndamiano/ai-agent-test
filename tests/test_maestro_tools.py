@@ -244,6 +244,73 @@ def test_edit_node_errors(tmp_path):
     assert tools["edit_node"]("s1", end={"type": "boom"})["ok"] is False
 
 
+def test_edit_node_end_patch_rejects_fake_menu(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("s1", _node())
+    fake = {"type": "menu", "choices": [{"text": "a", "target": "s2"},
+                                        {"text": "b", "target": "s2"}]}
+    res = tools["edit_node"]("s1", end=fake)
+    assert res["ok"] is False and "fake choice" in res["error"]
+    real = {"type": "menu", "choices": [{"text": "a", "target": "s2"},
+                                        {"text": "b", "target": "s3"}]}
+    assert tools["edit_node"]("s1", end=real)["ok"] is True
+
+
+def test_edit_node_full_replace_preserves_beat(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("s1", _node(), beat="beat_01")
+    assert state.read_component("nodes")["nodes"]["s1"]["beat"] == "beat_01"
+    replacement = {"lines": [{"speaker": "a", "text": "new"}], "end": {"type": "return"}}
+    assert tools["edit_node"]("s1", content=replacement)["ok"] is True
+    assert state.read_component("nodes")["nodes"]["s1"]["beat"] == "beat_01"
+
+
+def test_missing_location_is_patched_not_rejected(tmp_path):
+    # A reject forces a full-scene regen and retries degrade; a missing/wrong location is a
+    # one-field repair, so the write is ACCEPTED and the location check flags it for a patch.
+    from maestro.modules.scenes import each_node_has_location
+    state = RunState(tmp_path)
+    state.write_component("asset_manifest", {"backgrounds": [{"id": "bg_apartment"}],
+                                             "characters": []})
+    tools = build_tools(_spec(), state)
+    node = {"lines": [{"speaker": "a", "text": "hi"}], "end": {"type": "return"}}
+    assert tools["write_node"]("s1", node)["ok"] is True
+
+    def artifact():
+        return {"nodes": state.read_component("nodes"),
+                "asset_manifest": state.read_component("asset_manifest")}
+
+    ok, msg = each_node_has_location(artifact())
+    assert ok is False and "s1" in msg and "bg_apartment" in msg
+    res = tools["edit_node"]("s1", location="bg_nowhere")
+    assert res["ok"] is False and "bg_apartment" in res["error"]
+    assert tools["edit_node"]("s1", location="bg_apartment")["ok"] is True
+    assert each_node_has_location(artifact())[0] is True
+
+
+def test_location_check_flags_unknown_background(tmp_path):
+    from maestro.modules.scenes import each_node_has_location
+    art = {"nodes": {"node_ids": ["s1"],
+                     "nodes": {"s1": {"location": "bg_ghost", "lines": [{"text": "x"}],
+                                      "end": {"type": "return"}}}},
+           "asset_manifest": {"backgrounds": [{"id": "bg_real"}]}}
+    ok, msg = each_node_has_location(art)
+    assert ok is False and "s1" in msg and "bg_real" in msg
+
+
+def test_write_node_rejects_bad_emotion(tmp_path):
+    tools = build_tools(_spec(), RunState(tmp_path))
+    bad = {"lines": [{"speaker": "a", "text": "hi", "emotion": "weary"}],
+           "end": {"type": "return"}}
+    res = tools["write_node"]("s1", bad)
+    assert res["ok"] is False and "weary" in res["error"]
+    good = {"lines": [{"speaker": "a", "text": "hi", "emotion": "worried"}],
+            "end": {"type": "return"}}
+    assert tools["write_node"]("s1", good)["ok"] is True
+
+
 def test_write_node_enforces_min_lines_floor(tmp_path):
     # When the spec demands each_node_min_lines, a thin node is rejected at write time
     # (born-compliant) so the loop never enters a separate repair phase for it.

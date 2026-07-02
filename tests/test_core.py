@@ -159,6 +159,36 @@ def test_scenes_floor_gated_on_story_presence():
     assert narrative & rich               # story present -> narrative floor fires
 
 
+def test_premature_ending_flagged_earned_ending_allowed():
+    scenes = MODULE_REGISTRY["scenes"]
+    story = {"central_question": "q",
+             "endings": [{"id": "ending_a"}],
+             "beats": [{"id": f"beat_{i}"} for i in range(1, 6)]}
+
+    def node(beat, end):
+        return {"beat": beat, "lines": [{"speaker": "a", "text": "x"}], "end": end}
+
+    # quit-out at beat 1: an unplanned end whose path never nears the arc's finish
+    art = {"story": story, "nodes": {"node_ids": ["n1", "early_out"], "nodes": {
+        "n1": node("beat_1", {"type": "menu", "choices": [
+            {"text": "a", "target": "early_out"}, {"text": "b", "target": "n2"}]}),
+        "early_out": node(None, {"type": "end"}),
+    }}}
+    errs = scenes.get_errors(_ctx({"params": {}}, art))
+    assert any(e.code == "premature_endings" and e.path == "early_out" for e in errs)
+
+    # unplanned ending reached after the final beat: welcome
+    chain = {"node_ids": [], "nodes": {}}
+    for i in range(1, 6):
+        nid = f"n{i}"
+        chain["node_ids"].append(nid)
+        chain["nodes"][nid] = node(f"beat_{i}", {"type": "jump", "target": f"n{i+1}"})
+    chain["node_ids"].append("n6")
+    chain["nodes"]["n6"] = node(None, {"type": "end"})
+    errs = scenes.get_errors(_ctx({"params": {}}, {"story": story, "nodes": chain}))
+    assert not any(e.code == "premature_endings" for e in errs)
+
+
 # ── compose always includes human; prioritization ───────────────────────────
 def test_compose_includes_human():
     ids = [m.id for m in compose(("cast", "scenes"))]

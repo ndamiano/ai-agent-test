@@ -31,7 +31,6 @@ _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
 # speaker-name validation) is gone. Escaping is the compiler's job (ir_vn/ir_pnc via
 # json.dumps); reference integrity (speakers, targets) is ir_crossref's, run at compile.
 
-_END_TYPES = {"jump", "menu", "return", "end"}
 _EMOTIONS = set(EMOTIONS)
 # A menu is a dramatic fork, not a location picker. Capped so the slot-driven loop can't satisfy
 # its node quota by fanning one node into a wide hub of stub branches (the hub-and-spoke star that
@@ -335,10 +334,11 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     # Born-compliant nodes: write_node enforces each_node_min_lines at creation, so a thin node is
     # rejected up front instead of passing as a stub and dragging the model through a repair phase.
     _node_min_lines = params.get("each_node_min_lines", 0)
-    # VN (a dialogue spine, the compile terminal over `nodes`) demands a background per scene; reject
-    # an untagged node at creation rather than adding locations one edit at a time in a fix phase.
-    _node_needs_location = any(getattr(m, "emits_compile", False)
-                               and getattr(m, "component", None) == "nodes" for m in modules)
+
+    def _known_bgs() -> List[str]:
+        man = state.read_component("asset_manifest") or {}
+        return [b["id"] for b in (man.get("backgrounds") or [])
+                if isinstance(b, dict) and b.get("id")]
 
     # A component LOCKS once no module reports an error ON it: a full rewrite would otherwise drop
     # ids other components already reference. The sweep covers every module that AFFECTS the
@@ -426,8 +426,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if beat and isinstance(content, dict):
             content["beat"] = beat
         from maestro.modules.scenes import node_write_error, normalize_narration
-        err = node_write_error(content, min_lines=_node_min_lines,
-                               needs_location=_node_needs_location)
+        err = node_write_error(content, min_lines=_node_min_lines)
         if err:
             return {"ok": False, "error": err}
         normalize_narration(content)
@@ -478,19 +477,28 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if content is not None:
             content = _coerce_json(content)
             from maestro.modules.scenes import node_write_error, normalize_narration
-            err = node_write_error(content, min_lines=_node_min_lines,
-                                   needs_location=_node_needs_location)
+            err = node_write_error(content, min_lines=_node_min_lines)
             if err:
                 return {"ok": False, "error": err}
+            # The beat is system-stamped and absent from TOOL_SCHEMAS, so a full-content
+            # replace would silently orphan it and the loop would re-fan the beat's slot.
+            if "beat" not in content and "beat" in nodes[node_id]:
+                content["beat"] = nodes[node_id]["beat"]
             nodes[node_id] = normalize_narration(content)
             state.write_component("nodes", ns)
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
         if location is not None:
+            bgs = _known_bgs()
+            if bgs and location not in bgs:
+                return {"ok": False, "error": f"location {location!r} is not in asset_manifest — "
+                                              f"use one of {bgs}"}
             node["location"] = location
         if end is not None:
-            if end.get("type") not in _END_TYPES:
-                return {"ok": False, "error": f"end.type must be one of {sorted(_END_TYPES)}"}
+            from maestro.modules.scenes import end_error
+            err = end_error(end)
+            if err:
+                return {"ok": False, "error": err}
             node["end"] = end
         if line_index is not None:
             lines = node.get("lines", [])

@@ -56,9 +56,15 @@ def tile_slug(theme: str) -> str:
 def _collect_tile_themes(places_comp: Dict) -> List[str]:
     """Every distinct tile `theme` a walkable map renders (legend entries + the default chars its
     rows actually use), so each gets one generated terrain texture. Empty for VN/PnC games."""
+    return [t for t, _ in _collect_tile_specs(places_comp)]
+
+
+def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
+    """(theme, role) pairs — the role steers the texture prompt so open ground and blocked
+    obstacles READ differently at a glance (the texture is the avatar's only passability signal)."""
     from maestro.modules.world import DEFAULT_LEGEND, _RPG_KINDS
 
-    themes: Dict[str, bool] = {}
+    specs: Dict[str, str] = {}
     for place in ((places_comp or {}).get("places") or {}).values():
         if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS:
             continue
@@ -68,14 +74,15 @@ def _collect_tile_themes(places_comp: Dict) -> List[str]:
             for ch in row:
                 spec = merged.get(ch)
                 if isinstance(spec, dict) and spec.get("theme"):
-                    themes[spec["theme"]] = True
-    return list(themes)
+                    specs.setdefault(spec["theme"], spec.get("role", "open"))
+    return list(specs.items())
 
 
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     from tools.comfyui_tools import (
         build_character_job, build_background_job, build_cg_job, build_title_card_job,
-        build_character_emotion_job, build_tile_job, upload_image, vram_bracket, run_jobs,
+        build_character_emotion_job, build_tile_job, make_seamless_tile, upload_image,
+        vram_bracket, run_jobs,
     )
     from maestro.ir_assemble import used_emotions, expression_file
 
@@ -178,14 +185,16 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         # --- tile pass: one terrain texture per distinct walkable-map theme. On failure we skip
         # (no placeholder) so the overworld falls back to its computed theme colour — a solid block
         # is no better than the colour, and this keeps a no-ComfyUI build looking intentional. ----
-        tile_themes = _collect_tile_themes(inputs.get("places", {}))
-        if tile_themes:
+        tile_specs = _collect_tile_specs(inputs.get("places", {}))
+        if tile_specs:
             tile_meta = [{"file": f"tile_{tile_slug(t)}.png",
-                          "dest": images_dir / f"tile_{tile_slug(t)}.png"} for t in tile_themes]
-            print(f"    [images]  generating {len(tile_themes)} map tile(s)")
-            for meta, result in zip(tile_meta, run_jobs([build_tile_job(t) for t in tile_themes])):
+                          "dest": images_dir / f"tile_{tile_slug(t)}.png"} for t, _ in tile_specs]
+            print(f"    [images]  generating {len(tile_specs)} map tile(s)")
+            jobs = [build_tile_job(t, role) for t, role in tile_specs]
+            for meta, result in zip(tile_meta, run_jobs(jobs)):
                 if result.get("success") and result.get("saved_paths"):
                     shutil.copy2(result["saved_paths"][0], meta["dest"])
+                    make_seamless_tile(meta["dest"])
                     generated.append(meta["file"])
                     print(f"    [images]  ok: {meta['file']}")
                 else:

@@ -19,6 +19,11 @@ A ZONE needs:
     role is the ONLY thing that affects play: open = the avatar can walk on it, blocked = a wall it
     cannot enter. theme is free flavour that drives the tile's look (e.g. "frozen stream", "ash
     pine", "temple stone"). Use theme to make each zone LOOK like its place.
+    Each theme becomes ONE generated texture, so themes are a PALETTE — make them CONTRAST:
+    open ground and blocked obstacles must differ in MATERIAL, not just adjective ("mossy earth"
+    vs "bone-pale ossuary wall", NOT "stone floor" vs "stone wall" — five stone variants render
+    as indistinguishable gray). REUSE the same theme string wherever the terrain is the same
+    (across zones too); spend NEW themes on things that should look different.
   - These default chars need NO legend entry (use them freely): "." ground, "," path, "#" wall,
     "T" tree, "~" water, "%" rock. Add a legend entry only for a NEW char or to re-theme a default.
 - "interactables": each at a {"cell":{"x","y"}} TILE — x = column (0..width-1), y = row

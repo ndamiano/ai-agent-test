@@ -20,6 +20,7 @@ _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
 _TXT2IMG_CHARACTER_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_character.json"
 _IMG2IMG_CHARACTER_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_character.json"
 _TXT2IMG_BACKGROUND_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_background.json"
+_TXT2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_tile.json"
 _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
 # ---------------------------------------------------------------------------
@@ -205,18 +206,75 @@ def build_background_job(description: str) -> dict:
     }
 
 
-def build_tile_job(theme: str) -> dict:
-    """Return a job for ONE walkable-map terrain tile: a top-down, tileable texture of `theme`
-    (e.g. 'frozen stream', 'temple stone'), via the background t2i workflow. The overworld tiles it
-    across a grid, so ask for a seamless overhead texture with no characters/perspective."""
-    positive = (f"{_BG_QUALITY}, top-down overhead map tile, orthographic bird's-eye view, "
-                f"seamless tileable terrain texture, game map asset, flat even lighting, "
-                f"no characters, no people, no horizon, no text, {theme}")
+_TILE_NEGATIVE = (
+    "map, cartography, chart, diagram, floor plan, blueprint, border, frame, edge, vignette, "
+    "text, letters, watermark, logo, people, person, character, figure, animal, object, item, "
+    "prop, horizon, sky, clouds, perspective, isometric, depth of field, 3d render, photo of "
+    "paper, parchment, table, wall in the distance, room, scene, blurry, jpeg artifacts")
+
+# What the two tile roles must READ as at a glance: the avatar walks on `open`, bounces off
+# `blocked` — the texture is the only signal, so the roles get opposite value/density language.
+_TILE_ROLE_HINTS = {
+    "open": "flat even ground material, subtle low-contrast detail, uniform, walkable surface",
+    "blocked": ("dense impassable material filling the whole frame, strong texture, "
+                "high contrast, reads as an obstacle"),
+}
+
+
+def build_tile_job(theme: str, role: str = "open") -> dict:
+    """Return a job for ONE walkable-map terrain tile: a square, top-down surface TEXTURE of
+    `theme` (e.g. 'frozen stream', 'temple stone'). Never say 'map tile' — models draw a picture
+    OF a map. The saved image is post-processed seamless + downscaled (`make_seamless_tile`); the
+    overworld repeats it per cell, so it must be a uniform material, not a scene."""
+    hint = _TILE_ROLE_HINTS.get(role, _TILE_ROLE_HINTS["open"])
+    positive = (f"seamless repeating texture of {theme}, top-down surface material viewed "
+                f"directly from above, {hint}, video game terrain texture asset, stylized "
+                f"painterly fantasy RPG art, rich color, even diffuse lighting, fills the entire "
+                f"frame edge to edge")
     return {
         "prompt": positive,
         "workflow_override": _build_background_workflow(
-            _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _BG_NEGATIVE),
+            _load_workflow(_TXT2IMG_TILE_WORKFLOW_PATH), positive, _TILE_NEGATIVE),
     }
+
+
+def make_seamless_tile(path, out_size: int = 256) -> None:
+    """Make a generated texture tile-safe in place: center-square crop, wrap-shift by half so the
+    hard edges land in the middle, crossfade that seam cross back to the original (which is
+    continuous there), then LANCZOS-downscale to `out_size` (cells render at <=88px; 256 keeps
+    headroom without shipping megapixel PNGs). Pure PIL."""
+    from PIL import Image, ImageChops
+
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    s = min(w, h)
+    img = img.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+
+    # Two-pass cross-fade: blend the image with its own half-roll along one axis, weighting the
+    # ORIGINAL by a triangle (1 at center, 0 at edges). The result's opposite edges are adjacent
+    # columns/rows of the roll — continuous by construction — and the roll's own hard seam sits
+    # under weight 1 of the original. Repeat for the other axis; the second pass's mask is
+    # constant along the first axis, so it preserves the first wrap.
+    def wrap_blend(im: Image.Image, axis: str) -> Image.Image:
+        half = s // 2
+        rolled = Image.new("RGB", (s, s))
+        if axis == "x":
+            rolled.paste(im.crop((half, 0, s, s)), (0, 0))
+            rolled.paste(im.crop((0, 0, half, s)), (s - half, 0))
+        else:
+            rolled.paste(im.crop((0, half, s, s)), (0, 0))
+            rolled.paste(im.crop((0, 0, s, half)), (0, s - half))
+        # Trapezoid mask: original at full weight everywhere except a thin fade band at the two
+        # edges (~s/12) — the blend ghosting stays confined to the border instead of doubling
+        # features across the whole tile.
+        grad = Image.linear_gradient("L").resize((s, s))   # 0 at top -> 255 at bottom
+        tent = ImageChops.darker(grad, grad.transpose(Image.FLIP_TOP_BOTTOM)) \
+            .point(lambda v: min(255, v * 12))
+        mask = tent if axis == "y" else tent.transpose(Image.ROTATE_90)
+        return Image.composite(im, rolled, mask)
+
+    out = wrap_blend(wrap_blend(img, "x"), "y")
+    out.resize((out_size, out_size), Image.LANCZOS).save(path)
 
 
 def build_cg_job(description: str) -> dict:

@@ -39,5 +39,44 @@ def test_collect_themes_empty_for_pnc_and_vn():
 
 def test_build_tile_job_carries_theme_and_workflow():
     job = build_tile_job("frozen stream")
-    assert "frozen stream" in job["prompt"] and "tileable" in job["prompt"]
-    assert job["workflow_override"]  # a concrete t2i graph, not empty
+    assert "frozen stream" in job["prompt"] and "seamless" in job["prompt"]
+    assert "map tile" not in job["prompt"]   # "map tile" makes the model draw a picture OF a map
+    wf = job["workflow_override"]
+    dims = next(v["inputs"] for v in wf.values() if v["class_type"] == "EmptyLatentImage")
+    assert dims["width"] == dims["height"]   # square: cells render square, widescreen mushes
+
+
+def test_build_tile_job_role_steers_readability():
+    open_p = build_tile_job("mossy ground", "open")["prompt"]
+    blocked_p = build_tile_job("crumbling wall", "blocked")["prompt"]
+    assert "walkable" in open_p and "obstacle" in blocked_p
+
+
+def test_collect_tile_specs_carries_roles():
+    from renpy.fns import _collect_tile_specs
+    comp = {"places": {"z": {"kind": "world_map", "tiles": {
+        "legend": {"@": {"role": "blocked", "theme": "ash pine"}},
+        "rows": ["@.", ".."]}}}}
+    assert dict(_collect_tile_specs(comp)) == {"ash pine": "blocked", "ground": "open"}
+
+
+def test_make_seamless_tile_wraps_and_downscales(tmp_path):
+    from PIL import Image
+    from tools.comfyui_tools import make_seamless_tile
+    # A locally-smooth gradient whose opposite edges differ by the full range (0 vs 255): tiled
+    # untreated, that's the worst realistic wrap seam. (Generated textures are locally smooth —
+    # the method's guarantee is wrap-continuity wherever the input is locally continuous.)
+    grad = Image.linear_gradient("L").resize((512, 512)).transpose(Image.ROTATE_90)
+    p = tmp_path / "t.png"
+    grad.convert("RGB").save(p)
+    img = Image.open(p)
+    assert abs(img.load()[0, 0][0] - img.load()[511, 0][0]) > 200   # raw edges clash hard
+    make_seamless_tile(str(p), out_size=128)
+    out = Image.open(p)
+    assert out.size == (128, 128)
+    px = out.load()
+    for i in range(0, 128, 8):
+        l, r = px[0, i], px[127, i]
+        assert abs(l[0] - r[0]) < 30, f"horizontal wrap seam at row {i}: {l} vs {r}"
+        t, b = px[i, 0], px[i, 127]
+        assert abs(t[0] - b[0]) < 30, f"vertical wrap seam at col {i}: {t} vs {b}"

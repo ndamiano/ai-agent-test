@@ -50,6 +50,7 @@ const _MARKERS := {
 
 var g  # Game driver
 var _tex_cache := {}  # theme -> texture-or-null, so a map of many same-theme cells loads art once
+var _labels := []     # {x, y, node} per interactable label — visibility follows the avatar
 
 
 func _init(game) -> void:
@@ -98,6 +99,7 @@ func run_place(place_id, spawn):
 	var avatar := _make_avatar(tile)
 	layer.add_child(avatar)
 	_place_avatar(avatar, ax, ay, tile, ox, oy)
+	_refresh_labels(ax, ay)
 	g.set_hud(_HINT)
 
 	while true:
@@ -121,6 +123,7 @@ func run_place(place_id, spawn):
 				ax = nx
 				ay = ny
 				_place_avatar(avatar, ax, ay, tile, ox, oy)
+				_refresh_labels(ax, ay)
 				var it = inter.get(_key(ax, ay))
 				if it != null and it["action"]["type"] in ["move", "start_combat"]:
 					var r = await _fire(layer, it)
@@ -170,41 +173,70 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 			var spec = _spec_of(ch, legend)
 			var role := String(spec.get("role", "open"))
 			var theme := String(spec.get("theme", ""))
-			# inset 1px so the dark scene shows through as thin grid lines
-			var pos := Vector2(ox + cx * tile + 1, oy + cy * tile + 1)
-			var siz := Vector2(tile - 2, tile - 2)
+			var pos := Vector2(ox + cx * tile, oy + cy * tile)
+			var siz := Vector2(tile, tile)
 			var tex = _tile_texture(theme)
 			if tex != null:
+				# Each cell samples ITS region of the (seamless) texture — one texture spans a
+				# 3x3 cell block and wraps exactly, so same-theme terrain flows continuously
+				# across cells instead of stamping the whole squeezed image per cell.
+				var third_w = tex.get_width() / 3.0
+				var third_h = tex.get_height() / 3.0
+				var at := AtlasTexture.new()
+				at.atlas = tex
+				at.region = Rect2((cx % 3) * third_w, (cy % 3) * third_h, third_w, third_h)
 				var tr := TextureRect.new()
-				tr.texture = tex
-				tr.position = pos
-				tr.size = siz
 				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				tr.stretch_mode = TextureRect.STRETCH_SCALE
+				tr.texture = at
+				tr.position = pos
+				tr.size = siz
 				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				if role == "blocked":
-					tr.modulate = Color(0.68, 0.68, 0.74)  # dim walls so they still read as walls
+					tr.modulate = Color(0.62, 0.62, 0.70)  # dim walls so they still read as walls
 				layer.add_child(tr)
 			else:
+				# colour fallback keeps a 1px grid inset so bare cells still read as tiles
 				var cell := ColorRect.new()
-				cell.position = pos
-				cell.size = siz
+				cell.position = pos + Vector2(1, 1)
+				cell.size = siz - Vector2(2, 2)
 				cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				cell.color = _tile_color(role, theme)
 				layer.add_child(cell)
 
+	_labels.clear()
 	for k in inter:
 		var it = inter[k]
 		var cell = it["position"]["cell"]
 		var cx := int(cell["x"])
 		var cy := int(cell["y"])
-		var m = tile * 0.52
-		var marker := ColorRect.new()
-		marker.position = Vector2(ox + cx * tile + (tile - m) / 2, oy + cy * tile + (tile - m) / 3)
-		marker.size = Vector2(m, m)
-		marker.color = _MARKERS.get(it["action"].get("type", ""), Color(0.85, 0.85, 0.85))
-		marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		layer.add_child(marker)
+		var atype := String(it["action"].get("type", ""))
+		var icon = _interactable_icon(it)
+		if icon != null:
+			# The generated inventory icon IS the marker — the thing sits on the map.
+			var m = tile * 0.82
+			var tr := TextureRect.new()
+			# expand_mode BEFORE size: with the default EXPAND_KEEP_SIZE the texture's native
+			# resolution becomes the minimum size and the size assignment clamps up to it.
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.texture = icon
+			tr.position = Vector2(ox + cx * tile + (tile - m) / 2, oy + cy * tile + (tile - m) / 2)
+			tr.size = Vector2(m, m)
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			layer.add_child(tr)
+		else:
+			# No art: a small rotated diamond, colour-coded by verb; exits stay subtlest.
+			var m = tile * (0.30 if atype == "move" else 0.42)
+			var marker := ColorRect.new()
+			marker.position = Vector2(ox + cx * tile + tile / 2.0, oy + cy * tile + (tile - m) / 2)
+			marker.size = Vector2(m, m)
+			marker.rotation = PI / 4
+			var col: Color = _MARKERS.get(atype, Color(0.85, 0.85, 0.85))
+			col.a = 0.55 if atype == "move" else 0.9
+			marker.color = col
+			marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			layer.add_child(marker)
 		var lbl := Label.new()
 		lbl.text = it.get("label", "")
 		lbl.position = Vector2(ox + cx * tile - tile * 0.5, oy + cy * tile + tile * 0.66)
@@ -217,8 +249,34 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 		lbl.add_theme_constant_override("shadow_offset_x", 1)
 		lbl.add_theme_constant_override("shadow_offset_y", 1)
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lbl.visible = false   # shown only when the avatar is on/adjacent (no label soup)
 		layer.add_child(lbl)
+		_labels.append({"x": cx, "y": cy, "node": lbl})
 	return layer
+
+
+# The generated art for a hotspot, if any: a take/use that names an item shows that item's
+# inventory icon (<item_id>.png — generated from the asset manifest every build).
+func _interactable_icon(it):
+	var a = it.get("action", {})
+	var item := ""
+	if a.get("type", "") == "take":
+		item = String(a.get("item", ""))
+	elif a.get("type", "") == "use":
+		for cl in a.get("clauses", []):
+			var req = cl.get("requires", {})
+			if req is Dictionary and req.has("item"):
+				item = String(req["item"])
+				break
+	if item == "":
+		return null
+	return g._texture_file("%s.png" % item)
+
+
+# Labels only near the avatar: on or adjacent (chebyshev <= 1) — otherwise a dense map is soup.
+func _refresh_labels(ax: int, ay: int) -> void:
+	for e in _labels:
+		e["node"].visible = max(abs(int(e["x"]) - ax), abs(int(e["y"]) - ay)) <= 1
 
 
 func _spec_of(ch, legend: Dictionary) -> Dictionary:

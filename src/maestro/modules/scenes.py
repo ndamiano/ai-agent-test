@@ -88,7 +88,7 @@ SKEL_NODES = (
 
 _NODE_MODE_TOOLS = frozenset({"write_node", "edit_node", "read_node", "read_story_state",
                               "validate", "update_scratchpad", "request_review"})
-_T_WRITE = frozenset({"write_node"})                                 # add a node
+_T_WRITE = frozenset({"write_scene"})                                # add a scene (screenplay text)
 _T_EDIT = frozenset({"read_node", "edit_node"})                      # correct an existing node
 _T_EDIT_WRITE = frozenset({"read_node", "edit_node", "write_node"})  # correct OR add
 
@@ -104,6 +104,57 @@ def normalize_narration(content):
                 and ln["speaker"].strip().lower() in ("", "narrator", "narration", "none", "null"):
             ln["speaker"] = None
     return content
+
+
+_NARR_NAMES = {"narr", "narrator", "narration"}
+_SPEAKER_RE = None  # compiled lazily; the format is `NAME: text` / `NAME [emotion]: text`
+
+
+def parse_screenplay(script: str, characters: List[Dict]):
+    """Screenplay text -> IR lines. `NAME: text`, optional `[emotion]` tag, NARR for narration;
+    a line without a speaker prefix continues the previous line. Returns (lines, error)."""
+    import re
+    if not isinstance(script, str) or not script.strip():
+        return None, "script must be non-empty screenplay text (`NAME: line` per line)"
+    by_name = {}
+    for c in characters or []:
+        if c.get("id"):
+            by_name[c["id"].lower()] = c["id"]
+        if c.get("name"):
+            by_name[c["name"].lower()] = c["id"]
+    head = re.compile(r"^\s*([A-Za-z][\w .'-]*?)\s*(?:\[([a-z]+)\])?\s*:\s*(.*)$")
+    lines: List[Dict] = []
+    for raw in script.splitlines():
+        if not raw.strip():
+            continue
+        m = head.match(raw)
+        if not m:
+            if lines:
+                lines[-1]["text"] = (lines[-1]["text"] + " " + raw.strip()).strip()
+                continue
+            return None, (f"the script must start with a `NAME:` line — got {raw.strip()[:60]!r}. "
+                          f"Every line is `NAME: text` (or `NARR:` for narration).")
+        name, emotion, text = m.group(1).strip(), m.group(2), m.group(3).strip()
+        key = name.lower()
+        if key in _NARR_NAMES:
+            speaker = None
+        elif key in by_name:
+            speaker = by_name[key]
+        else:
+            return None, (f"unknown speaker {name!r} — use one of "
+                          f"{sorted(set(by_name.values()))} or NARR for narration.")
+        if not text:
+            continue
+        line: Dict = {"speaker": speaker, "text": text}
+        if emotion and speaker is not None:
+            if emotion not in _EMOTIONS:
+                return None, (f"emotion {emotion!r} on {name}'s line — use EXACTLY one of "
+                              f"{sorted(_EMOTIONS)} (or no tag for neutral).")
+            line["emotion"] = emotion
+        lines.append(line)
+    if not lines:
+        return None, "script parsed to zero lines — write `NAME: text` per line"
+    return lines, None
 
 
 def end_error(end) -> Optional[str]:
@@ -258,7 +309,7 @@ def _parallel_cap(view: Dict) -> int:
     return max(1, len(view.get("open_slots") or ()))
 
 
-_NODE_GUARD = {"count_tool": "write_node", "id_key": "node_id", "id_list_key": "node_ids",
+_NODE_GUARD = {"count_tool": "write_scene", "id_key": "node_id", "id_list_key": "node_ids",
                "noun": "node", "assign": pick_slot, "prepare": _stamp_beat, "cap": _parallel_cap}
 
 
@@ -475,8 +526,10 @@ def _render_slot_focus(view: Dict, slot_index: int = 0) -> List[str]:
             out.append(f"  PATH TO HERE (already happened — do NOT repeat it): {crumb}")
         lead = slot.get("lead_in") or []
         if lead and len(slot.get("from", [])) == 1:
-            out.append("  THE SCENE CONTINUES FROM these exact lines (pick up their referents — "
-                       "objects, claims, tensions — do not re-invent or contradict them):")
+            out.append("  ALREADY ON SCREEN — the previous scene ended with these lines. They are "
+                       "context ONLY: never re-emit or paraphrase them. Your scene starts with the "
+                       "NEXT thing said or done, picking up their referents (objects, claims, "
+                       "tensions) without contradicting them:")
             for ln in lead:
                 out.append(f"    {ln.get('speaker') or 'narration'}: {ln.get('text', '')}")
         elif len(slot.get("from", [])) > 1:
@@ -579,8 +632,10 @@ class Scenes(Module):
     # lint can't starve node creation. Adding a node (realizing a beat / bootstrapping the first
     # scene) is slot-guarded; every other error is a single edit.
     checks = [
-        Check("beats_realized", _d_beats_realized, tools=_T_WRITE, guard=_NODE_GUARD),
-        Check("build_nodes", _d_build_nodes, tools=_T_WRITE, guard=_NODE_GUARD),
+        Check("beats_realized", _d_beats_realized, tools=_T_WRITE, guard=_NODE_GUARD,
+              prompt="nodes_screenplay_write.txt", skeleton=""),
+        Check("build_nodes", _d_build_nodes, tools=_T_WRITE, guard=_NODE_GUARD,
+              prompt="nodes_screenplay_write.txt", skeleton=""),
         Check("endings_are_nodes", _d_endings_are_nodes, tools=_T_EDIT_WRITE),
         Check("premature_endings", _d_premature_endings, job="fix", prompt="nodes_fix.txt",
               tools=_T_EDIT),

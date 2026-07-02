@@ -118,6 +118,28 @@ TOOL_SCHEMAS: List[Dict] = [
                 "open_threads_resolve[], event_summary"},
         }, "required": ["node_id", "content"]}}},
     {"type": "function", "function": {
+        "name": "write_scene",
+        "description": "Write one dialogue scene as SCREENPLAY TEXT (not JSON lines) plus a "
+                       "structured `end`, and merge its story-state delta in the same call. "
+                       "Each script line is `NAME: text` or `NAME [emotion]: text`; use NARR for "
+                       "narration.",
+        "parameters": {"type": "object", "properties": {
+            "node_id": {"type": "string"},
+            "script": {"type": "string", "description":
+                "the whole scene as screenplay text, one line per line, e.g.\n"
+                "NARR: The hallway light flickers.\n"
+                "MARA [worried]: You left the door open.\n"
+                "JONAS: I left it open for you."},
+            "end": {"type": "object", "description":
+                "{type: 'jump', target} | {type: 'menu', choices: [{text, target}]} | "
+                "{type: 'end'}"},
+            "location": {"type": "string", "description":
+                "background id from asset_manifest for this scene"},
+            "story_state_delta": {"type": "object", "description":
+                "new_facts[], entity_updates{}, open_threads_add[], "
+                "open_threads_resolve[], event_summary"},
+        }, "required": ["node_id", "script", "end"]}}},
+    {"type": "function", "function": {
         "name": "edit_node",
         "description": "Patch ONE field of an existing node without rewriting it: replace a "
                        "single line by index (text/speaker/emotion/effects) or replace the node's "
@@ -454,6 +476,23 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             state.write_story_state(ss)
 
         return {"ok": True, "node_id": node_id}
+
+    def write_scene(node_id: str, script: str, end, location: Optional[str] = None,
+                    story_state_delta: Optional[Dict] = None, force: bool = False,
+                    beat: Optional[str] = None, **delta_fields) -> Dict:
+        """Screenplay-text front end to write_node: parse `NAME: text` lines into IR lines, then
+        store through the same validated path. Keeps the model writing dialogue as dialogue
+        instead of inside JSON string arrays."""
+        from maestro.modules.scenes import parse_screenplay
+        chars = (state.read_component("characters") or {}).get("characters", [])
+        lines, err = parse_screenplay(script, chars)
+        if err:
+            return {"ok": False, "error": err}
+        content: Dict = {"lines": lines, "end": _coerce_json(end)}
+        if location:
+            content["location"] = location
+        return write_node(node_id, content, story_state_delta=story_state_delta,
+                          force=force, beat=beat, **delta_fields)
 
     _UNSET = object()
 
@@ -815,6 +854,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     return {
         "write_component": write_component,
         "write_node": write_node,
+        "write_scene": write_scene,
         "edit_node": edit_node,
         "write_place": write_place,
         "edit_place": edit_place,

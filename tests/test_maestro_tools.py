@@ -267,6 +267,48 @@ def test_edit_node_full_replace_preserves_beat(tmp_path):
     assert state.read_component("nodes")["nodes"]["s1"]["beat"] == "beat_01"
 
 
+def test_parse_screenplay():
+    from maestro.modules.scenes import parse_screenplay
+    chars = [{"id": "mara", "name": "Mara"}, {"id": "jonas", "name": "Jonas"}]
+    script = ("NARR: The hallway light flickers.\n"
+              "MARA [worried]: You left the door open.\n"
+              "Jonas: I left it open\n"
+              "for you.\n")
+    lines, err = parse_screenplay(script, chars)
+    assert err is None
+    assert lines[0] == {"speaker": None, "text": "The hallway light flickers."}
+    assert lines[1] == {"speaker": "mara", "text": "You left the door open.", "emotion": "worried"}
+    assert lines[2] == {"speaker": "jonas", "text": "I left it open for you."}
+
+    _, err = parse_screenplay("GHOST: boo", chars)
+    assert "unknown speaker" in err and "mara" in err
+    _, err = parse_screenplay("MARA [weary]: hm", chars)
+    assert "weary" in err
+    _, err = parse_screenplay("just prose with no speaker", chars)
+    assert "NAME:" in err
+
+
+def test_write_scene_stores_parsed_node(tmp_path):
+    state = RunState(tmp_path)
+    state.write_component("characters", {"characters": [{"id": "mara", "name": "Mara"},
+                                                        {"id": "jonas", "name": "Jonas"}]})
+    tools = build_tools(_spec(), state)
+    res = tools["write_scene"](
+        "scene_01",
+        "MARA: Hand me the crate.\nJONAS [angry]: Get your own.\nNARR: He turns away.",
+        {"type": "jump", "target": "scene_02"},
+        location="bg_hall", beat="beat_01", event_summary="crate standoff")
+    assert res["ok"] is True, res
+    node = state.read_component("nodes")["nodes"]["scene_01"]
+    assert node["beat"] == "beat_01" and node["location"] == "bg_hall"
+    assert node["lines"][1] == {"speaker": "jonas", "text": "Get your own.", "emotion": "angry"}
+    assert state.read_component("nodes")["synopses"]["scene_01"] == "crate standoff"
+
+    bad = tools["write_scene"]("s2", "MARA: hi", {"type": "menu", "choices": [
+        {"text": "a", "target": "x"}, {"text": "b", "target": "x"}]})
+    assert bad["ok"] is False and "fake choice" in bad["error"]
+
+
 def test_missing_location_is_patched_not_rejected(tmp_path):
     # A reject forces a full-scene regen and retries degrade; a missing/wrong location is a
     # one-field repair, so the write is ACCEPTED and the location check flags it for a patch.

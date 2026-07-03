@@ -85,6 +85,17 @@ src/
                   allowed tools = the SAME source as the offered schemas): a tool not scoped to this
                   step is refused, not dispatched — a small model learns other tool names from the
                   prompt prose and would otherwise thrash on an off-phase tool.
+                  Scene AUTHORING is a turn loop (scenes.scene_turn_loop, via Check.run — a check
+                  may own its whole multi-call fix body): one LLM call per character turn (system
+                  prompt = that character's card + scene brief; the scene-so-far rendered as real
+                  chat turns), with per-turn hygiene in code (dedupe kills two-agent circling and
+                  seeds the lead-in against echoes; other-name prefixes rejected; third-person
+                  NARR), then a closer call files the exit + story-state delta and the write goes
+                  through write_scene — screenplay text (`NAME [emotion]: line`) parsed by
+                  scenes.parse_screenplay into IR through write_node's validated path. Planned
+                  ending nodes are forced to end; backward jumps/choices are rejected in code.
+                  Turn calls run reasoning "none" (the connector maps it to chat_template_kwargs
+                  enable_thinking:false — llama.cpp ignores reasoning.effort).
                 rewrite.py — rewrite_node: regenerate ONE node from a human note (per-scene control)
                 climb.py — module re-runner for prompt hill-climbing: clone a finished run, wipe ONE
                   module's component, drive the loop with only that module composed (same upstream

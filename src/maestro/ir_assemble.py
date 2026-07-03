@@ -79,6 +79,9 @@ def _characters(cast: Dict, manifest: Dict, nodes: List[Dict]) -> List[Dict]:
         if not c.get("id"):
             continue
         ch = {"id": c["id"], "name": c.get("name") or c["id"]}
+        for k in ("sex", "tts_voice"):
+            if c.get(k):
+                ch[k] = c[k]
         base = sprites.get(c["id"])
         if base:
             ch["sprite"] = base

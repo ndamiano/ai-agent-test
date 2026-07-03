@@ -1,8 +1,7 @@
 import os
-import re
 import shutil
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from utils.image import write_solid_png
 
@@ -80,15 +79,14 @@ def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
 
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     from tools.comfyui_tools import (
-        build_character_job, build_background_job, build_cg_job, build_title_card_job,
-        build_character_emotion_job, build_tile_job, make_seamless_tile, upload_image,
-        vram_bracket, run_jobs,
+        build_character_job, build_background_job, build_cg_job, build_item_job,
+        build_title_card_job, build_character_emotion_job, build_tile_job, make_seamless_tile,
+        upload_image, vram_bracket, run_jobs,
     )
     from maestro.ir_assemble import used_emotions, expression_file
 
     cast     = inputs.get("characters", {})
     manifest = _merge_cast_into_manifest(cast, inputs.get("asset_manifest", {}))
-    manifest = _merge_items_into_manifest(inputs.get("places", {}), manifest)
 
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +142,7 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     for it in manifest.get("items", []):
         img_file = it.get("image_file", f"{it['id']}.png")
         base_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "item"})
-        base_jobs.append(build_background_job(it.get("description", it.get("name", it["id"]))))
+        base_jobs.append(build_item_job(it.get("description", it.get("name", it["id"]))))
 
     title_card = manifest.get("title_card", {})
     if title_card.get("description"):
@@ -223,7 +221,13 @@ def generate_voices(inputs: Dict, working_dir: Path) -> Dict:
         return {"status": "skipped", "reason": f"voice unsupported for genre {ir.get('genre')}"}
 
     voices = _tts_voices()
-    char_voice = {c["id"]: pick_voice(c["id"], voices) for c in ir.get("characters", [])}
+    char_voice = {c["id"]: pick_voice(c["id"], voices, sex=c.get("sex"),
+                                      tts_voice=c.get("tts_voice"))
+                  for c in ir.get("characters", [])}
+    # Narration gets its own consistent voice (configurable), not the server default.
+    narrator = (_tts_settings_narrator() or None)
+    if narrator:
+        char_voice[None] = narrator
 
     audio_dir = working_dir / "game_output" / "game" / "audio" / "voice"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -255,6 +259,14 @@ def _tts_voices() -> List[str]:
         return []
 
 
+def _tts_settings_narrator() -> Optional[str]:
+    try:
+        from config.settings_manager import settings_manager
+        return (settings_manager.get_settings().get("tts") or {}).get("narrator_voice")
+    except Exception:
+        return None
+
+
 def _ensure_voice_placeholders(ir: Dict, game_dir: str) -> None:
     """Every spoken line the voiced VN script references must have an audio file on disk or Ren'Py
     lint flags it. The TTS pass fills these with real clips; where it didn't run or failed, write a
@@ -281,36 +293,6 @@ def _merge_cast_into_manifest(cast: Dict, manifest: Dict) -> Dict:
             chars.append({"id": cid, "image_file": f"{cid}.png",
                           "description": pc.get("description") or pc.get("voice") or cid})
     return {**manifest, "characters": chars}
-
-
-_APPEND_ITEM_RE = re.compile(r'inventory\.append\(\s*[\'"](\w+)[\'"]')
-
-
-def _merge_items_into_manifest(rooms_art: Dict, manifest: Dict) -> Dict:
-    """rooms.items is the source of truth for inventory items. The image defines and
-    placeholder/generated icons key off asset_manifest.items, so backfill a manifest entry
-    for every rooms item the agent didn't already list (existing entries win as overrides).
-    Also backfill any item id the hotspot logic actually picks up (inventory.append) even if it
-    was never declared — the inventory bar `add`s that image at runtime and would crash without
-    a define. Mirrors _merge_cast_into_manifest for the cast."""
-    if not rooms_art:
-        return manifest
-    items = list(manifest.get("items", []))
-    have = {i.get("id") for i in items if isinstance(i, dict)}
-    declared = {it.get("id"): it for it in rooms_art.get("items", []) if isinstance(it, dict)}
-
-    picked_up = set()
-    for room in (rooms_art.get("rooms", {}) or {}).values():
-        for h in room.get("hotspots", []) if isinstance(room, dict) else []:
-            picked_up |= set(_APPEND_ITEM_RE.findall(h.get("logic", "") or ""))
-
-    for iid in list(declared) + sorted(picked_up):
-        if iid and iid not in have:
-            meta = declared.get(iid, {})
-            items.append({"id": iid, "image_file": f"{iid}.png",
-                          "description": meta.get("name") or meta.get("examine") or iid})
-            have.add(iid)
-    return {**manifest, "items": items}
 
 
 def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:

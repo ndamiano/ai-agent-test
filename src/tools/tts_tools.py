@@ -24,13 +24,24 @@ def voice_enabled() -> bool:
     return bool(s and s.get("endpoint"))
 
 
-def pick_voice(char_id: str, voices: List[str]) -> Optional[str]:
-    """Deterministically map a character id onto one of the server's speaker presets, so the same
-    character always gets the same voice across a run (and across re-compiles). No bank -> the
-    server's default voice."""
+def pick_voice(char_id: str, voices: List[str], sex: Optional[str] = None,
+               tts_voice: Optional[str] = None) -> Optional[str]:
+    """Map a character onto one of the server's speaker presets. Precedence: an explicit
+    tts_voice on the card wins; otherwise the bank is filtered by the card's sex before the
+    deterministic hash — a male character must never hash onto a female voice (a sultry
+    lounge-singer Danny is funnier than it is shippable). Kokoro encodes sex in the preset
+    prefix (af_/bf_ female, am_/bm_ male); banks without that convention filter to nothing
+    and fall back to the whole bank. No bank -> the server's default voice."""
+    if tts_voice:
+        return tts_voice
     if not voices:
         return None
-    return voices[sum(ord(c) for c in char_id) % len(voices)]
+    pool = voices
+    if sex in ("male", "female"):
+        want = "m" if sex == "male" else "f"
+        filtered = [v for v in voices if len(v) > 1 and v[1] == want and v[2:3] == "_"]
+        pool = filtered or voices
+    return pool[sum(ord(c) for c in char_id) % len(pool)]
 
 
 def synthesize(text: str, voice: Optional[str], timeout: int = 120) -> bytes:

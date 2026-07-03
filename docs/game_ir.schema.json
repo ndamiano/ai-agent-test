@@ -118,7 +118,9 @@
           "type": "object",
           "description": "Optional per-emotion sprite variants ({emotion: image_file}). A line's `emotion` selects one; falls back to `sprite` (neutral) when absent. Derived by the asset pipeline, not hand-authored.",
           "additionalProperties": { "type": "string" }
-        }
+        },
+        "sex": { "enum": ["male", "female"], "description": "Optional; drives sprite and spoken-voice casting (a TTS bank is filtered by it before the deterministic pick)." },
+        "tts_voice": { "type": "string", "description": "Optional explicit TTS speaker preset; overrides the sex-filtered pick." }
       }
     },
 

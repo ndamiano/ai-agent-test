@@ -124,12 +124,28 @@ def _human_prompt(m, context, error: Error) -> CorrectionPrompt:
     return CorrectionPrompt(system=system, user="\n".join(lines), allowed_tools=_HUMAN_TOOLS)
 
 
+_READONLY = {"read_component", "read_node", "read_place", "update_scratchpad"}
+
+
+def _run_todo_fix(module, context, error, slot, services, dispatch):
+    """One prompt step, but a successful mutating call marks the todo applied — otherwise the
+    HUMAN error (which outranks everything) re-emits every sweep and the same direction is
+    applied again and again. The human can reopen it from the panel if the edit missed."""
+    def marking(name, args):
+        result = dispatch(name, args)
+        if name not in _READONLY and isinstance(result, dict) and result.get("ok"):
+            resolve_todo(services.state, error.path)
+        return result
+    services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=marking)
+
+
 class Human(Module):
     id = "human"
     selectable = False   # always-on: the human-in-the-loop channel is never optional
     priority = 0   # irrelevant to ordering (HUMAN type ranks first), but explicit
 
-    checks = [Check("human_todo", _d_human_todo, tier=ErrorType.HUMAN, build_prompt=_human_prompt)]
+    checks = [Check("human_todo", _d_human_todo, tier=ErrorType.HUMAN, build_prompt=_human_prompt,
+                    run=_run_todo_fix)]
 
 
 MODULE = Human()

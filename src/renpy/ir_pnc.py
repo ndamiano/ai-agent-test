@@ -96,10 +96,14 @@ def _action_body(action: Dict) -> List[str]:
     if t == "talk":
         return [f"{ind}call {action['node']}", f"{ind}return"]
     if t == "move":
+        # Hotspot labels are entered via the screen's Call(); a plain jump would leak that call
+        # frame (growing the stack every move, and making a later `return` resume the old room),
+        # so pop it before leaving.
         if action.get("requires"):
             return [f"{ind}if {_condition(action['requires'])}:",
+                    f"{ind}{_IND}$ renpy.pop_call()",
                     f"{ind}{_IND}jump {action['target']}", f"{ind}return"]
-        return [f"{ind}jump {action['target']}"]
+        return [f"{ind}$ renpy.pop_call()", f"{ind}jump {action['target']}"]
     if t == "use":
         out = []
         clauses = action.get("clauses", [])
@@ -116,10 +120,13 @@ def _action_body(action: Dict) -> List[str]:
                 out += _outcome(action["fallback"], ind)
         return out + [f"{ind}return"]
     if t == "win":
+        # Same frame-pop as move: without it, `label win:`'s final `return` pops back into the
+        # room loop and the game never ends. With the frame popped, that `return` ends the game.
         if action.get("requires"):
             return [f"{ind}if {_condition(action['requires'])}:",
+                    f"{ind}{_IND}$ renpy.pop_call()",
                     f"{ind}{_IND}jump win", f"{ind}return"]
-        return [f"{ind}jump win"]
+        return [f"{ind}$ renpy.pop_call()", f"{ind}jump win"]
     if t == "start_combat":
         # Combat has no Ren'Py projection yet; resolve as a no-op so the room stays playable.
         return [f"{ind}# start_combat: {action.get('encounter')} (combat backend pending)",
@@ -141,8 +148,10 @@ def compile_pnc(ir: Dict) -> str:
 
     out.append("")
     out.append("## Images")
+    bg_files = {bg["id"]: bg["image_file"] for bg in ir.get("backgrounds", [])}
     for bg in sorted({p.get("background") for p in places if p.get("background")}):
-        out.append(f'image {bg} = "images/{bg}.png"')
+        fname = bg_files.get(bg, f"{bg}.png")
+        out.append(f'image {bg} = "images/{fname}"')
     for it in ir.get("items", []):
         out.append(f'image {it["id"]} = "images/{it["id"]}.png"')
 

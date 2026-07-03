@@ -27,22 +27,28 @@ func play_node(start_id) -> void:
 			"jump":
 				id = end["target"]
 			"menu":
-				var open := []
-				for c in end.get("choices", []):
-					if IRCore.eval_cond(g.state, c.get("requires")):
-						open.append(c)
-				var labels := []
-				for c in open:
-					labels.append(c["text"])
-				var pick = open[await g.show_menu(labels)]
-				IRCore.apply_effects(g.state, pick.get("effects"))
-				id = pick["target"]
+				id = await menu_pick(end)
 			"return":
 				g.hide_dialogue()
 				return
 			_:
 				g.show_ending(end.get("ending"))
 				return
+
+
+# Present a menu node_end's open choices, apply the pick's effects, return its target node id.
+# Also the path a combat on_victory/on_defeat menu resolves through (Game._flow).
+func menu_pick(end):
+	var open := []
+	for c in end.get("choices", []):
+		if IRCore.eval_cond(g.state, c.get("requires")):
+			open.append(c)
+	var labels := []
+	for c in open:
+		labels.append(c["text"])
+	var pick = open[await g.show_menu(labels)]
+	IRCore.apply_effects(g.state, pick.get("effects"))
+	return pick["target"]
 
 
 func _stage_sprites(node) -> void:

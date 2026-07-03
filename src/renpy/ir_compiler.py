@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from maestro.ir_crossref import crossref_errors
 from maestro.ir_assemble import assemble_ir
@@ -23,8 +23,20 @@ from renpy.fns import (_get_sdk_path, _merge_cast_into_manifest, _ensure_placeho
                        _ensure_expression_placeholders, _ensure_voice_placeholders)
 from renpy.renpy_builder import _copy_templates, _distribute, write_options_rpy
 
+_REPO = Path(__file__).resolve().parents[2]
+_SCHEMA_PATH = _REPO / "docs" / "game_ir.schema.json"
+
 _REQUIRED = ("asset_manifest",)
 _FAIL = {"lint_error_count": None, "project_dir": None}
+
+
+def _schema_errors(ir: Dict) -> List[str]:
+    import jsonschema
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(
+        {k: v for k, v in schema.items() if k != "examples"})
+    return [f"{'/'.join(str(p) for p in e.path) or '<root>'}: {e.message}"
+            for e in validator.iter_errors(ir)]
 
 
 def _load(working_dir: Path) -> Dict:
@@ -61,10 +73,23 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
 
     ir = assemble_ir(inputs)
 
+    # Schema first: crossref assumes a well-formed IR, so a structural error must surface here
+    # rather than crash the reference walk.
+    errs = _schema_errors(ir)
+    if errs:
+        return {"ok": False, "reason": "invalid IR — " + "; ".join(errs[:5]), **_FAIL}
+
     # Hard gate: every id reference must resolve. Replaces the legacy _find_script_issues.
     errs = crossref_errors(ir)
     if errs:
         return {"ok": False, "reason": "unresolved references — " + "; ".join(errs[:5]), **_FAIL}
+
+    if ir["genre"] == "rpg":
+        from maestro.modules.world import _RPG_KINDS
+        place = next(p for p in ir.get("places", []) if p.get("kind") in _RPG_KINDS)
+        return {"ok": False, "reason":
+                f"the renpy engine cannot play walkable places — place '{place['id']}' has "
+                f"kind '{place['kind']}'; this game needs the godot engine", **_FAIL}
 
     from tools.tts_tools import voice_enabled
     voiced = ir["genre"] == "visual_novel" and voice_enabled()
@@ -78,11 +103,11 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     game_dir = os.path.join(output_dir, "game")
     os.makedirs(game_dir, exist_ok=True)
 
-    title = (inputs.get("spec", {}) or {}).get("title") or \
-        (inputs.get("brief", {}) or {}).get("title") or "Untitled"
+    spec = inputs.get("spec", {}) or {}
+    title = spec.get("title") or (inputs.get("brief", {}) or {}).get("title") or "Untitled"
     tc = (inputs.get("asset_manifest", {}) or {}).get("title_card", {}) or {}
     menu_bg = tc.get("image_file", "title_card.png") if tc.get("description") else ""
-    write_options_rpy(game_dir, title)
+    write_options_rpy(game_dir, title, about=spec.get("concept", ""), menu_bg=menu_bg)
     with open(os.path.join(game_dir, "script.rpy"), "w", encoding="utf-8") as f:
         f.write(script)
 
@@ -144,13 +169,15 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
 
 
 def _write_pnc_placeholders(ir: Dict, game_dir: str) -> None:
-    """Write a solid placeholder for every background/item image ir_pnc references by id
-    (`images/<id>.png`), so the project lints before real art is generated."""
+    """Write a solid placeholder for every background/item image ir_pnc references (background
+    ids resolve through ir["backgrounds"], falling back to `<id>.png`), so the project lints
+    before real art is generated."""
     from utils.image import write_solid_png
     images_dir = Path(game_dir) / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
+    bg_files = {bg["id"]: bg["image_file"] for bg in ir.get("backgrounds", [])}
     for bg in {p.get("background") for p in ir.get("places", []) if p.get("background")}:
-        path = images_dir / f"{bg}.png"
+        path = images_dir / bg_files.get(bg, f"{bg}.png")
         if not path.exists():
             write_solid_png(path, 1280, 720, (58, 58, 92))
     for it in ir.get("items", []):

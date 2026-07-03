@@ -195,14 +195,18 @@ func run_action(act) -> Variant:
 			return null
 
 
-# A node_end flowing out of combat: jump/return play through Vn and fall back to the place (null);
-# end terminates the whole run (END). Mirrors how dialogue ends elsewhere.
+# A node_end flowing out of combat: jump/menu/return play through Vn and fall back to the place
+# (null); end terminates the whole run (END). Mirrors how dialogue ends elsewhere.
 func _flow(end) -> Variant:
 	if end == null:
 		return null
 	match end.get("type"):
 		"jump":
 			await Vn.new(self).play_node(end["target"])
+			return null
+		"menu":
+			var vn = Vn.new(self)
+			await vn.play_node(await vn.menu_pick(end))
 			return null
 		"end":
 			show_ending(end.get("ending"))

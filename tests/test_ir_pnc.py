@@ -25,6 +25,7 @@ def test_example_valid_and_clean():
 
 def test_compile_pnc_structure():
     out = compile_pnc(_EXAMPLE)
+    # no ir["backgrounds"] map in the example -> filenames fall back to <id>.png
     assert 'image bg_cell = "images/bg_cell.png"' in out
     assert "screen room_cell():" in out
     assert 'add "bg_cell"' in out
@@ -36,13 +37,29 @@ def test_compile_pnc_structure():
     assert 'if "item_key" in inventory:' in out
     assert "$ door_unlocked = True" not in out  # we set door_open, not a stray flag
     assert "$ door_open = True" in out
-    # gated move
+    # gated move pops the screen Call frame before jumping (no stack leak)
     assert "label hs_room_cell_hs_leave:" in out
-    assert "    if door_open:\n        jump room_hall" in out
+    assert "    if door_open:\n        $ renpy.pop_call()\n        jump room_hall" in out
     # talk calls the dialogue node; win label exists
     assert "    call talk_warden" in out
     assert "label win:" in out
     assert 'warden "You won\'t find the key. I made sure of that."' in out
+
+
+def test_backgrounds_map_resolves_image_files():
+    ir = {**_EXAMPLE, "backgrounds": [{"id": "bg_cell", "image_file": "cell_interior.png"}]}
+    out = compile_pnc(ir)
+    assert 'image bg_cell = "images/cell_interior.png"' in out
+    assert 'image bg_hall = "images/bg_hall.png"' in out
+
+
+def test_win_ends_game():
+    out = compile_pnc(_EXAMPLE)
+    # The hotspot label was entered via the screen's Call(); the frame must be popped before
+    # `jump win` or `label win:`'s final `return` resumes the room loop instead of ending.
+    assert "label hs_room_hall_hs_win:\n    $ renpy.pop_call()\n    jump win" in out
+    assert "label win:\n    scene black\n" in out
+    assert 'centered "You won."' in out
 
 
 def _write_run(run_dir: Path):
@@ -69,6 +86,21 @@ def test_compile_ir_dispatches_pnc(tmp_path):
     compile_ir(tmp_path, distribute=False)
     script = (tmp_path / "game_output" / "game" / "script.rpy").read_text()
     assert "screen room_cell():" in script
+
+
+def test_compile_ir_pnc_uses_manifest_background_files(tmp_path):
+    _write_run(tmp_path)
+    (tmp_path / "asset_manifest.json").write_text(json.dumps({
+        "backgrounds": [{"id": "bg_cell", "image_file": "cell_interior.png",
+                         "description": "a cell"}],
+        "characters": [],
+    }))
+    compile_ir(tmp_path, distribute=False)
+    script = (tmp_path / "game_output" / "game" / "script.rpy").read_text()
+    assert 'image bg_cell = "images/cell_interior.png"' in script
+    images = tmp_path / "game_output" / "game" / "images"
+    assert (images / "cell_interior.png").exists()
+    assert (images / "bg_hall.png").exists()
 
 
 @pytest.mark.skipif(not _get_sdk_path(), reason="Ren'Py SDK not configured")

@@ -227,10 +227,13 @@ class Services:
         overrides self.dispatch — a create fix installs its slot guard this way."""
         from llm_clients.message_builder import MessageBuilder
         dispatch = dispatch or self.dispatch
-        self.allowed = frozenset(prompt.allowed_tools) or None   # what dispatch enforces this step
-        schemas = filter_schemas(prompt.allowed_tools)
-        if self.escalate:
-            schemas = [s for s in schemas if not s.get("function", {}).get("name", "").startswith("read")]
+        allowed = frozenset(prompt.allowed_tools) or None
+        if self.escalate and allowed:
+            # A stalled fix must ACT, not re-read; drop reads from the offer AND the enforcement
+            # (same source, so they can't drift).
+            allowed = frozenset(t for t in allowed if not t.startswith("read")) or allowed
+        self.allowed = allowed   # what dispatch enforces this step
+        schemas = filter_schemas(allowed)
         msgs = MessageBuilder(prompt.system).add_user(prompt.user).build()
         action = parse_action(self.infer(msgs, schemas, max_tokens=prompt.max_tokens), schemas)
         if not action.get("tool"):

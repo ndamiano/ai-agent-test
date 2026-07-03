@@ -56,7 +56,7 @@ DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
 
 
 class AppSettings(BaseModel):
-    connector_type: Literal["lmstudio", "cline"]
+    connector_type: Literal["lmstudio", "cline", "openrouter"]
     working_directory: Optional[str] = "outputs"
     refine_before_execution: bool = False
     # Concurrent build fixes (parallel LLM calls per loop step). >1 needs an inference server that

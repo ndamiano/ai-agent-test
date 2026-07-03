@@ -168,9 +168,19 @@ def crossref_failures(artifact: Dict):
     from maestro.ir_assemble import assemble_ir
     from maestro.ir_crossref import crossref_records
     try:
-        records = crossref_records(assemble_ir(artifact))
+        ir = assemble_ir(artifact)
     except Exception:
         return []
+    try:
+        records = crossref_records(ir)
+    except Exception as e:
+        # A crossref crash means malformed IR (e.g. a string where an effect object belongs, a
+        # menu choice with no target). Swallowing it reports "clean" and defers the failure to
+        # the terminal compile's unattributed KeyError — surface it as a finding instead.
+        return [{"message": f"IR reference walk crashed ({type(e).__name__}: {e}) — a node "
+                            f"effect/end is malformed (e.g. an effect that isn't an object, or "
+                            f"a menu choice missing 'target'). Find and fix the malformed field.",
+                 "path": None, "ref": None}]
     return [{"message": r["message"], "path": r.get("path"), "ref": r.get("ref")} for r in records]
 
 

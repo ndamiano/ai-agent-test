@@ -3,7 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tools.comfyui_tools import _build_character_prompt, build_background_job, build_cg_job
+from tools.comfyui_tools import (_build_character_prompt, build_background_job, build_cg_job,
+                                 build_item_job)
 
 
 def test_uses_natural_language_description():
@@ -39,6 +40,22 @@ def test_background_bakes_description_into_prompt():
     assert "no humans" in job["prompt"]  # background stays unpopulated
     # backgrounds render on the cel-shaded anime scene model, matching the sprite style
     assert job["workflow_override"]["4"]["inputs"]["ckpt_name"] == "waiIllustriousSDXL_v170.safetensors"
+
+
+def test_item_job_is_an_icon_not_a_scene():
+    job = build_item_job("a rusty iron key")
+    assert "rusty iron key" in job["prompt"]
+    assert "game item icon" in job["prompt"]
+    assert "a single" in job["prompt"] and "plain simple background" in job["prompt"]
+    # never the background job's scenery/wide-angle framing
+    assert "wide angle background" not in job["prompt"]
+    assert "establishing shot" not in job["prompt"]
+    wf = job["workflow_override"]
+    # square, unlike the widescreen background workflow
+    assert wf["5"]["inputs"]["width"] == wf["5"]["inputs"]["height"]
+    # the negative must not suppress the foreground object itself
+    assert "foreground object" not in wf["7"]["inputs"]["text"]
+    assert "scenery" in wf["7"]["inputs"]["text"]
 
 
 def test_cg_does_not_force_no_characters():

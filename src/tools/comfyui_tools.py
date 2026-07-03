@@ -206,6 +206,27 @@ def build_background_job(description: str) -> dict:
     }
 
 
+_ITEM_NEGATIVE = (
+    "worst quality, low quality, blurry, distorted, scenery, landscape, environment, room, "
+    "wide angle, people, person, 1girl, 1boy, hands, multiple objects, cluttered, cropped, "
+    "watermark, signature, text"
+)
+
+
+def build_item_job(description: str) -> dict:
+    """Return a {prompt, workflow_override} job dict for ONE inventory item icon: a single
+    centered object on a plain background (WAI Illustrious, square — icons render small in the
+    inventory bar, so the object must fill the frame, never sit in a scene)."""
+    positive = (f"{_BG_QUALITY}, game item icon, a single {description}, one object only, "
+                f"centered composition, plain simple background, no scenery, still life, "
+                f"clean detailed rendering")
+    wf = _build_background_workflow(
+        _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _ITEM_NEGATIVE)
+    wf["5"]["inputs"]["width"] = 1024
+    wf["5"]["inputs"]["height"] = 1024
+    return {"prompt": positive, "workflow_override": wf}
+
+
 _TILE_NEGATIVE = (
     "map, cartography, chart, diagram, floor plan, blueprint, border, frame, edge, vignette, "
     "text, letters, watermark, logo, people, person, character, figure, animal, object, item, "

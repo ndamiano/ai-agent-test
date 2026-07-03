@@ -37,6 +37,45 @@ def test_compile_ir_writes_script(tmp_path):
     assert "label start:\n    jump n_intro" in script
 
 
+def test_compile_ir_rejects_malformed_ir(tmp_path):
+    _write_run(tmp_path)
+    nodes = json.loads((tmp_path / "nodes.json").read_text())
+    nodes["nodes"]["n_intro"]["lines"] = [{"speaker": "al"}]
+    (tmp_path / "nodes.json").write_text(json.dumps(nodes))
+    res = compile_ir(tmp_path, distribute=False)
+    assert not res["ok"]
+    assert res["reason"].startswith("invalid IR")
+
+
+def test_compile_ir_rejects_walkable_places(tmp_path):
+    pnc = json.loads(
+        (Path(__file__).parent.parent / "docs" / "examples" / "pnc_crappy.json").read_text())
+    (tmp_path / "spec.json").write_text(json.dumps({"title": pnc["meta"]["title"]}))
+    (tmp_path / "characters.json").write_text(json.dumps({"characters": pnc["characters"]}))
+    (tmp_path / "asset_manifest.json").write_text(json.dumps({"backgrounds": [], "characters": []}))
+    (tmp_path / "nodes.json").write_text(json.dumps({
+        "node_ids": [n["id"] for n in pnc["nodes"]],
+        "nodes": {n["id"]: {k: v for k, v in n.items() if k != "id"} for n in pnc["nodes"]},
+    }))
+    places = {p["id"]: {k: v for k, v in p.items() if k != "id"} for p in pnc["places"]}
+    places["room_hall"]["kind"] = "town"
+    places["room_hall"]["tiles"] = {"rows": ["...", "..."],
+                                    "legend": {".": {"role": "open", "theme": "stone"}}}
+    (tmp_path / "places.json").write_text(json.dumps({
+        "place_ids": [p["id"] for p in pnc["places"]],
+        "places": places,
+        "flags": pnc["flags"],
+        "goal": pnc["goal"],
+        "start_place": pnc["start"]["place"],
+    }))
+    (tmp_path / "items.json").write_text(json.dumps({"items": pnc["items"]}))
+    res = compile_ir(tmp_path, distribute=False)
+    assert not res["ok"]
+    assert "walkable" in res["reason"]
+    assert "room_hall" in res["reason"] and "town" in res["reason"]
+    assert "godot" in res["reason"]
+
+
 def test_compile_ir_reports_unresolved_refs(tmp_path):
     _write_run(tmp_path)
     nodes = json.loads((tmp_path / "nodes.json").read_text())

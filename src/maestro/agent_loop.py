@@ -161,7 +161,9 @@ class AgentLoop:
         """Run the batch — one thread per fix (LLM calls overlap; tool dispatch serializes on the
         loop's lock). Returns the total steps spent. BuildCancelled from any worker re-raises after
         the others finish (they see the same cancel at their next checkpoint)."""
-        budget = min(_FIX_CAP, self.max_steps - self.step)
+        # The global remainder is shared across the batch — each worker gets its share, so N
+        # workers can't jointly overshoot max_steps by N× the remainder.
+        budget = min(_FIX_CAP, max(1, (self.max_steps - self.step) // max(1, len(batch))))
 
         def one(module: Module, error: Error, slot: int) -> Services:
             services = Services(self.conn, self.tools, self.spec, self.state, budget=budget,

@@ -25,10 +25,20 @@ func run(enc_id):
 	g.hide_dialogue()
 
 	while true:
+		var res := _check_end(enc, units)
+		# A fully dead field must resolve even when victory/defeat are `when`-conditions that
+		# never match — otherwise every unit `continue`s and the loop spins forever with no awaits.
+		if res == "" and not _any_alive(units):
+			res = "defeat"
+		if res != "":
+			return _finish(enc, res)
 		for u in units:
 			if not u.alive:
 				continue
 			_tick_statuses(u)
+			res = _check_end(enc, units)
+			if res != "":
+				return _finish(enc, res)
 			if not u.alive:
 				continue
 			_update_hud(units)
@@ -37,12 +47,23 @@ func run(enc_id):
 					await _player_turn(u, units)
 				else:
 					await _enemy_turn(u, units)
-			var res := _check_end(enc, units)
+			res = _check_end(enc, units)
 			if res != "":
-				g.set_hud("")
-				if res == "victory":
-					return enc.get("on_victory")
-				return enc.get("on_defeat", {"type": "end", "ending": "game_over"})
+				return _finish(enc, res)
+
+
+func _finish(enc, res: String):
+	g.set_hud("")
+	if res == "victory":
+		return enc.get("on_victory")
+	return enc.get("on_defeat", {"type": "end", "ending": "game_over"})
+
+
+func _any_alive(units) -> bool:
+	for u in units:
+		if u["alive"]:
+			return true
+	return false
 
 
 func _make_unit(c: Dictionary) -> Dictionary:

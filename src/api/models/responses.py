@@ -13,6 +13,8 @@ class SettingsResponse(BaseModel):
     working_directory: Optional[str] = None
     refine_before_execution: bool = False
     renpy_sdk_path: Optional[str] = None
+    parallel_fixes: Optional[int] = None
+    tts: Optional[Dict[str, Any]] = None
     lmstudio: Optional[Dict[str, Any]] = None
     cline: Optional[Dict[str, Any]] = None
     comfyui: Optional[Dict[str, Any]] = None

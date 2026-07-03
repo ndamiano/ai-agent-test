@@ -128,7 +128,9 @@ class PipelineAgent:
         if "error" in result:
             raise RuntimeError(f"LLM error: {result['error']}")
 
-        content = result["choices"][0]["message"]["content"].strip()
+        # content can be None when the model burned its whole budget on reasoning and emitted
+        # no text — treat it like empty output, not a crash (callers retry on empty).
+        content = (result["choices"][0]["message"]["content"] or "").strip()
         if _is_repetitive(content):
             raise RuntimeError("Model output detected as repetitive — retrying with fresh context")
         if content:

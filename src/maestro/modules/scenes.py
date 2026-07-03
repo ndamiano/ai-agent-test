@@ -10,12 +10,12 @@ Example games:
   - "explore a haunted manor and talk to its ghosts"  — cast + world + scenes
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from maestro import context_render as cr
 from maestro.ir_assemble import EMOTIONS as _EMOTIONS_TUPLE
 from maestro.modules import checks, views
-from maestro.modules.module import Check, Error, Module, register_module
+from maestro.modules.module import Check, Error, Module, load_prompt, register_module
 from maestro.modules.story import render_beat
 
 _END_TYPES = {"jump", "menu", "return", "end"}
@@ -164,6 +164,10 @@ def end_error(end) -> Optional[str]:
         return f"node.end must be an object whose 'type' is one of {sorted(_END_TYPES)}"
     if end.get("type") == "menu":
         choices = end.get("choices") or []
+        for j, c in enumerate(choices):
+            if not isinstance(c, dict) or not c.get("target"):
+                return (f"menu choice [{j}] has no 'target' — every choice is "
+                        f"{{text, target}} where target is the node it jumps to.")
         n = len(choices)
         if n > _MAX_MENU_CHOICES:
             return (f"this menu has {n} choices — a menu is a DRAMATIC FORK, at most "
@@ -196,6 +200,11 @@ def node_write_error(content, *, min_lines: int = 0):
     for j, ln in enumerate(lines):
         if not isinstance(ln, dict) or not ln.get("text"):
             return f"node.lines[{j}] needs a non-empty 'text' (speaker is optional; null = narration)"
+        effs = ln.get("effects")
+        if effs is not None and (not isinstance(effs, list)
+                                 or any(not isinstance(e, dict) for e in effs)):
+            return (f"node.lines[{j}].effects must be a list of effect OBJECTS "
+                    f"(e.g. {{\"set_flag\": \"found_key\"}}), not strings")
         emo = ln.get("emotion")
         if emo and emo not in _EMOTIONS:
             return (f"node.lines[{j}] has emotion {emo!r} — use EXACTLY one of "
@@ -448,6 +457,22 @@ def _d_endings_are_nodes(chk, m, ctx):
                                            from_key="id"))
 
 
+def _d_ending_nodes_end(chk, m, ctx):
+    """A planned ending node that doesn't end the game loops the player back into the story
+    (observed from the turn-loop closer: an ending jumping to beat_02). The inverse of
+    premature_endings: that check frees unplanned end nodes; this one pins planned ones."""
+    if not _has_story(ctx.artifact):
+        return []
+    planned = {e.get("id") for e in (ctx.artifact.get("story") or {}).get("endings", [])}
+    node_ids, nodes = views.nodes_of(ctx.artifact)
+    return [Error(type=chk.tier, code=chk.code, component="nodes", path=nid,
+                  message=f"'{nid}' is one of the story's planned endings but its end.type is "
+                          f"{(nodes[nid].get('end') or {}).get('type')!r} — an ending node must "
+                          f"END the game. Set its end to {{\"type\": \"end\"}} (edit_node).")
+            for nid in node_ids
+            if nid in planned and (nodes.get(nid, {}).get("end") or {}).get("type") != "end"]
+
+
 def _d_premature_endings(chk, m, ctx):
     """An UNPLANNED ending is fine — a good exit can evolve naturally from play. What's not fine
     is ending the game while the arc is barely started: an unplanned end node whose path never
@@ -610,6 +635,265 @@ def _owns_compile(art: Dict) -> bool:
     return not has_places and (has_nodes or "nodes" not in art)
 
 
+# ── turn-loop scene authoring (one call per character turn) ───────────────────
+_MAX_TURNS = 12
+_TURN_MAX_TOKENS = 600
+
+
+def _card_text(card: Dict) -> str:
+    keep = ("name", "role", "voice", "temperament", "drive", "history", "competencies",
+            "example_lines")
+    out = []
+    for k in keep:
+        v = card.get(k)
+        if not v:
+            continue
+        out.append(f"{k}: " + ("; ".join(str(x) for x in v) if isinstance(v, list) else str(v)))
+    return "\n".join(out)
+
+
+def _scene_brief(view: Dict, assigned: Optional[Dict], cast: List[Dict], artifact: Dict) -> str:
+    beats = {b["id"]: b for b in (view.get("beats") or []) if b.get("id")}
+    beat_ids = list(beats)
+    lines = ["THE SCENE:"]
+    others = ", ".join(c.get("name", c["id"]) for c in cast)
+    lines.append(f"Present: {others}.")
+    bgs = (artifact.get("asset_manifest") or {}).get("backgrounds", [])
+    if bgs:
+        lines.append(f"Setting: {bgs[0].get('description', bgs[0].get('id'))}")
+    # Each agent's system prompt carries only its OWN card; without the other side's fixed
+    # facts, an agent under pressure borrows the other's biography (observed: Juniper claiming
+    # Elara's flight abroad as her own).
+    facts = []
+    for c in cast:
+        bits = [c.get("drive", "")] + list(c.get("history") or [])[:1]
+        bits = [b for b in bits if b]
+        if bits:
+            facts.append(f"  {c.get('name', c['id'])}: " + " ".join(bits))
+    if facts:
+        lines.append("FIXED FACTS (who did what — never swap these between characters):")
+        lines += facts
+    bid = (assigned or {}).get("beat") or (beat_ids[0] if beat_ids else None)
+    if bid and bid in beats:
+        lines.append(f"This scene dramatizes: {render_beat(beats[bid])}")
+        i = beat_ids.index(bid)
+        if i + 1 < len(beat_ids):
+            lines.append(f"It leads toward: {render_beat(beats[beat_ids[i + 1]])}")
+    path = (assigned or {}).get("path") or []
+    if path:
+        crumb = " → ".join(p["synopsis"] or p["id"] for p in path)
+        lines.append(f"Already happened: {crumb}")
+    lead = (assigned or {}).get("lead_in") or []
+    if lead:
+        lines.append("The previous scene ended with (already on screen — do not repeat):")
+        for ln in lead:
+            lines.append(f"  {ln.get('speaker') or 'NARR'}: {ln.get('text', '')}")
+    if not view.get("node_ids"):
+        lines.append("This is the game's OPENING — the player knows nothing yet. Start your "
+                     "first reply with one NARR line that orients them: who you two are to "
+                     "each other, where this is, and why tonight.")
+    return "\n".join(lines)
+
+
+def _parse_turn(reply: str, me: Dict, others: Optional[Set[str]] = None) -> List[Dict]:
+    """A turn reply -> IR lines. Plain text = my speech; a `NARR:` line = my action. Strips an
+    [END] marker (the caller checks for it), my own name prefix, and wrapping quotes. A line
+    prefixed with ANOTHER character's name is the agent speaking for its scene partner
+    (observed: Juniper's turn emitting `elara: ...`) — dropped, never re-attributed."""
+    out: List[Dict] = []
+    my_names = {me["id"].lower(), (me.get("name") or "").lower()}
+    other_names = {n.lower() for n in (others or set())}
+    for raw in (reply or "").splitlines():
+        t = raw.strip()
+        if not t or t == "[END]":
+            continue
+        t = t.removesuffix("[END]").strip()
+        low = t.lower()
+        if low.startswith("narr:") or low.startswith("narration:"):
+            out.append({"speaker": None, "text": t.split(":", 1)[1].strip()})
+            continue
+        head = t.split(":", 1)
+        if len(head) == 2:
+            prefix = head[0].strip().lower()
+            if prefix in other_names:
+                continue
+            if prefix in my_names:
+                t = head[1].strip()
+        if len(t) >= 2 and t[0] in "\"'“" and t[-1] in "\"'”":
+            t = t[1:-1].strip()
+        if t:
+            out.append({"speaker": me["id"], "text": t})
+    return out
+
+
+_FINISH_SCHEMA = [{"type": "function", "function": {
+    "name": "finish_scene",
+    "description": "File the finished scene: its exit, synopsis, and story-state delta.",
+    "parameters": {"type": "object", "properties": {
+        "end": {"type": "object", "description":
+                "{type:'jump', target} | {type:'menu', choices:[{text,target}]} | {type:'end'}"},
+        "event_summary": {"type": "string"},
+        "location": {"type": "string"},
+        "story_state_delta": {"type": "object"},
+    }, "required": ["end", "event_summary"]}}}]
+
+
+def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
+    """Author one scene as a live conversation: each character is its own LLM call (system =
+    its card; the scene so far = chat turns), a closer call files the exit + delta, and the
+    result dispatches through the normal guarded write_scene path."""
+    from renpy.templating import render_template
+    from maestro.modules.module import _PROMPTS_DIR
+    from maestro.services import parse_action
+
+    art = context.artifact
+    view = module.view(art) or {}
+    assigned = pick_slot(view, slot)
+    cast = [c for c in (art.get("characters") or {}).get("characters", []) if c.get("id")]
+    if len(cast) < 2:
+        services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
+        return
+    node_id = (assigned or {}).get("id") or ("scene_01" if not view.get("node_ids")
+                                             else f"scene_{(view.get('beats_todo') or ['x'])[0]}")
+    brief = _scene_brief(view, assigned, cast, art)
+    beats = {b["id"]: b for b in (view.get("beats") or []) if b.get("id")}
+    bid = (assigned or {}).get("beat") or (next(iter(beats), None))
+    business = render_beat(beats[bid]) if bid in beats else "the conversation reaches a turn"
+    endings = {e.get("id"): e for e in (art.get("story") or {}).get("endings", [])}
+    is_ending = node_id in endings
+    if is_ending:
+        business = (f"this is the story's ENDING '{node_id}' — resolve it: "
+                    f"{endings[node_id].get('description', '')}")
+    min_lines = context.param("each_node_min_lines", 3)
+
+    # The lead-in's last speaker just spoke — the OTHER character opens.
+    lead = (assigned or {}).get("lead_in") or []
+    last_speaker = next((ln.get("speaker") for ln in reversed(lead) if ln.get("speaker")), None)
+    order = list(cast)
+    if last_speaker and order[0]["id"] == last_speaker:
+        order = order[1:] + order[:1]
+
+    def _dupe_keys(text: str) -> List[str]:
+        # Exact key + a first-words key: agents circle with the same opener and a varied tail
+        # ("You're treating this lease like…/deadline like…" five turns straight), so a repeated
+        # opening phrase counts as a repeat.
+        t = text.strip().lower()
+        return [t, " ".join(t.split()[:4])]
+
+    other_names = {n for c in cast for n in (c["id"], c.get("name", "")) if n}
+    transcript: List[Dict] = []
+    seen: Set[str] = set()
+    for ln in lead:   # the lead-in is already on screen — re-emitting it is an echo
+        seen.update(_dupe_keys(ln.get("text", "")))
+    ended = False
+    stale_turns = 0
+    for turn in range(_MAX_TURNS):
+        me = order[turn % len(order)]
+        system = render_template(_PROMPTS_DIR / "scene_turn.txt",
+                                 {"name": me.get("name", me["id"]),
+                                  "card": _card_text(me), "business": business})
+        msgs = [{"role": "system", "content": system}, {"role": "user", "content": brief}]
+        for ln in transcript:
+            if ln["speaker"] == me["id"]:
+                msgs.append({"role": "assistant", "content": ln["text"]})
+            else:
+                who = "NARR" if ln["speaker"] is None else ln["speaker"]
+                text = f"{who}: {ln['text']}"
+                if msgs[-1]["role"] == "user":
+                    msgs[-1]["content"] += "\n" + text
+                else:
+                    msgs.append({"role": "user", "content": text})
+        if msgs[-1]["role"] == "assistant":
+            msgs.append({"role": "user", "content": "(your turn continues the scene)"})
+        # reasoning="none": a turn is speech, not a puzzle — thinking tokens eat the whole
+        # budget and truncate before any text is emitted (observed: 400/400 tokens, content null).
+        resp = services.infer(msgs, None, reasoning="none", max_tokens=_TURN_MAX_TOKENS)
+        reply = ((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        mine = {c.get("name", "") for c in cast if c["id"] == me["id"]} | {me["id"]}
+        lines = _parse_turn(reply, me, others=other_names - mine)
+        # Two agents deadlock by re-trading the same exchange (observed: one line verbatim 4×).
+        # A repeated line never enters the transcript; a turn that contributes NOTHING new is
+        # stale, and two stale turns in a row mean the conversation is spent — close the scene.
+        fresh = []
+        for ln in lines[:3]:
+            keys = _dupe_keys(ln["text"])
+            if any(k in seen for k in keys):
+                continue
+            seen.update(keys)
+            fresh.append(ln)
+        if fresh:
+            transcript.extend(fresh)
+            stale_turns = 0
+            services._report(f"turn {turn + 1} ({me['id']}): {fresh[0]['text'][:60]}")
+        else:
+            stale_turns += 1
+        if len(transcript) >= min_lines and ("[END]" in reply or stale_turns >= 2):
+            ended = "[END]" in reply
+            break
+    if len(transcript) < min_lines:
+        services._report(f"turn loop produced only {len(transcript)} lines — abandoning scene")
+        return
+
+    script = "\n".join(f"{ln['speaker'] or 'NARR'}: {ln['text']}" for ln in transcript)
+    close_system = load_prompt("scene_close.txt")
+    node_lines = ["CURRENT NODES: " + ", ".join(view.get("node_ids") or ["(none)"])]
+    beat_ids = list(beats)
+    if bid in beats and beat_ids.index(bid) + 1 < len(beat_ids):
+        node_lines.append(f"NEXT BEAT: {render_beat(beats[beat_ids[beat_ids.index(bid) + 1]])}")
+    endings = (art.get("story") or {}).get("endings", [])
+    if endings:
+        node_lines.append("STORY ENDINGS: " + ", ".join(e.get("id", "") for e in endings))
+    bgs = (art.get("asset_manifest") or {}).get("backgrounds", [])
+    if bgs:
+        node_lines.append("LOCATIONS: " + ", ".join(b.get("id", "") for b in bgs))
+    close_user = "\n".join(node_lines) + "\n\nTHE SCRIPT:\n" + script
+    action = {}
+    for _ in range(2):
+        resp = services.infer([{"role": "system", "content": close_system},
+                               {"role": "user", "content": close_user}], _FINISH_SCHEMA,
+                              reasoning="none")
+        action = parse_action(resp, _FINISH_SCHEMA)
+        if action.get("tool") == "finish_scene" and isinstance(action.get("args"), dict) \
+                and action["args"].get("end"):
+            break
+    args = action.get("args") or {}
+    end = args.get("end")
+    beat_ix = {b: i for i, b in enumerate(beat_ids)}
+    my_ix = beat_ix.get(bid, -1)
+    existing = (art.get("nodes") or {}).get("nodes") or {}
+
+    def _backward(target: str) -> bool:
+        # A jump/choice into an existing node at or behind this beat loops the story
+        # (observed: beat_08's closer jumping to beat_02).
+        tb = (existing.get(target) or {}).get("beat")
+        return tb in beat_ix and beat_ix[tb] <= my_ix
+
+    nxt = beat_ids[my_ix + 1] if 0 <= my_ix and my_ix + 1 < len(beat_ids) else None
+    fallback = {"type": "jump", "target": f"scene_{nxt}"} if nxt else {"type": "end"}
+    if is_ending:
+        # A planned ending node ENDS the game — the closer has no discretion here (observed:
+        # an ending jumping back into beat_02, another ending in a self-targeting menu).
+        end = {"type": "end"}
+    elif not isinstance(end, dict) or end.get("type") not in _END_TYPES:
+        end = fallback
+    elif end.get("type") == "jump" and _backward(end.get("target", "")):
+        end = fallback
+    elif end.get("type") == "menu":
+        kept = [c for c in (end.get("choices") or [])
+                if isinstance(c, dict) and not _backward(c.get("target", ""))]
+        end = {"type": "menu", "choices": kept} if len(kept) >= 2 else fallback
+    delta = args.get("story_state_delta") if isinstance(args.get("story_state_delta"), dict) else {}
+    if args.get("event_summary"):
+        delta["event_summary"] = args["event_summary"]
+    result = dispatch("write_scene", {
+        "node_id": node_id, "script": script, "end": end,
+        "location": args.get("location") or (bgs[0]["id"] if bgs else None),
+        "story_state_delta": delta})
+    services._report(f"write_scene({node_id}): "
+                     + ("ok" if result.get("ok") else f"error — {result.get('error')}")
+                     + ("" if ended else " (turn cap reached)"))
+
+
 class Scenes(Module):
     id = "scenes"
     description = ("A branching, choice-driven dialogue/scene graph — the playable script. With "
@@ -633,10 +917,12 @@ class Scenes(Module):
     # scene) is slot-guarded; every other error is a single edit.
     checks = [
         Check("beats_realized", _d_beats_realized, tools=_T_WRITE, guard=_NODE_GUARD,
-              prompt="nodes_screenplay_write.txt", skeleton=""),
+              prompt="nodes_screenplay_write.txt", skeleton="", run=scene_turn_loop),
         Check("build_nodes", _d_build_nodes, tools=_T_WRITE, guard=_NODE_GUARD,
-              prompt="nodes_screenplay_write.txt", skeleton=""),
+              prompt="nodes_screenplay_write.txt", skeleton="", run=scene_turn_loop),
         Check("endings_are_nodes", _d_endings_are_nodes, tools=_T_EDIT_WRITE),
+        Check("ending_nodes_end", _d_ending_nodes_end, job="fix", prompt="nodes_fix.txt",
+              tools=_T_EDIT),
         Check("premature_endings", _d_premature_endings, job="fix", prompt="nodes_fix.txt",
               tools=_T_EDIT),
         Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, node_targets_resolve(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT_WRITE),

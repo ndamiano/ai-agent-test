@@ -1,0 +1,12 @@
+A scene for a visual novel was just written (the script below). You file it: decide how it
+exits and record what changed. Call finish_scene.
+
+- end: {type:'jump', target} toward the NEXT BEAT most of the time; {type:'menu', choices:
+  [{text, target}]} ONLY at a genuine fork (2-3 choices, different targets); {type:'end'} only
+  if this scene IS a planned story ending.
+- a target is an existing node id or a NEW id for the scene that follows.
+- event_summary: one line, what CHANGES in this scene (specific — "sisters find the ledger;
+  debt is real", not "they talk").
+- new_facts / entity_updates / open_threads_add / open_threads_resolve: only what this scene
+  established.
+- location: the background id for this scene, from the LOCATIONS list.

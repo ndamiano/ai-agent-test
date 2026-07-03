@@ -32,16 +32,8 @@ _DELTA_FIELDS = ("new_facts", "entity_updates", "open_threads_add",
 # json.dumps); reference integrity (speakers, targets) is ir_crossref's, run at compile.
 
 _EMOTIONS = set(EMOTIONS)
-# A menu is a dramatic fork, not a location picker. Capped so the slot-driven loop can't satisfy
-# its node quota by fanning one node into a wide hub of stub branches (the hub-and-spoke star that
-# guts the arc); past this, the model must build DEPTH — scenes that lead into scenes — instead.
 
 
-# The model intuitively writes a speaker STRING for narration ("narration"/"narrator") instead of
-# the convention speaker:null. Left alone it isn't a declared character, so it only blows up far
-# later at crossref/compile — where a small model thrashes trying to "fix" it. Normalize at write
-# time so the intent (narration) is honored and the error never forms (is_narration_speaker is the
-# shared rule, also applied as a backstop in ir_assemble).
 def _coerce_json(value):
     """A small model frequently passes a nested object (a node's content, a place/match body) as a
     JSON STRING — `content: "{\\"lines\\": ...}"` — instead of an object, and the write is then
@@ -371,6 +363,11 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     # test a lock).
     _owner = {cid: m for m in modules for cid in m.affected_components()}
     _terminal = {getattr(m, "component", None) for m in modules if getattr(m, "emits_compile", False)}
+    # In a scenes-less world game, talk hotspots demand nodes on demand — `nodes` must stay
+    # writable or the second talk target can never be authored (world's crossref fix needs to
+    # ADD a node, and no composed module would unlock it).
+    if any(m.id == "world" for m in modules):
+        _terminal.add("nodes")
 
     def _require_frozen():
         if not spec.get("frozen"):
@@ -424,6 +421,22 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         err = _schema_error(component_id, content)
         if err:
             return {"ok": False, "error": f"invalid {component_id}: {err}"}
+        if component_id == "nodes" and isinstance(content, dict):
+            # A whole-component rewrite (state/human fixes) must obey the same per-node policy
+            # write_node enforces, and must not orphan the system-owned beat/synopsis metadata.
+            from maestro.modules.scenes import end_error
+            prior = state.read_component("nodes") or {}
+            for nid, node in (content.get("nodes") or {}).items():
+                if not isinstance(node, dict):
+                    continue
+                e = end_error(node.get("end"))
+                if e:
+                    return {"ok": False, "error": f"invalid nodes.nodes[{nid!r}]: {e}"}
+                old = (prior.get("nodes") or {}).get(nid)
+                if isinstance(old, dict) and "beat" not in node and "beat" in old:
+                    node["beat"] = old["beat"]
+            if "synopses" not in content and prior.get("synopses"):
+                content["synopses"] = prior["synopses"]
         state.write_component(component_id, content)
         return {"ok": True, "component_id": component_id}
 
@@ -459,6 +472,11 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         delta.update({k: v for k, v in delta_fields.items() if k in _DELTA_FIELDS})
 
         ns = state.read_component("nodes") or {"nodes": {}, "node_ids": []}
+        # An overwrite must not orphan the system-stamped beat (mirrors edit_node's
+        # full-content path) — losing it re-fans the beat's slot into a duplicate scene.
+        prior = ns.get("nodes", {}).get(node_id)
+        if isinstance(prior, dict) and "beat" not in content and "beat" in prior:
+            content["beat"] = prior["beat"]
         ns.setdefault("nodes", {})[node_id] = content
         ns.setdefault("node_ids", [])
         if node_id not in ns["node_ids"]:
@@ -545,6 +563,9 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 return {"ok": False, "error": f"line_index {line_index} out of range "
                                               f"(node {node_id} has {len(lines)} lines)"}
             if text is not None:
+                if not text.strip():
+                    return {"ok": False, "error": "a line's text cannot be empty — to remove a "
+                                                  "line, replace the whole node via `content`"}
                 lines[line_index]["text"] = text
             if speaker is not _UNSET:
                 if not is_narration_speaker(speaker) and not isinstance(speaker, str):
@@ -708,8 +729,9 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if m is None:
             return {"ok": False, "error": f"no match {match_id!r} to edit"}
         if card_model is not None:
-            if card_model not in _CARD_MODELS:
-                return {"ok": False, "error": f"card_model must be one of {sorted(_CARD_MODELS)}"}
+            from maestro.modules.card_play import _MODELS
+            if card_model not in _MODELS:
+                return {"ok": False, "error": f"card_model must be one of {sorted(_MODELS)}"}
             m["card_model"] = card_model
         if opponent is not None:
             m["opponent"] = opponent
@@ -834,9 +856,9 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             {"component": e.component, "code": e.code, "type": e.type.value, "detail": e.message}
             for e in errs]}
 
-    # No compile tool: the executor already runs the `compiles` done-condition (a real build)
-    # after every step, so a manual trigger only wastes a step — and lets the agent compile early,
-    # fighting the deliberate "compiles last" check ordering (see executor._CHECK_PRIORITY).
+    # No compile tool: the loop already runs the `compiles` done-condition (a real build)
+    # after every step, so a manual trigger only wastes a step — and lets the agent compile
+    # early, fighting the deliberate when_clean ordering of the compile check.
 
     # ── working memory ───────────────────────────────────────────────────────
     def update_scratchpad(current_goal: str = "",

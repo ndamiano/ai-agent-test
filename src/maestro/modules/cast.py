@@ -57,6 +57,7 @@ SKEL_CHARACTERS = (
     '      "name": "<Display Name>",\n'
     '      "role": "protagonist | antagonist | npc",\n'
     '      "voice": "one line: vocabulary, sentence length, rhythm, what breaks under pressure",\n'
+    '      "sex": "male|female — drives sprite and spoken-voice casting",\n'
     '      "temperament": "2-4 words for how they carry themselves",\n'
     '      "drive": "what they want, plainly — a thing they would say out loud, NOT a goal for this plot",\n'
     '      "history": ["one concrete formative event", "a second, different event"],\n'

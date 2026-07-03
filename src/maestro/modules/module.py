@@ -102,6 +102,9 @@ class Check:
     guard: Optional[Dict] = None           # slot guard for a create tool (count targets)
     max_tokens: Optional[int] = None
     build_prompt: Optional[Callable] = None   # (module, ctx, error) -> CorrectionPrompt
+    run: Optional[Callable] = None         # (module, ctx, error, slot, services, dispatch) -> None:
+                                           # the whole fix body (multi-call subloop); replaces the
+                                           # single prompt+dispatch step, still budget-bounded
 
     def __post_init__(self):
         if self.tier is None:
@@ -260,6 +263,9 @@ class Module(ABC):
             dispatch = _create_guard(services.dispatch, view_fn, guard["count_tool"],
                                      guard["id_key"], guard["id_list_key"], guard["noun"],
                                      assigned=assigned, prepare=guard.get("prepare"))
+        if chk and chk.run is not None:
+            chk.run(self, context, error, slot, services, dispatch or services.dispatch)
+            return
         services.run(self.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
 
 

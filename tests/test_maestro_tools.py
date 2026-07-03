@@ -267,6 +267,190 @@ def test_edit_node_full_replace_preserves_beat(tmp_path):
     assert state.read_component("nodes")["nodes"]["s1"]["beat"] == "beat_01"
 
 
+def test_write_node_overwrite_preserves_beat(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("s1", _node(), beat="beat_01")
+    tools["write_node"]("s1", {"lines": [{"speaker": "a", "text": "rewritten"}],
+                               "end": {"type": "return"}})
+    assert state.read_component("nodes")["nodes"]["s1"]["beat"] == "beat_01"
+
+
+def test_menu_choice_requires_target(tmp_path):
+    tools = build_tools(_spec(), RunState(tmp_path))
+    bad = {"lines": [{"speaker": "a", "text": "x"}],
+           "end": {"type": "menu", "choices": [{"text": "a", "target": "s2"}, {"text": "b"}]}}
+    res = tools["write_node"]("s1", bad)
+    assert res["ok"] is False and "target" in res["error"]
+
+
+def test_effects_must_be_objects(tmp_path):
+    tools = build_tools(_spec(), RunState(tmp_path))
+    bad = {"lines": [{"speaker": "a", "text": "x", "effects": ["set_flag"]}],
+           "end": {"type": "return"}}
+    res = tools["write_node"]("s1", bad)
+    assert res["ok"] is False and "effect OBJECT" in res["error"]
+
+
+def test_edit_match_card_model_validates(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("matches", {"match_ids": ["m1"], "matches": {
+        "m1": {"card_model": "high_card", "opponent": "x"}}})
+    res = tools["edit_match"]("m1", card_model="poker")
+    assert res["ok"] is False and "high_card" in res["error"]
+    assert tools["edit_match"]("m1", card_model="blackjack")["ok"] is True
+
+
+def test_write_component_nodes_preserves_beats_and_synopses(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("s1", _node(), beat="beat_01", event_summary="the reveal")
+    rewrite = {"node_ids": ["s1"], "nodes": {"s1": {
+        "lines": [{"speaker": "a", "text": "new"}], "end": {"type": "return"}}}}
+    assert tools["write_component"]("nodes", rewrite, force=True)["ok"] is True
+    ns = state.read_component("nodes")
+    assert ns["nodes"]["s1"]["beat"] == "beat_01"
+    assert ns["synopses"]["s1"] == "the reveal"
+    fake = {"node_ids": ["s1"], "nodes": {"s1": {
+        "lines": [{"speaker": "a", "text": "x"}],
+        "end": {"type": "menu", "choices": [{"text": "a", "target": "z"},
+                                            {"text": "b", "target": "z"}]}}}}
+    res = tools["write_component"]("nodes", fake, force=True)
+    assert res["ok"] is False and "fake choice" in res["error"]
+
+
+def test_edit_node_rejects_empty_text(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    tools["write_node"]("s1", _node())
+    res = tools["edit_node"]("s1", line_index=0, text="  ")
+    assert res["ok"] is False and "empty" in res["error"]
+
+
+def test_human_todo_marked_applied_after_fix(tmp_path):
+    from maestro.modules import human as human_mod
+    from maestro.modules import compose
+    from maestro.modules.context import build_context
+
+    state = RunState(tmp_path)
+    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes"], "params": {}})
+    tools = build_tools(spec, state)
+    tools["write_node"]("s1", _node())
+    todo = human_mod.add_todo(state, "nodes", "make s1 angrier")
+    human = [m for m in compose(("scenes",)) if m.id == "human"][0]
+    ctx = build_context(spec.data, state)
+    err = next(e for e in human.get_errors(ctx) if e.code == "human_todo")
+
+    class StubServices:
+        def __init__(self):
+            self.state = state
+
+        def run(self, prompt, *, dispatch=None):
+            dispatch("edit_node", {"node_id": "s1", "line_index": 0, "text": "angrier line"})
+
+    def dispatch(name, args):
+        return tools[name](**(args or {}))
+
+    human_mod._run_todo_fix(human, ctx, err, 0, StubServices(), dispatch)
+    assert human_mod.open_todos(state) == []
+
+
+def test_crossref_crash_is_surfaced_not_swallowed():
+    from maestro.modules.checks import crossref_failures
+    art = {"characters": {"characters": [{"id": "a", "name": "A"}]},
+           "asset_manifest": {"backgrounds": [], "characters": []},
+           "nodes": {"node_ids": ["s1"], "nodes": {"s1": {
+               "lines": [{"speaker": "a", "text": "x", "effects": [{"set_var": "gold"}]}],
+               "end": {"type": "return"}}}}}
+    recs = crossref_failures(art)
+    assert recs and "malformed" in recs[0]["message"]
+
+
+def test_pick_voice_respects_sex_and_override():
+    from tools.tts_tools import pick_voice
+    bank = ["af_heart", "af_bella", "bf_emma", "am_michael", "am_puck", "bm_george"]
+    # a male character never hashes onto a female voice, whatever the id
+    for cid in ("danny", "marc", "x", "abcdef"):
+        assert pick_voice(cid, bank, sex="male") in {"am_michael", "am_puck", "bm_george"}
+        assert pick_voice(cid, bank, sex="female") in {"af_heart", "af_bella", "bf_emma"}
+    assert pick_voice("danny", bank, sex="male", tts_voice="am_puck") == "am_puck"
+    # deterministic across calls
+    assert pick_voice("danny", bank, sex="male") == pick_voice("danny", bank, sex="male")
+    # non-kokoro bank (no prefix convention) falls back to whole bank
+    assert pick_voice("danny", ["speaker1", "speaker2"], sex="male") in {"speaker1", "speaker2"}
+
+
+def test_parse_turn():
+    from maestro.modules.scenes import _parse_turn
+    me = {"id": "elara", "name": "Elara"}
+    lines = _parse_turn('NARR: She lifts the lid.\n"Hand me the tape."\n[END]', me)
+    assert lines == [{"speaker": None, "text": "She lifts the lid."},
+                     {"speaker": "elara", "text": "Hand me the tape."}]
+    # strips a self-name prefix the model sometimes adds
+    assert _parse_turn("ELARA: Put it down.", me) == [{"speaker": "elara", "text": "Put it down."}]
+    # a line the agent writes FOR its scene partner is dropped, never re-attributed
+    lines = _parse_turn("juniper: Take the money.\nI won't repeat myself.", me,
+                        others={"juniper", "Juniper"})
+    assert lines == [{"speaker": "elara", "text": "I won't repeat myself."}]
+
+
+def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
+    from maestro.modules import compose
+    from maestro.modules.context import build_context
+    from maestro.modules.scenes import scene_turn_loop
+
+    state = RunState(tmp_path)
+    state.write_component("characters", {"characters": [
+        {"id": "a", "name": "Ada", "drive": "leave"}, {"id": "b", "name": "Bo", "drive": "stay"}]})
+    state.write_component("story", {"central_question": "q",
+                                    "endings": [{"id": "ending_x", "description": "d"}],
+                                    "beats": [{"id": "beat_1", "summary": "s1"},
+                                              {"id": "beat_2", "summary": "s2"}]})
+    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes"],
+                 "params": {"each_node_min_lines": 3}})
+    scenes = [m for m in compose(("scenes",)) if m.id == "scenes"][0]
+    ctx = build_context(spec.data, state)
+    err = next(e for e in scenes.get_errors(ctx) if e.code == "beats_realized")
+
+    # includes a fully-duplicate turn (dedupe: contributes nothing, loop keeps going)
+    turn_replies = iter(["Pack the crate.", "NARR: Bo blocks the door.\nNot that one.",
+                         "Pack the crate.", "Then hand me the list.", "Take it. [END]"])
+
+    class StubServices:
+        def __init__(self, tools):
+            self.tools, self.state = tools, state
+            self.reports = []
+
+        def infer(self, msgs, schemas, **kw):
+            if schemas:  # the closer call
+                import json as j
+                return {"choices": [{"message": {"tool_calls": [{"function": {
+                    "name": "finish_scene", "arguments": j.dumps({
+                        "end": {"type": "jump", "target": "scene_beat_2"},
+                        "event_summary": "crate fight"})}}]}}]}
+            return {"choices": [{"message": {"content": next(turn_replies)}}]}
+
+        def dispatch(self, name, args):
+            return self.tools[name](**(args or {}))
+
+        def _report(self, s):
+            self.reports.append(s)
+
+    tools = build_tools(spec, state, [scenes])
+    svc = StubServices(tools)
+    scene_turn_loop(scenes, ctx, err, 0, svc, svc.dispatch)
+
+    nodes = state.read_component("nodes")
+    assert nodes["node_ids"] == ["scene_01"]
+    node = nodes["nodes"]["scene_01"]
+    assert node["end"] == {"type": "jump", "target": "scene_beat_2"}
+    assert {"speaker": None, "text": "Bo blocks the door."} in node["lines"]
+    speakers = [ln["speaker"] for ln in node["lines"]]
+    assert "a" in speakers and "b" in speakers
+    assert state.read_component("nodes")["synopses"]["scene_01"] == "crate fight"
+
+
 def test_parse_screenplay():
     from maestro.modules.scenes import parse_screenplay
     chars = [{"id": "mara", "name": "Mara"}, {"id": "jonas", "name": "Jonas"}]

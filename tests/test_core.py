@@ -159,6 +159,23 @@ def test_scenes_floor_gated_on_story_presence():
     assert narrative & rich               # story present -> narrative floor fires
 
 
+def test_planned_ending_node_must_end():
+    scenes = MODULE_REGISTRY["scenes"]
+    story = {"central_question": "q", "endings": [{"id": "ending_a"}],
+             "beats": [{"id": "beat_1"}, {"id": "beat_2"}, {"id": "beat_3"}]}
+    art = {"story": story, "nodes": {"node_ids": ["n1", "ending_a"], "nodes": {
+        "n1": {"beat": "beat_1", "lines": [{"speaker": "a", "text": "x"}],
+               "end": {"type": "jump", "target": "ending_a"}},
+        "ending_a": {"lines": [{"speaker": "a", "text": "x"}],
+                     "end": {"type": "jump", "target": "n1"}},
+    }}}
+    errs = scenes.get_errors(_ctx({"params": {}}, art))
+    assert any(e.code == "ending_nodes_end" and e.path == "ending_a" for e in errs)
+    art["nodes"]["nodes"]["ending_a"]["end"] = {"type": "end"}
+    errs = scenes.get_errors(_ctx({"params": {}}, art))
+    assert not any(e.code == "ending_nodes_end" for e in errs)
+
+
 def test_premature_ending_flagged_earned_ending_allowed():
     scenes = MODULE_REGISTRY["scenes"]
     story = {"central_question": "q",

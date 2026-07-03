@@ -21,12 +21,24 @@ HISTORY — a list of things that have happened in the character's life. These w
 fulfil dialogue goals, and make the character feel alive. They can be connected to other
 characters or independent, and they should be varied and interesting.
 
-VOICE — one sentence on how they speak (vocabulary, sentence length, rhythm).
+VOICE — one sentence on how they speak (vocabulary, sentence length, rhythm). A professional
+tic ("falls into shop terms when cornered") must be stated as a TIC WITH A BOUND — something
+that surfaces occasionally — never as the character's default register. A voice spec like
+"uses technical jargon to create distance" licenses every line to be an inspection report;
+write "short sentences; reaches for a work word when a feeling gets close" instead.
+The voice describes HOW words come out — length, rhythm, vocabulary — never a conversational
+STRATEGY. "Speaks in metaphors", "states what she thinks others are thinking", "answers
+questions with questions" turn every line into that strategy: a wall of metaphor-diagnosis
+monologues. If the character deflects or accuses, their example line shows it in ten words;
+the voice field does not command it.
 
-EXAMPLE LINES — 2+ lines that the character would say. In general, characters should speak
-plainly, and their lines shouldn't be steeped in their profession. These should be forgettable
-lines that show the character's word choice and rhythm. One should be purely transactional,
-another reactive — a logistics complaint.
+EXAMPLE LINES — 2+ lines that the character would say. These lines get QUOTED: the dialogue
+author treats them as the strongest signal of how this person talks, so whatever register
+they model is the register every scene inherits. Write them PLAIN — everyday words, the
+person off-duty, not the profession talking. One purely transactional, one reactive — a
+logistics complaint.
+  FAILS:  "The cardboard is warping; we need to move this to the drier room."  <- profession as speech
+  PASSES: "Leave the boxes by the door, the damp gets to them in here."        <- same person, human words
 
 TEMPERAMENT — how they carry themselves day to day.
 

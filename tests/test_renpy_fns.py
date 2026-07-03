@@ -39,6 +39,42 @@ def test_copy_templates_seeds_gui_from_sdk(tmp_path, monkeypatch):
     assert (game_dir / "screens.rpy").exists()
 
 
+def test_write_options_rpy_escapes_title(tmp_path):
+    from renpy.renpy_builder import write_options_rpy
+
+    write_options_rpy(str(tmp_path), 'The "Last" Stand \\')
+    content = (tmp_path / "options.rpy").read_text()
+    assert 'define config.name = "The \\"Last\\" Stand \\\\"' in content
+    assert 'build.name = "The_Last_Stand_"' in content
+
+
+def test_write_options_about_and_menu_background(tmp_path):
+    from renpy.renpy_builder import write_options_rpy
+
+    write_options_rpy(str(tmp_path), "T", about='A "tense" night.', menu_bg="title_card.png")
+    content = (tmp_path / "options.rpy").read_text()
+    assert 'define gui.about = "A \\"tense\\" night."' in content
+    # title card absent on disk -> no menu override emitted
+    assert "main_menu_background" not in content
+
+    (tmp_path / "images").mkdir()
+    (tmp_path / "images" / "title_card.png").write_bytes(b"png")
+    write_options_rpy(str(tmp_path), "T", about="x", menu_bg="title_card.png")
+    content = (tmp_path / "options.rpy").read_text()
+    assert 'gui.main_menu_background = "images/title_card.png"' in content
+    assert 'gui.game_menu_background = "images/title_card.png"' in content
+    assert "init 999 python" in content
+
+
+def test_screens_template_has_no_foreign_font_or_stock_credits():
+    from renpy.renpy_builder import TEMPLATES_DIR
+    import os
+    screens = open(os.path.join(TEMPLATES_DIR, "screens.rpy")).read()
+    assert "SourceHanSansLite" not in screens
+    assert "Mugenjohncel" not in screens
+    assert "gui.about" in screens
+
+
 def test_copy_templates_no_sdk_still_warns_not_crashes(tmp_path, monkeypatch):
     import renpy.renpy_builder as rb
 
@@ -86,6 +122,30 @@ def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
     for name in ("dock.png", "alex.png", "cg_finale.png", "title_card.png"):
         png = (images_dir / name).read_bytes()
         assert png.startswith(b"\x89PNG")
+
+
+def test_generate_images_queues_items_as_icon_jobs(tmp_path, monkeypatch):
+    import tools.comfyui_tools as comfyui_tools
+    from renpy.fns import generate_images
+
+    import contextlib
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
+    queued = []
+
+    def fake_run_jobs(jobs):
+        queued.extend(jobs)
+        return [{"success": False, "error": "no comfyui"} for _ in jobs]
+
+    monkeypatch.setattr(comfyui_tools, "run_jobs", fake_run_jobs)
+
+    inputs = {"asset_manifest": {
+        "items": [{"id": "item_key", "description": "a rusty iron key"}],
+    }}
+    generate_images(inputs, tmp_path)
+
+    assert len(queued) == 1
+    assert "game item icon" in queued[0]["prompt"]
+    assert "rusty iron key" in queued[0]["prompt"]
 
 
 # ---------------------------------------------------------------------------

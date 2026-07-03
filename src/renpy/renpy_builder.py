@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -8,15 +9,28 @@ import sys
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "renpy_templates")
 
 
-def write_options_rpy(game_dir: str, title: str) -> None:
-    """Write game/options.rpy (config name/version + build identity) for a project."""
+def write_options_rpy(game_dir: str, title: str, about: str = "", menu_bg: str = "") -> None:
+    """Write game/options.rpy (config name/version/about + build identity) for a project.
+    menu_bg: a generated title-card filename under game/images — becomes the main/game menu
+    background instead of the stock template art."""
     safe = re.sub(r"[^A-Za-z0-9_]", "", title.replace(" ", "_")) or "UntitledGame"
     content = (
-        f'define config.name = "{title}"\n'
+        f'define config.name = {json.dumps(title)}\n'
         f'define config.version = "1.0"\n'
+        f'define gui.about = {json.dumps(about)}\n'
         f'define config.window_icon = None\n'
         f'define gui.show_name = True\n'
         f'define config.save_directory = "{safe}"\n'
+    )
+    if menu_bg and os.path.exists(os.path.join(game_dir, "images", menu_bg)):
+        # gui.rpy `define`s these; a second define is a duplicate-definition error, so
+        # override after init instead.
+        content += (
+            f'init 999 python:\n'
+            f'    gui.main_menu_background = "images/{menu_bg}"\n'
+            f'    gui.game_menu_background = "images/{menu_bg}"\n'
+        )
+    content += (
         f'init python:\n'
         f'    build.name = "{safe}"\n'
         f'    build.executable_name = "{safe}"\n'

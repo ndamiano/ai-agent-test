@@ -546,49 +546,10 @@ screen about():
         vbox:
 
             label "[config.name!t]"
-            text _("[config.version!t]\n")
+            text _("Version [config.version!t]\n")
 
-            hbox:
-                spacing 15
-                text _("Updated Character Art") style "about_small"
-                text _("Deji")
-
-            hbox:
-                spacing 15
-                text _("Original Character Art") style "about_small"
-                text _("Derik")
-
-            null height 15
-
-            hbox:
-                spacing 15
-                text _("Updated Background Art") style "about_small"
-                text _("Mugenjohncel")
-
-            hbox:
-                spacing 15
-                text _("Original Background Art") style "about_small"
-                text _("DaFool")
-
-            null height 15
-
-            hbox:
-                spacing 15
-                text _("Music By") style "about_small"
-                text _("Alessio")
-
-            null height 15
-
-            hbox:
-                spacing 15
-                text _("Update Written By") style "about_small"
-                text _("Lore")
-
-            hbox:
-                spacing 15
-                text _("Originally Written By ") style "about_small"
-                text _("mikey (ATP Projects)")
-
+            if gui.about:
+                text "[gui.about!t]\n"
 
             text _("\nMade with {a=https://www.renpy.org/}Ren'Py{/a} [renpy.version_only]")
             null height 15
@@ -783,32 +744,6 @@ screen preferences():
                 ## Additional vboxes of type "radio_pref" or "check_pref" can be
                 ## added here, to add additional creator-defined preferences.
 
-#begin language_picker
-
-                vbox:
-                    style_prefix "radio"
-                    label _("Language")
-
-                    textbutton "English" text_font "DejaVuSans.ttf" action Language(None)
-                    textbutton "Česky" text_font "DejaVuSans.ttf" action Language("czech")
-                    textbutton "Dansk" text_font "DejaVuSans.ttf" action Language("danish")
-                    textbutton "Français" text_font "DejaVuSans.ttf" action Language("french")
-                    textbutton "Italiano" text_font "DejaVuSans.ttf" action Language("italian")
-                    textbutton "Bahasa Melayu" text_font "DejaVuSans.ttf" action Language("malay")
-                    textbutton "Русский" text_font "DejaVuSans.ttf" action Language("russian")
-
-                vbox:
-                    style_prefix "radio"
-                    label _(" ")
-
-                    textbutton "Español" text_font "DejaVuSans.ttf" action Language("spanish")
-                    textbutton "Українська" text_font "DejaVuSans.ttf" action Language("ukrainian")
-                    textbutton "日本語" text_font "SourceHanSansLite.ttf" action Language("japanese")
-                    textbutton "한국어" text_font "SourceHanSansLite.ttf" action Language("korean")
-                    textbutton "简体中文" text_font "SourceHanSansLite.ttf" action Language("schinese")
-                    textbutton "繁體中文" text_font "SourceHanSansLite.ttf" action Language("tchinese")
-
-#end language_picker
 
             null height (4 * gui.pref_spacing)
 

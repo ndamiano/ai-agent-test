@@ -288,6 +288,12 @@ class OpenAICompatibleConnector(BaseConnector):
         effort = self.reasoning if reasoning is _REASONING_UNSET else _resolve_effort(reasoning)
         if effort in _REASONING_EFFORTS:
             payload["reasoning"] = {"effort": effort}
+        if effort == "none":
+            # llama.cpp ignores reasoning.effort "none" — the model thinks anyway and can burn
+            # the whole output budget before any text. The chat-template switch actually
+            # disables it (verified: Qwen3.6 output drops from 2500 truncated to instant text);
+            # servers that don't know the field ignore it.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         if tools:
             payload["tools"] = _chat_tools_to_responses(tools)
             payload["tool_choice"] = "auto"

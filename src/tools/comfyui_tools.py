@@ -51,7 +51,8 @@ _BG_QUALITY = "masterpiece, best quality, amazing quality, newest, absurdres"
 _BG_NEGATIVE = (
     "worst quality, low quality, blurry, distorted, people, person, 1girl, 1boy, "
     "characters, figures, monster, creature, animal, insect, skeleton, subject, "
-    "foreground object, close-up, watermark, signature, text"
+    "foreground object, close-up, watermark, signature, text, gibberish text, signage, "
+    "lettering, posters with text"
 )
 
 _CG_NEGATIVE = (
@@ -60,7 +61,8 @@ _CG_NEGATIVE = (
 )
 
 _TITLE_CARD_NEGATIVE = (
-    "low quality, blurry, distorted, watermark, signature, ui elements, hud"
+    "low quality, blurry, distorted, watermark, signature, ui elements, hud, "
+    "text, title text, logo, lettering, typography, japanese text, subtitles"
 )
 
 
@@ -196,9 +198,14 @@ def _build_background_workflow(base_workflow: dict, positive: str, negative: str
 
 
 def build_background_job(description: str) -> dict:
-    """Return a {prompt, workflow_override} job dict for a background image (WAI Illustrious)."""
-    positive = (f"{_BG_QUALITY}, scenery, no humans, empty environment, establishing shot, "
-                f"wide angle background, {description}")
+    """Return a {prompt, workflow_override} job dict for a background image (WAI Illustrious).
+
+    The DESCRIPTION leads the prompt: CLIP weights early tokens hardest and truncates long
+    prompts, so with the tag salad in front, the room's actual contents fell off the end
+    (observed: 'boxes stacked against walls... posters' rendered as an empty neon server room —
+    the mood words survived, the objects didn't). Quality/framing tags ride behind."""
+    positive = (f"{description} — scenery, no humans, empty environment, establishing shot, "
+                f"wide angle background, {_BG_QUALITY}")
     return {
         "prompt": positive,
         "workflow_override": _build_background_workflow(
@@ -299,27 +306,30 @@ def make_seamless_tile(path, out_size: int = 256) -> None:
 
 
 def build_cg_job(description: str) -> dict:
-    """Return a {prompt, workflow_override} job dict for a full-screen CG illustration."""
-    positive = (
-        f"{_QUALITY}. {_STYLE_LOCK}. A full-scene anime visual novel CG illustration with "
-        f"characters in their environment, dynamic composition, and dramatic lighting. {description}"
-    )
-    wf = _build_widescreen_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _CG_NEGATIVE)
-    wf["19"]["inputs"]["cfg"] = 7.0
-    wf["19"]["inputs"]["steps"] = 35
-    return {"prompt": positive, "workflow_override": wf}
+    """Return a {prompt, workflow_override} job dict for a full-screen CG illustration.
+    Renders on WAI Illustrious (like backgrounds): the Anima/Qwen model letterboxes 1280x720
+    with baked black bars, and Illustrious keeps CGs in the same visual family as the scenes
+    they interrupt."""
+    positive = (f"{description} — anime visual novel CG illustration, characters in their "
+                f"environment, dynamic composition, dramatic lighting, {_BG_QUALITY}")
+    return {
+        "prompt": positive,
+        "workflow_override": _build_background_workflow(
+            _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _CG_NEGATIVE),
+    }
 
 
 def build_title_card_job(description: str) -> dict:
-    """Return a {prompt, workflow_override} job dict for the game title card."""
-    positive = (
-        f"{_QUALITY}. {_STYLE_LOCK}. A wide, cinematic visual novel title card key visual "
-        f"with an atmospheric composition. {description}"
-    )
-    wf = _build_widescreen_workflow(_load_workflow(_TXT2IMG_WORKFLOW_PATH), positive, _TITLE_CARD_NEGATIVE)
-    wf["19"]["inputs"]["cfg"] = 7.0
-    wf["19"]["inputs"]["steps"] = 35
-    return {"prompt": positive, "workflow_override": wf}
+    """Return a {prompt, workflow_override} job dict for the game title card. WAI Illustrious
+    widescreen, same reasoning as build_cg_job (observed: Anima baked letterbox bars into the
+    1280x720 title image)."""
+    positive = (f"{description} — cinematic visual novel title key visual, atmospheric "
+                f"composition, {_BG_QUALITY}")
+    return {
+        "prompt": positive,
+        "workflow_override": _build_background_workflow(
+            _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _TITLE_CARD_NEGATIVE),
+    }
 
 
 def _load_workflow(path: Path) -> dict:

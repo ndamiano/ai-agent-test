@@ -253,8 +253,11 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
             for theme, role in tile_specs:
                 fname = f"tile_{tile_slug(theme)}.png"
                 dest = images_dir / fname
-                for attempt in range(3):
-                    result = run_jobs([build_tile_job(theme, role)])[0]
+                for attempt in range(4):
+                    # 3 ideogram seed rolls, then DreamShaper — some theme phrases trip the
+                    # refusal filter on every seed
+                    job = build_tile_job(theme, role, ideogram=attempt < 3)
+                    result = run_jobs([job])[0]
                     if not (result.get("success") and result.get("saved_paths")):
                         print(f"    [images]  tile failed ({result.get('error', 'unknown')}), "
                               f"colour fallback: {fname}")

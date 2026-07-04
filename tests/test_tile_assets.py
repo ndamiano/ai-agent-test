@@ -66,6 +66,12 @@ def test_build_tile_job_role_steers_readability(monkeypatch):
     assert "impassable growth" in bush_p and "front-facing" not in bush_p
 
 
+def test_build_tile_job_ideogram_false_forces_dreamshaper(monkeypatch):
+    _force_tile_endpoint(monkeypatch, "http://localhost:8189")
+    job = build_tile_job("dusty track", "open", ideogram=False)
+    assert "endpoint" not in job and "tileable" in job["prompt"]
+
+
 def test_build_tile_job_routes_to_ideogram_endpoint(monkeypatch):
     import json
     _force_tile_endpoint(monkeypatch, "http://localhost:8189/")

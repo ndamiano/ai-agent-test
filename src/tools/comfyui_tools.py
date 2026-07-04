@@ -394,20 +394,21 @@ def _build_ideogram_tile_workflow(caption: str) -> dict:
     }
 
 
-def build_tile_job(theme: str, role: str = "open") -> dict:
+def build_tile_job(theme: str, role: str = "open", ideogram: bool = True) -> dict:
     """Return a job for ONE walkable-map terrain tile: a square, top-down surface TEXTURE of
     `theme` (e.g. 'frozen stream', 'temple stone'). Never say 'map tile' — models draw a picture
     OF a map. The saved image is post-processed seamless + downscaled (`make_seamless_tile`); the
     overworld repeats it per cell, so it must be a uniform material, not a scene. Renders on the
     ideogram4 endpoint (`comfyui.tile_endpoint`) when configured, else the default endpoint's
-    DreamShaper formulas."""
+    DreamShaper formulas; `ideogram=False` forces the DreamShaper path (the caller's last
+    resort when a theme phrase keeps tripping ideogram's refusal filter on every seed)."""
     if role == "blocked":
         key = "blocked_wall" if any(w in theme.lower() for w in _TILE_WALLISH) \
             else "blocked_organic"
     else:
         key = "open"
     tile_endpoint = _get_comfyui_settings().get("tile_endpoint", "").rstrip("/")
-    if tile_endpoint:
+    if tile_endpoint and ideogram:
         caption = _ideogram_tile_caption(theme, key)
         return {
             "prompt": caption,

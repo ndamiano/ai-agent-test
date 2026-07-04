@@ -46,6 +46,13 @@ def v_characters(c: Dict) -> Optional[str]:
             return f"characters.characters[{i}] needs an 'id' (snake_case, e.g. 'evelyn')"
         if not ch.get("name"):
             return f"characters.characters[{i}] needs a 'name'"
+        # Enum-gate at write time: the compile gate also checks this, but by then the
+        # component is done-locked and the compile fixer can't touch it (observed deadlock:
+        # sex 'female (Sarah), male (Tom)' — two people stuffed into one card).
+        sex = ch.get("sex")
+        if sex is not None and sex not in ("male", "female"):
+            return (f"characters.characters[{i}].sex must be exactly 'male' or 'female' — "
+                    f"got {sex!r}. One character per entry; never combine people in one card.")
     return None
 
 

@@ -18,6 +18,16 @@ def test_characters_requires_character_id_and_name():
     assert validate_component("characters", {"characters": [{"id": "evelyn", "name": "Evelyn"}]}) is None
 
 
+def test_characters_sex_is_enum_gated_at_write_time():
+    # observed: 'female (Sarah), male (Tom)' — two people in one card — passed cast checks,
+    # locked the component, then deadlocked the compile fixer
+    bad = {"characters": [{"id": "s", "name": "S", "sex": "female (Sarah), male (Tom)"}]}
+    err = validate_component("characters", bad)
+    assert err and "male" in err
+    ok = {"characters": [{"id": "s", "name": "S", "sex": "female"}]}
+    assert validate_component("characters", ok) is None
+
+
 def test_asset_manifest_requires_list_keys_and_ids():
     # the shape the failing run produced (images/audio_files) is rejected
     bad = {"images": [{"filename": "x.png"}], "audio_files": ["a.mp3"]}

@@ -102,7 +102,7 @@ def each_place_min_interactables(artifact: Dict, *, min=2):
 
 def nodes_world_entered(artifact: Dict):
     """When places exist the game STARTS in the world, and the node graph plays only through world
-    entry points: talk actions and encounter/match resolution jumps. Every node must be reachable
+    entry points: talk actions and encounter resolution jumps. Every node must be reachable
     from those entries — otherwise it's authored story the player can never see (both live builds
     shipped their whole opening unreachable; run 2 shipped ALL 12 nodes dead)."""
     node_ids, nodes = views.nodes_of(artifact)
@@ -116,11 +116,6 @@ def nodes_world_entered(artifact: Dict):
     for e in (artifact.get("combat") or {}).get("encounters", []) or []:
         for key in ("on_victory", "on_defeat"):
             ne = e.get(key) if isinstance(e, dict) else None
-            if isinstance(ne, dict) and ne.get("type") == "jump" and isinstance(ne.get("target"), str):
-                entries.add(ne["target"])
-    for m in ((artifact.get("matches") or {}).get("matches") or {}).values():
-        for key in ("on_win", "on_lose"):
-            ne = (m.get(key) or {}).get("end") if isinstance(m, dict) else None
             if isinstance(ne, dict) and ne.get("type") == "jump" and isinstance(ne.get("target"), str):
                 entries.add(ne["target"])
     valid = sorted(e for e in entries if e in nodes)
@@ -462,7 +457,8 @@ SKEL_PLACES = (
     '      "interactables": [\n'
     '        {"id": "h_<thing>", "label": "<short noun>",\n'
     '         "position": {"rect": {"x": 340, "y": 210, "w": 180, "h": 160}},\n'
-    '         "action": {"type": "examine", "text": "It is a heavy locked door."}}\n'
+    '         "action": {"type": "examine",\n'
+    '                    "text": "<one physical fact — material, condition, what it is for>"}}\n'
     '      ]\n'
     '    }\n'
     '  }\n'
@@ -478,7 +474,8 @@ SKEL_PLACES = (
     '//   declared in the `items` catalogue (compose `inventory`); a talk node must exist in\n'
     '//   `nodes` (compose `scenes`); move/win targets resolve.\n'
     '// goal is OPTIONAL: if you want a win, declare a goal flag set by a reachable use-outcome\n'
-    '//   and give some hotspot a win action; omit it for an open-ended world.'
+    '//   and give some hotspot a win action; omit it for an open-ended world.\n'
+    '// examine/use text states a PHYSICAL FACT (what it is, its condition) — never a mood word.'
 )
 
 SKEL_RPG = (

@@ -33,8 +33,10 @@ def story_block(artifact: Dict) -> list:
 
 def render_beat(b: Dict) -> str:
     """One story beat as a prompt line (the scene author's brief for a slot)."""
-    stake = f' (stake: {b["tension"]})' if b.get("tension") else ""
-    return f'{b.get("id")} — {b.get("summary", "")}{stake}'
+    tags = [t for t in (b.get("type"),
+                        f'stake: {b["tension"]}' if b.get("tension") else None) if t]
+    suffix = f' ({", ".join(tags)})' if tags else ""
+    return f'{b.get("id")} — {b.get("summary", "")}{suffix}'
 
 
 def v_story(c: Dict) -> Optional[str]:
@@ -64,20 +66,26 @@ def v_story(c: Dict) -> Optional[str]:
 SKEL_STORY = (
     '{\n'
     '  "central_question": "the dramatic question the endings answer differently",\n'
-    '  "endings": [ {"id": "ending_<slug>", "description": "how this ending resolves the question"} ],\n'
+    '  "endings": [ {"id": "ending_<slug>", "description": "the concrete final scene — who does/says\n'
+    '    what, in-world words; never an abstract label like \\"integration\\" or \\"closure\\" (the scene\n'
+    '    author reads this verbatim and abstract words here become dialogue)"} ],\n'
     '  "beats": [\n'
     '    {"id": "beat_01", "summary": "what happens in this beat",\n'
+    '     "type": "its register: bonding | comedy | friction | plot | character",\n'
     '     "purpose": "its dramatic job: setup | inciting | escalation | midpoint_turn | crisis | climax | resolution",\n'
-    '     "tension": "the question or stake this beat presses — what the player worries about now"}\n'
+    '     "tension": "the stakes dial — what the player worries about NOW; \\"none\\" is a real answer and most early beats carry it"}\n'
     '  ],\n'
     '  "ending_paths": [\n'
-    '    {"ending": "<a story.endings id>", "earned_by": "the choices/turns along the way that make this ending land"}\n'
+    '    {"ending": "<a story.endings id>", "earned_by": "the SPECIFIC beat + choice that earns it\n'
+    '      (e.g. \\"the beat_04 choice to stay\\") — never a vague cause"}\n'
     '  ]\n'
     '}\n'
     '// The story is the ARC the scenes will realize — author it FROM the concept + cast.\n'
     '//   NOT scenes yet: the shape of the whole story.\n'
-    '// beats: 5+ in dramatic ORDER — a real rise (setup -> escalation -> a midpoint that\n'
-    '//   reframes -> crisis/climax -> resolution); each beat does work no other beat does.\n'
+    '// beats: 5+ in dramatic ORDER — a rise toward the crisis, but BACK-LOADED: the early\n'
+    '//   beats are allowed to just be these people together (bonding/comedy, tension "none");\n'
+    '//   each beat does work no other beat does. summary = ONE committed event, never a menu\n'
+    '//   of alternatives ("X, or maybe Y") — the scene author reads it as a literal brief.\n'
     '// endings: distinct outcomes the central_question resolves to.\n'
     '// ending_paths: ONE per endings id — plan how each different ending is EARNED, so branches\n'
     '//   diverge in meaning, not just in which scene plays.'
@@ -106,7 +114,7 @@ class Story(Module):
         Check("min_beats", lambda chk, m, ctx: m.wrap(chk, checks.count(
             ctx.artifact, "story.beats", min=ctx.param("min_beats", 5)))),
         Check("beat_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "story.beats", fields=["id", "summary", "purpose", "tension"]))),
+            ctx.artifact, "story.beats", fields=["id", "summary", "type", "purpose", "tension"]))),
         Check("distinct_beats", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
             ctx.artifact, "story.beats", key="id")), job="fix"),
         Check("ending_path_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(

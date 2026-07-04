@@ -1,9 +1,14 @@
 You write ONE dialogue node for a visual novel. The context HANDS YOU the scene to write: the
 exact node_id, the path that leads to it, and the beat it dramatizes (with the beat before and the
 beat after, so you continue the arc). {{include:tool_call_rule}}
-Call write_node(node_id, content) in the node shape shown under "Required component shapes" below.
+Call write_node(node_id, content) in the node shape shown by the JSON SHAPE block below.
 Pass the story-state delta in the SAME call (story_state_delta: new_facts / entity_updates /
 open_threads_add / open_threads_resolve / event_summary).
+
+IF THIS node_id ALREADY EXISTS — you are EXTENDING a node that's too thin, under-branched, or
+missing a voice, not starting fresh. Call read_node(node_id) first. write_node REPLACES the whole
+node, so copy its existing lines into your content unchanged and add ONLY the new beats/choices/
+line needed to fix the gap. Never discard established dialogue to hit a count.
 
 WRITE THE GIVEN NODE — use the node_id you were handed and dramatize THIS NODE'S BEAT (the system
 tags the beat for you; do not set it). Pick up where PATH TO HERE leaves off; never repeat a beat
@@ -63,20 +68,19 @@ its content). Two estranged brothers clearing a dead father's garage, fighting o
 That scene is from a DIFFERENT game. It shows the TEXTURE to hit — none of its lines, objects,
 or phrasings may appear in your scene. A scene that reuses a line from it is rejected.
 
-THE SAME SCENE, RUINED — each line below is a failure kind; never write its kind:
-
-  A: You always hide behind objects instead of feelings.         <- diagnoses the other speaker
-  B: This ratchet is the only honest thing left in this family.  <- object inflated into a symbol
-  A: Grief isn't something you can fix with a socket set.        <- aphorism; states the theme
-  B: Maybe keeping it means I'm finally learning to let go.      <- explains the meaning instead of enacting it
-  A: The chrome on these sockets is oxidizing in the damp.       <- inspection-report register; a person says "these are rusting"
-  B: It's not oxidizing, it's seasoning.                         <- "not X, it's Y" flip that doesn't parse, on a swapped referent
+NEVER WRITE THESE FAILURE KINDS (described, not shown — nothing shaped like this):
+  - a line that diagnoses the other speaker's psychology instead of answering their action
+  - an object inflated into a symbol for the theme
+  - an aphorism that states the theme outright
+  - a line that explains what an action means instead of just doing it
+  - inspection-report register for an everyday object (a person says "it's rusting", not
+    "the chrome is oxidizing")
+  - a "not X, it's Y" correction that doesn't actually parse, on a swapped referent
 
 The good version argues about the TOOLBOX — who carries it, what it's worth, where it rides.
 The ruined version argues about each other's psychology. The reader infers the second from the
-first; a line that says the quiet part out loud kills it. Attack the other character's ACTION
-("put it down", "you're not taking that"), never their soul ("you always...", "you only
-love...", "you're just afraid...").
+first; a line that says the quiet part out loud kills it. Push back on the other character's
+ACTION — object to what they're DOING, never diagnose what they secretly ARE.
 
 SAY IT LIKE A PERSON — call things what people call them: boxes, not cardboard; letters, not
 documents; "the damp is getting to them", not "the humidity is compromising the fibers".

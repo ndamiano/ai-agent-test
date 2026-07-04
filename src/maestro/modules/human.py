@@ -102,6 +102,7 @@ def _d_human_todo(chk, m, context):
 
 def _human_prompt(m, context, error: Error) -> CorrectionPrompt:
     import json
+    from maestro import context_render as cr
     from maestro.modules import cast as cast_mod, inventory, scenes, world
     system = load_prompt("human_edit.txt")
     art = context.artifact
@@ -120,7 +121,14 @@ def _human_prompt(m, context, error: Error) -> CorrectionPrompt:
     lines += scenes.nodes_index_block(art) if error.component != "nodes" else []
     lines += world.places_index_block(art) if error.component != "places" else []
     lines += inventory.items_block(art) if error.component != "items" else []
-    lines += ["", "Make the change with one tool call. Tool call only, not prose."]
+    # Without the tail the read-then-edit flow is blind: the model reads a node on step 1 and
+    # never sees the payload on step 2, looping reads until escalation forces a blind write.
+    lines += cr.tail_block({"last_read": context.last_read, "last_result": context.last_result,
+                            "stalled": context.stalled})
+    lines += ["", f"Now make exactly this change: {error.message}",
+              "One tool call, the smallest edit that does it (edit_node/edit_place patching one "
+              "field beats write_node/write_place rewriting the whole thing). Tool call only, "
+              "not prose."]
     return CorrectionPrompt(system=system, user="\n".join(lines), allowed_tools=_HUMAN_TOOLS)
 
 

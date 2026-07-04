@@ -292,16 +292,6 @@ def test_effects_must_be_objects(tmp_path):
     assert res["ok"] is False and "effect OBJECT" in res["error"]
 
 
-def test_edit_match_card_model_validates(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    state.write_component("matches", {"match_ids": ["m1"], "matches": {
-        "m1": {"card_model": "high_card", "opponent": "x"}}})
-    res = tools["edit_match"]("m1", card_model="poker")
-    assert res["ok"] is False and "high_card" in res["error"]
-    assert tools["edit_match"]("m1", card_model="blackjack")["ok"] is True
-
-
 def test_write_component_nodes_preserves_beats_and_synopses(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_spec(), state)
@@ -393,6 +383,35 @@ def test_parse_turn():
     lines = _parse_turn("juniper: Take the money.\nI won't repeat myself.", me,
                         others={"juniper", "Juniper"})
     assert lines == [{"speaker": "elara", "text": "I won't repeat myself."}]
+    # a bare self-name glued on without a colon is stripped
+    assert _parse_turn("Elara You had me worried there.", me) == \
+        [{"speaker": "elara", "text": "You had me worried there."}]
+    # third-person narration about the partner, emitted as speech, becomes narration
+    lines = _parse_turn("Juniper's breath hitches in her throat. She slumps back.", me,
+                        others={"juniper", "Juniper"})
+    assert lines == [{"speaker": None,
+                      "text": "Juniper's breath hitches in her throat. She slumps back."}]
+    # ...but a vocative to the partner stays speech (it carries a you/I)
+    lines = _parse_turn("Juniper you can't just pause reality.", me,
+                        others={"juniper", "Juniper"})
+    assert lines == [{"speaker": "elara", "text": "Juniper you can't just pause reality."}]
+    # a garbled snake_case speaker tag (misspelled cast id) is dropped, never re-attributed
+    assert _parse_turn("junyper_vance: Take the money.", me, others={"juniper_vance"}) == []
+    # mechanics parentheticals are stripped from play text
+    assert _parse_turn("I'm allowing you to board. (flag: loophole_found)", me) == \
+        [{"speaker": "elara", "text": "I'm allowing you to board."}]
+    # RP-prose habits: pronoun narration becomes NARR; attributed quotes keep only the speech
+    lines = _parse_turn("He lowers the controller. His hands are shaking.", me)
+    assert lines == [{"speaker": None,
+                      "text": "He lowers the controller. His hands are shaking."}]
+    lines = _parse_turn("'We got it,' he says, voice cracking.", me)
+    assert lines == [{"speaker": "elara", "text": "We got it"}]
+    # a licensed ramble splits at sentence ends into breath-sized lines, text preserved
+    long = ("I checked the manifest twice and the numbers do not add up at all. " * 4).strip()
+    lines = _parse_turn(long, me)
+    assert len(lines) > 1
+    assert " ".join(ln["text"] for ln in lines) == long
+    assert all(len(ln["text"].split()) <= 55 for ln in lines)
 
 
 def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
@@ -407,20 +426,39 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
                                     "endings": [{"id": "ending_x", "description": "d"}],
                                     "beats": [{"id": "beat_1", "summary": "s1"},
                                               {"id": "beat_2", "summary": "s2"}]})
+    # a pre-existing scene seeds the cross-scene dedupe: its LONG lines' openers are spent,
+    # its short lines stay available for deadpan callbacks
+    state.write_component("nodes", {"node_ids": ["intro"], "nodes": {"intro": {
+        "beat": "beat_0",
+        "lines": [{"speaker": "a",
+                   "text": "The spawn rate on the final platform is inconsistent today."},
+                  {"speaker": "b", "text": "We have time."}],
+        "end": {"type": "jump", "target": "scene_01"}}}})
     spec = Spec({"title": "T", "frozen": True, "modules": ["scenes"],
                  "params": {"each_node_min_lines": 3}})
     scenes = [m for m in compose(("scenes",)) if m.id == "scenes"][0]
     ctx = build_context(spec.data, state)
     err = next(e for e in scenes.get_errors(ctx) if e.code == "beats_realized")
 
-    # includes a fully-duplicate turn (dedupe: contributes nothing, loop keeps going)
-    turn_replies = iter(["Pack the crate.", "NARR: Bo blocks the door.\nNot that one.",
-                         "Pack the crate.", "Then hand me the list.", "Take it. [END]"])
+    # echo policy: a short line may recur once (deadpan echo), a third occurrence is blocked;
+    # a long line repeating its 4-word opener is circling — in-scene AND across scenes
+    turn_replies = iter([
+        "Pack the crate.",
+        "NARR: Bo blocks the door.\nNot that one.",
+        "Pack the crate.",
+        "Pack the crate.",
+        "We have time.",
+        "The spawn rate on the second platform is worse.",
+        "You're treating this crate like it's the last one in the world.",
+        "You're treating this crate like a problem we can fix tonight.",
+        "The list is in your pocket.",
+        "Take it. [END]"])
 
     class StubServices:
         def __init__(self, tools):
             self.tools, self.state = tools, state
             self.reports = []
+            self.turn_msgs = []
 
         def infer(self, msgs, schemas, **kw):
             if schemas:  # the closer call
@@ -429,6 +467,7 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
                     "name": "finish_scene", "arguments": j.dumps({
                         "end": {"type": "jump", "target": "scene_beat_2"},
                         "event_summary": "crate fight"})}}]}}]}
+            self.turn_msgs.append(msgs)
             return {"choices": [{"message": {"content": next(turn_replies)}}]}
 
         def dispatch(self, name, args):
@@ -442,13 +481,139 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
     scene_turn_loop(scenes, ctx, err, 0, svc, svc.dispatch)
 
     nodes = state.read_component("nodes")
-    assert nodes["node_ids"] == ["scene_01"]
+    assert nodes["node_ids"] == ["intro", "scene_01"]
     node = nodes["nodes"]["scene_01"]
     assert node["end"] == {"type": "jump", "target": "scene_beat_2"}
     assert {"speaker": None, "text": "Bo blocks the door."} in node["lines"]
     speakers = [ln["speaker"] for ln in node["lines"]]
     assert "a" in speakers and "b" in speakers
+    texts = [ln["text"] for ln in node["lines"]]
+    assert texts.count("Pack the crate.") == 2
+    assert sum(1 for t in texts if t.startswith("You're treating this crate")) == 1
+    # cross-scene: intro's long opener is spent; its short line is a legal callback
+    assert not any(t.startswith("The spawn rate on") for t in texts)
+    assert "We have time." in texts
     assert state.read_component("nodes")["synopses"]["scene_01"] == "crate fight"
+    # the last rounds before the turn cap carry the close-the-scene nudge; early ones don't
+    assert "[END]" not in svc.turn_msgs[0][-1]["content"]
+    assert "Bring the scene to a close" in svc.turn_msgs[-1][-1]["content"]
+
+
+def test_parse_args_normalizes_model_shapes():
+    from maestro.services import parse_args
+    assert parse_args('{"a": 1}') == {"a": 1}
+    assert parse_args({"a": 1}) == {"a": 1}                       # already-parsed dict
+    assert parse_args({'{"a": 1}': ""}) == {"a": 1}               # JSON blob as the only KEY
+    assert parse_args('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse_args("[1, 2]") == {}                             # non-dict JSON
+    assert parse_args("not json") == {}
+
+
+def test_edit_node_coerces_wrapped_speaker(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(_spec(), state)
+    state.write_component("nodes", {"node_ids": ["n1"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x"}], "end": {"type": "end"}}}})
+    assert tools["edit_node"]("n1", line_index=0, speaker={"id": "b"})["ok"] is True
+    assert state.read_component("nodes")["nodes"]["n1"]["lines"][0]["speaker"] == "b"
+    assert tools["edit_node"]("n1", line_index=0, speaker=["c"])["ok"] is True
+    assert state.read_component("nodes")["nodes"]["n1"]["lines"][0]["speaker"] == "c"
+    assert tools["edit_node"]("n1", line_index=0, speaker={"x": 1})["ok"] is False
+
+
+def test_reachable_from_start_vacuous_on_empty_graph():
+    from maestro.modules.scenes import reachable_from_start
+    ok, _ = reachable_from_start({})
+    assert ok is True
+    ok, _ = reachable_from_start({"nodes": {"node_ids": [], "nodes": {}}})
+    assert ok is True
+
+
+def test_force_ending_end_is_mechanical(tmp_path):
+    from maestro.modules.context import build_context
+    from maestro.modules import compose
+    from maestro.modules.scenes import _force_ending_end
+
+    state = RunState(tmp_path)
+    state.write_component("story", {"central_question": "q",
+                                    "endings": [{"id": "ending_x", "description": "d"}],
+                                    "beats": [{"id": "b1", "summary": "s"}]})
+    state.write_component("nodes", {"node_ids": ["ending_x"], "nodes": {
+        "ending_x": {"lines": [{"speaker": None, "text": "t"}],
+                     "end": {"type": "jump", "target": "ending_x_final"}}}})
+    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes"], "params": {}})
+    scenes_mod = [m for m in compose(("scenes",)) if m.id == "scenes"][0]
+    ctx = build_context(spec.data, state)
+    err = next(e for e in scenes_mod.get_errors(ctx) if e.code == "ending_nodes_end")
+    tools = build_tools(spec, state)
+
+    class Svc:
+        allowed = frozenset({"read_node"})
+
+        def __init__(self):
+            self.reports = []
+
+        def dispatch(self, name, args):
+            return tools[name](**(args or {}))
+
+        def _report(self, s):
+            self.reports.append(s)
+
+        def run(self, *a, **k):
+            raise AssertionError("forcing a planned ending's end must never call the LLM")
+
+    svc = Svc()
+    _force_ending_end(scenes_mod, ctx, err, 0, svc, svc.dispatch)
+    assert state.read_component("nodes")["nodes"]["ending_x"]["end"] == {"type": "end"}
+
+
+def test_state_bare_declaration_cut_is_mechanical(tmp_path):
+    from maestro.modules.context import build_context
+    from maestro.modules.state import MODULE as st, _cut_bare_declaration
+
+    state = RunState(tmp_path)
+    state.write_component("items", {"items": [
+        {"id": "item_dead", "name": "Dead", "examine": "x"},
+        {"id": "item_live", "name": "Live", "examine": "y"}]})
+    state.write_component("nodes", {"node_ids": ["n1", "n2"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x", "effects": [{"add_item": "item_live"}]}],
+               "end": {"type": "jump", "target": "n2"}},
+        "n2": {"lines": [{"speaker": "a", "text": "y"}], "end": {"type": "menu", "choices": [
+            {"text": "go", "target": "n1", "requires": {"item": "item_live"}},
+            {"text": "stay", "target": "n1"}]}}}})
+    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes", "inventory"], "params": {}})
+    ctx = build_context(spec.data, state)
+    err = next(e for e in st.get_errors(ctx)
+               if e.code == "state_wiring" and e.ref == "item_dead")
+
+    tools = build_tools(spec, state)
+
+    class Svc:
+        allowed = frozenset({"edit_node"})   # stale scope from a previous step
+
+        def __init__(self):
+            self.reports = []
+
+        def dispatch(self, name, args):
+            return tools[name](**(args or {}))
+
+        def _report(self, s):
+            self.reports.append(s)
+
+        def run(self, *a, **k):
+            raise AssertionError("a bare-declaration cut must never call the LLM")
+
+    svc = Svc()
+    _cut_bare_declaration(st, ctx, err, 0, svc, svc.dispatch)
+    assert [i["id"] for i in state.read_component("items")["items"]] == ["item_live"]
+    assert svc.allowed is None
+
+
+def test_render_beat_carries_type_and_stake():
+    from maestro.modules.story import render_beat
+    assert render_beat({"id": "beat_01", "summary": "pizza order", "type": "comedy",
+                        "tension": "none"}) == "beat_01 — pizza order (comedy, stake: none)"
+    assert render_beat({"id": "beat_02", "summary": "the fight"}) == "beat_02 — the fight"
 
 
 def test_parse_screenplay():

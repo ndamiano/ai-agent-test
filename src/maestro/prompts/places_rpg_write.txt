@@ -18,14 +18,17 @@ A ZONE needs:
   - "legend": maps each tile char to {"role": "open"|"blocked", "theme": "<what it looks like>"}.
     role is the ONLY thing that affects play: open = the avatar can walk on it, blocked = a wall it
     cannot enter. theme is free flavour that drives the tile's look (e.g. "frozen stream", "ash
-    pine", "temple stone"). Use theme to make each zone LOOK like its place.
+    pine", "temple stone"). Derive themes from what this zone IS in the story (a kitchen, a
+    frozen lake, a server room) — never generic terrain grafted onto the wrong setting.
     Each theme becomes ONE generated texture, so themes are a PALETTE — make them CONTRAST:
     open ground and blocked obstacles must differ in MATERIAL, not just adjective ("mossy earth"
     vs "bone-pale ossuary wall", NOT "stone floor" vs "stone wall" — five stone variants render
     as indistinguishable gray). REUSE the same theme string wherever the terrain is the same
     (across zones too); spend NEW themes on things that should look different.
-  - These default chars need NO legend entry (use them freely): "." ground, "," path, "#" wall,
-    "T" tree, "~" water, "%" rock. Add a legend entry only for a NEW char or to re-theme a default.
+  - These default chars need NO legend entry: "." ground, "," path, "#" wall, "T" tree,
+    "~" water, "%" rock — but their default themes are OUTDOOR terrain. Indoors (town/interior),
+    re-theme the ones you use with a legend entry (a corridor wall, a shelf, a console) instead
+    of leaving trees and rocks in a building.
 - "interactables": each at a {"cell":{"x","y"}} TILE — x = column (0..width-1), y = row
   (0..height-1), counting from the TOP-LEFT. It must sit on an OPEN tile.
 
@@ -62,10 +65,15 @@ and need no background image.
 {{include:conditions_ref}}
 {{include:effects_ref}}
 
-MAKE EACH ZONE REAL — a carved tile layout plus 2+ interactables, each doing something. At least one
-must `move` (or `win`) so no zone is a dead end, and a combat game wires at least one `start_combat`
-tile. The win flag must be set by a reachable use-outcome or a fight, and some interactable must have
-a `win` action.
+EXAMINE AND USE TEXT STATE A FACT, NOT A FEELING — what the object is, what shape it's in, what
+it's for. Never a mood word ("eerie", "the air feels heavy") — a person noticing a thing names
+the thing, not what it makes them feel.
+
+MAKE EACH ZONE REAL, NOT A PROP LIST — a carved tile layout plus 2+ interactables, each EARNING
+its spot: it gates something (an item, a flag, a fight, a route) or its text is specific enough
+to be worth pressing E. At least one must `move` (or `win`) so no zone is a dead end, and a
+combat game wires at least one `start_combat` tile. If you declare a goal, its win flag must be
+set by a reachable use-outcome or a fight, and some interactable must have a `win` action.
 
 WIRE THE DECLARED ITEMS AS YOU BUILD — every item in the catalogue must end up TAKEN somewhere (a
 `take` hotspot) and USED somewhere (a `requires` on a move/use/win). The context lists which items

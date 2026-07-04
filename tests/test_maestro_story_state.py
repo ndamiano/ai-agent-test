@@ -44,6 +44,15 @@ def test_apply_delta_entity_key_merge_not_clobber():
     assert ss["entity_states"]["betta"] == {"trust": "wary", "location": "docks"}
 
 
+def test_apply_delta_tolerates_list_entity_updates():
+    # observed: a model sent entity_updates as [{entity, ...}] instead of a map — the whole
+    # scene write crashed on .items()
+    ss = init_story_state()
+    apply_delta(ss, {"entity_updates": [{"entity": "marcus", "state": "packing"}, "junk"]})
+    assert ss["entity_states"]["marcus"] == {"state": "packing"}
+    apply_delta(ss, {"entity_updates": "garbage"})   # unusable shape: ignored, no crash
+
+
 def test_facts_and_threads_dedupe_and_resolve():
     ss = init_story_state()
     apply_delta(ss, {"new_facts": ["x"], "open_threads_add": ["t1", "t2"]})

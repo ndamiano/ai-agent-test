@@ -9,21 +9,35 @@ CENTRAL QUESTION — the guiding beacon: the tension that drives the characters,
 the story answers with its resolution. The endings answer it differently.
 
 ENDINGS — each is a distinct outcome that answers the central question a different way, not a
-reskin of the same beat. Derive every detail from the cast and concept.
+reskin of the same beat. Derive every detail from the cast and concept. Write `description` as
+the concrete scene — what happens, who says or does what, in plain in-world language — never a
+thematic label ("integration", "closure", "resolution"): the scene author reads this text
+VERBATIM as the ending's brief, and abstract vocabulary here becomes spoken dialogue.
 
-A REAL ARC, NOT A LIST OF EVENTS. The beats must RISE and TURN, not just happen in a row:
-  - setup — establish the normal and what's at stake before anything breaks;
-  - an inciting beat that destabilizes it and presses the central question;
-  - escalation — each beat raises the cost or narrows the options, not a flat sequence;
+A REAL ARC THAT EARNS ITS WEIGHT. The beats rise toward a crisis, but the rise is BACK-LOADED,
+and the OPENING REGISTER comes from the premise: friends doing a thing together open on
+bonding/comedy at tension "none"; strangers, adversaries, or a character alone open on the
+situation's own low-key tension — never small talk grafted between an interrogator and the
+person they're detaining, never a "bonding" beat with one character in it. Not every beat
+serves the plot — bonding and comedy beats are real beats where the relationship warrants
+them, and the heavy beat late in the story lands BECAUSE its topic first arrived light (a joke
+in beat 2 sets up the gut-punch in beat 6; plant it and note the payoff). Then the story turns:
+  - an inciting/escalation stretch where the cost becomes real;
   - a midpoint that REFRAMES — new information makes the question harder, the obvious answer worse;
   - a crisis/climax where the protagonist must actually choose on the central question;
-  - resolution that lands the consequence.
-Each beat does work no other beat does. `purpose` names its dramatic job; `tension` names what the
-player is made to worry about during it. 5 beats minimum — more for a longer game.
+  - resolution that lands the consequence — carried by the ENDINGS themselves. The final beat
+    is the crisis/fork; do not plan a beat after it (a post-fork beat can't sit on every
+    branch, so it strands unreachable).
+`type` names the beat's register (bonding | comedy | friction | plot | character); `purpose` names
+its dramatic job; `tension` is the stakes dial — write "none" when nothing needs to go wrong in
+the beat. Each beat's `summary` commits to ONE concrete event — never alternatives ("a phone call
+or a sudden realization"); the scene author reads it verbatim as their brief and can't choose for
+you. Each beat does work no other beat does. 5 beats minimum — more for a longer game.
 
-PLAN EVERY ENDING. ending_paths has ONE entry per endings id: name the turns and choices that
-EARN that ending, so the branches mean different things (a different answer to the central
-question), not just different scenery. Every ending must have a path here.
+PLAN EVERY ENDING. ending_paths has ONE entry per endings id: name the SPECIFIC beat and choice
+that earns it (e.g. "the beat_04 choice to stay; the climax reads it"), so the branches mean
+different things (a different answer to the central question), not just different scenery. A
+vague cause ("through courage and honesty") is not a path. Every ending must have a path here.
 
 SETUP / PAYOFF. Note in the beats what gets planted early and paid off late — the story is where
 the script earns its callbacks, since each scene later sees only the arc, not the other scenes.

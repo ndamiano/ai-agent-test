@@ -22,7 +22,7 @@ from maestro.modules.module import (Check, CorrectionPrompt, Error, Module, load
 
 # The tools state uses to wire (or cut) a value, by the host component it lives in.
 _FIX_TOOLS = {
-    "nodes": ("read_node", "edit_node", "write_node", "read_component"),
+    "nodes": ("read_node", "edit_node", "read_component"),
     "places": ("read_place", "edit_place", "add_interactable", "set_places_meta", "read_component"),
     "items": ("write_component", "read_component"),
 }
@@ -120,8 +120,7 @@ def state_wiring(artifact: Dict) -> list:
             # would race each other — one fix wires it while the other cuts it. One verdict: cut it.
             out.append({"component": _pick_host(e["decl"]), "ref": sid, "message": (
                 f"{kind} '{sid}' is declared but never produced or consumed — it does nothing. "
-                f"Cut the declaration, or wire it fully (an effect that sets it AND a gate that "
-                f"reads it).")})
+                f"Cut the declaration — rewrite the host catalog/list without it.")})
             continue
         if not e["prod"]:
             out.append({"component": _pick_host(e["cons"], e["decl"]), "ref": sid, "message": (
@@ -167,6 +166,43 @@ def _catalog_block(context, error: Error) -> list:
             "never a bare id string, never an empty list."]
 
 
+def _cut_bare_declaration(module, context, error, slot, services, dispatch) -> None:
+    """A bare declaration's verdict is already decided (cut it) and the edit is a deterministic
+    list removal — no LLM. Observed: a model told to cut one dead item rewrote the catalog 20+
+    times WITH the item still in it, riding the step cap to a failed build. Half-wired values
+    still route to the LLM fix (adding a producer/consumer takes judgment)."""
+    art = context.artifact
+    e = _walk_state(art).get(error.ref or "")
+    if not e or e["prod"] or e["cons"]:
+        services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
+        return
+    sid = error.ref
+    services.allowed = None   # code-driven step: no prior prompt scoped the tools
+    if error.component == "items":
+        items = [i for i in (art.get("items") or {}).get("items") or []
+                 if not (isinstance(i, dict) and i.get("id") == sid)]
+        # force: this is a code-decided deterministic edit, not the model — a done-locked
+        # catalog must still be cuttable or the wiring error can never clear.
+        result = dispatch("write_component", {"component_id": "items",
+                                              "content": {"items": items}, "force": True})
+    else:
+        pc = art.get("places") or {}
+        kwargs = {}
+        if sid in (pc.get("flags") or []):
+            kwargs["flags"] = [f for f in pc["flags"] if f != sid]
+        variables = pc.get("variables") or []
+        if any((v.get("id") if isinstance(v, dict) else v) == sid for v in variables):
+            kwargs["variables"] = [v for v in variables
+                                   if (v.get("id") if isinstance(v, dict) else v) != sid]
+        if not kwargs:
+            services.run(module.get_correction_prompt(context, error, slot=slot),
+                         dispatch=dispatch)
+            return
+        result = dispatch("set_places_meta", kwargs)
+    services._report(f"cut bare declaration '{sid}' from {error.component}: "
+                     + ("ok" if result.get("ok") else f"error — {result.get('error')}"))
+
+
 def _wiring_prompt(m, context, error: Error) -> CorrectionPrompt:
     from maestro.modules import inventory, scenes, world
     rd = render_dict(context, active=error.component, target=error,
@@ -189,7 +225,8 @@ class State(Module):
     selectable = False   # always-on: the wiring invariant holds for every game
     priority = 70        # after the content modules have authored the values it inspects
 
-    checks = [Check("state_wiring", _d_state_wiring, job="fix", build_prompt=_wiring_prompt)]
+    checks = [Check("state_wiring", _d_state_wiring, job="fix", build_prompt=_wiring_prompt,
+                    run=_cut_bare_declaration)]
 
     def affected_components(self) -> Tuple[str, ...]:
         return ("nodes", "places", "items")

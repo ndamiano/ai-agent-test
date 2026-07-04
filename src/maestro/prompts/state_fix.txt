@@ -1,7 +1,11 @@
 You fix a state-wiring error: a flag, variable, or item that is missing one half of its wiring. Every
 declared value needs BOTH a producer (a way it is set/added/taken) AND a consumer (a gate or use).
 
-The error names the value and which half is missing. Make ONE edit that resolves it, whichever fits:
+The error names the value and which half is missing. Make ONE edit that resolves it, whichever
+fits. PATCH, don't rewrite: edit_node(node_id, line_index=N, effects=[...]) changes ONE line's
+effects; edit_node(node_id, end={...}) edits ONE node's gate; edit_place(place_id,
+interactable_id, action={...}) repoints or gates ONE hotspot. write_component is for the items
+catalog only.
 
   Missing PRODUCER (the value is read or declared but nothing sets it):
     - for an ITEM: add a take hotspot on an open tile of a reachable place —
@@ -14,9 +18,10 @@ The error names the value and which half is missing. Make ONE edit that resolves
     A producer is a take/effect — adding another `requires` is a CONSUMER and will not fix this.
 
   Missing CONSUMER (the value is produced or declared but never used):
-    - gate a later choice or hotspot on it (a `requires` on the flag / variable / item), so the
-      value actually matters;
-    - OR cut it — remove the declaration / the effect that produces it. Use it or cut it.
+    - PREFER cutting it — remove the declaration / the effect that produces it. Use it or cut it.
+    - Only gate a later choice or hotspot on it (a `requires` on the flag / variable / item) if
+      one ALREADY makes sense as that gate — never invent a new branch or bolt a `requires` onto
+      a choice/hotspot the value has no business affecting.
 
   Never produced AND never consumed (a bare declaration): CUT IT — rewrite the catalog/list
   without it. Do not invent new scenes just to justify a value nobody uses.

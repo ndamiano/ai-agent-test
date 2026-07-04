@@ -319,7 +319,7 @@ SKEL_META = (
 
 SKEL_ABILITY = (
     '{\n'
-    '  "name": "Slash",\n'
+    '  "name": "<short functional name — what it does, not a title>",\n'
     '  "targeting": {"shape": "single", "faction": "enemy", "range": "melee"},\n'
     '  "cost": [{"stat": "<a declared resource stat id>", "amount": 3}],\n'
     '  "effects": [{"stat": "<a declared stat id>", "op": "damage", "formula": {"base": 4}}]\n'

@@ -422,6 +422,33 @@ def build_tile_job(theme: str, role: str = "open") -> dict:
     }
 
 
+def tile_refused(path) -> bool:
+    """True when an ideogram4 tile came back as a refusal. The filtered weights don't error —
+    they RENDER 'Image blocked by safety filter' as bold white text across the image center
+    (sometimes over a perfectly good texture), or emit a near-transparent frame; the trigger
+    is seed-dependent, the same caption passes on a reroll. Detector: near-white pixels
+    concentrated in the center band with a dark-quiet remainder (a bright texture like snow
+    is bright everywhere, so it doesn't trip). Third mode: a blank 'transparency' card (the
+    model paints a literal checkerboard) — dead flat at low frequency where any real texture
+    keeps tonal patches."""
+    from PIL import Image
+
+    img = Image.open(path)
+    if "A" in img.getbands():
+        alpha = img.convert("RGBA").resize((64, 64)).getchannel("A")
+        if sum(a < 32 for a in alpha.getdata()) / (64 * 64) > 0.5:
+            return True
+    low = sorted(img.convert("L").resize((64, 64)).getdata())
+    if low[int(len(low) * 0.95)] - low[int(len(low) * 0.05)] <= 3:
+        return True
+    g = img.convert("L").resize((256, 256))
+    px = g.load()
+    band = sum(1 for y in range(96, 160) for x in range(256) if px[x, y] > 215) / (64 * 256)
+    rest = sum(1 for y in list(range(0, 96)) + list(range(160, 256)) for x in range(256)
+               if px[x, y] > 215) / (192 * 256)
+    return band > 0.01 and rest < band / 4
+
+
 def make_seamless_tile(path, out_size: int = 256) -> None:
     """Make a generated texture tile-safe in place: center-square crop, wrap-shift by half so the
     hard edges land in the middle, crossfade that seam cross back to the original (which is

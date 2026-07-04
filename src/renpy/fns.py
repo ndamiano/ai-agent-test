@@ -245,19 +245,28 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         # is no better than the colour, and this keeps a no-ComfyUI build looking intentional. ----
         tile_specs = _collect_tile_specs(inputs.get("places", {}))
         if tile_specs:
-            tile_meta = [{"file": f"tile_{tile_slug(t)}.png",
-                          "dest": images_dir / f"tile_{tile_slug(t)}.png"} for t, _ in tile_specs]
+            from tools.comfyui_tools import tile_refused
             print(f"    [images]  generating {len(tile_specs)} map tile(s)")
-            jobs = [build_tile_job(t, role) for t, role in tile_specs]
-            for meta, result in zip(tile_meta, run_jobs(jobs)):
-                if result.get("success") and result.get("saved_paths"):
-                    shutil.copy2(result["saved_paths"][0], meta["dest"])
-                    make_seamless_tile(meta["dest"])
-                    generated.append(meta["file"])
-                    print(f"    [images]  ok: {meta['file']}")
-                else:
-                    print(f"    [images]  tile failed ({result.get('error', 'unknown')}), "
-                          f"colour fallback: {meta['file']}")
+            # One tile at a time with a reseed loop: the ideogram endpoint's refusals are
+            # seed-dependent (it bakes 'blocked by safety filter' INTO the image), so a
+            # rejected pull just rolls again with a fresh seed.
+            for theme, role in tile_specs:
+                fname = f"tile_{tile_slug(theme)}.png"
+                dest = images_dir / fname
+                for attempt in range(3):
+                    result = run_jobs([build_tile_job(theme, role)])[0]
+                    if not (result.get("success") and result.get("saved_paths")):
+                        print(f"    [images]  tile failed ({result.get('error', 'unknown')}), "
+                              f"colour fallback: {fname}")
+                        break
+                    if tile_refused(result["saved_paths"][0]):
+                        print(f"    [images]  tile refused (seed roll {attempt + 1}): {fname}")
+                        continue
+                    shutil.copy2(result["saved_paths"][0], dest)
+                    make_seamless_tile(dest)
+                    generated.append(fname)
+                    print(f"    [images]  ok: {fname}")
+                    break
 
     return {"status": "ok", "generated": generated, "failed": failed}
 

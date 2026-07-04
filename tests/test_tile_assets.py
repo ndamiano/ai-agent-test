@@ -130,6 +130,47 @@ def test_build_feature_job_is_isolated_object():
     assert any("BiRefNet" in k for k in kinds)
 
 
+def test_tile_refused_detects_flat_cards_and_transparency(tmp_path):
+    import random
+    from PIL import Image, ImageDraw
+    from tools.comfyui_tools import tile_refused
+    rng = random.Random(7)
+
+    def texture(base):
+        # grain + coarse tonal patches — pure per-pixel noise averages to a flat card at the
+        # detector's low-frequency scale, which no real generated texture does
+        im = Image.new("RGB", (512, 512))
+        im.putdata([tuple(min(255, c + ((x // 64 + y // 64) % 3) * 12 + rng.randrange(-20, 20))
+                          for c in base)
+                    for y in range(512) for x in range(512)])
+        return im
+
+    dirt = (110, 88, 55)
+
+    # refusal: bold white text across the center of an otherwise good texture (observed mode)
+    card = texture(dirt)
+    d = ImageDraw.Draw(card)
+    for dx in range(3):
+        for dy in range(3):
+            d.text((100 + dx, 250 + dy), "Image blocked by safety filter",
+                   fill=(255, 255, 255))
+    p1 = tmp_path / "card.png"
+    card.save(p1)
+    assert tile_refused(p1)
+    # near-transparent frame (second observed refusal mode)
+    ghost = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    p2 = tmp_path / "ghost.png"
+    ghost.save(p2)
+    assert tile_refused(p2)
+    # real textures pass, including low-contrast and bright-everywhere (snow) ones
+    p3 = tmp_path / "tex.png"
+    texture(dirt).save(p3)
+    assert not tile_refused(p3)
+    p4 = tmp_path / "snow.png"
+    texture((225, 225, 230)).save(p4)
+    assert not tile_refused(p4)
+
+
 def test_make_seamless_tile_wraps_and_downscales(tmp_path):
     from PIL import Image
     from tools.comfyui_tools import make_seamless_tile

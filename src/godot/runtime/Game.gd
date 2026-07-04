@@ -24,6 +24,8 @@ const PRESENTERS := {
 const WIN := "__win__"
 const END := "__end__"
 
+const SAVE_PATH := "user://save.json"
+
 var ir: Dictionary = {}
 var state: Dictionary = {}
 
@@ -31,11 +33,19 @@ var chars := {}
 var node_by_id := {}
 var place_by_id := {}
 var bg_files := {}
+var item_by_id := {}
 var stat_by_id := {}
 var ability_by_id := {}
 var status_by_id := {}
 var combatant_by_id := {}
 var encounter_by_id := {}
+
+# Save plumbing: _run_world tracks the live place; the overworld presenter mirrors the avatar's
+# cell here on every step (null in a PnC room), so save_game never reaches into a presenter.
+var avatar_cell = null
+var _place_id = null
+var _title_open := false
+var _inv_last := []
 
 signal advanced
 signal menu_picked
@@ -49,7 +59,7 @@ var _menu_pick := -1
 @onready var _speaker := Label.new()
 @onready var _text := Label.new()
 @onready var _menu := VBoxContainer.new()
-@onready var _ending := Label.new()
+@onready var _inv := HBoxContainer.new()
 @onready var _hud := Label.new()
 
 
@@ -71,10 +81,14 @@ func _setup_input() -> void:
 		"move_left": [KEY_A, KEY_LEFT],
 		"move_right": [KEY_D, KEY_RIGHT],
 		"interact": [KEY_E, KEY_SPACE],
+		"ui_pause": [KEY_ESCAPE],
 	}
 	for action in binds:
-		if not InputMap.has_action(action):
-			InputMap.add_action(action)
+		# InputMap survives reload_current_scene (Play Again) — skip an already-bound action
+		# instead of stacking duplicate events on it.
+		if InputMap.has_action(action):
+			continue
+		InputMap.add_action(action)
 		for kc in binds[action]:
 			var ev := InputEventKey.new()
 			ev.physical_keycode = kc
@@ -97,6 +111,8 @@ func _index() -> void:
 		place_by_id[p["id"]] = p
 	for b in ir.get("backgrounds", []):
 		bg_files[b["id"]] = b["image_file"]
+	for i in ir.get("items", []):
+		item_by_id[i["id"]] = i
 	for s in ir.get("stats", []):
 		stat_by_id[s["id"]] = s
 	for a in ir.get("abilities", []):
@@ -110,6 +126,14 @@ func _index() -> void:
 
 
 func _boot() -> void:
+	if await _title_screen() == "continue":
+		var data = _load_save()
+		# user:// is shared across games (one project name), so a stale save may point at a
+		# place this game doesn't have — fall through to a fresh start instead of crashing.
+		if data != null and place_by_id.has(data.get("place")):
+			state = data["state"]
+			await _run_world(data["place"], data.get("spawn"))
+			return
 	var start = ir.get("start", {})
 	if start.has("place"):
 		await _run_world(start["place"], start.get("spawn"))
@@ -117,11 +141,131 @@ func _boot() -> void:
 		await Vn.new(self).play_node(start["node"])
 
 
+# Boot chrome: title art (or the IR title on dark ground) + New Game / Continue / Quit.
+# Returns "new" or "continue"; Quit exits the app from here.
+func _title_screen() -> String:
+	_title_open = true
+	var layer := Control.new()
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(layer)
+	var card = _texture_file("title_card.png")
+	if card != null:
+		var tr := TextureRect.new()
+		tr.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tr.texture = card
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(tr)
+	else:
+		var ground := ColorRect.new()
+		ground.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		ground.color = Color(0.06, 0.06, 0.10)
+		ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(ground)
+		var tl := Label.new()
+		tl.text = String(ir.get("meta", {}).get("title", "Untitled"))
+		tl.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+		tl.position.y = 170
+		tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tl.add_theme_font_size_override("font_size", 46)
+		tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(tl)
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.custom_minimum_size = Vector2(280, 0)
+	box.position.y += 140
+	layer.add_child(box)
+	var picked := {"v": ""}
+	var nb := Button.new()
+	nb.text = "New Game"
+	nb.pressed.connect(func(): picked["v"] = "new")
+	box.add_child(nb)
+	if FileAccess.file_exists(SAVE_PATH):
+		var cb := Button.new()
+		cb.text = "Continue"
+		cb.pressed.connect(func(): picked["v"] = "continue")
+		box.add_child(cb)
+	var qb := Button.new()
+	qb.text = "Quit"
+	qb.pressed.connect(func(): get_tree().quit())
+	box.add_child(qb)
+	while picked["v"] == "":
+		await get_tree().process_frame
+	layer.queue_free()
+	_title_open = false
+	return picked["v"]
+
+
+# ── save / pause ─────────────────────────────────────────────────────────────────────────────
+func save_game() -> void:
+	var data := {"state": state, "place": _place_id}
+	if avatar_cell != null:
+		data["spawn"] = {"cell": avatar_cell}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(data))
+
+
+func _load_save():
+	if not FileAccess.file_exists(SAVE_PATH):
+		return null
+	var data = JSON.parse_string(FileAccess.get_file_as_string(SAVE_PATH))
+	if typeof(data) != TYPE_DICTIONARY or not data.has("state") or not data.has("place"):
+		return null
+	return data
+
+
+# Esc menu, awaited from a presenter's poll loop: Resume / Save / Quit. The dim layer STOPs the
+# mouse so the hotspots underneath stay dead while the menu is up.
+func pause_menu() -> void:
+	var layer := Control.new()
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(dim)
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.custom_minimum_size = Vector2(280, 0)
+	layer.add_child(box)
+	var done := {"v": false}
+	var rb := Button.new()
+	rb.text = "Resume"
+	rb.pressed.connect(func(): done["v"] = true)
+	box.add_child(rb)
+	var sb := Button.new()
+	sb.text = "Save"
+	sb.pressed.connect(func():
+		save_game()
+		sb.text = "Saved")
+	box.add_child(sb)
+	var qb := Button.new()
+	qb.text = "Quit"
+	qb.pressed.connect(func(): get_tree().quit())
+	box.add_child(qb)
+	while not done["v"]:
+		await get_tree().process_frame
+		if Input.is_action_just_pressed("ui_pause"):
+			done["v"] = true
+	layer.queue_free()
+
+
 # The place loop, presenter-agnostic. Picks the presenter for each place by kind (PRESENTERS),
 # runs it, and follows the result: a {move} hops to the next place (carrying the RPG arrival
 # spawn), WIN/END terminate. Moving between an RPG zone and a PnC room just swaps presenters here.
 func _run_world(place_id, spawn) -> void:
 	while true:
+		_place_id = place_id
+		avatar_cell = null
 		var kind = place_by_id[place_id].get("kind", "room")
 		var presenter = (PRESENTERS.get(kind, Pnc)).new(self)
 		var r = await presenter.run_place(place_id, spawn)
@@ -258,13 +402,52 @@ func _build_ui() -> void:
 	_menu.visible = false
 	add_child(_menu)
 
-	_ending.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_ending.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_ending.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_ending.add_theme_font_size_override("font_size", 48)
-	_ending.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ending.visible = false
-	add_child(_ending)
+	# Inventory strip: bottom-right, above the dialogue/combat strip clearance so it never
+	# collides with the HP panels (top corners) or the ability buttons (bottom strip).
+	_inv.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	_inv.offset_right = -12
+	_inv.offset_bottom = -210
+	_inv.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_inv.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_inv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_inv)
+
+
+# The strip rebuilds only when the item set changes — take/use/combat world effects all mutate
+# state["inv"] in place, so a per-frame value compare is the one hook that catches every path.
+func _process(_delta: float) -> void:
+	_inv.visible = not _title_open
+	if _title_open:
+		return
+	var inv: Array = state.get("inv", [])
+	if inv == _inv_last:
+		return
+	_inv_last = inv.duplicate()
+	for c in _inv.get_children():
+		c.queue_free()
+	for iid in inv:
+		# The asset pipeline writes <item_id>.png (see overworld._interactable_icon); probe the
+		# item_-prefixed name first for hand-dropped art.
+		var tex = _texture_file("item_%s.png" % iid)
+		if tex == null:
+			tex = _texture_file("%s.png" % iid)
+		if tex != null:
+			var tr := TextureRect.new()
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.custom_minimum_size = Vector2(40, 40)
+			tr.texture = tex
+			tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_inv.add_child(tr)
+		else:
+			var chip := PanelContainer.new()
+			chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var lbl := Label.new()
+			lbl.text = String(item_by_id.get(iid, {}).get("name", str(iid)))
+			lbl.add_theme_font_size_override("font_size", 13)
+			lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			chip.add_child(lbl)
+			_inv.add_child(chip)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -310,8 +493,49 @@ func show_ending(label) -> void:
 	_dialogue.visible = false
 	_menu.visible = false
 	_hud.visible = false
-	_ending.text = "The End" + ("\n" + str(label) if label else "")
-	_ending.visible = true
+	var title := "The End"
+	var text := str(label) if label else ""
+	for e in ir.get("endings", []):
+		if typeof(e) == TYPE_DICTIONARY and e.get("id") == label:
+			title = String(e.get("title", e.get("name", title)))
+			text = String(e.get("text", e.get("description", "")))
+			break
+	var layer := Control.new()
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.78)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(dim)
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.custom_minimum_size = Vector2(640, 0)
+	box.add_theme_constant_override("separation", 18)
+	layer.add_child(box)
+	var tl := Label.new()
+	tl.text = title
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tl.add_theme_font_size_override("font_size", 48)
+	box.add_child(tl)
+	if text != "":
+		var tx := Label.new()
+		tx.text = text
+		tx.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tx.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tx.add_theme_font_size_override("font_size", 22)
+		box.add_child(tx)
+	var again := Button.new()
+	again.text = "Play Again"
+	again.pressed.connect(func(): get_tree().reload_current_scene())
+	box.add_child(again)
+	var qb := Button.new()
+	qb.text = "Quit"
+	qb.pressed.connect(func(): get_tree().quit())
+	box.add_child(qb)
 
 
 func hide_dialogue() -> void:

@@ -165,3 +165,55 @@ def test_overworld_has_wall_face_treatment():
     assert "below_open" in src and "face.color" in src and "shadow" in src
     assert '_token.png" % cid' in src
     assert 'marker_signpost.png' in src and 'prop_%s.png' in src
+
+
+def test_game_title_screen_and_save_contract():
+    src = (_RUNTIME / "Game.gd").read_text()
+    # title screen before the intro: art backdrop when present, Continue gated on the save file
+    assert "title_card.png" in src
+    assert "FileAccess.file_exists(SAVE_PATH)" in src
+    assert 'const SAVE_PATH := "user://save.json"' in src
+    # the save carries the full resume context: state + place + overworld cell
+    assert '"state": state' in src and '"place": _place_id' in src
+    assert '{"cell": avatar_cell}' in src
+    boot = src.split("func _boot(")[1].split("\nfunc ")[0]
+    assert "_load_save" in boot
+    assert '_run_world(data["place"], data.get("spawn"))' in boot
+
+
+def test_game_pause_menu_and_ending_screen():
+    src = (_RUNTIME / "Game.gd").read_text()
+    assert '"ui_pause": [KEY_ESCAPE]' in src
+    pause = src.split("func pause_menu(")[1].split("\nfunc ")[0]
+    assert "save_game()" in pause and "get_tree().quit()" in pause
+    ending = src.split("func show_ending(")[1].split("\nfunc ")[0]
+    assert 'ir.get("endings", [])' in ending
+    assert "reload_current_scene" in ending and "quit()" in ending
+
+
+def test_inventory_strip_dirty_check_refresh():
+    src = (_RUNTIME / "Game.gd").read_text()
+    proc = src.split("func _process(")[1].split("\nfunc ")[0]
+    assert "_inv_last" in proc  # value compare, not a rebuild every frame
+    assert '"item_%s.png" % iid' in proc and '"%s.png" % iid' in proc
+    assert 'get("name"' in proc  # name-chip fallback when there is no icon art
+    assert "_title_open" in proc  # hidden while the title screen is up
+
+
+def test_presenters_poll_pause():
+    for name in ("pnc.gd", "overworld.gd"):
+        src = (_RUNTIME / name).read_text()
+        assert 'Input.is_action_just_pressed("ui_pause")' in src, name
+        assert "pause_menu()" in src, name
+
+
+def test_pnc_hotspot_hover():
+    src = (_RUNTIME / "pnc.gd").read_text()
+    assert "mouse_entered" in src and "mouse_exited" in src
+    assert "b.modulate" in src and "hover.visible = true" in src
+
+
+def test_overworld_avatar_cell_and_token_word_match():
+    src = (_RUNTIME / "overworld.gd").read_text()
+    assert 'g.avatar_cell = {"x": ax, "y": ay}' in src
+    assert '(" " + label + " ").contains(" " + nm + " ")' in src

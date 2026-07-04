@@ -34,6 +34,13 @@ func _await_hotspot(place) -> Dictionary:
 		c.queue_free()
 	var picked := {"v": null}
 	var stack := 0
+	var hover := Label.new()
+	hover.visible = false
+	hover.add_theme_font_size_override("font_size", 16)
+	hover.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	hover.add_theme_constant_override("shadow_offset_x", 1)
+	hover.add_theme_constant_override("shadow_offset_y", 1)
+	hover.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for it in place.get("interactables", []):
 		var rect = it.get("position", {}).get("rect", {})
 		var b := Button.new()
@@ -47,9 +54,21 @@ func _await_hotspot(place) -> Dictionary:
 			b.position = Vector2(40, 120 + stack * 64)
 			b.custom_minimum_size = Vector2(280, 52)
 			stack += 1
-		b.pressed.connect(func(): picked["v"] = it; g.menu_picked.emit())
+		b.pressed.connect(func(): picked["v"] = it)
+		b.mouse_entered.connect(func():
+			b.modulate = Color(1.3, 1.3, 1.3)
+			hover.text = it.get("label", "")
+			hover.position = b.position + Vector2(0, -24)
+			hover.visible = true)
+		b.mouse_exited.connect(func():
+			b.modulate = Color(1, 1, 1)
+			hover.visible = false)
 		box.add_child(b)
-	await g.menu_picked
+	box.add_child(hover)  # last child, so the label draws above the buttons
+	while picked["v"] == null:
+		await g.get_tree().process_frame
+		if Input.is_action_just_pressed("ui_pause"):
+			await g.pause_menu()
 	for c in box.get_children():
 		c.queue_free()
 	return picked["v"]

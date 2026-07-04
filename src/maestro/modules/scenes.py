@@ -326,7 +326,10 @@ _NODE_GUARD = {"count_tool": "write_scene", "id_key": "node_id", "id_list_key": 
 def reachable_from_start(artifact: Dict):
     node_ids, nodes = views.nodes_of(artifact)
     if not node_ids:
-        return False, "no nodes to reach"
+        # An empty graph has no orphans — failing here sends the fixer at nodes that don't
+        # exist (observed: edit_node('start') hallucinated for 140 steps). Whether nodes
+        # SHOULD exist is owned by build_nodes/beats_realized/nodes_world_entered.
+        return True, None
     edges = {nid: views.node_targets(nodes.get(nid, {})) for nid in node_ids}
     orphans = [n for n in node_ids if n not in views.reachable(node_ids, edges)]
     if orphans:
@@ -455,6 +458,16 @@ def _d_endings_are_nodes(chk, m, ctx):
         return []
     return m.wrap(chk, checks.refs_resolve(ctx.artifact, "story.endings", "nodes.node_ids",
                                            from_key="id"))
+
+
+def _force_ending_end(module, context, error, slot, services, dispatch) -> None:
+    """A planned ending node's end.type is decided by the check itself — setting it is
+    deterministic, so no LLM. Observed: the model DISAGREED with the check (it had authored a
+    continuation node) and re-asserted the same jump 250 steps straight, every edit 'ok'."""
+    services.allowed = None
+    result = dispatch("edit_node", {"node_id": error.path, "end": {"type": "end"}})
+    services._report(f"forced end on planned ending '{error.path}': "
+                     + ("ok" if result.get("ok") else f"error — {result.get('error')}"))
 
 
 def _d_ending_nodes_end(chk, m, ctx):
@@ -638,6 +651,7 @@ def _owns_compile(art: Dict) -> bool:
 # ── turn-loop scene authoring (one call per character turn) ───────────────────
 _MAX_TURNS = 12
 _TURN_MAX_TOKENS = 600
+_ECHO_WORDS = 6
 
 
 def _card_text(card: Dict) -> str:
@@ -652,7 +666,8 @@ def _card_text(card: Dict) -> str:
     return "\n".join(out)
 
 
-def _scene_brief(view: Dict, assigned: Optional[Dict], cast: List[Dict], artifact: Dict) -> str:
+def _scene_brief(view: Dict, assigned: Optional[Dict], cast: List[Dict], artifact: Dict,
+                 schema_facts: Optional[List[str]] = None) -> str:
     beats = {b["id"]: b for b in (view.get("beats") or []) if b.get("id")}
     beat_ids = list(beats)
     lines = ["THE SCENE:"]
@@ -663,16 +678,19 @@ def _scene_brief(view: Dict, assigned: Optional[Dict], cast: List[Dict], artifac
         lines.append(f"Setting: {bgs[0].get('description', bgs[0].get('id'))}")
     # Each agent's system prompt carries only its OWN card; without the other side's fixed
     # facts, an agent under pressure borrows the other's biography (observed: Juniper claiming
-    # Elara's flight abroad as her own).
-    facts = []
+    # Elara's flight abroad as her own). The spec's seeded facts anchor numbers/timelines too
+    # (observed: "three years" / "since 2004" / "twelve years" drifting across scenes) — the
+    # LIVE story-state facts are not used here: ending deltas pollute them with one branch's
+    # outcome ("they drift apart") that would contradict the others.
+    facts = list(schema_facts or [])
     for c in cast:
         bits = [c.get("drive", "")] + list(c.get("history") or [])[:1]
         bits = [b for b in bits if b]
         if bits:
-            facts.append(f"  {c.get('name', c['id'])}: " + " ".join(bits))
+            facts.append(f"{c.get('name', c['id'])}: " + " ".join(bits))
     if facts:
-        lines.append("FIXED FACTS (who did what — never swap these between characters):")
-        lines += facts
+        lines.append("FIXED FACTS (never contradict these, never swap them between characters):")
+        lines += [f"  {f}" for f in facts]
     bid = (assigned or {}).get("beat") or (beat_ids[0] if beat_ids else None)
     if bid and bid in beats:
         lines.append(f"This scene dramatizes: {render_beat(beats[bid])}")
@@ -689,17 +707,63 @@ def _scene_brief(view: Dict, assigned: Optional[Dict], cast: List[Dict], artifac
         for ln in lead:
             lines.append(f"  {ln.get('speaker') or 'NARR'}: {ln.get('text', '')}")
     if not view.get("node_ids"):
+        # Orientation drifts into speech without the second sentence (observed: "we're back in
+        # this stripped-down room, trying to prove nothing has changed" SAID to the friend who
+        # already knows).
         lines.append("This is the game's OPENING — the player knows nothing yet. Start your "
                      "first reply with one NARR line that orients them: who you two are to "
-                     "each other, where this is, and why tonight.")
+                     "each other, where this is, and why tonight. The orientation lives ONLY "
+                     "in that NARR line — your spoken lines never explain your shared history "
+                     "or why tonight matters; you both already know.")
     return "\n".join(lines)
+
+
+_FIRST_SECOND = {"i", "you", "me", "my", "mine", "your", "yours", "we", "us", "our", "ours"}
+
+
+def _speaks_12(text: str) -> bool:
+    import re
+    return any(w.split("'")[0].split("’")[0] in _FIRST_SECOND
+               for w in re.findall(r"[A-Za-z'’]+", text.lower()))
+
+
+def _other_narration(t: str, names: Set[str]) -> bool:
+    """A 'spoken' line that is really third-person narration (observed: Marcus's turn emitting
+    `Leo's breath hitches…` AND `Marcus reaches out and taps…` as his own speech; an RP-tuned
+    model also writes pronoun prose: `He lowers the controller.`). Signature: opens on a cast
+    name or He/She flowing straight into a lowercase sentence (or a possessive), with no I/you
+    anywhere; a vocative ("Marcus you can't…") always carries a first/second person."""
+    import re
+    m = re.match(r"^([A-Za-z]+)(?:'s|’s)? [a-z]", t)
+    if not m:
+        return False
+    head = m.group(1).lower()
+    return (head in names or head in ("he", "she")) and not _speaks_12(t)
+
+
+_ATTRIB_RE = None
+
+
+def _unquote_attributed(t: str) -> str:
+    """RP-tuned models emit novel-style dialogue: `'We got it,' he says, voice cracking.` —
+    keep the quoted speech, drop the attribution tail."""
+    import re
+    m = re.match(r"^[\"'“‘](.+?)[,.!?]?[\"'”’]\s*,?\s*(?:he|she|\w+)\s+(?:says?|said|whisper|"
+                 r"mutter|shout|repl|ask|call|scream|croak|manage)\w*\b.*$", t, re.I)
+    if m:
+        text = m.group(1).strip()
+        return text if len(text.split()) >= 2 else t
+    return t
 
 
 def _parse_turn(reply: str, me: Dict, others: Optional[Set[str]] = None) -> List[Dict]:
     """A turn reply -> IR lines. Plain text = my speech; a `NARR:` line = my action. Strips an
     [END] marker (the caller checks for it), my own name prefix, and wrapping quotes. A line
     prefixed with ANOTHER character's name is the agent speaking for its scene partner
-    (observed: Juniper's turn emitting `elara: ...`) — dropped, never re-attributed."""
+    (observed: Juniper's turn emitting `elara: ...`) — dropped, never re-attributed. A bare
+    self-name glued to the front without a colon (observed: `Leo You're joking…` every turn)
+    is stripped; narration-about-the-partner is re-attributed to the narrator."""
+    import re
     out: List[Dict] = []
     my_names = {me["id"].lower(), (me.get("name") or "").lower()}
     other_names = {n.lower() for n in (others or set())}
@@ -708,6 +772,8 @@ def _parse_turn(reply: str, me: Dict, others: Optional[Set[str]] = None) -> List
         if not t or t == "[END]":
             continue
         t = t.removesuffix("[END]").strip()
+        # mechanics notes leak into play text (observed: "(flag: loophole_found)") — never speech
+        t = re.sub(r"\(\s*(?:flag|set_flag|sets? flag)[^)]*\)", "", t, flags=re.I).strip()
         low = t.lower()
         if low.startswith("narr:") or low.startswith("narration:"):
             out.append({"speaker": None, "text": t.split(":", 1)[1].strip()})
@@ -719,11 +785,43 @@ def _parse_turn(reply: str, me: Dict, others: Optional[Set[str]] = None) -> List
                 continue
             if prefix in my_names:
                 t = head[1].strip()
+            elif "_" in prefix and re.fullmatch(r"[a-z][a-z0-9_]*", prefix):
+                # a snake_case tag matching no cast name is a garbled speaker prefix
+                # (observed: `arist_thorne:` for a cast id `aris_thorne`) — drop, never
+                # re-attribute a line meant for someone else
+                continue
+        first, _, rest = t.partition(" ")
+        if rest and first.lower() in my_names and rest[:1].isupper():
+            t = rest.strip()
+        t = _unquote_attributed(t)
         if len(t) >= 2 and t[0] in "\"'“" and t[-1] in "\"'”":
             t = t[1:-1].strip()
         if t:
-            out.append({"speaker": me["id"], "text": t})
+            speaker = None if _other_narration(t, other_names | my_names) else me["id"]
+            # A voice card that licenses rambling beats every prompt bound (observed: 129-word
+            # single lines). Splitting at sentence ends preserves the text and keeps each line
+            # sayable in one breath — and inside the dialogue box.
+            for chunk in _split_breaths(t):
+                out.append({"speaker": speaker, "text": chunk})
     return out
+
+
+def _split_breaths(text: str, max_words: int = 55) -> List[str]:
+    import re
+    if len(text.split()) <= max_words:
+        return [text]
+    parts = re.split(r"(?<=[.!?…])\s+", text)
+    chunks, cur = [], ""
+    for p in parts:
+        joined = (cur + " " + p).strip()
+        if cur and len(joined.split()) > max_words:
+            chunks.append(cur)
+            cur = p
+        else:
+            cur = joined
+    if cur:
+        chunks.append(cur)
+    return chunks
 
 
 _FINISH_SCHEMA = [{"type": "function", "function": {
@@ -755,14 +853,25 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         return
     node_id = (assigned or {}).get("id") or ("scene_01" if not view.get("node_ids")
                                              else f"scene_{(view.get('beats_todo') or ['x'])[0]}")
-    brief = _scene_brief(view, assigned, cast, art)
+    sss = context.spec.get("story_state_schema") or {}
+    schema_facts = list(sss.get("established_facts") or [])
+    # entity states carry the RELATIONSHIP frame — without it strangers talk like old friends
+    # (observed: "neutral_strangers" in the spec while the detainee first-names the officer).
+    schema_facts += [f"{k}: {v}" for k, v in (sss.get("entity_states") or {}).items()
+                     if isinstance(v, str)]
+    brief = _scene_brief(view, assigned, cast, art, schema_facts=schema_facts)
     beats = {b["id"]: b for b in (view.get("beats") or []) if b.get("id")}
     bid = (assigned or {}).get("beat") or (next(iter(beats), None))
     business = render_beat(beats[bid]) if bid in beats else "the conversation reaches a turn"
+    if bid in beats and str(beats[bid].get("tension", "")).strip().lower() in ("", "none"):
+        business += ("\nStake: NONE — nothing needs to go wrong in this scene. Do the activity, "
+                     "get the jokes in, let it be easy; it exists to build these people.")
     endings = {e.get("id"): e for e in (art.get("story") or {}).get("endings", [])}
     is_ending = node_id in endings
     if is_ending:
-        business = (f"this is the story's ENDING '{node_id}' — resolve it: "
+        # The raw ending id ("ending_integration") gets parroted back as dialogue when it's in
+        # the instruction — only the concrete description enters the prompt.
+        business = ("this scene is the story's ENDING — resolve it: "
                     f"{endings[node_id].get('description', '')}")
     min_lines = context.param("each_node_min_lines", 3)
 
@@ -774,17 +883,35 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         order = order[1:] + order[:1]
 
     def _dupe_keys(text: str) -> List[str]:
-        # Exact key + a first-words key: agents circle with the same opener and a varied tail
-        # ("You're treating this lease like…/deadline like…" five turns straight), so a repeated
-        # opening phrase counts as a repeat.
-        t = text.strip().lower()
-        return [t, " ".join(t.split()[:4])]
+        # Exact key + (for long lines) a first-words key: agents circle with the same opener and
+        # a varied tail ("You're treating this lease like…/deadline like…" five turns straight),
+        # so a repeated opening phrase counts as a repeat.
+        t = " ".join(text.strip().lower().split())
+        return [t] if len(t.split()) <= _ECHO_WORDS else [t, " ".join(t.split()[:4])]
+
+    def _spent(text: str) -> bool:
+        # A short line may recur ONCE — the deadpan echo ("We have time." / "We have time.")
+        # is the register, not circling. Anything longer, or a third occurrence, is circling.
+        cap = 2 if len(text.split()) <= _ECHO_WORDS else 1
+        return any(seen.get(k, 0) >= cap for k in _dupe_keys(text))
+
+    def _mark(text: str) -> None:
+        for k in _dupe_keys(text):
+            seen[k] = seen.get(k, 0) + 1
 
     other_names = {n for c in cast for n in (c["id"], c.get("name", "")) if n}
     transcript: List[Dict] = []
-    seen: Set[str] = set()
+    seen: Dict[str, int] = {}
     for ln in lead:   # the lead-in is already on screen — re-emitting it is an echo
-        seen.update(_dupe_keys(ln.get("text", "")))
+        _mark(ln.get("text", ""))
+    # Long openers repeat ACROSS scenes too (observed: "The spawn rate on…" 4× in one script) —
+    # seed every existing scene's long lines so a new scene can't reuse their openers. Short
+    # lines stay free: a cross-scene deadpan callback is the register, not circling.
+    for node in ((art.get("nodes") or {}).get("nodes") or {}).values():
+        for ln in (node.get("lines") or []):
+            t = (ln or {}).get("text", "")
+            if isinstance(t, str) and len(t.split()) > _ECHO_WORDS:
+                _mark(t)
     ended = False
     stale_turns = 0
     for turn in range(_MAX_TURNS):
@@ -805,9 +932,18 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
                     msgs.append({"role": "user", "content": text})
         if msgs[-1]["role"] == "assistant":
             msgs.append({"role": "user", "content": "(your turn continues the scene)"})
+        # Agents never volunteer [END] (observed: 8/8 scenes chopped at the turn cap, last
+        # line dangling) — the last two rounds tell them the scene is closing.
+        # "land the business" made agents close by SAYING the theme ("It wasn't just tactics.
+        # It was trust.") — the close instruction must forbid the summary shape outright.
+        if turn >= _MAX_TURNS - 2 * len(order):
+            msgs[-1]["content"] += ("\n(Bring the scene to a close now — with an action or a "
+                                    "short line, never a summary of what the scene meant — "
+                                    "and put [END] on its own line after your reply.)")
         # reasoning="none": a turn is speech, not a puzzle — thinking tokens eat the whole
         # budget and truncate before any text is emitted (observed: 400/400 tokens, content null).
-        resp = services.infer(msgs, None, reasoning="none", max_tokens=_TURN_MAX_TOKENS)
+        resp = services.infer(msgs, None, reasoning="none", max_tokens=_TURN_MAX_TOKENS,
+                              dialogue=True)
         reply = ((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         mine = {c.get("name", "") for c in cast if c["id"] == me["id"]} | {me["id"]}
         lines = _parse_turn(reply, me, others=other_names - mine)
@@ -816,10 +952,9 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         # stale, and two stale turns in a row mean the conversation is spent — close the scene.
         fresh = []
         for ln in lines[:3]:
-            keys = _dupe_keys(ln["text"])
-            if any(k in seen for k in keys):
+            if _spent(ln["text"]):
                 continue
-            seen.update(keys)
+            _mark(ln["text"])
             fresh.append(ln)
         if fresh:
             transcript.extend(fresh)
@@ -842,7 +977,14 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         node_lines.append(f"NEXT BEAT: {render_beat(beats[beat_ids[beat_ids.index(bid) + 1]])}")
     endings = (art.get("story") or {}).get("endings", [])
     if endings:
-        node_lines.append("STORY ENDINGS: " + ", ".join(e.get("id", "") for e in endings))
+        # earned_by was write-only data before this — the closer decides menus, so it is the
+        # one consumer that can make a choice actually pay toward its planned ending.
+        earned = {p.get("ending"): p.get("earned_by")
+                  for p in (art.get("story") or {}).get("ending_paths", []) if isinstance(p, dict)}
+        node_lines.append("STORY ENDINGS (a menu choice toward one must MATCH what earns it):")
+        for e in endings:
+            eid = e.get("id", "")
+            node_lines.append(f"  {eid}" + (f" — earned by: {earned[eid]}" if earned.get(eid) else ""))
     bgs = (art.get("asset_manifest") or {}).get("backgrounds", [])
     if bgs:
         node_lines.append("LOCATIONS: " + ", ".join(b.get("id", "") for b in bgs))
@@ -851,7 +993,7 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     for _ in range(2):
         resp = services.infer([{"role": "system", "content": close_system},
                                {"role": "user", "content": close_user}], _FINISH_SCHEMA,
-                              reasoning="none")
+                              reasoning="none", dialogue=True)
         action = parse_action(resp, _FINISH_SCHEMA)
         if action.get("tool") == "finish_scene" and isinstance(action.get("args"), dict) \
                 and action["args"].get("end"):
@@ -881,7 +1023,15 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     elif end.get("type") == "menu":
         kept = [c for c in (end.get("choices") or [])
                 if isinstance(c, dict) and not _backward(c.get("target", ""))]
-        end = {"type": "menu", "choices": kept} if len(kept) >= 2 else fallback
+        targets = {c.get("target") for c in kept if c.get("target")}
+        if len(targets) < 2:
+            # A fake menu (every choice → the same scene) would be rejected at write_scene,
+            # throwing the whole authored scene away — collapse it to the jump it really is.
+            end = {"type": "jump", "target": next(iter(targets))} if targets else fallback
+        elif len(kept) >= 2:
+            end = {"type": "menu", "choices": kept}
+        else:
+            end = fallback
     delta = args.get("story_state_delta") if isinstance(args.get("story_state_delta"), dict) else {}
     if args.get("event_summary"):
         delta["event_summary"] = args["event_summary"]
@@ -922,7 +1072,7 @@ class Scenes(Module):
               prompt="nodes_screenplay_write.txt", skeleton="", run=scene_turn_loop),
         Check("endings_are_nodes", _d_endings_are_nodes, tools=_T_EDIT_WRITE),
         Check("ending_nodes_end", _d_ending_nodes_end, job="fix", prompt="nodes_fix.txt",
-              tools=_T_EDIT),
+              tools=_T_EDIT, run=_force_ending_end),
         Check("premature_endings", _d_premature_endings, job="fix", prompt="nodes_fix.txt",
               tools=_T_EDIT),
         Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, node_targets_resolve(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT_WRITE),

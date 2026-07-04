@@ -55,7 +55,13 @@ def apply_delta(state: Dict, delta: Dict, tail_len: int = _TAIL_LEN) -> Dict:
 
     _dedupe_extend(state["established_facts"], delta.get("new_facts"))
 
-    for entity, updates in (delta.get("entity_updates") or {}).items():
+    # Models sometimes send entity_updates as a LIST ([{entity, ...updates}] or plain strings)
+    # instead of a map — normalize instead of crashing the whole scene write.
+    eu = delta.get("entity_updates")
+    if isinstance(eu, list):
+        eu = {e.pop("entity"): e for e in eu
+              if isinstance(e, dict) and isinstance(e.get("entity"), str)}
+    for entity, updates in (eu or {} if isinstance(eu, (dict, type(None))) else {}).items():
         cur = state["entity_states"].get(entity)
         if isinstance(cur, dict) and isinstance(updates, dict):
             cur.update(updates)

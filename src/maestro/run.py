@@ -110,7 +110,7 @@ def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
     return result
 
 
-def _cli(request: str) -> int:
+def _cli(request: str, *, yes: bool = False) -> int:
     from tools.spec_tools import propose_spec, freeze_spec
     import json
 
@@ -123,10 +123,11 @@ def _cli(request: str) -> int:
     spec = propose_spec(request, run_id)
     print(json.dumps(spec, indent=2, ensure_ascii=False))
 
-    answer = input("\nFreeze this spec and build? [y/N] ").strip().lower()
-    if answer != "y":
-        print("Not frozen. Edit the spec and re-run, or freeze later.")
-        return 0
+    if not yes:
+        answer = input("\nFreeze this spec and build? [y/N] ").strip().lower()
+        if answer != "y":
+            print("Not frozen. Edit the spec and re-run, or freeze later.")
+            return 0
 
     freeze_spec(run_id)
     print("\nfrozen — building...\n")
@@ -144,6 +145,7 @@ def _cli(request: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit('usage: python -m maestro.run "<request>"')
-    sys.exit(_cli(" ".join(sys.argv[1:])))
+    args = [a for a in sys.argv[1:] if a != "--yes"]
+    if not args:
+        sys.exit('usage: python -m maestro.run [--yes] "<request>"')
+    sys.exit(_cli(" ".join(args), yes="--yes" in sys.argv[1:]))

@@ -371,6 +371,33 @@
               }
             }
           }
+        },
+        "footprints": {
+          "type": "object",
+          "description": "feature id -> {x, y, w, h, kind, label} cell rect the map builder stamped for a solid feature. The overworld presenter draws a generated object sprite (feature_<slug>.png) over the rect when the asset exists.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "w": {
+                "type": "integer"
+              },
+              "h": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },

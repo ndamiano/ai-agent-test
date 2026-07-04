@@ -34,6 +34,10 @@ class ClineSettings(BaseModel):
 class ComfyUISettings(BaseModel):
     endpoint: str = Field("http://localhost:8188", min_length=1)
     vram_management: bool = Field(False)
+    # Second ComfyUI install carrying the ideogram4 stack; when set, terrain-tile jobs render
+    # there with structured JSON captions (the tile-lab quality winner) instead of the default
+    # endpoint's DreamShaper formulas.
+    tile_endpoint: str = Field("")
 
 
 class TTSSettings(BaseModel):

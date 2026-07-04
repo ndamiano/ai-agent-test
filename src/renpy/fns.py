@@ -77,11 +77,26 @@ def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
     return list(specs.items())
 
 
+def _collect_feature_specs(places_comp: Dict) -> List[tuple]:
+    """(kind, label) per distinct solid footprint across walkable places — one object sprite
+    each (feature_<slug>.png keyed on the label, so a 'smithy' in two zones shares art)."""
+    from maestro.modules.world import _RPG_KINDS
+
+    specs: Dict[str, str] = {}
+    for place in ((places_comp or {}).get("places") or {}).values():
+        if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS:
+            continue
+        for fp in (place.get("footprints") or {}).values():
+            if isinstance(fp, dict) and fp.get("label") and tile_slug(fp["label"]):
+                specs.setdefault(fp["label"], fp.get("kind", "building"))
+    return [(kind, label) for label, kind in specs.items()]
+
+
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     from tools.comfyui_tools import (
         build_character_job, build_background_job, build_cg_job, build_item_job,
         build_title_card_job, build_character_emotion_job, build_tile_job, build_token_job,
-        make_seamless_tile, upload_image, vram_bracket, run_jobs,
+        build_feature_job, make_seamless_tile, upload_image, vram_bracket, run_jobs,
     )
     from maestro.modules.world import _RPG_KINDS
     from maestro.ir_assemble import used_emotions, expression_file
@@ -187,6 +202,13 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
             pf = f"prop_{tile_slug(label)}.png"
             base_meta.append({"file": pf, "dest": images_dir / pf, "kind": "token"})
             base_jobs.append(build_item_job(label))
+        # Feature sprites: one object sprite per distinct stamped footprint (kind+label),
+        # drawn by the overworld over the footprint rect instead of a tile mosaic. Miss ->
+        # the mosaic stays (kind token: no placeholder).
+        for kind, label in _collect_feature_specs(inputs.get("places", {}))[:10]:
+            ff = f"feature_{tile_slug(label)}.png"
+            base_meta.append({"file": ff, "dest": images_dir / ff, "kind": "token"})
+            base_jobs.append(build_feature_job(kind, label))
 
     with vram_bracket():
         print(f"    [images]  generating {len(base_jobs)} base image(s)")

@@ -37,19 +37,27 @@ def test_collect_themes_empty_for_pnc_and_vn():
     assert _collect_tile_themes({}) == []
 
 
-def test_build_tile_job_carries_theme_and_workflow():
+def _force_tile_endpoint(monkeypatch, url):
+    import tools.comfyui_tools as ct
+    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {"tile_endpoint": url})
+
+
+def test_build_tile_job_carries_theme_and_workflow(monkeypatch):
+    _force_tile_endpoint(monkeypatch, "")
     job = build_tile_job("frozen stream")
     assert "frozen stream" in job["prompt"] and "tileable" in job["prompt"]
     assert "map tile" not in job["prompt"]   # "map tile" makes the model draw a picture OF a map
+    assert "endpoint" not in job             # default endpoint, default model
     wf = job["workflow_override"]
     dims = next(v["inputs"] for v in wf.values() if v["class_type"] == "EmptyLatentImage")
     assert dims["width"] == dims["height"]   # square: cells render square, widescreen mushes
 
 
-def test_build_tile_job_role_steers_readability():
+def test_build_tile_job_role_steers_readability(monkeypatch):
     # lab-derived formulas (2026-07-04): open = stylized walkable tileset; wall-ish blocked
     # themes get FRONT-FACING masonry (top-down walls render as ground); organic blocked gets
     # dense-growth language darker than open ground
+    _force_tile_endpoint(monkeypatch, "")
     open_p = build_tile_job("mossy ground", "open")["prompt"]
     wall_p = build_tile_job("crumbling wall", "blocked")["prompt"]
     bush_p = build_tile_job("dense brambles", "blocked")["prompt"]
@@ -58,12 +66,68 @@ def test_build_tile_job_role_steers_readability():
     assert "impassable growth" in bush_p and "front-facing" not in bush_p
 
 
+def test_build_tile_job_routes_to_ideogram_endpoint(monkeypatch):
+    import json
+    _force_tile_endpoint(monkeypatch, "http://localhost:8189/")
+    job = build_tile_job("crumbling wall", "blocked")
+    assert job["endpoint"] == "http://localhost:8189"
+    cap = json.loads(job["prompt"])           # structured JSON caption, ideogram4's training diet
+    assert cap["aspect_ratio"] == "1:1"
+    assert "crumbling wall" in cap["high_level_description"]
+    assert "impassable barrier" in cap["compositional_deconstruction"]["background"]
+    wf = job["workflow_override"]
+    kinds = {v["class_type"] for v in wf.values()}
+    assert {"DualModelGuider", "Ideogram4Scheduler", "CFGOverride"} <= kinds
+    sc = next(v["inputs"] for v in wf.values() if v["class_type"] == "Ideogram4Scheduler")
+    assert sc["width"] == sc["height"]
+
+
+def test_ideogram_caption_palette_matched_or_omitted():
+    import json
+    from tools.comfyui_tools import _ideogram_tile_caption
+    dirt = json.loads(_ideogram_tile_caption("packed dirt trail", "open"))
+    assert all(c.startswith("#") and len(c) == 7
+               for c in dirt["style_description"]["color_palette"])
+    odd = json.loads(_ideogram_tile_caption("chromatic void", "open"))
+    assert "color_palette" not in odd["style_description"]   # no keyword match -> no guess
+
+
 def test_collect_tile_specs_carries_roles():
     from renpy.fns import _collect_tile_specs
     comp = {"places": {"z": {"kind": "world_map", "tiles": {
         "legend": {"@": {"role": "blocked", "theme": "ash pine"}},
         "rows": ["@.", ".."]}}}}
     assert dict(_collect_tile_specs(comp)) == {"ash pine": "blocked", "ground": "open"}
+
+
+def test_collect_feature_specs_dedupes_by_label():
+    from renpy.fns import _collect_feature_specs
+    comp = {"places": {
+        "z1": {"kind": "town", "footprints": {
+            "f_a": {"x": 1, "y": 1, "w": 3, "h": 3, "kind": "building", "label": "smithy"},
+            "f_b": {"x": 5, "y": 5, "w": 3, "h": 3, "kind": "fountain", "label": "fountain"}}},
+        "z2": {"kind": "world_map", "footprints": {
+            "f_c": {"x": 2, "y": 2, "w": 3, "h": 3, "kind": "building", "label": "smithy"},
+            "f_d": {"x": 4, "y": 4, "w": 2, "h": 2, "kind": "market_stall", "label": "!!!"}}},
+        "r": {"kind": "room"},
+    }}
+    specs = dict((label, kind) for kind, label in _collect_feature_specs(comp))
+    # shared label -> one sprite; unsluggable label dropped; rooms ignored
+    assert specs == {"smithy": "building", "fountain": "fountain"}
+
+
+def test_build_feature_job_is_isolated_object():
+    from tools.comfyui_tools import build_feature_job
+    job = build_feature_job("building", "smithy")
+    assert "a single smithy" in job["prompt"] and "three-quarter" in job["prompt"]
+    # the label IS the subject; kind is only the no-label fallback (a "Horse Tether" stamped
+    # as tree_clump must not prompt "Horse Tether tree clump")
+    assert "a single horse tether seen" in \
+        build_feature_job("tree_clump", "horse tether")["prompt"]
+    assert "a single market stall" in build_feature_job("market_stall", "")["prompt"]
+    # rides the matting workflow so it lands transparent on the map
+    kinds = {v["class_type"] for v in job["workflow_override"].values()}
+    assert any("BiRefNet" in k for k in kinds)
 
 
 def test_make_seamless_tile_wraps_and_downscales(tmp_path):

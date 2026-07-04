@@ -111,6 +111,7 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
         grid[y][x] = WALL
 
     anchors: Dict[str, Tuple[int, int]] = {}
+    footprints: Dict[str, Dict] = {}
     feature_theme: Dict[str, str] = {}
     legend_extra: Dict[str, Dict] = {}
     next_char = iter("BCDEFGHIJKLMNOPQRSUVWXYZ")
@@ -129,17 +130,22 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
         if theme:
             ch = next(next_char)
             legend_extra[ch] = {"role": "blocked", "theme": theme}
+        solid = False
         for dy, row in enumerate(fp):
             for dx, c in enumerate(row):
                 gx, gy = x0 + dx, y0 + dy
                 if c == "#":
                     grid[gy][gx] = ch or WALL
+                    solid = True
                 elif c in (".", "A"):
                     grid[gy][gx] = OPEN
                 if c == "A":
                     anchors[feat["id"]] = (gx, gy)
         anchors.setdefault(feat["id"], (x0, min(h - 2, y0 + fh)))
         feature_theme[feat["id"]] = theme or kind
+        if solid:
+            footprints[feat["id"]] = {"x": x0, "y": y0, "w": fw, "h": fh, "kind": kind,
+                                      "label": feat.get("label") or theme or kind}
 
     features = [f for f in layout.get("features") or [] if isinstance(f, dict) and f.get("id")]
     for feat in features:
@@ -216,7 +222,8 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
         **legend_extra,
     }
     return {"rows": rows, "legend": legend,
-            "anchors": {k: {"x": v[0], "y": v[1]} for k, v in anchors.items()}}
+            "anchors": {k: {"x": v[0], "y": v[1]} for k, v in anchors.items()},
+            "footprints": footprints}
 
 
 def open_cells(tiles: Dict) -> set:

@@ -18,7 +18,8 @@
   },
   "comfyui": {
     "endpoint": "http://localhost:8188",
-    "vram_management": false
+    "vram_management": false,
+    "tile_endpoint": ""
   },
   "tts": {
     "endpoint": "http://localhost:8880",

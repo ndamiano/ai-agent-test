@@ -374,6 +374,31 @@ def test_map_builder_rasterizes_connected_layout():
     assert any("," in r for r in rows)
 
 
+def test_map_builder_emits_footprints_for_solid_features():
+    from maestro.map_builder import build_tiles
+    layout = {
+        "size": "medium",
+        "terrain": {"open": "grass", "blocked": "rock"},
+        "features": [
+            {"id": "f_smithy", "kind": "building", "at": "northwest",
+             "theme": "timber smithy", "label": "smithy"},
+            {"id": "f_glade", "kind": "clearing", "at": "center"},
+        ],
+        "exits": [{"id": "x_south", "edge": "south"}],
+    }
+    built = build_tiles("zone_fp", layout)
+    fps = built["footprints"]
+    assert "f_glade" not in fps and "x_south" not in fps   # nothing solid stamped
+    fp = fps["f_smithy"]
+    assert fp["kind"] == "building" and fp["label"] == "smithy"
+    w, h = len(built["rows"][0]), len(built["rows"])
+    assert 0 < fp["x"] and fp["x"] + fp["w"] <= w - 1
+    assert 0 < fp["y"] and fp["y"] + fp["h"] <= h - 1
+    # label falls back to theme, then kind
+    layout["features"][0].pop("label")
+    assert build_tiles("zone_fp", layout)["footprints"]["f_smithy"]["label"] == "timber smithy"
+
+
 def test_map_builder_rejects_bad_layout():
     from maestro.map_builder import v_layout
     assert v_layout({"size": "huge"}) is not None

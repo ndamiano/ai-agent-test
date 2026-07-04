@@ -606,6 +606,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             built = build_tiles(place_id, content["layout"])
             content["tiles"] = {"rows": built["rows"], "legend": built["legend"]}
             content["anchors"] = built["anchors"]
+            content["footprints"] = built["footprints"]
             anchors = built["anchors"]
             used: Dict = {}
             for h in content.get("interactables") or []:

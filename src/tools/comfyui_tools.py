@@ -255,6 +255,23 @@ def build_item_job(description: str) -> dict:
     return {"prompt": positive, "workflow_override": wf}
 
 
+def build_feature_job(kind: str, label: str) -> dict:
+    """Return a job for ONE map-feature object sprite (a building, fountain, camp... drawn over
+    its stamped footprint on the walkable map). High three-quarter view like a JRPG overworld
+    object — a straight top-down feature reads as texture, a side view floats. Rides the item
+    workflow (BiRefNet matting) so it lands transparent over the terrain."""
+    desc = (label or kind.replace("_", " ")).strip()
+    positive = (f"{_BG_QUALITY}, a single {desc} seen from a high three-quarter angle, "
+                f"stylized 2d game overworld object sprite, whole structure in frame, "
+                f"centered, bold readable silhouette, clean detailed rendering, isolated "
+                f"against a plain flat white background, no ground, no scenery around it")
+    wf = _build_background_workflow(
+        _load_workflow(_TXT2IMG_ITEM_WORKFLOW_PATH), positive, _ITEM_NEGATIVE)
+    wf["5"]["inputs"]["width"] = 1024
+    wf["5"]["inputs"]["height"] = 1024
+    return {"prompt": positive, "workflow_override": wf}
+
+
 _TILE_NEGATIVE = (
     "map, cartography, chart, diagram, floor plan, blueprint, border, frame, edge, vignette, "
     "text, letters, watermark, logo, people, person, character, figure, animal, object, item, "
@@ -282,16 +299,121 @@ _TILE_FORMULAS = {
 }
 
 
+# Ideogram4 is trained on structured JSON captions — freeform texture prompts trip its
+# "safety" refusals (out-of-distribution), the schema below is what unlocked the best tiles of
+# the 84-generation lab. Palettes give per-tile value control; themes with no keyword match
+# omit the palette rather than guess.
+_IDEO_PALETTES = (
+    (("dirt", "earth", "mud", "trail"), ["#6B4A2F", "#7C5A3A", "#8A6A47", "#5A3D26"]),
+    (("grass", "moss", "meadow", "leaf"), ["#4F6B35", "#6B8A45", "#3C5228", "#2E401F"]),
+    (("bush", "bramble", "hedge", "growth", "pine", "tree", "forest"),
+     ["#2E4A22", "#3E5E2C", "#243A1B", "#182812"]),
+    (("stone", "cobble", "rock", "masonry", "brick", "granite"),
+     ["#7A7A82", "#8E8E96", "#5E5E66", "#3A3A42"]),
+    (("wood", "timber", "palisade", "plank", "log"),
+     ["#6B4A2F", "#553A24", "#7C5A3A", "#3E2B1A"]),
+    (("sand", "dune", "desert"), ["#C9A96A", "#D9BC80", "#B08F55", "#8F7040"]),
+    (("snow", "ice", "frozen", "frost"), ["#DCE4EC", "#C2CEDA", "#A8B8C8", "#8FA2B5"]),
+    (("water", "stream", "river", "lake"), ["#2E5A7A", "#3E7094", "#24485F", "#182F40"]),
+    (("ash", "char", "burnt", "cinder"), ["#4A4A4E", "#5E5A58", "#38363A", "#262428"]),
+)
+
+_IDEO_TILE_BODIES = {
+    "open": ("A seamless repeating game texture of {t} filling the entire square frame edge "
+             "to edge.",
+             "A uniform continuous walkable {t} surface covering the whole canvas viewed "
+             "straight down, with no objects, no horizon and no border."),
+    "blocked_organic": ("A seamless repeating game texture of dense {t} viewed from directly "
+                        "above filling the entire square frame edge to edge.",
+                        "Thick {t} packed tightly together with deep shadow between clumps, "
+                        "denser and darker than open ground, an impassable vegetation pattern "
+                        "covering the whole canvas."),
+    "blocked_wall": ("A seamless repeating game texture of a {t} face filling the entire "
+                     "square frame edge to edge.",
+                     "Tightly packed {t} with deep dark shadow seams between elements, a "
+                     "dense masonry-like pattern that reads as an impassable barrier, "
+                     "covering the whole canvas with no perspective and no horizon."),
+}
+
+
+def _ideogram_tile_caption(theme: str, key: str) -> str:
+    hld, bg = (s.format(t=theme) for s in _IDEO_TILE_BODIES[key])
+    style = {
+        "aesthetics": ("Stylized 2d video game tileset texture, crisp hand-painted detail, "
+                       "bold readable shapes, flat orthographic view with no perspective and "
+                       "no horizon."),
+        "lighting": "Perfectly uniform diffuse lighting with no directional shadows and no "
+                    "vignette.",
+        "medium": "Digital game asset painting",
+    }
+    for words, palette in _IDEO_PALETTES:
+        if any(w in theme.lower() for w in words):
+            style["color_palette"] = palette
+            break
+    return json.dumps({
+        "aspect_ratio": "1:1",
+        "high_level_description": hld,
+        "style_description": style,
+        "compositional_deconstruction": {"background": bg, "elements": []},
+    })
+
+
+def _build_ideogram_tile_workflow(caption: str) -> dict:
+    # The lab's canonical graph: conditional + unconditional UNETs through DualModelGuider
+    # (asymmetric CFG — 7 dropping to 3 at 70%), Ideogram4Scheduler sigmas, flux2 VAE.
+    return {
+        "c": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": "ideogram4_fp8_scaled.safetensors", "weight_dtype": "default"}},
+        "u": {"class_type": "UNETLoader", "inputs": {
+            "unet_name": "ideogram4_unconditional_fp8_scaled.safetensors",
+            "weight_dtype": "default"}},
+        "cl": {"class_type": "CLIPLoader", "inputs": {
+            "clip_name": "qwen3vl_8b_fp8_scaled.safetensors", "type": "ideogram4",
+            "device": "default"}},
+        "v": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+        "e": {"class_type": "CLIPTextEncode", "inputs": {"text": caption, "clip": ["cl", 0]}},
+        "z": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["e", 0]}},
+        "co": {"class_type": "CFGOverride", "inputs": {
+            "model": ["c", 0], "cfg": 3.0, "start_percent": 0.7, "end_percent": 1.0}},
+        "g": {"class_type": "DualModelGuider", "inputs": {
+            "model": ["co", 0], "positive": ["e", 0], "cfg": 7.0,
+            "model_negative": ["u", 0], "negative": ["z", 0]}},
+        "n": {"class_type": "RandomNoise", "inputs": {
+            "noise_seed": int(uuid.uuid4().int % (2**32))}},
+        "ks": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}},
+        "sc": {"class_type": "Ideogram4Scheduler", "inputs": {
+            "steps": 20, "width": 1024, "height": 1024, "mu": 0.5, "std": 1.75}},
+        "lat": {"class_type": "EmptyFlux2LatentImage", "inputs": {
+            "width": 1024, "height": 1024, "batch_size": 1}},
+        "s": {"class_type": "SamplerCustomAdvanced", "inputs": {
+            "noise": ["n", 0], "guider": ["g", 0], "sampler": ["ks", 0],
+            "sigmas": ["sc", 0], "latent_image": ["lat", 0]}},
+        "d": {"class_type": "VAEDecode", "inputs": {"samples": ["s", 0], "vae": ["v", 0]}},
+        "o": {"class_type": "SaveImage", "inputs": {
+            "images": ["d", 0], "filename_prefix": "maestro_tile"}},
+    }
+
+
 def build_tile_job(theme: str, role: str = "open") -> dict:
     """Return a job for ONE walkable-map terrain tile: a square, top-down surface TEXTURE of
     `theme` (e.g. 'frozen stream', 'temple stone'). Never say 'map tile' — models draw a picture
     OF a map. The saved image is post-processed seamless + downscaled (`make_seamless_tile`); the
-    overworld repeats it per cell, so it must be a uniform material, not a scene."""
+    overworld repeats it per cell, so it must be a uniform material, not a scene. Renders on the
+    ideogram4 endpoint (`comfyui.tile_endpoint`) when configured, else the default endpoint's
+    DreamShaper formulas."""
     if role == "blocked":
         key = "blocked_wall" if any(w in theme.lower() for w in _TILE_WALLISH) \
             else "blocked_organic"
     else:
         key = "open"
+    tile_endpoint = _get_comfyui_settings().get("tile_endpoint", "").rstrip("/")
+    if tile_endpoint:
+        caption = _ideogram_tile_caption(theme, key)
+        return {
+            "prompt": caption,
+            "workflow_override": _build_ideogram_tile_workflow(caption),
+            "endpoint": tile_endpoint,
+        }
     positive = _TILE_FORMULAS[key].format(t=theme)
     return {
         "prompt": positive,
@@ -691,11 +813,15 @@ def vram_bracket():
     """Free ComfyUI/LM-Studio VRAM for the duration, reloading the LLM on exit. Lets a caller
     run several `run_jobs` passes (e.g. neutral bases then img2img emotion variants) inside ONE
     unload/reload cycle instead of paying it per pass. No-op unless `comfyui.vram_management`."""
-    vram_management = _get_comfyui_settings().get("vram_management", False)
-    endpoint = _get_comfyui_endpoint()
+    cfg = _get_comfyui_settings()
+    vram_management = cfg.get("vram_management", False)
+    endpoints = [_get_comfyui_endpoint()]
+    if cfg.get("tile_endpoint", "").rstrip("/"):
+        endpoints.append(cfg["tile_endpoint"].rstrip("/"))
     unloaded_model: Optional[str] = None
     if vram_management:
-        _comfyui_free_vram(endpoint)
+        for ep in endpoints:
+            _comfyui_free_vram(ep)
         unloaded_model = _llm_get_loaded_model()
         if unloaded_model:
             _llm_unload(unloaded_model)
@@ -703,19 +829,22 @@ def vram_bracket():
         yield
     finally:
         if vram_management:
-            _comfyui_free_vram(endpoint)
+            for ep in endpoints:
+                _comfyui_free_vram(ep)
             if unloaded_model:
                 _llm_load(unloaded_model)
 
 
 def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Run image jobs sequentially (no VRAM management — wrap in `vram_bracket`). Each job:
-    {"prompt": str, "workflow_override": dict | None}. Results returned in job order."""
+    {"prompt": str, "workflow_override": dict | None, "endpoint": str | absent} — a job
+    carrying its own endpoint (ideogram4 tiles) renders there instead of the default."""
     endpoint = _get_comfyui_endpoint()
     results = []
     for job in jobs:
         try:
-            result = _run_comfyui_job(endpoint, job["prompt"], job.get("workflow_override"))
+            result = _run_comfyui_job(job.get("endpoint") or endpoint, job["prompt"],
+                                      job.get("workflow_override"))
         except Exception as e:
             logger.error(f"run_jobs job failed: {e}")
             result = {"success": False, "error": str(e)}

@@ -90,6 +90,7 @@ func run_place(place_id, spawn):
 	var oy := (720 - tile * gh) / 2
 
 	var layer := _build_layer(rows, legend, gw, gh, tile, ox, oy, inter)
+	_draw_features(layer, place.get("footprints", {}), tile, ox, oy)
 
 	var ax := 0
 	var ay := 0
@@ -359,6 +360,29 @@ func _tile_texture(theme: String):
 		tex = g._texture_file("tile_%s.png" % _slug(theme))
 	_tex_cache[theme] = tex
 	return tex
+
+
+# Generated object sprites over stamped footprints — a building reads as a building, not a
+# mosaic of blocked tiles. The mosaic stays underneath (sprite is matted transparent), so a
+# missing asset degrades to the old look. The sprite overhangs upward half a tile for a hint
+# of elevation.
+func _draw_features(layer: Control, footprints, tile: int, ox: int, oy: int) -> void:
+	if typeof(footprints) != TYPE_DICTIONARY:
+		return
+	for fid in footprints:
+		var fp = footprints[fid]
+		var tex = g._texture_file("feature_%s.png" % _slug(String(fp.get("label", ""))))
+		if tex == null:
+			continue
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		var over := int(tile / 2.0)
+		tr.position = Vector2(ox + int(fp["x"]) * tile, oy + int(fp["y"]) * tile - over)
+		tr.size = Vector2(int(fp["w"]) * tile, int(fp["h"]) * tile + over)
+		tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		layer.add_child(tr)
 
 
 # Byte-for-byte the same rule as renpy/fns.tile_slug so the filename the generator wrote matches.

@@ -209,11 +209,16 @@ def _wiring_prompt(m, context, error: Error) -> CorrectionPrompt:
                      available_tools=_WIRING_TOOLS)
     system = load_prompt("state_fix.txt")
     art = context.artifact
+    # Observed park: with no nodes authored yet the model invented plausible node ids and
+    # burned all 6 fix attempts on edit_node — say the node path is closed outright.
+    no_nodes = [] if (art.get("nodes") or {}).get("nodes") else [
+        "", "There are NO dialogue nodes in this artifact — edit_node CANNOT work. Fix on the "
+        "PLACE side (edit_place / add_interactable use-outcome effects) or cut the value."]
     user = "\n".join(
         cr.spec_block(rd) + [""] + cr.todo_block(rd.get("todo", []))
         + cr.target_block(rd) + _wiring_report(context) + _catalog_block(context, error)
         + inventory.items_block(art) + scenes.nodes_index_block(art)
-        + world.places_index_block(art)
+        + world.places_index_block(art) + no_nodes
         + cr.tail_block(rd) + ["", "Make the one edit that wires the TARGET value (give it the "
                               "missing producer or consumer) WITHOUT touching another value's "
                               "wiring, or cut it. Tool call only."])

@@ -95,7 +95,10 @@ SKEL_STORY = (
 class Story(Module):
     id = "story"
     description = ("A dramatic plan: the central question, a beat-sheet arc, and distinct endings. "
-                   "Include for story-forward games; it makes the cast richer and the script branch.")
+                   "REQUIRED whenever the story you wrote has a plot arc, named endings, or "
+                   "characters whose conversations matter — without it the script has no "
+                   "narrative floor and dialogue may never be authored. Skip only for a pure "
+                   "puzzle-box with no story to tell.")
     priority = 30
     component = "story"
     mode_prompt = "story_write.txt"

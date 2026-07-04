@@ -6,7 +6,13 @@ extends RefCounted
 
 const IRCore = preload("res://ir.gd")
 
+signal _picked
+
 var g  # Game driver
+var _ui: Control = null          # bars + banner + popups layer
+var _sprites := []               # staged combatant TextureRects, index-aligned with units
+var _bars := []                  # {fill, value, name_lbl, status_lbl, max} per unit index
+var _pick := -1
 
 
 func _init(game) -> void:
@@ -20,6 +26,8 @@ func run(enc_id):
 	var units := []
 	for c in enc["combatants"]:
 		units.append(_make_unit(c))
+	_units_ctx = units
+	_stage(units)
 
 	await g.show_line(null, "The fight begins.")
 	g.hide_dialogue()
@@ -41,12 +49,14 @@ func run(enc_id):
 				return _finish(enc, res)
 			if not u.alive:
 				continue
-			_update_hud(units)
+			_refresh_bars(units)
 			if not _blocked(u):
+				_banner_text("%s's turn" % u["name"])
 				if u.faction == "player":
 					await _player_turn(u, units)
 				else:
 					await _enemy_turn(u, units)
+				_refresh_bars(units)
 			res = _check_end(enc, units)
 			if res != "":
 				return _finish(enc, res)
@@ -54,9 +64,211 @@ func run(enc_id):
 
 func _finish(enc, res: String):
 	g.set_hud("")
+	_teardown()
 	if res == "victory":
 		return enc.get("on_victory")
 	return enc.get("on_defeat", {"type": "end", "ending": "game_over"})
+
+
+# ── combat UI: staged fighters, bar panels, banner, popups ──────────────────────────────────
+# The old presentation was one white HUD string + the shared dialogue menu — fighters were
+# invisible. Everything here uses assets that already exist (character sprites) plus plain
+# Controls; no new generation.
+const _PANEL_W := 360
+const _PANEL_H := 68
+const _BOTTOM := 190.0   # dialogue panel clearance
+
+
+func _stage(units) -> void:
+	_teardown()
+	g.set_hud("")
+	for c in g.sprites_node().get_children():
+		c.queue_free()
+	_ui = Control.new()
+	_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	g.add_child(_ui)
+	var vp: Vector2 = g.get_viewport_rect().size
+	var left_n := 0
+	var right_n := 0
+	_sprites.clear()
+	_bars.clear()
+	for i in units.size():
+		var u = units[i]
+		var is_player: bool = u["faction"] == "player"
+		# sprite, players from the left edge, enemies mirrored from the right
+		var tr: TextureRect = null
+		var cb = g.combatant_by_id.get(u["ref"], {})
+		if cb.has("character") and g.chars.has(cb["character"]) \
+				and g.chars[cb["character"]].has("sprite"):
+			var tex = g._texture_file(g.chars[cb["character"]]["sprite"])
+			if tex != null:
+				tr = TextureRect.new()
+				tr.texture = tex
+				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				tr.size = Vector2(300, 430)
+				tr.flip_h = not is_player
+				var slot = left_n if is_player else right_n
+				var x = 90 + slot * 200 if is_player else vp.x - 90 - 300 - slot * 200
+				tr.position = Vector2(x, vp.y - _BOTTOM - 430)
+				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				g.sprites_node().add_child(tr)
+		_sprites.append(tr)
+		# bar panel, stacked per side
+		var slot2 = left_n if is_player else right_n
+		var px = 24.0 if is_player else vp.x - _PANEL_W - 24.0
+		var py = 20.0 + slot2 * (_PANEL_H + 10)
+		var panel := ColorRect.new()
+		panel.color = Color(0.08, 0.08, 0.11, 0.82)
+		panel.position = Vector2(px, py)
+		panel.size = Vector2(_PANEL_W, _PANEL_H)
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ui.add_child(panel)
+		var nm := Label.new()
+		nm.text = u["name"]
+		nm.position = Vector2(px + 12, py + 6)
+		nm.add_theme_font_size_override("font_size", 18)
+		_ui.add_child(nm)
+		var val := Label.new()
+		val.position = Vector2(px + _PANEL_W - 86, py + 8)
+		val.add_theme_font_size_override("font_size", 15)
+		val.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9))
+		_ui.add_child(val)
+		var track := ColorRect.new()
+		track.color = Color(0.2, 0.2, 0.24)
+		track.position = Vector2(px + 12, py + 36)
+		track.size = Vector2(_PANEL_W - 24, 14)
+		track.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ui.add_child(track)
+		var fill := ColorRect.new()
+		fill.color = Color(0.28, 0.66, 0.36) if is_player else Color(0.78, 0.28, 0.24)
+		fill.position = track.position
+		fill.size = track.size
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ui.add_child(fill)
+		var st := Label.new()
+		st.position = Vector2(px + 12, py + 50)
+		st.add_theme_font_size_override("font_size", 12)
+		st.add_theme_color_override("font_color", Color(0.95, 0.8, 0.4))
+		_ui.add_child(st)
+		_bars.append({"fill": fill, "track_w": track.size.x, "value": val, "status": st,
+			"name_lbl": nm, "sprite": tr})
+		if is_player:
+			left_n += 1
+		else:
+			right_n += 1
+	var banner := Label.new()
+	banner.name = "turn_banner"
+	banner.position = Vector2(vp.x / 2 - 140, 16)
+	banner.size = Vector2(280, 34)
+	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner.add_theme_font_size_override("font_size", 20)
+	banner.add_theme_color_override("font_color", Color(0.95, 0.87, 0.5))
+	banner.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_ui.add_child(banner)
+
+
+func _teardown() -> void:
+	if _ui != null and is_instance_valid(_ui):
+		_ui.queue_free()
+	_ui = null
+	for s in _sprites:
+		if s != null and is_instance_valid(s):
+			s.queue_free()
+	_sprites.clear()
+	_bars.clear()
+
+
+func _banner_text(t: String) -> void:
+	if _ui == null:
+		return
+	var b = _ui.get_node_or_null("turn_banner")
+	if b != null:
+		b.text = t
+
+
+func _refresh_bars(units) -> void:
+	if _bars.size() != units.size():
+		return
+	for i in units.size():
+		var u = units[i]
+		var bar = _bars[i]
+		var cur := 0.0
+		var mx := 1.0
+		for sid in u["stats"]:
+			var sdef = g.stat_by_id.get(sid, {})
+			if sdef.get("role") == "resource_depletable":
+				cur = float(u["stats"][sid])
+				mx = max(float(sdef.get("max", 1.0)), cur, 1.0)
+				break
+		bar["fill"].size.x = bar["track_w"] * clamp(cur / mx, 0.0, 1.0)
+		bar["value"].text = "%d/%d" % [int(cur), int(mx)] if u["alive"] else "down"
+		var chips := []
+		for stx in u["statuses"]:
+			chips.append("%s(%d)" % [stx["id"], int(stx.get("left", 1))])
+		bar["status"].text = "  ".join(chips)
+		if not u["alive"]:
+			bar["name_lbl"].add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+			if bar["sprite"] != null and is_instance_valid(bar["sprite"]):
+				bar["sprite"].modulate = Color(0.4, 0.4, 0.4, 0.55)
+
+
+func _popup(units, tg, text: String, col: Color) -> void:
+	if _ui == null:
+		return
+	var i = units.find(tg)
+	var vp: Vector2 = g.get_viewport_rect().size
+	var x = vp.x / 2.0
+	if i >= 0 and _sprites[i] != null and is_instance_valid(_sprites[i]):
+		x = _sprites[i].position.x + 150
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.position = Vector2(x, vp.y - _BOTTOM - 470)
+	lbl.add_theme_font_size_override("font_size", 34)
+	lbl.add_theme_color_override("font_color", col)
+	lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_ui.add_child(lbl)
+	var tw = g.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(lbl, "position:y", lbl.position.y - 46, 0.7)
+	tw.tween_property(lbl, "modulate:a", 0.0, 0.7)
+	tw.chain().tween_callback(lbl.queue_free)
+
+
+func _menu_buttons(entries: Array, note: String = "") -> int:
+	# Combat's own picker: a bottom strip holding name + cost-sub buttons (wrapping 4 per row)
+	# and the actor's resource line. The shared g.show_menu stays untouched for dialogue choices.
+	var vp: Vector2 = g.get_viewport_rect().size
+	var row := Control.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui.add_child(row)
+	var strip := ColorRect.new()
+	strip.color = Color(0.05, 0.05, 0.08, 0.8)
+	strip.position = Vector2(0, vp.y - _BOTTOM)
+	strip.size = Vector2(vp.x, _BOTTOM)
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(strip)
+	for i in entries.size():
+		var e = entries[i]
+		var b := Button.new()
+		b.text = e["label"] if e["sub"] == "" else "%s\n%s" % [e["label"], e["sub"]]
+		b.position = Vector2(24 + (i % 4) * 250, vp.y - _BOTTOM + 16 + int(i / 4.0) * 76)
+		b.size = Vector2(238, 66)
+		b.pressed.connect(func():
+			_pick = i
+			_picked.emit())
+		row.add_child(b)
+	if note != "":
+		var nl := Label.new()
+		nl.text = note
+		nl.position = Vector2(24, vp.y - 34)
+		nl.add_theme_font_size_override("font_size", 15)
+		nl.add_theme_color_override("font_color", Color(0.55, 0.7, 0.95))
+		row.add_child(nl)
+	await _picked
+	row.queue_free()
+	return _pick
 
 
 func _any_alive(units) -> bool:
@@ -83,7 +295,7 @@ func _make_unit(c: Dictionary) -> Dictionary:
 # ── turns ───────────────────────────────────────────────────────────────────────────────────
 func _player_turn(u, units) -> void:
 	var ids := []
-	var labels := []
+	var entries := []
 	for aid in u["abilities"]:
 		var ab = g.ability_by_id.get(aid)
 		if ab == null:
@@ -93,12 +305,29 @@ func _player_turn(u, units) -> void:
 		if not _can_afford(u, ab):
 			continue
 		ids.append(aid)
-		labels.append(ab.get("name", aid))
+		var costs := []
+		for cost in ab.get("cost", []):
+			costs.append("%d %s" % [int(cost["amount"]), cost["stat"]])
+		entries.append({"label": ab.get("name", aid), "sub": ", ".join(costs)})
 	if ids.is_empty():
 		await g.show_line(u["name"], "%s can do nothing." % u["name"])
 		g.hide_dialogue()
 		return
-	var ab = g.ability_by_id[ids[await g.show_menu(labels)]]
+	var seen := {}
+	var notes := []
+	for aid in u["abilities"]:
+		var ab2 = g.ability_by_id.get(aid)
+		if ab2 == null:
+			continue
+		for cost in ab2.get("cost", []):
+			var sid = cost["stat"]
+			if seen.has(sid):
+				continue
+			seen[sid] = true
+			var sdef = g.stat_by_id.get(sid, {})
+			notes.append("%s  %d/%d" % [sdef.get("name", sid),
+				int(u["stats"].get(sid, 0)), int(sdef.get("max", 0))])
+	var ab = g.ability_by_id[ids[await _menu_buttons(entries, "   ".join(notes))]]
 	var targets = await _choose_targets(u, ab, units)
 	await _resolve(u, ab, targets)
 
@@ -127,10 +356,10 @@ func _choose_targets(user, ab, units) -> Array:
 		return pool
 	if pool.size() <= 1:
 		return pool
-	var names := []
+	var entries := []
 	for u in pool:
-		names.append(u["name"])
-	return [pool[await g.show_menu(names)]]
+		entries.append({"label": u["name"], "sub": ""})
+	return [pool[await _menu_buttons(entries)]]
 
 
 func _valid_targets(user, ab, units) -> Array:
@@ -163,10 +392,15 @@ func _resolve(user, ab, targets) -> void:
 	g.hide_dialogue()
 	for tg in targets:
 		for ce in ab.get("effects", []):
-			_apply_combat_effect(user, tg, ce)
+			_apply_combat_effect(user, tg, ce, _units_ctx)
+	if _units_ctx != null:
+		_refresh_bars(_units_ctx)
 
 
-func _apply_combat_effect(user, tg, ce) -> void:
+var _units_ctx = null  # set by run(); popups locate the target's sprite through it
+
+
+func _apply_combat_effect(user, tg, ce, units = null) -> void:
 	if ce.has("stat"):
 		var sid = ce["stat"]
 		var mag := _formula(user, ce.get("formula"))
@@ -176,7 +410,13 @@ func _apply_combat_effect(user, tg, ce) -> void:
 			"heal": cur += mag
 			"set": cur = mag
 			"add": cur += mag
+		var before := float(tg["stats"].get(sid, 0))
 		tg["stats"][sid] = _clamp(sid, cur)
+		var delta := float(tg["stats"][sid]) - before
+		if units != null and delta != 0.0 \
+				and g.stat_by_id.get(sid, {}).get("role") == "resource_depletable":
+			var col := Color(1, 0.35, 0.27) if delta < 0 else Color(0.45, 1, 0.55)
+			_popup(units, tg, "%+d" % int(delta), col)
 		_recompute_alive(tg)
 	elif ce.has("status"):
 		if ce.get("remove", false):
@@ -233,7 +473,7 @@ func _tick_statuses(u) -> void:
 	for st in u["statuses"]:
 		var sdef = g.status_by_id.get(st["id"], {})
 		for ce in sdef.get("tick", []):
-			_apply_combat_effect(u, u, ce)
+			_apply_combat_effect(u, u, ce, _units_ctx)
 		st["left"] = int(st.get("left", 1)) - 1
 		if st["left"] > 0:
 			keep.append(st)
@@ -266,18 +506,3 @@ func _cond_met(c, units) -> bool:
 	return false
 
 
-func _update_hud(units) -> void:
-	var parts := []
-	for u in units:
-		parts.append("%s%s" % [u["name"], _depletable_str(u)])
-	g.set_hud("    ".join(parts))
-
-
-func _depletable_str(u) -> String:
-	if not u["alive"]:
-		return " (down)"
-	for sid in u["stats"]:
-		var sdef = g.stat_by_id.get(sid, {})
-		if sdef.get("role") == "resource_depletable":
-			return " (%d/%d)" % [int(u["stats"][sid]), int(sdef.get("max", u["stats"][sid]))]
-	return ""

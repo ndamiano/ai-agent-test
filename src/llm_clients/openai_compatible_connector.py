@@ -205,6 +205,7 @@ class OpenAICompatibleConnector(BaseConnector):
         self._response_format_supported = True
         self._streaming_works = True
         self._context_length: Optional[int] = None
+        self._resident_model: Optional[str] = None
 
         # The API root: a base_url already carrying a version segment ("/v1") is used as-is; a
         # bare host gets "/v1" appended. responses/models endpoints all derive from it.
@@ -258,7 +259,8 @@ class OpenAICompatibleConnector(BaseConnector):
         return result
 
     def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None,
-                            max_tokens: int = None, reasoning=_REASONING_UNSET) -> dict:
+                            max_tokens: int = None, reasoning=_REASONING_UNSET,
+                            model: str = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -266,15 +268,55 @@ class OpenAICompatibleConnector(BaseConnector):
             return {"error": error_msg}
 
         request_id = str(uuid.uuid4())
-        return self._call_responses(messages, tools, response_format, max_tokens, request_id, reasoning)
+        return self._call_responses(messages, tools, response_format, max_tokens, request_id,
+                                    reasoning, model=model)
+
+    def _evict_for(self, target_model: str) -> None:
+        """llama-server's router autoloads but never evicts — two ~22GB models can't coexist, so
+        a model switch 500s with 'failed to load' until the resident child dies. When the target
+        differs from the last model this connector used, ask the router to unload the old one
+        (best-effort: servers without the endpoint just 404 and nothing changes)."""
+        last = self._resident_model
+        self._resident_model = target_model
+        if not last or last == target_model:
+            return
+        self._evict_others(target_model)
+
+    def _evict_others(self, target_model: str) -> bool:
+        """Ask the router which models are loaded and unload every one except the target,
+        then WAIT until they actually report unloaded — the child process takes seconds to
+        release VRAM, and an immediate retry races it back into 'failed to load'. Returns
+        True if anything was unloaded (i.e. a retry is worth it)."""
+        def _loaded():
+            resp = self._get_session().get(f"{self.base_url}/models",
+                                           headers=self._prepare_headers(), timeout=15)
+            return [m["id"] for m in resp.json().get("data", [])
+                    if m.get("id") != target_model
+                    and (m.get("status") or {}).get("value") not in (None, "unloaded")]
+
+        try:
+            loaded = _loaded()
+            for mid in loaded:
+                self._get_session().post(f"{self.base_url}/models/unload", json={"model": mid},
+                                         headers=self._prepare_headers(), timeout=30)
+                logger.info("evicted %s to make room for %s", mid, target_model)
+            if not loaded:
+                return False
+            deadline = time.time() + 90
+            while time.time() < deadline and _loaded():
+                time.sleep(2)
+            return True
+        except Exception:
+            logger.warning("evict-others failed", exc_info=True)
+            return False
 
     def _responses_payload(self, messages: list, tools: list, response_format: Optional[dict],
                            max_tokens: Optional[int], stream: bool,
-                           reasoning=_REASONING_UNSET) -> dict:
+                           reasoning=_REASONING_UNSET, model: str = None) -> dict:
         """Build the Responses-API request body from chat-shaped inputs."""
         instructions, input_items = _chat_messages_to_responses_input(messages)
         payload = {
-            "model": self.model_name,
+            "model": model or self.model_name,
             "input": input_items,
             "temperature": 0.7,
             "max_output_tokens": max_tokens if max_tokens is not None else self.max_tokens,
@@ -305,14 +347,15 @@ class OpenAICompatibleConnector(BaseConnector):
 
     def _call_responses(self, messages: list, tools: list, response_format: Optional[dict],
                         max_tokens: Optional[int], request_id: str,
-                        reasoning=_REASONING_UNSET) -> dict:
+                        reasoning=_REASONING_UNSET, model: str = None) -> dict:
         """Call the OpenAI-compatible Responses endpoint, translating to/from chat shape.
 
         The Responses API honors reasoning.effort — how we keep a local reasoning model from
         spending ~30k tokens thinking per node. Speaks the same {choices, usage} shape back to
         callers as the old chat path did, so call sites are unchanged."""
+        self._evict_for(model or self.model_name)
         payload = self._responses_payload(messages, tools, response_format, max_tokens,
-                                          stream=False, reasoning=reasoning)
+                                          stream=False, reasoning=reasoning, model=model)
         endpoint = self.api_endpoint
         _log_request_to_file(payload=payload, endpoint=endpoint, request_id=request_id,
                              metadata={"method": "responses", "model": self.model_name,
@@ -330,6 +373,21 @@ class OpenAICompatibleConnector(BaseConnector):
                 _log_response_to_file(raw, endpoint, request_id,
                                       {"method": "responses", "model": self.model_name})
                 return result
+            # Router couldn't load the target model — usually another model is holding the
+            # VRAM (the router autoloads but never evicts). Unload everything else and retry.
+            if response.status_code == 500 and "failed to load" in response.text:
+                if self._evict_others(payload["model"]):
+                    response = self._get_session().post(
+                        endpoint, json=payload, headers=self._prepare_headers(), timeout=300)
+                    if response.status_code == 200:
+                        raw = self._unwrap_response(response.json())
+                        result = _responses_to_chat(raw)
+                        _log_call(payload["model"], len(messages), bool(tools),
+                                  time.perf_counter() - t0, result)
+                        self._log_llm(messages, result)
+                        _log_response_to_file(raw, endpoint, request_id,
+                                              {"method": "responses", "model": payload["model"]})
+                        return result
             # Server doesn't understand text.format — drop it and retry once so structured
             # output degrades to free-form rather than failing the whole call.
             if response_format and "format" in response.text:

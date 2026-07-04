@@ -13,6 +13,10 @@ ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 class LLMStudioSettings(BaseModel):
     base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
+    dialogue_model: str = Field("", description=(
+        "Optional second model for DIALOGUE inference only (the scene turn loop + closer). "
+        "Lets a strong prose model speak the lines while `model` keeps doing tools/JSON. "
+        "Empty = use `model` for everything."))
     max_tokens: int = Field(50000, ge=1)
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
     reasoning: Optional[ReasoningLevel] = None

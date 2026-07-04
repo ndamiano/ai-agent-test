@@ -42,17 +42,26 @@ def filter_schemas(allowed, schemas=None):
     return [s for s in schemas if s.get("function", {}).get("name") in allowed]
 
 
-def parse_args(raw: str) -> Dict:
+def parse_args(raw) -> Dict:
+    # Some templates (observed: gemma via llama.cpp) hand arguments back already-parsed, or
+    # mangled into a dict whose single KEY is the JSON blob — normalize every shape to a dict.
+    if isinstance(raw, dict):
+        if len(raw) == 1:
+            k, v = next(iter(raw.items()))
+            if k.lstrip().startswith("{") and v in ("", None):
+                return parse_args(k)
+        return raw
     raw = (raw or "{}").strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         raw = raw[4:] if raw.startswith("json") else raw
         raw = raw.strip()
     try:
-        return json.loads(raw or "{}")
+        parsed = json.loads(raw or "{}")
     except json.JSONDecodeError:
         logger.warning("unparseable tool args: %r", raw)
         return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def salvage_tool_call(content: str, schemas) -> Optional[Dict]:
@@ -193,8 +202,12 @@ class Services:
             c.set_status("running")
             self._emit("build_resumed", step=self.spent)
 
-    def infer(self, messages, schemas, reasoning: Optional[str] = None, max_tokens: Optional[int] = None):
-        """One LLM call — checkpointed, budgeted. Raises BudgetExhausted when the per-fix cap is hit."""
+    def infer(self, messages, schemas, reasoning: Optional[str] = None,
+              max_tokens: Optional[int] = None, dialogue: bool = False):
+        """One LLM call — checkpointed, budgeted. Raises BudgetExhausted when the per-fix cap is
+        hit. dialogue=True routes to the configured dialogue model (settings
+        lmstudio.dialogue_model) when one is set — prose calls go to the model that writes the
+        most human lines; tool/JSON steps stay on the primary."""
         self.checkpoint()
         if self.spent >= self.budget:
             raise BudgetExhausted()
@@ -203,6 +216,12 @@ class Services:
         eff = reasoning or ("high" if self.escalate else None)
         if eff:
             kw["reasoning"] = eff
+        if dialogue:
+            from config.settings_manager import settings_manager
+            dm = ((settings_manager.get_settings().get("lmstudio") or {})
+                  .get("dialogue_model") or "").strip()
+            if dm:
+                kw["model"] = dm
         return self.conn.generate_with_tools(messages, schemas, **kw)
 
     def dispatch(self, name, args) -> Dict:

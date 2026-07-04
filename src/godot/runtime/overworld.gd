@@ -245,12 +245,33 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter, covered := {}) -> C
 			# open ground gets a thin highlight. Pure overlays, works over textures and fills.
 			if role == "blocked":
 				if below_open:
-					var face := ColorRect.new()
-					face.position = pos + Vector2(0, siz.y * 0.5)
-					face.size = Vector2(siz.x, siz.y * 0.5)
-					face.color = Color(0, 0, 0, 0.51)
-					face.mouse_filter = Control.MOUSE_FILTER_IGNORE
-					layer.add_child(face)
+					var ftex = _tile_texture(theme)
+					if ftex != null:
+						# The face shows the wall MATERIAL, vertically squashed (top third of
+						# this cell's texture region) and darkened — masonry on the face, not
+						# a flat black card. The plain band stays as the no-texture fallback.
+						var third_w = ftex.get_width() / 3.0
+						var third_h = ftex.get_height() / 3.0
+						var fat := AtlasTexture.new()
+						fat.atlas = ftex
+						fat.region = Rect2((cx % 3) * third_w, (cy % 3) * third_h,
+							third_w, third_h / 3.0)
+						var ftr := TextureRect.new()
+						ftr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+						ftr.stretch_mode = TextureRect.STRETCH_SCALE
+						ftr.texture = fat
+						ftr.position = pos + Vector2(0, siz.y * 0.5)
+						ftr.size = Vector2(siz.x, siz.y * 0.5)
+						ftr.modulate = Color(0.42, 0.40, 0.45)
+						ftr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+						layer.add_child(ftr)
+					else:
+						var face := ColorRect.new()
+						face.position = pos + Vector2(0, siz.y * 0.5)
+						face.size = Vector2(siz.x, siz.y * 0.5)
+						face.color = Color(0, 0, 0, 0.51)
+						face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+						layer.add_child(face)
 					var lip := ColorRect.new()
 					lip.position = pos + Vector2(0, siz.y * 0.5 - 2)
 					lip.size = Vector2(siz.x, 2)

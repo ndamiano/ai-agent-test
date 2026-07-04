@@ -42,7 +42,7 @@ def _schema_errors(ir: Dict) -> List[str]:
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
     for stem in ("brief", "characters", "story", "asset_manifest", "items", "nodes", "places",
-                 "matches", "spec"):
+                 "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))
@@ -69,7 +69,7 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if missing:
         return {"ok": False, "reason":
                 f"the renpy engine has no projection for module(s) {missing} — "
-                f"this game needs an engine that renders them (e.g. web)", **_FAIL}
+                f"this game needs an engine that renders them (e.g. godot)", **_FAIL}
 
     ir = assemble_ir(inputs)
 

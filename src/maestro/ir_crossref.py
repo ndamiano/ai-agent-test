@@ -19,7 +19,7 @@ from typing import Dict, List
 # kinds name something that must be DECLARED (a variable/flag/item/stat); the fix is to declare it
 # wherever that kind is declared (the spine's set_*_meta), so those stay on the declaring component.
 _REFERENCE_KINDS = frozenset({"node", "character", "place", "encounter", "combatant",
-                              "ability", "card_match"})
+                              "ability"})
 
 
 def slice_token(path: str) -> str:
@@ -61,7 +61,6 @@ def crossref_records(ir: Dict) -> List[Dict]:
     abilities = {a["id"] for a in ir.get("abilities", [])}
     combatants = {c["id"] for c in ir.get("combatants", [])}
     encounters = {e["id"] for e in ir.get("encounters", [])}
-    card_matches = {m["id"] for m in ir.get("card_matches", [])}
 
     records: List[Dict] = []
 
@@ -157,7 +156,7 @@ def crossref_records(ir: Dict) -> List[Dict]:
                     "path": f"{path}.node", "ref": action["node"], "kind": "node",
                     "message": (
                         f"{path}.node: talk targets node '{action['node']}' which does not exist — "
-                        f"either change this hotspot to a play_match/examine action (edit_place), or "
+                        f"either change this hotspot to an examine action (edit_place), or "
                         f"write the dialogue node '{action['node']}' in the `nodes` component.")})
         elif t == "move":
             if action["target"] not in places:
@@ -176,11 +175,6 @@ def crossref_records(ir: Dict) -> List[Dict]:
         elif t == "start_combat":
             if action["encounter"] not in encounters:
                 bad(f"{path}.encounter", action["encounter"], "encounter")
-            if "requires" in action:
-                check_condition(action["requires"], f"{path}.requires")
-        elif t == "play_match":
-            if action["match"] not in card_matches:
-                bad(f"{path}.match", action["match"], "card_match")
             if "requires" in action:
                 check_condition(action["requires"], f"{path}.requires")
         # examine resolves nothing
@@ -237,11 +231,21 @@ def crossref_records(ir: Dict) -> List[Dict]:
             if ab not in abilities:
                 bad(f"combatants[{cid}].abilities[{i}]", ab, "ability")
 
+    backgrounds = {b["id"] for b in ir.get("backgrounds", []) if isinstance(b, dict)}
     for enc in ir.get("encounters", []):
         eid = enc.get("id")
         for i, c in enumerate(enc.get("combatants", [])):
             if c["ref"] not in combatants:
                 bad(f"encounters[{eid}].combatants[{i}].ref", c["ref"], "combatant")
+        # observed: a live build shipped ok=True with an encounter background that existed
+        # nowhere in the manifest — every other background reference is gated, this one wasn't
+        if backgrounds and enc.get("background") and enc["background"] not in backgrounds:
+            records.append({
+                "path": f"encounters[{eid}].background", "ref": enc["background"],
+                "kind": "background", "message": (
+                    f"encounters[{eid}].background: '{enc['background']}' is not in "
+                    f"asset_manifest.backgrounds {sorted(backgrounds)} — set it to an existing "
+                    f"background id.")})
         for key in ("victory", "defeat"):
             ec = enc.get(key)
             if isinstance(ec, dict) and "when" in ec:
@@ -249,25 +253,5 @@ def crossref_records(ir: Dict) -> List[Dict]:
         for key in ("on_victory", "on_defeat"):
             if key in enc:
                 check_node_end(enc[key], f"encounters[{eid}].{key}")
-
-    # ── card matches ─────────────────────────────────────────────────────────
-    for m in ir.get("card_matches", []):
-        mid = m.get("id")
-        if m.get("opponent") not in chars:
-            bad(f"card_matches[{mid}].opponent", m.get("opponent"), "character")
-        ante = m.get("ante", {})
-        if ante.get("var") not in variables:
-            records.append({
-                "path": f"card_matches[{mid}].ante.var", "ref": ante.get("var"), "kind": "variable",
-                "message": (
-                    f"card_matches[{mid}].ante.var: '{ante.get('var')}' is not a declared variable — "
-                    f"declare it via set_places_meta(variables=[{{\"id\":\"{ante.get('var')}\","
-                    f"\"default\":100}}]) so the player has a starting balance to ante.")})
-        for key in ("on_win", "on_lose"):
-            res = m.get(key)
-            if isinstance(res, dict):
-                check_effects(res.get("effects"), f"card_matches[{mid}].{key}.effects")
-                if "end" in res:
-                    check_node_end(res["end"], f"card_matches[{mid}].{key}.end")
 
     return records

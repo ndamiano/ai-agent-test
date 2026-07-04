@@ -2,8 +2,8 @@
 
 Assembles the on-disk components into one Game IR (maestro.ir_assemble), gates on cross-reference
 integrity (maestro.ir_crossref) and JSON-Schema validity, then writes a self-contained Godot 4
-project: game.json (the IR) + the static GDScript runtime + placeholder/real art. Returns the same
-structured pass/fail contract as web's compile_ir.
+project: game.json (the IR) + the static GDScript runtime + placeholder/real art. Returns the
+loop's structured pass/fail contract.
 
 Optionally exports a native binary if a `godot` binary + export templates are present; that step is
 best-effort and never fails the build (the runnable project dir is the deliverable).
@@ -30,7 +30,7 @@ _FAIL = {"lint_error_count": None, "project_dir": None}
 def _load(working_dir: Path) -> Dict:
     inputs: Dict = {}
     for stem in ("brief", "characters", "story", "asset_manifest", "items", "nodes", "places",
-                 "matches", "combat", "spec"):
+                 "combat", "spec"):
         path = working_dir / f"{stem}.json"
         if path.exists():
             inputs[stem] = json.loads(path.read_text(encoding="utf-8"))

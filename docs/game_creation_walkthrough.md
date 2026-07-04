@@ -38,10 +38,10 @@ module it can't tie to the story is left out.
 This is the important inversion: the contract is built from code, not transcribed by the
 LLM. `Module.resolve_modules` takes the picks and (1) force-includes the always-on
 foundation (`selectable=False` → `human`, `assets`, `state`), (2) expands each pick's
-`requires` transitively (`scenes`→`cast`, `card_play`→`world`), (3) validates the set has
+`requires` transitively (`scenes`→`cast`), (3) validates the set has
 a realization module (`scenes`/`world`) and is projectable — falling back to a
 visual-novel bundle if not — and (4) derives `spec["engine"]` via `Module.engine_for` =
-the first engine that can project the whole set (`card_play`→`web`, everything else→
+the first engine that can project the whole set (`combat`→`godot`, everything else→
 `renpy`). Sizing is data: each `Module.params()` declares its knob **floors** (int→max,
 list→union when composed); `spec_tools` resolves them into `spec.params`.
 
@@ -135,8 +135,8 @@ The per-step `crossref` done-condition and the final packaging both call
    structured `{path, ref, kind}` routed to the module that can fix it). It runs **twice**
    — as a cheap per-step `crossref` done-condition emitted by the realization module, and
    again inside the engine compile as a backstop.
-3. The engine projects: Ren'Py → `ir_vn`/`ir_pnc` → `script.rpy`; web → `game.json` + the
-   static runtime.
+3. The engine projects: Ren'Py → `ir_vn`/`ir_pnc` → `script.rpy`; Godot → `game.json` + the
+   static GDScript runtime.
 4. The engine's lint / JSON-Schema gate runs; lint errors are attributed back to the
    owning component.
 

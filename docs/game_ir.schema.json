@@ -3,71 +3,106 @@
   "$id": "https://maestro/game_ir.schema.json",
   "title": "Maestro Game IR",
   "description": "Engine-agnostic intermediate representation for a Maestro game. The model emits THIS (plain JSON, in-distribution), and a deterministic backend compiles it to an engine (Ren'Py today; RPGMaker / web / Twine later). Visual assets are referenced by id; their generation spec lives in the separate asset manifest (asset_manifest.schema.json), never as file paths here. Design rationale lives in game_ir_decisions.md.",
-
   "type": "object",
-  "required": ["version", "genre", "start", "nodes"],
+  "required": [
+    "version",
+    "genre",
+    "start",
+    "nodes"
+  ],
   "additionalProperties": false,
   "properties": {
-    "version": { "type": "string", "const": "0.1", "description": "IR schema version." },
-    "genre": { "enum": ["visual_novel", "point_and_click", "rpg"] },
-
+    "version": {
+      "type": "string",
+      "const": "0.1",
+      "description": "IR schema version."
+    },
+    "genre": {
+      "enum": [
+        "visual_novel",
+        "point_and_click",
+        "rpg"
+      ]
+    },
     "meta": {
       "type": "object",
       "description": "Human-facing framing. Premise/title; not load-bearing for the compiler.",
       "properties": {
-        "title": { "type": "string" },
-        "premise": { "type": "string" }
+        "title": {
+          "type": "string"
+        },
+        "premise": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
-
     "characters": {
       "type": "array",
       "description": "Character cast. A dialogue line's `speaker` MUST be an id here (or null for narration).",
-      "items": { "$ref": "#/$defs/character" }
-    },
-    "card_matches": {
-      "type": "array",
-      "description": "Wagering card matches an interactable's play_match action enters. The card rules are engine-implemented (card_model); the IR only parameterizes stakes/opponent/payout. Resolution flows out via on_win/on_lose, mirroring encounters.",
-      "items": { "$ref": "#/$defs/card_match" }
+      "items": {
+        "$ref": "#/$defs/character"
+      }
     },
     "backgrounds": {
       "type": "array",
       "description": "Scene backgrounds lifted from the asset manifest. A node's `location` resolves to an `id` here.",
       "items": {
         "type": "object",
-        "required": ["id", "image_file"],
+        "required": [
+          "id",
+          "image_file"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "$ref": "#/$defs/id" },
-          "image_file": { "type": "string", "description": "filename under game/images/." }
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "image_file": {
+            "type": "string",
+            "description": "filename under game/images/."
+          }
         }
       }
     },
     "items": {
       "type": "array",
       "description": "Inventory items. An id used by a take/use action or an item condition MUST be declared here.",
-      "items": { "$ref": "#/$defs/item" }
+      "items": {
+        "$ref": "#/$defs/item"
+      }
     },
     "flags": {
       "type": "array",
       "description": "Boolean puzzle/story flags, default false. Set by effects, read by conditions.",
-      "items": { "$ref": "#/$defs/id" }
+      "items": {
+        "$ref": "#/$defs/id"
+      }
     },
     "variables": {
       "type": "array",
       "description": "Numeric state (e.g. trust, gold, days). Read by `var` conditions, changed by set_var/add_var effects.",
-      "items": { "$ref": "#/$defs/variable" }
+      "items": {
+        "$ref": "#/$defs/variable"
+      }
     },
-
     "start": {
       "type": "object",
       "description": "Where play begins. A place (PnC/RPG) and/or a node (VN, or an opening cutscene). At least one required.",
       "minProperties": 1,
       "properties": {
-        "place": { "type": "string", "description": "id in `places`" },
-        "node": { "type": "string", "description": "id in `nodes`" },
-        "spawn": { "$ref": "#/$defs/position", "description": "RPG: player start cell within the place." }
+        "place": {
+          "type": "string",
+          "description": "id in `places`"
+        },
+        "node": {
+          "type": "string",
+          "description": "id in `nodes`"
+        },
+        "spawn": {
+          "$ref": "#/$defs/position",
+          "description": "RPG: player start cell within the place."
+        }
       },
       "additionalProperties": false
     },
@@ -75,118 +110,237 @@
       "$ref": "#/$defs/condition",
       "description": "OPTIONAL win condition. When satisfiable, a win action / ending becomes legal. Omit entirely for open-ended games with no win state."
     },
-
     "places": {
       "type": "array",
       "description": "Spatial scenes the player navigates. A 'room' (PnC), a 'town'/'world_map'/'interior' (RPG), or empty (VN). Each holds interactables. Reachability is a graph walk over move/talk targets — no engine parsing.",
-      "items": { "$ref": "#/$defs/place" }
+      "items": {
+        "$ref": "#/$defs/place"
+      }
     },
     "nodes": {
       "type": "array",
       "description": "Dialogue scenes — the genre-invariant core. A list of spoken lines + a terminal control (jump / menu / return / end). Identical across VN, PnC, RPG.",
-      "items": { "$ref": "#/$defs/node" }
+      "items": {
+        "$ref": "#/$defs/node"
+      }
     },
-
     "combat_model": {
-      "enum": ["turn_based", "real_time", "auto", "none"],
+      "enum": [
+        "turn_based",
+        "real_time",
+        "auto",
+        "none"
+      ],
       "default": "none",
       "description": "Projection hint for HOW combat plays. The ONLY place the loop style is named — per-ability data never encodes it. none = no combat. auto = engine's default."
     },
-    "stats": { "type": "array", "items": { "$ref": "#/$defs/stat" } },
-    "statuses": { "type": "array", "items": { "$ref": "#/$defs/status" } },
-    "abilities": { "type": "array", "items": { "$ref": "#/$defs/ability" } },
-    "combatants": { "type": "array", "items": { "$ref": "#/$defs/combatant" } },
+    "stats": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stat"
+      }
+    },
+    "statuses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/status"
+      }
+    },
+    "abilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ability"
+      }
+    },
+    "combatants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/combatant"
+      }
+    },
     "encounters": {
       "type": "array",
       "description": "Combat scenes (combatants placed in an arena + win/lose + node_end resolution). A fight is ENTERED by a start_combat action on any interactable; it resolves out via the encounter's on_victory/on_defeat.",
-      "items": { "$ref": "#/$defs/encounter" }
+      "items": {
+        "$ref": "#/$defs/encounter"
+      }
     }
   },
-
   "$defs": {
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
     "character": {
       "type": "object",
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "name": { "type": "string", "description": "Display name." },
-        "sprite": { "type": "string", "description": "Optional asset id for the neutral portrait/sprite (the base expression)." },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name."
+        },
+        "sprite": {
+          "type": "string",
+          "description": "Optional asset id for the neutral portrait/sprite (the base expression)."
+        },
         "expressions": {
           "type": "object",
           "description": "Optional per-emotion sprite variants ({emotion: image_file}). A line's `emotion` selects one; falls back to `sprite` (neutral) when absent. Derived by the asset pipeline, not hand-authored.",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         },
-        "sex": { "enum": ["male", "female"], "description": "Optional; drives sprite and spoken-voice casting (a TTS bank is filtered by it before the deterministic pick)." },
-        "tts_voice": { "type": "string", "description": "Optional explicit TTS speaker preset; overrides the sex-filtered pick." }
+        "sex": {
+          "enum": [
+            "male",
+            "female"
+          ],
+          "description": "Optional; drives sprite and spoken-voice casting (a TTS bank is filtered by it before the deterministic pick)."
+        },
+        "tts_voice": {
+          "type": "string",
+          "description": "Optional explicit TTS speaker preset; overrides the sex-filtered pick."
+        }
       }
     },
-
     "item": {
       "type": "object",
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "name": { "type": "string" },
-        "examine": { "type": "string", "description": "Flavor text when inspected in inventory." },
-        "icon": { "type": "string", "description": "Optional asset id." }
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string"
+        },
+        "examine": {
+          "type": "string",
+          "description": "Flavor text when inspected in inventory."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Optional asset id."
+        }
       }
     },
-
     "variable": {
       "type": "object",
-      "required": ["id", "default"],
+      "required": [
+        "id",
+        "default"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "default": { "type": "number" },
-        "min": { "type": "number", "description": "Optional clamp floor (advisory — enforced by the compiler if at all)." },
-        "max": { "type": "number", "description": "Optional clamp ceiling (advisory)." }
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "default": {
+          "type": "number"
+        },
+        "min": {
+          "type": "number",
+          "description": "Optional clamp floor (advisory — enforced by the compiler if at all)."
+        },
+        "max": {
+          "type": "number",
+          "description": "Optional clamp ceiling (advisory)."
+        }
       }
     },
-
     "place": {
       "type": "object",
-      "required": ["id", "kind", "interactables"],
+      "required": [
+        "id",
+        "kind",
+        "interactables"
+      ],
       "additionalProperties": false,
       "allOf": [
         {
-          "if": { "properties": { "kind": { "enum": ["world_map", "town", "interior"] } } },
-          "then": { "required": ["tiles"] }
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "world_map",
+                  "town",
+                  "interior"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "tiles"
+            ]
+          }
         }
       ],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
         "kind": {
-          "enum": ["room", "world_map", "town", "interior"],
+          "enum": [
+            "room",
+            "world_map",
+            "town",
+            "interior"
+          ],
           "description": "room = PnC scene (click hotspots); world_map/town/interior = RPG (a walkable tile grid). The runtime picks the presenter from this — room => point-and-click, the rest => the WASD overworld. The compiler picks the engine projection from it too."
         },
-        "background": { "type": "string", "description": "Asset id for a PnC room's backdrop. Walkable maps render their tiles and need no background." },
+        "background": {
+          "type": "string",
+          "description": "Asset id for a PnC room's backdrop. Walkable maps render their tiles and need no background."
+        },
         "tiles": {
           "type": "object",
           "description": "RPG map painted as a char grid. Required for world_map/town/interior; ignored for room. Grid size = the shape of `rows`. Each char resolves via `legend` (or the built-in defaults) to a role: open (walkable) or blocked (wall). interactable/spawn cells must be open tiles within [0,width) x [0,height).",
-          "required": ["rows"],
+          "required": [
+            "rows"
+          ],
           "additionalProperties": false,
           "properties": {
             "rows": {
               "type": "array",
               "description": "One string per grid row (top to bottom); each char is a tile. All rows same length.",
               "minItems": 1,
-              "items": { "type": "string", "minLength": 1 }
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "legend": {
               "type": "object",
               "description": "Maps a single tile char -> its role + theme. Built-in defaults ('.'ground ','path '#'wall 'T'tree '~'water '%'rock) need no entry; declare only new chars or overrides.",
               "additionalProperties": {
                 "type": "object",
-                "required": ["role"],
+                "required": [
+                  "role"
+                ],
                 "additionalProperties": false,
                 "properties": {
-                  "role": { "enum": ["open", "blocked"], "description": "open = walkable, blocked = wall/obstacle. The only tile property the engine reads." },
-                  "theme": { "type": "string", "description": "Free cosmetic label (drives the tile's look), e.g. 'frozen stream', 'neon barrier'." }
+                  "role": {
+                    "enum": [
+                      "open",
+                      "blocked"
+                    ],
+                    "description": "open = walkable, blocked = wall/obstacle. The only tile property the engine reads."
+                  },
+                  "theme": {
+                    "type": "string",
+                    "description": "Free cosmetic label (drives the tile's look), e.g. 'frozen stream', 'neon barrier'."
+                  }
                 }
               }
             }
@@ -195,601 +349,1234 @@
         "interactables": {
           "type": "array",
           "description": "Everything the player can click (PnC) or step on / talk to (RPG). At least one must lead elsewhere or the place is a dead end.",
-          "items": { "$ref": "#/$defs/interactable" }
+          "items": {
+            "$ref": "#/$defs/interactable"
+          }
         }
       }
     },
-
     "interactable": {
       "type": "object",
-      "required": ["id", "action"],
+      "required": [
+        "id",
+        "action"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "label": { "type": "string", "description": "Player-facing name of the thing (hotspot tooltip / NPC name)." },
-        "position": { "$ref": "#/$defs/position" },
-        "sprite": { "type": "string", "description": "Optional asset id (an NPC/object drawn on the map)." },
-        "action": { "$ref": "#/$defs/action" }
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string",
+          "description": "Player-facing name of the thing (hotspot tooltip / NPC name)."
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "sprite": {
+          "type": "string",
+          "description": "Optional asset id (an NPC/object drawn on the map)."
+        },
+        "action": {
+          "$ref": "#/$defs/action"
+        }
       }
     },
-
     "position": {
       "type": "object",
       "description": "Where an interactable sits. Exactly ONE projection: `rect` (on-screen pixel box — PnC/VN, 1280x720 canvas) or `cell` (grid tile — RPG). Room for more projections later.",
       "additionalProperties": false,
       "oneOf": [
-        { "required": ["rect"] },
-        { "required": ["cell"] }
+        {
+          "required": [
+            "rect"
+          ]
+        },
+        {
+          "required": [
+            "cell"
+          ]
+        }
       ],
       "properties": {
         "rect": {
           "type": "object",
           "description": "Pixel box on a 1280x720 canvas.",
-          "required": ["x", "y", "w", "h"],
+          "required": [
+            "x",
+            "y",
+            "w",
+            "h"
+          ],
           "additionalProperties": false,
           "properties": {
-            "x": { "type": "number" },
-            "y": { "type": "number" },
-            "w": { "type": "number", "exclusiveMinimum": 0 },
-            "h": { "type": "number", "exclusiveMinimum": 0 }
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "w": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "h": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
           }
         },
         "cell": {
           "type": "object",
           "description": "Grid coordinates.",
-          "required": ["x", "y"],
+          "required": [
+            "x",
+            "y"
+          ],
           "additionalProperties": false,
           "properties": {
-            "x": { "type": "integer", "minimum": 0 },
-            "y": { "type": "integer", "minimum": 0 }
+            "x": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }
     },
-
     "action": {
       "description": "What happens on interact. The CLOSED verb vocabulary — exactly the six shapes the prompts already enumerate. Discriminated by `type`.",
       "oneOf": [
-        { "$ref": "#/$defs/action_examine" },
-        { "$ref": "#/$defs/action_take" },
-        { "$ref": "#/$defs/action_talk" },
-        { "$ref": "#/$defs/action_move" },
-        { "$ref": "#/$defs/action_use" },
-        { "$ref": "#/$defs/action_win" },
-        { "$ref": "#/$defs/action_start_combat" },
-        { "$ref": "#/$defs/action_play_match" }
+        {
+          "$ref": "#/$defs/action_examine"
+        },
+        {
+          "$ref": "#/$defs/action_take"
+        },
+        {
+          "$ref": "#/$defs/action_talk"
+        },
+        {
+          "$ref": "#/$defs/action_move"
+        },
+        {
+          "$ref": "#/$defs/action_use"
+        },
+        {
+          "$ref": "#/$defs/action_win"
+        },
+        {
+          "$ref": "#/$defs/action_start_combat"
+        }
       ]
     },
-
     "action_examine": {
       "type": "object",
-      "required": ["type", "text"],
+      "required": [
+        "type",
+        "text"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "examine" },
-        "text": { "type": "string", "description": "Description shown, then return to the place." }
+        "type": {
+          "const": "examine"
+        },
+        "text": {
+          "type": "string",
+          "description": "Description shown, then return to the place."
+        }
       }
     },
     "action_take": {
       "type": "object",
-      "required": ["type", "item"],
+      "required": [
+        "type",
+        "item"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "take" },
-        "item": { "type": "string", "description": "item id added to inventory (once)." },
-        "text": { "type": "string" }
+        "type": {
+          "const": "take"
+        },
+        "item": {
+          "type": "string",
+          "description": "item id added to inventory (once)."
+        },
+        "text": {
+          "type": "string"
+        }
       }
     },
     "action_talk": {
       "type": "object",
-      "required": ["type", "node"],
+      "required": [
+        "type",
+        "node"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "talk" },
-        "node": { "type": "string", "description": "node id to play, then return to the place." }
+        "type": {
+          "const": "talk"
+        },
+        "node": {
+          "type": "string",
+          "description": "node id to play, then return to the place."
+        }
       }
     },
     "action_move": {
       "type": "object",
-      "required": ["type", "target"],
+      "required": [
+        "type",
+        "target"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "move" },
-        "target": { "type": "string", "description": "destination place id." },
-        "requires": { "$ref": "#/$defs/condition", "description": "Optional gate (a locked door)." },
-        "spawn": { "$ref": "#/$defs/position", "description": "RPG: arrival cell in the target place." }
+        "type": {
+          "const": "move"
+        },
+        "target": {
+          "type": "string",
+          "description": "destination place id."
+        },
+        "requires": {
+          "$ref": "#/$defs/condition",
+          "description": "Optional gate (a locked door)."
+        },
+        "spawn": {
+          "$ref": "#/$defs/position",
+          "description": "RPG: arrival cell in the target place."
+        }
       }
     },
     "action_use": {
       "type": "object",
       "description": "The interact verb: ordered `clauses` evaluated top-down — the first whose `requires` holds fires its outcome; if none match, `fallback` fires. A simple lock is one clause + a fallback. An UNCONDITIONAL effect (e.g. 'pray → set a flag, always') is just a `fallback` with no clauses. Must carry at least one of `clauses`/`fallback`.",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "anyOf": [
-        { "required": ["clauses"] },
-        { "required": ["fallback"] }
+        {
+          "required": [
+            "clauses"
+          ]
+        },
+        {
+          "required": [
+            "fallback"
+          ]
+        }
       ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "use" },
+        "type": {
+          "const": "use"
+        },
         "clauses": {
           "type": "array",
           "minItems": 1,
           "description": "Evaluated in order; first match wins. Each requires a REAL condition (never an empty {}). Omit entirely for an unconditional outcome — put it in `fallback`.",
-          "items": { "$ref": "#/$defs/use_clause" }
+          "items": {
+            "$ref": "#/$defs/use_clause"
+          }
         },
-        "fallback": { "$ref": "#/$defs/outcome", "description": "Outcome when no clause matches — or, with no clauses, the UNCONDITIONAL outcome (always fires)." }
+        "fallback": {
+          "$ref": "#/$defs/outcome",
+          "description": "Outcome when no clause matches — or, with no clauses, the UNCONDITIONAL outcome (always fires)."
+        }
       }
     },
-
     "use_clause": {
       "type": "object",
-      "required": ["requires", "outcome"],
+      "required": [
+        "requires",
+        "outcome"
+      ],
       "additionalProperties": false,
       "properties": {
-        "requires": { "$ref": "#/$defs/condition" },
-        "outcome": { "$ref": "#/$defs/outcome" }
+        "requires": {
+          "$ref": "#/$defs/condition"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        }
       }
     },
     "action_win": {
       "type": "object",
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "win" },
-        "requires": { "$ref": "#/$defs/condition", "description": "Defaults to the top-level goal if omitted." }
+        "type": {
+          "const": "win"
+        },
+        "requires": {
+          "$ref": "#/$defs/condition",
+          "description": "Defaults to the top-level goal if omitted."
+        }
       }
     },
     "action_start_combat": {
       "type": "object",
       "description": "Enter a combat encounter. Any interactable can start a fight (an aggressive NPC, a trapped chest, a boss door); resolution flows out via the encounter's on_victory/on_defeat.",
-      "required": ["type", "encounter"],
+      "required": [
+        "type",
+        "encounter"
+      ],
       "additionalProperties": false,
       "properties": {
-        "type": { "const": "start_combat" },
-        "encounter": { "type": "string", "description": "encounter id to enter." },
-        "requires": { "$ref": "#/$defs/condition", "description": "Optional gate (only ambushes if a flag is set, etc.)." }
+        "type": {
+          "const": "start_combat"
+        },
+        "encounter": {
+          "type": "string",
+          "description": "encounter id to enter."
+        },
+        "requires": {
+          "$ref": "#/$defs/condition",
+          "description": "Optional gate (only ambushes if a flag is set, etc.)."
+        }
       }
     },
-    "action_play_match": {
-      "type": "object",
-      "description": "Play a wagering card match against an NPC. Any interactable can start one (a gambler, a card table); the match's on_win/on_lose flow resolution back out, mirroring start_combat.",
-      "required": ["type", "match"],
-      "additionalProperties": false,
-      "properties": {
-        "type": { "const": "play_match" },
-        "match": { "type": "string", "description": "card_match id to play." },
-        "requires": { "$ref": "#/$defs/condition", "description": "Optional gate (e.g. must hold enough gold to ante)." }
-      }
-    },
-
     "outcome": {
       "type": "object",
       "description": "The result of a use/choice: say something and/or change state.",
       "minProperties": 1,
       "additionalProperties": false,
       "properties": {
-        "text": { "type": "string" },
-        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } }
-      }
-    },
-
-    "condition": {
-      "description": "A boolean over game state. Leaf (item / flag / var comparison) or composite (all / any / not).",
-      "oneOf": [
-        { "type": "object", "required": ["item"], "additionalProperties": false,
-          "properties": { "item": { "type": "string" } } },
-        { "type": "object", "required": ["flag"], "additionalProperties": false,
-          "properties": { "flag": { "type": "string" } } },
-        { "type": "object", "required": ["var", "op", "value"], "additionalProperties": false,
-          "description": "Numeric comparison. `value` is a literal number OR another variable, e.g. {var:'sleight_of_hand', op:'>', value:{var:'perception'}}.",
-          "properties": {
-            "var": { "type": "string" },
-            "op": { "enum": ["==", "!=", "<", "<=", ">", ">="] },
-            "value": { "$ref": "#/$defs/operand" }
-          } },
-        { "type": "object", "required": ["not"], "additionalProperties": false,
-          "properties": { "not": { "$ref": "#/$defs/condition" } } },
-        { "type": "object", "required": ["all"], "additionalProperties": false,
-          "properties": { "all": { "type": "array", "items": { "$ref": "#/$defs/condition" } } } },
-        { "type": "object", "required": ["any"], "additionalProperties": false,
-          "properties": { "any": { "type": "array", "items": { "$ref": "#/$defs/condition" } } } }
-      ]
-    },
-
-    "operand": {
-      "description": "A number, or a reference to another variable's value.",
-      "oneOf": [
-        { "type": "number" },
-        { "type": "object", "required": ["var"], "additionalProperties": false,
-          "properties": { "var": { "type": "string" } } }
-      ]
-    },
-
-    "effect": {
-      "description": "A mutation of game state.",
-      "oneOf": [
-        { "type": "object", "required": ["set_flag"], "additionalProperties": false,
-          "properties": { "set_flag": { "type": "string" } } },
-        { "type": "object", "required": ["clear_flag"], "additionalProperties": false,
-          "properties": { "clear_flag": { "type": "string" } } },
-        { "type": "object", "required": ["add_item"], "additionalProperties": false,
-          "properties": { "add_item": { "type": "string" } } },
-        { "type": "object", "required": ["remove_item"], "additionalProperties": false,
-          "properties": { "remove_item": { "type": "string" } } },
-        { "type": "object", "required": ["set_var"], "additionalProperties": false,
-          "description": "Set a variable to an absolute value.",
-          "properties": { "set_var": {
-            "type": "object", "required": ["var", "value"], "additionalProperties": false,
-            "properties": { "var": { "type": "string" }, "value": { "type": "number" } } } } },
-        { "type": "object", "required": ["add_var"], "additionalProperties": false,
-          "description": "Increment/decrement a variable by delta.",
-          "properties": { "add_var": {
-            "type": "object", "required": ["var", "delta"], "additionalProperties": false,
-            "properties": { "var": { "type": "string" }, "delta": { "type": "number" } } } } }
-      ]
-    },
-
-    "node": {
-      "type": "object",
-      "required": ["id", "lines", "end"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "location": { "type": "string", "description": "VN: background asset id (resolves to `backgrounds`) shown for this scene. Omitted by PnC dialogue nodes called from a place." },
-        "lines": {
-          "type": "array",
-          "description": "Ordered dialogue beats. Effects attach to a specific line so timing is explicit.",
-          "items": { "$ref": "#/$defs/line" }
+        "text": {
+          "type": "string"
         },
-        "end": { "$ref": "#/$defs/node_end" }
-      }
-    },
-
-    "line": {
-      "type": "object",
-      "required": ["text"],
-      "additionalProperties": false,
-      "properties": {
-        "speaker": {
-          "type": ["string", "null"],
-          "description": "character id, or null for narration."
-        },
-        "emotion": {
-          "enum": ["neutral", "happy", "sad", "angry", "surprised", "worried"],
-          "description": "Optional facial expression for the speaker on this line (default neutral). Selects the speaker's matching sprite variant; ignored for narration (speaker null)."
-        },
-        "text": { "type": "string" },
         "effects": {
           "type": "array",
-          "description": "Optional state changes applied AFTER this line is spoken (give item, set flag, change var).",
-          "items": { "$ref": "#/$defs/effect" }
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
         }
       }
     },
-
+    "condition": {
+      "description": "A boolean over game state. Leaf (item / flag / var comparison) or composite (all / any / not).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "item"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "item": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "flag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "flag": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "var",
+            "op",
+            "value"
+          ],
+          "additionalProperties": false,
+          "description": "Numeric comparison. `value` is a literal number OR another variable, e.g. {var:'sleight_of_hand', op:'>', value:{var:'perception'}}.",
+          "properties": {
+            "var": {
+              "type": "string"
+            },
+            "op": {
+              "enum": [
+                "==",
+                "!=",
+                "<",
+                "<=",
+                ">",
+                ">="
+              ]
+            },
+            "value": {
+              "$ref": "#/$defs/operand"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "not"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/condition"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "all"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "all": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "any"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "any": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "operand": {
+      "description": "A number, or a reference to another variable's value.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "object",
+          "required": [
+            "var"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "var": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "effect": {
+      "description": "A mutation of game state.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "set_flag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "set_flag": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "clear_flag"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "clear_flag": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "add_item"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "add_item": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "remove_item"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "remove_item": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "set_var"
+          ],
+          "additionalProperties": false,
+          "description": "Set a variable to an absolute value.",
+          "properties": {
+            "set_var": {
+              "type": "object",
+              "required": [
+                "var",
+                "value"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "var": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "add_var"
+          ],
+          "additionalProperties": false,
+          "description": "Increment/decrement a variable by delta.",
+          "properties": {
+            "add_var": {
+              "type": "object",
+              "required": [
+                "var",
+                "delta"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "var": {
+                  "type": "string"
+                },
+                "delta": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "lines",
+        "end"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "location": {
+          "type": "string",
+          "description": "VN: background asset id (resolves to `backgrounds`) shown for this scene. Omitted by PnC dialogue nodes called from a place."
+        },
+        "lines": {
+          "type": "array",
+          "description": "Ordered dialogue beats. Effects attach to a specific line so timing is explicit.",
+          "items": {
+            "$ref": "#/$defs/line"
+          }
+        },
+        "end": {
+          "$ref": "#/$defs/node_end"
+        }
+      }
+    },
+    "line": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "speaker": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "character id, or null for narration."
+        },
+        "emotion": {
+          "enum": [
+            "neutral",
+            "happy",
+            "sad",
+            "angry",
+            "surprised",
+            "worried"
+          ],
+          "description": "Optional facial expression for the speaker on this line (default neutral). Selects the speaker's matching sprite variant; ignored for narration (speaker null)."
+        },
+        "text": {
+          "type": "string"
+        },
+        "effects": {
+          "type": "array",
+          "description": "Optional state changes applied AFTER this line is spoken (give item, set flag, change var).",
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
+        }
+      }
+    },
     "node_end": {
       "description": "Terminal control after the lines. jump = continue to another node; menu = branch on player choice; return = back to the calling place (PnC talk / open-world loop); end = the story ends here (a definitive ending).",
       "oneOf": [
-        { "type": "object", "required": ["type", "target"], "additionalProperties": false,
-          "properties": { "type": { "const": "jump" }, "target": { "type": "string" } } },
-        { "type": "object", "required": ["type", "choices"], "additionalProperties": false,
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "target"
+          ],
+          "additionalProperties": false,
           "properties": {
-            "type": { "const": "menu" },
-            "choices": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/choice" } }
-          } },
-        { "type": "object", "required": ["type"], "additionalProperties": false,
-          "properties": { "type": { "const": "return" } } },
-        { "type": "object", "required": ["type"], "additionalProperties": false,
-          "properties": { "type": { "const": "end" }, "ending": { "type": "string", "description": "Optional ending label." } } }
+            "type": {
+              "const": "jump"
+            },
+            "target": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "choices"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "menu"
+            },
+            "choices": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/choice"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "return"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "end"
+            },
+            "ending": {
+              "type": "string",
+              "description": "Optional ending label."
+            }
+          }
+        }
       ]
     },
-
     "choice": {
       "type": "object",
-      "required": ["text", "target"],
+      "required": [
+        "text",
+        "target"
+      ],
       "additionalProperties": false,
       "properties": {
-        "text": { "type": "string", "description": "The choice the player picks." },
-        "target": { "type": "string", "description": "node id this choice jumps to." },
-        "requires": { "$ref": "#/$defs/condition", "description": "Optional: choice only shown/enabled when met." },
-        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" }, "description": "Optional state change on picking." }
+        "text": {
+          "type": "string",
+          "description": "The choice the player picks."
+        },
+        "target": {
+          "type": "string",
+          "description": "node id this choice jumps to."
+        },
+        "requires": {
+          "$ref": "#/$defs/condition",
+          "description": "Optional: choice only shown/enabled when met."
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/effect"
+          },
+          "description": "Optional state change on picking."
+        }
       }
     },
-
     "stat": {
       "type": "object",
       "description": "A declared combat/character stat. The game defines its own stat system rather than the schema hardcoding hp/mp/etc. `role` tells the engine projection HOW to use the stat without encoding a combat loop.",
-      "required": ["id", "default", "role"],
+      "required": [
+        "id",
+        "default",
+        "role"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "default": { "type": "number" },
-        "min": { "type": "number", "description": "Floor. For resource_depletable, reaching min typically means defeated (engine projection decides)." },
-        "max": { "type": "number", "description": "Ceiling. Clamp semantics committed: the compiler MUST clamp to [min,max] on every stat mutation." },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "default": {
+          "type": "number"
+        },
+        "min": {
+          "type": "number",
+          "description": "Floor. For resource_depletable, reaching min typically means defeated (engine projection decides)."
+        },
+        "max": {
+          "type": "number",
+          "description": "Ceiling. Clamp semantics committed: the compiler MUST clamp to [min,max] on every stat mutation."
+        },
         "role": {
-          "enum": ["resource_depletable", "resource_regenerating", "modifier", "rating"],
+          "enum": [
+            "resource_depletable",
+            "resource_regenerating",
+            "modifier",
+            "rating"
+          ],
           "description": "resource_depletable = HP-like, depletes, hitting min = out of fight. resource_regenerating = MP/stamina-like, spent and recovered. modifier = feeds formulas (attack/defense). rating = static descriptor (level/tier), rarely mutated."
         }
       }
     },
-
     "faction": {
-      "enum": ["player", "ally", "enemy", "neutral"],
+      "enum": [
+        "player",
+        "ally",
+        "enemy",
+        "neutral"
+      ],
       "description": "Whose side a combatant is on. Targeting and victory/defeat conditions resolve against this. Engine-independent."
     },
-
     "combatant": {
       "type": "object",
       "description": "What an entity IS in combat: its stat block, abilities, and tie back to a character for name/sprite. Pure data — survives unchanged from text to 2D to 3D.",
-      "required": ["id", "stats"],
+      "required": [
+        "id",
+        "stats"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "character": { "type": "string", "description": "Optional character id for display name/sprite. Combat identity is separate from narrative identity." },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "character": {
+          "type": "string",
+          "description": "Optional character id for display name/sprite. Combat identity is separate from narrative identity."
+        },
         "stats": {
           "type": "array",
           "description": "This combatant's values for declared stats. A stat id not listed uses the stat's declared default.",
           "items": {
             "type": "object",
-            "required": ["stat", "value"],
+            "required": [
+              "stat",
+              "value"
+            ],
             "additionalProperties": false,
             "properties": {
-              "stat": { "type": "string", "description": "stat id" },
-              "value": { "type": "number" }
+              "stat": {
+                "type": "string",
+                "description": "stat id"
+              },
+              "value": {
+                "type": "number"
+              }
             }
           }
         },
         "abilities": {
           "type": "array",
           "description": "ability ids this combatant can use.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
-
     "ability": {
       "type": "object",
       "description": "What an action DOES, never how it looks or how time passes. Cost + targeting intent + stat effects + optional gate. The engine projection owns animation, frame data, hitboxes.",
-      "required": ["id", "targeting", "effects"],
+      "required": [
+        "id",
+        "targeting",
+        "effects"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "name": { "type": "string", "description": "Display name." },
-        "icon": { "type": "string", "description": "Optional asset id." },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Optional asset id."
+        },
         "cost": {
           "type": "array",
           "description": "Resource cost to use. Empty/absent = free.",
           "items": {
             "type": "object",
-            "required": ["stat", "amount"],
+            "required": [
+              "stat",
+              "amount"
+            ],
             "additionalProperties": false,
             "properties": {
-              "stat": { "type": "string", "description": "stat id, should be a resource_* role." },
-              "amount": { "type": "number" }
+              "stat": {
+                "type": "string",
+                "description": "stat id, should be a resource_* role."
+              },
+              "amount": {
+                "type": "number"
+              }
             }
           }
         },
-        "targeting": { "$ref": "#/$defs/targeting" },
+        "targeting": {
+          "$ref": "#/$defs/targeting"
+        },
         "effects": {
           "type": "array",
           "description": "What happens to each target. Reuses combat_effect (stat-aware) — distinct from the narrative `effect` def which mutates game flags/vars/items.",
-          "items": { "$ref": "#/$defs/combat_effect" }
+          "items": {
+            "$ref": "#/$defs/combat_effect"
+          }
         },
-        "requires": { "$ref": "#/$defs/condition", "description": "Optional gate (learned the spell, has the weapon). Reuses your existing condition def." }
+        "requires": {
+          "$ref": "#/$defs/condition",
+          "description": "Optional gate (learned the spell, has the weapon). Reuses your existing condition def."
+        }
       }
     },
-
     "targeting": {
       "type": "object",
       "description": "WHO/WHERE an ability hits, as engine-independent intent. shape + faction + range describe geometry abstractly; the projection turns `cone` into a turn-based group-hit, a 3D collider, or 'the front rank' in text.",
-      "required": ["shape", "faction"],
+      "required": [
+        "shape",
+        "faction"
+      ],
       "additionalProperties": false,
       "properties": {
         "shape": {
-          "enum": ["self", "single", "all", "line", "cone", "area"],
+          "enum": [
+            "self",
+            "single",
+            "all",
+            "line",
+            "cone",
+            "area"
+          ],
           "description": "Abstract hit shape. self = caster. single = one target. all = every valid-faction combatant. line/cone/area = spatial spreads the projection realizes per dimension."
         },
         "faction": {
-          "enum": ["self", "ally", "enemy", "any"],
+          "enum": [
+            "self",
+            "ally",
+            "enemy",
+            "any"
+          ],
           "description": "Which side is a legal target relative to the user."
         },
         "range": {
-          "enum": ["melee", "ranged", "any"],
+          "enum": [
+            "melee",
+            "ranged",
+            "any"
+          ],
           "description": "Engagement distance intent. melee = adjacent/close, ranged = at distance. The projection decides what that means spatially.",
           "default": "any"
         }
       }
     },
-
     "combat_effect": {
       "description": "A change an ability makes to a target's stat, or a status/narrative effect. Kept separate from the top-level `effect` def: that one mutates world state (flags/vars/items), this one operates on combatant stats and statuses. They share spirit, not shape.",
       "oneOf": [
         {
           "type": "object",
           "description": "Modify a stat. `op` + formula. damage/heal are sugar over a signed delta the projection applies and clamps.",
-          "required": ["stat", "op"],
+          "required": [
+            "stat",
+            "op"
+          ],
           "additionalProperties": false,
           "properties": {
-            "stat": { "type": "string", "description": "stat id affected on the target." },
-            "op": { "enum": ["damage", "heal", "set", "add"], "description": "damage = reduce (mitigated by modifiers per formula), heal = restore, set = absolute, add = signed delta unmitigated." },
-            "formula": { "$ref": "#/$defs/formula" }
+            "stat": {
+              "type": "string",
+              "description": "stat id affected on the target."
+            },
+            "op": {
+              "enum": [
+                "damage",
+                "heal",
+                "set",
+                "add"
+              ],
+              "description": "damage = reduce (mitigated by modifiers per formula), heal = restore, set = absolute, add = signed delta unmitigated."
+            },
+            "formula": {
+              "$ref": "#/$defs/formula"
+            }
           }
         },
         {
           "type": "object",
           "description": "Apply or remove a status (poison, stun, shield). Statuses are declared like flags but live on a combatant.",
-          "required": ["status"],
+          "required": [
+            "status"
+          ],
           "additionalProperties": false,
           "properties": {
-            "status": { "type": "string", "description": "status id." },
-            "remove": { "type": "boolean", "description": "true = cleanse instead of apply.", "default": false },
-            "duration": { "type": "number", "description": "Engine-interpreted: turns (turn-based) or seconds (real-time). Units are a projection concern; the number is intent." }
+            "status": {
+              "type": "string",
+              "description": "status id."
+            },
+            "remove": {
+              "type": "boolean",
+              "description": "true = cleanse instead of apply.",
+              "default": false
+            },
+            "duration": {
+              "type": "number",
+              "description": "Engine-interpreted: turns (turn-based) or seconds (real-time). Units are a projection concern; the number is intent."
+            }
           }
         },
         {
           "type": "object",
           "description": "Bridge back to world state — let a combat outcome set a story flag/var (e.g. 'spared_the_boss'). Reuses your narrative effect def verbatim.",
-          "required": ["world"],
+          "required": [
+            "world"
+          ],
           "additionalProperties": false,
           "properties": {
-            "world": { "$ref": "#/$defs/effect" }
+            "world": {
+              "$ref": "#/$defs/effect"
+            }
           }
         }
       ]
     },
-
     "formula": {
       "type": "object",
       "description": "How a magnitude is computed, as data. base + optional stat scaling. Deliberately minimal — the projection evaluates it; it does NOT encode RNG/crit/turn logic. Absent = the engine's default for that op.",
       "additionalProperties": false,
       "properties": {
-        "base": { "type": "number", "description": "Flat magnitude before scaling." },
-        "scales_with": { "type": "string", "description": "stat id on the USER whose value scales the effect." },
-        "scale": { "type": "number", "description": "Multiplier on scales_with. Default 1.", "default": 1 }
+        "base": {
+          "type": "number",
+          "description": "Flat magnitude before scaling."
+        },
+        "scales_with": {
+          "type": "string",
+          "description": "stat id on the USER whose value scales the effect."
+        },
+        "scale": {
+          "type": "number",
+          "description": "Multiplier on scales_with. Default 1.",
+          "default": 1
+        }
       }
     },
-
     "status": {
       "type": "object",
       "description": "A declared transient condition a combatant can carry (poison/stun/shield). Per-tick or gating behavior is the projection's to interpret from the effects + role.",
-      "required": ["id", "name"],
+      "required": [
+        "id",
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "name": { "type": "string" },
-        "icon": { "type": "string", "description": "Optional asset id." },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string",
+          "description": "Optional asset id."
+        },
         "tick": {
           "type": "array",
           "description": "Optional per-interval effects (poison damage). Interval is a projection concern.",
-          "items": { "$ref": "#/$defs/combat_effect" }
+          "items": {
+            "$ref": "#/$defs/combat_effect"
+          }
         },
-        "blocks_action": { "type": "boolean", "description": "true = afflicted combatant cannot act (stun). Engine honors per its loop.", "default": false }
+        "blocks_action": {
+          "type": "boolean",
+          "description": "true = afflicted combatant cannot act (stun). Engine honors per its loop.",
+          "default": false
+        }
       }
     },
-
     "encounter": {
       "type": "object",
       "description": "Combat as a spatial scene. A place subtype: combatants positioned in it, win/lose conditions, and node_end transitions on resolution. The combat LOOP (turn order / real-time) is NOT here — it's a projection choice driven by top-level combat_model.",
-      "required": ["id", "combatants", "victory"],
+      "required": [
+        "id",
+        "combatants",
+        "victory"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "background": { "type": "string", "description": "Asset id for the arena backdrop/map." },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "background": {
+          "type": "string",
+          "description": "Asset id for the arena backdrop/map."
+        },
         "combatants": {
           "type": "array",
           "description": "Who's in the fight and where they stand. position reuses your existing projection oneOf (rect/cell, + transform when 3D lands).",
           "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["ref", "faction"],
+            "required": [
+              "ref",
+              "faction"
+            ],
             "additionalProperties": false,
             "properties": {
-              "ref": { "type": "string", "description": "combatant id." },
-              "faction": { "$ref": "#/$defs/faction" },
-              "position": { "$ref": "#/$defs/position" }
+              "ref": {
+                "type": "string",
+                "description": "combatant id."
+              },
+              "faction": {
+                "$ref": "#/$defs/faction"
+              },
+              "position": {
+                "$ref": "#/$defs/position"
+              }
             }
           }
         },
-        "victory": { "$ref": "#/$defs/encounter_condition" },
-        "defeat": { "$ref": "#/$defs/encounter_condition", "description": "Defaults to 'all player-faction defeated' if omitted." },
-        "on_victory": { "$ref": "#/$defs/node_end", "description": "Where play flows on win. Reuses node_end — combat resolves back into dialogue/navigation like everything else." },
-        "on_defeat": { "$ref": "#/$defs/node_end", "description": "Where play flows on loss (often end:game_over, or a jump to a setback node)." }
+        "victory": {
+          "$ref": "#/$defs/encounter_condition"
+        },
+        "defeat": {
+          "$ref": "#/$defs/encounter_condition",
+          "description": "Defaults to 'all player-faction defeated' if omitted."
+        },
+        "on_victory": {
+          "$ref": "#/$defs/node_end",
+          "description": "Where play flows on win. Reuses node_end — combat resolves back into dialogue/navigation like everything else."
+        },
+        "on_defeat": {
+          "$ref": "#/$defs/node_end",
+          "description": "Where play flows on loss (often end:game_over, or a jump to a setback node)."
+        }
       }
     },
-
     "encounter_condition": {
       "description": "How a fight ends. Faction wipe is the common case; flag/var lets you express survive-N, escape, protect-the-NPC via the existing condition system.",
       "oneOf": [
         {
           "type": "object",
-          "required": ["all_defeated"],
+          "required": [
+            "all_defeated"
+          ],
           "additionalProperties": false,
-          "properties": { "all_defeated": { "$ref": "#/$defs/faction" } }
+          "properties": {
+            "all_defeated": {
+              "$ref": "#/$defs/faction"
+            }
+          }
         },
         {
           "type": "object",
           "description": "Win/lose on an arbitrary game-state condition (e.g. var:turns_survived >= 5, flag:reached_exit). Reuses your condition def.",
-          "required": ["when"],
-          "additionalProperties": false,
-          "properties": { "when": { "$ref": "#/$defs/condition" } }
-        }
-      ]
-    },
-
-    "card_match": {
-      "type": "object",
-      "description": "A wagering card match: a known card game (card_model, engine-implemented) played against an NPC for a stake. The IR parameterizes stakes/opponent/payout; the engine owns the rules and the opponent. Resolution flows out via on_win/on_lose (reuses node_end), so a match returns to the overworld like combat returns to navigation.",
-      "required": ["id", "card_model", "opponent", "ante"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "card_model": {
-          "enum": ["high_card", "blackjack"],
-          "description": "Which engine-implemented card game's rules to run. high_card = each side draws one card, higher wins (simplest). blackjack = draw toward 21 without busting."
-        },
-        "deck_model": {
-          "enum": ["standard_52"],
-          "default": "standard_52",
-          "description": "Which deck the engine deals from. standard_52 = a normal playing-card deck."
-        },
-        "opponent": { "type": "string", "description": "character id the player wagers against (name/sprite)." },
-        "ante": {
-          "type": "object",
-          "description": "The stake. The variable is spent to play and the payout is applied via on_win/on_lose effects.",
-          "required": ["var", "amount"],
+          "required": [
+            "when"
+          ],
           "additionalProperties": false,
           "properties": {
-            "var": { "type": "string", "description": "variable id staked (e.g. gold)." },
-            "amount": { "type": "number", "description": "amount staked per match." }
+            "when": {
+              "$ref": "#/$defs/condition"
+            }
           }
-        },
-        "rounds": { "type": "integer", "minimum": 1, "default": 1, "description": "Best-of-N rounds; the match is decided by who wins the majority. Default 1." },
-        "on_win": { "$ref": "#/$defs/match_resolution", "description": "Where play flows and what changes on a win (typically add the pot to the ante variable)." },
-        "on_lose": { "$ref": "#/$defs/match_resolution", "description": "Where play flows and what changes on a loss (typically subtract the ante)." }
-      }
-    },
-
-    "match_resolution": {
-      "type": "object",
-      "description": "What happens when a match ends: optional state changes (the payout) plus where control returns. Reuses node_end so a match resolves back into navigation/dialogue like everything else.",
-      "additionalProperties": false,
-      "properties": {
-        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } },
-        "end": { "$ref": "#/$defs/node_end" }
-      }
+        }
+      ]
     }
   },
-
   "examples": [
     {
       "version": "0.1",
       "genre": "point_and_click",
-      "meta": { "title": "The Cellar", "premise": "Escape the locked cellar." },
-      "characters": [{ "id": "warden", "name": "The Warden", "sprite": "spr_warden" }],
-      "items": [{ "id": "item_key", "name": "Rusty Key", "examine": "Cold and bent." }],
-      "flags": ["door_open", "escaped"],
-      "variables": [{ "id": "warden_trust", "default": 0, "min": 0, "max": 10 }],
-      "start": { "place": "room_cell" },
-      "goal": { "flag": "escaped" },
+      "meta": {
+        "title": "The Cellar",
+        "premise": "Escape the locked cellar."
+      },
+      "characters": [
+        {
+          "id": "warden",
+          "name": "The Warden",
+          "sprite": "spr_warden"
+        }
+      ],
+      "items": [
+        {
+          "id": "item_key",
+          "name": "Rusty Key",
+          "examine": "Cold and bent."
+        }
+      ],
+      "flags": [
+        "door_open",
+        "escaped"
+      ],
+      "variables": [
+        {
+          "id": "warden_trust",
+          "default": 0,
+          "min": 0,
+          "max": 10
+        }
+      ],
+      "start": {
+        "place": "room_cell"
+      },
+      "goal": {
+        "flag": "escaped"
+      },
       "places": [
         {
           "id": "room_cell",
           "kind": "room",
           "background": "bg_cell",
           "interactables": [
-            { "id": "hs_drawer", "label": "Drawer", "position": { "rect": { "x": 120, "y": 400, "w": 200, "h": 150 } },
-              "action": { "type": "take", "item": "item_key", "text": "A key, tucked under a rag." } },
-            { "id": "hs_warden", "label": "Warden", "position": { "rect": { "x": 800, "y": 200, "w": 180, "h": 400 } },
-              "action": { "type": "talk", "node": "talk_warden" } },
-            { "id": "hs_door", "label": "Iron Door", "position": { "rect": { "x": 500, "y": 150, "w": 220, "h": 450 } },
-              "action": { "type": "use",
+            {
+              "id": "hs_drawer",
+              "label": "Drawer",
+              "position": {
+                "rect": {
+                  "x": 120,
+                  "y": 400,
+                  "w": 200,
+                  "h": 150
+                }
+              },
+              "action": {
+                "type": "take",
+                "item": "item_key",
+                "text": "A key, tucked under a rag."
+              }
+            },
+            {
+              "id": "hs_warden",
+              "label": "Warden",
+              "position": {
+                "rect": {
+                  "x": 800,
+                  "y": 200,
+                  "w": 180,
+                  "h": 400
+                }
+              },
+              "action": {
+                "type": "talk",
+                "node": "talk_warden"
+              }
+            },
+            {
+              "id": "hs_door",
+              "label": "Iron Door",
+              "position": {
+                "rect": {
+                  "x": 500,
+                  "y": 150,
+                  "w": 220,
+                  "h": 450
+                }
+              },
+              "action": {
+                "type": "use",
                 "clauses": [
-                  { "requires": { "item": "item_key" },
-                    "outcome": { "text": "The lock gives.", "effects": [{ "set_flag": "door_open" }] } }
+                  {
+                    "requires": {
+                      "item": "item_key"
+                    },
+                    "outcome": {
+                      "text": "The lock gives.",
+                      "effects": [
+                        {
+                          "set_flag": "door_open"
+                        }
+                      ]
+                    }
+                  }
                 ],
-                "fallback": { "text": "Locked. You need a key." } } },
-            { "id": "hs_leave", "label": "Doorway", "position": { "rect": { "x": 560, "y": 600, "w": 120, "h": 100 } },
-              "action": { "type": "move", "target": "room_hall", "requires": { "flag": "door_open" } } }
+                "fallback": {
+                  "text": "Locked. You need a key."
+                }
+              }
+            },
+            {
+              "id": "hs_leave",
+              "label": "Doorway",
+              "position": {
+                "rect": {
+                  "x": 560,
+                  "y": 600,
+                  "w": 120,
+                  "h": 100
+                }
+              },
+              "action": {
+                "type": "move",
+                "target": "room_hall",
+                "requires": {
+                  "flag": "door_open"
+                }
+              }
+            }
           ]
         },
         {
@@ -797,15 +1584,54 @@
           "kind": "room",
           "background": "bg_hall",
           "interactables": [
-            { "id": "hs_exit", "label": "Stairs Up", "position": { "rect": { "x": 600, "y": 100, "w": 160, "h": 300 } },
-              "action": { "type": "use",
+            {
+              "id": "hs_exit",
+              "label": "Stairs Up",
+              "position": {
+                "rect": {
+                  "x": 600,
+                  "y": 100,
+                  "w": 160,
+                  "h": 300
+                }
+              },
+              "action": {
+                "type": "use",
                 "clauses": [
-                  { "requires": { "flag": "door_open" },
-                    "outcome": { "text": "You climb into daylight.", "effects": [{ "set_flag": "escaped" }] } }
+                  {
+                    "requires": {
+                      "flag": "door_open"
+                    },
+                    "outcome": {
+                      "text": "You climb into daylight.",
+                      "effects": [
+                        {
+                          "set_flag": "escaped"
+                        }
+                      ]
+                    }
+                  }
                 ],
-                "fallback": { "text": "The door won't budge yet." } } },
-            { "id": "hs_win", "label": "Freedom", "position": { "rect": { "x": 10, "y": 10, "w": 50, "h": 50 } },
-              "action": { "type": "win" } }
+                "fallback": {
+                  "text": "The door won't budge yet."
+                }
+              }
+            },
+            {
+              "id": "hs_win",
+              "label": "Freedom",
+              "position": {
+                "rect": {
+                  "x": 10,
+                  "y": 10,
+                  "w": 50,
+                  "h": 50
+                }
+              },
+              "action": {
+                "type": "win"
+              }
+            }
           ]
         }
       ],
@@ -813,51 +1639,174 @@
         {
           "id": "talk_warden",
           "lines": [
-            { "speaker": "warden", "text": "You won't find the key. I made sure of that." },
-            { "speaker": null, "text": "His eyes flick to the drawer, just once.", "effects": [{ "add_var": { "var": "warden_trust", "delta": 1 } }] }
+            {
+              "speaker": "warden",
+              "text": "You won't find the key. I made sure of that."
+            },
+            {
+              "speaker": null,
+              "text": "His eyes flick to the drawer, just once.",
+              "effects": [
+                {
+                  "add_var": {
+                    "var": "warden_trust",
+                    "delta": 1
+                  }
+                }
+              ]
+            }
           ],
-          "end": { "type": "return" }
+          "end": {
+            "type": "return"
+          }
         }
       ]
     },
     {
       "version": "0.1",
       "genre": "visual_novel",
-      "meta": { "title": "After the Funeral" },
+      "meta": {
+        "title": "After the Funeral"
+      },
       "characters": [
-        { "id": "mara", "name": "Mara" },
-        { "id": "elias", "name": "Elias" }
+        {
+          "id": "mara",
+          "name": "Mara"
+        },
+        {
+          "id": "elias",
+          "name": "Elias"
+        }
       ],
       "variables": [
-        { "id": "trust", "default": 0 },
-        { "id": "sleight_of_hand", "default": 3 },
-        { "id": "perception", "default": 2 }
+        {
+          "id": "trust",
+          "default": 0
+        },
+        {
+          "id": "sleight_of_hand",
+          "default": 3
+        },
+        {
+          "id": "perception",
+          "default": 2
+        }
       ],
-      "start": { "node": "node_1" },
+      "start": {
+        "node": "node_1"
+      },
       "nodes": [
         {
           "id": "node_1",
           "lines": [
-            { "speaker": "elias", "text": "I saw your dad at the funeral. He looked... relieved." },
-            { "speaker": "mara", "text": "My mother wasn't a good person. It still feels wrong to see it." },
-            { "speaker": null, "text": "A loud bang sounds from downstairs." }
+            {
+              "speaker": "elias",
+              "text": "I saw your dad at the funeral. He looked... relieved."
+            },
+            {
+              "speaker": "mara",
+              "text": "My mother wasn't a good person. It still feels wrong to see it."
+            },
+            {
+              "speaker": null,
+              "text": "A loud bang sounds from downstairs."
+            }
           ],
-          "end": { "type": "menu", "choices": [
-            { "text": "Palm the letter while she's distracted", "target": "node_swipe", "requires": { "var": "sleight_of_hand", "op": ">", "value": { "var": "perception" } } },
-            { "text": "Stay, hold her hand", "target": "node_stay", "effects": [{ "add_var": { "var": "trust", "delta": 2 } }] }
-          ] }
+          "end": {
+            "type": "menu",
+            "choices": [
+              {
+                "text": "Palm the letter while she's distracted",
+                "target": "node_swipe",
+                "requires": {
+                  "var": "sleight_of_hand",
+                  "op": ">",
+                  "value": {
+                    "var": "perception"
+                  }
+                }
+              },
+              {
+                "text": "Stay, hold her hand",
+                "target": "node_stay",
+                "effects": [
+                  {
+                    "add_var": {
+                      "var": "trust",
+                      "delta": 2
+                    }
+                  }
+                ]
+              }
+            ]
+          }
         },
-        { "id": "node_swipe", "lines": [{ "speaker": null, "text": "The letter is in your pocket before she turns." }], "end": { "type": "end", "ending": "thief" } },
+        {
+          "id": "node_swipe",
+          "lines": [
+            {
+              "speaker": null,
+              "text": "The letter is in your pocket before she turns."
+            }
+          ],
+          "end": {
+            "type": "end",
+            "ending": "thief"
+          }
+        },
         {
           "id": "node_stay",
-          "lines": [{ "speaker": "mara", "text": "Don't go." }],
-          "end": { "type": "menu", "choices": [
-            { "text": "Promise to stay", "target": "node_together", "requires": { "var": "trust", "op": ">=", "value": 2 } },
-            { "text": "Pull away", "target": "node_alone" }
-          ] }
+          "lines": [
+            {
+              "speaker": "mara",
+              "text": "Don't go."
+            }
+          ],
+          "end": {
+            "type": "menu",
+            "choices": [
+              {
+                "text": "Promise to stay",
+                "target": "node_together",
+                "requires": {
+                  "var": "trust",
+                  "op": ">=",
+                  "value": 2
+                }
+              },
+              {
+                "text": "Pull away",
+                "target": "node_alone"
+              }
+            ]
+          }
         },
-        { "id": "node_together", "lines": [{ "speaker": "mara", "text": "Thank you." }], "end": { "type": "end", "ending": "together" } },
-        { "id": "node_alone", "lines": [{ "speaker": null, "text": "The door clicks shut behind you." }], "end": { "type": "end", "ending": "alone" } }
+        {
+          "id": "node_together",
+          "lines": [
+            {
+              "speaker": "mara",
+              "text": "Thank you."
+            }
+          ],
+          "end": {
+            "type": "end",
+            "ending": "together"
+          }
+        },
+        {
+          "id": "node_alone",
+          "lines": [
+            {
+              "speaker": null,
+              "text": "The door clicks shut behind you."
+            }
+          ],
+          "end": {
+            "type": "end",
+            "ending": "alone"
+          }
+        }
       ]
     }
   ]

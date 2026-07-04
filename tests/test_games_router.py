@@ -141,14 +141,13 @@ def test_amend_spec_reresolves_modules_and_unfreezes(tmp_path, monkeypatch):
     RunState(tmp_path / "g").write_spec(
         {"title": "G", "frozen": True, "modules": ["scenes"], "params": {}})
 
-    body = games.AmendBody(changes={"modules": ["world", "card_play"]},
-                           reason="switch to point-and-click cards")
+    body = games.AmendBody(changes={"modules": ["world", "combat"]},
+                           reason="switch to a fighting point-and-click")
     result = asyncio.run(games.amend_game_spec_route("g", body))
 
     mods = result["spec"]["modules"]
-    assert "world" in mods and "card_play" in mods          # card_play pulls world
-    assert "scenes" not in mods                              # the scene graph was dropped
-    assert result["spec"]["engine"] == "web"                # cards only render on web
+    assert "world" in mods and "combat" in mods              # combat pulls world+scenes
+    assert result["spec"]["engine"] == "godot"               # combat only plays on godot
     assert result["frozen"] is False                         # amend always un-freezes for re-approval
     assert set(result["spec"]["module_reasons"]) == set(mods)
 

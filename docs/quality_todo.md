@@ -59,19 +59,19 @@ sees facts set on branch-B. Real continuity bugs.
 - [ ] **Continuity check in the judge** — facts a node references must be established on a path
   that reaches it.
 
-## 4. Mechanics depth — card_play / economy (shallowest)
+## 4. Mechanics depth — combat / economy (shallowest)
 
-`card_play` baseline = `count >= 1`. `economy` baseline = nothing. Mechanic loops are never
-validated for being actual games.
+`combat` baseline = `min_abilities: 2, min_combatants: 2, min_encounters: 1`. `economy` baseline =
+nothing. Mechanic loops are never validated for being actual games.
 
-- [ ] **card_play depth checks.** Stakes vary/escalate across matches; opponents distinct; >1
-  match for a real wander-wager loop (the prompt says "not a single table" — unchecked).
+- [ ] **combat depth checks.** Ability/status variety across combatants; encounter difficulty
+  escalates; >1 encounter for a real campaign arc (unchecked).
 - [ ] **Economy balance check.** A variable has both sources and sinks; the win/lose loop is
   reachable and not trivially degenerate (infinite money / instant ruin).
-- [ ] **More card_models.** Only `high_card` / `blackjack`. Add depth (poker-lite,
-  push-your-luck) — a shallow rule set caps card-game quality.
-- [ ] **Match flavor.** Matches are pure params (no dialogue / stakes narrative). Let opponent
-  banter and rising tension ride on the match — currently mechanical.
+- [ ] **More combat_models.** Only `turn_based` plays (`real_time`/`auto` declared, unimplemented).
+  Add depth here before widening the model set — a shallow effect set caps combat quality.
+- [ ] **Encounter flavor.** Encounters are pure params (no narrative framing). Let combatant
+  banter and rising tension ride on the fight — currently mechanical.
 
 ## 5. Point-and-click puzzle depth
 
@@ -139,7 +139,7 @@ every call's context (worse for small models — more tokens, more distraction) 
   `effects_ref`, `derive_from_request`. (Originally specced as ctx keys; an include directive keeps
   callers unchanged.) Repeated verbatim today:
   - "Respond with a TOOL CALL, never prose. You write JSON, NOT Ren'Py — the compiler renders
-    it" — in write_node, write_place, fix_node, fix_place, mode_matches, mode_premise, mode_asset,
+    it" — in write_node, write_place, fix_node, fix_place, mode_premise, mode_asset,
     build_agent_system.
   - The CONDITIONS block (`{"flag":"x"}, {"item":"x"}, {"var":...}`) and EFFECTS block
     (`set_flag / clear_flag / …`) — duplicated across write_node, write_place, fix_place **and**
@@ -154,7 +154,7 @@ every call's context (worse for small models — more tokens, more distraction) 
 
 `propose_spec.txt` / `propose_spec_pnc.txt` / `propose_spec_card.txt` are 270 lines of
 near-duplicate. Worse, each hardcodes a prose "good default set" of done-conditions that
-**duplicates the code baselines** in the modules (dialogue SPINE / navigation / card_play) — two
+**duplicates the code baselines** in the modules (dialogue SPINE / navigation / combat) — two
 sources for the same contract, guaranteed to drift.
 
 - [x] **Generate the spec prompt from the composed preset.** One `propose_spec.txt`; its
@@ -169,20 +169,17 @@ sources for the same contract, guaranteed to drift.
 The module refactor was supposed to kill per-genre dispatch, but per-target/per-mode tool gating
 and prompt selection are **hardcoded in `agent.py`** (`_MODE_TOOLS`, `_TARGET_TOOLS`,
 `_PLACE_TARGET_TOOLS`, `_TARGET_PROMPT`, `_PLACE_TARGET_PROMPT`, `_MODE_PROMPTS`), keyed by
-component / check-type strings. Adding `card_play` meant editing these maps — the seam leaks.
+component / check-type strings. Adding a module meant editing these maps — the seam leaks.
 
 - [x] **Move tool gating + prompt mapping onto the `Module`.** Added `mode_tools` / `mode_prompt`
   / `prompts` / `target_jobs` / `target_tools` / `subloop` to `Module`; `compose()` unions them and
   `agent.py`'s decider + the single `make_subloop(module)` read the bundle. The `_MODE_TOOLS` /
   `_TARGET_*` / `_*_PROMPTS` globals are gone — adding a module needs no `agent.py` edit.
-- [ ] **`matches` has no sub_runner, no fix mode, no per-target gating.** It's a single
-  `write_component` call — it can't repair or grow against a richer check. The moment card_play
-  gets the depth checks from §4, it needs a sub-loop like nodes/places.
 
 ## 12. Tool surface gaps that cap quality
 
-- [ ] **`read_story_state` is absent from the places and matches tool sets.** PnC talk-node
-  barks and card-match flavor are authored blind to continuity. Add it where those modules write.
+- [ ] **`read_story_state` is absent from the places and combat tool sets.** PnC talk-node
+  barks and encounter flavor are authored blind to continuity. Add it where those modules write.
 - [ ] **No tool to read sibling content for setup/payoff.** `read_node` is by-id and the injected
   node-graph view is structural only — an author can't see what was foreshadowed elsewhere, so
   callbacks/payoff are hard. Weigh a scoped "recent beats" read against context bloat.

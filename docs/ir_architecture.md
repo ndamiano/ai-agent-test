@@ -43,12 +43,12 @@ A `Module` is **behavior, not a data bag**: the only required method is `get_err
 can fix it. `compose(module_ids)` resolves ids → live instances; the loop reads gating off the
 composed set, never a genre string. Two flavors:
 
-- **content** modules author a component (`scenes`→nodes, `world`→places, `card_play`→matches,
+- **content** modules author a component (`scenes`→nodes, `world`→places, `combat`→encounters,
   `cast`→characters, `story`→story, `inventory`→items).
 - **cross-cutting** modules author none: `state` is the always-on wiring invariant (every declared
   flag/var/item needs a producer **and** a consumer), `human` is the HITL channel.
 
-**Engine projections register separately** (`renpy/projections.py`, `web/projections.py`) keyed
+**Engine projections register separately** (`renpy/projections.py`, `godot/projections.py`) keyed
 `(engine, module_id)`, because a module's schema is substrate-agnostic while its projection is
 per-engine. A `projected` module with no projection for the chosen engine makes the compile
 **fail fast** (`unprojectable`) instead of silently dropping content. (Full mechanics: CLAUDE.md.)
@@ -56,21 +56,21 @@ per-engine. A `projected` module with no projection for the chosen engine makes 
 ### The discrete module roster (as built)
 
 `cast` (characters) · `story` (arc + endings) · `scenes` (nodes — the narrative graph) · `world`
-(places) · `assets` (asset_manifest) · `inventory` (items) · `state` (wiring) · `card_play`
-(matches — wagering card games) · `human` (HITL). `assets`/`state`/`human` are always-on.
+(places) · `assets` (asset_manifest) · `inventory` (items) · `state` (wiring) · `combat`
+(turn-based encounters) · `human` (HITL). `assets`/`state`/`human` are always-on.
 
 ### Module selection (the proposer picks from the catalog — no genre/preset box)
 
 The spec drafter is shown the selectable modules (`id` + `description`) and picks them as a
 `{id: reason}` map. `Module.resolve_modules` force-includes the foundation (`human`, `assets`,
-`state`), expands each pick's `requires` (`scenes`→`cast`, `card_play`→`world`), validates a
+`state`), expands each pick's `requires` (`scenes`→`cast`), validates a
 realization module is present (falling back to a VN bundle), and derives the engine = the first
 engine that can project the whole set. Typical shapes:
 
 - story-forward → cast + story + scenes → engine renpy
 - explorable world → cast + world (+ scenes) → engine renpy
-- wagering cards → card_play (+ world, cast) → engine **web** (only web renders cards; the Ren'Py
-  build fails fast via `unprojectable`)
+- turn-based battles → combat (+ world, cast) → engine **godot** (only godot renders combat; the
+  Ren'Py build fails fast via `unprojectable`)
 
 ## Unique mechanics — the completeness valve
 
@@ -86,14 +86,13 @@ the can't-be-malformed guarantee for coverage on the novel slice, which is what 
 break it to primitives ("automation" = placement + logistics + production-recipe + power). Same
 rule that keeps substrates few keeps modules sharp.
 
-## card_play — the worked example
+## combat — the worked example
 
-"Make me a card game where you wander the world and play for ante": the proposer picks `card_play`;
-its `requires` pull in `world` (the overworld) and `cast`. A `matches` component declares each
-match (`card_model` ∈ {high_card, blackjack}, `opponent`, `ante {var, amount}`, `on_win`/`on_lose`);
-an overworld interactable's `play_match` action enters it; it resolves back via `node_end`,
-mirroring how combat enters an encounter and returns via `on_victory`. Rules are
-**engine-implemented** (Tier-1): the IR only parameterizes stakes/opponent/payout; the web runtime
-(`runtime/engine.js` `runMatch`) owns the rules and the opponent. `card_play` registers a **web**
-projection and no Ren'Py one — so a card game builds on web, and a Ren'Py build fails fast. That is
-the schema-agnostic / projection-per-engine seam made concrete.
+"Make me a game where you explore and fight monsters": the proposer picks `combat`; a `combat`
+component declares stats/statuses/abilities/combatants/encounters (each `encounter` carrying
+win/lose conditions that flow back to the story). A `start_combat` hotspot on a `world` place
+enters an encounter; it resolves back via `on_victory`/`on_defeat` node-end jumps. Rules are
+**engine-implemented** (Tier-1): the IR only parameterizes stats/abilities/combatants/encounters;
+the Godot runtime (`runtime/combat.gd`) owns turn resolution. `combat` registers a **godot**
+projection and no Ren'Py one — so a combat game builds on Godot, and a Ren'Py build fails fast. That
+is the schema-agnostic / projection-per-engine seam made concrete.

@@ -43,8 +43,8 @@ class Spec:
 
     @property
     def engine(self) -> str:
-        """Which engine backend projects this spec's IR ('renpy' default, 'web' for the
-        self-contained browser build). The IR and genre layers are engine-neutral; only the
+        """Which engine backend projects this spec's IR ('renpy' default, 'godot' for
+        combat/walkable-world games). The IR and genre layers are engine-neutral; only the
         compile target keys off this."""
         return self.data.get("engine", "renpy")
 

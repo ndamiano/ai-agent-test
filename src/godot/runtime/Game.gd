@@ -187,10 +187,6 @@ func run_action(act) -> Variant:
 				return null
 			var resolution = await Combat.new(self).run(act["encounter"])
 			return await _flow(resolution)
-		"play_match":
-			await show_line(null, "[Card matches play in the web build.]")
-			hide_dialogue()
-			return null
 		_:
 			return null
 

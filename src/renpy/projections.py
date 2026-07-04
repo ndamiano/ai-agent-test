@@ -3,7 +3,7 @@
 A module's schema is substrate-level (shared); its *projection* to engine output is per-engine.
 Ren'Py renders the two realization modules via the existing IR→script compilers (ir_vn for a
 `scenes` graph, ir_pnc for a `world`). Registering them here makes the compile dispatch's
-fail-fast guard pass; a `projected` module with no entry here (e.g. card_play) makes a Ren'Py
+fail-fast guard pass; a `projected` module with no entry here (e.g. combat) makes a Ren'Py
 build of a game that uses it fail with a clear message instead of silently dropping content.
 """
 

@@ -26,7 +26,7 @@ def test_reasons_keep_justifications_and_flag_gaps():
 def test_catalog_hides_always_on_foundation():
     catalog = dict(M.selectable_catalog())
     assert "human" not in catalog and "assets" not in catalog
-    real = {"scenes", "world", "cast", "inventory", "story", "card_play"}
+    real = {"scenes", "world", "cast", "inventory", "story", "combat"}
     assert real <= set(catalog)
     assert all(catalog[mid] for mid in real)  # every real module is described
 
@@ -37,16 +37,16 @@ def test_foundation_is_always_forced_in():
 
 
 def test_requires_expand_transitively():
-    # card_play needs world; scenes needs cast.
-    modules, _ = M.resolve_modules(["card_play"])
-    assert {"card_play", "world"} <= set(modules)
+    # combat needs world+scenes; scenes needs cast.
+    modules, _ = M.resolve_modules(["combat"])
+    assert {"combat", "world", "scenes", "cast"} <= set(modules)
 
 
-def test_vn_picks_renpy_card_picks_web():
+def test_vn_picks_renpy_combat_picks_godot():
     _, vn_engine = M.resolve_modules(["scenes", "story"])
-    _, card_engine = M.resolve_modules(["card_play"])
+    _, combat_engine = M.resolve_modules(["combat"])
     assert vn_engine == "renpy"
-    assert card_engine == "web"  # only the web runtime renders cards
+    assert combat_engine == "godot"  # only the godot runtime plays combat
 
 
 def test_world_game_resolves_without_falling_back():

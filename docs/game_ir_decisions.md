@@ -10,7 +10,7 @@ The model is better at JSON than at Ren'Py — JSON is far more common in its tr
 Ren'Py "freedom" the generator had was illusory anyway: the prompts already constrained it to a
 fixed verb set (examine / take / use / talk / move / win) and a fixed node shape (lines +
 jump/menu). The IR just *names* those shapes so they can't be malformed. A deterministic backend
-compiles the IR to an engine (Ren'Py today; RPGMaker / web / Twine later), so most error classes
+compiles the IR to an engine (Ren'Py / Godot today; RPGMaker / Twine later), so most error classes
 the repair prompts fight — quote escaping, speaker format, menu indentation, dangling jumps —
 become impossible by construction, and validation/reachability become data walks instead of
 regex over engine source.

@@ -35,7 +35,7 @@ _EMOTIONS = set(EMOTIONS)
 
 
 def _coerce_json(value):
-    """A small model frequently passes a nested object (a node's content, a place/match body) as a
+    """A small model frequently passes a nested object (a node's content, a place body) as a
     JSON STRING — `content: "{\\"lines\\": ...}"` — instead of an object, and the write is then
     rejected for a wrong type, burning a step. Parse a JSON-looking string back to the object it
     encodes; leave anything else untouched (a real type error still surfaces below)."""
@@ -214,36 +214,6 @@ TOOL_SCHEMAS: List[Dict] = [
             "start_spawn": {"type": "object", "description":
                             "RPG only: the player's start tile, {cell:{x,y}} in start_place"},
         }, "required": []}}},
-    {"type": "function", "function": {
-        "name": "write_match",
-        "description": "Write one wagering card match into `matches`: its card_model (high_card or "
-                       "blackjack), opponent (a characters component id), ante {var, amount}, and "
-                       "on_win/on_lose payout. Adds it to match_ids. Card games only.",
-        "parameters": {"type": "object", "properties": {
-            "match_id": {"type": "string", "description": "e.g. 'match_gambler'"},
-            "content": {"type": "object", "description":
-                "{card_model: 'high_card'|'blackjack', deck_model?: 'standard_52', "
-                "opponent: <char id>, ante: {var, amount}, rounds?: int, "
-                "on_win: {effects?, end?}, on_lose: {effects?, end?}}"},
-        }, "required": ["match_id", "content"]}}},
-    {"type": "function", "function": {
-        "name": "edit_match",
-        "description": "Patch fields of an existing card match without rewriting it (card_model, "
-                       "opponent, ante, rounds, on_win, on_lose). Card games only.",
-        "parameters": {"type": "object", "properties": {
-            "match_id": {"type": "string"},
-            "card_model": {"type": "string"},
-            "opponent": {"type": "string"},
-            "ante": {"type": "object", "description": "{var, amount}"},
-            "rounds": {"type": "integer"},
-            "on_win": {"type": "object", "description": "{effects?, end?}"},
-            "on_lose": {"type": "object", "description": "{effects?, end?}"},
-        }, "required": ["match_id"]}}},
-    {"type": "function", "function": {
-        "name": "read_match",
-        "description": "Read one card match's current definition.",
-        "parameters": {"type": "object", "properties": {
-            "match_id": {"type": "string"}}, "required": ["match_id"]}}},
     {"type": "function", "function": {
         "name": "set_combat_meta",
         "description": "Lay the combat foundation on `combat`: combat_model + the stat SYSTEM (you "
@@ -568,6 +538,13 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                                                   "line, replace the whole node via `content`"}
                 lines[line_index]["text"] = text
             if speaker is not _UNSET:
+                # Coerce the shapes models actually send (observed: {'id': 'x'} and ['x']
+                # retried 100+ steps against a reject) — the intent is unambiguous.
+                if isinstance(speaker, dict) and isinstance(speaker.get("id"), str):
+                    speaker = speaker["id"]
+                elif isinstance(speaker, list) and len(speaker) == 1 \
+                        and isinstance(speaker[0], str):
+                    speaker = speaker[0]
                 if not is_narration_speaker(speaker) and not isinstance(speaker, str):
                     return {"ok": False, "error": "speaker must be a character id STRING (or null "
                             "for narration), not an object/list"}
@@ -701,57 +678,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": f"no place {place_id!r}"}
         return {"ok": True, "place_id": place_id, "content": place}
 
-    def write_match(match_id: str, content) -> Dict:
-        """Write one card match into `matches` (mirrors write_node/write_place)."""
-        _require_frozen()
-        if _locked("matches"):
-            return _locked_error("matches")
-        content = _coerce_json(content)
-        from maestro.modules.card_play import match_write_error
-        err = match_write_error(content)
-        if err:
-            return {"ok": False, "error": err}
-        matches = state.read_component("matches") or {"match_ids": [], "matches": {}}
-        matches.setdefault("matches", {})[match_id] = content
-        matches.setdefault("match_ids", [])
-        if match_id not in matches["match_ids"]:
-            matches["match_ids"].append(match_id)
-        state.write_component("matches", matches)
-        return {"ok": True, "match_id": match_id}
-
-    def edit_match(match_id: str, card_model=None, opponent=None, ante=None,
-                   rounds=None, on_win=None, on_lose=None) -> Dict:
-        _require_frozen()
-        if _locked("matches"):
-            return _locked_error("matches")
-        matches = state.read_component("matches") or {}
-        m = (matches.get("matches") or {}).get(match_id)
-        if m is None:
-            return {"ok": False, "error": f"no match {match_id!r} to edit"}
-        if card_model is not None:
-            from maestro.modules.card_play import _MODELS
-            if card_model not in _MODELS:
-                return {"ok": False, "error": f"card_model must be one of {sorted(_MODELS)}"}
-            m["card_model"] = card_model
-        if opponent is not None:
-            m["opponent"] = opponent
-        if ante is not None:
-            m["ante"] = ante
-        if rounds is not None:
-            m["rounds"] = rounds
-        if on_win is not None:
-            m["on_win"] = on_win
-        if on_lose is not None:
-            m["on_lose"] = on_lose
-        state.write_component("matches", matches)
-        return {"ok": True, "match_id": match_id}
-
-    def read_match(match_id: str) -> Dict:
-        m = (state.read_component("matches") or {}).get("matches", {}).get(match_id)
-        if m is None:
-            return {"ok": False, "error": f"no match {match_id!r}"}
-        return {"ok": True, "match_id": match_id, "content": m}
-
     # ── combat: the doc is grown ONE slice at a time (dependency order), each validated against the
     #    already-declared upstream ids at write time. set_combat_meta lays stats/statuses; the write_*
     #    tools id-merge into the list slices (replace-by-id, else append). ──────────────────────────
@@ -883,9 +809,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "add_interactable": add_interactable,
         "read_place": read_place,
         "set_places_meta": set_places_meta,
-        "write_match": write_match,
-        "edit_match": edit_match,
-        "read_match": read_match,
         "set_combat_meta": set_combat_meta,
         "write_ability": write_ability,
         "write_combatant": write_combatant,

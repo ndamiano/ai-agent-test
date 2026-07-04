@@ -3,7 +3,7 @@
 This package turns a frozen **spec** into a finished artifact (a game) by driving a
 non-LLM loop that calls an LLM agent one tool at a time until every done-condition the
 spec declares passes. It is engine-agnostic: it builds the engine-neutral **Game IR**;
-a backend (`renpy/`, `web/`) projects that IR to a launchable project.
+a backend (`renpy/`, `godot/`) projects that IR to a launchable project.
 
 If you're new here, read `docs/game_creation_walkthrough.md` next — it traces one request
 from chat to a packaged game, naming the function at each hop.
@@ -63,7 +63,7 @@ Three layers:
 | File | Role |
 |------|------|
 | `modules/module.py` | `Module` ABC + `MODULE_REGISTRY` + `compose()`/`resolve_modules()` + the per-engine projection registry. A `Module` is a set of `(error → fix)` over the shared components; `get_errors` is the only required method. |
-| `modules/` | The mechanic-modules, each a direct `Module` subclass: `cast`, `story`, `scenes`, `world`, `assets`, `inventory`, `state`, `card_play`, `human` (+ inline validators/skeletons). `human`/`assets`/`state` are always-on (`selectable=False`); `__init__.py` registers them all. |
+| `modules/` | The mechanic-modules, each a direct `Module` subclass: `cast`, `story`, `scenes`, `world`, `assets`, `inventory`, `state`, `combat`, `human` (+ inline validators/skeletons). `human`/`assets`/`state` are always-on (`selectable=False`); `__init__.py` registers them all. |
 | `ir_assemble.py` | Lift the decomposed on-disk components → one engine-neutral IR dict. |
 | `ir_crossref.py` | Gate that every id reference in the IR resolves; emits structured records routed by `slice_owner`. |
 | `engines.py` | `compile_for(spec.engine)` — map engine tag → backend compile entry. |
@@ -80,7 +80,7 @@ the proposer picks modules from the catalog directly (`world`+`scenes` compose),
 agent never branches on a component string — it reads the gating off the composed set.
 
 - **content** modules author a component (`scenes`→nodes, `world`→places,
-  `card_play`→matches, `cast`→characters, `story`→story, `inventory`→items).
+  `combat`→encounters, `cast`→characters, `story`→story, `inventory`→items).
 - **cross-cutting** modules author none: `state` is the always-on wiring invariant
   (every declared flag/var/item needs a producer + consumer), `human` is the HITL channel.
 - Engine **projections** register separately, keyed `(engine, module_id)` — a module's

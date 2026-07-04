@@ -177,16 +177,9 @@ def assemble_ir(artifact: Dict) -> Dict:
     if items:
         ir["items"] = items
 
-    # card_play: lift the decomposed match definitions to the top level (presence-driven).
-    matches_comp = artifact.get("matches", {}) or {}
-    match_ids = matches_comp.get("match_ids", []) or []
-    matches_map = matches_comp.get("matches", {}) or {}
-    if match_ids:
-        ir["card_matches"] = [{"id": mid, **matches_map.get(mid, {})} for mid in match_ids]
-
     # combat: the combat component holds the whole combat block as one document (the slices are
     # too interdependent to author piecemeal). Lift each present slice to the top level + the
-    # combat_model projection hint (presence-driven, like card_matches).
+    # combat_model projection hint (presence-driven).
     combat_comp = artifact.get("combat", {}) or {}
     if combat_comp.get("combat_model"):
         ir["combat_model"] = combat_comp["combat_model"]

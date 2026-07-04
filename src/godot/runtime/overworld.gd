@@ -101,6 +101,7 @@ func run_place(place_id, spawn):
 	layer.add_child(avatar)
 	_place_avatar(avatar, ax, ay, tile, ox, oy)
 	_refresh_labels(ax, ay)
+	g.avatar_cell = {"x": ax, "y": ay}
 	g.set_hud(_HINT)
 
 	while true:
@@ -125,6 +126,7 @@ func run_place(place_id, spawn):
 				ay = ny
 				_place_avatar(avatar, ax, ay, tile, ox, oy)
 				_refresh_labels(ax, ay)
+				g.avatar_cell = {"x": ax, "y": ay}
 				var it = inter.get(_key(ax, ay))
 				if it != null and it["action"]["type"] in ["move", "start_combat"]:
 					var r = await _fire(layer, it)
@@ -137,6 +139,9 @@ func run_place(place_id, spawn):
 				var r = await _fire(layer, it)
 				if r != null:
 					return r
+
+		if Input.is_action_just_pressed("ui_pause"):
+			await g.pause_menu()
 
 
 # Run a verb through Game, hiding the grid while dialogue/combat owns the screen. Returns a
@@ -309,10 +314,16 @@ func _interactable_icon(it):
 	if atype == "talk":
 		# An NPC hotspot IS a person — draw their token instead of a blue diamond. The hotspot
 		# label is the only link to the cast (a talk action targets a node, not a character).
+		# Exact match wins; else a character name as a whole word inside the label ("Elara
+		# Checkin" -> Elara) — labels routinely decorate the name with a verb.
 		var label := String(it.get("label", "")).strip_edges().to_lower()
 		for cid in g.chars:
 			var ch = g.chars[cid]
 			if label == String(cid).to_lower() or label == String(ch.get("name", "")).to_lower():
+				return g._texture_file("%s_token.png" % cid)
+		for cid in g.chars:
+			var nm := String(g.chars[cid].get("name", "")).strip_edges().to_lower()
+			if nm != "" and (" " + label + " ").contains(" " + nm + " "):
 				return g._texture_file("%s_token.png" % cid)
 		return null
 	if atype == "move":

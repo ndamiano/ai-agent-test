@@ -259,10 +259,29 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 # inventory icon (<item_id>.png — generated from the asset manifest every build).
 func _interactable_icon(it):
 	var a = it.get("action", {})
+	var atype = a.get("type", "")
+	if atype == "talk":
+		# An NPC hotspot IS a person — draw their token instead of a blue diamond. The hotspot
+		# label is the only link to the cast (a talk action targets a node, not a character).
+		var label := String(it.get("label", "")).strip_edges().to_lower()
+		for cid in g.chars:
+			var ch = g.chars[cid]
+			if label == String(cid).to_lower() or label == String(ch.get("name", "")).to_lower():
+				return g._texture_file("%s_token.png" % cid)
+		return null
+	if atype == "move":
+		return g._texture_file("marker_signpost.png")
+	if atype == "win":
+		return g._texture_file("marker_banner.png")
+	if atype == "examine":
+		var lbl := String(it.get("label", ""))
+		if lbl != "":
+			return g._texture_file("prop_%s.png" % _slug(lbl))
+		return null
 	var item := ""
-	if a.get("type", "") == "take":
+	if atype == "take":
 		item = String(a.get("item", ""))
-	elif a.get("type", "") == "use":
+	elif atype == "use":
 		for cl in a.get("clauses", []):
 			var req = cl.get("requires", {})
 			if req is Dictionary and req.has("item"):
@@ -364,7 +383,13 @@ func _avatar_texture():
 		var chars = g.ir.get("characters", [])
 		if not chars.is_empty():
 			cid = chars[0]["id"]
-	if cid != null and g.chars.has(cid) and g.chars[cid].has("sprite"):
+	if cid == null:
+		return null
+	# A chibi token is drawn for tile scale; the VN portrait is the fallback, not the goal.
+	var token = g._texture_file("%s_token.png" % cid)
+	if token != null:
+		return token
+	if g.chars.has(cid) and g.chars[cid].has("sprite"):
 		return g._texture_file(g.chars[cid]["sprite"])
 	return null
 

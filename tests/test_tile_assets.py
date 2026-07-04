@@ -39,7 +39,7 @@ def test_collect_themes_empty_for_pnc_and_vn():
 
 def test_build_tile_job_carries_theme_and_workflow():
     job = build_tile_job("frozen stream")
-    assert "frozen stream" in job["prompt"] and "seamless" in job["prompt"]
+    assert "frozen stream" in job["prompt"] and "tileable" in job["prompt"]
     assert "map tile" not in job["prompt"]   # "map tile" makes the model draw a picture OF a map
     wf = job["workflow_override"]
     dims = next(v["inputs"] for v in wf.values() if v["class_type"] == "EmptyLatentImage")
@@ -47,9 +47,15 @@ def test_build_tile_job_carries_theme_and_workflow():
 
 
 def test_build_tile_job_role_steers_readability():
+    # lab-derived formulas (2026-07-04): open = stylized walkable tileset; wall-ish blocked
+    # themes get FRONT-FACING masonry (top-down walls render as ground); organic blocked gets
+    # dense-growth language darker than open ground
     open_p = build_tile_job("mossy ground", "open")["prompt"]
-    blocked_p = build_tile_job("crumbling wall", "blocked")["prompt"]
-    assert "walkable" in open_p and "obstacle" in blocked_p
+    wall_p = build_tile_job("crumbling wall", "blocked")["prompt"]
+    bush_p = build_tile_job("dense brambles", "blocked")["prompt"]
+    assert "walkable" in open_p
+    assert "front-facing" in wall_p and "impassable barrier" in wall_p
+    assert "impassable growth" in bush_p and "front-facing" not in bush_p
 
 
 def test_collect_tile_specs_carries_roles():

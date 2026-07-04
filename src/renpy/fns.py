@@ -80,9 +80,10 @@ def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
 def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     from tools.comfyui_tools import (
         build_character_job, build_background_job, build_cg_job, build_item_job,
-        build_title_card_job, build_character_emotion_job, build_tile_job, make_seamless_tile,
-        upload_image, vram_bracket, run_jobs,
+        build_title_card_job, build_character_emotion_job, build_tile_job, build_token_job,
+        make_seamless_tile, upload_image, vram_bracket, run_jobs,
     )
+    from maestro.modules.world import _RPG_KINDS
     from maestro.ir_assemble import used_emotions, expression_file
 
     cast     = inputs.get("characters", {})
@@ -105,11 +106,12 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
             return
         error = result.get("error", "unknown")
         # Emotion variants degrade to the neutral face rather than a solid block; if the neutral
-        # isn't on disk, compile-time placeholders still cover the reference.
+        # isn't on disk, compile-time placeholders still cover the reference. A missing token is
+        # not placeholder-backed either — the overworld's colour-dot fallback beats a grey square.
         if kind == "emotion" and meta.get("neutral_dest") and meta["neutral_dest"].exists():
             shutil.copy2(meta["neutral_dest"], filepath)
             print(f"    [images]  failed ({error}), neutral fallback: {img_file}")
-        elif kind != "emotion":
+        elif kind not in ("emotion", "token"):
             w, h, color = _PLACEHOLDER_SPECS[kind]
             write_solid_png(filepath, w, h, color)
             print(f"    [images]  failed ({error}), placeholder: {img_file}")
@@ -125,6 +127,8 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         base_meta.append({"file": bg_file, "dest": images_dir / bg_file, "kind": "bg"})
         base_jobs.append(build_background_job(bg.get("description", bg.get("name", bg["id"]))))
 
+    walkable = any(isinstance(p, dict) and p.get("kind") in _RPG_KINDS
+                   for p in ((inputs.get("places") or {}).get("places") or {}).values())
     for char in manifest.get("characters", []):
         cid = char["id"]
         img_file = char.get("image_file", f"{cid}.png")
@@ -133,6 +137,12 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         base_jobs.append(build_character_job(merged))
         char_bases.append({"id": cid, "char": merged, "base_file": img_file,
                            "dest": images_dir / img_file})
+        if walkable:
+            # Walkable maps draw people at ~1 tile — a shrunken VN portrait floats; a chibi
+            # token reads. The overworld probes for <id>_token.png (avatar + talk markers).
+            tok_file = f"{cid}_token.png"
+            base_meta.append({"file": tok_file, "dest": images_dir / tok_file, "kind": "token"})
+            base_jobs.append(build_token_job(merged))
 
     for cg in manifest.get("cgs", []):
         img_file = cg.get("image_file", f"{cg['id']}.png")
@@ -149,6 +159,34 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
         tc_file = title_card.get("image_file", "title_card.png")
         base_meta.append({"file": tc_file, "dest": images_dir / tc_file, "kind": "title_card"})
         base_jobs.append(build_title_card_job(title_card["description"]))
+
+    # Marker assets: overworld hotspots draw a THING, not a colored diamond. One signpost per
+    # game for exits, a small prop icon per examine hotspot (its label is the description), a
+    # banner for win. All ride the item-icon pipeline; misses fall back to diamonds (kind token
+    # semantics: no placeholder).
+    if walkable:
+        verbs = set()
+        examine_labels: List[str] = []
+        for p in ((inputs.get("places") or {}).get("places") or {}).values():
+            if not isinstance(p, dict) or p.get("kind") not in _RPG_KINDS:
+                continue
+            for hot in p.get("interactables") or []:
+                a = (hot or {}).get("action") or {}
+                verbs.add(a.get("type"))
+                if a.get("type") == "examine" and hot.get("label"):
+                    examine_labels.append(hot["label"])
+        if "move" in verbs:
+            base_meta.append({"file": "marker_signpost.png",
+                              "dest": images_dir / "marker_signpost.png", "kind": "token"})
+            base_jobs.append(build_item_job("weathered wooden trail signpost with a blank arrow board"))
+        if "win" in verbs:
+            base_meta.append({"file": "marker_banner.png",
+                              "dest": images_dir / "marker_banner.png", "kind": "token"})
+            base_jobs.append(build_item_job("small victory banner on a standing pole"))
+        for label in dict.fromkeys(examine_labels[:12]):
+            pf = f"prop_{tile_slug(label)}.png"
+            base_meta.append({"file": pf, "dest": images_dir / pf, "kind": "token"})
+            base_jobs.append(build_item_job(label))
 
     with vram_bracket():
         print(f"    [images]  generating {len(base_jobs)} base image(s)")

@@ -21,6 +21,7 @@ _TXT2IMG_CHARACTER_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_character.json"
 _IMG2IMG_CHARACTER_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_character.json"
 _TXT2IMG_BACKGROUND_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_background.json"
 _TXT2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_tile.json"
+_TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
 _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
 # ---------------------------------------------------------------------------
@@ -132,6 +133,23 @@ def build_character_job(char_data: dict) -> dict:
     }
 
 
+def build_token_job(char_data: dict) -> dict:
+    """Return a job for a character's OVERWORLD TOKEN — the walkable-map avatar/NPC marker.
+    A full-body VN portrait shrunk to one tile reads as a floating cutout; a token is drawn
+    for that scale: chibi proportions, bold shapes, square frame. Rides the character workflow
+    (BiRefNet matting included) so it lands transparent like the sprites."""
+    description = (char_data.get("description") or char_data.get("name") or "").strip()
+    positive = (f"{_QUALITY}. Chibi-style full-body game character token of {description} "
+                f"Small cute proportions with a large head, standing facing the viewer, "
+                f"simple bold shapes readable at a small size, clean thick lineart, flat "
+                f"cel shading, against a plain white background.")
+    wf = _build_character_workflow(
+        _load_workflow(_TXT2IMG_CHARACTER_WORKFLOW_PATH), positive, _CHAR_NEGATIVE)
+    wf["28"]["inputs"]["width"] = 832
+    wf["28"]["inputs"]["height"] = 832
+    return {"prompt": positive, "workflow_override": wf}
+
+
 def _build_img2img_character_workflow(base_workflow: dict, positive: str, negative: str,
                                       image_name: str, denoise: float) -> dict:
     import copy
@@ -227,8 +245,11 @@ def build_item_job(description: str) -> dict:
     positive = (f"{_BG_QUALITY}, game item icon, a single {description}, one object only, "
                 f"centered composition, plain simple background, no scenery, still life, "
                 f"clean detailed rendering")
+    # txt2img_item = the background workflow + BiRefNet matting: these render ON maps and in
+    # the inventory bar, so they must land transparent like sprites (observed: props shipping
+    # with baked backgrounds).
     wf = _build_background_workflow(
-        _load_workflow(_TXT2IMG_BACKGROUND_WORKFLOW_PATH), positive, _ITEM_NEGATIVE)
+        _load_workflow(_TXT2IMG_ITEM_WORKFLOW_PATH), positive, _ITEM_NEGATIVE)
     wf["5"]["inputs"]["width"] = 1024
     wf["5"]["inputs"]["height"] = 1024
     return {"prompt": positive, "workflow_override": wf}
@@ -240,12 +261,24 @@ _TILE_NEGATIVE = (
     "prop, horizon, sky, clouds, perspective, isometric, depth of field, 3d render, photo of "
     "paper, parchment, table, wall in the distance, room, scene, blurry, jpeg artifacts")
 
-# What the two tile roles must READ as at a glance: the avatar walks on `open`, bounces off
-# `blocked` — the texture is the only signal, so the roles get opposite value/density language.
-_TILE_ROLE_HINTS = {
-    "open": "flat even ground material, subtle low-contrast detail, uniform, walkable surface",
-    "blocked": ("dense impassable material filling the whole frame, strong texture, "
-                "high contrast, reads as an obstacle"),
+# Formulas from the 48-tile lab (2026-07-04): the old single formula rendered walls as
+# rounded river-stones (read as ground). Winners: stylized-tileset language for organic/open
+# surfaces; front-facing masonry structure for built barriers — a wall "viewed from above" is
+# a losing premise, walls need face-texture treatment to read as walls. WAI Illustrious is
+# banned from tiles (hallucinates scenes on texture prompts); tiles stay on DreamShaper.
+_TILE_WALLISH = ("wall", "cliff", "palisade", "brick", "masonry", "barricade", "fence",
+                 "gate", "rampart", "barrier")
+_TILE_FORMULAS = {
+    "open": ("top-down 2d game tileset texture of {t}, crisp stylized detail, bold "
+             "silhouettes, saturated colors, uniform lighting, orthographic, flat walkable "
+             "surface, texture fills frame, tileable game asset"),
+    "blocked_organic": ("top-down 2d game tileset texture of {t}, dense impassable growth, "
+                        "crisp stylized detail, bold silhouettes, deep shadows between "
+                        "elements, darker and denser than open ground, texture fills frame, "
+                        "tileable game asset"),
+    "blocked_wall": ("flat front-facing pattern of {t}, dense repeating structural detail, "
+                     "masonry-like arrangement, strong shadows between elements, reads as an "
+                     "impassable barrier, game texture asset, tileable"),
 }
 
 
@@ -254,11 +287,12 @@ def build_tile_job(theme: str, role: str = "open") -> dict:
     `theme` (e.g. 'frozen stream', 'temple stone'). Never say 'map tile' — models draw a picture
     OF a map. The saved image is post-processed seamless + downscaled (`make_seamless_tile`); the
     overworld repeats it per cell, so it must be a uniform material, not a scene."""
-    hint = _TILE_ROLE_HINTS.get(role, _TILE_ROLE_HINTS["open"])
-    positive = (f"seamless repeating texture of {theme}, top-down surface material viewed "
-                f"directly from above, {hint}, video game terrain texture asset, stylized "
-                f"painterly fantasy RPG art, rich color, even diffuse lighting, fills the entire "
-                f"frame edge to edge")
+    if role == "blocked":
+        key = "blocked_wall" if any(w in theme.lower() for w in _TILE_WALLISH) \
+            else "blocked_organic"
+    else:
+        key = "open"
+    positive = _TILE_FORMULAS[key].format(t=theme)
     return {
         "prompt": positive,
         "workflow_override": _build_background_workflow(

@@ -124,6 +124,49 @@ def test_generate_images_writes_placeholders_on_failure(tmp_path, monkeypatch):
         assert png.startswith(b"\x89PNG")
 
 
+def test_generate_images_tokens_only_for_walkable_games(tmp_path, monkeypatch):
+    import tools.comfyui_tools as comfyui_tools
+    from renpy.fns import generate_images
+
+    import contextlib
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
+    monkeypatch.setattr(comfyui_tools, "run_jobs",
+                        lambda jobs: [{"success": False, "error": "no comfyui"} for _ in jobs])
+
+    inputs = {
+        "asset_manifest": {"backgrounds": [],
+                           "characters": [{"id": "kae", "name": "Kae", "image_file": "kae.png"}]},
+        "places": {"places": {"z1": {"kind": "world_map", "tiles": {"rows": ["."]},
+                                     "interactables": []}}},
+    }
+    result = generate_images(inputs, tmp_path)
+    files = {f["file"] for f in result["failed"]}
+    assert "kae_token.png" in files                       # walkable game queues a token
+    # a failed token writes NO placeholder — the overworld's colour-dot fallback covers it
+    assert not (tmp_path / "game_output" / "game" / "images" / "kae_token.png").exists()
+
+    inputs_vn = {"asset_manifest": {"backgrounds": [],
+                                    "characters": [{"id": "kae", "name": "Kae",
+                                                    "image_file": "kae.png"}]}}
+    result_vn = generate_images(inputs_vn, tmp_path)
+    assert "kae_token.png" not in {f["file"] for f in result_vn["failed"]}
+
+
+def test_build_token_job_is_square_chibi():
+    from tools.comfyui_tools import build_token_job
+    job = build_token_job({"id": "kae", "description": "a tired knight in dented armor"})
+    wf = job["workflow_override"]
+    assert wf["28"]["inputs"]["width"] == wf["28"]["inputs"]["height"] == 832
+    assert "Chibi" in job["prompt"] and "dented armor" in job["prompt"]
+
+
+def test_overworld_prefers_token_and_talk_markers_use_tokens():
+    src = open("godot/runtime/overworld.gd").read() if __import__("os").path.exists(
+        "godot/runtime/overworld.gd") else open("../src/godot/runtime/overworld.gd").read()
+    assert '_token.png" % cid' in src
+    assert 'atype == "talk"' in src
+
+
 def test_generate_images_queues_items_as_icon_jobs(tmp_path, monkeypatch):
     import tools.comfyui_tools as comfyui_tools
     from renpy.fns import generate_images

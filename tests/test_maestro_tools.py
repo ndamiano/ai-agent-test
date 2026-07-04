@@ -355,6 +355,18 @@ def test_crossref_crash_is_surfaced_not_swallowed():
                "end": {"type": "return"}}}}}
     recs = crossref_failures(art)
     assert recs and "malformed" in recs[0]["message"]
+    # the crash record carries path=None — the combat/world crossref filters must route it
+    # (to the realization module), never crash on it (observed: killed a live build)
+    from maestro.modules.module import Check
+    from maestro.modules import combat as combat_mod, world as world_mod
+
+    class Ctx:
+        artifact = art
+
+    chk = Check("crossref", lambda *a: [], job="fix")
+    assert combat_mod._d_crossref(chk, None, Ctx()) == []      # not a combat slice
+    world_errors = world_mod._d_crossref(chk, None, Ctx())
+    assert world_errors and "malformed" in world_errors[0].message
 
 
 def test_pick_voice_respects_sex_and_override():

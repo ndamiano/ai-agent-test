@@ -494,7 +494,7 @@ def _d_crossref(chk, m, ctx):
     from maestro.ir_crossref import slice_token
     out = []
     for rec in checks.crossref_failures(ctx.artifact):
-        if slice_token(rec.get("path", "")) in _COMBAT_SLICES:
+        if slice_token(rec.get("path") or "") in _COMBAT_SLICES:
             out.append(Error(type=chk.tier, code=chk.code, component="combat",
                              message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
     return out

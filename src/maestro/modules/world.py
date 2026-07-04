@@ -633,7 +633,7 @@ def _d_crossref(chk, m, ctx):
     out = []
     for rec in checks.crossref_failures(ctx.artifact):
         # combat owns its slices' refs (it can rewrite the combat doc; world cannot).
-        if slice_token(rec.get("path", "")) in _COMBAT_SLICES:
+        if slice_token(rec.get("path") or "") in _COMBAT_SLICES:
             continue
         out.append(Error(type=chk.tier, code=chk.code, component="places", message=rec["message"],
                          path=rec.get("path"), ref=rec.get("ref")))

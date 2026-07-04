@@ -340,9 +340,23 @@ def _rpg_world_error(c: Dict) -> Optional[str]:
             if act.get("type") == "move" and act.get("target") in places \
                     and places[act["target"]].get("kind") in _RPG_KINDS \
                     and _cell_xy(act.get("spawn")) is None:
-                issues.append(f"places[{pid!r}].interactables[{iid!r}] moves to walkable place "
-                              f"{act['target']!r} but has no 'spawn': {{'cell': {{'x','y'}}}} — the "
-                              f"avatar needs an arrival tile in the destination")
+                sp = act.get("spawn")
+                feat = (sp or {}).get("feature") if isinstance(sp, dict) else None
+                if feat:
+                    # A layout-authored arrival resolves the moment the target zone is written
+                    # (write_place runs the resolver both directions); an unresolved one here
+                    # means the target's layout never declared that feature — actionable.
+                    tgt_anchors = places[act["target"]].get("anchors") or {}
+                    issues.append(
+                        f"places[{pid!r}].interactables[{iid!r}] arrives at feature {feat!r} "
+                        f"but {act['target']!r} declares no such feature/exit — use one of "
+                        f"{sorted(tgt_anchors) or ['(target has no layout anchors)']}")
+                else:
+                    issues.append(
+                        f"places[{pid!r}].interactables[{iid!r}] moves to walkable place "
+                        f"{act['target']!r} but has no 'spawn' — declare the arrival as "
+                        f"{{'feature': '<a feature/exit id in {act['target']}>'}} (layout "
+                        f"zones) or {{'cell': {{'x','y'}}}}")
 
         sources = entries.get(pid, [])
         if not sources:
@@ -487,54 +501,47 @@ SKEL_RPG = (
     '  "places": {\n'
     '    "zone_<first>": {\n'
     '      "kind": "world_map",\n'
-    '      "tiles": {\n'
-    '        "legend": {\n'
-    '          ".": {"role": "open",    "theme": "<walkable ground, e.g. snow>"},\n'
-    '          ",": {"role": "open",    "theme": "<a path/road>"},\n'
-    '          "T": {"role": "blocked", "theme": "<an obstacle, e.g. pine>"},\n'
-    '          "#": {"role": "blocked", "theme": "<a wall/cliff>"}\n'
-    '        },\n'
-    '        "rows": [\n'
-    '          "TTTTTTTT",\n'
-    '          "T......T",\n'
-    '          "T.,,,..T",\n'
-    '          "T.,..#.T",\n'
-    '          "T.,....T",\n'
-    '          "TTTTTTTT"\n'
-    '        ]\n'
+    '      "layout": {\n'
+    '        "size": "medium",\n'
+    '        "terrain": {"open": "<walkable ground, e.g. mossy earth>",\n'
+    '                    "blocked": "<impassable material, e.g. bone-pale cliff>"},\n'
+    '        "features": [\n'
+    '          {"id": "f_<slug>", "kind": "building", "at": "northwest",\n'
+    '           "theme": "<what it looks like>", "label": "<display name>"},\n'
+    '          {"id": "f_<slug2>", "kind": "clearing", "at": "center", "label": "<name>"}\n'
+    '        ],\n'
+    '        "exits": [{"id": "x_south", "edge": "south"}],\n'
+    '        "connections": [{"from": "x_south", "to": "f_<slug2>"},\n'
+    '                        {"from": "f_<slug2>", "to": "f_<slug>"}]\n'
     '      },\n'
     '      "interactables": [\n'
     '        {"id": "h_<enemy>", "label": "<short noun>",\n'
-    '         "position": {"cell": {"x": 5, "y": 3}},\n'
+    '         "position": {"feature": "f_<slug2>"},\n'
     '         "action": {"type": "start_combat", "encounter": "enc_<slug>"}},\n'
     '        {"id": "h_<exit>", "label": "<where it leads>",\n'
-    '         "position": {"cell": {"x": 1, "y": 2}},\n'
-    '         "action": {"type": "move", "target": "zone_<second>", "spawn": {"cell": {"x": 6, "y": 3}}}}\n'
+    '         "position": {"feature": "x_south"},\n'
+    '         "action": {"type": "move", "target": "zone_<second>",\n'
+    '                    "spawn": {"feature": "x_north"}}}\n'
     '      ]\n'
     '    }\n'
     '  }\n'
     '}\n'
-    '// A WALKABLE map is PAINTED as tiles.rows — one string per grid row, each char a tile. The grid\n'
-    '//   size is just the shape of rows (any size; make rows all the SAME length). The player avatar\n'
-    '//   walks it with WASD. An interactable position is a {cell:{x,y}} TILE: x = column (0..width-1),\n'
-    '//   y = row (0..height-1), counting from the TOP-LEFT. These are grid coords, NOT pixels.\n'
-    '// tiles.legend maps each char -> {"role": "open"|"blocked", "theme": "<what it looks like>"}.\n'
-    '//   role is the ONLY thing that matters to play: open = walkable, blocked = a wall the avatar\n'
-    '//   cannot enter. theme is free flavour (drives the look). Paint terrain with these chars to\n'
-    '//   carve real paths, rooms, water, treelines — do NOT leave an empty box. Default chars you can\n'
-    '//   use without a legend entry: "." ground, "," path, "#" wall, "T" tree, "~" water, "%" rock.\n'
-    '// NEVER put an interactable on a blocked tile, and NEVER wall one off — every interactable and\n'
-    '//   every spawn tile must be reachable by walking from the spawn (open tiles only).\n'
-    '// Set the START tile ONCE with set_places_meta(start_spawn={"cell":{"x":..,"y":..}}) — an open\n'
-    '//   tile in start_place. Give EACH zone a move BACK the way the player came (a round trip), plus\n'
-    '//   its forward exit — no one-way strandings.\n'
-    '// TRIGGERING: walking ONTO a move/start_combat tile fires it; talk/examine/take/use/win fire\n'
-    '//   when the player presses E while standing on the tile.\n'
+    '// You PLAN the map; a deterministic builder places every tile and carves the roads —\n'
+    '//   connectivity is guaranteed, so think like a town plan: what exists, in which of the\n'
+    '//   nine regions (northwest..center..southeast), and what connects to what.\n'
+    '// feature kinds: building, fountain, camp, market_stall, rock_outcrop, tree_clump,\n'
+    '//   clearing, gate. 2-5 features per zone. Every exit connects to something.\n'
+    '// terrain/theme strings each become ONE generated texture: make open vs blocked CONTRAST\n'
+    '//   in material, and REUSE the same strings across zones for matching terrain.\n'
+    '// interactable position = {"feature": "<id>"} (its doorstep); a move\'s spawn names the\n'
+    '//   arrival feature/exit in the TARGET zone. Give each zone a move BACK the way the\n'
+    '//   player came — no one-way strandings.\n'
+    '// Set the start ONCE with set_places_meta(start_spawn={"feature-free cell is fine"}) — or\n'
+    '//   any open tile; the start zone\'s gate anchor is the natural choice.\n'
+    '// TRIGGERING: walking ONTO a move/start_combat tile fires it; talk/examine/take/use/win\n'
+    '//   fire on E while standing on the tile.\n'
     '// action.type: examine {text}; take {item,text?}; talk {node}; use {clauses/fallback};\n'
-    '//   win {requires?}; move {target, spawn:{cell:{x,y}}}  (spawn = the arrival TILE in the\n'
-    '//   destination zone, REQUIRED when moving into a walkable place); start_combat {encounter}\n'
-    '//   (step onto the tile to enter that fight — compose `combat`).\n'
-    '// talk node in `nodes`; item in `items`; refs resolve. (Walkable maps need no background image.)'
+    '//   win {requires?}; move {target, spawn:{feature}}; start_combat {encounter}.\n'
 )
 
 _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "add_interactable",

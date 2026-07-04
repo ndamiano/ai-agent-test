@@ -147,19 +147,29 @@ src/
                 registry keyed on place.kind: `room` => pnc.gd (click hotspots), `world_map/town/
                 interior` => overworld.gd (a WASD/arrow-key walkable tile grid — step ONTO a
                 move/start_combat cell to fire it, press E on a talk/examine/take/use/win cell). A
-                walkable place is PAINTED as `tiles` (a char grid: `rows` of tile chars + a `legend`
-                mapping each char to a role — open/blocked = the only thing play reads — plus a free
-                `theme` string). The grid size is just the shape of rows (any size), passability is
-                derived from role (no separate `impassable`), and the map renders from the tiles —
-                no background image. Each distinct theme gets one generated terrain texture
+                walkable place is authored as a LAYOUT PLAN, never a painted grid: the model
+                declares features on a coarse 3x3 region grid ("smithy northwest, fountain
+                center, gate south") + exits + connections, and maestro/map_builder.py
+                rasterizes deterministically — stamps footprint templates, carves roads,
+                emits the `tiles` char grid (`rows` + `legend` {role open/blocked, free
+                `theme`}) with connectivity guaranteed by construction, plus `anchors`
+                (feature id → doorstep cell) that resolve interactable positions
+                ({"feature": id}) and cross-zone move spawns ({"spawn": {"feature": id}},
+                resolved both directions as zones land; unknown arrival falls back to the
+                target's gate). Hotspots snap to the nearest open cell (never LLM-fixed).
+                Each distinct theme gets one generated terrain texture
                 (renpy/fns.generate_images tile pass via comfyui build_tile_job(theme, role) —
-                a dedicated square DreamShaperXL-Turbo workflow with texture-language prompts,
-                role-aware so open ground and blocked obstacles read differently — then
-                make_seamless_tile post: wrap cross-fade + downscale to 256² → tile_<slug>.png);
-                the presenter samples each cell's REGION of the seamless texture (one texture
-                spans a 3×3 cell block, wrapping exactly) so terrain flows across cells, shows
-                the generated item icon on take/use hotspots, keeps labels visible only near the
-                avatar, and colour-fills when art is absent.
+                role-aware formulas from the 84-generation tile lab: stylized-tileset for open
+                ground, dense-growth for organic blocked, FRONT-FACING masonry for wall-ish
+                themes (a top-down wall renders as ground) — then make_seamless_tile post:
+                wrap cross-fade + downscale to 256² → tile_<slug>.png). Best tile quality =
+                ideogram4 with structured JSON captions on the second ComfyUI (see memory);
+                DreamShaper formulas are the wired default. The presenter samples each cell's
+                REGION of the seamless texture (3×3-cell wrap) so terrain flows across cells,
+                draws the avatar and talk-NPCs as generated chibi TOKENS (<id>_token.png),
+                move/win/examine hotspots as generated marker assets (signpost/banner/prop),
+                take/use hotspots as item icons, keeps labels visible only near the avatar,
+                and colour-fills when art is absent.
                 Game.run_action is the one shared verb dispatch both presenters call, so a new
                 navigation modality = a new presenter + one registry entry, never a router edit.
                 docs/examples/combat_game.json is the hand-authored showcase exercising the full

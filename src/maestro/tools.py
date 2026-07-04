@@ -152,19 +152,21 @@ TOOL_SCHEMAS: List[Dict] = [
     {"type": "function", "function": {
         "name": "write_place",
         "description": "Write one place into `places`: its interactables (each a position + a "
-                       "structured `action`), plus a backdrop (room) or a tile map (walkable). Adds "
-                       "it to place_ids. A place is either a point-and-click room (kind 'room', "
-                       "pixel-rect hotspots + background) OR a walkable RPG map (kind "
-                       "'world_map'/'town'/'interior', a `tiles` char grid + cell positions).",
+                       "structured `action`), plus a backdrop (room) or a layout PLAN (walkable). "
+                       "Adds it to place_ids. A point-and-click room (kind 'room') has pixel-rect "
+                       "hotspots + background. A walkable RPG zone (kind 'world_map'/'town'/"
+                       "'interior') is authored as a `layout` — features on a coarse region grid; "
+                       "a deterministic builder places every tile. NEVER write tiles/rows/cells.",
         "parameters": {"type": "object", "properties": {
             "place_id": {"type": "string", "description": "e.g. 'room_kitchen' or 'zone_crypt'"},
             "content": {"type": "object", "description":
                 "{kind: 'room' (point-and-click) | 'world_map'|'town'|'interior' (walkable RPG), "
                 "interactables: [{id, label, position, action:{type, ...}}], "
                 "background: <asset id> (ROOM only), "
-                "tiles: {legend:{<char>:{role:'open'|'blocked', theme}}, rows:['..','..']} (RPG "
-                "ONLY, required — the map painted as char rows; grid size = shape of rows). A "
-                "position is {rect:{x,y,w,h}} for a room or {cell:{x,y}} for an RPG tile."},
+                "layout: {size:'small'|'medium'|'large', terrain:{open, blocked}, features:[{id, "
+                "kind, at:<region>, theme?, label?}], exits:[{id, edge}], connections:[{from, to}]} "
+                "(RPG only). A position is {rect:{x,y,w,h}} for a room or {feature:'<layout id>'} "
+                "for an RPG zone."},
         }, "required": ["place_id", "content"]}}},
     {"type": "function", "function": {
         "name": "edit_place",
@@ -558,13 +560,73 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         state.write_component("nodes", ns)
         return {"ok": True, "node_id": node_id}
 
+    def _resolve_feature_spawns(places: Dict) -> None:
+        """A layout-authored move may name its arrival as {"feature": "<id in the TARGET zone>"}.
+        Zones are written in any order, so resolution runs after every write, both directions:
+        any move whose target zone now has anchors gets its spawn cell filled in."""
+        all_places = places.get("places") or {}
+        for p in all_places.values():
+            for h in (p.get("interactables") or []) if isinstance(p, dict) else []:
+                a = h.get("action") if isinstance(h, dict) else None
+                if not isinstance(a, dict) or a.get("type") != "move":
+                    continue
+                spawn = a.get("spawn")
+                feat = (spawn or {}).get("feature") if isinstance(spawn, dict) else None
+                if not feat:
+                    continue
+                target = all_places.get(a.get("target"))
+                t_anchors = (target or {}).get("anchors") or {}
+                anchor = t_anchors.get(feat)
+                if anchor is None and t_anchors:
+                    # The model names arrivals by features IT knows — its own zone's (observed:
+                    # arriving at the source's campfire). Arriving at the target's gate is the
+                    # deterministic best guess; the round-trip rule keeps play coherent.
+                    exits = [k for k in sorted(t_anchors) if k.startswith("x_")]
+                    anchor = t_anchors[exits[0]] if exits else t_anchors[sorted(t_anchors)[0]]
+                if anchor:
+                    a["spawn"] = {"cell": {"x": anchor["x"], "y": anchor["y"]}}
+
     def write_place(place_id: str, content) -> Dict:
         """Write one place (background + interactables) into `places`, mirroring write_node.
-        The scaffold (goal/items/flags/start_place) is laid by set_places_meta."""
+        The scaffold (goal/items/flags/start_place) is laid by set_places_meta.
+
+        A walkable place is authored as a LAYOUT (features on a coarse region grid) — the model
+        plans, maestro.map_builder rasterizes deterministically, and the stored `tiles` grid is
+        valid by construction. An interactable's position may be {"feature": "<layout id>"};
+        it resolves to that feature's anchor cell here."""
         _require_frozen()
         if _locked("places"):
             return _locked_error("places")
         content = _coerce_json(content)
+        if isinstance(content, dict) and isinstance(content.get("layout"), dict):
+            from maestro.map_builder import build_tiles, v_layout
+            lerr = v_layout(content["layout"])
+            if lerr:
+                return {"ok": False, "error": lerr}
+            built = build_tiles(place_id, content["layout"])
+            content["tiles"] = {"rows": built["rows"], "legend": built["legend"]}
+            content["anchors"] = built["anchors"]
+            anchors = built["anchors"]
+            used: Dict = {}
+            for h in content.get("interactables") or []:
+                pos = h.get("position") if isinstance(h, dict) else None
+                feat = (pos or {}).get("feature")
+                if feat is not None:
+                    if feat not in anchors:
+                        return {"ok": False, "error":
+                                f"interactable {h.get('id')!r} sits at feature {feat!r} which "
+                                f"the layout doesn't declare — use one of {sorted(anchors)}"}
+                    a = anchors[feat]
+                    # several hotspots on one feature fan out around its anchor; the fanned
+                    # cell snaps back to open ground if the offset lands on a wall
+                    n = used.get(feat, 0)
+                    used[feat] = n + 1
+                    dx = (0, 1, -1, 0)[n % 4]
+                    dy = (0, 0, 0, 1)[n % 4]
+                    from maestro.map_builder import snap_to_open
+                    cell = snap_to_open(content["tiles"], a["x"] + dx, a["y"] + dy) \
+                        or (a["x"], a["y"])
+                    h["position"] = {"cell": {"x": cell[0], "y": cell[1]}}
         err = _place_content_error(content)
         if err:
             return {"ok": False, "error": err}
@@ -575,6 +637,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             places["place_ids"].append(place_id)
         if not places.get("start_place"):
             places["start_place"] = place_id
+        _resolve_feature_spawns(places)
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id}
 
@@ -642,6 +705,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             h["position"] = position
         if label is not None:
             h["label"] = label
+        _resolve_feature_spawns(places)
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
 
@@ -668,6 +732,22 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error":
                     f"interactable {interactable['id']!r} already exists in {place_id!r} — "
                     f"use edit_place to change it, or pick a new id"}
+        if place.get("kind") in ("world_map", "town", "interior"):
+            from maestro.map_builder import snap_to_open
+            pos = interactable.get("position") or {}
+            feat = pos.get("feature")
+            anchors = place.get("anchors") or {}
+            if feat is not None:
+                a = anchors.get(feat)
+                if a is None:
+                    return {"ok": False, "error":
+                            f"no feature {feat!r} in {place_id!r} — use one of {sorted(anchors)}"}
+                interactable["position"] = {"cell": {"x": a["x"], "y": a["y"]}}
+            cell = (interactable.get("position") or {}).get("cell") or {}
+            if isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int):
+                snapped = snap_to_open(place.get("tiles") or {}, cell["x"], cell["y"])
+                if snapped:
+                    interactable["position"] = {"cell": {"x": snapped[0], "y": snapped[1]}}
         inter.append(interactable)
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id, "interactable_id": interactable["id"]}

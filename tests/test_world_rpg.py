@@ -327,3 +327,143 @@ def test_non_combat_game_allows_rooms():
 def test_rpg_author_prompt_loads_with_includes_resolved():
     p = load_prompt("places_rpg_write.txt")
     assert "{{include" not in p and "start_combat" in p and "WASD" in p
+
+
+def test_map_builder_rasterizes_connected_layout():
+    from maestro.map_builder import build_tiles, v_layout
+    layout = {
+        "size": "medium",
+        "terrain": {"open": "mossy earth", "blocked": "bone-pale cliff"},
+        "features": [
+            {"id": "f_smithy", "kind": "building", "at": "northwest", "theme": "timber smithy"},
+            {"id": "f_fountain", "kind": "fountain", "at": "center"},
+        ],
+        "exits": [{"id": "x_south", "edge": "south"}],
+        "connections": [{"from": "x_south", "to": "f_fountain"},
+                        {"from": "f_fountain", "to": "f_smithy"}],
+    }
+    assert v_layout(layout) is None
+    built = build_tiles("zone_town", layout)
+    rows, legend, anchors = built["rows"], built["legend"], built["anchors"]
+    w, h = len(rows[0]), len(rows)
+    assert all(len(r) == w for r in rows)
+    assert {"f_smithy", "f_fountain", "x_south"} <= set(anchors)
+    # determinism: same zone id -> same map
+    assert build_tiles("zone_town", layout)["rows"] == rows
+    # every anchor is an open cell, all mutually reachable on open tiles
+    open_roles = {ch for ch, e in legend.items() if e["role"] == "open"}
+
+    def is_open(x, y):
+        return 0 <= x < w and 0 <= y < h and rows[y][x] in open_roles
+
+    from collections import deque
+    ax0 = list(anchors.values())[0]
+    seen = {(ax0["x"], ax0["y"])}
+    q = deque(seen)
+    while q:
+        x, y = q.popleft()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if is_open(nx, ny) and (nx, ny) not in seen:
+                seen.add((nx, ny))
+                q.append((nx, ny))
+    for aid, a in anchors.items():
+        assert is_open(a["x"], a["y"]), f"{aid} anchor blocked"
+        assert (a["x"], a["y"]) in seen, f"{aid} unreachable"
+    # not a mud-box: paths exist and open ground is broken up
+    assert any("," in r for r in rows)
+
+
+def test_map_builder_rejects_bad_layout():
+    from maestro.map_builder import v_layout
+    assert v_layout({"size": "huge"}) is not None
+    assert "kind" in v_layout({"size": "small", "features": [
+        {"id": "f", "kind": "castle", "at": "center"}]})
+    assert "at" in v_layout({"size": "small", "features": [
+        {"id": "f", "kind": "building", "at": "middle"}]})
+
+
+def test_write_place_rasterizes_layout_and_resolves_spawns(tmp_path):
+    from maestro.spec import Spec
+    from maestro.state import RunState
+    from maestro.tools import build_tools
+
+    state = RunState(tmp_path)
+    spec = Spec({"title": "T", "frozen": True, "modules": ["world"], "params": {}})
+    tools = build_tools(spec, state)
+    layout_a = {"size": "small", "terrain": {"open": "grass", "blocked": "rock"},
+                "features": [{"id": "f_camp", "kind": "camp", "at": "center"}],
+                "exits": [{"id": "x_east", "edge": "east"}],
+                "connections": [{"from": "x_east", "to": "f_camp"}]}
+    res = tools["write_place"]("zone_a", {
+        "kind": "world_map", "layout": layout_a,
+        "interactables": [
+            {"id": "h_camp", "label": "camp", "position": {"feature": "f_camp"},
+             "action": {"type": "examine", "text": "cold fire pit"}},
+            {"id": "h_go", "label": "east road", "position": {"feature": "x_east"},
+             "action": {"type": "move", "target": "zone_b",
+                        "spawn": {"feature": "x_west"}}}]})
+    assert res["ok"] is True, res
+    pa = state.read_component("places")["places"]["zone_a"]
+    assert pa["tiles"]["rows"] and pa["anchors"]["f_camp"]
+    assert pa["interactables"][0]["position"]["cell"]  # feature resolved to a cell
+    # spawn still a feature ref — zone_b not written yet
+    assert pa["interactables"][1]["action"]["spawn"] == {"feature": "x_west"}
+
+    layout_b = {"size": "small", "terrain": {"open": "grass", "blocked": "rock"},
+                "features": [{"id": "f_rock", "kind": "rock_outcrop", "at": "center"}],
+                "exits": [{"id": "x_west", "edge": "west"}],
+                "connections": [{"from": "x_west", "to": "f_rock"}]}
+    res = tools["write_place"]("zone_b", {
+        "kind": "world_map", "layout": layout_b,
+        "interactables": [{"id": "h_back", "label": "west road",
+                           "position": {"feature": "x_west"},
+                           "action": {"type": "move", "target": "zone_a",
+                                      "spawn": {"feature": "x_east"}}}]})
+    assert res["ok"] is True, res
+    pb = state.read_component("places")["places"]["zone_b"]
+    assert "cell" in pb["interactables"][0]["action"]["spawn"]  # zone_a already known
+    pa = state.read_component("places")["places"]["zone_a"]
+    spawn = pa["interactables"][1]["action"]["spawn"]
+    assert "cell" in spawn  # resolved the moment the target zone landed
+
+    # unknown feature is refused with the declared ids in the message
+    res = tools["write_place"]("zone_c", {
+        "kind": "world_map", "layout": layout_b,
+        "interactables": [{"id": "h_x", "label": "x", "position": {"feature": "f_nope"},
+                           "action": {"type": "examine", "text": "t"}}]})
+    assert res["ok"] is False and "f_nope" in res["error"]
+
+
+def test_add_interactable_snaps_to_open_and_takes_features(tmp_path):
+    from maestro.spec import Spec
+    from maestro.state import RunState
+    from maestro.tools import build_tools
+
+    state = RunState(tmp_path)
+    spec = Spec({"title": "T", "frozen": True, "modules": ["world"], "params": {}})
+    tools = build_tools(spec, state)
+    layout = {"size": "small", "terrain": {"open": "grass", "blocked": "rock"},
+              "features": [{"id": "f_camp", "kind": "camp", "at": "center"}],
+              "exits": [{"id": "x_east", "edge": "east"}]}
+    tools["write_place"]("zone_a", {"kind": "world_map", "layout": layout, "interactables": [
+        {"id": "h_c", "label": "camp", "position": {"feature": "f_camp"},
+         "action": {"type": "examine", "text": "t"}}]})
+    # raw cell on a border wall snaps to the nearest open tile
+    res = tools["add_interactable"]("zone_a", {
+        "id": "h_snap", "label": "s", "position": {"cell": {"x": 0, "y": 0}},
+        "action": {"type": "examine", "text": "t"}})
+    assert res["ok"] is True
+    from maestro.map_builder import open_cells
+    p = state.read_component("places")["places"]["zone_a"]
+    cell = next(i for i in p["interactables"] if i["id"] == "h_snap")["position"]["cell"]
+    assert (cell["x"], cell["y"]) in open_cells(p["tiles"])
+    # feature form works here too
+    res = tools["add_interactable"]("zone_a", {
+        "id": "h_feat", "label": "f", "position": {"feature": "x_east"},
+        "action": {"type": "examine", "text": "t"}})
+    assert res["ok"] is True
+    res = tools["add_interactable"]("zone_a", {
+        "id": "h_bad", "label": "b", "position": {"feature": "f_nope"},
+        "action": {"type": "examine", "text": "t"}})
+    assert res["ok"] is False and "f_nope" in res["error"]

@@ -352,6 +352,25 @@
           "items": {
             "$ref": "#/$defs/interactable"
           }
+        },
+        "layout": {
+          "type": "object",
+          "description": "The authored map PLAN for a walkable place (features on a coarse region grid). maestro.map_builder rasterizes it into `tiles` at write time; engines read only `tiles`. Kept for re-authoring/edits."
+        },
+        "anchors": {
+          "type": "object",
+          "description": "feature/exit id -> {x, y} open cell in front of it, emitted by the map builder. Used to resolve interactable positions and cross-zone move spawns; engines ignore it.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              }
+            }
+          }
         }
       }
     },
@@ -547,8 +566,46 @@
           "description": "Optional gate (a locked door)."
         },
         "spawn": {
-          "$ref": "#/$defs/position",
-          "description": "RPG: arrival cell in the target place."
+          "description": "Arrival in the target walkable place: a resolved tile {cell:{x,y}}, or the transitional layout form {feature: '<feature/exit id in the target zone>'} which write_place resolves to a cell as soon as the target zone exists.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "cell"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "cell": {
+                  "type": "object",
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "x": {
+                      "type": "integer"
+                    },
+                    "y": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "feature"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "feature": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
         }
       }
     },

@@ -155,3 +155,13 @@ def test_flow_routes_menu_end():
     flow = (_RUNTIME / "Game.gd").read_text().split("func _flow(")[1].split("\nfunc ")[0]
     assert '"menu"' in flow
     assert "menu_pick" in flow
+
+
+def test_overworld_has_wall_face_treatment():
+    # a flat full-tile texture reads as ground — blocked cells over open ground must draw a
+    # face band + drop shadow (2.5D), and tokens/marker assets must be probed
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "src/godot/runtime/overworld.gd").read_text()
+    assert "below_open" in src and "face.color" in src and "shadow" in src
+    assert '_token.png" % cid' in src
+    assert 'marker_signpost.png' in src and 'prop_%s.png' in src

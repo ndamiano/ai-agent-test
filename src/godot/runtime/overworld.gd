@@ -166,6 +166,16 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	g.add_child(layer)
 
+	# Role lookup for neighbour checks: 2.5D wall treatment needs to know what's below/above.
+	var roles := []
+	for cy in gh:
+		var row := String(rows[cy]) if cy < rows.size() else ""
+		var rrow := []
+		for cx in gw:
+			var ch := row.substr(cx, 1) if cx < row.length() else "."
+			rrow.append(String(_spec_of(ch, legend).get("role", "open")))
+		roles.append(rrow)
+
 	for cy in gh:
 		var row := String(rows[cy]) if cy < rows.size() else ""
 		for cx in gw:
@@ -175,6 +185,8 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 			var theme := String(spec.get("theme", ""))
 			var pos := Vector2(ox + cx * tile, oy + cy * tile)
 			var siz := Vector2(tile, tile)
+			var below_open: bool = cy + 1 < gh and roles[cy + 1][cx] == "open"
+			var above_open: bool = cy > 0 and roles[cy - 1][cx] == "open"
 			var tex = _tile_texture(theme)
 			if tex != null:
 				# Each cell samples ITS region of the (seamless) texture — one texture spans a
@@ -193,7 +205,9 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 				tr.size = siz
 				tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				if role == "blocked":
-					tr.modulate = Color(0.62, 0.62, 0.70)  # dim walls so they still read as walls
+					# Mild dim only — the 2.5D face below is what reads as "wall"; heavy
+					# dimming made whole walls read as dark ground (observed).
+					tr.modulate = Color(0.85, 0.85, 0.90)
 				layer.add_child(tr)
 			else:
 				# colour fallback keeps a 1px grid inset so bare cells still read as tiles
@@ -203,6 +217,37 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 				cell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				cell.color = _tile_color(role, theme)
 				layer.add_child(cell)
+			# 2.5D wall treatment — a flat full-tile texture reads as ground no matter how good
+			# the masonry is. A blocked cell over open ground gets a FACE (darkened lower band =
+			# the wall's front) and casts a shadow onto the ground cell below; a top edge above
+			# open ground gets a thin highlight. Pure overlays, works over textures and fills.
+			if role == "blocked":
+				if below_open:
+					var face := ColorRect.new()
+					face.position = pos + Vector2(0, siz.y * 0.5)
+					face.size = Vector2(siz.x, siz.y * 0.5)
+					face.color = Color(0, 0, 0, 0.51)
+					face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					layer.add_child(face)
+					var lip := ColorRect.new()
+					lip.position = pos + Vector2(0, siz.y * 0.5 - 2)
+					lip.size = Vector2(siz.x, 2)
+					lip.color = Color(1, 1, 1, 0.16)
+					lip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					layer.add_child(lip)
+					var shadow := ColorRect.new()
+					shadow.position = pos + Vector2(0, siz.y)
+					shadow.size = Vector2(siz.x, siz.y * 0.2)
+					shadow.color = Color(0, 0, 0, 0.27)
+					shadow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					layer.add_child(shadow)
+				if above_open:
+					var crest := ColorRect.new()
+					crest.position = pos
+					crest.size = Vector2(siz.x, 3)
+					crest.color = Color(1, 1, 1, 0.22)
+					crest.mouse_filter = Control.MOUSE_FILTER_IGNORE
+					layer.add_child(crest)
 
 	_labels.clear()
 	for k in inter:

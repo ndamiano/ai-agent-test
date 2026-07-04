@@ -89,8 +89,22 @@ func run_place(place_id, spawn):
 	var ox := (1280 - tile * gw) / 2
 	var oy := (720 - tile * gh) / 2
 
-	var layer := _build_layer(rows, legend, gw, gh, tile, ox, oy, inter)
-	_draw_features(layer, place.get("footprints", {}), tile, ox, oy)
+	# Cells under a feature whose sprite is on disk render as plain open ground — the sprite
+	# IS the feature; the themed mosaic + wall faces beneath it just clash. (Movement blocking
+	# is untouched: `blocked` reads roles from the legend above.)
+	var covered := {}
+	var fps = place.get("footprints", {})
+	if typeof(fps) == TYPE_DICTIONARY:
+		for fid in fps:
+			var fp = fps[fid]
+			if g._texture_file("feature_%s.png" % _slug(String(fp.get("label", "")))) == null:
+				continue
+			for dy in int(fp.get("h", 0)):
+				for dx in int(fp.get("w", 0)):
+					covered[_key(int(fp["x"]) + dx, int(fp["y"]) + dy)] = true
+
+	var layer := _build_layer(rows, legend, gw, gh, tile, ox, oy, inter, covered)
+	_draw_features(layer, fps, tile, ox, oy)
 
 	var ax := 0
 	var ay := 0
@@ -163,7 +177,7 @@ func _fire(layer: Control, it) -> Variant:
 
 
 # ── rendering ────────────────────────────────────────────────────────────────────────────────
-func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
+func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter, covered := {}) -> Control:
 	g.set_scene(null)  # the tiles ARE the scene — no backdrop image
 	for c in g.sprites_node().get_children():
 		c.queue_free()
@@ -173,20 +187,22 @@ func _build_layer(rows, legend, gw, gh, tile, ox, oy, inter) -> Control:
 	g.add_child(layer)
 
 	# Role lookup for neighbour checks: 2.5D wall treatment needs to know what's below/above.
+	# Sprite-covered cells count as open so no face bands sprout around a drawn feature.
 	var roles := []
 	for cy in gh:
 		var row := String(rows[cy]) if cy < rows.size() else ""
 		var rrow := []
 		for cx in gw:
 			var ch := row.substr(cx, 1) if cx < row.length() else "."
-			rrow.append(String(_spec_of(ch, legend).get("role", "open")))
+			var r := String(_spec_of(ch, legend).get("role", "open"))
+			rrow.append("open" if covered.has(_key(cx, cy)) else r)
 		roles.append(rrow)
 
 	for cy in gh:
 		var row := String(rows[cy]) if cy < rows.size() else ""
 		for cx in gw:
 			var ch := row.substr(cx, 1) if cx < row.length() else "."
-			var spec = _spec_of(ch, legend)
+			var spec = _spec_of("." if covered.has(_key(cx, cy)) else ch, legend)
 			var role := String(spec.get("role", "open"))
 			var theme := String(spec.get("theme", ""))
 			var pos := Vector2(ox + cx * tile, oy + cy * tile)

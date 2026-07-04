@@ -60,7 +60,9 @@ def _collect_tile_themes(places_comp: Dict) -> List[str]:
 
 def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
     """(theme, role) pairs — the role steers the texture prompt so open ground and blocked
-    obstacles READ differently at a glance (the texture is the avatar's only passability signal)."""
+    obstacles READ differently at a glance (the texture is the avatar's only passability signal).
+    Cells inside a feature footprint are excluded: the feature SPRITE covers them (the presenter
+    draws base ground underneath), so 'a supply wagon' never becomes a nonsense terrain texture."""
     from maestro.modules.world import DEFAULT_LEGEND, _RPG_KINDS
 
     specs: Dict[str, str] = {}
@@ -69,8 +71,16 @@ def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
             continue
         tiles = place.get("tiles") or {}
         merged = {**DEFAULT_LEGEND, **(tiles.get("legend") or {})}
-        for row in tiles.get("rows") or []:
-            for ch in row:
+        covered = set()
+        for fp in (place.get("footprints") or {}).values():
+            if isinstance(fp, dict):
+                for dy in range(int(fp.get("h", 0))):
+                    for dx in range(int(fp.get("w", 0))):
+                        covered.add((int(fp["x"]) + dx, int(fp["y"]) + dy))
+        for y, row in enumerate(tiles.get("rows") or []):
+            for x, ch in enumerate(row):
+                if (x, y) in covered:
+                    continue
                 spec = merged.get(ch)
                 if isinstance(spec, dict) and spec.get("theme"):
                     specs.setdefault(spec["theme"], spec.get("role", "open"))

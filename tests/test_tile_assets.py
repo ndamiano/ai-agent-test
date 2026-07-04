@@ -106,6 +106,19 @@ def test_collect_tile_specs_carries_roles():
     assert dict(_collect_tile_specs(comp)) == {"ash pine": "blocked", "ground": "open"}
 
 
+def test_collect_tile_specs_skips_sprite_covered_footprint_cells():
+    from renpy.fns import _collect_tile_specs
+    comp = {"places": {"z": {"kind": "town",
+        "tiles": {"legend": {"B": {"role": "blocked", "theme": "supply wagon"},
+                             "C": {"role": "blocked", "theme": "gallows"}},
+                  "rows": ["BB.", "CC."]},
+        "footprints": {"f_w": {"x": 0, "y": 0, "w": 2, "h": 1,
+                               "kind": "building", "label": "wagon"}}}}}
+    themes = dict(_collect_tile_specs(comp["places"] and comp))
+    # wagon cells are sprite-covered -> no terrain texture; gallows has no footprint -> kept
+    assert "supply wagon" not in themes and "gallows" in themes and "ground" in themes
+
+
 def test_collect_feature_specs_dedupes_by_label():
     from renpy.fns import _collect_feature_specs
     comp = {"places": {

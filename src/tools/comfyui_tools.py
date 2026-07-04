@@ -264,7 +264,8 @@ def build_feature_job(kind: str, label: str) -> dict:
     positive = (f"{_BG_QUALITY}, a single {desc} seen from a high three-quarter angle, "
                 f"stylized 2d game overworld object sprite, whole structure in frame, "
                 f"centered, bold readable silhouette, clean detailed rendering, isolated "
-                f"against a plain flat white background, no ground, no scenery around it")
+                f"against a plain flat white background, no ground, no pedestal, no base "
+                f"platform, no scenery around it")
     wf = _build_background_workflow(
         _load_workflow(_TXT2IMG_ITEM_WORKFLOW_PATH), positive, _ITEM_NEGATIVE)
     wf["5"]["inputs"]["width"] = 1024

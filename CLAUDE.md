@@ -156,20 +156,32 @@ src/
                 (feature id → doorstep cell) that resolve interactable positions
                 ({"feature": id}) and cross-zone move spawns ({"spawn": {"feature": id}},
                 resolved both directions as zones land; unknown arrival falls back to the
-                target's gate). Hotspots snap to the nearest open cell (never LLM-fixed).
+                target's gate), plus `footprints` (feature id → stamped cell rect) that the
+                presenter covers with a generated object sprite (feature_<slug>.png, item
+                workflow + BiRefNet — a wagon reads as a wagon, not a mosaic of blocked
+                tiles; missing asset degrades to the mosaic). Hotspots snap to the nearest
+                open cell (never LLM-fixed).
                 Each distinct theme gets one generated terrain texture
                 (renpy/fns.generate_images tile pass via comfyui build_tile_job(theme, role) —
-                role-aware formulas from the 84-generation tile lab: stylized-tileset for open
-                ground, dense-growth for organic blocked, FRONT-FACING masonry for wall-ish
-                themes (a top-down wall renders as ground) — then make_seamless_tile post:
-                wrap cross-fade + downscale to 256² → tile_<slug>.png). Best tile quality =
-                ideogram4 with structured JSON captions on the second ComfyUI (see memory);
-                DreamShaper formulas are the wired default. The presenter samples each cell's
+                then make_seamless_tile post: wrap cross-fade + downscale to 256² →
+                tile_<slug>.png). Tile QUALITY path: settings comfyui.tile_endpoint names the
+                second ComfyUI carrying the ideogram4 stack — tile jobs render there with the
+                structured JSON captions the model is trained on (role-specific body +
+                keyword-matched hex palette, dual-UNET asymmetric-CFG graph); its filtered
+                weights REFUSE stochastically per seed by painting refusal text/blank cards
+                INTO the image, so the pass runs one tile at a time through tile_refused()
+                and rerolls the seed (up to 3). Unset, the endpoint falls back to the lab's
+                role-aware DreamShaper formulas (stylized-tileset open ground, dense-growth
+                organic blocked, FRONT-FACING masonry for wall-ish themes — a top-down wall
+                renders as ground). The presenter samples each cell's
                 REGION of the seamless texture (3×3-cell wrap) so terrain flows across cells,
                 draws the avatar and talk-NPCs as generated chibi TOKENS (<id>_token.png),
                 move/win/examine hotspots as generated marker assets (signpost/banner/prop),
                 take/use hotspots as item icons, keeps labels visible only near the avatar,
-                and colour-fills when art is absent.
+                and colour-fills when art is absent. Player chrome lives in the runtime:
+                title screen (title_card + New Game/Continue/Quit), Esc pause menu with
+                save-anywhere (user://save.json: state + place + avatar cell), ending overlay
+                with Play Again, bottom-right inventory strip, PnC hotspot hover.
                 Game.run_action is the one shared verb dispatch both presenters call, so a new
                 navigation modality = a new presenter + one registry entry, never a router edit.
                 docs/examples/combat_game.json is the hand-authored showcase exercising the full

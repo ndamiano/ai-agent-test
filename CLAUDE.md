@@ -139,10 +139,18 @@ src/
                 exist is combat: combat.gd plays turn_based encounters renpy stubs out. The
                 `combat` module authors the encounter IR ONE slice at a time in dependency order
                 (set_combat_meta lays stats/statuses, then write_ability/write_combatant/
-                write_encounter grow the list slices, each validated against the declared upstream
-                ids at write time — so a small model fixes one item, never re-authors the whole
-                block); since it registers a projection ONLY here (none for renpy), any spec that
-                picks it auto-routes to Godot via Module.engine_for — no explicit routing.
+                write_encounter grow the list slices, then set_progression + set_encounter_table
+                lay the GROWTH LOOP — each validated against the declared upstream ids at write
+                time, so a small model fixes one item, never re-authors the whole block); since
+                it registers a projection ONLY here (none for renpy), any spec that picks it
+                auto-routes to Godot via Module.engine_for — no explicit routing.
+                Game LENGTH comes from systems, not authored encounter count: the player fights
+                as ONE persistent combatant (progression.player; damage/XP/levels carry across
+                fights via state.pstats, riding saves), victories pay the loser's xp_yield,
+                level-ups apply the declared stat growth and heal to full, and a zone's
+                encounter_table rolls weighted tier-scaled wild fights on open-ground steps —
+                losing a wild fight respawns at the zone entrance at half strength while
+                authored encounters (the set pieces) keep their on_defeat stakes.
                 runtime/Game.gd drives a PRESENTERS
                 registry keyed on place.kind: `room` => pnc.gd (click hotspots), `world_map/town/
                 interior` => overworld.gd (a WASD/arrow-key walkable tile grid — step ONTO a

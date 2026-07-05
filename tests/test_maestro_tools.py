@@ -882,6 +882,26 @@ def test_set_places_meta_and_edit_place(tmp_path):
     h = state.read_component("places")["places"]["room_a"]["interactables"][0]
     assert h["action"]["target"] == "room_c"
     assert tools["set_places_meta"](goal={"type": "x"})["ok"] is False  # bad goal shape
+    # same-type action patches MERGE — one fixer's `requires` must survive another fixer's
+    # spawn/target patch (observed: two fixers alternating whole-action replacements forever)
+    assert tools["edit_place"]("room_a", "hs_door",
+                               action={"type": "move", "target": "room_c",
+                                       "requires": {"flag": "escaped"}})["ok"] is True
+    assert tools["edit_place"]("room_a", "hs_door",
+                               action={"type": "move", "target": "room_b"})["ok"] is True
+    h = state.read_component("places")["places"]["room_a"]["interactables"][0]
+    assert h["action"]["target"] == "room_b"
+    assert h["action"]["requires"] == {"flag": "escaped"}   # survived the repoint
+    # a null value removes its key; a type change replaces outright
+    assert tools["edit_place"]("room_a", "hs_door",
+                               action={"type": "move", "target": "room_b",
+                                       "requires": None})["ok"] is True
+    h = state.read_component("places")["places"]["room_a"]["interactables"][0]
+    assert "requires" not in h["action"]
+    assert tools["edit_place"]("room_a", "hs_door",
+                               action={"type": "examine", "text": "a door"})["ok"] is True
+    h = state.read_component("places")["places"]["room_a"]["interactables"][0]
+    assert h["action"] == {"type": "examine", "text": "a door"}
 
 
 # ── locking ──────────────────────────────────────────────────────────────────

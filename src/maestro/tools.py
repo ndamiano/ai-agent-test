@@ -698,6 +698,13 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": f"no interactable {interactable_id!r} in place {place_id!r}"}
         if action is not None:
             from maestro.modules.world import action_error
+            # Same-type patches MERGE over the current action (a null value removes its key).
+            # Replacement semantics let two fixers fight: the wiring fix's `requires` wiped the
+            # spawn fix's `spawn` and vice versa, each edit 'ok' — an A-B loop the stall
+            # detector can't see. A type CHANGE still replaces outright.
+            current = h.get("action") or {}
+            if isinstance(action, dict) and action.get("type") == current.get("type"):
+                action = {k: v for k, v in {**current, **action}.items() if v is not None}
             err = action_error(action)
             if err:
                 return {"ok": False, "error": err}

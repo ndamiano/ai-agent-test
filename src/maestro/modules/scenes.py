@@ -157,6 +157,22 @@ def parse_screenplay(script: str, characters: List[Dict]):
     return lines, None
 
 
+_EFFECT_KEYS = ("set_flag", "clear_flag", "add_item", "remove_item", "set_var", "add_var")
+
+
+def effect_error(e) -> Optional[str]:
+    """One narrative effect = ONE known key. Observed: invented effect types ('show_text')
+    written to lines sailed through the dict-shape check and died attributed-but-unfixable at
+    the terminal compile."""
+    if not isinstance(e, dict) or not any(k in e for k in _EFFECT_KEYS):
+        return (f"unknown effect {str(e)[:80]!r} — an effect is one of "
+                f"{{\"set_flag\"|\"clear_flag\": \"<flag>\"}}, "
+                f"{{\"add_item\"|\"remove_item\": \"<item>\"}}, "
+                f"{{\"set_var\"|\"add_var\": {{\"var\": .., \"value\"|\"amount\": ..}}}}. "
+                f"Prose belongs in the line's `text`, never in an effect.")
+    return None
+
+
 def end_error(end) -> Optional[str]:
     """Menu/end policy for BOTH write paths — write_node and edit_node's end patch. A fake
     menu written via the end-patch path games min_branches, so the gate must hold there too."""
@@ -168,6 +184,10 @@ def end_error(end) -> Optional[str]:
             if not isinstance(c, dict) or not c.get("target"):
                 return (f"menu choice [{j}] has no 'target' — every choice is "
                         f"{{text, target}} where target is the node it jumps to.")
+            for e in c.get("effects") or []:
+                err = effect_error(e)
+                if err:
+                    return f"menu choice [{j}].effects: {err}"
         n = len(choices)
         if n > _MAX_MENU_CHOICES:
             return (f"this menu has {n} choices — a menu is a DRAMATIC FORK, at most "
@@ -205,6 +225,10 @@ def node_write_error(content, *, min_lines: int = 0):
                                  or any(not isinstance(e, dict) for e in effs)):
             return (f"node.lines[{j}].effects must be a list of effect OBJECTS "
                     f"(e.g. {{\"set_flag\": \"found_key\"}}), not strings")
+        for e in effs or []:
+            err = effect_error(e)
+            if err:
+                return f"node.lines[{j}].effects: {err}"
         emo = ln.get("emotion")
         if emo and emo not in _EMOTIONS:
             return (f"node.lines[{j}] has emotion {emo!r} — use EXACTLY one of "

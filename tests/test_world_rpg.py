@@ -528,3 +528,11 @@ def test_add_interactable_snaps_to_open_and_takes_features(tmp_path):
         "id": "h_bad", "label": "b", "position": {"feature": "f_nope"},
         "action": {"type": "examine", "text": "t"}})
     assert res["ok"] is False and "f_nope" in res["error"]
+
+
+def test_node_write_rejects_unknown_effect_types():
+    from maestro.modules.scenes import effect_error
+    assert effect_error({"set_flag": "x"}) is None
+    assert effect_error({"remove_item": "item_k"}) is None
+    err = effect_error({"type": "show_text", "text": "Verifying..."})
+    assert err and "unknown effect" in err and "text" in err

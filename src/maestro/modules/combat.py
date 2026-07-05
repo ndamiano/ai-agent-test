@@ -354,7 +354,10 @@ SKEL_COMBATANT = (
     '}\n'
     '// call write_combatant(combatant_id="cb_hero", content={...}) — ONE combatant per call.\n'
     '// character ties to a cast `characters` id (name/sprite). stats override the declared defaults.\n'
-    '// abilities MUST be ability ids you already authored with write_ability.'
+    '// abilities MUST be ability ids you already authored with write_ability.\n'
+    '// The PLAYER fights as the PROTAGONIST: author one combatant whose character is the main\n'
+    '// character (the story\'s POV), and use THAT one with faction "player" in every encounter —\n'
+    '// never an enemy re-used on the player side.'
 )
 
 SKEL_ENCOUNTER = (

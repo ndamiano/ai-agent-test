@@ -275,7 +275,7 @@ func _draw_features(footprints) -> void:
 		var span: float = max(float(fp.get("w", 1)), float(fp.get("h", 1))) * _CELL
 		var glb_path := "images/feature_%s.glb" % slug
 		if FileAccess.file_exists("res://" + glb_path):
-			var node := _load_glb(glb_path, span)
+			var node := _load_glb(glb_path, span, g._texture_file("feature_%s.png" % slug))
 			if node != null:
 				node.position = Vector3(fx, 0.0, fz)
 				_root.add_child(node)
@@ -293,7 +293,7 @@ func _draw_features(footprints) -> void:
 
 # Load a .glb, drop it on the ground, scale its longest horizontal side to `span`, and give the
 # untextured shape a warm stone material so its form reads under the scene light.
-func _load_glb(path: String, span: float) -> Node3D:
+func _load_glb(path: String, span: float, tex = null) -> Node3D:
 	var doc := GLTFDocument.new()
 	var st := GLTFState.new()
 	if doc.append_from_buffer(FileAccess.get_file_as_bytes("res://" + path), "", st) != OK:
@@ -304,9 +304,28 @@ func _load_glb(path: String, span: float) -> Node3D:
 	var aabb := _mesh_aabb(scene)
 	if aabb.size == Vector3.ZERO:
 		return null
+	# Shape-only meshes are untextured — project the SOURCE SPRITE onto the mesh as a triplanar
+	# texture (local space, one repeat across the mesh bounds) so the generated art becomes the
+	# colour. Crude (the front reads best, sides smear) but fully local, no paint model. No sprite
+	# -> a warm stone fallback so the form still reads.
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.80, 0.76, 0.68)
-	mat.roughness = 0.9
+	mat.roughness = 0.85
+	if tex != null:
+		mat.albedo_texture = tex
+		mat.uv1_triplanar = true
+		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+		# the sprite's transparent regions carry near-white RGB; scissor on their alpha so the
+		# mesh's auto-generated base slab (which samples them) punches through to the ground
+		# instead of showing as a white platform
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		mat.alpha_scissor_threshold = 0.5
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var m: float = max(aabb.size.x, max(aabb.size.y, aabb.size.z))
+		if m > 0.0:
+			mat.uv1_scale = Vector3(1.0 / m, 1.0 / m, 1.0 / m)
+		mat.uv1_offset = Vector3(0.5, 0.5, 0.5)
+	else:
+		mat.albedo_color = Color(0.80, 0.76, 0.68)
 	_apply_material(scene, mat)
 	var wrap := Node3D.new()
 	# scale so the mesh sits WITHIN its footprint (0.8) and a tall object (a tower) never rises

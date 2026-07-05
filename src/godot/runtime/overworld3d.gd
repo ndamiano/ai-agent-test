@@ -230,17 +230,20 @@ func _build_scene(rows, legend, gw, gh, inter) -> Node3D:
 			spr.texture = icon
 			spr.pixel_size = m / icon.get_height()
 		else:
+			# no art: a small full-billboard chip, not a ground-skewed square
 			var col: Color = Overworld._MARKERS.get(atype, Color(0.85, 0.85, 0.85))
+			spr.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 			spr.texture = _solid_texture(col)
-			spr.pixel_size = m / 8.0
+			spr.pixel_size = (m * 0.35) / 8.0
 		spr.position = Vector3(cx * _CELL, m / 2.0, cy * _CELL)
 		root.add_child(spr)
 
 		var lbl := Label3D.new()
 		lbl.text = it.get("label", "")
 		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lbl.font_size = 40
-		lbl.outline_size = 10
+		lbl.font_size = 28
+		lbl.outline_size = 8
+		lbl.pixel_size = 0.003
 		lbl.position = Vector3(cx * _CELL, m + 0.35, cy * _CELL)
 		lbl.visible = false  # shown only when the avatar is near (see _refresh_labels)
 		root.add_child(lbl)

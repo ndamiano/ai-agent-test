@@ -399,6 +399,20 @@ def test_map_builder_emits_footprints_for_solid_features():
     assert build_tiles("zone_fp", layout)["footprints"]["f_smithy"]["label"] == "timber smithy"
 
 
+def test_talk_entered_nodes_are_reachability_roots():
+    from maestro.modules.scenes import reachable_from_start
+    art = {"nodes": {"node_ids": ["scene_01", "node_rally"], "nodes": {
+        "scene_01": {"lines": [{"speaker": "a", "text": "x"}], "end": {"type": "return"}},
+        "node_rally": {"lines": [{"speaker": "a", "text": "y"}], "end": {"type": "return"}}}},
+        "places": {"places": {"town": {"kind": "town", "interactables": [
+            {"id": "h_rally", "action": {"type": "talk", "node": "node_rally"}}]}}}}
+    ok, msg = reachable_from_start(art)
+    assert ok, msg   # node_rally is entered from the world, not an orphan
+    art["places"]["places"]["town"]["interactables"] = []
+    ok, msg = reachable_from_start(art)
+    assert not ok and "node_rally" in msg
+
+
 def test_snap_to_open_avoids_occupied_cells():
     from maestro.map_builder import snap_to_open
     tiles = {"legend": {}, "rows": ["...", "...", "..."]}

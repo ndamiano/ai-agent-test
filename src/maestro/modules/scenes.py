@@ -331,7 +331,16 @@ def reachable_from_start(artifact: Dict):
         # SHOULD exist is owned by build_nodes/beats_realized/nodes_world_entered.
         return True, None
     edges = {nid: views.node_targets(nodes.get(nid, {})) for nid in node_ids}
-    orphans = [n for n in node_ids if n not in views.reachable(node_ids, edges)]
+    # In a world game a node is also ENTERED from a place: every talk hotspot's target is a
+    # root, not an orphan (observed: legitimately talk-entered nodes flagged unreachable and
+    # the fixer told to wire them into the node graph they don't belong in).
+    roots = [node_ids[0]]
+    for place in ((artifact.get("places") or {}).get("places") or {}).values():
+        for h in (place.get("interactables") or []) if isinstance(place, dict) else []:
+            a = (h or {}).get("action") or {}
+            if a.get("type") == "talk" and a.get("node"):
+                roots.append(a["node"])
+    orphans = [n for n in node_ids if n not in views.reachable(node_ids, edges, roots)]
     if orphans:
         return False, f"nodes unreachable from '{node_ids[0]}': {orphans[:5]}"
     return True, None

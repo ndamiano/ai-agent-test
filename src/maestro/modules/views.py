@@ -21,10 +21,11 @@ def node_targets(node: Dict) -> List[str]:
     return []
 
 
-def reachable(ids: List[str], edges: Dict[str, List[str]]) -> set:
+def reachable(ids: List[str], edges: Dict[str, List[str]], roots: List[str] = None) -> set:
     if not ids:
         return set()
-    seen, frontier = {ids[0]}, [ids[0]]
+    start = [r for r in (roots or []) if r in edges] or [ids[0]]
+    seen, frontier = set(start), list(start)
     while frontier:
         for tgt in edges.get(frontier.pop(), []):
             if tgt in edges and tgt not in seen:

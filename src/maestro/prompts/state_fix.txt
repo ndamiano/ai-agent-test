@@ -22,6 +22,8 @@ catalog only.
     - Only gate a later choice or hotspot on it (a `requires` on the flag / variable / item) if
       one ALREADY makes sense as that gate — never invent a new branch or bolt a `requires` onto
       a choice/hotspot the value has no business affecting.
+    - `requires` is only legal on move/win/use/start_combat actions and menu choices — a talk
+      or examine hotspot can NOT be gated; pick a different consumer.
 
   Never produced AND never consumed (a bare declaration): CUT IT — rewrite the catalog/list
   without it. Do not invent new scenes just to justify a value nobody uses.

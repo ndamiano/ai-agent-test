@@ -399,6 +399,17 @@ def test_map_builder_emits_footprints_for_solid_features():
     assert build_tiles("zone_fp", layout)["footprints"]["f_smithy"]["label"] == "timber smithy"
 
 
+def test_snap_to_open_avoids_occupied_cells():
+    from maestro.map_builder import snap_to_open
+    tiles = {"legend": {}, "rows": ["...", "...", "..."]}
+    # target cell free -> stays; occupied -> nearest free open cell (observed: two takes on
+    # one tile parked a build after 6 blind LLM fixes)
+    assert snap_to_open(tiles, 1, 1) == (1, 1)
+    assert snap_to_open(tiles, 1, 1, occupied={(1, 1)}) != (1, 1)
+    everywhere = {(x, y) for x in range(3) for y in range(3)}
+    assert snap_to_open(tiles, 1, 1, occupied=everywhere) == (1, 1)  # all taken -> nearest open
+
+
 def test_map_builder_rejects_bad_layout():
     from maestro.map_builder import v_layout
     assert v_layout({"size": "huge"}) is not None

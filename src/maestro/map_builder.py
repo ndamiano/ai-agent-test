@@ -241,16 +241,18 @@ def open_cells(tiles: Dict) -> set:
     return cells
 
 
-def snap_to_open(tiles: Dict, x: int, y: int) -> Optional[Tuple[int, int]]:
+def snap_to_open(tiles: Dict, x: int, y: int, occupied=()) -> Optional[Tuple[int, int]]:
     """Nearest open cell to (x, y) — deterministic, so a hotspot dropped on a wall is moved,
     never bounced to an LLM fixer (observed: 6 failed fixes then a parked build over one
-    blocked cell)."""
+    blocked cell). `occupied` cells (other hotspots) are avoided the same way (observed: two
+    takes on one tile parked a build); if every open cell is taken, nearest open wins."""
     cells = open_cells(tiles)
     if not cells:
         return None
-    if (x, y) in cells:
+    free = cells - set(occupied) or cells
+    if (x, y) in free:
         return (x, y)
-    return min(cells, key=lambda c: (abs(c[0] - x) + abs(c[1] - y), c[1], c[0]))
+    return min(free, key=lambda c: (abs(c[0] - x) + abs(c[1] - y), c[1], c[0]))
 
 
 def v_layout(layout: Dict) -> Optional[str]:

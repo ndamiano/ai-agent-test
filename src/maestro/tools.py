@@ -625,7 +625,10 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                     dx = (0, 1, -1, 0)[n % 4]
                     dy = (0, 0, 0, 1)[n % 4]
                     from maestro.map_builder import snap_to_open
-                    cell = snap_to_open(content["tiles"], a["x"] + dx, a["y"] + dy) \
+                    taken = {(i["position"]["cell"]["x"], i["position"]["cell"]["y"])
+                             for i in content.get("interactables", [])
+                             if i is not h and (i.get("position") or {}).get("cell")}
+                    cell = snap_to_open(content["tiles"], a["x"] + dx, a["y"] + dy, taken) \
                         or (a["x"], a["y"])
                     h["position"] = {"cell": {"x": cell[0], "y": cell[1]}}
         err = _place_content_error(content)
@@ -710,6 +713,16 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 return {"ok": False, "error": err}
             h["action"] = action
         if position is not None:
+            cell = (position or {}).get("cell") or {}
+            if place.get("kind") in ("world_map", "town", "interior") \
+                    and isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int):
+                from maestro.map_builder import snap_to_open
+                taken = {(i["position"]["cell"]["x"], i["position"]["cell"]["y"])
+                         for i in place.get("interactables", [])
+                         if i is not h and (i.get("position") or {}).get("cell")}
+                snapped = snap_to_open(place.get("tiles") or {}, cell["x"], cell["y"], taken)
+                if snapped:
+                    position = {"cell": {"x": snapped[0], "y": snapped[1]}}
             h["position"] = position
         if label is not None:
             h["label"] = label
@@ -753,7 +766,9 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 interactable["position"] = {"cell": {"x": a["x"], "y": a["y"]}}
             cell = (interactable.get("position") or {}).get("cell") or {}
             if isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int):
-                snapped = snap_to_open(place.get("tiles") or {}, cell["x"], cell["y"])
+                taken = {(i["position"]["cell"]["x"], i["position"]["cell"]["y"])
+                         for i in inter if (i.get("position") or {}).get("cell")}
+                snapped = snap_to_open(place.get("tiles") or {}, cell["x"], cell["y"], taken)
                 if snapped:
                     interactable["position"] = {"cell": {"x": snapped[0], "y": snapped[1]}}
         inter.append(interactable)

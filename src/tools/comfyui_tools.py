@@ -472,10 +472,20 @@ def mesh_backend() -> str:
 def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir.
     Shells out to the standalone TRELLIS venv (loads the 4B pipeline once for the whole batch).
-    Returns the set of slugs that produced a .glb. Never raises — a failure leaves billboards."""
+    Returns the set of slugs that produced a .glb. Never raises — a failure leaves billboards.
+
+    The 4B pipeline needs ~19GB, and the mesh pass runs after the LLM/ComfyUI phase (they may
+    be resident), so free everyone's VRAM first — this subprocess owns the GPU for its run."""
     import json
     import os
     import subprocess
+    cfg = _get_comfyui_settings()
+    for ep in {_get_comfyui_endpoint(), cfg.get("mesh_endpoint", ""), cfg.get("tile_endpoint", "")}:
+        if ep:
+            _comfyui_free_vram(ep.rstrip("/"))
+    loaded = _llm_get_loaded_model()
+    if loaded:
+        _llm_unload(loaded)
     t = _get_trellis_settings()
     runner = os.path.join(os.path.dirname(__file__), "trellis_runner.py")
     try:

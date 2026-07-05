@@ -108,16 +108,21 @@ def action_conditions(action: Dict):
     if t in ("move", "win") and action.get("requires"):
         yield action["requires"]
     if t == "use":
-        for cl in action.get("clauses", []):
-            if cl.get("requires"):
+        for cl in action.get("clauses", []) or []:
+            if isinstance(cl, dict) and cl.get("requires"):
                 yield cl["requires"]
 
 
 def action_effects(action: Dict):
+    # Tolerates malformed shapes (string fallback, non-dict outcome): this walks the raw
+    # artifact between validated writes, and a crash here kills the whole build process.
     if action.get("type") == "use":
-        for cl in action.get("clauses", []):
-            yield from (cl.get("outcome", {}) or {}).get("effects", []) or []
-        yield from (action.get("fallback", {}) or {}).get("effects", []) or []
+        for cl in action.get("clauses", []) or []:
+            if isinstance(cl, dict) and isinstance(cl.get("outcome"), dict):
+                yield from cl["outcome"].get("effects", []) or []
+        fb = action.get("fallback")
+        if isinstance(fb, dict):
+            yield from fb.get("effects", []) or []
 
 
 def all_actions(places_map: Dict):

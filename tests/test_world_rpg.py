@@ -399,6 +399,17 @@ def test_map_builder_emits_footprints_for_solid_features():
     assert build_tiles("zone_fp", layout)["footprints"]["f_smithy"]["label"] == "timber smithy"
 
 
+def test_action_walks_tolerate_malformed_use_shapes():
+    # a transient string fallback (model edit between validated writes) crashed the state
+    # scan and took the whole build process down — the walk must skip, never raise
+    from maestro.modules.views import action_effects, action_conditions
+    a = {"type": "use", "clauses": [{"requires": {"item": "k"}, "outcome": "not a dict"},
+                                    "not a clause"],
+         "fallback": "just a string"}
+    assert list(action_effects(a)) == []
+    assert list(action_conditions(a)) == [{"item": "k"}]
+
+
 def test_talk_entered_nodes_are_reachability_roots():
     from maestro.modules.scenes import reachable_from_start
     art = {"nodes": {"node_ids": ["scene_01", "node_rally"], "nodes": {

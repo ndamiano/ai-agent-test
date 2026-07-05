@@ -61,6 +61,8 @@ class FakeGame:
 \tvar combatant_by_id = {}
 \tvar encounter_by_id = {}
 \tvar lines = []
+\tvar ir = {}
+\tfunc pstats(): return null
 \tfunc set_scene(_bg): pass
 \tfunc show_line(_sp, text): lines.append(text)
 \tfunc hide_dialogue(): pass
@@ -146,7 +148,7 @@ def test_combat_resolution_and_menu_flow(tmp_path):
 
 
 def test_combat_checks_end_after_status_tick():
-    body = (_RUNTIME / "combat.gd").read_text().split("func run(")[1].split("\nfunc ")[0]
+    body = (_RUNTIME / "combat.gd").read_text().split("func _run_enc(")[1].split("\nfunc ")[0]
     assert body.index("_any_alive") < body.index("_tick_statuses(u)")
     assert "_check_end" in body[body.index("_tick_statuses(u)"):body.index("await _player_turn")]
 

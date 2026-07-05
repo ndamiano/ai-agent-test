@@ -262,4 +262,21 @@ def crossref_records(ir: Dict) -> List[Dict]:
             if key in enc:
                 check_node_end(enc[key], f"encounters[{eid}].{key}")
 
+    prog = ir.get("progression")
+    if isinstance(prog, dict):
+        if prog.get("player") not in combatants:
+            bad("progression.player", prog.get("player"), "combatant")
+        for i, g in enumerate(prog.get("growth", [])):
+            if isinstance(g, dict) and g.get("stat") not in stats:
+                bad(f"progression.growth[{i}].stat", g.get("stat"), "stat")
+
+    for place in ir.get("places", []):
+        pid = place.get("id")
+        table = place.get("encounter_table")
+        if isinstance(table, dict):
+            for i, e in enumerate(table.get("entries", [])):
+                if isinstance(e, dict) and e.get("combatant") not in combatants:
+                    bad(f"places[{pid}].encounter_table.entries[{i}].combatant",
+                        e.get("combatant"), "combatant")
+
     return records

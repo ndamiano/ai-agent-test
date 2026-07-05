@@ -602,6 +602,27 @@ func _texture_file(file: String):
 	return ImageTexture.create_from_image(img)
 
 
+# The persistent player combat block (stats/max/xp/level) for the progression loop — lives in
+# `state` so saves carry it. Initialized lazily from the progression player's combatant.
+func pstats():
+	var prog = ir.get("progression")
+	if prog == null:
+		return null
+	if not state.has("pstats"):
+		var cb = combatant_by_id.get(prog["player"], {})
+		var stats := {}
+		for s in stat_by_id.values():
+			stats[s["id"]] = s["default"]
+		for sv in cb.get("stats", []):
+			stats[sv["stat"]] = sv["value"]
+		var mx := {}
+		for s in stat_by_id.values():
+			if s.get("role") == "resource_depletable":
+				mx[s["id"]] = max(float(s.get("max", 1.0)), float(stats.get(s["id"], 1)), 1.0)
+		state["pstats"] = {"stats": stats, "max": mx, "xp": 0, "level": 1}
+	return state["pstats"]
+
+
 func sprites_node() -> Control:
 	return _sprites
 

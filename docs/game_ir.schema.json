@@ -112,14 +112,14 @@
     },
     "places": {
       "type": "array",
-      "description": "Spatial scenes the player navigates. A 'room' (PnC), a 'town'/'world_map'/'interior' (RPG), or empty (VN). Each holds interactables. Reachability is a graph walk over move/talk targets — no engine parsing.",
+      "description": "Spatial scenes the player navigates. A 'room' (PnC), a 'town'/'world_map'/'interior' (RPG), or empty (VN). Each holds interactables. Reachability is a graph walk over move/talk targets \u2014 no engine parsing.",
       "items": {
         "$ref": "#/$defs/place"
       }
     },
     "nodes": {
       "type": "array",
-      "description": "Dialogue scenes — the genre-invariant core. A list of spoken lines + a terminal control (jump / menu / return / end). Identical across VN, PnC, RPG.",
+      "description": "Dialogue scenes \u2014 the genre-invariant core. A list of spoken lines + a terminal control (jump / menu / return / end). Identical across VN, PnC, RPG.",
       "items": {
         "$ref": "#/$defs/node"
       }
@@ -132,7 +132,7 @@
         "none"
       ],
       "default": "none",
-      "description": "Projection hint for HOW combat plays. The ONLY place the loop style is named — per-ability data never encodes it. none = no combat. auto = engine's default."
+      "description": "Projection hint for HOW combat plays. The ONLY place the loop style is named \u2014 per-ability data never encodes it. none = no combat. auto = engine's default."
     },
     "stats": {
       "type": "array",
@@ -163,6 +163,46 @@
       "description": "Combat scenes (combatants placed in an arena + win/lose + node_end resolution). A fight is ENTERED by a start_combat action on any interactable; it resolves out via the encounter's on_victory/on_defeat.",
       "items": {
         "$ref": "#/$defs/encounter"
+      }
+    },
+    "progression": {
+      "type": "object",
+      "description": "The growth loop (present only when combat is): the player's canonical combatant, XP thresholds, and per-level stat growth. Victories award the loser's xp_yield to the player; crossing a threshold levels up, applies growth, and heals to full. Player combat stats persist across fights.",
+      "required": [
+        "player",
+        "xp_per_level"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "player": {
+          "type": "string",
+          "description": "combatant id the player fights as in every encounter and wild fight."
+        },
+        "xp_per_level": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "XP needed per level (flat curve: level N needs N*this total)."
+        },
+        "growth": {
+          "type": "array",
+          "description": "Stat increases applied at each level-up.",
+          "items": {
+            "type": "object",
+            "required": [
+              "stat",
+              "per_level"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "stat": {
+                "type": "string"
+              },
+              "per_level": {
+                "type": "number"
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -250,7 +290,7 @@
         },
         "min": {
           "type": "number",
-          "description": "Optional clamp floor (advisory — enforced by the compiler if at all)."
+          "description": "Optional clamp floor (advisory \u2014 enforced by the compiler if at all)."
         },
         "max": {
           "type": "number",
@@ -297,7 +337,7 @@
             "town",
             "interior"
           ],
-          "description": "room = PnC scene (click hotspots); world_map/town/interior = RPG (a walkable tile grid). The runtime picks the presenter from this — room => point-and-click, the rest => the WASD overworld. The compiler picks the engine projection from it too."
+          "description": "room = PnC scene (click hotspots); world_map/town/interior = RPG (a walkable tile grid). The runtime picks the presenter from this \u2014 room => point-and-click, the rest => the WASD overworld. The compiler picks the engine projection from it too."
         },
         "background": {
           "type": "string",
@@ -398,6 +438,49 @@
               }
             }
           }
+        },
+        "encounter_table": {
+          "type": "object",
+          "description": "Wild fights for a walkable zone: each step onto an open tile rolls `rate`; on a hit the player fights one combatant drawn from `entries` by weight, its stats scaled by `tier`. Defeat in a wild fight respawns at the zone spawn (no game over) \u2014 authored encounters keep their on_defeat stakes.",
+          "required": [
+            "rate",
+            "entries"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "rate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "entries": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "combatant"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "combatant": {
+                    "type": "string"
+                  },
+                  "weight": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 1
+                  },
+                  "tier": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "default": 1.0,
+                    "description": "Stat multiplier for this zone's variant of the combatant."
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -430,7 +513,7 @@
     },
     "position": {
       "type": "object",
-      "description": "Where an interactable sits. Exactly ONE projection: `rect` (on-screen pixel box — PnC/VN, 1280x720 canvas) or `cell` (grid tile — RPG). Room for more projections later.",
+      "description": "Where an interactable sits. Exactly ONE projection: `rect` (on-screen pixel box \u2014 PnC/VN, 1280x720 canvas) or `cell` (grid tile \u2014 RPG). Room for more projections later.",
       "additionalProperties": false,
       "oneOf": [
         {
@@ -494,7 +577,7 @@
       }
     },
     "action": {
-      "description": "What happens on interact. The CLOSED verb vocabulary — exactly the six shapes the prompts already enumerate. Discriminated by `type`.",
+      "description": "What happens on interact. The CLOSED verb vocabulary \u2014 exactly the six shapes the prompts already enumerate. Discriminated by `type`.",
       "oneOf": [
         {
           "$ref": "#/$defs/action_examine"
@@ -638,7 +721,7 @@
     },
     "action_use": {
       "type": "object",
-      "description": "The interact verb: ordered `clauses` evaluated top-down — the first whose `requires` holds fires its outcome; if none match, `fallback` fires. A simple lock is one clause + a fallback. An UNCONDITIONAL effect (e.g. 'pray → set a flag, always') is just a `fallback` with no clauses. Must carry at least one of `clauses`/`fallback`.",
+      "description": "The interact verb: ordered `clauses` evaluated top-down \u2014 the first whose `requires` holds fires its outcome; if none match, `fallback` fires. A simple lock is one clause + a fallback. An UNCONDITIONAL effect (e.g. 'pray \u2192 set a flag, always') is just a `fallback` with no clauses. Must carry at least one of `clauses`/`fallback`.",
       "required": [
         "type"
       ],
@@ -662,14 +745,14 @@
         "clauses": {
           "type": "array",
           "minItems": 1,
-          "description": "Evaluated in order; first match wins. Each requires a REAL condition (never an empty {}). Omit entirely for an unconditional outcome — put it in `fallback`.",
+          "description": "Evaluated in order; first match wins. Each requires a REAL condition (never an empty {}). Omit entirely for an unconditional outcome \u2014 put it in `fallback`.",
           "items": {
             "$ref": "#/$defs/use_clause"
           }
         },
         "fallback": {
           "$ref": "#/$defs/outcome",
-          "description": "Outcome when no clause matches — or, with no clauses, the UNCONDITIONAL outcome (always fires)."
+          "description": "Outcome when no clause matches \u2014 or, with no clauses, the UNCONDITIONAL outcome (always fires)."
         }
       }
     },
@@ -1177,7 +1260,7 @@
     },
     "combatant": {
       "type": "object",
-      "description": "What an entity IS in combat: its stat block, abilities, and tie back to a character for name/sprite. Pure data — survives unchanged from text to 2D to 3D.",
+      "description": "What an entity IS in combat: its stat block, abilities, and tie back to a character for name/sprite. Pure data \u2014 survives unchanged from text to 2D to 3D.",
       "required": [
         "id",
         "stats"
@@ -1218,6 +1301,11 @@
           "items": {
             "type": "string"
           }
+        },
+        "xp_yield": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "XP awarded to the player for defeating this combatant."
         }
       }
     },
@@ -1268,7 +1356,7 @@
         },
         "effects": {
           "type": "array",
-          "description": "What happens to each target. Reuses combat_effect (stat-aware) — distinct from the narrative `effect` def which mutates game flags/vars/items.",
+          "description": "What happens to each target. Reuses combat_effect (stat-aware) \u2014 distinct from the narrative `effect` def which mutates game flags/vars/items.",
           "items": {
             "$ref": "#/$defs/combat_effect"
           }
@@ -1374,7 +1462,7 @@
         },
         {
           "type": "object",
-          "description": "Bridge back to world state — let a combat outcome set a story flag/var (e.g. 'spared_the_boss'). Reuses your narrative effect def verbatim.",
+          "description": "Bridge back to world state \u2014 let a combat outcome set a story flag/var (e.g. 'spared_the_boss'). Reuses your narrative effect def verbatim.",
           "required": [
             "world"
           ],
@@ -1389,7 +1477,7 @@
     },
     "formula": {
       "type": "object",
-      "description": "How a magnitude is computed, as data. base + optional stat scaling. Deliberately minimal — the projection evaluates it; it does NOT encode RNG/crit/turn logic. Absent = the engine's default for that op.",
+      "description": "How a magnitude is computed, as data. base + optional stat scaling. Deliberately minimal \u2014 the projection evaluates it; it does NOT encode RNG/crit/turn logic. Absent = the engine's default for that op.",
       "additionalProperties": false,
       "properties": {
         "base": {
@@ -1442,7 +1530,7 @@
     },
     "encounter": {
       "type": "object",
-      "description": "Combat as a spatial scene. A place subtype: combatants positioned in it, win/lose conditions, and node_end transitions on resolution. The combat LOOP (turn order / real-time) is NOT here — it's a projection choice driven by top-level combat_model.",
+      "description": "Combat as a spatial scene. A place subtype: combatants positioned in it, win/lose conditions, and node_end transitions on resolution. The combat LOOP (turn order / real-time) is NOT here \u2014 it's a projection choice driven by top-level combat_model.",
       "required": [
         "id",
         "combatants",
@@ -1491,7 +1579,7 @@
         },
         "on_victory": {
           "$ref": "#/$defs/node_end",
-          "description": "Where play flows on win. Reuses node_end — combat resolves back into dialogue/navigation like everything else."
+          "description": "Where play flows on win. Reuses node_end \u2014 combat resolves back into dialogue/navigation like everything else."
         },
         "on_defeat": {
           "$ref": "#/$defs/node_end",

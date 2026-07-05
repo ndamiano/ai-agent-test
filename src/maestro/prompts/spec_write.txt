@@ -86,6 +86,10 @@ picked the module that uses it. Available knobs:
 
 e.g. a sprawling saga: "sizing": {"min_endings": 6, "min_beats": 35, "min_branches": 6}
 
+The floors produce a SHORT game — size for the story you actually wrote. A game meant to be
+played for an hour wants the places its arc visits (5-8), an encounter or set piece for each
+dramatic escalation, and enough combatant variety that wild fights don't repeat one enemy.
+
 Return only the JSON object.
 </content>
 </invoke>

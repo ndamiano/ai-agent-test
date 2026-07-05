@@ -33,12 +33,14 @@ def _combat(**over):
         "combatants": [{"id": "cb_hero", "character": "hero", "stats": [{"stat": "hp", "value": 30}],
                         "abilities": ["slash"]},
                        {"id": "cb_foe", "character": "foe", "stats": [{"stat": "hp", "value": 12}],
-                        "abilities": ["slash"]}],
+                        "abilities": ["slash"], "xp_yield": 8}],
         "encounters": [{"id": "enc_1", "background": "bg_arena",
                         "combatants": [{"ref": "cb_hero", "faction": "player"},
                                        {"ref": "cb_foe", "faction": "enemy"}],
                         "victory": {"all_defeated": "enemy"},
                         "on_victory": {"type": "end", "ending": "win"}}],
+        "progression": {"player": "cb_hero", "xp_per_level": 20,
+                        "growth": [{"stat": "hp", "per_level": 3}]},
     }
     c.update(over)
     return c
@@ -90,7 +92,8 @@ def _art(combat, *, reachable=True, hero=True, foe=True):
         "asset_manifest": {"backgrounds": [{"id": "bg_arena", "image_file": "a.png"}]},
         "nodes": {"node_ids": [], "nodes": {}},
         "places": {"start_place": "room", "place_ids": ["room"], "places": {
-            "room": {"kind": "interior", "background": "bg_arena", "interactables": [hotspot]}}},
+            "room": {"kind": "interior", "background": "bg_arena", "interactables": [hotspot],
+                     "encounter_table": {"rate": 0.1, "entries": [{"combatant": "cb_foe"}]}}}},
         "combat": combat,
     }
 
@@ -373,3 +376,120 @@ def test_dangling_character_routes_to_combat_as_crossref():
     # and that path's slice is one world's terminal skips (so world never claims it).
     assert all(slice_token(e.path) in ("stats", "statuses", "abilities", "combatants", "encounters")
                for e in cross)
+
+
+def test_set_progression_validates_and_writes(tmp_path):
+    tools, state = _combat_tools(tmp_path)
+    tools["set_combat_meta"](stats=[{"id": "hp", "default": 20, "max": 20,
+                                     "role": "resource_depletable"}])
+    tools["write_ability"]("jab", {"targeting": {"shape": "single", "faction": "enemy"},
+                                   "effects": [{"stat": "hp", "op": "damage",
+                                                "formula": {"base": 4}}]})
+    tools["write_combatant"]("cb_hero", {"stats": [{"stat": "hp", "value": 20}],
+                                         "abilities": ["jab"]})
+    bad = tools["set_progression"]({"player": "cb_nope", "xp_per_level": 10})
+    assert not bad["ok"] and "cb_nope" not in "" and "combatant id" in bad["error"]
+    bad2 = tools["set_progression"]({"player": "cb_hero", "xp_per_level": 10,
+                                     "growth": [{"stat": "mana", "per_level": 2}]})
+    assert not bad2["ok"] and "growth" in bad2["error"]
+    ok = tools["set_progression"]({"player": "cb_hero", "xp_per_level": 10,
+                                   "growth": [{"stat": "hp", "per_level": 3}]})
+    assert ok["ok"]
+    assert state.read_component("combat")["progression"]["player"] == "cb_hero"
+
+
+def test_set_encounter_table_validates_zone_and_refs(tmp_path):
+    from maestro.tools import build_tools as bt
+    state = RunState(tmp_path)
+    tools = bt(Spec({"title": "T", "frozen": True, "modules": ["combat", "world"],
+                     "params": {}}), state)
+    tools["set_combat_meta"](stats=[{"id": "hp", "default": 20, "max": 20,
+                                     "role": "resource_depletable"}])
+    tools["write_ability"]("jab", {"targeting": {"shape": "single", "faction": "enemy"},
+                                   "effects": [{"stat": "hp", "op": "damage",
+                                                "formula": {"base": 4}}]})
+    tools["write_combatant"]("cb_rat", {"stats": [{"stat": "hp", "value": 8}],
+                                        "abilities": ["jab"], "xp_yield": 5})
+    tools["write_place"]("town", {"kind": "room", "interactables": [
+        {"id": "h", "position": {"rect": {"x": 1, "y": 1, "w": 5, "h": 5}},
+         "action": {"type": "examine", "text": "t"}}]})
+    tools["write_place"]("wild", {"kind": "world_map",
+        "tiles": {"legend": {}, "rows": ["....", "....", "...."]},
+        "interactables": [{"id": "h2", "position": {"cell": {"x": 1, "y": 1}},
+                           "action": {"type": "examine", "text": "t"}}]})
+    assert not tools["set_encounter_table"]("town", {"rate": 0.1, "entries": [
+        {"combatant": "cb_rat"}]})["ok"]        # rooms don't roll wild fights
+    assert not tools["set_encounter_table"]("wild", {"rate": 0.1, "entries": [
+        {"combatant": "cb_ghost"}]})["ok"]      # undeclared combatant
+    assert not tools["set_encounter_table"]("wild", {"rate": 2, "entries": [
+        {"combatant": "cb_rat"}]})["ok"]        # rate out of range
+    ok = tools["set_encounter_table"]("wild", {"rate": 0.15, "entries": [
+        {"combatant": "cb_rat", "weight": 3, "tier": 1.5}]})
+    assert ok["ok"]
+    place = state.read_component("places")["places"]["wild"]
+    assert place["encounter_table"]["entries"][0]["combatant"] == "cb_rat"
+
+
+def test_progression_check_demands_loop_and_yields(tmp_path):
+    from maestro.modules.context import build_context
+    from maestro.modules import compose
+    state = RunState(tmp_path)
+    spec = Spec({"title": "T", "frozen": True, "modules": ["combat", "world", "scenes", "cast"],
+                 "params": {"min_wild_zones": 1}})
+    tools = build_tools(spec, state)
+    tools["set_combat_meta"](stats=[{"id": "hp", "default": 20, "max": 20,
+                                     "role": "resource_depletable"}])
+    tools["write_ability"]("jab", {"targeting": {"shape": "single", "faction": "enemy"},
+                                   "effects": [{"stat": "hp", "op": "damage",
+                                                "formula": {"base": 4}}]})
+    tools["write_combatant"]("cb_hero", {"stats": [{"stat": "hp", "value": 20}],
+                                         "abilities": ["jab"]})
+    tools["write_combatant"]("cb_rat", {"stats": [{"stat": "hp", "value": 8}],
+                                        "abilities": ["jab"]})
+    tools["write_encounter"]("e1", {"combatants": [
+        {"ref": "cb_hero", "faction": "player"}, {"ref": "cb_rat", "faction": "enemy"}],
+        "victory": {"all_defeated": "enemy"},
+        "on_victory": {"type": "end", "ending": "win"}})
+    combat_mod = [m for m in compose(("combat", "world", "scenes", "cast"))
+                  if m.id == "combat"][0]
+    ctx = build_context(spec.data, state)
+    codes = {e.code for e in combat_mod.get_errors(ctx)}
+    assert "build_progression" in codes    # loop missing entirely
+    tools["set_progression"]({"player": "cb_hero", "xp_per_level": 10,
+                              "growth": [{"stat": "hp", "per_level": 3}]})
+    ctx = build_context(spec.data, state)
+    errs = {e.code: e.message for e in combat_mod.get_errors(ctx)}
+    assert "build_progression" in errs and "xp_yield" in errs["build_progression"]
+    tools["write_combatant"]("cb_rat", {"stats": [{"stat": "hp", "value": 8}],
+                                        "abilities": ["jab"], "xp_yield": 5})
+    ctx = build_context(spec.data, state)
+    codes = {e.code for e in combat_mod.get_errors(ctx)}
+    assert "build_progression" not in codes
+
+
+def test_assemble_lifts_progression_and_crossref_gates_it():
+    from maestro.ir_assemble import assemble_ir
+    from maestro.ir_crossref import crossref_records
+    art = {
+        "characters": {"characters": [{"id": "a", "name": "A"}]},
+        "asset_manifest": {"backgrounds": [], "characters": []},
+        "nodes": {"node_ids": ["n1"], "nodes": {"n1": {
+            "lines": [{"speaker": "a", "text": "x"}], "end": {"type": "return"}}}},
+        "combat": {"combat_model": "turn_based",
+                   "stats": [{"id": "hp", "default": 10, "max": 10,
+                              "role": "resource_depletable"}],
+                   "abilities": [{"id": "jab", "targeting": {"shape": "single",
+                                  "faction": "enemy"},
+                                  "effects": [{"stat": "hp", "op": "damage",
+                                               "formula": {"base": 2}}]}],
+                   "combatants": [{"id": "cb_a", "stats": [{"stat": "hp", "value": 10}],
+                                   "abilities": ["jab"]}],
+                   "encounters": [{"id": "e1", "combatants": [
+                       {"ref": "cb_a", "faction": "player"},
+                       {"ref": "cb_a", "faction": "enemy"}],
+                       "victory": {"all_defeated": "enemy"}}],
+                   "progression": {"player": "cb_ghost", "xp_per_level": 10}}}
+    ir = assemble_ir(art)
+    assert ir["progression"]["player"] == "cb_ghost"
+    recs = crossref_records(ir)
+    assert any(r["path"] == "progression.player" for r in recs)

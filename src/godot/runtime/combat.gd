@@ -22,14 +22,41 @@ func _init(game) -> void:
 # Returns the resolution node_end (on_victory / on_defeat), or null if absent.
 func run(enc_id):
 	var enc = g.encounter_by_id[enc_id]
+	return await _run_enc(enc, "The fight begins.")
+
+
+# A wild fight rolled from a zone's encounter_table: the progression player vs one tier-scaled
+# enemy. Returns null on victory (keep exploring) or {"wild_defeat": true} — the overworld
+# respawns the avatar instead of ending the game.
+func run_wild(cb_ref: String, tier: float):
+	var prog = g.ir.get("progression")
+	if prog == null:
+		return null
+	var enemy = _make_unit({"ref": cb_ref, "faction": "enemy"})
+	if tier != 1.0:
+		for sid in enemy["stats"]:
+			enemy["stats"][sid] = int(round(float(enemy["stats"][sid]) * tier))
+	var enc = {"combatants": [], "victory": {"all_defeated": "enemy"},
+		"defeat": {"all_defeated": "player"}, "wild": true, "prebuilt":
+		[_make_unit({"ref": prog["player"], "faction": "player"}), enemy]}
+	var res = await _run_enc(enc, "A %s attacks!" % enemy["name"])
+	if typeof(res) == TYPE_DICTIONARY and res.get("wild_defeat"):
+		return res
+	return null
+
+
+func _run_enc(enc, opener: String):
 	g.set_scene(enc.get("background"))
 	var units := []
-	for c in enc["combatants"]:
-		units.append(_make_unit(c))
+	if enc.has("prebuilt"):
+		units = enc["prebuilt"]
+	else:
+		for c in enc["combatants"]:
+			units.append(_make_unit(c))
 	_units_ctx = units
 	_stage(units)
 
-	await g.show_line(null, "The fight begins.")
+	await g.show_line(null, opener)
 	g.hide_dialogue()
 
 	while true:
@@ -39,14 +66,14 @@ func run(enc_id):
 		if res == "" and not _any_alive(units):
 			res = "defeat"
 		if res != "":
-			return _finish(enc, res)
+			return await _finish(enc, res, units)
 		for u in units:
 			if not u.alive:
 				continue
 			_tick_statuses(u)
 			res = _check_end(enc, units)
 			if res != "":
-				return _finish(enc, res)
+				return await _finish(enc, res, units)
 			if not u.alive:
 				continue
 			_refresh_bars(units)
@@ -59,15 +86,50 @@ func run(enc_id):
 				_refresh_bars(units)
 			res = _check_end(enc, units)
 			if res != "":
-				return _finish(enc, res)
+				return await _finish(enc, res, units)
 
 
-func _finish(enc, res: String):
+func _finish(enc, res: String, units):
 	g.set_hud("")
+	if res == "victory":
+		await _award_xp(units)
 	_teardown()
 	if res == "victory":
 		return enc.get("on_victory")
+	if enc.get("wild"):
+		return {"wild_defeat": true}
 	return enc.get("on_defeat", {"type": "end", "ending": "game_over"})
+
+
+# Victory pays the defeated enemies' xp_yield into the persistent player stats; crossing a
+# threshold levels up (growth applied, depletables healed to their grown max).
+func _award_xp(units) -> void:
+	var prog = g.ir.get("progression")
+	var ps = g.pstats()
+	if prog == null or ps == null:
+		return
+	var gain := 0
+	for u in units:
+		if u["faction"] != "player" and not u["alive"]:
+			gain += int(g.combatant_by_id.get(u["ref"], {}).get("xp_yield", 0))
+	if gain <= 0:
+		return
+	ps["xp"] = int(ps["xp"]) + gain
+	var msg := "Gained %d XP." % gain
+	var need = int(prog["xp_per_level"])
+	while int(ps["xp"]) >= int(ps["level"]) * need:
+		ps["level"] = int(ps["level"]) + 1
+		for gr in prog.get("growth", []):
+			var sid = gr["stat"]
+			if ps["max"].has(sid):
+				ps["max"][sid] = float(ps["max"][sid]) + float(gr["per_level"])
+			else:
+				ps["stats"][sid] = float(ps["stats"].get(sid, 0)) + float(gr["per_level"])
+		for sid in ps["max"]:
+			ps["stats"][sid] = ps["max"][sid]
+		msg += "  LEVEL %d!" % int(ps["level"])
+	await g.show_line(null, msg)
+	g.hide_dialogue()
 
 
 # ── combat UI: staged fighters, bar panels, banner, popups ──────────────────────────────────
@@ -200,7 +262,10 @@ func _refresh_bars(units) -> void:
 			var sdef = g.stat_by_id.get(sid, {})
 			if sdef.get("role") == "resource_depletable":
 				cur = float(u["stats"][sid])
-				mx = max(float(sdef.get("max", 1.0)), cur, 1.0)
+				if u.has("max_override") and u["max_override"].has(sid):
+					mx = max(float(u["max_override"][sid]), cur, 1.0)
+				else:
+					mx = max(float(sdef.get("max", 1.0)), cur, 1.0)
 				break
 		bar["fill"].size.x = bar["track_w"] * clamp(cur / mx, 0.0, 1.0)
 		bar["value"].text = "%d/%d" % [int(cur), int(mx)] if u["alive"] else "down"
@@ -280,14 +345,25 @@ func _any_alive(units) -> bool:
 
 func _make_unit(c: Dictionary) -> Dictionary:
 	var cb = g.combatant_by_id[c["ref"]]
+	var nm = c["ref"]
+	if cb.has("character") and g.chars.has(cb["character"]):
+		nm = g.chars[cb["character"]]["name"]
+	# The progression player fights on their PERSISTENT stat dict (damage, XP and growth carry
+	# across fights); everyone else gets a fresh block from defaults + overrides.
+	var prog = g.ir.get("progression")
+	if prog != null and c["ref"] == prog.get("player") and c["faction"] == "player":
+		var ps = g.pstats()
+		for sid in ps["max"]:
+			if float(ps["stats"].get(sid, 0)) <= 0:
+				ps["stats"][sid] = 1   # never enter a fight already dead
+		return {"ref": c["ref"], "faction": "player", "stats": ps["stats"],
+			"max_override": ps["max"], "abilities": cb.get("abilities", []),
+			"statuses": [], "alive": true, "name": "%s  Lv %d" % [nm, int(ps["level"])]}
 	var stats := {}
 	for s in g.stat_by_id.values():
 		stats[s["id"]] = s["default"]
 	for sv in cb.get("stats", []):
 		stats[sv["stat"]] = sv["value"]
-	var nm = c["ref"]
-	if cb.has("character") and g.chars.has(cb["character"]):
-		nm = g.chars[cb["character"]]["name"]
 	return {"ref": c["ref"], "faction": c["faction"], "stats": stats,
 		"abilities": cb.get("abilities", []), "statuses": [], "alive": true, "name": nm}
 

@@ -187,6 +187,8 @@ def assemble_ir(artifact: Dict) -> Dict:
         rows = combat_comp.get(slice_key)
         if rows:
             ir[slice_key] = rows
+    if combat_comp.get("progression"):
+        ir["progression"] = combat_comp["progression"]
 
     if has_places:
         place_ids = places_comp.get("place_ids", []) or []

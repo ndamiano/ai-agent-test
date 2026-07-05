@@ -260,6 +260,26 @@ TOOL_SCHEMAS: List[Dict] = [
                 "on_victory?:<node_end>, on_defeat?:<node_end>}"},
         }, "required": ["encounter_id", "content"]}}},
     {"type": "function", "function": {
+        "name": "set_progression",
+        "description": "Declare the growth loop on `combat`: the player's canonical combatant, "
+                       "the XP curve, and per-level stat growth. Combat games only.",
+        "parameters": {"type": "object", "properties": {
+            "progression": {"type": "object", "description":
+                "{player:<combatant id — the PROTAGONIST's>, xp_per_level:<int>, "
+                "growth:[{stat:<declared stat>, per_level:<n>}]}"},
+        }, "required": ["progression"]}}},
+    {"type": "function", "function": {
+        "name": "set_encounter_table",
+        "description": "Give ONE walkable zone wild fights: each step on open ground rolls "
+                       "`rate`; a hit fights one combatant drawn from entries by weight, stats "
+                       "scaled by tier. Combat games only.",
+        "parameters": {"type": "object", "properties": {
+            "place_id": {"type": "string", "description": "a dangerous walkable zone"},
+            "table": {"type": "object", "description":
+                "{rate:<0-1 per-step chance>, entries:[{combatant:<id>, weight?:<int>, "
+                "tier?:<stat multiplier, 1.0 base>}]}"},
+        }, "required": ["place_id", "table"]}}},
+    {"type": "function", "function": {
         "name": "read_component",
         "description": "Read a component you previously wrote.",
         "parameters": {"type": "object", "properties": {
@@ -851,6 +871,45 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         """Author ONE encounter into `combat` (validated against the declared combatants)."""
         return _combat_write("encounters", encounter_id, content, encounter_write_error)
 
+    def set_progression(progression) -> Dict:
+        """Declare the growth loop on `combat`: the player's canonical combatant, the XP curve,
+        and per-level stat growth (validated against the declared combatants/stats)."""
+        from maestro.modules.combat import progression_error
+        _require_frozen()
+        if _locked("combat"):
+            return _locked_error("combat")
+        progression = _coerce_json(progression)
+        combat = state.read_component("combat") or {}
+        err = progression_error(progression, combat)
+        if err:
+            return {"ok": False, "error": err}
+        combat["progression"] = progression
+        state.write_component("combat", combat)
+        return {"ok": True, "player": progression["player"]}
+
+    def set_encounter_table(place_id: str, table) -> Dict:
+        """Give ONE walkable zone a wild-fight table: each step on open ground rolls `rate`; a
+        hit fights one combatant drawn from `entries` by weight, stats scaled by `tier`."""
+        from maestro.modules.combat import encounter_table_error
+        _require_frozen()
+        if _locked("places"):
+            return _locked_error("places")
+        table = _coerce_json(table)
+        places = state.read_component("places") or {}
+        place = (places.get("places") or {}).get(place_id)
+        if place is None:
+            return {"ok": False, "error": f"no place {place_id!r}"}
+        if place.get("kind") not in ("world_map", "town", "interior"):
+            return {"ok": False, "error":
+                    f"{place_id!r} is a {place.get('kind')!r} — encounter tables belong on "
+                    f"walkable zones (world_map/town/interior)"}
+        err = encounter_table_error(table, state.read_component("combat") or {})
+        if err:
+            return {"ok": False, "error": err}
+        place["encounter_table"] = table
+        state.write_component("places", places)
+        return {"ok": True, "place_id": place_id}
+
     def generate_asset() -> Dict:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
         _require_frozen()
@@ -916,6 +975,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "write_ability": write_ability,
         "write_combatant": write_combatant,
         "write_encounter": write_encounter,
+        "set_progression": set_progression,
+        "set_encounter_table": set_encounter_table,
         "read_component": read_component,
         "read_node": read_node,
         "read_story_state": read_story_state,

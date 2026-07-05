@@ -168,6 +168,8 @@ def _combatant_error(cb: Dict, stat_ids: set, ability_ids: set) -> Optional[str]
         if not isinstance(ab, str) or ab not in ability_ids:
             return (f"combatant['{cb['id']}'] uses undeclared ability {ab!r} — use one of the "
                     f"authored abilities {sorted(ability_ids) or 'NONE yet; write_ability first'}")
+    if "xp_yield" in cb and (not isinstance(cb["xp_yield"], int) or cb["xp_yield"] < 0):
+        return f"combatant['{cb['id']}'].xp_yield must be a non-negative integer"
     return None
 
 
@@ -251,6 +253,10 @@ def v_combat(c: Dict) -> Optional[str]:
         er = _encounter_error(e, combatant_ids)
         if er:
             return "combat.encounters: " + er
+    if c.get("progression") is not None:
+        er = progression_error(c["progression"], c)
+        if er:
+            return "combat.progression: " + er
     return None
 
 
@@ -280,6 +286,49 @@ def combatant_write_error(content: Dict, combat: Dict) -> Optional[str]:
 
 def encounter_write_error(content: Dict, combat: Dict) -> Optional[str]:
     return _encounter_error(content, _ids(combat, "combatants"))
+
+
+def progression_error(prog, combat: Dict) -> Optional[str]:
+    if not isinstance(prog, dict):
+        return "progression must be an object {player, xp_per_level, growth?}"
+    cbs = _ids(combat, "combatants")
+    if prog.get("player") not in cbs:
+        return (f"progression.player must be an authored combatant id "
+                f"({sorted(cbs) or 'NONE yet'}) — the protagonist's combatant, the one the "
+                f"player fights as in every encounter")
+    if not isinstance(prog.get("xp_per_level"), int) or prog["xp_per_level"] < 1:
+        return ("progression.xp_per_level must be a positive integer — reaching level N takes "
+                "N * this total XP")
+    stat_ids = _ids(combat, "stats")
+    for i, g in enumerate(prog.get("growth") or []):
+        if not isinstance(g, dict) or g.get("stat") not in stat_ids \
+                or not isinstance(g.get("per_level"), (int, float)):
+            return (f"progression.growth[{i}] must be {{\"stat\": <declared stat id>, "
+                    f"\"per_level\": <number>}} — stats are {sorted(stat_ids)}")
+    return None
+
+
+def encounter_table_error(table, combat: Dict) -> Optional[str]:
+    if not isinstance(table, dict):
+        return "encounter_table must be {rate, entries: [{combatant, weight?, tier?}]}"
+    rate = table.get("rate")
+    if not isinstance(rate, (int, float)) or not (0 < rate <= 1):
+        return ("encounter_table.rate must be a number in (0, 1] — the per-step wild-fight "
+                "chance on open ground (0.12 reads well)")
+    entries = table.get("entries")
+    if not isinstance(entries, list) or not entries:
+        return "encounter_table.entries must be a non-empty list of {combatant, weight?, tier?}"
+    cbs = _ids(combat, "combatants")
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict) or e.get("combatant") not in cbs:
+            return (f"encounter_table.entries[{i}].combatant must be an authored combatant id "
+                    f"({sorted(cbs) or 'NONE yet — write_combatant first'})")
+        if "weight" in e and (not isinstance(e["weight"], int) or e["weight"] < 1):
+            return f"encounter_table.entries[{i}].weight must be a positive integer"
+        if "tier" in e and (not isinstance(e["tier"], (int, float)) or e["tier"] <= 0):
+            return (f"encounter_table.entries[{i}].tier must be a positive number — the stat "
+                    f"multiplier for this zone's variant (1.0 = base, 1.5 = elite)")
+    return None
 
 
 def combat_index_block(artifact: Dict) -> list:
@@ -448,6 +497,39 @@ _GUARDS = {
                        "id_list_key": "encounter_ids", "noun": "encounter"},
 }
 
+_PROGRESSION_TOOLS = frozenset({"set_progression", "write_combatant", "read_component",
+                                "update_scratchpad", "request_review"})
+_TABLE_TOOLS = frozenset({"set_encounter_table", "read_component", "read_place",
+                          "update_scratchpad", "request_review"})
+
+SKEL_PROGRESSION = (
+    '{\n'
+    '  "player": "<the PROTAGONIST\'s combatant id>",\n'
+    '  "xp_per_level": 20,\n'
+    '  "growth": [{"stat": "hp", "per_level": 5}, {"stat": "attack", "per_level": 1}]\n'
+    '}\n'
+    '// call set_progression(progression={...}) — the growth loop.\n'
+    '// player: the combatant the player fights as in EVERY encounter and wild fight.\n'
+    '// Victories award the defeated combatant\'s xp_yield; reaching level N takes N*xp_per_level\n'
+    '// total XP; each level-up applies every growth entry and heals to full.\n'
+    '// Also make sure every ENEMY combatant carries "xp_yield": <n> (re-author with\n'
+    '// write_combatant if one is missing).'
+)
+
+SKEL_TABLE = (
+    '{\n'
+    '  "rate": 0.12,\n'
+    '  "entries": [\n'
+    '    {"combatant": "<an authored enemy id>", "weight": 3, "tier": 1.0},\n'
+    '    {"combatant": "<a rarer, meaner one>",  "weight": 1, "tier": 1.5}\n'
+    '  ]\n'
+    '}\n'
+    '// call set_encounter_table(place_id="<a dangerous walkable zone>", table={...}).\n'
+    '// Wild fights: each step on open ground rolls `rate`; a hit draws ONE combatant by weight,\n'
+    '// stats scaled by tier. Losing a wild fight respawns at the zone entrance (no game over).\n'
+    '// Give the wilds/dungeon zones a table; keep the safe town zone without one.'
+)
+
 
 def _start_combat_targets(art: Dict) -> set:
     """Every encounter id a place hotspot enters via a start_combat action."""
@@ -500,6 +582,53 @@ def _d_reachable(chk, m, ctx):
     return out
 
 
+def _d_progression(chk, m, ctx):
+    combat = ctx.artifact.get("combat") or {}
+    if not combat.get("combatants"):
+        return []
+    prog = combat.get("progression")
+    if prog is None:
+        return [Error(type=chk.tier, code=chk.code, component="combat",
+                      message=("no progression declared — the growth loop is missing. Call "
+                               "set_progression(progression={player, xp_per_level, growth}) "
+                               "with the PROTAGONIST's combatant as player."))]
+    err = progression_error(prog, combat)
+    if err:
+        return [Error(type=chk.tier, code=chk.code, component="combat", message=err)]
+    player = prog.get("player")
+    missing = [cb["id"] for cb in combat.get("combatants", [])
+               if isinstance(cb, dict) and cb.get("id") != player
+               and not isinstance(cb.get("xp_yield"), int)]
+    if missing:
+        return [Error(type=chk.tier, code=chk.code, component="combat",
+                      message=(f"combatants {missing} carry no xp_yield — defeating them must "
+                               f"award XP. Re-author each with write_combatant including its "
+                               f"existing fields plus \"xp_yield\": <n> (5-15 for mooks, more "
+                               f"for elites)."))]
+    return []
+
+
+def _d_wild_tables(chk, m, ctx):
+    art = ctx.artifact
+    combat = art.get("combat") or {}
+    places = (art.get("places") or {}).get("places") or {}
+    walkable = {pid: p for pid, p in places.items()
+                if isinstance(p, dict) and p.get("kind") in ("world_map", "town", "interior")}
+    if not walkable or not combat.get("combatants"):
+        return []
+    good = [pid for pid in walkable
+            if encounter_table_error(walkable[pid].get("encounter_table"), combat) is None]
+    need = ctx.param("min_wild_zones", 1)
+    if len(good) >= need:
+        return []
+    candidates = sorted(pid for pid in walkable if pid not in good)
+    return [Error(type=chk.tier, code=chk.code, component="combat",
+                  message=(f"{len(good)} zone(s) carry a wild encounter_table, need {need} — "
+                           f"wild fights are the game's length. Pick the dangerous zone(s) from "
+                           f"{candidates} and call set_encounter_table(place_id=..., "
+                           f"table={{rate, entries}})."))]
+
+
 def _d_crossref(chk, m, ctx):
     # Combat-slice external refs (a combatant's character, an ability's flag gate) surface as combat's
     # own crossref so the fix rewrites the owning slice, not a place.
@@ -524,7 +653,8 @@ class Combat(Module):
     schemas = {"combat": v_combat}
     projector = staticmethod(combat_view)
     projected = True
-    tool_names = ("set_combat_meta", "write_ability", "write_combatant", "write_encounter")
+    tool_names = ("set_combat_meta", "write_ability", "write_combatant", "write_encounter",
+                  "set_progression", "set_encounter_table")
 
     # Dependency order, ONE slice at a time: the stat foundation, then abilities/combatants/encounters
     # (each a slot-guarded count target), then the structural backstop — all `blocking`, so a gap in
@@ -541,6 +671,10 @@ class Combat(Module):
         Check("min_encounters", _floor_detector("combat.encounters", "encounter"), blocking=True,
               tools=_ENCOUNTER_TOOLS, guard=_GUARDS["min_encounters"],
               skeleton=_skel_with_ids(SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES])),
+        Check("build_progression", _d_progression, blocking=True, tools=_PROGRESSION_TOOLS,
+              skeleton=_skel_with_ids(SKEL_PROGRESSION, [_F_COMBATANTS, _F_STATS])),
+        Check("wild_tables", _d_wild_tables, tools=_TABLE_TOOLS,
+              skeleton=_skel_with_ids(SKEL_TABLE, [_F_COMBATANTS])),
         Check("combat_structural", _d_structural, job="fix", blocking=True, tools=_CROSSREF_TOOLS,
               skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
                                                  _F_COMBATANTS, _F_CAST, _F_NODES])),
@@ -551,7 +685,8 @@ class Combat(Module):
     ]
 
     def params(self) -> Dict:
-        return {"min_abilities": 2, "min_combatants": 2, "min_encounters": 1}
+        return {"min_abilities": 3, "min_combatants": 3, "min_encounters": 2,
+                "min_wild_zones": 1}
 
     def render_context(self, ctx: Dict) -> str:
         # The combat author's context, crafted: the character cards (a combatant IS a cast member

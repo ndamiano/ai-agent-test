@@ -111,6 +111,9 @@ func run_place(place_id, spawn):
 	if spawn != null and spawn.has("cell"):
 		ax = int(spawn["cell"]["x"])
 		ay = int(spawn["cell"]["y"])
+	var home_x := ax   # wild-defeat respawn point: where the player entered this zone
+	var home_y := ay
+	var table = place.get("encounter_table")
 	var avatar := _make_avatar(tile)
 	layer.add_child(avatar)
 	_place_avatar(avatar, ax, ay, tile, ox, oy)
@@ -146,6 +149,15 @@ func run_place(place_id, spawn):
 					var r = await _fire(layer, it)
 					if r != null:
 						return r
+				elif it == null and typeof(table) == TYPE_DICTIONARY \
+						and randf() < float(table.get("rate", 0)):
+					var lost = await _wild_fight(layer, table)
+					if lost:
+						ax = home_x
+						ay = home_y
+						_place_avatar(avatar, ax, ay, tile, ox, oy)
+						_refresh_labels(ax, ay)
+						g.avatar_cell = {"x": ax, "y": ay}
 
 		if Input.is_action_just_pressed("interact"):
 			var it = inter.get(_key(ax, ay))
@@ -156,6 +168,41 @@ func run_place(place_id, spawn):
 
 		if Input.is_action_just_pressed("ui_pause"):
 			await g.pause_menu()
+
+
+# A wild fight from this zone's encounter_table: weighted draw, tier-scaled enemy, fought by
+# the persistent progression player. Returns true on DEFEAT — the caller respawns the avatar at
+# the zone entrance with half its depletables (grinding is safe-ish; authored fights keep their
+# on_defeat stakes).
+func _wild_fight(layer: Control, table) -> bool:
+	var entries: Array = table.get("entries", [])
+	if entries.is_empty() or g.ir.get("progression") == null:
+		return false
+	var total := 0
+	for e in entries:
+		total += int(e.get("weight", 1))
+	var roll: int = randi() % maxi(total, 1)
+	var pick = entries[0]
+	for e in entries:
+		roll -= int(e.get("weight", 1))
+		if roll < 0:
+			pick = e
+			break
+	layer.visible = false
+	var cmb = load("res://combat.gd").new(g)
+	var r = await cmb.run_wild(String(pick["combatant"]), float(pick.get("tier", 1.0)))
+	g.set_scene(null)
+	layer.visible = true
+	g.set_hud(_HINT)
+	if typeof(r) == TYPE_DICTIONARY and r.get("wild_defeat"):
+		var ps = g.pstats()
+		if ps != null:
+			for sid in ps["max"]:
+				ps["stats"][sid] = max(1, int(float(ps["max"][sid]) / 2))
+		await g.show_line(null, "You come to at the edge of the zone, wounds half-bound.")
+		g.hide_dialogue()
+		return true
+	return false
 
 
 # Run a verb through Game, hiding the grid while dialogue/combat owns the screen. Returns a

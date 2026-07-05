@@ -712,7 +712,7 @@ class World(Module):
     ]
 
     def params(self) -> Dict:
-        return {"min_places": 3, "min_interactables": 2}
+        return {"min_places": 4, "min_interactables": 3}
 
     def render_context(self, ctx: Dict) -> str:
         # The world author's context, crafted: the items to place (full catalogue — takes and

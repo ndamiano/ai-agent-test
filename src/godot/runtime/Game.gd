@@ -8,6 +8,7 @@ const IRCore = preload("res://ir.gd")
 const Vn = preload("res://vn.gd")
 const Pnc = preload("res://pnc.gd")
 const Overworld = preload("res://overworld.gd")
+const Overworld3d = preload("res://overworld3d.gd")
 const Combat = preload("res://combat.gd")
 
 # Presenter registry keyed by place.kind. Adding a navigation modality = a new presenter + one
@@ -123,7 +124,10 @@ func _boot() -> void:
 func _run_world(place_id, spawn) -> void:
 	while true:
 		var kind = place_by_id[place_id].get("kind", "room")
-		var presenter = (PRESENTERS.get(kind, Pnc)).new(self)
+		var cls = PRESENTERS.get(kind, Pnc)
+		if cls == Overworld and ir.get("meta", {}).get("presentation") == "hd2d":
+			cls = Overworld3d
+		var presenter = cls.new(self)
 		var r = await presenter.run_place(place_id, spawn)
 		# Match the {move} dict BEFORE the string compares — Godot 4 errors on Dictionary == String.
 		if typeof(r) == TYPE_DICTIONARY and r.has("move"):

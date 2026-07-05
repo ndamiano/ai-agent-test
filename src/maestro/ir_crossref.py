@@ -262,10 +262,27 @@ def crossref_records(ir: Dict) -> List[Dict]:
             if key in enc:
                 check_node_end(enc[key], f"encounters[{eid}].{key}")
 
+    leveled = {v["id"]: v for v in ir.get("variables", [])
+               if isinstance(v, dict) and v.get("level_var")}
+    for vid, v in leveled.items():
+        if v["level_var"] not in variables:
+            bad(f"variables[{vid}].level_var", v["level_var"], "variable")
+        if not isinstance(v.get("per_level"), int) or v["per_level"] < 1:
+            records.append({"path": f"variables[{vid}].per_level", "ref": v.get("per_level"),
+                            "kind": "per_level", "message": (
+                                f"variables[{vid}].per_level: a leveled variable needs a "
+                                f"positive integer per_level alongside level_var.")})
+
     prog = ir.get("progression")
     if isinstance(prog, dict):
         if prog.get("player") not in combatants:
             bad("progression.player", prog.get("player"), "combatant")
+        if prog.get("xp_var") not in leveled:
+            records.append({"path": "progression.xp_var", "ref": prog.get("xp_var"),
+                            "kind": "leveled variable", "message": (
+                                f"progression.xp_var: {prog.get('xp_var')!r} is not a LEVELED "
+                                f"variable — declare it in `variables` with level_var + "
+                                f"per_level (leveled: {sorted(leveled)}).")})
         for i, g in enumerate(prog.get("growth", [])):
             if isinstance(g, dict) and g.get("stat") not in stats:
                 bad(f"progression.growth[{i}].stat", g.get("stat"), "stat")

@@ -167,10 +167,10 @@
     },
     "progression": {
       "type": "object",
-      "description": "The growth loop (present only when combat is): the player's canonical combatant, XP thresholds, and per-level stat growth. Victories award the loser's xp_yield to the player; crossing a threshold levels up, applies growth, and heals to full. Player combat stats persist across fights.",
+      "description": "Combat's projection of the growth loop (present only when combat is): who the player fights as, which LEVELED variable is the XP pool, and what a level-up does to combat stats. XP production is ordinary effects \u2014 victories add the loser's xp_yield to xp_var; any other action can feed it too. Player combat stats persist across fights.",
       "required": [
         "player",
-        "xp_per_level"
+        "xp_var"
       ],
       "additionalProperties": false,
       "properties": {
@@ -178,14 +178,13 @@
           "type": "string",
           "description": "combatant id the player fights as in every encounter and wild fight."
         },
-        "xp_per_level": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "XP needed per level (flat curve: level N needs N*this total)."
+        "xp_var": {
+          "type": "string",
+          "description": "a LEVELED variable (declares level_var/per_level) that accumulates XP."
         },
         "growth": {
           "type": "array",
-          "description": "Stat increases applied at each level-up.",
+          "description": "Combat stat increases applied at each level-up (level-up also heals depletables to their grown max).",
           "items": {
             "type": "object",
             "required": [
@@ -295,6 +294,15 @@
         "max": {
           "type": "number",
           "description": "Optional clamp ceiling (advisory)."
+        },
+        "level_var": {
+          "type": "string",
+          "description": "Makes this a LEVELED variable: the runtime keeps the named variable (also declared in `variables`) derived as floor(value / per_level) + 1. Any effect that feeds this variable (a harvest outcome, a victory yield, a choice) advances the level; any condition can gate on the level variable. Requires per_level."
+        },
+        "per_level": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Points per level for a leveled variable. Requires level_var."
         }
       }
     },

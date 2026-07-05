@@ -33,5 +33,6 @@ from maestro.modules import (  # noqa: F401
     inventory,
     scenes,
     story,
+    wild_encounters,
     world,
 )

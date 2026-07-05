@@ -84,6 +84,22 @@ def _walk_state(artifact: Dict) -> Dict:
         rec(f, "flag", "decl", "places")
     for v in (pc.get("variables") or []):
         rec(v.get("id") if isinstance(v, dict) else v, "variable", "decl", "places")
+        # A leveled variable is wired by the RUNTIME's level rule: the xp pool is consumed by
+        # the derivation, the level variable is produced by it. Without these, every xp/level
+        # pair reads as half-dead and gets cut.
+        if isinstance(v, dict) and v.get("level_var"):
+            rec(v.get("id"), "variable", "cons", "system")
+            rec(v["level_var"], "variable", "prod", "system")
+    # combat's victory yields feed progression.xp_var, and its level-up growth consumes the
+    # level — with combat composed the whole xp/level pair is system-wired; without it the
+    # level still needs a real consumer (a gate) and the pool a real producer.
+    prog = (artifact.get("combat") or {}).get("progression")
+    if isinstance(prog, dict) and prog.get("xp_var"):
+        rec(prog["xp_var"], "variable", "prod", "system")
+        if prog.get("growth"):
+            for v in (pc.get("variables") or []):
+                if isinstance(v, dict) and v.get("id") == prog["xp_var"] and v.get("level_var"):
+                    rec(v["level_var"], "variable", "cons", "system")
     goal = pc.get("goal")
     if isinstance(goal, dict) and goal.get("type") == "flag":
         rec(goal.get("id"), "flag", "cons", "places")        # the win condition reads it

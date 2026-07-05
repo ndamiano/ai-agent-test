@@ -963,3 +963,43 @@ def test_leaf_component_never_locks(tmp_path):
     n = {"location": "bg", "lines": [{"speaker": "a", "text": "x"}], "end": {"type": "return"}}
     assert tools["write_node"]("s1", n)["ok"]
     assert tools["write_node"]("s2", n)["ok"]
+
+
+def test_set_progression_declares_leveled_variable_pair(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(Spec({"title": "T", "frozen": True,
+                              "modules": ["combat", "world"], "params": {}}), state)
+    tools["set_combat_meta"](stats=[{"id": "hp", "default": 20, "max": 20,
+                                     "role": "resource_depletable"}])
+    tools["write_ability"]("jab", {"targeting": {"shape": "single", "faction": "enemy"},
+                                   "effects": [{"stat": "hp", "op": "damage",
+                                                "formula": {"base": 4}}]})
+    tools["write_combatant"]("cb_hero", {"stats": [{"stat": "hp", "value": 20}],
+                                         "abilities": ["jab"]})
+    ok = tools["set_progression"]({"player": "cb_hero", "per_level": 25,
+                                   "growth": [{"stat": "hp", "per_level": 3}]})
+    assert ok["ok"] and ok["xp_var"] == "xp" and ok["level_var"] == "level"
+    variables = state.read_component("places")["variables"]
+    xp = next(v for v in variables if v["id"] == "xp")
+    assert xp["level_var"] == "level" and xp["per_level"] == 25
+    assert any(v["id"] == "level" for v in variables)
+    assert state.read_component("combat")["progression"] == {
+        "player": "cb_hero", "xp_var": "xp", "growth": [{"stat": "hp", "per_level": 3}]}
+
+
+def test_state_wiring_treats_leveled_pair_as_system_wired(tmp_path):
+    # xp is CONSUMED by the level rule and level is PRODUCED by it; without these the pair
+    # reads half-dead and gets cut. The pool still needs a real producer and (without combat
+    # growth) the level still needs a real consumer — the farmer game's harvest + gate.
+    from maestro.modules.state import _walk_state
+    art = {"places": {"variables": [
+        {"id": "xp", "default": 0, "level_var": "level", "per_level": 20},
+        {"id": "level", "default": 1}], "places": {}}}
+    info = _walk_state(art)
+    assert "system" in info["xp"]["cons"] and not info["xp"]["prod"]
+    assert "system" in info["level"]["prod"] and not info["level"]["cons"]
+    # with combat progression + growth composed, the whole pair is system-wired
+    art["combat"] = {"progression": {"player": "cb_h", "xp_var": "xp",
+                                     "growth": [{"stat": "hp", "per_level": 3}]}}
+    info = _walk_state(art)
+    assert "system" in info["xp"]["prod"] and "system" in info["level"]["cons"]

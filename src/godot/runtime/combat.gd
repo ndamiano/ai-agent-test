@@ -101,8 +101,9 @@ func _finish(enc, res: String, units):
 	return enc.get("on_defeat", {"type": "end", "ending": "game_over"})
 
 
-# Victory pays the defeated enemies' xp_yield into the persistent player stats; crossing a
-# threshold levels up (growth applied, depletables healed to their grown max).
+# Victory pays the defeated enemies' xp_yield into the XP VARIABLE (an ordinary add_var — the
+# same pool a harvest or a choice can feed); the level variable re-derives, and combat applies
+# its meaning of the levels gained: stat growth + full heal.
 func _award_xp(units) -> void:
 	var prog = g.ir.get("progression")
 	var ps = g.pstats()
@@ -114,20 +115,23 @@ func _award_xp(units) -> void:
 			gain += int(g.combatant_by_id.get(u["ref"], {}).get("xp_yield", 0))
 	if gain <= 0:
 		return
-	ps["xp"] = int(ps["xp"]) + gain
+	var before: int = g.player_level()
+	var xv = String(prog["xp_var"])
+	g.state["vars"][xv] = float(g.state["vars"].get(xv, 0)) + gain
+	g.sync_levels()
+	var after: int = g.player_level()
 	var msg := "Gained %d XP." % gain
-	var need = int(prog["xp_per_level"])
-	while int(ps["xp"]) >= int(ps["level"]) * need:
-		ps["level"] = int(ps["level"]) + 1
+	for _lvl in range(after - before):
 		for gr in prog.get("growth", []):
 			var sid = gr["stat"]
 			if ps["max"].has(sid):
 				ps["max"][sid] = float(ps["max"][sid]) + float(gr["per_level"])
 			else:
 				ps["stats"][sid] = float(ps["stats"].get(sid, 0)) + float(gr["per_level"])
+	if after > before:
 		for sid in ps["max"]:
 			ps["stats"][sid] = ps["max"][sid]
-		msg += "  LEVEL %d!" % int(ps["level"])
+		msg += "  LEVEL %d!" % after
 	await g.show_line(null, msg)
 	g.hide_dialogue()
 
@@ -358,7 +362,7 @@ func _make_unit(c: Dictionary) -> Dictionary:
 				ps["stats"][sid] = 1   # never enter a fight already dead
 		return {"ref": c["ref"], "faction": "player", "stats": ps["stats"],
 			"max_override": ps["max"], "abilities": cb.get("abilities", []),
-			"statuses": [], "alive": true, "name": "%s  Lv %d" % [nm, int(ps["level"])]}
+			"statuses": [], "alive": true, "name": "%s  Lv %d" % [nm, g.player_level()]}
 	var stats := {}
 	for s in g.stat_by_id.values():
 		stats[s["id"]] = s["default"]

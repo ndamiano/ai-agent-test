@@ -265,8 +265,10 @@ TOOL_SCHEMAS: List[Dict] = [
                        "the XP curve, and per-level stat growth. Combat games only.",
         "parameters": {"type": "object", "properties": {
             "progression": {"type": "object", "description":
-                "{player:<combatant id — the PROTAGONIST's>, xp_per_level:<int>, "
-                "growth:[{stat:<declared stat>, per_level:<n>}]}"},
+                "{player:<combatant id — the PROTAGONIST's>, xp_var?:'xp', level_var?:'level', "
+                "per_level?:<int, default 20>, growth:[{stat:<declared stat>, per_level:<n>}]} — "
+                "declares the xp/level variables for you; victories and any other effect can "
+                "then add_var the xp pool, and conditions can gate on the level"},
         }, "required": ["progression"]}}},
     {"type": "function", "function": {
         "name": "set_encounter_table",
@@ -872,25 +874,48 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         return _combat_write("encounters", encounter_id, content, encounter_write_error)
 
     def set_progression(progression) -> Dict:
-        """Declare the growth loop on `combat`: the player's canonical combatant, the XP curve,
-        and per-level stat growth (validated against the declared combatants/stats)."""
+        """Declare combat's growth loop: who the player fights as, which leveled VARIABLE is the
+        XP pool, and per-level stat growth. Declares the xp/level variable pair on `places` as
+        ordinary variables — XP producers are then plain effects (victory yields, harvest
+        outcomes, choices) and any condition can gate on the level."""
         from maestro.modules.combat import progression_error
         _require_frozen()
         if _locked("combat"):
             return _locked_error("combat")
         progression = _coerce_json(progression)
+        if not isinstance(progression, dict):
+            return {"ok": False, "error": "progression must be a JSON object"}
+        xp_var = progression.get("xp_var") or "xp"
+        level_var = progression.get("level_var") or "level"
+        per_level = progression.get("per_level", 20)
+        if not isinstance(per_level, int) or per_level < 1:
+            return {"ok": False, "error": "per_level must be a positive integer"}
         combat = state.read_component("combat") or {}
-        err = progression_error(progression, combat)
+        prog = {"player": progression.get("player"), "xp_var": xp_var}
+        if progression.get("growth") is not None:
+            prog["growth"] = progression["growth"]
+        err = progression_error(prog, combat)
         if err:
             return {"ok": False, "error": err}
-        combat["progression"] = progression
+        # The variable pair is declared by CODE, deterministically — additive, so it bypasses
+        # the places done-lock rather than parking progression behind it.
+        places = state.read_component("places") or {"place_ids": [], "places": {}}
+        variables = places.setdefault("variables", [])
+        variables[:] = [v for v in variables
+                        if (v.get("id") if isinstance(v, dict) else v) not in (xp_var, level_var)]
+        variables.append({"id": xp_var, "default": 0,
+                          "level_var": level_var, "per_level": per_level})
+        variables.append({"id": level_var, "default": 1})
+        combat["progression"] = prog
+        state.write_component("places", places)
         state.write_component("combat", combat)
-        return {"ok": True, "player": progression["player"]}
+        return {"ok": True, "player": prog["player"], "xp_var": xp_var,
+                "level_var": level_var, "per_level": per_level}
 
     def set_encounter_table(place_id: str, table) -> Dict:
         """Give ONE walkable zone a wild-fight table: each step on open ground rolls `rate`; a
         hit fights one combatant drawn from `entries` by weight, stats scaled by `tier`."""
-        from maestro.modules.combat import encounter_table_error
+        from maestro.modules.wild_encounters import encounter_table_error
         _require_frozen()
         if _locked("places"):
             return _locked_error("places")

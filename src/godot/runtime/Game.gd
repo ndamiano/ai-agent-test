@@ -423,6 +423,8 @@ func _process(_delta: float) -> void:
 	_inv.visible = not _title_open
 	if _title_open:
 		return
+	if state.has("vars"):
+		sync_levels()
 	var inv: Array = state.get("inv", [])
 	if inv == _inv_last:
 		return
@@ -606,8 +608,9 @@ func _texture_file(file: String):
 	return ImageTexture.create_from_image(img)
 
 
-# The persistent player combat block (stats/max/xp/level) for the progression loop — lives in
-# `state` so saves carry it. Initialized lazily from the progression player's combatant.
+# The persistent player combat block (stats + grown maxes) for the progression loop — lives in
+# `state` so saves carry it. XP and level are ordinary VARIABLES (state.vars), fed by effects
+# anywhere and derived by sync_levels; this holds only what combat owns.
 func pstats():
 	var prog = ir.get("progression")
 	if prog == null:
@@ -623,8 +626,28 @@ func pstats():
 		for s in stat_by_id.values():
 			if s.get("role") == "resource_depletable":
 				mx[s["id"]] = max(float(s.get("max", 1.0)), float(stats.get(s["id"], 1)), 1.0)
-		state["pstats"] = {"stats": stats, "max": mx, "xp": 0, "level": 1}
+		state["pstats"] = {"stats": stats, "max": mx}
 	return state["pstats"]
+
+
+# Leveled variables: any variable declaring level_var/per_level keeps its level variable
+# derived — floor(value/per_level)+1 — no matter WHAT effect fed it (a victory yield, a
+# harvest outcome, a dialogue choice). Swept per frame from _process; cheap and unmissable.
+func sync_levels() -> void:
+	for v in ir.get("variables", []):
+		if v is Dictionary and v.get("level_var") and int(v.get("per_level", 0)) > 0:
+			var xp = float(state["vars"].get(v["id"], 0))
+			state["vars"][v["level_var"]] = int(floor(xp / float(v["per_level"]))) + 1
+
+
+func player_level() -> int:
+	var prog = ir.get("progression")
+	if prog == null:
+		return 1
+	for v in ir.get("variables", []):
+		if v is Dictionary and v.get("id") == prog.get("xp_var") and v.get("level_var"):
+			return int(state["vars"].get(v["level_var"], 1))
+	return 1
 
 
 func sprites_node() -> Control:

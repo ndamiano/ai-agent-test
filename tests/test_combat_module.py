@@ -39,7 +39,7 @@ def _combat(**over):
                                        {"ref": "cb_foe", "faction": "enemy"}],
                         "victory": {"all_defeated": "enemy"},
                         "on_victory": {"type": "end", "ending": "win"}}],
-        "progression": {"player": "cb_hero", "xp_per_level": 20,
+        "progression": {"player": "cb_hero", "xp_var": "xp",
                         "growth": [{"stat": "hp", "per_level": 3}]},
     }
     c.update(over)
@@ -91,7 +91,11 @@ def _art(combat, *, reachable=True, hero=True, foe=True):
         "characters": {"characters": chars},
         "asset_manifest": {"backgrounds": [{"id": "bg_arena", "image_file": "a.png"}]},
         "nodes": {"node_ids": [], "nodes": {}},
-        "places": {"start_place": "room", "place_ids": ["room"], "places": {
+        "places": {"start_place": "room", "place_ids": ["room"],
+                   "variables": [{"id": "xp", "default": 0, "level_var": "level",
+                                  "per_level": 20},
+                                 {"id": "level", "default": 1}],
+                   "places": {
             "room": {"kind": "interior", "background": "bg_arena", "interactables": [hotspot],
                      "encounter_table": {"rate": 0.1, "entries": [{"combatant": "cb_foe"}]}}}},
         "combat": combat,

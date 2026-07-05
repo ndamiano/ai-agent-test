@@ -241,3 +241,50 @@ def test_mesh_endpoint_falls_back_to_tile_endpoint(monkeypatch):
     assert ct._mesh_endpoint() == "http://m:9"
     monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {})
     assert ct._mesh_endpoint() == "" and ct.mesh_enabled() is False
+
+
+def test_mesh_backend_selects_trellis_only_when_fully_configured(monkeypatch, tmp_path):
+    import os
+    import tools.comfyui_tools as ct
+    # trellis requested but paths missing -> falls back to hunyuan
+    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {"mesh_backend": "trellis"})
+    monkeypatch.setattr(ct, "_get_trellis_settings",
+                        lambda: {"python": "/nope", "repo": "/nope", "weights": "/nope"})
+    assert ct.mesh_backend() == "hunyuan"
+    # all three paths exist -> trellis engages
+    for n in ("py", "repo", "w"):
+        (tmp_path / n).mkdir()
+    monkeypatch.setattr(ct, "_get_trellis_settings",
+                        lambda: {"python": str(tmp_path / "py"), "repo": str(tmp_path / "repo"),
+                                 "weights": str(tmp_path / "w")})
+    assert ct.mesh_backend() == "trellis"
+    # default (no backend key) is hunyuan
+    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {})
+    assert ct.mesh_backend() == "hunyuan"
+
+
+def test_run_trellis_batch_reads_timings_and_verifies_glbs(monkeypatch, tmp_path):
+    import json
+    import tools.comfyui_tools as ct
+    out = tmp_path / "out"
+    out.mkdir()
+    # simulate the runner: writes timings for 3, but only 2 glbs actually land
+    (out / "a.glb").write_bytes(b"x")
+    (out / "b.glb").write_bytes(b"x")
+    json.dump({"a": 50.0, "b": 51.0, "c": 52.0}, open(out / "timings.json", "w"))
+    monkeypatch.setattr(ct, "_get_trellis_settings",
+                        lambda: {"python": "py", "repo": "repo", "weights": "w"})
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
+    done = ct.run_trellis_batch(str(tmp_path / "in"), str(out))
+    assert done == {"a", "b"}      # c had a timing but no glb -> excluded
+
+
+def test_trellis_backend_leaves_texture_to_presenter():
+    # contract: the overworld3d presenter must KEEP a glb's baked texture and skip sprite
+    # projection when the mesh is textured (TRELLIS) — guard the gd code carries the check
+    from pathlib import Path
+    gd = (Path(__file__).parent.parent / "src/godot/runtime/overworld3d.gd").read_text()
+    assert "_has_baked_texture" in gd
+    load = gd.split("func _load_glb(")[1].split("\nfunc ")[0]
+    assert "_has_baked_texture" in load and load.index("_has_baked_texture") < load.index("triplanar")

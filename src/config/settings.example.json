@@ -20,12 +20,18 @@
     "endpoint": "http://localhost:8188",
     "vram_management": false,
     "tile_endpoint": "",
-    "mesh_endpoint": ""
+    "mesh_endpoint": "",
+    "mesh_backend": "hunyuan"
   },
   "tts": {
     "endpoint": "http://localhost:8880",
     "model": "",
     "voices": [],
     "format": "wav"
+  },
+  "trellis": {
+    "python": "",
+    "repo": "",
+    "weights": ""
   }
 }

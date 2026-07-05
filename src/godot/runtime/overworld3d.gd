@@ -304,6 +304,10 @@ func _load_glb(path: String, span: float, tex = null) -> Node3D:
 	var aabb := _mesh_aabb(scene)
 	if aabb.size == Vector3.ZERO:
 		return null
+	# A TRELLIS mesh already carries its own baked PBR texture — keep it, project nothing. Only
+	# the untextured Hunyuan/shape-only path needs the sprite projected on for colour.
+	if _has_baked_texture(scene):
+		return _seat_glb(scene, aabb, span)
 	# Shape-only meshes are untextured — project the SOURCE SPRITE onto the mesh as a triplanar
 	# texture (local space, one repeat across the mesh bounds) so the generated art becomes the
 	# colour. Crude (the front reads best, sides smear) but fully local, no paint model. No sprite
@@ -327,20 +331,42 @@ func _load_glb(path: String, span: float, tex = null) -> Node3D:
 	else:
 		mat.albedo_color = Color(0.80, 0.76, 0.68)
 	_apply_material(scene, mat)
+	return _seat_glb(scene, aabb, span)
+
+
+# Scale the mesh to sit WITHIN its footprint (0.8) with a tall object (a tower) capped at ~1.6
+# footprints so a pagoda doesn't tower off-screen; seat its base on the ground, centered.
+func _seat_glb(scene: Node, aabb: AABB, span: float) -> Node3D:
 	var wrap := Node3D.new()
-	# scale so the mesh sits WITHIN its footprint (0.8) and a tall object (a tower) never rises
-	# past ~1.6 footprints — otherwise a pagoda scaled to 3 cells wide towers off-screen.
 	var footprint_side: float = max(aabb.size.x, aabb.size.z)
 	var s: float = span * 0.8 / footprint_side if footprint_side > 0.0 else 1.0
 	var max_h: float = span * 1.6
 	if aabb.size.y * s > max_h and aabb.size.y > 0.0:
 		s = max_h / aabb.size.y
 	scene.scale = Vector3(s, s, s)
-	# seat the base on the ground and center it horizontally
 	scene.position = Vector3(-aabb.get_center().x * s, -aabb.position.y * s,
 		-aabb.get_center().z * s)
 	wrap.add_child(scene)
 	return wrap
+
+
+# Does the loaded glb carry its own albedo texture (a TRELLIS PBR mesh) vs bare geometry
+# (Hunyuan shape-only)? Walk the mesh surfaces' materials for a base-colour texture.
+func _has_baked_texture(n: Node) -> bool:
+	if n is MeshInstance3D:
+		var mi := n as MeshInstance3D
+		var mesh := mi.mesh
+		if mesh != null:
+			for i in mesh.get_surface_count():
+				var m = mi.get_active_material(i)
+				if m is BaseMaterial3D and (m as BaseMaterial3D).albedo_texture != null:
+					return true
+				if m is StandardMaterial3D and (m as StandardMaterial3D).albedo_texture != null:
+					return true
+	for c in n.get_children():
+		if _has_baked_texture(c):
+			return true
+	return false
 
 
 func _mesh_aabb(n: Node) -> AABB:

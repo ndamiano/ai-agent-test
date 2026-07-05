@@ -430,9 +430,11 @@ def build_feature_mesh_workflow(image_name: str, octree: int = 256, steps: int =
 
 
 def mesh_enabled() -> bool:
-    """Feature-mesh generation is on only when a mesh endpoint is configured AND the packaged
-    Hunyuan3D checkpoint is actually loadable there (so a missing download degrades to
-    billboards, never a hard failure mid-build)."""
+    """Feature-mesh generation is on when a working backend is present: the trellis backend
+    (venv+repo+weights on disk) or a hunyuan endpoint carrying the checkpoint. A missing/broken
+    backend degrades to billboards, never a hard failure mid-build."""
+    if mesh_backend() == "trellis":
+        return True
     ep = _mesh_endpoint()
     if not ep:
         return False
@@ -447,6 +449,46 @@ def mesh_enabled() -> bool:
 def _mesh_endpoint() -> str:
     cfg = _get_comfyui_settings()
     return (cfg.get("mesh_endpoint") or cfg.get("tile_endpoint") or "").rstrip("/")
+
+
+def _get_trellis_settings() -> dict:
+    from config.settings_manager import settings_manager
+    return settings_manager.get_settings().get("trellis") or {}
+
+
+def mesh_backend() -> str:
+    """Which feature-mesh generator to use: 'trellis' only when it's selected AND fully
+    configured (venv + repo + weights all present on disk), else 'hunyuan'. A misconfigured
+    trellis silently downgrades — the build must never hard-fail on an art backend."""
+    import os
+    cfg = _get_comfyui_settings()
+    if cfg.get("mesh_backend") == "trellis":
+        t = _get_trellis_settings()
+        if all(os.path.exists(t.get(k, "")) for k in ("python", "repo", "weights")):
+            return "trellis"
+    return "hunyuan"
+
+
+def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
+    """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir.
+    Shells out to the standalone TRELLIS venv (loads the 4B pipeline once for the whole batch).
+    Returns the set of slugs that produced a .glb. Never raises — a failure leaves billboards."""
+    import json
+    import os
+    import subprocess
+    t = _get_trellis_settings()
+    runner = os.path.join(os.path.dirname(__file__), "trellis_runner.py")
+    try:
+        subprocess.run(
+            [t["python"], runner, "--repo", t["repo"], "--weights", t["weights"],
+             "--sprites", sprite_dir, "--out", out_dir],
+            check=False, timeout=3600)
+        tj = os.path.join(out_dir, "timings.json")
+        done = set(json.load(open(tj))) if os.path.exists(tj) else set()
+        return {s for s in done if os.path.exists(os.path.join(out_dir, f"{s}.glb"))}
+    except Exception as e:
+        logger.error(f"trellis batch failed: {e}")
+        return set()
 
 
 def run_mesh_job(image_path: str, dest_glb, octree: int = 256) -> bool:

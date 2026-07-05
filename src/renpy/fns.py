@@ -285,18 +285,38 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
     # feature sprite into a .glb the HD-2D presenter can stand in the world as real geometry.
     # Best-effort and OFF unless a mesh endpoint carries the checkpoint; a miss leaves the
     # billboard. Runs last so a mesh failure never blocks the 2D-complete build. ----------------
-    from tools.comfyui_tools import mesh_enabled, run_mesh_job
+    from tools.comfyui_tools import mesh_enabled, mesh_backend, run_mesh_job, run_trellis_batch
     if walkable and mesh_enabled():
         meshed = [f for f in generated if f.startswith("feature_") and f.endswith(".png")]
-        print(f"    [images]  generating {len(meshed)} feature mesh(es)")
-        for fpng in meshed:
-            src = images_dir / fpng
-            glb = images_dir / (fpng[:-4] + ".glb")
-            if run_mesh_job(str(src), str(glb)):
-                generated.append(glb.name)
-                print(f"    [images]  ok: {glb.name}")
-            else:
-                print(f"    [images]  mesh failed, billboard fallback: {fpng}")
+        backend = mesh_backend()
+        print(f"    [images]  generating {len(meshed)} feature mesh(es) via {backend}")
+        if backend == "trellis":
+            # TRELLIS loads a 4B model once per batch, so stage ONLY the feature sprites in a
+            # scratch dir (not the character/tile art in images_dir) and run it once. Its .glb
+            # carries its OWN PBR texture (the presenter keeps it; no sprite projection).
+            stage = images_dir / "_mesh_in"
+            stage.mkdir(exist_ok=True)
+            for fpng in meshed:
+                shutil.copy2(images_dir / fpng, stage / fpng)
+            done = run_trellis_batch(str(stage), str(stage))
+            for fpng in meshed:
+                slug = fpng[:-4]
+                if slug in done and (stage / f"{slug}.glb").exists():
+                    shutil.copy2(stage / f"{slug}.glb", images_dir / f"{slug}.glb")
+                    generated.append(f"{slug}.glb")
+                    print(f"    [images]  ok: {slug}.glb")
+                else:
+                    print(f"    [images]  mesh failed, billboard fallback: {fpng}")
+            shutil.rmtree(stage, ignore_errors=True)
+        else:
+            for fpng in meshed:
+                src = images_dir / fpng
+                glb = images_dir / (fpng[:-4] + ".glb")
+                if run_mesh_job(str(src), str(glb)):
+                    generated.append(glb.name)
+                    print(f"    [images]  ok: {glb.name}")
+                else:
+                    print(f"    [images]  mesh failed, billboard fallback: {fpng}")
 
     return {"status": "ok", "generated": generated, "failed": failed}
 

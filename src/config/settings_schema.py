@@ -42,6 +42,20 @@ class ComfyUISettings(BaseModel):
     # present), feature sprites are turned into .glb meshes for the HD-2D world. Falls back to
     # tile_endpoint. Empty disables mesh generation (features stay billboards).
     mesh_endpoint: str = Field("")
+    # Feature-mesh backend: "hunyuan" (ComfyUI, fast, shape-only — the sprite is projected on
+    # for colour) or "trellis" (standalone TRELLIS.2-4B, slower, native PBR textures). Bake-off
+    # winner is trellis; hunyuan stays the fast fallback and the default. Requires `trellis`
+    # below when set to "trellis".
+    mesh_backend: str = Field("hunyuan")
+
+
+class TrellisSettings(BaseModel):
+    """TRELLIS.2-4B runs standalone (its own cu128 venv + prebuilt Blackwell CUDA wheels), so
+    maestro shells out to it. All three paths must exist for the trellis mesh backend to engage;
+    otherwise the build silently falls back to hunyuan/billboards."""
+    python: str = Field("", description="Path to the TRELLIS venv python (cu128).")
+    repo: str = Field("", description="Path to the microsoft/TRELLIS.2 checkout.")
+    weights: str = Field("", description="Path to the TRELLIS.2-4B weights dir.")
 
 
 class TTSSettings(BaseModel):
@@ -79,4 +93,5 @@ class AppSettings(BaseModel):
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None
     comfyui: Optional[ComfyUISettings] = None
+    trellis: Optional[TrellisSettings] = None
     tts: Optional[TTSSettings] = None

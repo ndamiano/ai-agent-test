@@ -260,6 +260,34 @@ def test_slice_tool_validates_against_declared_ids(tmp_path):
     assert not bad2["ok"] and "nope" in bad2["error"]
 
 
+def test_write_ability_rejects_non_string_requires_ids(tmp_path):
+    # observed: a model wrote a whole dict as requires.var (stat-as-condition proxy), which
+    # crashed the crossref walk downstream — the write gate must catch it with a message
+    tools, _ = _combat_tools(tmp_path)
+    tools["set_combat_meta"](stats=[{"id": "hp", "default": 9, "role": "resource_depletable"}])
+    bad = tools["write_ability"]("burst", {
+        "targeting": {"shape": "single", "faction": "enemy"},
+        "effects": [{"stat": "hp", "op": "damage"}],
+        "requires": {"var": {"stat_ref": "hp"}, "op": ">=", "value": 15}})
+    assert not bad["ok"] and "string id" in bad["error"] and "requires" in bad["error"]
+    ok = tools["write_ability"]("burst", {
+        "targeting": {"shape": "single", "faction": "enemy"},
+        "effects": [{"stat": "hp", "op": "damage"}],
+        "requires": {"flag": "enraged"}})
+    assert ok["ok"], ok.get("error")
+
+
+def test_crossref_reports_non_string_cond_id_instead_of_crashing():
+    from maestro.ir_crossref import crossref_records
+    ir = {"meta": {"title": "t"}, "characters": [], "backgrounds": [],
+          "abilities": [{"id": "burst", "requires": {"var": {"bad": 1}, "op": ">=", "value": 5},
+                         "targeting": {"shape": "single", "faction": "enemy"},
+                         "effects": [{"stat": "hp", "op": "damage"}]}]}
+    recs = crossref_records(ir)
+    hits = [r for r in recs if "must be a string id" in r["message"]]
+    assert hits and "abilities[burst].requires.var" in hits[0]["path"]
+
+
 def test_set_combat_meta_rejects_no_depletable_stat(tmp_path):
     tools, _ = _combat_tools(tmp_path)
     res = tools["set_combat_meta"](stats=[{"id": "atk", "default": 5, "role": "modifier"}])

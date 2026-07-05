@@ -144,6 +144,15 @@ def _ability_error(a: Dict, stat_ids: set, status_ids: set) -> Optional[str]:
         if not isinstance(cs, str) or cs not in stat_ids:
             return (f"ability['{a['id']}'].cost needs {{\"stat\": <declared stat id>, \"amount\": "
                     f"<n>}}; {cs!r} is not one of the declared stats {sorted(stat_ids)}")
+    req = a.get("requires")
+    if req is not None:
+        if not isinstance(req, dict):
+            return f"ability['{a['id']}'].requires must be a condition object"
+        for key in ("item", "flag", "var"):
+            if key in req and not isinstance(req[key], str):
+                return (f"ability['{a['id']}'].requires.{key} must be a string id (got "
+                        f"{type(req[key]).__name__}) — a stat can NOT be used as a condition; "
+                        f"gate on an item or flag, or drop `requires`")
     return None
 
 

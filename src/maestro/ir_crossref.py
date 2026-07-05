@@ -71,6 +71,14 @@ def crossref_records(ir: Dict) -> List[Dict]:
     def check_condition(cond, path: str) -> None:
         if not isinstance(cond, dict):
             return
+        # A non-string id (observed: a model wrote a whole dict as `var`) must surface as an
+        # attributed record at ITS path — falling through to `in set` raises unhashable-dict,
+        # which collapses the whole walk into one blind, unfixable crash record.
+        for key in ("item", "flag", "var"):
+            if key in cond and not isinstance(cond[key], str):
+                bad(f"{path}.{key}", cond[key],
+                    f"{key} (must be a string id, not {type(cond[key]).__name__})")
+                return
         if "item" in cond:
             if cond["item"] not in items:
                 bad(path, cond["item"], "item")

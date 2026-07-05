@@ -395,6 +395,97 @@ def _build_ideogram_tile_workflow(caption: str) -> dict:
     }
 
 
+_MESH_CKPT = "hunyuan_3d_v2.1.safetensors"
+
+
+def build_feature_mesh_workflow(image_name: str, octree: int = 256, steps: int = 30) -> dict:
+    """The local Hunyuan3D-2.1 image→mesh graph: a matted feature sprite (already isolated on
+    white) becomes a .glb. The single packaged checkpoint yields MODEL + CLIP_VISION + VAE; the
+    image conditions a DiT sample, the hunyuan VAE decodes a voxel field, and it's marched to a
+    mesh and saved as GLB. octree_resolution trades detail for time/VRAM (256 is a fast preview,
+    384 crisper)."""
+    return {
+        "ck": {"class_type": "ImageOnlyCheckpointLoader",
+               "inputs": {"ckpt_name": _MESH_CKPT}},
+        "im": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "en": {"class_type": "CLIPVisionEncode",
+               "inputs": {"clip_vision": ["ck", 1], "image": ["im", 0], "crop": "center"}},
+        "co": {"class_type": "Hunyuan3Dv2Conditioning",
+               "inputs": {"clip_vision_output": ["en", 0]}},
+        "la": {"class_type": "EmptyLatentHunyuan3Dv2",
+               "inputs": {"resolution": 3072, "batch_size": 1}},
+        "ks": {"class_type": "KSampler", "inputs": {
+            "model": ["ck", 0], "seed": int(uuid.uuid4().int % (2**32)), "steps": steps,
+            "cfg": 5.0, "sampler_name": "euler", "scheduler": "simple",
+            "positive": ["co", 0], "negative": ["co", 1], "latent_image": ["la", 0],
+            "denoise": 1.0}},
+        "de": {"class_type": "VAEDecodeHunyuan3D", "inputs": {
+            "samples": ["ks", 0], "vae": ["ck", 2], "num_chunks": 8000,
+            "octree_resolution": octree}},
+        "me": {"class_type": "VoxelToMeshBasic",
+               "inputs": {"voxel": ["de", 0], "threshold": 0.6}},
+        "sv": {"class_type": "SaveGLB",
+               "inputs": {"mesh": ["me", 0], "filename_prefix": "maestro_mesh/feature"}},
+    }
+
+
+def mesh_enabled() -> bool:
+    """Feature-mesh generation is on only when a mesh endpoint is configured AND the packaged
+    Hunyuan3D checkpoint is actually loadable there (so a missing download degrades to
+    billboards, never a hard failure mid-build)."""
+    ep = _mesh_endpoint()
+    if not ep:
+        return False
+    try:
+        info = _http_get(f"{ep}/object_info/ImageOnlyCheckpointLoader")
+        ckpts = info["ImageOnlyCheckpointLoader"]["input"]["required"]["ckpt_name"][0]
+        return _MESH_CKPT in ckpts
+    except Exception:
+        return False
+
+
+def _mesh_endpoint() -> str:
+    cfg = _get_comfyui_settings()
+    return (cfg.get("mesh_endpoint") or cfg.get("tile_endpoint") or "").rstrip("/")
+
+
+def run_mesh_job(image_path: str, dest_glb, octree: int = 256) -> bool:
+    """Upload a feature sprite, run the image→mesh graph, and write the resulting .glb to
+    dest_glb. Returns True on success. Endpoint is `comfyui.mesh_endpoint` (falls back to
+    tile_endpoint — the ideogram box carries the 3D nodes too)."""
+    import shutil
+    ep = _mesh_endpoint()
+    if not ep:
+        return False
+    try:
+        name = upload_image(image_path, endpoint=ep)
+        wf = build_feature_mesh_workflow(name, octree=octree)
+        client_id = str(uuid.uuid4())
+        resp = _http_post(f"{ep}/prompt", {"prompt": wf, "client_id": client_id})
+        pid = resp.get("prompt_id")
+        if not pid:
+            logger.error(f"mesh job not queued: {resp}")
+            return False
+        result = _poll_until_done(ep, pid, timeout=600)
+        for node_output in result.get("outputs", {}).values():
+            for glb in node_output.get("3d", []) or node_output.get("gltf", []) \
+                    or node_output.get("mesh", []):
+                fn = glb["filename"] if isinstance(glb, dict) else glb
+                sub = glb.get("subfolder", "") if isinstance(glb, dict) else ""
+                url = (f"{ep}/view?filename={urllib.parse.quote(fn)}"
+                       f"&subfolder={urllib.parse.quote(sub)}&type=output")
+                data = urllib.request.urlopen(url, timeout=120).read()
+                with open(dest_glb, "wb") as f:
+                    f.write(data)
+                return True
+        logger.error(f"mesh job {pid} produced no glb output: "
+                     f"{list(result.get('outputs', {}).keys())}")
+        return False
+    except Exception as e:
+        logger.error(f"mesh job failed for {image_path}: {e}")
+        return False
+
+
 def build_tile_job(theme: str, role: str = "open", ideogram: bool = True) -> dict:
     """Return a job for ONE walkable-map terrain tile: a square, top-down surface TEXTURE of
     `theme` (e.g. 'frozen stream', 'temple stone'). Never say 'map tile' — models draw a picture

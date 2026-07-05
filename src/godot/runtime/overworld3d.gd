@@ -55,6 +55,7 @@ func run_place(place_id, spawn):
 			inter[_helper._key(cpos["x"], cpos["y"])] = it
 
 	_root = _build_scene(rows, legend, gw, gh, inter)
+	_draw_features(place.get("footprints", {}))
 
 	var ax := 0
 	var ay := 0
@@ -256,6 +257,99 @@ func _build_scene(rows, legend, gw, gh, inter) -> Node3D:
 	_cam = cam
 
 	return root
+
+
+# Feature objects: a generated .glb is REAL geometry standing on the footprint (the HD-2D
+# payoff — a building you walk around, not a cardboard cutout); when only the sprite exists it
+# falls back to a fixed-Y billboard (still 3D-placed, just flat). The glb is loaded from
+# res://images/feature_<slug>.glb, centered on the footprint rect and scaled to span it, sitting
+# on the ground plane.
+func _draw_features(footprints) -> void:
+	if typeof(footprints) != TYPE_DICTIONARY:
+		return
+	for fid in footprints:
+		var fp = footprints[fid]
+		var slug: String = _helper._slug(String(fp.get("label", "")))
+		var fx := (float(fp.get("x", 0)) + float(fp.get("w", 1)) / 2.0 - 0.5) * _CELL
+		var fz := (float(fp.get("y", 0)) + float(fp.get("h", 1)) / 2.0 - 0.5) * _CELL
+		var span: float = max(float(fp.get("w", 1)), float(fp.get("h", 1))) * _CELL
+		var glb_path := "images/feature_%s.glb" % slug
+		if FileAccess.file_exists("res://" + glb_path):
+			var node := _load_glb(glb_path, span)
+			if node != null:
+				node.position = Vector3(fx, 0.0, fz)
+				_root.add_child(node)
+				continue
+		var tex = g._texture_file("feature_%s.png" % slug)
+		if tex != null:
+			var spr := Sprite3D.new()
+			spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+			spr.shaded = false
+			spr.texture = tex
+			spr.pixel_size = (span * 1.1) / tex.get_height()
+			spr.position = Vector3(fx, span * 0.55, fz)
+			_root.add_child(spr)
+
+
+# Load a .glb, drop it on the ground, scale its longest horizontal side to `span`, and give the
+# untextured shape a warm stone material so its form reads under the scene light.
+func _load_glb(path: String, span: float) -> Node3D:
+	var doc := GLTFDocument.new()
+	var st := GLTFState.new()
+	if doc.append_from_buffer(FileAccess.get_file_as_bytes("res://" + path), "", st) != OK:
+		return null
+	var scene := doc.generate_scene(st)
+	if scene == null:
+		return null
+	var aabb := _mesh_aabb(scene)
+	if aabb.size == Vector3.ZERO:
+		return null
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.80, 0.76, 0.68)
+	mat.roughness = 0.9
+	_apply_material(scene, mat)
+	var wrap := Node3D.new()
+	# scale so the mesh sits WITHIN its footprint (0.8) and a tall object (a tower) never rises
+	# past ~1.6 footprints — otherwise a pagoda scaled to 3 cells wide towers off-screen.
+	var footprint_side: float = max(aabb.size.x, aabb.size.z)
+	var s: float = span * 0.8 / footprint_side if footprint_side > 0.0 else 1.0
+	var max_h: float = span * 1.6
+	if aabb.size.y * s > max_h and aabb.size.y > 0.0:
+		s = max_h / aabb.size.y
+	scene.scale = Vector3(s, s, s)
+	# seat the base on the ground and center it horizontally
+	scene.position = Vector3(-aabb.get_center().x * s, -aabb.position.y * s,
+		-aabb.get_center().z * s)
+	wrap.add_child(scene)
+	return wrap
+
+
+func _mesh_aabb(n: Node) -> AABB:
+	var a := AABB()
+	var first := true
+	for c in n.get_children():
+		if c is MeshInstance3D:
+			var m: AABB = (c as MeshInstance3D).get_aabb()
+			if first:
+				a = m
+				first = false
+			else:
+				a = a.merge(m)
+		var sub := _mesh_aabb(c)
+		if sub.size != Vector3.ZERO:
+			if first:
+				a = sub
+				first = false
+			else:
+				a = a.merge(sub)
+	return a
+
+
+func _apply_material(n: Node, mat: StandardMaterial3D) -> void:
+	if n is MeshInstance3D:
+		(n as MeshInstance3D).material_override = mat
+	for c in n.get_children():
+		_apply_material(c, mat)
 
 
 func _make_avatar() -> Sprite3D:

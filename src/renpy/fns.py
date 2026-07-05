@@ -281,6 +281,23 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
                     print(f"    [images]  ok: {fname}")
                     break
 
+    # --- mesh pass (outside the vram bracket — Hunyuan3D holds its own VRAM): turn each matted
+    # feature sprite into a .glb the HD-2D presenter can stand in the world as real geometry.
+    # Best-effort and OFF unless a mesh endpoint carries the checkpoint; a miss leaves the
+    # billboard. Runs last so a mesh failure never blocks the 2D-complete build. ----------------
+    from tools.comfyui_tools import mesh_enabled, run_mesh_job
+    if walkable and mesh_enabled():
+        meshed = [f for f in generated if f.startswith("feature_") and f.endswith(".png")]
+        print(f"    [images]  generating {len(meshed)} feature mesh(es)")
+        for fpng in meshed:
+            src = images_dir / fpng
+            glb = images_dir / (fpng[:-4] + ".glb")
+            if run_mesh_job(str(src), str(glb)):
+                generated.append(glb.name)
+                print(f"    [images]  ok: {glb.name}")
+            else:
+                print(f"    [images]  mesh failed, billboard fallback: {fpng}")
+
     return {"status": "ok", "generated": generated, "failed": failed}
 
 

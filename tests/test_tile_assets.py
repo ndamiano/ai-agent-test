@@ -210,3 +210,34 @@ def test_make_seamless_tile_wraps_and_downscales(tmp_path):
         assert abs(l[0] - r[0]) < 30, f"horizontal wrap seam at row {i}: {l} vs {r}"
         t, b = px[i, 0], px[i, 127]
         assert abs(t[0] - b[0]) < 30, f"vertical wrap seam at col {i}: {t} vs {b}"
+
+
+def test_build_feature_mesh_workflow_is_valid_graph():
+    from tools.comfyui_tools import build_feature_mesh_workflow, _MESH_CKPT
+    wf = build_feature_mesh_workflow("wagon.png", octree=256, steps=30)
+    kinds = {v["class_type"] for v in wf.values()}
+    assert {"ImageOnlyCheckpointLoader", "CLIPVisionEncode", "Hunyuan3Dv2Conditioning",
+            "KSampler", "VAEDecodeHunyuan3D", "VoxelToMeshBasic", "SaveGLB"} <= kinds
+    ck = next(v for v in wf.values() if v["class_type"] == "ImageOnlyCheckpointLoader")
+    assert ck["inputs"]["ckpt_name"] == _MESH_CKPT
+    im = next(v for v in wf.values() if v["class_type"] == "LoadImage")
+    assert im["inputs"]["image"] == "wagon.png"
+    dec = next(v for v in wf.values() if v["class_type"] == "VAEDecodeHunyuan3D")
+    assert dec["inputs"]["octree_resolution"] == 256
+    keys = set(wf)
+    for node in wf.values():
+        for v in node["inputs"].values():
+            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
+                assert v[0] in keys
+
+
+def test_mesh_endpoint_falls_back_to_tile_endpoint(monkeypatch):
+    import tools.comfyui_tools as ct
+    monkeypatch.setattr(ct, "_get_comfyui_settings",
+                        lambda: {"mesh_endpoint": "", "tile_endpoint": "http://x:8189/"})
+    assert ct._mesh_endpoint() == "http://x:8189"
+    monkeypatch.setattr(ct, "_get_comfyui_settings",
+                        lambda: {"mesh_endpoint": "http://m:9/", "tile_endpoint": "http://x:8189"})
+    assert ct._mesh_endpoint() == "http://m:9"
+    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {})
+    assert ct._mesh_endpoint() == "" and ct.mesh_enabled() is False

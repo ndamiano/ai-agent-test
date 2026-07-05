@@ -38,6 +38,10 @@ class ComfyUISettings(BaseModel):
     # there with structured JSON captions (the tile-lab quality winner) instead of the default
     # endpoint's DreamShaper formulas.
     tile_endpoint: str = Field("")
+    # ComfyUI endpoint carrying the Hunyuan3D-2.1 checkpoint; when set (and the checkpoint is
+    # present), feature sprites are turned into .glb meshes for the HD-2D world. Falls back to
+    # tile_endpoint. Empty disables mesh generation (features stay billboards).
+    mesh_endpoint: str = Field("")
 
 
 class TTSSettings(BaseModel):

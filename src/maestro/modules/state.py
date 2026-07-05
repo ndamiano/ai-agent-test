@@ -176,6 +176,15 @@ def _cut_bare_declaration(module, context, error, slot, services, dispatch) -> N
     if not e or e["prod"] or e["cons"]:
         services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
         return
+    if error.component == "items":
+        # Cutting a bare item at/below the min_items floor re-fires the count check, which
+        # authors another unwired item this then cuts — an author/cut oscillation that rode a
+        # live build to the step cap. At the floor, WIRE the item instead of cutting it.
+        n = len([i for i in (art.get("items") or {}).get("items") or [] if isinstance(i, dict)])
+        if n <= context.param("min_items", 1):
+            services.run(module.get_correction_prompt(context, error, slot=slot),
+                         dispatch=dispatch)
+            return
     sid = error.ref
     services.allowed = None   # code-driven step: no prior prompt scoped the tools
     if error.component == "items":
@@ -214,11 +223,18 @@ def _wiring_prompt(m, context, error: Error) -> CorrectionPrompt:
     no_nodes = [] if (art.get("nodes") or {}).get("nodes") else [
         "", "There are NO dialogue nodes in this artifact — edit_node CANNOT work. Fix on the "
         "PLACE side (edit_place / add_interactable use-outcome effects) or cut the value."]
+    at_floor = []
+    if error.component == "items":
+        n = len([i for i in (art.get("items") or {}).get("items") or [] if isinstance(i, dict)])
+        if n <= context.param("min_items", 1):
+            at_floor = ["", "The catalog is at its minimum size — do NOT cut this item (the "
+                        "count check would just author another unwired one). WIRE it: a take "
+                        "hotspot produces it, a use/requires consumes it."]
     user = "\n".join(
         cr.spec_block(rd) + [""] + cr.todo_block(rd.get("todo", []))
         + cr.target_block(rd) + _wiring_report(context) + _catalog_block(context, error)
         + inventory.items_block(art) + scenes.nodes_index_block(art)
-        + world.places_index_block(art) + no_nodes
+        + world.places_index_block(art) + no_nodes + at_floor
         + cr.tail_block(rd) + ["", "Make the one edit that wires the TARGET value (give it the "
                               "missing producer or consumer) WITHOUT touching another value's "
                               "wiring, or cut it. Tool call only."])

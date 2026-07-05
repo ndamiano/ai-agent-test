@@ -621,6 +621,44 @@ def test_state_bare_declaration_cut_is_mechanical(tmp_path):
     assert svc.allowed is None
 
 
+def test_state_bare_item_at_floor_wires_instead_of_cutting(tmp_path):
+    # observed: cut at the floor -> min_items authors another unwired item -> cut again,
+    # an author/cut oscillation that rode a live build to the step cap
+    from maestro.modules.context import build_context
+    from maestro.modules.state import MODULE as st, _cut_bare_declaration
+
+    state = RunState(tmp_path)
+    state.write_component("items", {"items": [
+        {"id": "item_dead", "name": "Dead", "examine": "x"},
+        {"id": "item_live", "name": "Live", "examine": "y"}]})
+    state.write_component("nodes", {"node_ids": ["n1"], "nodes": {
+        "n1": {"lines": [{"speaker": "a", "text": "x", "effects": [{"add_item": "item_live"}]}],
+               "end": {"type": "menu", "choices": [
+                   {"text": "go", "target": "n1", "requires": {"item": "item_live"}},
+                   {"text": "stay", "target": "n1"}]}}}})
+    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes", "inventory"],
+                 "params": {"min_items": 2}})
+    ctx = build_context(spec.data, state)
+    err = next(e for e in st.get_errors(ctx)
+               if e.code == "state_wiring" and e.ref == "item_dead")
+
+    class Svc:
+        allowed = None
+        ran = False
+
+        def dispatch(self, name, args):
+            raise AssertionError("at the floor the fix must go to the LLM, not a code cut")
+
+        def run(self, prompt, dispatch=None):
+            Svc.ran = True
+            assert "do NOT cut this item" in prompt.user
+
+    svc = Svc()
+    _cut_bare_declaration(st, ctx, err, 0, svc, svc.dispatch)
+    assert Svc.ran
+    assert [i["id"] for i in state.read_component("items")["items"]] == ["item_dead", "item_live"]
+
+
 def test_render_beat_carries_type_and_stake():
     from maestro.modules.story import render_beat
     assert render_beat({"id": "beat_01", "summary": "pizza order", "type": "comedy",

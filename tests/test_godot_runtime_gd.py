@@ -126,6 +126,36 @@ func _run():
 """
 
 
+# The overworld snaps a bad/absent arrival cell onto walkable ground: New Game enters the start
+# place with no spawn, defaulting the avatar to (0,0) — a bordered map's wall corner boxed in by
+# more wall. Without the snap the player can never take a step.
+_OVERWORLD_SELFTEST = """
+extends SceneTree
+
+const Overworld = preload("res://overworld.gd")
+
+class FakeGame:
+\tvar _x = 0
+
+func _fail(msg):
+\tprint("SELFTEST FAIL: ", msg)
+\tquit(1)
+
+func _initialize():
+\tvar ov = Overworld.new(FakeGame.new())
+\t# 3x3 ringed by wall; only the centre (1,1) is open.
+\tvar blocked = {}
+\tfor c in ["0,0", "1,0", "2,0", "0,1", "2,1", "0,2", "1,2", "2,2"]:
+\t\tblocked[c] = true
+\tif ov._nearest_open(0, 0, blocked, 3, 3) != Vector2i(1, 1):
+\t\t_fail("null-spawn corner not snapped to open centre"); return
+\tif ov._nearest_open(1, 1, blocked, 3, 3) != Vector2i(1, 1):
+\t\t_fail("an already-open cell must be returned unchanged"); return
+\tprint("SELFTEST OK")
+\tquit(0)
+"""
+
+
 def _run_selftest(tmp_path, script):
     proj = tmp_path / "proj"
     shutil.copytree(_RUNTIME, proj)
@@ -145,6 +175,23 @@ def test_ircore_parity(tmp_path):
 @pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
 def test_combat_resolution_and_menu_flow(tmp_path):
     _run_selftest(tmp_path, _COMBAT_SELFTEST)
+
+
+@pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
+def test_overworld_snaps_spawn_to_open(tmp_path):
+    _run_selftest(tmp_path, _OVERWORLD_SELFTEST)
+
+
+def test_overworld_spawn_never_lands_on_wall():
+    # New Game enters the start place with no arrival spawn -> the avatar defaults to (0,0), a
+    # bordered map's wall corner. Both presenters must route the initial cell through
+    # _nearest_open (defined once on the 2D presenter, reused by the 3D one) so the player is
+    # never boxed in and unable to move.
+    ov = (_RUNTIME / "overworld.gd").read_text()
+    ov3d = (_RUNTIME / "overworld3d.gd").read_text()
+    assert "func _nearest_open" in ov
+    assert "_nearest_open(sx, sy, blocked, gw, gh)" in ov
+    assert "_helper._nearest_open(sx, sy, blocked, gw, gh)" in ov3d
 
 
 def test_combat_checks_end_after_status_tick():

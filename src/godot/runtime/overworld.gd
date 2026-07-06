@@ -106,11 +106,14 @@ func run_place(place_id, spawn):
 	var layer := _build_layer(rows, legend, gw, gh, tile, ox, oy, inter, covered)
 	_draw_features(layer, fps, tile, ox, oy)
 
-	var ax := 0
-	var ay := 0
+	var sx := 0
+	var sy := 0
 	if spawn != null and spawn.has("cell"):
-		ax = int(spawn["cell"]["x"])
-		ay = int(spawn["cell"]["y"])
+		sx = int(spawn["cell"]["x"])
+		sy = int(spawn["cell"]["y"])
+	var start_cell := _nearest_open(sx, sy, blocked, gw, gh)
+	var ax := start_cell.x
+	var ay := start_cell.y
 	var home_x := ax   # wild-defeat respawn point: where the player entered this zone
 	var home_y := ay
 	var table = place.get("encounter_table")
@@ -565,3 +568,23 @@ func _place_avatar(avatar: Control, cx, cy, tile, ox, oy) -> void:
 
 func _key(x, y) -> String:
 	return "%d,%d" % [int(x), int(y)]
+
+
+# Snap an arrival cell onto the walkable floor. A place entered with no spawn (New Game hits the
+# start place, whose IR has no arrival cell) defaults to (0,0) — on a bordered map that's a wall
+# corner boxed in by more wall, so the avatar can never take a step. BFS out to the nearest OPEN
+# cell so every entry lands the player somewhere they can actually move from.
+func _nearest_open(sx: int, sy: int, blocked: Dictionary, gw: int, gh: int) -> Vector2i:
+	var start := Vector2i(clampi(sx, 0, gw - 1), clampi(sy, 0, gh - 1))
+	var seen := {start: true}
+	var q: Array[Vector2i] = [start]
+	while not q.is_empty():
+		var c: Vector2i = q.pop_front()
+		if not blocked.has(_key(c.x, c.y)):
+			return c
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + d
+			if n.x >= 0 and n.x < gw and n.y >= 0 and n.y < gh and not seen.has(n):
+				seen[n] = true
+				q.append(n)
+	return start

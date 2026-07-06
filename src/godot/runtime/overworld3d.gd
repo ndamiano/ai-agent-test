@@ -57,11 +57,14 @@ func run_place(place_id, spawn):
 	_root = _build_scene(rows, legend, gw, gh, inter)
 	_draw_features(place.get("footprints", {}))
 
-	var ax := 0
-	var ay := 0
+	var sx := 0
+	var sy := 0
 	if spawn != null and spawn.has("cell"):
-		ax = int(spawn["cell"]["x"])
-		ay = int(spawn["cell"]["y"])
+		sx = int(spawn["cell"]["x"])
+		sy = int(spawn["cell"]["y"])
+	var start_cell: Vector2i = _helper._nearest_open(sx, sy, blocked, gw, gh)
+	var ax := start_cell.x
+	var ay := start_cell.y
 
 	_avatar = _make_avatar()
 	_root.add_child(_avatar)
@@ -79,6 +82,10 @@ func run_place(place_id, spawn):
 	while true:
 		await g.get_tree().process_frame
 		var delta: float = g.get_process_delta_time()
+
+		if Input.is_action_just_pressed("ui_pause"):
+			await g.pause_menu()
+			continue
 
 		if moving:
 			slide_t = min(1.0, slide_t + delta / _SLIDE_SECS)
@@ -334,13 +341,16 @@ func _load_glb(path: String, span: float, tex = null) -> Node3D:
 	return _seat_glb(scene, aabb, span)
 
 
-# Scale the mesh to sit WITHIN its footprint (0.8) with a tall object (a tower) capped at ~1.6
-# footprints so a pagoda doesn't tower off-screen; seat its base on the ground, centered.
+# Scale the mesh to sit WITHIN its footprint (0.8 of its span wide) and seat its base on the
+# ground, centered. Height is capped so nothing towers over the low following camera and fills the
+# screen: at most ~1.15 footprint-spans tall AND a hard 3.0-unit ceiling (the avatar is ~0.9, so a
+# building tops out around 3x human height — reads as a building, not a skyscraper next to you).
+const _MAX_FEATURE_H := 3.0
 func _seat_glb(scene: Node, aabb: AABB, span: float) -> Node3D:
 	var wrap := Node3D.new()
 	var footprint_side: float = max(aabb.size.x, aabb.size.z)
 	var s: float = span * 0.8 / footprint_side if footprint_side > 0.0 else 1.0
-	var max_h: float = span * 1.6
+	var max_h: float = min(span * 1.15, _MAX_FEATURE_H)
 	if aabb.size.y * s > max_h and aabb.size.y > 0.0:
 		s = max_h / aabb.size.y
 	scene.scale = Vector3(s, s, s)

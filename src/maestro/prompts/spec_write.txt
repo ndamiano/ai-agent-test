@@ -57,11 +57,14 @@ RULES for picking:
 - Required companions are added for you automatically; only list (and justify) the modules YOU chose.
 
 ── PRESENTATION ──
-How the game renders. Default "2d" (flat sprites). Choose "hd2d" ONLY when BOTH hold:
-- the request asks for 3D / HD-2D / "Octopath-style" / a game you walk around in 3D, AND
-- you picked the `world` module (hd2d renders the walkable world as real 3D — a pure
-  conversation/`scenes` game has nothing to render in 3D).
-When in doubt, "2d". hd2d on a game with no `world` is ignored and falls back to "2d".
+How the game renders. "hd2d" renders the walkable world as real 3D (Octopath-style); "2d" is
+flat sprites.
+- If you picked the `world` module (the player walks around a map), use "hd2d" — a walkable world
+  is meant to be explored in 3D. This is the default; keep it.
+- Use "2d" only when the request explicitly wants a flat / retro / classic-2D look on that
+  walkable world.
+- For a pure conversation/`scenes` game (no `world`), presentation does not matter — leave "hd2d"
+  and it auto-falls back to "2d" (there is nothing to render in 3D).
 
 Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
 
@@ -69,7 +72,7 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
   "title": "short game title",
   "concept": "<the one-line hook from CONCEPT above>",
   "request": "<the full story paragraph you authored, per the requirements above>",
-  "presentation": "2d",                       // "2d" (default) or "hd2d" — see PRESENTATION above
+  "presentation": "hd2d",                     // "hd2d" (walkable world in 3D — the default) or "2d" — see PRESENTATION above
   "modules": {                                // each module you pick -> ONE sentence: what IN THIS STORY it serves
     // "scenes": "the whole game is the scientist's branching descent told through his own dialogue"
   },

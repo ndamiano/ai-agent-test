@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import ChatPanel from './ChatPanel'
 import GamesPanel from './GamesPanel'
+import { useWebSocket } from '../contexts/WebSocketContext'
 
 interface LayoutProps {
     onSettingsClick: () => void
@@ -8,6 +9,20 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ onSettingsClick }) => {
     const [tab, setTab] = useState<'chat' | 'games'>('chat')
+    const { messages } = useWebSocket()
+    const [focusRun, setFocusRun] = useState<string | null>(null)
+    const seenMsgs = useRef(0)
+
+    // F2 — chat→build continuity: a chat request that drafts a spec emits `spec_proposed` (carrying
+    // the new run_id) over the WebSocket. Surface it: jump to the games view and focus the run, so
+    // the user lands on the freeze gate without a manual tab switch + Refresh.
+    useEffect(() => {
+        if (messages.length <= seenMsgs.current) { seenMsgs.current = messages.length; return }
+        const fresh = messages.slice(seenMsgs.current)
+        seenMsgs.current = messages.length
+        const proposed = [...fresh].reverse().find(m => m.type === 'spec_proposed' && m.run_id)
+        if (proposed?.run_id) { setFocusRun(proposed.run_id); setTab('games') }
+    }, [messages])
 
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
@@ -45,7 +60,7 @@ const Layout: React.FC<LayoutProps> = ({ onSettingsClick }) => {
             </div>
 
             <div className="flex-1 overflow-hidden">
-                {tab === 'chat' ? <ChatPanel /> : <GamesPanel />}
+                {tab === 'chat' ? <ChatPanel /> : <GamesPanel focusRunId={focusRun} />}
             </div>
         </div>
     )

@@ -1,9 +1,34 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { Loader2, Check, X } from 'lucide-react'
 import { api } from '../api/client'
+import type { ToolProgressEvent } from '../types/chat'
 
 interface Message {
     role: 'user' | 'assistant'
     content: string
+}
+
+const TOOL_LABELS: Record<string, string> = {
+    propose_game_spec: 'Drafting the spec',
+    amend_game_spec: 'Amending the spec',
+    web_search: 'Searching the web',
+    web_fetch: 'Reading a page',
+    generate_image: 'Generating an image',
+}
+
+export function toolLabel(toolName: string): string {
+    return TOOL_LABELS[toolName] ?? `Running ${toolName}`
+}
+
+// Tool calls run sequentially in the backend loop, so at most one entry per tool name is
+// ever "in flight" — resolving one just updates that entry's status in place.
+export function updateToolEvents(prev: ToolProgressEvent[], event: ToolProgressEvent): ToolProgressEvent[] {
+    if (event.status === 'start') return [...prev, { tool_name: event.tool_name, status: 'start' }]
+    const idx = prev.map(t => t.tool_name).lastIndexOf(event.tool_name)
+    if (idx === -1) return [...prev, event]
+    const next = [...prev]
+    next[idx] = event
+    return next
 }
 
 const ChatPanel: React.FC = () => {
@@ -12,12 +37,14 @@ const ChatPanel: React.FC = () => {
     })
     const [input, setInput] = useState('')
     const [loading, setLoading] = useState(false)
+    const [streamingText, setStreamingText] = useState('')
+    const [activeTools, setActiveTools] = useState<ToolProgressEvent[]>([])
     const bottomRef = useRef<HTMLDivElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages, loading])
+    }, [messages, loading, streamingText, activeTools])
 
     useEffect(() => {
         localStorage.setItem('maestro_chat', JSON.stringify(messages))
@@ -36,14 +63,31 @@ const ChatPanel: React.FC = () => {
         setInput('')
         setMessages(prev => [...prev, { role: 'user', content: text }])
         setLoading(true)
+        setStreamingText('')
+        setActiveTools([])
+
+        let finalText = ''
         try {
-            const res = await api.sendChatMessage(text)
-            setMessages(prev => [...prev, { role: 'assistant', content: res.message }])
-        } catch (e) {
-            setMessages(prev => [...prev, { role: 'assistant', content: 'Something went wrong. Try again.' }])
-        } finally {
-            setLoading(false)
+            for await (const event of api.streamChatMessage(text)) {
+                if (event.type === 'token') {
+                    finalText += event.content
+                    setStreamingText(prev => prev + event.content)
+                } else if (event.type === 'tool') {
+                    setActiveTools(prev => updateToolEvents(prev, { tool_name: event.tool_name, status: event.status }))
+                } else if (event.type === 'done') {
+                    finalText = event.message
+                } else if (event.type === 'error') {
+                    finalText = event.message || 'Something went wrong. Try again.'
+                }
+            }
+        } catch {
+            finalText = finalText || 'Something went wrong. Try again.'
         }
+
+        setMessages(prev => [...prev, { role: 'assistant', content: finalText }])
+        setStreamingText('')
+        setActiveTools([])
+        setLoading(false)
     }
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -85,12 +129,25 @@ const ChatPanel: React.FC = () => {
                 ))}
                 {loading && (
                     <div className="flex justify-start">
-                        <div className="bg-[#1a1a1a] border border-white/[0.06] rounded-lg px-4 py-2">
-                            <div className="flex gap-1 items-center h-4">
-                                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                            </div>
+                        <div className="max-w-[80%] rounded-lg px-4 py-2 text-sm whitespace-pre-wrap bg-[#1a1a1a] text-gray-200 border border-white/[0.06]">
+                            {activeTools.map((tool, i) => (
+                                <div key={i} className="flex items-center gap-2 text-xs text-gray-400 mb-1">
+                                    {tool.status === 'start' && <Loader2 className="w-3 h-3 shrink-0 animate-spin" />}
+                                    {tool.status === 'success' && <Check className="w-3 h-3 shrink-0 text-green-500" />}
+                                    {tool.status === 'failed' && <X className="w-3 h-3 shrink-0 text-red-500" />}
+                                    <span>{toolLabel(tool.tool_name)}{tool.status === 'start' ? '…' : ''}</span>
+                                </div>
+                            ))}
+                            {streamingText && (
+                                <div className={activeTools.length > 0 ? 'mt-1' : ''}>{streamingText}</div>
+                            )}
+                            {!streamingText && activeTools.length === 0 && (
+                                <div className="flex gap-1 items-center h-4">
+                                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

@@ -1,4 +1,5 @@
-import type { Game, GameDetail, SystemStatus, Settings } from '../types'
+import type { Game, GameDetail, SystemStatus, Settings, Asset } from '../types'
+import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
 
@@ -35,6 +36,60 @@ async function request<T>(path: string, init?: RequestInit, retries = 2): Promis
     throw new Error('Rate limit exceeded after retries')
 }
 
+// Splits an accumulated SSE text buffer on blank lines into complete `data: ...` frames
+// plus whatever partial frame is still trailing (a chunk boundary can land mid-frame).
+export function splitSseFrames(buffer: string): { frames: string[]; rest: string } {
+    const parts = buffer.split('\n\n')
+    const rest = parts.pop() ?? ''
+    return { frames: parts, rest }
+}
+
+function parseSseFrame(frame: string): ChatStreamEvent | null {
+    const dataLine = frame.split('\n').find(line => line.startsWith('data: '))
+    if (!dataLine) return null
+    try {
+        return JSON.parse(dataLine.slice('data: '.length)) as ChatStreamEvent
+    } catch {
+        return null
+    }
+}
+
+// Streams a chat turn's tokens + tool-progress markers as they arrive (SSE over POST —
+// EventSource can't send a body, so this parses the stream by hand).
+export async function* streamChatMessage(
+    message: string,
+    session_id = 'default',
+): AsyncGenerator<ChatStreamEvent> {
+    const res = await fetch(`${base}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, session_id }),
+    })
+    if (!res.ok || !res.body) {
+        throw new Error(`${res.status}`)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const { frames, rest } = splitSseFrames(buffer)
+        buffer = rest
+        for (const frame of frames) {
+            const event = parseSseFrame(frame)
+            if (event) yield event
+        }
+    }
+    const { frames } = splitSseFrames(buffer + '\n\n')
+    for (const frame of frames) {
+        const event = parseSseFrame(frame)
+        if (event) yield event
+    }
+}
+
 export const api = {
     // Games
     listGames: () =>
@@ -63,6 +118,12 @@ export const api = {
         request<{ ok: boolean; reason?: string }>(`/games/${runId}/compile`, { method: 'POST', body: JSON.stringify({ distribute }) }),
     regenerateAssets: (runId: string) =>
         request<Record<string, any>>(`/games/${runId}/regenerate-assets`, { method: 'POST' }),
+    regenerateAsset: (runId: string, filename: string) =>
+        request<Record<string, any>>(`/games/${runId}/regenerate-asset`, {
+            method: 'POST', body: JSON.stringify({ filename }),
+        }),
+    assetFileUrl: (runId: string, filename: string) =>
+        `${base}/games/${runId}/asset-file/${encodeURIComponent(filename)}`,
     revealGame: (runId: string) =>
         request<{ run_id: string; path: string }>(`/games/${runId}/reveal`, { method: 'POST' }),
     editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
@@ -82,13 +143,32 @@ export const api = {
     unwaiveCheck: (runId: string, idkey: string) =>
         request<{ idkey: string }>(`/games/${runId}/unwaive`, { method: 'POST', body: JSON.stringify({ idkey }) }),
 
+    // Asset browser (Epic C) — component-blind: works for any component id the artifact has
+    // (nodes, characters, places, combat, items, story, asset_manifest, ...).
+    listAssets: (runId: string, componentId: string) =>
+        request<Asset[]>(`/games/${runId}/assets/${componentId}`),
+    getAsset: (runId: string, componentId: string, itemId: string) =>
+        request<Asset>(`/games/${runId}/assets/${componentId}/${itemId}`),
+    editAsset: (runId: string, componentId: string, itemId: string, content: Record<string, any>) =>
+        request<{ ok: boolean; cleared_own_dirty: boolean; flagged_dependents: string[] }>(
+            `/games/${runId}/assets/${componentId}/${itemId}`,
+            { method: 'PUT', body: JSON.stringify({ content }) }),
+    setAssetDirty: (runId: string, idkey: string, note = '') =>
+        request<{ ok: boolean; idkey: string; note: string }>(
+            `/games/${runId}/assets/dirty`, { method: 'POST', body: JSON.stringify({ idkey, note }) }),
+    thumbsUpAsset: (runId: string, idkey: string) =>
+        request<{ ok: boolean; idkey: string; cleared: boolean }>(
+            `/games/${runId}/assets/thumbs-up`, { method: 'POST', body: JSON.stringify({ idkey }) }),
+    thumbsDownAsset: (runId: string, idkey: string, note = '') =>
+        request<{ ok: boolean; idkey: string; note: string }>(
+            `/games/${runId}/assets/thumbs-down`, { method: 'POST', body: JSON.stringify({ idkey, note }) }),
+
     // System
     getStatus: () =>
         request<SystemStatus>('/system/status'),
 
     // Chat
-    sendChatMessage: (message: string, session_id = 'default') =>
-        request<{ message: string; session_id: string }>('/chat', { method: 'POST', body: JSON.stringify({ message, session_id }) }),
+    streamChatMessage,
     clearChatSession: (session_id = 'default') =>
         fetch(`${base}/chat/${session_id}`, { method: 'DELETE' }),
 

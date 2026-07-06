@@ -1,0 +1,19 @@
+A scene for a walkable RPG was just written (the script below) — an NPC conversation the player
+walked up to on the map. You file it: decide how it exits and record what changed. Call finish_scene.
+
+This conversation is SELF-CONTAINED. When it ends the player goes back to exploring the map.
+
+- end: {type:'return'} — hand control back to the map. This is the RIGHT exit for almost every
+  conversation. Do NOT jump into another character's scene, and do NOT end the game by talking.
+- {type:'menu', choices:[{text, target}]} ONLY when THIS scene is the story's CLIMAX and the choices
+  ARE the game's endings (2-3 different ending nodes) — the final decision the whole game built to.
+  Any other scene: use 'return', never a menu.
+- {type:'end'}: never here. A mid-game conversation does not end the game; the game is won out in
+  the world, not by talking.
+- choice text (climax only) is what the player's character SAYS or DOES, in the story's own words
+  ("Relight the lamp" / "Shatter the lens") — never planning vocabulary.
+- event_summary: one line, what CHANGES in this scene (specific — "Maren admits the wreck was no
+  accident", not "they talk").
+- new_facts / entity_updates / open_threads_add / open_threads_resolve: only what this scene
+  established.
+- location: the background id for this scene, from the LOCATIONS list.

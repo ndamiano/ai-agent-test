@@ -28,6 +28,17 @@ A ZONE needs:
   strings each become ONE generated texture, so make open ground and blocked material CONTRAST
   ("mossy earth" vs "bone-pale wall", never two stones) and REUSE the same strings across zones
   for terrain that should look the same.
+  MATCH each feature's "kind" to what it IS — the kind sets the object's FOOTPRINT (how much
+  space and how big it renders), so a well is not the size of a keep:
+    building     — a real structure you could enter: house, inn, chapel, tower, keep, shrine
+                   (the LARGEST footprint — reserve it for actual buildings)
+    market_stall — a small stand, cart, booth, or crate pile
+    fountain     — a well, fountain, pool, altar, or wreck: a thing you stand around
+    camp / tree_clump / rock_outcrop — a campfire, a stand of trees, a cluster of rocks/debris
+    clearing     — an open patch (a plaza, a glade) with nothing solid in its middle
+    gate         — a single-tile doorway, signpost, portal, or dock post
+  A boat, a net pile, a stone well, a broken mast are NOT buildings — pick the kind that fits
+  the object's real size, so the world reads at human scale next to the avatar.
 - "interactables": position is {"feature": "<layout feature/exit id>"} — the builder puts the
   hotspot at that feature's doorstep. A `move` to another zone sits at the exit feature that
   faces it.

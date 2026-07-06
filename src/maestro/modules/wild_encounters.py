@@ -94,8 +94,24 @@ class WildEncounters(Module):
                    "every fight is an authored set piece (duels, boss ladders).")
     requires = ("combat",)
     priority = 45   # after combat's slices exist and world has zones to mark dangerous
+    component = "places"
+    mode_prompt = "wild_encounters_write.txt"
 
     checks = [Check("wild_tables", _d_wild_tables, tools=_TABLE_TOOLS, skeleton=SKEL_TABLE)]
+
+    def render_context(self, ctx: Dict) -> str:
+        # The table author needs the enemy roster (entries reference authored combatant ids) and
+        # the walkable zones (which one is dangerous) — nothing else.
+        from maestro import context_render as cr
+        from maestro.modules import combat, world
+        art = ctx.get("artifact") or {}
+        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
+        lines += cr.target_block(ctx)
+        lines += combat.combat_index_block(art)
+        lines += world.places_index_block(art)
+        lines += cr.tail_block(ctx)
+        lines += ["", "Call one tool to address the first to-do item."]
+        return "\n".join(lines)
 
     def params(self) -> Dict:
         return {"min_wild_zones": 1}

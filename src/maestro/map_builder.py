@@ -112,6 +112,7 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
 
     anchors: Dict[str, Tuple[int, int]] = {}
     footprints: Dict[str, Dict] = {}
+    footprint_cells: set = set()   # every stamped-solid cell, so roads route AROUND them not through
     feature_theme: Dict[str, str] = {}
     legend_extra: Dict[str, Dict] = {}
     next_char = iter("BCDEFGHIJKLMNOPQRSUVWXYZ")
@@ -136,6 +137,7 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
                 gx, gy = x0 + dx, y0 + dy
                 if c == "#":
                     grid[gy][gx] = ch or WALL
+                    footprint_cells.add((gx, gy))
                     solid = True
                 elif c in (".", "A"):
                     grid[gy][gx] = OPEN
@@ -151,39 +153,63 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
     for feat in features:
         stamp(feat)
 
+    def _inward(edge, x, y):
+        if edge == "north":
+            return x, 1
+        if edge == "south":
+            return x, h - 2
+        if edge == "west":
+            return 1, y
+        return w - 2, y
+
     for ex in layout.get("exits") or []:
         edge = ex.get("edge")
         if edge not in _EDGES or not ex.get("id"):
             continue
+        # Re-roll the edge cell so its inward doorstep doesn't punch a hole through a footprint
+        # (an exit corridor cut straight through a stamped building).
         x, y = _edge_cell(edge, w, h, rng)
+        for _ in range(10):
+            if _inward(edge, x, y) not in footprint_cells:
+                break
+            x, y = _edge_cell(edge, w, h, rng)
         grid[y][x] = OPEN
-        ix, iy = x, y
-        if edge == "north":
-            iy = 1
-        elif edge == "south":
-            iy = h - 2
-        elif edge == "west":
-            ix = 1
-        else:
-            ix = w - 2
+        ix, iy = _inward(edge, x, y)
         grid[iy][ix] = OPEN
         anchors[ex["id"]] = (x, y)
 
-    # Roads: carve ',' along an L-path between every connection's endpoints; default chain links
-    # every anchor so the zone is one walk even with no connections authored.
+    # Roads: carve ',' between every connection's endpoints; default chain links every anchor so the
+    # zone is one walk even with no connections authored. A BFS over the open interior (footprints
+    # are obstacles, endpoints excepted) routes the road AROUND buildings instead of an L-walk
+    # straight through them — open space minus small footprint islands is connected and the anchors
+    # sit on a footprint's open side, so a route always exists (connectivity preserved).
     def carve(a: Tuple[int, int], b: Tuple[int, int]) -> None:
-        (x1, y1), (x2, y2) = a, b
-        x, y = x1, y1
-        while x != x2:
-            x += 1 if x2 > x else -1
-            if grid[y][x] != OPEN and (x in (0, w - 1) or y in (0, h - 1)):
-                continue
-            grid[y][x] = PATH
-        while y != y2:
-            y += 1 if y2 > y else -1
-            if grid[y][x] != OPEN and (x in (0, w - 1) or y in (0, h - 1)):
-                continue
-            grid[y][x] = PATH
+        from collections import deque
+        if a == b:
+            return
+        prev = {a: None}
+        q = deque([a])
+        while q:
+            cur = q.popleft()
+            if cur == b:
+                break
+            cx, cy = cur
+            for nb in ((cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)):
+                nx, ny = nb
+                if not (0 <= nx < w and 0 <= ny < h) or nb in prev:
+                    continue
+                if nb != b and ((nx in (0, w - 1) or ny in (0, h - 1)) or nb in footprint_cells):
+                    continue  # don't route along the border ring or through a footprint
+                prev[nb] = cur
+                q.append(nb)
+        if b not in prev:
+            return  # no route (open interior fully walled off) — leave the anchors as they are
+        node = b
+        while node is not None:
+            x, y = node
+            if not (grid[y][x] != OPEN and (x in (0, w - 1) or y in (0, h - 1))):
+                grid[y][x] = PATH
+            node = prev[node]
 
     pairs: List[Tuple[str, str]] = []
     for con in layout.get("connections") or []:
@@ -204,15 +230,19 @@ def build_tiles(zone_id: str, layout: Dict) -> Dict:
     for a, b in pairs:
         carve(anchors[a], anchors[b])
 
-    # Scatter obstacles in CLUMPS on plain open ground, never on paths/anchors.
+    # Scatter obstacles as ATOMIC clumps on plain open ground, never on paths/anchors/footprints.
+    # The whole clump is stamped as a unit (a single roll over a 2x2 stencil) so a "clump" can never
+    # collapse to a lone 1-tile pillar the way independent per-cell rolls did.
     anchor_cells = set(anchors.values())
     for _ in range(max(2, (w * h) // 40)):
         x, y = rng.randrange(2, w - 2), rng.randrange(2, h - 2)
-        for dx, dy in ((0, 0), (1, 0), (0, 1)):
-            gx, gy = x + dx, y + dy
-            if grid[gy][gx] == OPEN and (gx, gy) not in anchor_cells:
-                if rng.random() < 0.7:
-                    grid[gy][gx] = WALL
+        cells = [(x + dx, y + dy) for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1))]
+        open_cells = [(gx, gy) for gx, gy in cells
+                      if 0 <= gx < w and 0 <= gy < h and grid[gy][gx] == OPEN
+                      and (gx, gy) not in anchor_cells and (gx, gy) not in footprint_cells]
+        if len(open_cells) >= 2 and rng.random() < 0.7:
+            for gx, gy in open_cells:
+                grid[gy][gx] = WALL
 
     rows = ["".join(r) for r in grid]
     legend = {

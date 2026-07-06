@@ -435,20 +435,13 @@ def mesh_enabled() -> bool:
     backend degrades to billboards, never a hard failure mid-build."""
     if mesh_backend() == "trellis":
         return True
-    ep = _mesh_endpoint()
-    if not ep:
-        return False
+    ep = _get_comfyui_endpoint()
     try:
         info = _http_get(f"{ep}/object_info/ImageOnlyCheckpointLoader")
         ckpts = info["ImageOnlyCheckpointLoader"]["input"]["required"]["ckpt_name"][0]
         return _MESH_CKPT in ckpts
     except Exception:
         return False
-
-
-def _mesh_endpoint() -> str:
-    cfg = _get_comfyui_settings()
-    return (cfg.get("mesh_endpoint") or cfg.get("tile_endpoint") or "").rstrip("/")
 
 
 def _get_trellis_settings() -> dict:
@@ -479,10 +472,7 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     import json
     import os
     import subprocess
-    cfg = _get_comfyui_settings()
-    for ep in {_get_comfyui_endpoint(), cfg.get("mesh_endpoint", ""), cfg.get("tile_endpoint", "")}:
-        if ep:
-            _comfyui_free_vram(ep.rstrip("/"))
+    _comfyui_free_vram(_get_comfyui_endpoint())
     loaded = _llm_get_loaded_model()
     if loaded:
         _llm_unload(loaded)
@@ -503,12 +493,9 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
 
 def run_mesh_job(image_path: str, dest_glb, octree: int = 256) -> bool:
     """Upload a feature sprite, run the image→mesh graph, and write the resulting .glb to
-    dest_glb. Returns True on success. Endpoint is `comfyui.mesh_endpoint` (falls back to
-    tile_endpoint — the ideogram box carries the 3D nodes too)."""
+    dest_glb. Returns True on success."""
     import shutil
-    ep = _mesh_endpoint()
-    if not ep:
-        return False
+    ep = _get_comfyui_endpoint()
     try:
         name = upload_image(image_path, endpoint=ep)
         wf = build_feature_mesh_workflow(name, octree=octree)
@@ -542,22 +529,20 @@ def build_tile_job(theme: str, role: str = "open", ideogram: bool = True) -> dic
     """Return a job for ONE walkable-map terrain tile: a square, top-down surface TEXTURE of
     `theme` (e.g. 'frozen stream', 'temple stone'). Never say 'map tile' — models draw a picture
     OF a map. The saved image is post-processed seamless + downscaled (`make_seamless_tile`); the
-    overworld repeats it per cell, so it must be a uniform material, not a scene. Renders on the
-    ideogram4 endpoint (`comfyui.tile_endpoint`) when configured, else the default endpoint's
-    DreamShaper formulas; `ideogram=False` forces the DreamShaper path (the caller's last
-    resort when a theme phrase keeps tripping ideogram's refusal filter on every seed)."""
+    overworld repeats it per cell, so it must be a uniform material, not a scene. Uses the
+    ideogram4 stack (structured JSON captions, the tile-lab quality winner) by default;
+    `ideogram=False` forces the DreamShaper path (the caller's last resort when a theme phrase
+    keeps tripping ideogram's refusal filter on every seed)."""
     if role == "blocked":
         key = "blocked_wall" if any(w in theme.lower() for w in _TILE_WALLISH) \
             else "blocked_organic"
     else:
         key = "open"
-    tile_endpoint = _get_comfyui_settings().get("tile_endpoint", "").rstrip("/")
-    if tile_endpoint and ideogram:
+    if ideogram:
         caption = _ideogram_tile_caption(theme, key)
         return {
             "prompt": caption,
             "workflow_override": _build_ideogram_tile_workflow(caption),
-            "endpoint": tile_endpoint,
         }
     positive = _TILE_FORMULAS[key].format(t=theme)
     return {
@@ -987,13 +972,10 @@ def vram_bracket():
     unload/reload cycle instead of paying it per pass. No-op unless `comfyui.vram_management`."""
     cfg = _get_comfyui_settings()
     vram_management = cfg.get("vram_management", False)
-    endpoints = [_get_comfyui_endpoint()]
-    if cfg.get("tile_endpoint", "").rstrip("/"):
-        endpoints.append(cfg["tile_endpoint"].rstrip("/"))
+    endpoint = _get_comfyui_endpoint()
     unloaded_model: Optional[str] = None
     if vram_management:
-        for ep in endpoints:
-            _comfyui_free_vram(ep)
+        _comfyui_free_vram(endpoint)
         unloaded_model = _llm_get_loaded_model()
         if unloaded_model:
             _llm_unload(unloaded_model)
@@ -1001,21 +983,19 @@ def vram_bracket():
         yield
     finally:
         if vram_management:
-            for ep in endpoints:
-                _comfyui_free_vram(ep)
+            _comfyui_free_vram(endpoint)
             if unloaded_model:
                 _llm_load(unloaded_model)
 
 
 def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Run image jobs sequentially (no VRAM management — wrap in `vram_bracket`). Each job:
-    {"prompt": str, "workflow_override": dict | None, "endpoint": str | absent} — a job
-    carrying its own endpoint (ideogram4 tiles) renders there instead of the default."""
+    {"prompt": str, "workflow_override": dict | None}."""
     endpoint = _get_comfyui_endpoint()
     results = []
     for job in jobs:
         try:
-            result = _run_comfyui_job(job.get("endpoint") or endpoint, job["prompt"],
+            result = _run_comfyui_job(endpoint, job["prompt"],
                                       job.get("workflow_override"))
         except Exception as e:
             logger.error(f"run_jobs job failed: {e}")

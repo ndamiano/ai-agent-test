@@ -37,46 +37,37 @@ def test_collect_themes_empty_for_pnc_and_vn():
     assert _collect_tile_themes({}) == []
 
 
-def _force_tile_endpoint(monkeypatch, url):
-    import tools.comfyui_tools as ct
-    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {"tile_endpoint": url})
-
-
-def test_build_tile_job_carries_theme_and_workflow(monkeypatch):
-    _force_tile_endpoint(monkeypatch, "")
-    job = build_tile_job("frozen stream")
+def test_build_tile_job_dreamshaper_carries_theme_and_workflow():
+    job = build_tile_job("frozen stream", ideogram=False)
     assert "frozen stream" in job["prompt"] and "tileable" in job["prompt"]
     assert "map tile" not in job["prompt"]   # "map tile" makes the model draw a picture OF a map
-    assert "endpoint" not in job             # default endpoint, default model
+    assert "endpoint" not in job             # single endpoint, no per-job routing
     wf = job["workflow_override"]
     dims = next(v["inputs"] for v in wf.values() if v["class_type"] == "EmptyLatentImage")
     assert dims["width"] == dims["height"]   # square: cells render square, widescreen mushes
 
 
-def test_build_tile_job_role_steers_readability(monkeypatch):
+def test_build_tile_job_role_steers_readability():
     # lab-derived formulas (2026-07-04): open = stylized walkable tileset; wall-ish blocked
     # themes get FRONT-FACING masonry (top-down walls render as ground); organic blocked gets
     # dense-growth language darker than open ground
-    _force_tile_endpoint(monkeypatch, "")
-    open_p = build_tile_job("mossy ground", "open")["prompt"]
-    wall_p = build_tile_job("crumbling wall", "blocked")["prompt"]
-    bush_p = build_tile_job("dense brambles", "blocked")["prompt"]
+    open_p = build_tile_job("mossy ground", "open", ideogram=False)["prompt"]
+    wall_p = build_tile_job("crumbling wall", "blocked", ideogram=False)["prompt"]
+    bush_p = build_tile_job("dense brambles", "blocked", ideogram=False)["prompt"]
     assert "walkable" in open_p
     assert "front-facing" in wall_p and "impassable barrier" in wall_p
     assert "impassable growth" in bush_p and "front-facing" not in bush_p
 
 
-def test_build_tile_job_ideogram_false_forces_dreamshaper(monkeypatch):
-    _force_tile_endpoint(monkeypatch, "http://localhost:8189")
+def test_build_tile_job_ideogram_false_forces_dreamshaper():
     job = build_tile_job("dusty track", "open", ideogram=False)
     assert "endpoint" not in job and "tileable" in job["prompt"]
 
 
-def test_build_tile_job_routes_to_ideogram_endpoint(monkeypatch):
+def test_build_tile_job_defaults_to_ideogram():
     import json
-    _force_tile_endpoint(monkeypatch, "http://localhost:8189/")
     job = build_tile_job("crumbling wall", "blocked")
-    assert job["endpoint"] == "http://localhost:8189"
+    assert "endpoint" not in job             # single endpoint, no per-job routing
     cap = json.loads(job["prompt"])           # structured JSON caption, ideogram4's training diet
     assert cap["aspect_ratio"] == "1:1"
     assert "crumbling wall" in cap["high_level_description"]
@@ -231,16 +222,20 @@ def test_build_feature_mesh_workflow_is_valid_graph():
                 assert v[0] in keys
 
 
-def test_mesh_endpoint_falls_back_to_tile_endpoint(monkeypatch):
+def test_mesh_enabled_gates_on_main_endpoint_checkpoint(monkeypatch):
     import tools.comfyui_tools as ct
-    monkeypatch.setattr(ct, "_get_comfyui_settings",
-                        lambda: {"mesh_endpoint": "", "tile_endpoint": "http://x:8189/"})
-    assert ct._mesh_endpoint() == "http://x:8189"
-    monkeypatch.setattr(ct, "_get_comfyui_settings",
-                        lambda: {"mesh_endpoint": "http://m:9/", "tile_endpoint": "http://x:8189"})
-    assert ct._mesh_endpoint() == "http://m:9"
-    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {})
-    assert ct._mesh_endpoint() == "" and ct.mesh_enabled() is False
+    monkeypatch.setattr(ct, "mesh_backend", lambda: "hunyuan")
+    monkeypatch.setattr(ct, "_get_comfyui_endpoint", lambda: "http://main:8188")
+    # checkpoint present on the single endpoint -> enabled
+    monkeypatch.setattr(ct, "_http_get", lambda url: {
+        "ImageOnlyCheckpointLoader": {"input": {"required": {
+            "ckpt_name": [[ct._MESH_CKPT], {}]}}}})
+    assert ct.mesh_enabled() is True
+    # endpoint unreachable / node absent -> degrades to billboards, never raises
+    def boom(url):
+        raise OSError("connection refused")
+    monkeypatch.setattr(ct, "_http_get", boom)
+    assert ct.mesh_enabled() is False
 
 
 def test_mesh_backend_selects_trellis_only_when_fully_configured(monkeypatch, tmp_path):

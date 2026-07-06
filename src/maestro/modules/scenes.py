@@ -553,7 +553,10 @@ def _d_premature_endings(chk, m, ctx):
 
 
 def _d_min_branches(chk, m, ctx):
-    if not _has_story(ctx.artifact):
+    # In a walkable world the player's branching is spatial (which zone, which NPC) plus the
+    # ending fork — conversations return to the map rather than menu-branch, so a dialogue-menu
+    # floor doesn't apply and would stall (the world closer authors `return`, not menus).
+    if not _has_story(ctx.artifact) or "world" in (ctx.spec.get("modules") or []):
         return []
     return m.wrap(chk, min_branches(ctx.artifact, min=ctx.param("min_branches", 1)))
 
@@ -862,11 +865,26 @@ _FINISH_SCHEMA = [{"type": "function", "function": {
     "description": "File the finished scene: its exit, synopsis, and story-state delta.",
     "parameters": {"type": "object", "properties": {
         "end": {"type": "object", "description":
-                "{type:'jump', target} | {type:'menu', choices:[{text,target}]} | {type:'end'}"},
+                "{type:'jump', target} | {type:'menu', choices:[{text,target}]} | "
+                "{type:'return'} (hand back to a walkable map) | {type:'end'}"},
         "event_summary": {"type": "string"},
         "location": {"type": "string"},
         "story_state_delta": {"type": "object"},
     }, "required": ["end", "event_summary"]}}}]
+
+
+def _world_end(end, ending_ids: set) -> Dict:
+    """The exit for a conversation embedded in a walkable world. It is self-contained: it returns
+    control to the map. The one exception is the story's climax — a menu whose every choice targets
+    a story ending node — which is kept so the branching endings remain reachable from the game's
+    final decision. Everything else (jump/end/malformed) collapses to `return`."""
+    if isinstance(end, dict) and end.get("type") == "menu":
+        kept = [c for c in (end.get("choices") or [])
+                if isinstance(c, dict) and c.get("target") in ending_ids]
+        targets = {c.get("target") for c in kept}
+        if len(targets) >= 2:
+            return {"type": "menu", "choices": kept}
+    return {"type": "return"}
 
 
 def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
@@ -878,6 +896,10 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     from maestro.services import parse_action
 
     art = context.artifact
+    # A conversation embedded in a walkable world is self-contained — it returns control to the map
+    # instead of chaining down the story spine (a talk that jumps beat→beat→ending plays the whole
+    # game and ends it the instant you speak to anyone). Endings are reached out in the world.
+    in_world = "world" in (context.spec.get("modules") or [])
     view = module.view(art) or {}
     assigned = pick_slot(view, slot)
     cast = [c for c in (art.get("characters") or {}).get("characters", []) if c.get("id")]
@@ -1003,7 +1025,7 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         return
 
     script = "\n".join(f"{ln['speaker'] or 'NARR'}: {ln['text']}" for ln in transcript)
-    close_system = load_prompt("scene_close.txt")
+    close_system = load_prompt("scene_close_world.txt" if in_world else "scene_close.txt")
     node_lines = ["CURRENT NODES: " + ", ".join(view.get("node_ids") or ["(none)"])]
     beat_ids = list(beats)
     if bid in beats and beat_ids.index(bid) + 1 < len(beat_ids):
@@ -1049,6 +1071,12 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         # A planned ending node ENDS the game — the closer has no discretion here (observed:
         # an ending jumping back into beat_02, another ending in a self-targeting menu).
         end = {"type": "end"}
+    elif in_world:
+        # Map conversation: hand back to the world. The ONLY non-return exit is a climactic
+        # menu whose choices ARE the story endings, so branching endings stay reachable.
+        # (`endings` was rebound to the raw ending LIST above, so derive its ids here.)
+        end = _world_end(end, {e.get("id") for e in endings
+                               if isinstance(e, dict) and e.get("id")})
     elif not isinstance(end, dict) or end.get("type") not in _END_TYPES:
         end = fallback
     elif end.get("type") == "jump" and _backward(end.get("target", "")):

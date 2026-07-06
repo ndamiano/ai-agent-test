@@ -30,9 +30,18 @@ in beat 2 sets up the gut-punch in beat 6; plant it and note the payoff). Then t
     branch, so it strands unreachable).
 `type` names the beat's register (bonding | comedy | friction | plot | character); `purpose` names
 its dramatic job; `tension` is the stakes dial — write "none" when nothing needs to go wrong in
-the beat. Each beat's `summary` commits to ONE concrete event — never alternatives ("a phone call
-or a sudden realization"); the scene author reads it verbatim as their brief and can't choose for
-you. Each beat does work no other beat does. 5 beats minimum — more for a longer game.
+the beat. Each beat's `summary` is the scene author's WHOLE brief — write it RICH: 1-2 sentences of
+concrete business (what physically happens, the specific object/place/action in play, who does or
+says the key thing), never a headline ("Arrival and setup", "The argument"). A thin summary starves
+the scene, and the model falls back on the same few props every scene — give each beat its OWN
+material so the scenes can't blur.
+  THIN (fails):  "First level down; celebration"
+  RICH (passes): "First level down. Riding the high, Danny phones the pizza place in his terrible
+                  fake Italian accent — the one-time bit, here. Marc barely holds it together."
+Commit to ONE concrete event — never alternatives ("a phone call or a sudden realization"); the
+scene author can't choose for you. Any one-time bit or set piece (ordering the pizza in the accent,
+the toast, the reveal) lives in the beat that stages it, so it happens ONCE. Each beat does work no
+other beat does. 5 beats minimum — more for a longer game.
 
 PLAN EVERY ENDING. ending_paths has ONE entry per endings id: name the SPECIFIC beat and choice
 that earns it (e.g. "the beat_04 choice to stay; the climax reads it"), so the branches mean

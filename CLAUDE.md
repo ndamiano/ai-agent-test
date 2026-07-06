@@ -172,16 +172,16 @@ src/
                 Each distinct theme gets one generated terrain texture
                 (renpy/fns.generate_images tile pass via comfyui build_tile_job(theme, role) —
                 then make_seamless_tile post: wrap cross-fade + downscale to 256² →
-                tile_<slug>.png). Tile QUALITY path: settings comfyui.tile_endpoint names the
-                second ComfyUI carrying the ideogram4 stack — tile jobs render there with the
-                structured JSON captions the model is trained on (role-specific body +
-                keyword-matched hex palette, dual-UNET asymmetric-CFG graph); its filtered
-                weights REFUSE stochastically per seed by painting refusal text/blank cards
-                INTO the image, so the pass runs one tile at a time through tile_refused()
-                and rerolls the seed (up to 3). Unset, the endpoint falls back to the lab's
-                role-aware DreamShaper formulas (stylized-tileset open ground, dense-growth
-                organic blocked, FRONT-FACING masonry for wall-ish themes — a top-down wall
-                renders as ground). The presenter samples each cell's
+                tile_<slug>.png). Tile QUALITY path: tiles render on the ideogram4 stack
+                (build_tile_job's default) with the structured JSON captions the model is
+                trained on (role-specific body + keyword-matched hex palette, dual-UNET
+                asymmetric-CFG graph); its filtered weights REFUSE stochastically per seed by
+                painting refusal text/blank cards INTO the image, so the pass runs one tile at a
+                time through tile_refused() and rerolls the seed (up to 3). `ideogram=False`
+                falls back to the lab's role-aware DreamShaper formulas (stylized-tileset open
+                ground, dense-growth organic blocked, FRONT-FACING masonry for wall-ish themes —
+                a top-down wall renders as ground). Everything runs on the single
+                comfyui.endpoint — the ideogram4 + Hunyuan3D stacks live on that one box. The presenter samples each cell's
                 REGION of the seamless texture (3×3-cell wrap) so terrain flows across cells,
                 draws the avatar and talk-NPCs as generated chibi TOKENS (<id>_token.png),
                 move/win/examine hotspots as generated marker assets (signpost/banner/prop),

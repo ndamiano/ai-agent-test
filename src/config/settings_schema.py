@@ -34,14 +34,6 @@ class ClineSettings(BaseModel):
 class ComfyUISettings(BaseModel):
     endpoint: str = Field("http://localhost:8188", min_length=1)
     vram_management: bool = Field(False)
-    # Second ComfyUI install carrying the ideogram4 stack; when set, terrain-tile jobs render
-    # there with structured JSON captions (the tile-lab quality winner) instead of the default
-    # endpoint's DreamShaper formulas.
-    tile_endpoint: str = Field("")
-    # ComfyUI endpoint carrying the Hunyuan3D-2.1 checkpoint; when set (and the checkpoint is
-    # present), feature sprites are turned into .glb meshes for the HD-2D world. Falls back to
-    # tile_endpoint. Empty disables mesh generation (features stay billboards).
-    mesh_endpoint: str = Field("")
     # Feature-mesh backend: "hunyuan" (ComfyUI, fast, shape-only — the sprite is projected on
     # for colour) or "trellis" (standalone TRELLIS.2-4B, slower, native PBR textures). Bake-off
     # winner is trellis; hunyuan stays the fast fallback and the default. Requires `trellis`

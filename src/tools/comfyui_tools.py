@@ -449,46 +449,59 @@ def _get_trellis_settings() -> dict:
     return settings_manager.get_settings().get("trellis") or {}
 
 
+def _trellis_endpoint() -> str:
+    return _get_trellis_settings().get("endpoint", "http://localhost:8189").rstrip("/")
+
+
+def _trellis_healthy(endpoint: str) -> bool:
+    try:
+        return _http_get(f"{endpoint}/health").get("status") == "ok"
+    except Exception:
+        return False
+
+
 def mesh_backend() -> str:
-    """Which feature-mesh generator to use: 'trellis' only when it's selected AND fully
-    configured (venv + repo + weights all present on disk), else 'hunyuan'. A misconfigured
-    trellis silently downgrades — the build must never hard-fail on an art backend."""
-    import os
+    """Which feature-mesh generator to use: 'trellis' only when it's selected AND its standalone
+    HTTP server answers /health, else 'hunyuan'. An unreachable trellis silently downgrades —
+    the build must never hard-fail on an art backend."""
     cfg = _get_comfyui_settings()
-    if cfg.get("mesh_backend") == "trellis":
-        t = _get_trellis_settings()
-        if all(os.path.exists(t.get(k, "")) for k in ("python", "repo", "weights")):
-            return "trellis"
+    if cfg.get("mesh_backend") == "trellis" and _trellis_healthy(_trellis_endpoint()):
+        return "trellis"
     return "hunyuan"
 
 
 def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir.
-    Shells out to the standalone TRELLIS venv (loads the 4B pipeline once for the whole batch).
-    Returns the set of slugs that produced a .glb. Never raises — a failure leaves billboards.
+    POSTs each sprite to the standalone TRELLIS HTTP server (trellis_server.py — the 4B pipeline
+    is already resident there). Returns the set of slugs that produced a .glb. Never raises — a
+    failure leaves billboards.
 
-    The 4B pipeline needs ~19GB, and the mesh pass runs after the LLM/ComfyUI phase (they may
-    be resident), so free everyone's VRAM first — this subprocess owns the GPU for its run."""
-    import json
+    The 4B pipeline needs ~19GB and the mesh pass runs after the LLM/ComfyUI phase (they may be
+    resident), so free everyone's VRAM first, then unload trellis after so they can reclaim it."""
+    import glob
     import os
-    import subprocess
+    ep = _trellis_endpoint()
     _comfyui_free_vram(_get_comfyui_endpoint())
     loaded = _llm_get_loaded_model()
     if loaded:
         _llm_unload(loaded)
-    t = _get_trellis_settings()
-    runner = os.path.join(os.path.dirname(__file__), "trellis_runner.py")
+    done: set = set()
+    for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
+        slug = os.path.splitext(os.path.basename(png))[0]
+        try:
+            with open(png, "rb") as f:
+                glb = _http_post_raw(f"{ep}/generate", f.read(), "image/png")
+            glb_path = os.path.join(out_dir, f"{slug}.glb")
+            with open(glb_path, "wb") as g:
+                g.write(glb)
+            done.add(slug)
+        except Exception as e:
+            logger.error(f"trellis {slug} failed: {e}")
     try:
-        subprocess.run(
-            [t["python"], runner, "--repo", t["repo"], "--weights", t["weights"],
-             "--sprites", sprite_dir, "--out", out_dir],
-            check=False, timeout=3600)
-        tj = os.path.join(out_dir, "timings.json")
-        done = set(json.load(open(tj))) if os.path.exists(tj) else set()
-        return {s for s in done if os.path.exists(os.path.join(out_dir, f"{s}.glb"))}
-    except Exception as e:
-        logger.error(f"trellis batch failed: {e}")
-        return set()
+        _http_post_raw(f"{ep}/unload", b"", "application/json", timeout=60)
+    except Exception:
+        pass
+    return done
 
 
 def run_mesh_job(image_path: str, dest_glb, octree: int = 256) -> bool:
@@ -681,6 +694,13 @@ def _http_post(url: str, data: dict) -> dict:
 def _http_get(url: str) -> dict:
     with urllib.request.urlopen(url, timeout=30) as resp:
         return json.loads(resp.read())
+
+
+def _http_post_raw(url: str, body: bytes, content_type: str, timeout: int = 1200) -> bytes:
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": content_type}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
 
 
 def _poll_until_done(endpoint: str, prompt_id: str, timeout: int = 300) -> dict:

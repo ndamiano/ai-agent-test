@@ -458,8 +458,8 @@ def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
 
 def _run_mesh_pass(meshed: List[str], images_dir: Path, backend: str) -> set:
     """Mesh each feature_<slug>.png in `meshed` → feature_<slug>.glb beside it; return the set of
-    slugs that produced a glb. TRELLIS loads its 4B model once per batch (stage the sprites in a
-    scratch dir, its .glb carries its own PBR texture); hunyuan runs one job per image."""
+    slugs that produced a glb. TRELLIS posts each sprite to its resident HTTP server (its .glb
+    carries its own PBR texture); hunyuan runs one job per image."""
     from tools.comfyui_tools import run_mesh_job, run_trellis_batch
     done: set = set()
     if backend == "trellis":

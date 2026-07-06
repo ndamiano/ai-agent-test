@@ -28,8 +28,6 @@
     "format": "wav"
   },
   "trellis": {
-    "python": "",
-    "repo": "",
-    "weights": ""
+    "endpoint": "http://localhost:8189"
   }
 }

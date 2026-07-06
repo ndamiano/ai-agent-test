@@ -1,0 +1,169 @@
+"""Standalone TRELLIS.2 HTTP server — run BY the TRELLIS venv (NOT the maestro venv), a long-lived
+process maestro POSTs sprites to (like ComfyUI / the TTS server). Replaces the per-build subprocess
+batch: the 4B pipeline loads ONCE and stays resident across builds instead of reloading every run.
+
+TRELLIS.2-4B is image->mesh WITH native PBR textures (base colour / roughness / metallic), so its
+meshes drop into the HD-2D world already coloured. It needs its own cu128 venv + prebuilt Blackwell
+CUDA-extension wheels, so it can't share maestro's process — hence a separate server on its own port.
+
+Launch (from the TRELLIS venv):
+  <trellis_python> trellis_server.py --repo <trellis2 repo> --weights <weights dir>
+                                     [--host 127.0.0.1] [--port 8189]
+                                     [--ptype 1024_cascade] [--texture 2048]
+
+API:
+  GET  /health            -> {"status": "ok", "loaded": <bool>}
+  POST /generate          body = PNG bytes (image/png); query ?ptype=&texture= override defaults
+                          -> 200 model/gltf-binary (the .glb bytes) | 500 on failure
+  POST /unload            -> release the pipeline from VRAM (so ComfyUI/the LLM can reclaim it)
+"""
+import argparse
+import io
+import os
+import sys
+import tempfile
+import time
+
+
+def _blackwell_patches():
+    """The sm_120 fixes discovered live: with triton 3.5+ (torch 2.9) Triton emits sm_120
+    natively, so do NOT force get_device_capability -> (9,0). flex_gemm's Triton
+    indice-weighted-sum can't compile for CC>=10, so swap in a pure-torch fallback; attention
+    runs on sdpa (no flash-attn built)."""
+    import torch
+    try:
+        import flex_gemm.kernels.triton as _fgk
+
+        def _fwd(feats, indices, weight):
+            idx = indices.long().clamp(0, feats.shape[0] - 1)
+            return (feats[idx] * weight.unsqueeze(-1)).sum(dim=1)
+
+        def _bwd(grad, indices, weight, N):
+            _, C = grad.shape
+            idx = indices.long().clamp(0, N - 1)
+            wg = grad.unsqueeze(1) * weight.unsqueeze(-1)
+            gf = torch.zeros(N, C, device=grad.device, dtype=grad.dtype)
+            gf.scatter_add_(0, idx.unsqueeze(-1).expand_as(wg).reshape(-1, C), wg.reshape(-1, C))
+            return gf
+
+        _fgk.indice_weighed_sum_fwd = _fwd
+        _fgk.indice_weighed_sum_bwd_input = _bwd
+    except Exception as e:
+        print(f"[trellis] flex_gemm patch skipped: {e}", flush=True)
+    import trellis2.modules.sparse.config as sc
+    import trellis2.modules.attention.config as ac
+    sc.ATTN = "sdpa"
+    ac.BACKEND = "sdpa"
+
+
+class TrellisEngine:
+    """Holds the 4B pipeline. Lazy-loads on first generate; unload() frees VRAM on demand so
+    ComfyUI / the LLM can reclaim the GPU between mesh passes."""
+
+    def __init__(self, repo: str, weights: str, ptype: str, texture: int):
+        self.repo, self.weights = repo, weights
+        self.ptype, self.texture = ptype, texture
+        self._pipe = None
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+        os.environ.setdefault("SPCONV_ALGO", "native")
+        sys.path.insert(0, repo)
+        _blackwell_patches()
+
+    @property
+    def loaded(self) -> bool:
+        return self._pipe is not None
+
+    def _ensure(self):
+        if self._pipe is not None:
+            return
+        from trellis2.pipelines import Trellis2ImageTo3DPipeline
+        print("[trellis] loading pipeline…", flush=True)
+        t0 = time.time()
+        pipe = Trellis2ImageTo3DPipeline.from_pretrained(self.weights)
+        pipe.cuda()
+        self._pipe = pipe
+        print(f"[trellis] loaded in {time.time() - t0:.1f}s", flush=True)
+
+    def generate(self, png_bytes: bytes, ptype: str, texture: int) -> bytes:
+        self._ensure()
+        import o_voxel
+        from PIL import Image
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        mesh = self._pipe.run(img, pipeline_type=ptype)[0]
+        mesh.simplify(16777216)
+        glb = o_voxel.postprocess.to_glb(
+            vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
+            coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
+            aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], decimation_target=1000000,
+            texture_size=texture, remesh=True, remesh_band=1, remesh_project=0,
+            verbose=False)
+        with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
+            tmp = f.name
+        try:
+            glb.export(tmp, extension_webp=True)
+            with open(tmp, "rb") as fh:
+                return fh.read()
+        finally:
+            os.unlink(tmp)
+
+    def unload(self):
+        if self._pipe is None:
+            return
+        import torch
+        self._pipe = None
+        torch.cuda.empty_cache()
+        print("[trellis] unloaded", flush=True)
+
+
+def build_app(engine: TrellisEngine):
+    from fastapi import FastAPI, Request, Response, HTTPException
+
+    app = FastAPI(title="trellis2")
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok", "loaded": engine.loaded}
+
+    @app.post("/generate")
+    async def generate(request: Request):
+        png = await request.body()
+        if not png:
+            raise HTTPException(status_code=400, detail="empty body (expected PNG bytes)")
+        ptype = request.query_params.get("ptype", engine.ptype)
+        texture = int(request.query_params.get("texture", engine.texture))
+        try:
+            t = time.time()
+            glb = engine.generate(png, ptype, texture)
+            print(f"[trellis] ok {len(glb)} bytes {time.time() - t:.1f}s", flush=True)
+            return Response(content=glb, media_type="model/gltf-binary")
+        except Exception as e:
+            print(f"[trellis] FAIL: {str(e)[:200]}", flush=True)
+            raise HTTPException(status_code=500, detail=str(e)[:200])
+
+    @app.post("/unload")
+    def unload():
+        engine.unload()
+        return {"status": "ok"}
+
+    return app
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--weights", required=True)
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8189)
+    ap.add_argument("--ptype", default="1024_cascade")
+    ap.add_argument("--texture", type=int, default=2048)
+    args = ap.parse_args()
+
+    import uvicorn
+    engine = TrellisEngine(args.repo, args.weights, args.ptype, args.texture)
+    print(f"[trellis] serving on {args.host}:{args.port}", flush=True)
+    uvicorn.run(build_app(engine), host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

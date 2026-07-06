@@ -238,41 +238,44 @@ def test_mesh_enabled_gates_on_main_endpoint_checkpoint(monkeypatch):
     assert ct.mesh_enabled() is False
 
 
-def test_mesh_backend_selects_trellis_only_when_fully_configured(monkeypatch, tmp_path):
-    import os
+def test_mesh_backend_selects_trellis_only_when_server_healthy(monkeypatch):
     import tools.comfyui_tools as ct
-    # trellis requested but paths missing -> falls back to hunyuan
+    # trellis requested but server unreachable -> falls back to hunyuan
     monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {"mesh_backend": "trellis"})
-    monkeypatch.setattr(ct, "_get_trellis_settings",
-                        lambda: {"python": "/nope", "repo": "/nope", "weights": "/nope"})
+    monkeypatch.setattr(ct, "_trellis_healthy", lambda ep: False)
     assert ct.mesh_backend() == "hunyuan"
-    # all three paths exist -> trellis engages
-    for n in ("py", "repo", "w"):
-        (tmp_path / n).mkdir()
-    monkeypatch.setattr(ct, "_get_trellis_settings",
-                        lambda: {"python": str(tmp_path / "py"), "repo": str(tmp_path / "repo"),
-                                 "weights": str(tmp_path / "w")})
+    # server answers /health -> trellis engages
+    monkeypatch.setattr(ct, "_trellis_healthy", lambda ep: True)
     assert ct.mesh_backend() == "trellis"
-    # default (no backend key) is hunyuan
+    # default (no backend key) is hunyuan even when a server is up
     monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {})
     assert ct.mesh_backend() == "hunyuan"
 
 
-def test_run_trellis_batch_reads_timings_and_verifies_glbs(monkeypatch, tmp_path):
-    import json
+def test_run_trellis_batch_posts_sprites_and_writes_glbs(monkeypatch, tmp_path):
     import tools.comfyui_tools as ct
+    in_dir = tmp_path / "in"
+    in_dir.mkdir()
     out = tmp_path / "out"
     out.mkdir()
-    # simulate the runner: writes timings for 3, but only 2 glbs actually land
-    (out / "a.glb").write_bytes(b"x")
-    (out / "b.glb").write_bytes(b"x")
-    json.dump({"a": 50.0, "b": 51.0, "c": 52.0}, open(out / "timings.json", "w"))
-    monkeypatch.setattr(ct, "_get_trellis_settings",
-                        lambda: {"python": "py", "repo": "repo", "weights": "w"})
-    import subprocess
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: None)
-    done = ct.run_trellis_batch(str(tmp_path / "in"), str(out))
-    assert done == {"a", "b"}      # c had a timing but no glb -> excluded
+    (in_dir / "a.png").write_bytes(b"pnga")
+    (in_dir / "b.png").write_bytes(b"pngb")
+    monkeypatch.setattr(ct, "_get_trellis_settings", lambda: {"endpoint": "http://x"})
+    monkeypatch.setattr(ct, "_comfyui_free_vram", lambda *a, **k: None)
+    monkeypatch.setattr(ct, "_llm_get_loaded_model", lambda: None)
+    posted = []
+
+    def fake_post(url, body, content_type, timeout=1200):
+        posted.append(url)
+        if url.endswith("/generate"):
+            return b"GLB" + body            # echo so we can tell them apart
+        return b""                          # /unload
+
+    monkeypatch.setattr(ct, "_http_post_raw", fake_post)
+    done = ct.run_trellis_batch(str(in_dir), str(out))
+    assert done == {"a", "b"}
+    assert (out / "a.glb").read_bytes() == b"GLBpnga"
+    assert "http://x/unload" in posted    # VRAM released after the batch
 
 
 def test_trellis_backend_leaves_texture_to_presenter():

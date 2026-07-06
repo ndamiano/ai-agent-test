@@ -42,12 +42,11 @@ class ComfyUISettings(BaseModel):
 
 
 class TrellisSettings(BaseModel):
-    """TRELLIS.2-4B runs standalone (its own cu128 venv + prebuilt Blackwell CUDA wheels), so
-    maestro shells out to it. All three paths must exist for the trellis mesh backend to engage;
-    otherwise the build silently falls back to hunyuan/billboards."""
-    python: str = Field("", description="Path to the TRELLIS venv python (cu128).")
-    repo: str = Field("", description="Path to the microsoft/TRELLIS.2 checkout.")
-    weights: str = Field("", description="Path to the TRELLIS.2-4B weights dir.")
+    """TRELLIS.2-4B runs as a standalone HTTP server (tools/trellis_server.py, launched by its own
+    cu128 venv + prebuilt Blackwell CUDA wheels); maestro POSTs sprites to it. The trellis mesh
+    backend engages only when this endpoint answers /health; otherwise the build silently falls
+    back to hunyuan/billboards. The repo/weights paths live on the server's launch args, not here."""
+    endpoint: str = Field("http://localhost:8189", min_length=1)
 
 
 class TTSSettings(BaseModel):

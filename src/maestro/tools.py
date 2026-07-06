@@ -939,7 +939,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         """Generate the image assets the asset_manifest declares (wraps comfyui)."""
         _require_frozen()
         from renpy.fns import generate_images
-        result = generate_images(state.load_artifact(), state.run_dir)
+        presentation = (state.read_spec() or {}).get("presentation", "2d")
+        result = generate_images(state.load_artifact(), state.run_dir, presentation=presentation)
         return {"ok": result.get("status") == "ok", **result}
 
     # ── inspection (safe pre-freeze) ─────────────────────────────────────────

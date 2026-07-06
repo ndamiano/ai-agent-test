@@ -49,6 +49,13 @@ class Spec:
         return self.data.get("engine", "renpy")
 
     @property
+    def presentation(self) -> str:
+        """How the walkable world renders: '2d' (default, flat sprites) or 'hd2d' (true 3D — the
+        godot overworld3d presenter + feature meshes). 'hd2d' forces engine 'godot' and only
+        applies to a game with a walkable `world`; the IR carries it as meta.presentation."""
+        return self.data.get("presentation", "2d")
+
+    @property
     def frozen(self) -> bool:
         return bool(self.data.get("frozen"))
 

@@ -26,13 +26,20 @@
     },
     "meta": {
       "type": "object",
-      "description": "Human-facing framing. Premise/title; not load-bearing for the compiler.",
+      "description": "Human-facing framing. Premise/title; not load-bearing for the compiler. `presentation` is the one runtime-facing key: 'hd2d' routes a walkable world to the Godot 3D presenter.",
       "properties": {
         "title": {
           "type": "string"
         },
         "premise": {
           "type": "string"
+        },
+        "presentation": {
+          "enum": [
+            "2d",
+            "hd2d"
+          ],
+          "description": "How the walkable world renders. Absent/'2d' = flat 2D presenter; 'hd2d' = the true-3D overworld3d presenter (feature meshes)."
         }
       },
       "additionalProperties": false

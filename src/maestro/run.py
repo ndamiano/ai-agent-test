@@ -66,7 +66,8 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
         from maestro.engines import compile_for
         artifact = state.load_artifact()
         try:
-            generate_images(artifact, state.run_dir)
+            generate_images(artifact, state.run_dir,
+                            presentation=spec_data.get("presentation", "2d"))
         except Exception:
             pass  # placeholders already cover the build; never fail delivery on art
         try:

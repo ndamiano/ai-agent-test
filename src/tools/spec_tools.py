@@ -69,6 +69,16 @@ def _resolve_params(module_ids, sizing: Dict) -> Dict:
     return floors
 
 
+def _resolve_presentation(raw, modules, engine) -> tuple:
+    """(engine, presentation). 'hd2d' renders the walkable world in true 3D — it needs a `world`
+    module (nothing else is walkable) and forces the godot engine (only godot has the 3D
+    presenter). Requested on a game with no world, it downgrades to '2d' rather than ship a dead
+    flag. Any other value is '2d'."""
+    if raw == "hd2d" and "world" in modules:
+        return "godot", "hd2d"
+    return engine, "2d"
+
+
 _AUTO_REASON = "auto-included (foundation or required dependency)"
 
 
@@ -120,7 +130,8 @@ def propose_spec(request: str, run_id: str) -> Dict:
     modules, engine = resolve_modules(list(picks))
     spec["modules"] = modules
     spec["module_reasons"] = _module_reasons(modules, picks)
-    spec["engine"] = engine
+    spec["engine"], spec["presentation"] = _resolve_presentation(
+        spec.get("presentation"), modules, engine)
     spec["substrate"] = "discrete"
     spec.setdefault("request", request)
     spec["params"] = _resolve_params(modules, spec.pop("sizing", None))
@@ -149,6 +160,13 @@ def amend_spec(run_id: str, changes: Dict, reason: str) -> Dict:
         prev = spec.get("module_reasons", {})
         spec["modules"], spec["engine"] = resolve_modules(spec.get("modules") or [])
         spec["module_reasons"] = {m: prev.get(m, _AUTO_REASON) for m in spec["modules"]}
+    # presentation (hd2d) constrains engine + needs world; re-resolve when either could have moved.
+    # Recompute the base engine from the modules first so a downgrade to 2d reverts a forced godot.
+    if "modules" in changes or "presentation" in changes:
+        from maestro.modules import resolve_modules
+        _, base_engine = resolve_modules(spec.get("modules") or [])
+        spec["engine"], spec["presentation"] = _resolve_presentation(
+            spec.get("presentation"), spec.get("modules") or [], base_engine)
     # Re-resolve params in case modules / sizing changed, so floors always hold.
     if "modules" in changes or "sizing" in changes or "params" in changes:
         spec["params"] = _resolve_params(spec.get("modules") or [], spec.get("params"))

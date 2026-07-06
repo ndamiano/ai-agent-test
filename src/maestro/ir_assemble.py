@@ -164,6 +164,11 @@ def assemble_ir(artifact: Dict) -> Dict:
     if title:
         ir["meta"] = {"title": title}
 
+    # hd2d routes the walkable world to the godot 3D presenter (overworld3d) at runtime; the flag
+    # is presentation-neutral spec data lifted into meta so the runtime reads it off game.json.
+    if (artifact.get("spec", {}) or {}).get("presentation") == "hd2d":
+        ir.setdefault("meta", {})["presentation"] = "hd2d"
+
     # Gameplay state is authored on the body components; merge it to the top level. The item
     # catalogue is its own `inventory` component.
     flags = list(nodes_comp.get("flags", []) or []) + list(places_comp.get("flags", []) or [])

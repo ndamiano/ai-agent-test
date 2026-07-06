@@ -56,12 +56,20 @@ RULES for picking:
   branch); omit it for a pure mechanic/puzzle game.
 - Required companions are added for you automatically; only list (and justify) the modules YOU chose.
 
+── PRESENTATION ──
+How the game renders. Default "2d" (flat sprites). Choose "hd2d" ONLY when BOTH hold:
+- the request asks for 3D / HD-2D / "Octopath-style" / a game you walk around in 3D, AND
+- you picked the `world` module (hd2d renders the walkable world as real 3D — a pure
+  conversation/`scenes` game has nothing to render in 3D).
+When in doubt, "2d". hd2d on a game with no `world` is ignored and falls back to "2d".
+
 Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
 
 {
   "title": "short game title",
   "concept": "<the one-line hook from CONCEPT above>",
   "request": "<the full story paragraph you authored, per the requirements above>",
+  "presentation": "2d",                       // "2d" (default) or "hd2d" — see PRESENTATION above
   "modules": {                                // each module you pick -> ONE sentence: what IN THIS STORY it serves
     // "scenes": "the whole game is the scientist's branching descent told through his own dialogue"
   },

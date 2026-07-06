@@ -102,7 +102,7 @@ def _collect_feature_specs(places_comp: Dict) -> List[tuple]:
     return [(kind, label) for label, kind in specs.items()]
 
 
-def generate_images(inputs: Dict, working_dir: Path) -> Dict:
+def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -> Dict:
     from tools.comfyui_tools import (
         build_character_job, build_background_job, build_cg_job, build_item_job,
         build_title_card_job, build_character_emotion_job, build_tile_job, build_token_job,
@@ -281,44 +281,70 @@ def generate_images(inputs: Dict, working_dir: Path) -> Dict:
                     print(f"    [images]  ok: {fname}")
                     break
 
-    # --- mesh pass (outside the vram bracket — Hunyuan3D holds its own VRAM): turn each matted
-    # feature sprite into a .glb the HD-2D presenter can stand in the world as real geometry.
-    # Best-effort and OFF unless a mesh endpoint carries the checkpoint; a miss leaves the
-    # billboard. Runs last so a mesh failure never blocks the 2D-complete build. ----------------
-    from tools.comfyui_tools import mesh_enabled, mesh_backend, run_mesh_job, run_trellis_batch
-    if walkable and mesh_enabled():
+    # --- mesh pass (outside the vram bracket — the mesh model holds its own VRAM): turn each
+    # matted feature sprite into a .glb the hd2d presenter stands in the world as real geometry.
+    # ONLY for an hd2d (3D) game — a 2d build renders the sprites flat and never loads a mesh, so
+    # generating them would be wasted GPU. Runs last so a mesh failure never blocks the build. -----
+    mesh_total = mesh_done = 0
+    if presentation == "hd2d" and walkable:
+        from tools.comfyui_tools import mesh_enabled, mesh_backend
         meshed = [f for f in generated if f.startswith("feature_") and f.endswith(".png")]
-        backend = mesh_backend()
-        print(f"    [images]  generating {len(meshed)} feature mesh(es) via {backend}")
-        if backend == "trellis":
-            # TRELLIS loads a 4B model once per batch, so stage ONLY the feature sprites in a
-            # scratch dir (not the character/tile art in images_dir) and run it once. Its .glb
-            # carries its OWN PBR texture (the presenter keeps it; no sprite projection).
-            stage = images_dir / "_mesh_in"
-            stage.mkdir(exist_ok=True)
-            for fpng in meshed:
-                shutil.copy2(images_dir / fpng, stage / fpng)
-            done = run_trellis_batch(str(stage), str(stage))
+        mesh_total = len(meshed)
+        if not mesh_enabled():
+            # The user asked for 3D; without a backend every feature degrades to a flat billboard.
+            # That's a hollow 3D game, so say so loudly rather than fail silently.
+            print(f"    [images]  WARNING: hd2d (3D) requested but NO mesh backend configured — "
+                  f"{mesh_total} feature(s) will render as flat billboards, not 3D geometry")
+        elif meshed:
+            backend = mesh_backend()
+            print(f"    [images]  generating {mesh_total} feature mesh(es) via {backend}")
+            done = _run_mesh_pass(meshed, images_dir, backend)
+            # One retry for the stragglers: the mesh backends fail stochastically (VRAM
+            # contention, a bad seed), and an all-billboard 3D game is a broken deliverable.
+            missing = [f for f in meshed if f[:-4] not in done]
+            if missing:
+                print(f"    [images]  {len(missing)} mesh(es) failed; retrying once")
+                done |= _run_mesh_pass(missing, images_dir, backend)
             for fpng in meshed:
                 slug = fpng[:-4]
-                if slug in done and (stage / f"{slug}.glb").exists():
-                    shutil.copy2(stage / f"{slug}.glb", images_dir / f"{slug}.glb")
+                if slug in done:
                     generated.append(f"{slug}.glb")
                     print(f"    [images]  ok: {slug}.glb")
                 else:
-                    print(f"    [images]  mesh failed, billboard fallback: {fpng}")
-            shutil.rmtree(stage, ignore_errors=True)
-        else:
-            for fpng in meshed:
-                src = images_dir / fpng
-                glb = images_dir / (fpng[:-4] + ".glb")
-                if run_mesh_job(str(src), str(glb)):
-                    generated.append(glb.name)
-                    print(f"    [images]  ok: {glb.name}")
-                else:
-                    print(f"    [images]  mesh failed, billboard fallback: {fpng}")
+                    print(f"    [images]  mesh FAILED after retry, billboard fallback: {fpng}")
+            mesh_done = len(done)
+            print(f"    [images]  mesh coverage {mesh_done}/{mesh_total}"
+                  + (f" — {mesh_total - mesh_done} fall back to billboards"
+                     if mesh_done < mesh_total else ""))
 
-    return {"status": "ok", "generated": generated, "failed": failed}
+    return {"status": "ok", "generated": generated, "failed": failed,
+            "mesh_total": mesh_total, "mesh_done": mesh_done}
+
+
+def _run_mesh_pass(meshed: List[str], images_dir: Path, backend: str) -> set:
+    """Mesh each feature_<slug>.png in `meshed` → feature_<slug>.glb beside it; return the set of
+    slugs that produced a glb. TRELLIS loads its 4B model once per batch (stage the sprites in a
+    scratch dir, its .glb carries its own PBR texture); hunyuan runs one job per image."""
+    from tools.comfyui_tools import run_mesh_job, run_trellis_batch
+    done: set = set()
+    if backend == "trellis":
+        stage = images_dir / "_mesh_in"
+        stage.mkdir(exist_ok=True)
+        for fpng in meshed:
+            shutil.copy2(images_dir / fpng, stage / fpng)
+        produced = run_trellis_batch(str(stage), str(stage))
+        for fpng in meshed:
+            slug = fpng[:-4]
+            if slug in produced and (stage / f"{slug}.glb").exists():
+                shutil.copy2(stage / f"{slug}.glb", images_dir / f"{slug}.glb")
+                done.add(slug)
+        shutil.rmtree(stage, ignore_errors=True)
+    else:
+        for fpng in meshed:
+            slug = fpng[:-4]
+            if run_mesh_job(str(images_dir / fpng), str(images_dir / f"{slug}.glb")):
+                done.add(slug)
+    return done
 
 
 def generate_voices(inputs: Dict, working_dir: Path) -> Dict:

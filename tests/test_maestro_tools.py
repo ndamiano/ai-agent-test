@@ -139,7 +139,8 @@ def test_no_manual_compile_tool(tmp_path):
 
 def test_generate_asset_wraps_image_gen(tmp_path, monkeypatch):
     import renpy.fns as fns
-    monkeypatch.setattr(fns, "generate_images", lambda inputs, wd: {"status": "ok", "generated": ["bg_x.png"]})
+    monkeypatch.setattr(fns, "generate_images",
+                        lambda inputs, wd, presentation="2d": {"status": "ok", "generated": ["bg_x.png"]})
     tools = build_tools(_spec(), RunState(tmp_path))
     res = tools["generate_asset"]()
     assert res["ok"] is True and res["generated"] == ["bg_x.png"]

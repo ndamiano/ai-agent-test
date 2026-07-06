@@ -88,3 +88,17 @@ def test_example_roundtrips_through_components():
     _VALIDATOR.validate(ir)
     assert crossref_errors(ir) == []
     assert len(ir["nodes"]) == len(ex["nodes"])
+
+
+def test_hd2d_presentation_lifted_to_meta_and_schema_valid():
+    art = _vn_artifact()
+    art["spec"] = {"presentation": "hd2d"}
+    ir = assemble_ir(art)
+    assert ir["meta"]["presentation"] == "hd2d"
+    _VALIDATOR.validate(ir)              # schema must permit meta.presentation
+
+
+def test_2d_presentation_leaves_meta_clean():
+    art = _vn_artifact()
+    art["spec"] = {"presentation": "2d"}
+    assert "presentation" not in assemble_ir(art).get("meta", {})

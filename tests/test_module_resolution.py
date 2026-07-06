@@ -72,3 +72,27 @@ def test_unknown_ids_are_dropped():
     modules, _ = M.resolve_modules(["scenes", "made_up_module"])
     assert "made_up_module" not in modules
     assert "scenes" in modules
+
+
+# ── presentation (hd2d 3D routing) ────────────────────────────────────────────────────────────
+from tools.spec_tools import _resolve_presentation  # noqa: E402
+
+
+def test_hd2d_with_world_forces_godot():
+    modules, _ = M.resolve_modules(["world"])
+    engine, presentation = _resolve_presentation("hd2d", modules, "renpy")
+    assert engine == "godot" and presentation == "hd2d"
+
+
+def test_hd2d_without_world_downgrades_to_2d():
+    # A pure-conversation game has nothing to render in 3D; hd2d falls back rather than ship a
+    # dead flag, and the engine is left as the modules derived it.
+    modules, base = M.resolve_modules(["scenes"])
+    engine, presentation = _resolve_presentation("hd2d", modules, base)
+    assert presentation == "2d" and engine == base
+
+
+def test_default_presentation_is_2d():
+    modules, _ = M.resolve_modules(["world"])
+    assert _resolve_presentation(None, modules, "renpy") == ("renpy", "2d")
+    assert _resolve_presentation("2d", modules, "godot") == ("godot", "2d")

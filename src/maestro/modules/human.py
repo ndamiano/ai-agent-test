@@ -78,6 +78,48 @@ def waived_idkeys(state) -> Set[str]:
     return {w.get("idkey") for w in state.read_waivers()}
 
 
+# ── durable dirty store (asset idkeys + review notes; same shape as waivers) ──
+# An asset idkey is "<component>:<item_id>" — the on-disk component plus the id within it
+# (nodes:scene_3, characters:mara, places:zone_crypt, combat:firebolt). It is NOT an Error
+# identity (waivers use those); it names a buildable asset. A dirty entry EMITS an error the
+# loop drains by rewriting (review_note = the instruction); a human clears it by thumbs-up.
+def asset_idkey(component: str, item_id: str) -> str:
+    return f"{component}:{item_id}"
+
+
+def split_idkey(asset_key: str) -> Tuple[str, str]:
+    component, _, item_id = (asset_key or "").partition(":")
+    return component, item_id
+
+
+def set_dirty(state, asset_key: str, note: str = "") -> Dict:
+    """Flag an asset dirty (or update its note if already flagged). Thumbs-down and a manual
+    'needs another look' are the same call."""
+    dirty = state.read_dirty()
+    for d in dirty:
+        if d.get("idkey") == asset_key:
+            d["note"] = note
+            state.write_dirty(dirty)
+            return d
+    entry = {"idkey": asset_key, "note": note}
+    dirty.append(entry)
+    state.write_dirty(dirty)
+    return entry
+
+
+def clear_dirty(state, asset_key: str) -> bool:
+    """Clear an asset's dirty flag — thumbs-up, or a completed rewrite. Returns whether one was
+    removed."""
+    dirty = state.read_dirty()
+    kept = [d for d in dirty if d.get("idkey") != asset_key]
+    state.write_dirty(kept)
+    return len(kept) != len(dirty)
+
+
+def dirty_entries(state) -> List[Dict]:
+    return state.read_dirty()
+
+
 def effective_failures(spec: Dict, state) -> List[Dict]:
     """The human-facing to-do: the effective errors (collected − waived, human todos included) as
     serializable dicts. Each carries `idkey` — the durable key the waive endpoint takes back."""
@@ -147,13 +189,55 @@ def _run_todo_fix(module, context, error, slot, services, dispatch):
     services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=marking)
 
 
+_DIRTY_DEFAULT_NOTE = "review this asset and improve it"
+
+
+def _d_dirty(chk, m, context):
+    """One HUMAN error per dirty asset — the human flagged it (thumbs-down / manual). The loop
+    drains it by rewriting (note = instruction); a thumbs-up clears the flag and the error with it.
+    Component + item id are recovered from the asset idkey, so the fix routes to the right path."""
+    out = []
+    for d in dirty_entries(context.state):
+        component, item_id = split_idkey(d.get("idkey", ""))
+        out.append(Error(type=ErrorType.HUMAN, code="dirty_asset", component=component,
+                         message=d.get("note") or _DIRTY_DEFAULT_NOTE, path=item_id))
+    return out
+
+
+def _run_dirty_fix(module, context, error, slot, services, dispatch):
+    """Rewrite the flagged asset from its review note, then clear the flag so the error retires.
+    A dialogue node reuses `rewrite_node` (the per-scene note-driven regenerator); any other
+    component takes the general human-direction edit step, clearing on the first successful
+    mutating call (the human re-flags if the edit missed — same contract as a todo)."""
+    key = asset_idkey(error.component, error.path)
+    note = error.message
+    if error.component == "nodes" and error.path:
+        from maestro.rewrite import rewrite_node
+        result = rewrite_node(services.spec, services.state, error.path, note, services.tools,
+                              connector=services.conn, report=services._report)
+        if result.get("ok"):
+            clear_dirty(services.state, key)
+        return
+
+    def marking(name, args):
+        result = dispatch(name, args)
+        if name not in _READONLY and isinstance(result, dict) and result.get("ok"):
+            clear_dirty(services.state, key)
+        return result
+    services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=marking)
+
+
 class Human(Module):
     id = "human"
     selectable = False   # always-on: the human-in-the-loop channel is never optional
     priority = 0   # irrelevant to ordering (HUMAN type ranks first), but explicit
 
-    checks = [Check("human_todo", _d_human_todo, tier=ErrorType.HUMAN, build_prompt=_human_prompt,
-                    run=_run_todo_fix)]
+    checks = [
+        Check("human_todo", _d_human_todo, tier=ErrorType.HUMAN, build_prompt=_human_prompt,
+              run=_run_todo_fix),
+        Check("dirty_asset", _d_dirty, tier=ErrorType.HUMAN, build_prompt=_human_prompt,
+              run=_run_dirty_fix),
+    ]
 
 
 MODULE = Human()

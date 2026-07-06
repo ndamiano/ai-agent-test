@@ -63,6 +63,9 @@ def rewrite_node(spec: Dict, state, node_id: str, note: str, tools: Dict[str, Ca
         result = tools["write_node"](**args)
         if result.get("ok"):
             say(f"rewrote {node_id}")
+            from maestro.depgraph import mark_downstream_dirty
+            from maestro.modules.human import asset_idkey
+            mark_downstream_dirty(state, spec, asset_idkey("nodes", node_id))
             return {"ok": True, "node_id": node_id}
         say(f"write_node rejected: {result.get('error')}")
         mb.add_user(f"That was rejected: {result.get('error')}. Fix it and call write_node again.")

@@ -192,6 +192,132 @@ def test_generate_images_queues_items_as_icon_jobs(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# generate_single_asset — the per-asset browser's targeted regen, never the whole manifest
+# ---------------------------------------------------------------------------
+
+def test_generate_single_asset_only_runs_one_job(tmp_path, monkeypatch):
+    import contextlib
+    import tools.comfyui_tools as comfyui_tools
+    from renpy.fns import generate_single_asset
+
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
+    calls = []
+
+    def fake_run_jobs(jobs):
+        calls.extend(jobs)
+        return [{"success": False, "error": "no comfyui"} for _ in jobs]
+
+    monkeypatch.setattr(comfyui_tools, "run_jobs", fake_run_jobs)
+
+    inputs = {"asset_manifest": {
+        "backgrounds": [{"id": "bg_dock", "image_file": "dock.png", "description": "a dock"},
+                        {"id": "bg_sea", "image_file": "sea.png", "description": "the sea"}],
+        "characters": [], "cgs": [],
+    }}
+
+    result = generate_single_asset(inputs, tmp_path, "dock.png")
+
+    assert len(calls) == 1                       # only the requested background's job ran
+    assert result["failed"][0]["file"] == "dock.png"
+    images_dir = tmp_path / "game_output" / "game" / "images"
+    assert (images_dir / "dock.png").exists()    # placeholder fallback on failure
+    assert not (images_dir / "sea.png").exists()  # the OTHER background is untouched
+
+
+def test_generate_single_asset_places_the_generated_file(tmp_path, monkeypatch):
+    import contextlib
+    import tools.comfyui_tools as comfyui_tools
+    from renpy.fns import generate_single_asset
+    from utils.image import write_solid_png
+
+    src = tmp_path / "src.png"
+    write_solid_png(src, 4, 4, (10, 20, 30))
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
+    monkeypatch.setattr(comfyui_tools, "run_jobs",
+                        lambda jobs: [{"success": True, "saved_paths": [str(src)]} for _ in jobs])
+
+    inputs = {"asset_manifest": {
+        "backgrounds": [], "cgs": [],
+        "characters": [{"id": "alex", "image_file": "alex.png", "description": "a hero"}],
+    }}
+
+    result = generate_single_asset(inputs, tmp_path, "alex.png")
+
+    assert result["status"] == "ok"
+    assert result["generated"] == ["alex.png"]
+    out = tmp_path / "game_output" / "game" / "images" / "alex.png"
+    assert out.read_bytes().startswith(b"\x89PNG")
+
+
+def test_generate_single_asset_unknown_filename_is_an_error(tmp_path):
+    from renpy.fns import generate_single_asset
+
+    result = generate_single_asset({"asset_manifest": {"backgrounds": [], "characters": [], "cgs": []}},
+                                   tmp_path, "nope.png")
+    assert result["status"] == "error"
+    assert "nope.png" in result["error"]
+
+
+def test_generate_single_asset_feature_chains_its_mesh_when_hd2d(tmp_path, monkeypatch):
+    import contextlib
+    import tools.comfyui_tools as comfyui_tools
+    import renpy.fns as fns_mod
+    from utils.image import write_solid_png
+
+    src = tmp_path / "src.png"
+    write_solid_png(src, 4, 4, (1, 2, 3))
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
+    monkeypatch.setattr(comfyui_tools, "run_jobs",
+                        lambda jobs: [{"success": True, "saved_paths": [str(src)]} for _ in jobs])
+    monkeypatch.setattr(comfyui_tools, "mesh_enabled", lambda: True)
+    monkeypatch.setattr(comfyui_tools, "mesh_backend", lambda: "hunyuan")
+    monkeypatch.setattr(fns_mod, "_run_mesh_pass",
+                        lambda meshed, images_dir, backend: {"feature_old_altar"})
+
+    inputs = {"places": {"places": {"z1": {
+        "kind": "world_map",
+        "layout": {"features": [{"id": "f1", "kind": "building", "label": "Old Altar", "at": "north"}]},
+        "footprints": {"f1": {"x": 0, "y": 0, "w": 1, "h": 1, "kind": "building", "label": "Old Altar"}},
+        "tiles": {"rows": ["."]},
+        "interactables": [],
+    }}}}
+
+    result = fns_mod.generate_single_asset(inputs, tmp_path, "feature_old_altar.png", presentation="hd2d")
+
+    assert result["status"] == "ok"
+    assert "feature_old_altar.png" in result["generated"]
+    assert "feature_old_altar.glb" in result["generated"]     # the mesh rode along
+    assert result["mesh_total"] == 1 and result["mesh_done"] == 1
+
+
+def test_generate_single_asset_feature_skips_mesh_for_2d(tmp_path, monkeypatch):
+    import contextlib
+    import tools.comfyui_tools as comfyui_tools
+    from renpy.fns import generate_single_asset
+    from utils.image import write_solid_png
+
+    src = tmp_path / "src.png"
+    write_solid_png(src, 4, 4, (1, 2, 3))
+    monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
+    monkeypatch.setattr(comfyui_tools, "run_jobs",
+                        lambda jobs: [{"success": True, "saved_paths": [str(src)]} for _ in jobs])
+
+    inputs = {"places": {"places": {"z1": {
+        "kind": "world_map",
+        "layout": {"features": [{"id": "f1", "kind": "building", "label": "Old Altar", "at": "north"}]},
+        "footprints": {"f1": {"x": 0, "y": 0, "w": 1, "h": 1, "kind": "building", "label": "Old Altar"}},
+        "tiles": {"rows": ["."]},
+        "interactables": [],
+    }}}}
+
+    result = generate_single_asset(inputs, tmp_path, "feature_old_altar.png", presentation="2d")
+
+    assert result["status"] == "ok"
+    assert result["generated"] == ["feature_old_altar.png"]   # no .glb for a 2d build
+    assert "mesh_total" not in result
+
+
+# ---------------------------------------------------------------------------
 # _merge_cast_into_manifest — premise is the source of truth for the cast
 # ---------------------------------------------------------------------------
 

@@ -8,10 +8,12 @@ Build orchestration (freeze/build/streaming) lives in the next phase.
 
 import asyncio
 import logging
+import mimetypes
 import threading
 from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,19 @@ class AutoPauseBody(BaseModel):
 
 class RewriteBody(BaseModel):
     note: str = ""
+
+
+class DirtyBody(BaseModel):
+    idkey: str
+    note: str = ""
+
+
+class ThumbBody(BaseModel):
+    idkey: str
+
+
+class AssetRegenBody(BaseModel):
+    filename: str
 
 # Run ids with a build thread in flight. Guards against double-builds and lets the
 # UI show a "building" state on load (the live event stream covers the rest).
@@ -293,8 +308,10 @@ async def unwaive_game(run_id: str, body: UnwaiveBody):
 
 
 def _require_editable(run_id: str):
-    """Hand-edits race the executor thread on the same files, so only allow them when no
-    build is running OR the build is parked (paused / awaiting_human)."""
+    """Regenerating art / compiling / rewriting a scene all race the executor thread on the same
+    files, so these still only run when no build is in flight OR the build is parked (paused /
+    awaiting_human). A plain content EDIT is exempt (see the asset-edit endpoints below) — it's
+    allowed at any build state and reflags its downstream closure instead of blocking."""
     from maestro.run_control import get as get_control
 
     if run_id in _active_builds:
@@ -322,24 +339,29 @@ def _spec_state(run_id: str):
 
 @router.put("/{run_id}/component/{component_id}", response_model=Dict)
 async def edit_component_game(run_id: str, component_id: str, body: ComponentBody):
-    """Human edit of a whole component (schema-validated; overrides the lock)."""
-    _require_editable(run_id)
+    """Human edit of a whole component (schema-validated; overrides the lock). UN-GATED (Epic C3):
+    allowed at any build state — a hand-edit is itself a rewrite, so it clears each item's own
+    dirty flag and reflags its downstream closure instead of waiting for a pause."""
     spec, state = _spec_state(run_id)
     result = _human_tools(spec, state)["write_component"](component_id, body.content, force=True)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "invalid component"))
+    new_content = state.read_component(component_id) or {}
+    item_ids = [iid for iid, _ in _component_items(component_id, new_content)]
+    result.update(_after_edit(run_id, spec.data, state, component_id, item_ids))
     return result
 
 
 @router.put("/{run_id}/node/{node_id}", response_model=Dict)
 async def edit_node_game(run_id: str, node_id: str, body: NodeEditBody):
-    """Human patch of one node field (e.g. fix a character's line); overrides the lock."""
-    _require_editable(run_id)
+    """Human patch of one node field (e.g. fix a character's line); overrides the lock. UN-GATED
+    (Epic C3): allowed at any build state."""
     spec, state = _spec_state(run_id)
     patch = body.model_dump(exclude_unset=True)
     result = _human_tools(spec, state)["edit_node"](node_id, force=True, **patch)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "invalid edit"))
+    result.update(_after_edit(run_id, spec.data, state, "nodes", [node_id]))
     return result
 
 
@@ -351,7 +373,49 @@ async def regenerate_assets_game(run_id: str):
     from renpy.fns import generate_images
 
     _, state = _spec_state(run_id)
-    return generate_images(state.load_artifact(), state.run_dir) or {"ok": True}
+    presentation = (state.read_spec() or {}).get("presentation", "2d")
+    return generate_images(state.load_artifact(), state.run_dir,
+                           presentation=presentation) or {"ok": True}
+
+
+@router.post("/{run_id}/regenerate-asset", response_model=Dict)
+async def regenerate_asset_game(run_id: str, body: AssetRegenBody):
+    """Regenerate exactly ONE declared/derived image file (never the whole manifest) — the
+    per-asset browser's 'try again'. Passes the run's `presentation` so an hd2d feature's mesh
+    rides along with its sprite, same as the all-assets regenerate."""
+    _require_editable(run_id)
+    from renpy.fns import generate_single_asset
+
+    _, state = _spec_state(run_id)
+    presentation = (state.read_spec() or {}).get("presentation", "2d")
+    result = generate_single_asset(state.load_artifact(), state.run_dir, body.filename,
+                                   presentation=presentation)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error", "regeneration failed"))
+    return result
+
+
+def _images_dir(run_id: str):
+    return _require_state(run_id).run_dir / "game_output" / "game" / "images"
+
+
+@router.get("/{run_id}/asset-file/{filename}")
+async def asset_file_game(run_id: str, filename: str):
+    """Stream one generated asset file's bytes (image or mesh) — the component browser's `<img
+    src>` target. Guarded to the run's own images dir: `filename` is a single path segment (FastAPI
+    won't match a `/` into it) and the resolved path must still land inside that directory, so a
+    `..` traversal 403s instead of reaching outside the run."""
+    images_dir = _images_dir(run_id).resolve()
+    resolved = (images_dir / filename).resolve()
+    if not resolved.is_relative_to(images_dir):
+        raise HTTPException(status_code=403, detail="invalid asset filename")
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail=f"no asset file {filename!r}")
+
+    media_type, _ = mimetypes.guess_type(str(resolved))
+    if media_type is None and resolved.suffix == ".glb":
+        media_type = "model/gltf-binary"
+    return FileResponse(path=resolved, media_type=media_type or "application/octet-stream")
 
 
 @router.post("/{run_id}/compile", response_model=Dict)
@@ -410,3 +474,222 @@ async def rewrite_node_game(run_id: str, node_id: str, body: RewriteBody):
 
     threading.Thread(target=_run, daemon=True, name=f"rewrite-{key}").start()
     return {"status": "rewriting", "run_id": run_id, "node_id": node_id}
+
+
+# ── Epic C: the component-blind asset browser API ────────────────────────────────────────────
+# Every component decomposes into ADDRESSABLE ITEMS at the same granularity the dirty store
+# already keys on (human.asset_idkey's docstring: nodes:scene_3, characters:mara, places:
+# zone_crypt, combat:firebolt). `_component_items` is that one place a new component's shape gets
+# taught to the browser; everything else here (list/detail/edit/dirty/thumbs) is generic over it.
+def _component_items(component_id: str, content) -> List:
+    """(item_id, item_content) pairs for one component's decomposed assets. A singleton document
+    with no per-item write tool (story, asset_manifest) is one asset keyed by the component id."""
+    if not isinstance(content, dict):
+        return [(component_id, content)]
+    if component_id in ("nodes", "places"):
+        inner = content.get(component_id)
+        if isinstance(inner, dict):
+            return list(inner.items())
+    elif component_id in ("characters", "items"):
+        rows = content.get(component_id)
+        if isinstance(rows, list):
+            return [(r["id"], r) for r in rows if isinstance(r, dict) and r.get("id")]
+    elif component_id == "combat":
+        out = []
+        for key in ("stats", "abilities", "combatants", "encounters", "statuses"):
+            out += [(r["id"], r) for r in content.get(key) or []
+                   if isinstance(r, dict) and r.get("id")]
+        return out
+    return [(component_id, content)]
+
+
+def _replace_item(component_id: str, content, item_id: str, new_item):
+    """Reconstruct the whole component with `item_id` replaced by `new_item` — the inverse of
+    `_component_items`, so a per-asset edit can write back through write_component. None means
+    `item_id` doesn't exist in this component (a 404, not a silent append). `nodes`/`places` aren't
+    handled here — they go through edit_node/write_place directly (see `_apply_asset_edit`)."""
+    content = dict(content or {})
+    if component_id in ("characters", "items"):
+        rows = list(content.get(component_id) or [])
+        idx = next((i for i, r in enumerate(rows)
+                   if isinstance(r, dict) and r.get("id") == item_id), None)
+        if idx is None:
+            return None
+        rows[idx] = {**new_item, "id": item_id}
+        content[component_id] = rows
+        return content
+    if component_id == "combat":
+        for key in ("stats", "abilities", "combatants", "encounters", "statuses"):
+            rows = list(content.get(key) or [])
+            idx = next((i for i, r in enumerate(rows)
+                       if isinstance(r, dict) and r.get("id") == item_id), None)
+            if idx is not None:
+                rows[idx] = {**new_item, "id": item_id}
+                content[key] = rows
+                return content
+        return None
+    if item_id == component_id:   # singleton document (story, asset_manifest, ...)
+        return new_item
+    return None
+
+
+def _asset_rows(component_id: str, content, dirty_by_key: Dict[str, str]) -> List[Dict]:
+    from maestro.modules.human import asset_idkey
+
+    rows = []
+    for item_id, item_content in _component_items(component_id, content):
+        key = asset_idkey(component_id, item_id)
+        rows.append({
+            "component": component_id,
+            "id": item_id,
+            "idkey": key,
+            "content": item_content,
+            "dirty": key in dirty_by_key,
+            "review_note": dirty_by_key.get(key, ""),
+        })
+    return rows
+
+
+def _apply_asset_edit(state, tools, component_id: str, item_id: str, content) -> Dict:
+    """Write one asset's new content through the tool that already knows this component's shape
+    (edit_node for nodes, write_place for places — both force-capable and already validated),
+    falling back to a read-modify-write through write_component for everything else."""
+    if component_id == "nodes":
+        return tools["edit_node"](item_id, content=content, force=True)
+    if component_id == "places":
+        return tools["write_place"](item_id, content, force=True)
+    current = state.read_component(component_id)
+    if current is None:
+        return {"ok": False, "error": f"no component {component_id!r}"}
+    new_content = _replace_item(component_id, current, item_id, content)
+    if new_content is None:
+        return {"ok": False, "error": f"no asset {item_id!r} in {component_id!r}"}
+    return tools["write_component"](component_id, new_content, force=True)
+
+
+def _emit_asset_event(run_id: str, event_type: str, **fields) -> None:
+    from tools.spec_tools import _emit
+    _emit(event_type, run_id, **fields)
+
+
+def _idkey_fields(asset_key: str) -> Dict:
+    from maestro.modules.human import split_idkey
+    component, item_id = split_idkey(asset_key)
+    return {"component": component, "item_id": item_id}
+
+
+def _after_edit(run_id: str, spec_data: Dict, state, component_id: str, item_ids: List[str]) -> Dict:
+    """Common post-edit bookkeeping every human edit path shares (Epic B's depgraph hook + Epic C's
+    live events): clear each edited item's own dirty flag (a hand-edit is itself a rewrite) and
+    reflag its downstream closure, broadcasting both over the event bus so other viewers update
+    live without a refetch."""
+    from maestro.depgraph import mark_downstream_dirty
+    from maestro.modules.human import asset_idkey, clear_dirty, dirty_entries, split_idkey
+
+    cleared_any = False
+    flagged: List[str] = []
+    for item_id in item_ids:
+        key = asset_idkey(component_id, item_id)
+        if clear_dirty(state, key):
+            cleared_any = True
+        for dep in mark_downstream_dirty(state, spec_data, key):
+            if dep not in flagged:
+                flagged.append(dep)
+        _emit_asset_event(run_id, "asset_updated", component=component_id, item_id=item_id,
+                          idkey=key)
+    if flagged:
+        notes = {d.get("idkey"): d.get("note", "") for d in dirty_entries(state)}
+        for dep in flagged:
+            dep_component, dep_item = split_idkey(dep)
+            _emit_asset_event(run_id, "asset_dirty_set", component=dep_component, item_id=dep_item,
+                              idkey=dep, note=notes.get(dep, ""))
+    return {"cleared_own_dirty": cleared_any, "flagged_dependents": flagged}
+
+
+@router.get("/{run_id}/assets/{component_id}", response_model=List[Dict])
+async def list_assets_game(run_id: str, component_id: str):
+    """Every asset in one component, uniform across every component type — the component-blind
+    browser's 'list assets of type X'. Folds in the dirty store so a card needs no second fetch
+    for its dirty flag / review note."""
+    from maestro.modules.human import dirty_entries
+
+    state = _require_state(run_id)
+    content = state.read_component(component_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"no component {component_id!r}")
+    dirty_by_key = {d["idkey"]: d.get("note", "") for d in dirty_entries(state)}
+    rows = _asset_rows(component_id, content, dirty_by_key)
+    if component_id == "asset_manifest":
+        for r in rows:
+            r["run_id"] = run_id
+    return rows
+
+
+@router.get("/{run_id}/assets/{component_id}/{item_id}", response_model=Dict)
+async def get_asset_game(run_id: str, component_id: str, item_id: str):
+    """One asset's detail — same shape as a list row."""
+    from maestro.modules.human import dirty_entries
+
+    state = _require_state(run_id)
+    content = state.read_component(component_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"no component {component_id!r}")
+    dirty_by_key = {d["idkey"]: d.get("note", "") for d in dirty_entries(state)}
+    row = next((r for r in _asset_rows(component_id, content, dirty_by_key) if r["id"] == item_id),
+               None)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no asset {item_id!r} in {component_id!r}")
+    if component_id == "asset_manifest":
+        row["run_id"] = run_id
+    return row
+
+
+@router.put("/{run_id}/assets/{component_id}/{item_id}", response_model=Dict)
+async def edit_asset_game(run_id: str, component_id: str, item_id: str, body: ComponentBody):
+    """Uniform per-asset edit — any component, any item, at any build state (never gated on
+    paused/idle; the edit reflags its downstream closure via Epic B instead of blocking)."""
+    spec, state = _spec_state(run_id)
+    tools = _human_tools(spec, state)
+    result = _apply_asset_edit(state, tools, component_id, item_id, body.content)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "invalid edit"))
+    result.update(_after_edit(run_id, spec.data, state, component_id, [item_id]))
+    return result
+
+
+@router.post("/{run_id}/assets/dirty", response_model=Dict)
+async def set_dirty_game(run_id: str, body: DirtyBody):
+    """Flag one asset for attention — a manual 'look at this' (thumbs-down is the same call,
+    worded differently for the UI's reject control)."""
+    from maestro.modules.human import set_dirty
+
+    state = _require_state(run_id)
+    set_dirty(state, body.idkey, body.note)
+    _emit_asset_event(run_id, "asset_dirty_set", idkey=body.idkey, note=body.note,
+                      **_idkey_fields(body.idkey))
+    return {"ok": True, "idkey": body.idkey, "note": body.note}
+
+
+@router.post("/{run_id}/assets/thumbs-up", response_model=Dict)
+async def thumbs_up_game(run_id: str, body: ThumbBody):
+    """Approve an asset — clears its dirty flag; the loop stops surfacing it."""
+    from maestro.modules.human import clear_dirty
+
+    state = _require_state(run_id)
+    cleared = clear_dirty(state, body.idkey)
+    if cleared:
+        _emit_asset_event(run_id, "asset_dirty_cleared", idkey=body.idkey, **_idkey_fields(body.idkey))
+    return {"ok": True, "idkey": body.idkey, "cleared": cleared}
+
+
+@router.post("/{run_id}/assets/thumbs-down", response_model=Dict)
+async def thumbs_down_game(run_id: str, body: DirtyBody):
+    """Reject an asset with a 'change this' note — same effect as set_dirty, worded for the UI's
+    thumbs-down control."""
+    from maestro.modules.human import set_dirty
+
+    state = _require_state(run_id)
+    set_dirty(state, body.idkey, body.note)
+    _emit_asset_event(run_id, "asset_dirty_set", idkey=body.idkey, note=body.note,
+                      **_idkey_fields(body.idkey))
+    return {"ok": True, "idkey": body.idkey, "note": body.note}

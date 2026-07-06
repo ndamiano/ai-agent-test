@@ -60,6 +60,15 @@ def _same(a, b) -> bool:
     return {e.identity() for _, e in a} == {e.identity() for _, e in b}
 
 
+def _todo_from_pairs(pairs: List[Tuple[Module, Error]]) -> List[dict]:
+    """The effective to-do serialized the same way `human.effective_failures` renders it for the
+    detail endpoint — so `build_started`/`build_step` carry the live board instead of the frontend
+    reading a `todo` field the backend never set."""
+    return [{"component": e.component, "code": e.code, "type": e.type.value,
+             "detail": e.message, "idkey": idkey(e), "path": e.path}
+            for _, e in pairs]
+
+
 class AgentLoop:
     """Drive a frozen spec's modules to completion.
 
@@ -130,13 +139,17 @@ class AgentLoop:
     def _on_step(self, summary: str) -> None:
         """The per-action progress sink Services calls. The loop owns the running step count + the
         last-known failing count, so it's the single emitter of build_step (per LLM call). Locked:
-        parallel fixes report from their own threads."""
+        parallel fixes report from their own threads. `todo` is the to-do as of the last full
+        recollection (start of this step's batch) — a per-call recompute would rebuild context on
+        every single LLM call, so it's refreshed once per loop iteration, not mid-batch."""
         with self._step_lock:
             self.step += 1
             step = self.step
             self.last_result = summary
             self._emit("build_step", step=step, max_steps=self.max_steps,
-                       summary=summary, n_failing=self._n_failing)
+                       summary=summary, n_failing=self._n_failing,
+                       todo=_todo_from_pairs(self._pairs),
+                       elapsed=time.time() - self._t0)
         print(f"  step {step}: {summary}", flush=True)
 
     def _batch(self, ctx, pairs, module: Module, error: Error) -> List[Tuple[Module, Error, int]]:
@@ -196,12 +209,15 @@ class AgentLoop:
         if not self.spec.get("frozen"):
             raise RuntimeError("build refuses to run until the spec is frozen")
         ctx, pairs = self._context()
+        self._pairs = pairs   # the live to-do _on_step reads for build_step's `todo`
         all_components = {cid for m in self.modules for cid in m.affected_components()}
         passed = all_components - {e.component for _, e in pairs}
         self.step = 0
         self._n_failing = len(pairs)
         self._attempts: dict = {}
-        self._emit("build_started", n_failing=len(pairs), max_steps=self.max_steps)
+        self._t0 = time.time()
+        self._emit("build_started", n_failing=len(pairs), max_steps=self.max_steps,
+                   todo=_todo_from_pairs(pairs), started_at=self._t0)
         prev: Optional[List] = None
         while self.step < self.max_steps:
             try:
@@ -224,6 +240,7 @@ class AgentLoop:
 
                 prev = pairs
                 ctx, pairs = self._context()
+                self._pairs = pairs
                 self._n_failing = len(pairs)
                 if len(pairs) < len(prev):
                     # Forward progress un-parks everything: slot identities are POSITIONAL

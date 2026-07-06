@@ -42,90 +42,106 @@ class MainAgent:
 
         return openai_tools
 
-    def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:
-        if (hasattr(self.connector, 'generate_with_tools_stream')
+    def _stream_llm_response(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]):
+        """Generator yielding ('token', str) as assistant content streams in, then a final
+        ('response', dict) in the same shape `generate_with_tools` returns (so callers that
+        only want the finished message can drain this without caring how it arrived).
+        """
+        if not (hasattr(self.connector, 'generate_with_tools_stream')
                 and getattr(self.connector, '_streaming_works', True)):
-            try:
-                # Envelope fields from the first chunk (id, model, etc.)
-                envelope: Dict[str, Any] = {}
-                # One accumulated message per choice index.
-                acc_messages: Dict[int, Dict[str, Any]] = {}
-                # Finish reasons per choice index.
-                finish_reasons: Dict[int, Any] = {}
+            yield ('response', self.connector.generate_with_tools(messages, tools))
+            return
 
-                for chunk in self.connector.generate_with_tools_stream(messages, tools):
-                    if "error" in chunk:
-                        logging.warning(f"Streaming failed, falling back to non-streaming: {chunk['error']}")
-                        return self.connector.generate_with_tools(messages, tools)
+        try:
+            # Envelope fields from the first chunk (id, model, etc.)
+            envelope: Dict[str, Any] = {}
+            # One accumulated message per choice index.
+            acc_messages: Dict[int, Dict[str, Any]] = {}
+            # Finish reasons per choice index.
+            finish_reasons: Dict[int, Any] = {}
 
-                    # Capture envelope fields once.
-                    if not envelope:
-                        envelope = {k: v for k, v in chunk.items() if k != "choices"}
+            for chunk in self.connector.generate_with_tools_stream(messages, tools):
+                if "error" in chunk:
+                    logging.warning(f"Streaming failed, falling back to non-streaming: {chunk['error']}")
+                    yield ('response', self.connector.generate_with_tools(messages, tools))
+                    return
 
-                    for choice in chunk.get("choices", []):
-                        i = choice.get("index", 0)
-                        if i not in acc_messages:
-                            acc_messages[i] = {"role": "assistant", "content": "", "tool_calls": []}
+                # Capture envelope fields once.
+                if not envelope:
+                    envelope = {k: v for k, v in chunk.items() if k != "choices"}
 
-                        acc_msg = acc_messages[i]
-                        delta = choice.get("delta", {})
+                for choice in chunk.get("choices", []):
+                    i = choice.get("index", 0)
+                    if i not in acc_messages:
+                        acc_messages[i] = {"role": "assistant", "content": "", "tool_calls": []}
 
-                        if delta.get("content"):
-                            acc_msg["content"] += delta["content"]
+                    acc_msg = acc_messages[i]
+                    delta = choice.get("delta", {})
 
-                        for tc_delta in delta.get("tool_calls", []):
-                            idx = tc_delta.get("index", 0)
-                            while len(acc_msg["tool_calls"]) <= idx:
-                                acc_msg["tool_calls"].append({
-                                    "id": "",
-                                    "type": "function",
-                                    "function": {"name": "", "arguments": ""},
-                                })
-                            acc_tc = acc_msg["tool_calls"][idx]
-                            if tc_delta.get("id"):
-                                acc_tc["id"] = tc_delta["id"]
-                            if tc_delta.get("type"):
-                                acc_tc["type"] = tc_delta["type"]
-                            fn_delta = tc_delta.get("function", {})
-                            if fn_delta.get("name"):
-                                acc_tc["function"]["name"] += fn_delta["name"]
-                            if fn_delta.get("arguments"):
-                                acc_tc["function"]["arguments"] += fn_delta["arguments"]
+                    if delta.get("content"):
+                        acc_msg["content"] += delta["content"]
+                        if i == 0:
+                            yield ('token', delta["content"])
 
-                        if choice.get("finish_reason"):
-                            finish_reasons[i] = choice["finish_reason"]
+                    for tc_delta in delta.get("tool_calls", []):
+                        idx = tc_delta.get("index", 0)
+                        while len(acc_msg["tool_calls"]) <= idx:
+                            acc_msg["tool_calls"].append({
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            })
+                        acc_tc = acc_msg["tool_calls"][idx]
+                        if tc_delta.get("id"):
+                            acc_tc["id"] = tc_delta["id"]
+                        if tc_delta.get("type"):
+                            acc_tc["type"] = tc_delta["type"]
+                        fn_delta = tc_delta.get("function", {})
+                        if fn_delta.get("name"):
+                            acc_tc["function"]["name"] += fn_delta["name"]
+                        if fn_delta.get("arguments"):
+                            acc_tc["function"]["arguments"] += fn_delta["arguments"]
 
-                if not acc_messages:
-                    return {"error": "Empty streaming response"}
+                    if choice.get("finish_reason"):
+                        finish_reasons[i] = choice["finish_reason"]
+        except Exception as e:
+            logging.warning(f"Streaming failed, falling back to non-streaming: {e}")
+            yield ('response', self.connector.generate_with_tools(messages, tools))
+            return
 
-                # Reconstruct a non-streaming response shape.
-                choices = []
-                for i, msg in sorted(acc_messages.items()):
-                    if not msg["tool_calls"]:
-                        del msg["tool_calls"]
-                    choices.append({
-                        "index": i,
-                        "message": msg,
-                        "finish_reason": finish_reasons.get(i),
-                        "logprobs": None,
-                    })
+        if not acc_messages:
+            yield ('response', {"error": "Empty streaming response"})
+            return
 
-                assembled = {**envelope, "choices": choices}
+        # Reconstruct a non-streaming response shape.
+        choices = []
+        for i, msg in sorted(acc_messages.items()):
+            if not msg["tool_calls"]:
+                del msg["tool_calls"]
+            choices.append({
+                "index": i,
+                "message": msg,
+                "finish_reason": finish_reasons.get(i),
+                "logprobs": None,
+            })
 
-                from llm_clients.openai_compatible_connector import _log_response_to_file
-                _log_response_to_file(
-                    assembled,
-                    getattr(self.connector, 'api_endpoint', 'unknown'),
-                    {"method": "generate_with_tools_stream", "model": getattr(self.connector, 'model_name', 'unknown')},
-                )
+        assembled = {**envelope, "choices": choices}
 
-                return assembled
+        from llm_clients.openai_compatible_connector import _log_response_to_file
+        _log_response_to_file(
+            assembled,
+            getattr(self.connector, 'api_endpoint', 'unknown'),
+            {"method": "generate_with_tools_stream", "model": getattr(self.connector, 'model_name', 'unknown')},
+        )
 
-            except Exception as e:
-                logging.warning(f"Streaming failed, falling back to non-streaming: {e}")
-                return self.connector.generate_with_tools(messages, tools)
-        else:
-            return self.connector.generate_with_tools(messages, tools)
+        yield ('response', assembled)
+
+    def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:
+        response: Optional[Dict[str, Any]] = None
+        for kind, payload in self._stream_llm_response(messages, tools):
+            if kind == 'response':
+                response = payload
+        return response if response is not None else {"error": "Empty streaming response"}
 
     def _sanitize_tool_arguments(self, tool_name: str, args: Dict) -> Dict:
         sensitive_keys = ['password', 'token', 'secret', 'key', 'credential', 'api_key']
@@ -158,16 +174,36 @@ class MainAgent:
             })
 
     def chat(self, message: str) -> str:
+        """Non-streaming convenience wrapper: drains `chat_stream` and returns the final text."""
+        final = ""
+        for event in self.chat_stream(message):
+            if event["type"] in ("done", "error"):
+                final = event.get("message", "")
+        return final
+
+    def chat_stream(self, message: str):
+        """Generator yielding streaming chat events as the agentic tool-calling turn runs:
+
+        - {"type": "token", "content": str}                         assistant text as it streams
+        - {"type": "tool", "tool_name": str, "status": "start"}      a tool call is about to run
+        - {"type": "tool", "tool_name": str, "status": "success"|"failed"}  it finished
+        - {"type": "done", "message": str}                           the turn's final reply
+        - {"type": "error", "message": str}                          the turn failed
+
+        Exactly one of "done"/"error" terminates the stream. `self.message_history` is
+        updated the same way `chat()` used to, so callers can freely mix streaming and
+        non-streaming turns on one session.
+        """
         self.message_history.append(MessageBuilder.user_msg(message))
 
         try:
-            return self._agentic_loop_with_native_tools()
+            yield from self._agentic_loop_stream()
         except Exception as e:
             error_response = f"Sorry, I encountered an error: {str(e)}"
             self.message_history.append(MessageBuilder.assistant_msg(error_response))
-            return error_response
+            yield {"type": "error", "message": error_response}
 
-    def _agentic_loop_with_native_tools(self) -> str:
+    def _agentic_loop_stream(self):
         from config.settings_manager import settings_manager
         max_iterations = settings_manager.get_category_settings().max_iterations
         iteration = 0
@@ -182,15 +218,29 @@ class MainAgent:
 
             messages = MessageBuilder(system_content).extend(self.message_history).build()
 
-            response = self._get_response_with_tools(messages, self._tools_schema)
+            response = None
+            streamed_content = ""
+            for kind, payload in self._stream_llm_response(messages, self._tools_schema):
+                if kind == 'token':
+                    streamed_content += payload
+                    yield {"type": "token", "content": payload}
+                else:
+                    response = payload
 
-            if "error" in response:
-                raise Exception(f"Connector error: {response['error']}")
+            if response is None or "error" in response:
+                err = response.get("error") if response else "Empty response"
+                yield {"type": "error", "message": f"Connector error: {err}"}
+                return
 
             choice = response.get("choices", [{}])[0]
             message_response = choice.get("message", {})
             content = message_response.get("content") or ""
             tool_calls = message_response.get("tool_calls", [])
+
+            # Fallback path (streaming unavailable/failed): no 'token' events fired above,
+            # so surface the whole reply as one chunk rather than a silent block.
+            if not streamed_content and content:
+                yield {"type": "token", "content": content}
 
             # Strip malformed tool calls (empty name) before storing — LM Studio 500s
             # if these are sent back in subsequent requests.
@@ -215,7 +265,8 @@ class MainAgent:
             )
 
             if not valid_tool_calls:
-                return content
+                yield {"type": "done", "message": content}
+                return
 
             from tools.execution_context import get_task_id, get_subtask_id
             ctx_task_id = get_task_id()
@@ -226,6 +277,8 @@ class MainAgent:
                     function = tool_call.get("function", {})
                     tool_name = function.get("name")
                     tool_call_id = tool_call.get("id")
+
+                    yield {"type": "tool", "tool_name": tool_name, "status": "start"}
 
                     arguments = {}
                     try:
@@ -249,6 +302,8 @@ class MainAgent:
                             MessageBuilder.tool_msg(tool_call_id, str(result))
                         )
 
+                        yield {"type": "tool", "tool_name": tool_name, "status": "success"}
+
                     except Exception as e:
 
                         self._broadcast_tool_usage(tool_name, arguments, 'failed')
@@ -257,6 +312,8 @@ class MainAgent:
                             MessageBuilder.tool_msg(tool_call_id, f"Tool '{tool_name}' failed: {str(e)}")
                         )
 
+                        yield {"type": "tool", "tool_name": tool_name, "status": "failed"}
+
             iteration += 1
 
-        return content
+        yield {"type": "done", "message": content}

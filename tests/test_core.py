@@ -300,6 +300,49 @@ def test_loop_completes_when_errors_clear(tmp_path):
     assert state.read_component("premise") == {"ok": 1}
 
 
+def test_build_started_and_step_events_carry_live_todo(tmp_path):
+    """Epic C5: build_started/build_step must carry the effective to-do (the frontend reads
+    msg.todo — previously a dead wire, since the backend never set it)."""
+    state = RunState(tmp_path)
+    register_module(_OneShot())
+    tools = {"write_component": lambda component_id, content, **kw: (
+        state.write_component(component_id, content) or {"ok": True})}
+    events = []
+    loop = AgentLoop({"frozen": True}, state, [_OneShot()], tools, connector=_Conn(),
+                     max_steps=5, on_event=events.append)
+    result = loop.run()
+    assert result.ok is True
+
+    started = next(e for e in events if e["type"] == "build_started")
+    assert started["todo"] == [{"component": "premise", "code": "mk", "type": "build",
+                               "detail": "write it", "idkey": idkey(Error(
+                                   ErrorType.BUILD, "mk", "premise", "write it")), "path": None}]
+
+    step = next(e for e in events if e["type"] == "build_step")
+    assert step["todo"] and step["todo"][0]["component"] == "premise"
+    assert all({"component", "code", "type", "detail", "idkey", "path"} <= set(t) for t in step["todo"])
+
+
+def test_build_started_and_step_carry_elapsed_timing(tmp_path):
+    """Epic E2: build_started carries a wall-clock `started_at`, and every build_step carries
+    `elapsed` (seconds since that start) — the frontend's progress header ticks off these."""
+    state = RunState(tmp_path)
+    register_module(_OneShot())
+    tools = {"write_component": lambda component_id, content, **kw: (
+        state.write_component(component_id, content) or {"ok": True})}
+    events = []
+    loop = AgentLoop({"frozen": True}, state, [_OneShot()], tools, connector=_Conn(),
+                     max_steps=5, on_event=events.append)
+    result = loop.run()
+    assert result.ok is True
+
+    started = next(e for e in events if e["type"] == "build_started")
+    assert isinstance(started["started_at"], float) and started["started_at"] > 0
+
+    step = next(e for e in events if e["type"] == "build_step")
+    assert isinstance(step["elapsed"], float) and step["elapsed"] >= 0.0
+
+
 # ── count target: fanned to one per-slot create-error, one item authored per step ────
 from maestro.modules import checks
 

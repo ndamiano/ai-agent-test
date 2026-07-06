@@ -375,6 +375,11 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return False
         if any((t.get("component_id") or "") == component_id for t in human_mod.open_todos(state)):
             return False
+        # A dirty asset is a human directive to rewrite that component — keep it writable so the
+        # loop's dirty fix can land the edit (mirrors the open-todo exception above).
+        if any(human_mod.split_idkey(d.get("idkey", ""))[0] == component_id
+               for d in human_mod.dirty_entries(state)):
+            return False
         ctx = build_context(spec, state)
         return not any(e.component == component_id
                        for m in modules if component_id in m.affected_components()
@@ -508,6 +513,15 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
 
     _UNSET = object()
 
+    def _propagate(component: str, item_id: str) -> None:
+        # Only a genuine EDIT of already-existing content reflags downstream — an authoring
+        # write (write_node/write_component creating a new asset) never calls this; during the
+        # initial build downstream is already dirty/unbuilt, so this would be a no-op anyway, but
+        # a brand-new asset has no meaningful "downstream" yet to begin with.
+        from maestro.depgraph import mark_downstream_dirty
+        from maestro.modules.human import asset_idkey
+        mark_downstream_dirty(state, spec, asset_idkey(component, item_id))
+
     def edit_node(node_id: str, line_index: Optional[int] = None, text: Optional[str] = None,
                   speaker=_UNSET, emotion: Optional[str] = None,
                   effects: Optional[List] = None, end: Optional[Dict] = None,
@@ -537,6 +551,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 content["beat"] = nodes[node_id]["beat"]
             nodes[node_id] = normalize_narration(content)
             state.write_component("nodes", ns)
+            _propagate("nodes", node_id)
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
         if location is not None:
@@ -580,6 +595,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             if effects is not None:
                 lines[line_index]["effects"] = effects
         state.write_component("nodes", ns)
+        _propagate("nodes", node_id)
         return {"ok": True, "node_id": node_id}
 
     def _resolve_feature_spawns(places: Dict) -> None:
@@ -608,16 +624,18 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 if anchor:
                     a["spawn"] = {"cell": {"x": anchor["x"], "y": anchor["y"]}}
 
-    def write_place(place_id: str, content) -> Dict:
+    def write_place(place_id: str, content, force: bool = False) -> Dict:
         """Write one place (background + interactables) into `places`, mirroring write_node.
         The scaffold (goal/items/flags/start_place) is laid by set_places_meta.
 
         A walkable place is authored as a LAYOUT (features on a coarse region grid) — the model
         plans, maestro.map_builder rasterizes deterministically, and the stored `tiles` grid is
         valid by construction. An interactable's position may be {"feature": "<layout id>"};
-        it resolves to that feature's anchor cell here."""
+        it resolves to that feature's anchor cell here.
+        force: a human edit may overwrite a locked places component (override, like write_component/
+        write_node/edit_node). The agent never sets it — not in TOOL_SCHEMAS."""
         _require_frozen()
-        if _locked("places"):
+        if not force and _locked("places"):
             return _locked_error("places")
         content = _coerce_json(content)
         if isinstance(content, dict) and isinstance(content.get("layout"), dict):
@@ -750,6 +768,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             h["label"] = label
         _resolve_feature_spawns(places)
         state.write_component("places", places)
+        _propagate("places", place_id)
         return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
 
     def add_interactable(place_id: str, interactable: Dict) -> Dict:
@@ -987,6 +1006,26 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         return {"ok": True, "status": "review_requested",
                 "question": question, "options": options or []}
 
+    # ── human-only dirty / thumb tools (never in TOOL_SCHEMAS, so the agent can't call them —
+    #    same discipline as the `force` param) ─────────────────────────────────────────────────
+    def set_dirty(idkey: str, note: str = "") -> Dict:
+        """Flag one asset (idkey '<component>:<item_id>') for attention with an optional note; the
+        loop then rewrites it and the human's thumbs-up clears it."""
+        from maestro.modules import human as human_mod
+        human_mod.set_dirty(state, idkey, note)
+        return {"ok": True, "idkey": idkey, "note": note}
+
+    def thumbs_up(idkey: str) -> Dict:
+        """Approve an asset — clear its dirty flag so the loop stops surfacing it."""
+        from maestro.modules import human as human_mod
+        return {"ok": True, "idkey": idkey, "cleared": human_mod.clear_dirty(state, idkey)}
+
+    def thumbs_down(idkey: str, note: str = "") -> Dict:
+        """Reject an asset with a 'change this' note — sets it dirty, handing it back to the loop."""
+        from maestro.modules import human as human_mod
+        human_mod.set_dirty(state, idkey, note)
+        return {"ok": True, "idkey": idkey, "note": note}
+
     return {
         "write_component": write_component,
         "write_node": write_node,
@@ -1010,4 +1049,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "validate": validate_tool,
         "update_scratchpad": update_scratchpad,
         "request_review": request_review,
+        "set_dirty": set_dirty,
+        "thumbs_up": thumbs_up,
+        "thumbs_down": thumbs_down,
     }

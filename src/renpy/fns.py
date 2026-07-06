@@ -102,6 +102,29 @@ def _collect_feature_specs(places_comp: Dict) -> List[tuple]:
     return [(kind, label) for label, kind in specs.items()]
 
 
+def _place_result(meta: Dict, result: Dict, generated: List[str], failed: List[Dict]) -> None:
+    """Land one generation job's result at its declared destination, or degrade gracefully:
+    emotion variants fall back to the neutral face, everything else but a token/mesh source gets
+    a solid placeholder (a missing token is not placeholder-backed — the overworld's colour-dot
+    fallback beats a grey square). Shared by the full manifest pass and a single-asset regen so
+    both place a result identically."""
+    filepath, img_file, kind = meta["dest"], meta["file"], meta["kind"]
+    if result.get("success") and result.get("saved_paths"):
+        shutil.copy2(result["saved_paths"][0], filepath)
+        generated.append(img_file)
+        print(f"    [images]  ok: {img_file}")
+        return
+    error = result.get("error", "unknown")
+    if kind == "emotion" and meta.get("neutral_dest") and meta["neutral_dest"].exists():
+        shutil.copy2(meta["neutral_dest"], filepath)
+        print(f"    [images]  failed ({error}), neutral fallback: {img_file}")
+    elif kind not in ("emotion", "token"):
+        w, h, color = _PLACEHOLDER_SPECS[kind]
+        write_solid_png(filepath, w, h, color)
+        print(f"    [images]  failed ({error}), placeholder: {img_file}")
+    failed.append({"file": img_file, "error": error})
+
+
 def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -> Dict:
     from tools.comfyui_tools import (
         build_character_job, build_background_job, build_cg_job, build_item_job,
@@ -123,24 +146,7 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
     failed:    List[Dict] = []
 
     def _place(meta: Dict, result: Dict) -> None:
-        filepath, img_file, kind = meta["dest"], meta["file"], meta["kind"]
-        if result.get("success") and result.get("saved_paths"):
-            shutil.copy2(result["saved_paths"][0], filepath)
-            generated.append(img_file)
-            print(f"    [images]  ok: {img_file}")
-            return
-        error = result.get("error", "unknown")
-        # Emotion variants degrade to the neutral face rather than a solid block; if the neutral
-        # isn't on disk, compile-time placeholders still cover the reference. A missing token is
-        # not placeholder-backed either — the overworld's colour-dot fallback beats a grey square.
-        if kind == "emotion" and meta.get("neutral_dest") and meta["neutral_dest"].exists():
-            shutil.copy2(meta["neutral_dest"], filepath)
-            print(f"    [images]  failed ({error}), neutral fallback: {img_file}")
-        elif kind not in ("emotion", "token"):
-            w, h, color = _PLACEHOLDER_SPECS[kind]
-            write_solid_png(filepath, w, h, color)
-            print(f"    [images]  failed ({error}), placeholder: {img_file}")
-        failed.append({"file": img_file, "error": error})
+        _place_result(meta, result, generated, failed)
 
     # --- base pass: backgrounds, neutral character sprites, cgs, items, title card ----------
     base_meta: List[Dict] = []
@@ -319,6 +325,135 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
 
     return {"status": "ok", "generated": generated, "failed": failed,
             "mesh_total": mesh_total, "mesh_done": mesh_done}
+
+
+def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
+                           presentation: str = "2d") -> Dict:
+    """Regenerate exactly ONE declared/derived image file — the per-asset browser's targeted
+    'try again', never the whole manifest. Searches the same categories generate_images enumerates
+    (backgrounds/characters/tokens/emotions/cgs/items/title_card/markers/props/features/tiles) for
+    the one whose filename matches, then runs ONLY that job through the same build_*_job
+    constructors so a single regen produces byte-for-byte what a full pass would have for this
+    file. A feature's `.glb` rides along automatically when `presentation` is hd2d — the mesh is
+    this asset's other half, not a separate target the caller has to ask for."""
+    from tools.comfyui_tools import (
+        build_character_job, build_background_job, build_cg_job, build_item_job,
+        build_title_card_job, build_character_emotion_job, build_tile_job, build_token_job,
+        build_feature_job, make_seamless_tile, upload_image, vram_bracket, run_jobs, tile_refused,
+    )
+    from maestro.modules.world import _RPG_KINDS
+    from maestro.ir_assemble import used_emotions, expression_file
+
+    cast     = inputs.get("characters", {})
+    manifest = _merge_cast_into_manifest(cast, inputs.get("asset_manifest", {}))
+    images_dir = working_dir / "game_output" / "game" / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    cast_chars = {c["id"]: c for c in cast.get("characters", [])}
+    nodes = _nodes_list(inputs)
+    walkable = any(isinstance(p, dict) and p.get("kind") in _RPG_KINDS
+                   for p in ((inputs.get("places") or {}).get("places") or {}).values())
+
+    generated: List[str] = []
+    failed:    List[Dict] = []
+
+    def _run_one(kind: str, job: Dict, neutral_dest: Path = None) -> Dict:
+        meta = {"file": filename, "dest": images_dir / filename, "kind": kind}
+        if neutral_dest is not None:
+            meta["neutral_dest"] = neutral_dest
+        with vram_bracket():
+            result = run_jobs([job])[0]
+        _place_result(meta, result, generated, failed)
+        return {"status": "ok", "generated": generated, "failed": failed}
+
+    for bg in manifest.get("backgrounds", []):
+        if bg.get("image_file", f"{bg['id']}.png") == filename:
+            return _run_one("bg", build_background_job(bg.get("description", bg.get("name", bg["id"]))))
+
+    for char in manifest.get("characters", []):
+        cid = char["id"]
+        img_file = char.get("image_file", f"{cid}.png")
+        merged = {**cast_chars.get(cid, {}), **char}
+        if img_file == filename:
+            return _run_one("char", build_character_job(merged))
+        if walkable and f"{cid}_token.png" == filename:
+            return _run_one("token", build_token_job(merged))
+        for emotion in used_emotions(cid, nodes):
+            if emotion == "neutral" or expression_file(img_file, emotion) != filename:
+                continue
+            neutral_dest = images_dir / img_file
+            if not neutral_dest.exists():
+                return {"status": "error",
+                        "error": f"neutral base {img_file!r} missing; regenerate it first"}
+            base_name = upload_image(str(neutral_dest))
+            return _run_one("emotion", build_character_emotion_job(merged, emotion, base_name),
+                             neutral_dest=neutral_dest)
+
+    for cg in manifest.get("cgs", []):
+        if cg.get("image_file", f"{cg['id']}.png") == filename:
+            return _run_one("cg", build_cg_job(cg.get("description", cg["id"])))
+
+    for it in manifest.get("items", []):
+        if it.get("image_file", f"{it['id']}.png") == filename:
+            return _run_one("item", build_item_job(it.get("description", it.get("name", it["id"]))))
+
+    title_card = manifest.get("title_card", {})
+    if title_card.get("description") and title_card.get("image_file", "title_card.png") == filename:
+        return _run_one("title_card", build_title_card_job(title_card["description"]))
+
+    if walkable:
+        if filename == "marker_signpost.png":
+            return _run_one("token", build_item_job(
+                "weathered wooden trail signpost with a blank arrow board"))
+        if filename == "marker_banner.png":
+            return _run_one("token", build_item_job("small victory banner on a standing pole"))
+
+        for p in ((inputs.get("places") or {}).get("places") or {}).values():
+            if not isinstance(p, dict) or p.get("kind") not in _RPG_KINDS:
+                continue
+            for hot in p.get("interactables") or []:
+                a = (hot or {}).get("action") or {}
+                label = hot.get("label")
+                if a.get("type") == "examine" and label and f"prop_{tile_slug(label)}.png" == filename:
+                    return _run_one("token", build_item_job(label))
+
+        for kind, label in _collect_feature_specs(inputs.get("places", {})):
+            ff = f"feature_{tile_slug(label)}.png"
+            if ff != filename:
+                continue
+            result = _run_one("token", build_feature_job(kind, label))
+            if presentation == "hd2d" and filename in generated:
+                from tools.comfyui_tools import mesh_enabled, mesh_backend
+                if mesh_enabled():
+                    done = _run_mesh_pass([filename], images_dir, mesh_backend())
+                    result["mesh_total"] = 1
+                    if filename[:-4] in done:
+                        result["generated"].append(f"{filename[:-4]}.glb")
+                        result["mesh_done"] = 1
+                    else:
+                        result["mesh_done"] = 0
+                else:
+                    result["mesh_total"], result["mesh_done"] = 1, 0
+            return result
+
+        for theme, role in _collect_tile_specs(inputs.get("places", {})):
+            fname = f"tile_{tile_slug(theme)}.png"
+            if fname != filename:
+                continue
+            dest = images_dir / fname
+            for attempt in range(4):
+                job = build_tile_job(theme, role, ideogram=attempt < 3)
+                with vram_bracket():
+                    result = run_jobs([job])[0]
+                if not (result.get("success") and result.get("saved_paths")):
+                    return {"status": "error", "error": result.get("error", "unknown")}
+                if tile_refused(result["saved_paths"][0]):
+                    continue
+                shutil.copy2(result["saved_paths"][0], dest)
+                make_seamless_tile(dest)
+                return {"status": "ok", "generated": [fname], "failed": []}
+            return {"status": "error", "error": "tile refused after retries"}
+
+    return {"status": "error", "error": f"unknown asset filename {filename!r}"}
 
 
 def _run_mesh_pass(meshed: List[str], images_dir: Path, backend: str) -> set:

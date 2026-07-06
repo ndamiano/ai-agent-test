@@ -26,9 +26,11 @@ SCRATCHPAD_FILE = "scratchpad.json"
 STORY_STATE_FILE = "story_state.json"
 HUMAN_TODOS_FILE = "human_todos.json"
 WAIVERS_FILE = "waivers.json"
+DIRTY_FILE = "dirty.json"
 
 # Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, SCRATCHPAD_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE}
+_RESERVED = {SPEC_FILE, SCRATCHPAD_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE,
+             DIRTY_FILE}
 
 _SCRATCHPAD_FIELDS = ("current_goal", "recent_decisions", "open_questions")
 
@@ -104,6 +106,12 @@ class RunState:
 
     def write_waivers(self, waivers: List[Dict]) -> None:
         self._write(WAIVERS_FILE, waivers)
+
+    def read_dirty(self) -> List[Dict]:
+        return self._read(DIRTY_FILE) or []
+
+    def write_dirty(self, dirty: List[Dict]) -> None:
+        self._write(DIRTY_FILE, dirty)
 
     # ── io ────────────────────────────────────────────────────────────────────
     def _write(self, filename: str, data) -> None:

@@ -127,7 +127,13 @@ class BuildQueue:
                 continue
 
             try:
-                maestro.run.run_build(item.run_id)   # removes its own control in finally
+                result = maestro.run.run_build(item.run_id)   # removes its own control in finally
+                # A build only reaches here in a terminal state (a paused/awaiting-human build
+                # blocks inside the loop, never returns), so `not ok` means it genuinely failed to
+                # deliver — stuck-parked, cancelled mid-build, or out of steps. Charge only for a
+                # build that produced the finished game; refund every other outcome.
+                if item.cost and not result.ok:
+                    store.refund(item.user_id, item.cost, "build_failed", item.run_id)
             except Exception:
                 logger.exception("build failed for %s", item.run_id)
                 if item.cost:

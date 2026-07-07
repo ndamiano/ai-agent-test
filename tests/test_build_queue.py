@@ -41,8 +41,15 @@ def _gate(run_ids=("a", "b", "c")):
         started[run_id].set()
         releases[run_id].wait(timeout=5)
         run_control.remove(run_id)   # real run_build removes its own control in finally
+        return _Result(ok=True)      # a completed build; the queue charges it (no refund)
 
     return fake, started, releases, calls
+
+
+class _Result:
+    """Stand-in for maestro's LoopResult — the queue only reads `.ok`."""
+    def __init__(self, ok: bool):
+        self.ok = ok
 
 
 def test_cap_one_serializes_and_surfaces_position(q, monkeypatch):
@@ -198,3 +205,41 @@ def test_build_that_raises_before_output_refunds(q, monkeypatch, user):
     q.enqueue("a", uid, cost=1)
 
     assert _wait(lambda: store.balance(uid) == before + 1)   # failed build refunded
+
+
+def test_build_that_finishes_unmet_refunds(q, monkeypatch, user):
+    """A build that RUNS to a terminal state but doesn't satisfy the spec (result.ok False —
+    stuck-parked / cancelled mid-build / out of steps) is refunded: the user pays only for a
+    finished game, not for compute that failed to deliver."""
+    uid, store = user
+
+    def unmet(run_id, *a, **k):
+        run_control.remove(run_id)
+        return _Result(ok=False)
+    monkeypatch.setattr("maestro.run.run_build", unmet)
+    q.start()
+
+    store.deduct(uid, 1, "build", "a")
+    before = store.balance(uid)
+    q.enqueue("a", uid, cost=1)
+
+    assert _wait(lambda: store.balance(uid) == before + 1)
+
+
+def test_successful_build_is_charged_not_refunded(q, monkeypatch, user):
+    """The complement: a build that completes (result.ok True) keeps the deducted credit."""
+    uid, store = user
+
+    def done(run_id, *a, **k):
+        run_control.remove(run_id)
+        return _Result(ok=True)
+    monkeypatch.setattr("maestro.run.run_build", done)
+    q.start()
+
+    store.deduct(uid, 1, "build", "a")
+    after_deduct = store.balance(uid)
+    q.enqueue("a", uid, cost=1)
+
+    assert _wait(lambda: q.state_of("a") is None)   # build drained
+    time.sleep(0.1)                                 # let any (erroneous) refund land
+    assert store.balance(uid) == after_deduct       # credit stayed spent

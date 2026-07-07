@@ -5,7 +5,8 @@
     python -m auth.cli grant  <handle> <n>               # add credits (manual top-up)
     python -m auth.cli list
 
-The store lives at <working_directory>/auth.db (same base path as the run dirs).
+The store lives at <working_directory>/private/auth.db — a `private/` subtree that no
+file-serving route is rooted in, kept out of the run dirs.
 """
 
 import argparse

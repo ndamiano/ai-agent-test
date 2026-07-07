@@ -26,10 +26,13 @@ It steals the old pipeline's two good properties (completion guarantee, no conte
 ```
 src/
   agents/       MainAgent (chat persona — drafts/amends specs) + agent_store, chat.json / summarizer.json
-  auth/         The identity + access layer (sqlite): store.py (users + bearer sessions + the credit
-                ledger, pbkdf2 passwords, token stored only as a hash), deps.py (the app-level
-                middleware that gates EVERY http route + the get_current_user dependency), router.py
-                (POST /auth/login — login ONLY, no signup), billing.py (cost(spec) — the one swappable
+  auth/         The identity + access layer (sqlite at <working_directory>/private/auth.db — a
+                `private/` subtree no file-serving route is rooted in, kept out of the run dirs):
+                store.py (users + bearer sessions + the credit ledger, pbkdf2 passwords, token stored
+                only as a hash + a TTL so a leaked token doesn't live forever), deps.py (the app-level
+                middleware that gates EVERY http route — HEADER-ONLY, no token in the URL — + the
+                get_current_user dependency), router.py (POST /auth/login + POST /auth/logout — login
+                ONLY, no signup; logout revokes the token server-side), billing.py (cost(spec) — the one swappable
                 build-pricing function, flat 1 today), credits.py (the provider-agnostic top-up
                 seam: CreditProvider ABC + PurchaseEvent + get/set_provider; default
                 UnconfiguredProvider refuses every event so there is no unsigned credit path — a
@@ -39,11 +42,13 @@ src/
                 query param — http middleware never sees the ws scope), and chat sessions key on
                 the authed user. Credits gate builds: create_user seeds INITIAL_CREDITS; build_game
                 deducts cost(spec) atomically (single check-and-decrement, never negative, 402 if
-                short) BEFORE enqueue; the build queue refunds the exact deducted cost if the run is
-                cancelled while queued or run_build raises — one net deduction per real build. Every
+                short) BEFORE enqueue; the build queue refunds the exact deducted cost whenever the build fails
+                to deliver — cancelled while queued, run_build raises, or it returns result.ok False
+                (stuck-parked / cancelled mid-build / out of steps) — so the user pays only for a
+                finished game, one net deduction per delivered build. Every
                 balance change also lands a signed row in credit_transactions, so the ledger
                 reconciles with the balance. There is deliberately no self-serve account creation.
-  api/          FastAPI routers (chat, games, agents, outputs, system, websocket,
+  api/          FastAPI routers (chat, games, agents, system, websocket,
                 billing — the payment webhook `POST /api/billing/webhook`, PUBLIC in
                 auth.deps.PUBLIC_PATHS: a provider posts server-to-server with no user token, so
                 it's authed by its signature inside the CreditProvider, not the user-token gate) +

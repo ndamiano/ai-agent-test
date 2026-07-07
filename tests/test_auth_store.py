@@ -65,6 +65,19 @@ def test_token_issue_resolve_and_revoke():
     assert store.resolve_token(token) is None
 
 
+def test_token_stops_resolving_after_its_ttl(monkeypatch):
+    user = store.create_user("alice", "pw")
+    token = store.issue_token(user.id)
+    assert store.resolve_token(token) is not None
+
+    # Age the session past the TTL by shifting "now" forward — the token no longer resolves.
+    import auth.store as s
+    real_time = s.time.time
+    monkeypatch.setattr(s.time, "time",
+                        lambda: real_time() + store.SESSION_TTL_SECONDS + 1)
+    assert store.resolve_token(token) is None
+
+
 def test_token_stored_only_as_hash(tmp_path):
     user = store.create_user("alice", "pw")
     token = store.issue_token(user.id)

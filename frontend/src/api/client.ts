@@ -31,9 +31,13 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
     }
 }
 
-// A browser <img src>/download anchor can't send a header — carry the token in the query string.
-function tokenQuery(): string {
-    return authToken ? `?token=${encodeURIComponent(authToken)}` : ''
+// Protected binary GET (asset image, .glb, packaged download) with the bearer token on the
+// Authorization header — never in the URL. `<img>`/anchor consumers turn the returned bytes into
+// a blob: object URL. A 401 clears the token centrally, same as `request`.
+async function authFetch(path: string, init?: RequestInit): Promise<Response> {
+    const res = await fetch(`${base}${path}`, { ...init, headers: authHeaders(init?.headers) })
+    if (res.status === 401) { handleUnauthorized(); throw new ApiError(401, null) }
+    return res
 }
 
 // Carries the HTTP status + parsed body so callers can react to a specific failure — notably a
@@ -166,6 +170,11 @@ export const api = {
         if (!res.ok) throw new ApiError(res.status, null)
         return res.json() as Promise<{ id: string; handle: string; role: string; balance: number }>
     },
+    // Revoke the current token server-side. Best-effort: the caller clears local state regardless.
+    logout: async () => {
+        try { await fetch('/auth/logout', { method: 'POST', headers: authHeaders() }) }
+        catch { /* offline / already-dead token — local clear still applies */ }
+    },
 
     // Games
     listGames: () =>
@@ -198,10 +207,27 @@ export const api = {
         request<Record<string, any>>(`/games/${runId}/regenerate-asset`, {
             method: 'POST', body: JSON.stringify({ filename }),
         }),
-    assetFileUrl: (runId: string, filename: string) =>
-        `${base}/games/${runId}/asset-file/${encodeURIComponent(filename)}${tokenQuery()}`,
-    downloadGameUrl: (runId: string) =>
-        `${base}/games/${runId}/download${tokenQuery()}`,
+    // Fetch one asset file's bytes as a blob: object URL for an <img src>. Caller revokes it on
+    // unmount / refetch. Rejects (throws) if the file is missing or unauthorized.
+    fetchAssetObjectUrl: async (runId: string, filename: string): Promise<string> => {
+        const res = await authFetch(`/games/${runId}/asset-file/${encodeURIComponent(filename)}`)
+        if (!res.ok) throw new ApiError(res.status, null)
+        return URL.createObjectURL(await res.blob())
+    },
+    // True iff the asset file exists (HEAD) — the mesh-badge probe.
+    assetFileExists: async (runId: string, filename: string): Promise<boolean> => {
+        try {
+            const res = await authFetch(
+                `/games/${runId}/asset-file/${encodeURIComponent(filename)}`, { method: 'HEAD' })
+            return res.ok
+        } catch { return false }
+    },
+    // Pull the packaged self-contained build as a blob (authed), for a browser download.
+    fetchDownloadBlob: async (runId: string): Promise<Blob> => {
+        const res = await authFetch(`/games/${runId}/download`)
+        if (!res.ok) throw new ApiError(res.status, null)
+        return res.blob()
+    },
     editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
         request<{ ok: boolean }>(`/games/${runId}/component/${componentId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
     editNode: (runId: string, nodeId: string, content: Record<string, any>) =>

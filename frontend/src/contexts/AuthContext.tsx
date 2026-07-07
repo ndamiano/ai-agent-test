@@ -12,7 +12,7 @@ interface AuthContextValue {
     user: AuthUser | null
     balance: number | null
     login: (handle: string, password: string) => Promise<void>
-    logout: () => void
+    logout: () => Promise<void>
     refreshBalance: () => Promise<void>
 }
 
@@ -29,7 +29,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setBalance(null)
     }, [])
 
-    const logout = useCallback(() => {
+    const logout = useCallback(async () => {
+        await api.logout()   // revoke server-side before dropping the local token
         setAuthToken(null)
         clear()
     }, [clear])

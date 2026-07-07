@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import type { Asset } from '../../../types'
 import SceneCard from './SceneCard'
 import CharacterCard from './CharacterCard'
@@ -92,8 +92,11 @@ describe('D4 bespoke component-browser renderers mount for a sample asset of the
 })
 
 describe('AssetManifestCard renders the declared-asset gallery against the run\'s served images', () => {
-    it('shows each backgrounds/characters/cgs/title_card entry with a run-scoped image URL and a Regenerate control', () => {
+    it('shows each backgrounds/characters/cgs/title_card entry, loading images via the run-scoped authed fetch, plus a Regenerate control', async () => {
         vi.spyOn(api, 'listAssets').mockResolvedValue([])
+        // Images now load over an authed fetch (token on the header, not the URL) into a blob: URL.
+        const fetchAsset = vi.spyOn(api, 'fetchAssetObjectUrl')
+            .mockImplementation(async (_runId, filename) => `blob:mock/${filename}`)
         const manifestAsset = {
             ...asset('asset_manifest', 'asset_manifest', {
                 backgrounds: [{ id: 'bg_dock', image_file: 'bg_dock.png', description: 'a foggy dock' }],
@@ -113,8 +116,14 @@ describe('AssetManifestCard renders the declared-asset gallery against the run\'
         expect(container.textContent).toContain('cg_win')
         expect(container.textContent).toContain('title_card')
 
-        const img = container.querySelector('img[alt="bg_dock"]') as HTMLImageElement
-        expect(img.src).toContain('/api/games/run_g1/asset-file/bg_dock.png')
+        // The bytes are fetched run-scoped by (runId, filename) — no token-bearing URL anywhere.
+        expect(fetchAsset).toHaveBeenCalledWith('run_g1', 'bg_dock.png')
+        const img = await waitFor(() => {
+            const el = container.querySelector('img[alt="bg_dock"]') as HTMLImageElement | null
+            if (!el) throw new Error('image not yet loaded')
+            return el
+        })
+        expect(img.src).toContain('blob:mock/bg_dock.png')
 
         // one Regenerate button per gallery tile (4 declared assets), editable=true
         const buttons = Array.from(container.querySelectorAll('button'))

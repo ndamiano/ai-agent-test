@@ -28,7 +28,6 @@ GATED_PATHS = [
     "/api/games",
     "/api/agents/",
     "/api/system/status",
-    "/api/outputs/whatever.txt",
     "/api/chat",
 ]
 

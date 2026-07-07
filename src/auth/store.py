@@ -24,6 +24,10 @@ _PBKDF2_ROUNDS = 200_000
 # Credits seeded on account creation (grant-on-create, deduct-per-build).
 INITIAL_CREDITS = 100
 
+# A session token stops resolving this long after it was issued, so a leaked token can't be
+# used forever — a re-login mints a fresh one.
+SESSION_TTL_SECONDS = 30 * 24 * 3600
+
 
 @dataclass(frozen=True)
 class User:
@@ -33,8 +37,10 @@ class User:
 
 
 def _db_path() -> Path:
+    # The credential store lives in a `private/` subtree, never under `runs/` — no file-serving
+    # route is rooted there, so the auth db can't be reached as if it were a game artifact.
     from tools.execution_context import resolve_base_path
-    return resolve_base_path() / "auth.db"
+    return resolve_base_path() / "private" / "auth.db"
 
 
 @contextmanager
@@ -168,10 +174,12 @@ def issue_token(user_id: str) -> str:
 def resolve_token(token: Optional[str]) -> Optional[User]:
     if not token:
         return None
+    cutoff = time.time() - SESSION_TTL_SECONDS
     with _db() as conn:
         row = conn.execute(
-            "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?",
-            (_token_hash(token),),
+            "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id "
+            "WHERE s.token_hash = ? AND s.created_at > ?",
+            (_token_hash(token), cutoff),
         ).fetchone()
     return _row_to_user(row) if row else None
 

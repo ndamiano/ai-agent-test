@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import system, agents, outputs, websocket, chat, games, billing
+from api.routers import system, agents, websocket, chat, games, billing
 from auth.router import router as auth_router
 from auth.deps import install_auth
 
@@ -80,7 +80,6 @@ async def root(request: Request):
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
-app.include_router(outputs.router, prefix="/api/outputs", tags=["outputs"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])

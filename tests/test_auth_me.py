@@ -39,10 +39,23 @@ def test_me_returns_the_balance_for_a_valid_token(app_client):
     assert r2.json()["balance"] == store.INITIAL_CREDITS - 3
 
 
-def test_me_accepts_a_token_query_param(app_client):
-    """The <img>/download channel: a token in the query string authenticates too."""
+def test_logout_revokes_the_token(app_client):
+    store.create_user("carol", "pw")
+    token = store.issue_token(store.get_user_by_handle("carol").id)
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    assert app_client.get("/auth/me", headers=hdr).status_code == 200
+    assert app_client.post("/auth/logout", headers=hdr).status_code == 200
+    # The token is dead server-side now — reusing it 401s.
+    assert app_client.get("/auth/me", headers=hdr).status_code == 401
+
+
+def test_me_rejects_a_token_query_param(app_client):
+    """A token in the URL is NOT accepted on HTTP routes — header-only, so tokens never leak into
+    access logs / history / Referer. (The WebSocket, a separate scope, still reads its own param.)"""
     store.create_user("bob", "pw")
     token = store.issue_token(store.get_user_by_handle("bob").id)
-    r = app_client.get(f"/auth/me?token={token}")
+    assert app_client.get(f"/auth/me?token={token}").status_code == 401
+    r = app_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     assert r.json()["handle"] == "bob"

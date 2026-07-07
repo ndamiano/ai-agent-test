@@ -317,12 +317,17 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         setFeed(prev => [...prev.slice(-60), '⏳ packaging self-contained build…'])
         const r = await api.compileGame(runId, true)
         if (!r.ok) { setFeed(prev => [...prev.slice(-60), `✗ package failed: ${r.reason}`]); return }
+        // Pull the packaged build over an authed fetch (token on the header) and save the blob —
+        // no token in the URL. Revoke the object URL once the click has fired.
+        const blob = await api.fetchDownloadBlob(runId)
+        const href = URL.createObjectURL(blob)
         const a = document.createElement('a')
-        a.href = api.downloadGameUrl(runId)
-        a.download = ''
+        a.href = href
+        a.download = `${runId}.zip`
         document.body.appendChild(a)
         a.click()
         a.remove()
+        URL.revokeObjectURL(href)
     }, 'Download failed', false)
     const componentIds: string[] = Object.keys(detail?.artifact ?? {})
     const addTodo = () => act(async () => {

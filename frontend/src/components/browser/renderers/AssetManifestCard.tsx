@@ -39,10 +39,24 @@ const AssetThumb: React.FC<{
 }> = ({ runId, filename, label, description, editable, extra, onRegenerated }) => {
     const [version, setVersion] = useState(0)
     const [status, setStatus] = useState<'loading' | 'ok' | 'missing'>('loading')
+    const [url, setUrl] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [err, setErr] = useState<string | null>(null)
 
-    const url = `${api.assetFileUrl(runId, filename)}${version ? `?v=${version}` : ''}`
+    // Load the asset bytes over an authed fetch (token on the header, never the URL) and hand the
+    // <img> a blob: object URL. Revoke the previous URL on refetch/unmount so blobs don't leak.
+    useEffect(() => {
+        let revoked = false
+        let objUrl: string | null = null
+        setStatus('loading')
+        api.fetchAssetObjectUrl(runId, filename)
+            .then(u => {
+                if (revoked) { URL.revokeObjectURL(u); return }
+                objUrl = u; setUrl(u); setStatus('ok')
+            })
+            .catch(() => { if (!revoked) { setUrl(null); setStatus('missing') } })
+        return () => { revoked = true; if (objUrl) URL.revokeObjectURL(objUrl) }
+    }, [runId, filename, version])
 
     const regenerate = async () => {
         setBusy(true); setErr(null)
@@ -61,14 +75,9 @@ const AssetThumb: React.FC<{
     return (
         <div className="bg-black/20 rounded-lg p-2 flex flex-col gap-1.5 w-32">
             <div className="relative w-28 h-28 rounded overflow-hidden bg-white/[0.04]">
-                <img
-                    key={url}
-                    src={url}
-                    alt={label}
-                    className="w-full h-full object-cover"
-                    onLoad={() => setStatus('ok')}
-                    onError={() => setStatus('missing')}
-                />
+                {url && (
+                    <img key={url} src={url} alt={label} className="w-full h-full object-cover" />
+                )}
                 <span
                     className={`absolute top-1 right-1 w-2 h-2 rounded-full ${STATUS_DOT[status]}`}
                     title={status === 'ok' ? 'generated' : status === 'missing' ? 'missing' : 'loading'}
@@ -101,9 +110,8 @@ const MeshBadge: React.FC<{ runId: string; featureSlug: string; version: number 
     useEffect(() => {
         let cancelled = false
         setHas(null)
-        fetch(`${api.assetFileUrl(runId, `feature_${featureSlug}.glb`)}${version ? `?v=${version}` : ''}`,
-            { method: 'HEAD' })
-            .then(res => { if (!cancelled) setHas(res.ok) })
+        api.assetFileExists(runId, `feature_${featureSlug}.glb`)
+            .then(ok => { if (!cancelled) setHas(ok) })
             .catch(() => { if (!cancelled) setHas(false) })
         return () => { cancelled = true }
     }, [runId, featureSlug, version])

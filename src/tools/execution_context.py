@@ -10,15 +10,19 @@ _working_directory_var: ContextVar[Optional[str]] = ContextVar('working_director
 
 @contextmanager
 def execution_context(task_id: Optional[str] = None, subtask_id: Optional[str] = None, working_directory: Optional[str] = None):
-    task_token = _task_id_var.set(task_id)
-    subtask_token = _subtask_id_var.set(subtask_id)
-    wd_token = _working_directory_var.set(working_directory)
+    # Restore prior VALUES instead of reset(token): this wraps async streaming generators that
+    # yield across task/context boundaries, so __enter__ and the finally can run in different
+    # Contexts — and ContextVar.reset() rejects a token created in another Context.
+    prev = (_task_id_var.get(), _subtask_id_var.get(), _working_directory_var.get())
+    _task_id_var.set(task_id)
+    _subtask_id_var.set(subtask_id)
+    _working_directory_var.set(working_directory)
     try:
         yield
     finally:
-        _task_id_var.reset(task_token)
-        _subtask_id_var.reset(subtask_token)
-        _working_directory_var.reset(wd_token)
+        _task_id_var.set(prev[0])
+        _subtask_id_var.set(prev[1])
+        _working_directory_var.set(prev[2])
 
 
 def get_task_id() -> Optional[str]:

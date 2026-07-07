@@ -232,3 +232,22 @@ class TestAutoInjection:
         with execution_context(task_id="t1"):
             result = self.tm.useTool("test_validation", message="hello")
             assert result == "t1: hello"
+
+    def test_exit_in_different_context_does_not_raise(self):
+        """The manager wraps async streaming generators that yield across context boundaries, so
+        __enter__ and the finally can run in different Contexts. reset(token) raised 'Token was
+        created in a different Context'; value-restore must not."""
+        import contextvars
+
+        cm = execution_context(task_id="x")
+        contextvars.copy_context().run(cm.__enter__)   # set() runs in a copied Context
+        cm.__exit__(None, None, None)                  # finally runs here — must not raise
+
+    def test_nesting_restores_outer_values(self):
+        assert get_task_id() is None
+        with execution_context(task_id="outer", subtask_id="a"):
+            assert get_task_id() == "outer"
+            with execution_context(task_id="inner", subtask_id="b"):
+                assert get_task_id() == "inner"
+            assert get_task_id() == "outer" and get_subtask_id() == "a"
+        assert get_task_id() is None

@@ -6,6 +6,7 @@ from pathlib import Path
 _task_id_var: ContextVar[Optional[str]] = ContextVar('task_id', default=None)
 _subtask_id_var: ContextVar[Optional[str]] = ContextVar('subtask_id', default=None)
 _working_directory_var: ContextVar[Optional[str]] = ContextVar('working_directory', default=None)
+_user_id_var: ContextVar[Optional[str]] = ContextVar('user_id', default=None)
 
 
 @contextmanager
@@ -23,6 +24,23 @@ def execution_context(task_id: Optional[str] = None, subtask_id: Optional[str] =
         _task_id_var.set(prev[0])
         _subtask_id_var.set(prev[1])
         _working_directory_var.set(prev[2])
+
+
+@contextmanager
+def user_id_scope(user_id: Optional[str]):
+    """Bind the authenticated user for the duration of a call so run-creating tools
+    (`create_run`) can attribute a new run to its owner. Restores the prior value (not
+    reset(token)) because it wraps streaming generators that resume across Contexts."""
+    prev = _user_id_var.get()
+    _user_id_var.set(user_id)
+    try:
+        yield
+    finally:
+        _user_id_var.set(prev)
+
+
+def get_user_id() -> Optional[str]:
+    return _user_id_var.get()
 
 
 def get_task_id() -> Optional[str]:

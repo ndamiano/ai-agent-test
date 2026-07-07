@@ -75,6 +75,36 @@ def test_chat_stream_forwards_tokens_and_tool_progress_then_done(monkeypatch):
     assert roles == ["user", "assistant", "tool", "assistant"]
 
 
+def test_tool_runs_under_the_agents_user_context(monkeypatch):
+    """The run-creating tool reads the authed user via get_user_id(); the agent must
+    re-establish it around the tool call (the contextvar does not survive the streaming
+    boundary, so binding it on the agent is what makes ownership attribution work)."""
+    from tools.execution_context import get_user_id
+
+    first_call = [
+        {"choices": [{"index": 0, "delta": {"tool_calls": [{
+            "index": 0, "id": "call1", "type": "function",
+            "function": {"name": "propose_game_spec", "arguments": "{}"},
+        }]}, "finish_reason": "tool_calls"}]},
+    ]
+    second_call = [
+        {"choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": "stop"}]},
+    ]
+    agent = MainAgent(agent_id="chat", user_id="u42")
+    agent.connector = _FakeStreamConnector([first_call, second_call])
+
+    seen = {}
+
+    def _record(name, **kwargs):
+        seen["user_id"] = get_user_id()
+        return {"ok": True}
+
+    monkeypatch.setattr("agents.main_agent.tool_manager.useTool", _record)
+
+    list(agent.chat_stream("make me a game"))
+    assert seen["user_id"] == "u42"
+
+
 def test_chat_stream_surfaces_tool_failure(monkeypatch):
     first_call = [
         {"choices": [{"index": 0, "delta": {"tool_calls": [{

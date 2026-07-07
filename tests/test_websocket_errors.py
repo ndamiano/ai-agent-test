@@ -74,8 +74,10 @@ class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
 
     async def _run_endpoint(self, receive_raise=None):
         from api.routers import websocket as websocket_module
+        from auth.store import User
 
         websocket = AsyncMock(spec=WebSocket)
+        websocket.query_params = {"token": "valid"}
         websocket.send_json = AsyncMock()
         websocket.receive_text = AsyncMock(
             side_effect=receive_raise or WebSocketDisconnect(code=1000)
@@ -88,7 +90,9 @@ class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
         logger_mock = MagicMock()
 
         with patch.object(websocket_module, "manager", manager_mock), \
-             patch.object(websocket_module, "logger", logger_mock):
+             patch.object(websocket_module, "logger", logger_mock), \
+             patch("auth.store.resolve_token",
+                   return_value=User(id="u1", handle="alice", role="user")):
             await websocket_module.websocket_endpoint(websocket)
 
         return websocket, logger_mock, manager_mock

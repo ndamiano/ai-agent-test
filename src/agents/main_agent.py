@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 from llm_clients.connector_selector import get_connector
 from llm_clients.message_builder import MessageBuilder
 from tools.tool_manager import tool_manager
-from tools.execution_context import execution_context
+from tools.execution_context import execution_context, user_id_scope
 from config.time_utils import get_utc_timestamp
 from api.websocket.event_bus import event_bus
 from .agent_store import get_agent
@@ -18,8 +18,10 @@ class MainAgent:
         self,
         agent_id: str,
         system_prompt: Optional[str] = None,
+        user_id: Optional[str] = None,
     ):
         self.connector = get_connector()
+        self.user_id = user_id
         self.message_history: List[Dict[str, str]] = []
 
         agent_data = get_agent(agent_id)
@@ -294,7 +296,8 @@ class MainAgent:
                             raw_args = "{}"
                         arguments = json.loads(raw_args)
 
-                        result = tool_manager.useTool(tool_name, **arguments)
+                        with user_id_scope(self.user_id):
+                            result = tool_manager.useTool(tool_name, **arguments)
 
                         self._broadcast_tool_usage(tool_name, arguments, 'success')
 

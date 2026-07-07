@@ -28,24 +28,27 @@ per-user ownership, and a credit ledger that gates builds.
 - **Persistence is on-disk run dirs only** — no database. Auth + credits introduce the first
   persistent user store (coordinate with `build_deploy.md` on the DB choice).
 
-## T1 — Authentication
-- [ ] **User store + model** (id, handle, hashed password / token, created_at, role). New persistent
-      store — pick the backend with `build_deploy.md` (sqlite to start is fine).
-- [ ] **Session/token + login endpoint.** `POST /auth/login`; issue a session or JWT.
-- [ ] **Gate ALL routes.** Middleware requiring auth on games, chat, outputs, settings, and the
-      **WebSocket** connection — nothing reachable anonymously.
-- [ ] **Manual account provisioning.** An admin CLI / script to create a user + set a password/grant.
+## T1 — Authentication  ✅ DONE
+- [x] **User store + model** (id, handle, hashed password / token, created_at, role). sqlite store at
+      `<working_dir>/auth.db` (`src/auth/store.py`); pbkdf2 passwords, sessions stored as token hash.
+- [x] **Session/token + login endpoint.** `POST /auth/login` issues an opaque bearer token
+      (`src/auth/router.py`).
+- [x] **Gate ALL routes.** One app-level middleware (`auth.deps.install_auth`) requires a valid
+      token on every http route (games, chat, outputs, settings, agents, system); the **WebSocket**
+      authenticates itself via a `token` query param (`routers/websocket.py`). Public: `/`,
+      `/auth/login`, docs.
+- [x] **Manual account provisioning.** `python -m auth.cli create <handle>` (+ `passwd`, `list`).
       **No public signup route.**
-- [ ] **Per-user chat sessions.** Key `_sessions` to the authenticated user; drop the shared default
-      (`chat.py:31`).
-- [ ] **Tests:** unauthenticated request to every router is rejected; login issues a working token;
-      no signup endpoint exists.
+- [x] **Per-user chat sessions.** `_sessions` keys on the authed user; the shared default is gone.
+- [x] **Tests:** `test_auth_gate.py` (every router rejects anon; valid token passes; no signup route;
+      ws gated), `test_auth_router.py` (login issues a working token), `test_auth_store.py`.
 
-## T2 — Run ownership (also unblocks scaleout S1)
-- [ ] **Attach `user_id` to runs** at create (`run.py` create_run) — persisted in run state.
-- [ ] **Scope every run operation to its owner** — `list_games`/get/build/pause/cancel/download in
-      `games.py` filter by the authed user. Closes the global-run hole.
-- [ ] **Tests:** a user sees/controls only their own runs; cross-user access 403s.
+## T2 — Run ownership (also unblocks scaleout S1)  ✅ DONE
+- [x] **Attach `user_id` to runs** at create — `create_run(user_id)` writes `owner.json`
+      (`RunState.write_owner`); the chat tool path attributes via a user-id context var.
+- [x] **Scope every run operation to its owner** — `_require_state(run_id, user)` in `games.py`
+      404s an unknown run / 403s another user's; `list_games` filters to the caller. Closes the hole.
+- [x] **Tests:** `test_run_ownership.py` + cross-user 403 cases across the games routers.
 
 ## T3 — Credit ledger
 - [ ] **Balance + transaction log per user** in the store (grant / deduct / refund entries).

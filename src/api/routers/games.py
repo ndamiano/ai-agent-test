@@ -12,9 +12,12 @@ import mimetypes
 import threading
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+from auth.deps import get_current_user
+from auth.store import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -100,9 +103,21 @@ def _is_built(run_dir) -> bool:
     return (run_dir / "game_output").exists()
 
 
+def _require_state(run_id: str, user: User):
+    """The run's state, scoped to its owner: 404 if there's no spec, 403 if it isn't this user's."""
+    from maestro.state import RunState
+
+    state = RunState.for_run(run_id)
+    if state.read_spec() is None:
+        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    if state.read_owner() != user.id:
+        raise HTTPException(status_code=403, detail="not your game")
+    return state
+
+
 @router.get("", response_model=List[Dict])
-async def list_games():
-    """Lightweight summary of every run. No validate (avoids per-row compiles)."""
+async def list_games(user: User = Depends(get_current_user)):
+    """Lightweight summary of the caller's runs. No validate (avoids per-row compiles)."""
     from maestro.state import RunState
 
     runs = _runs_dir()
@@ -116,6 +131,8 @@ async def list_games():
         state = RunState(run_dir)
         spec = state.read_spec()
         if spec is None:
+            continue
+        if state.read_owner() != user.id:
             continue
         games.append({
             "run_id": run_dir.name,
@@ -132,18 +149,14 @@ async def list_games():
 
 
 @router.get("/{run_id}", response_model=Dict)
-async def get_game(run_id: str):
+async def get_game(run_id: str, user: User = Depends(get_current_user)):
     """Full detail for one game: spec, built artifact, and the current to-do."""
     from maestro.spec import Spec
-    from maestro.state import RunState
     from maestro.modules.human import effective_failures
     from maestro.run_control import get as get_control
 
-    state = RunState.for_run(run_id)
+    state = _require_state(run_id, user)
     spec_data = state.read_spec()
-    if spec_data is None:
-        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
-
     spec = Spec(spec_data)
     ctrl = get_control(run_id)
     built = _is_built(state.run_dir)
@@ -165,38 +178,32 @@ async def get_game(run_id: str):
 
 
 @router.patch("/{run_id}/spec", response_model=Dict)
-async def amend_game_spec_route(run_id: str, body: AmendBody):
+async def amend_game_spec_route(run_id: str, body: AmendBody, user: User = Depends(get_current_user)):
     """Edit a draft's plan before freeze — change modules / sizing / title. Un-freezes + re-resolves
     (foundation forced, deps expanded, engine re-derived). Returns the fresh detail."""
     from tools.spec_tools import amend_spec
-    from maestro.state import RunState
 
-    if RunState.for_run(run_id).read_spec() is None:
-        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    _require_state(run_id, user)
     await asyncio.to_thread(amend_spec, run_id, body.changes, body.reason)
-    return await get_game(run_id)
+    return await get_game(run_id, user)
 
 
 @router.post("/{run_id}/freeze", response_model=Dict)
-async def freeze_game(run_id: str):
+async def freeze_game(run_id: str, user: User = Depends(get_current_user)):
     """Human approval action — freeze the spec so the build can run."""
     from tools.spec_tools import freeze_spec
-    from maestro.state import RunState
 
-    if RunState.for_run(run_id).read_spec() is None:
-        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    _require_state(run_id, user)
     return await asyncio.to_thread(freeze_spec, run_id)
 
 
 @router.post("/{run_id}/build", response_model=Dict)
-async def build_game(run_id: str, body: BuildBody = BuildBody()):
+async def build_game(run_id: str, body: BuildBody = BuildBody(),
+                     user: User = Depends(get_current_user)):
     """Kick a build on a background thread. Progress streams over the websocket."""
     from maestro.run import run_build
-    from maestro.state import RunState
 
-    spec_data = RunState.for_run(run_id).read_spec()
-    if spec_data is None:
-        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    spec_data = _require_state(run_id, user).read_spec()
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
@@ -233,76 +240,72 @@ def _control(run_id: str):
 
 
 @router.post("/{run_id}/pause", response_model=Dict)
-async def pause_game(run_id: str):
+async def pause_game(run_id: str, user: User = Depends(get_current_user)):
     """Pause a running build — it halts at the next step boundary (state stays consistent)."""
+    _require_state(run_id, user)
     _control(run_id).request_pause()
     return {"run_id": run_id, "status": "pausing"}
 
 
 @router.post("/{run_id}/resume", response_model=Dict)
-async def resume_game(run_id: str):
+async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     """Resume a paused build."""
+    _require_state(run_id, user)
     _control(run_id).request_resume()
     return {"run_id": run_id, "status": "running"}
 
 
 @router.post("/{run_id}/cancel", response_model=Dict)
-async def cancel_game(run_id: str):
+async def cancel_game(run_id: str, user: User = Depends(get_current_user)):
     """Cancel a running build — it unwinds at the next step boundary."""
+    _require_state(run_id, user)
     _control(run_id).request_cancel()
     return {"run_id": run_id, "status": "cancelling"}
 
 
 @router.post("/{run_id}/auto-pause", response_model=Dict)
-async def auto_pause_game(run_id: str, body: AutoPauseBody):
+async def auto_pause_game(run_id: str, body: AutoPauseBody, user: User = Depends(get_current_user)):
     """Arm/disarm auto-pause: when armed, the build parks itself each time a component finishes."""
+    _require_state(run_id, user)
     _control(run_id).set_auto_pause(body.enabled)
     return {"run_id": run_id, "auto_pause": body.enabled}
 
 
-def _require_state(run_id: str):
-    from maestro.state import RunState
-
-    state = RunState.for_run(run_id)
-    if state.read_spec() is None:
-        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
-    return state
-
-
 @router.post("/{run_id}/todos", response_model=Dict)
-async def add_todo_game(run_id: str, body: TodoBody):
+async def add_todo_game(run_id: str, body: TodoBody, user: User = Depends(get_current_user)):
     """Add a human todo against a component — the build won't complete while it's open.
     A live build parks in `awaiting_human` once its machine checks pass."""
     from maestro.modules.human import add_todo
 
-    return add_todo(_require_state(run_id), body.component_id, body.text)
+    return add_todo(_require_state(run_id, user), body.component_id, body.text)
 
 
 @router.patch("/{run_id}/todos/{todo_id}", response_model=Dict)
-async def resolve_todo_game(run_id: str, todo_id: str, body: ResolveBody):
+async def resolve_todo_game(run_id: str, todo_id: str, body: ResolveBody,
+                           user: User = Depends(get_current_user)):
     """Mark a human todo done (or reopen it) — only the human arbitrates this."""
     from maestro.modules.human import resolve_todo
 
-    if not resolve_todo(_require_state(run_id), todo_id, body.done):
+    if not resolve_todo(_require_state(run_id, user), todo_id, body.done):
         raise HTTPException(status_code=404, detail=f"no todo {todo_id!r}")
     return {"run_id": run_id, "todo_id": todo_id, "done": body.done}
 
 
 @router.post("/{run_id}/waive", response_model=Dict)
-async def waive_game(run_id: str, body: WaiveBody):
+async def waive_game(run_id: str, body: WaiveBody, user: User = Depends(get_current_user)):
     """Accept a machine check still reported red — it leaves the to-do and no longer blocks
     completion. Keyed on the error's `idkey` (from the detail endpoint's todo list)."""
     from maestro.modules.human import waive
 
-    return waive(_require_state(run_id), body.idkey, body.note)
+    return waive(_require_state(run_id, user), body.idkey, body.note)
 
 
 @router.post("/{run_id}/unwaive", response_model=Dict)
-async def unwaive_game(run_id: str, body: UnwaiveBody):
+async def unwaive_game(run_id: str, body: UnwaiveBody, user: User = Depends(get_current_user)):
     """Reinstate a previously waived check."""
     from maestro.modules.human import unwaive
 
-    if not unwaive(_require_state(run_id), body.idkey):
+    if not unwaive(_require_state(run_id, user), body.idkey):
         raise HTTPException(status_code=404, detail=f"no waiver {body.idkey!r}")
     return {"run_id": run_id, "idkey": body.idkey}
 
@@ -330,19 +333,20 @@ def _human_tools(spec, state):
     return build_tools(spec_data, state, compose(spec_data.get("modules", [])))
 
 
-def _spec_state(run_id: str):
+def _spec_state(run_id: str, user: User):
     from maestro.spec import Spec
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     return Spec(state.read_spec()), state
 
 
 @router.put("/{run_id}/component/{component_id}", response_model=Dict)
-async def edit_component_game(run_id: str, component_id: str, body: ComponentBody):
+async def edit_component_game(run_id: str, component_id: str, body: ComponentBody,
+                             user: User = Depends(get_current_user)):
     """Human edit of a whole component (schema-validated; overrides the lock). UN-GATED (Epic C3):
     allowed at any build state — a hand-edit is itself a rewrite, so it clears each item's own
     dirty flag and reflags its downstream closure instead of waiting for a pause."""
-    spec, state = _spec_state(run_id)
+    spec, state = _spec_state(run_id, user)
     result = _human_tools(spec, state)["write_component"](component_id, body.content, force=True)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "invalid component"))
@@ -353,10 +357,11 @@ async def edit_component_game(run_id: str, component_id: str, body: ComponentBod
 
 
 @router.put("/{run_id}/node/{node_id}", response_model=Dict)
-async def edit_node_game(run_id: str, node_id: str, body: NodeEditBody):
+async def edit_node_game(run_id: str, node_id: str, body: NodeEditBody,
+                        user: User = Depends(get_current_user)):
     """Human patch of one node field (e.g. fix a character's line); overrides the lock. UN-GATED
     (Epic C3): allowed at any build state."""
-    spec, state = _spec_state(run_id)
+    spec, state = _spec_state(run_id, user)
     patch = body.model_dump(exclude_unset=True)
     result = _human_tools(spec, state)["edit_node"](node_id, force=True, **patch)
     if not result.get("ok"):
@@ -366,27 +371,30 @@ async def edit_node_game(run_id: str, node_id: str, body: NodeEditBody):
 
 
 @router.post("/{run_id}/regenerate-assets", response_model=Dict)
-async def regenerate_assets_game(run_id: str):
+async def regenerate_assets_game(run_id: str, user: User = Depends(get_current_user)):
     """Regenerate the art (ComfyUI when up, placeholder fallback) from the current manifest.
     Recompile afterward to repackage the project with the new images."""
+    _require_state(run_id, user)
     _require_editable(run_id)
     from renpy.fns import generate_images
 
-    _, state = _spec_state(run_id)
+    _, state = _spec_state(run_id, user)
     presentation = (state.read_spec() or {}).get("presentation", "2d")
     return generate_images(state.load_artifact(), state.run_dir,
                            presentation=presentation) or {"ok": True}
 
 
 @router.post("/{run_id}/regenerate-asset", response_model=Dict)
-async def regenerate_asset_game(run_id: str, body: AssetRegenBody):
+async def regenerate_asset_game(run_id: str, body: AssetRegenBody,
+                               user: User = Depends(get_current_user)):
     """Regenerate exactly ONE declared/derived image file (never the whole manifest) — the
     per-asset browser's 'try again'. Passes the run's `presentation` so an hd2d feature's mesh
     rides along with its sprite, same as the all-assets regenerate."""
+    _require_state(run_id, user)
     _require_editable(run_id)
     from renpy.fns import generate_single_asset
 
-    _, state = _spec_state(run_id)
+    _, state = _spec_state(run_id, user)
     presentation = (state.read_spec() or {}).get("presentation", "2d")
     result = generate_single_asset(state.load_artifact(), state.run_dir, body.filename,
                                    presentation=presentation)
@@ -395,17 +403,17 @@ async def regenerate_asset_game(run_id: str, body: AssetRegenBody):
     return result
 
 
-def _images_dir(run_id: str):
-    return _require_state(run_id).run_dir / "game_output" / "game" / "images"
+def _images_dir(run_id: str, user: User):
+    return _require_state(run_id, user).run_dir / "game_output" / "game" / "images"
 
 
 @router.get("/{run_id}/asset-file/{filename}")
-async def asset_file_game(run_id: str, filename: str):
+async def asset_file_game(run_id: str, filename: str, user: User = Depends(get_current_user)):
     """Stream one generated asset file's bytes (image or mesh) — the component browser's `<img
     src>` target. Guarded to the run's own images dir: `filename` is a single path segment (FastAPI
     won't match a `/` into it) and the resolved path must still land inside that directory, so a
     `..` traversal 403s instead of reaching outside the run."""
-    images_dir = _images_dir(run_id).resolve()
+    images_dir = _images_dir(run_id, user).resolve()
     resolved = (images_dir / filename).resolve()
     if not resolved.is_relative_to(images_dir):
         raise HTTPException(status_code=403, detail="invalid asset filename")
@@ -419,17 +427,19 @@ async def asset_file_game(run_id: str, filename: str):
 
 
 @router.post("/{run_id}/compile", response_model=Dict)
-async def compile_game(run_id: str, body: CompileBody = CompileBody()):
+async def compile_game(run_id: str, body: CompileBody = CompileBody(),
+                      user: User = Depends(get_current_user)):
     """Compile/package the project on demand. Output served via /api/outputs/."""
+    _require_state(run_id, user)
     _require_editable(run_id)
     from maestro.engines import compile_for
 
-    spec, state = _spec_state(run_id)
+    spec, state = _spec_state(run_id, user)
     return compile_for(spec.engine)(state.run_dir, distribute=body.distribute)
 
 
 @router.get("/{run_id}/download")
-async def download_game(run_id: str):
+async def download_game(run_id: str, user: User = Depends(get_current_user)):
     """Stream the SELF-CONTAINED distributable (engine bundled) so the player needs no Ren'Py or
     Godot install. The backend is network-reachable (remote box), so there is no local file
     manager to 'reveal' into — the user pulls the finished game over HTTP.
@@ -438,7 +448,7 @@ async def download_game(run_id: str):
     zip of desktop binaries to <run>/godot_dist.zip. Package the game first to produce them."""
     import shutil
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     run = state.run_dir
 
     godot_dist = run / "godot_dist.zip"
@@ -465,10 +475,11 @@ _rewriting: set = set()
 
 
 @router.post("/{run_id}/node/{node_id}/rewrite", response_model=Dict)
-async def rewrite_node_game(run_id: str, node_id: str, body: RewriteBody):
+async def rewrite_node_game(run_id: str, node_id: str, body: RewriteBody,
+                           user: User = Depends(get_current_user)):
     """Regenerate one scene from a human note ('make it tenser'), on a background thread.
     Progress + completion stream over the websocket (node_rewrite_*)."""
-    _require_state(run_id)
+    _require_state(run_id, user)
     _require_editable(run_id)
     from maestro.run import rewrite_node_run
 
@@ -622,13 +633,13 @@ def _after_edit(run_id: str, spec_data: Dict, state, component_id: str, item_ids
 
 
 @router.get("/{run_id}/assets/{component_id}", response_model=List[Dict])
-async def list_assets_game(run_id: str, component_id: str):
+async def list_assets_game(run_id: str, component_id: str, user: User = Depends(get_current_user)):
     """Every asset in one component, uniform across every component type — the component-blind
     browser's 'list assets of type X'. Folds in the dirty store so a card needs no second fetch
     for its dirty flag / review note."""
     from maestro.modules.human import dirty_entries
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     content = state.read_component(component_id)
     if content is None:
         raise HTTPException(status_code=404, detail=f"no component {component_id!r}")
@@ -641,11 +652,12 @@ async def list_assets_game(run_id: str, component_id: str):
 
 
 @router.get("/{run_id}/assets/{component_id}/{item_id}", response_model=Dict)
-async def get_asset_game(run_id: str, component_id: str, item_id: str):
+async def get_asset_game(run_id: str, component_id: str, item_id: str,
+                        user: User = Depends(get_current_user)):
     """One asset's detail — same shape as a list row."""
     from maestro.modules.human import dirty_entries
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     content = state.read_component(component_id)
     if content is None:
         raise HTTPException(status_code=404, detail=f"no component {component_id!r}")
@@ -660,10 +672,11 @@ async def get_asset_game(run_id: str, component_id: str, item_id: str):
 
 
 @router.put("/{run_id}/assets/{component_id}/{item_id}", response_model=Dict)
-async def edit_asset_game(run_id: str, component_id: str, item_id: str, body: ComponentBody):
+async def edit_asset_game(run_id: str, component_id: str, item_id: str, body: ComponentBody,
+                         user: User = Depends(get_current_user)):
     """Uniform per-asset edit — any component, any item, at any build state (never gated on
     paused/idle; the edit reflags its downstream closure via Epic B instead of blocking)."""
-    spec, state = _spec_state(run_id)
+    spec, state = _spec_state(run_id, user)
     tools = _human_tools(spec, state)
     result = _apply_asset_edit(state, tools, component_id, item_id, body.content)
     if not result.get("ok"):
@@ -673,12 +686,12 @@ async def edit_asset_game(run_id: str, component_id: str, item_id: str, body: Co
 
 
 @router.post("/{run_id}/assets/dirty", response_model=Dict)
-async def set_dirty_game(run_id: str, body: DirtyBody):
+async def set_dirty_game(run_id: str, body: DirtyBody, user: User = Depends(get_current_user)):
     """Flag one asset for attention — a manual 'look at this' (thumbs-down is the same call,
     worded differently for the UI's reject control)."""
     from maestro.modules.human import set_dirty
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     set_dirty(state, body.idkey, body.note)
     _emit_asset_event(run_id, "asset_dirty_set", idkey=body.idkey, note=body.note,
                       **_idkey_fields(body.idkey))
@@ -686,11 +699,11 @@ async def set_dirty_game(run_id: str, body: DirtyBody):
 
 
 @router.post("/{run_id}/assets/thumbs-up", response_model=Dict)
-async def thumbs_up_game(run_id: str, body: ThumbBody):
+async def thumbs_up_game(run_id: str, body: ThumbBody, user: User = Depends(get_current_user)):
     """Approve an asset — clears its dirty flag; the loop stops surfacing it."""
     from maestro.modules.human import clear_dirty
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     cleared = clear_dirty(state, body.idkey)
     if cleared:
         _emit_asset_event(run_id, "asset_dirty_cleared", idkey=body.idkey, **_idkey_fields(body.idkey))
@@ -698,12 +711,12 @@ async def thumbs_up_game(run_id: str, body: ThumbBody):
 
 
 @router.post("/{run_id}/assets/thumbs-down", response_model=Dict)
-async def thumbs_down_game(run_id: str, body: DirtyBody):
+async def thumbs_down_game(run_id: str, body: DirtyBody, user: User = Depends(get_current_user)):
     """Reject an asset with a 'change this' note — same effect as set_dirty, worded for the UI's
     thumbs-down control."""
     from maestro.modules.human import set_dirty
 
-    state = _require_state(run_id)
+    state = _require_state(run_id, user)
     set_dirty(state, body.idkey, body.note)
     _emit_asset_event(run_id, "asset_dirty_set", idkey=body.idkey, note=body.note,
                       **_idkey_fields(body.idkey))

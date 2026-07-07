@@ -21,9 +21,10 @@ from maestro.tools import build_tools
 from maestro.agent_loop import AgentLoop, LoopResult
 
 
-def create_run() -> str:
+def create_run(user_id: str) -> str:
     run_id = uuid.uuid4().hex[:12]
-    RunState.for_run(run_id)  # creates the dir
+    state = RunState.for_run(run_id)  # creates the dir
+    state.write_owner(user_id)
     return run_id
 
 
@@ -113,13 +114,20 @@ def rewrite_node_run(run_id: str, node_id: str, note: str) -> dict:
 
 def _cli(request: str, *, yes: bool = False) -> int:
     from tools.spec_tools import propose_spec, freeze_spec
+    from auth import store
     import json
 
     # Without this the whole maestro/llm_clients/renpy log tree is silent on the CLI
     # path — a 100-step build would emit nothing. INFO surfaces per-call + per-decision.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
-    run_id = create_run()
+    users = store.list_users()
+    if not users:
+        print("no accounts yet — create one first: python -m auth.cli create <handle>")
+        return 1
+    owner = users[0].id  # the local dev owner for CLI-driven builds
+
+    run_id = create_run(owner)
     print(f"run: {run_id}\nproposing spec for: {request!r}\n")
     spec = propose_spec(request, run_id)
     print(json.dumps(spec, indent=2, ensure_ascii=False))

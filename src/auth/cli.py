@@ -1,0 +1,57 @@
+"""Admin CLI for MANUAL account provisioning — there is no public signup.
+
+    python -m auth.cli create <handle> [--role admin]   # prompts for a password
+    python -m auth.cli passwd <handle>                   # reset a password
+    python -m auth.cli list
+
+The store lives at <working_directory>/auth.db (same base path as the run dirs).
+"""
+
+import argparse
+import getpass
+import sys
+
+from auth import store
+
+
+def _prompt_password() -> str:
+    pw = getpass.getpass("password: ")
+    if pw != getpass.getpass("confirm : "):
+        sys.exit("passwords do not match")
+    if not pw:
+        sys.exit("password is required")
+    return pw
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="auth.cli", description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_create = sub.add_parser("create", help="create a new account")
+    p_create.add_argument("handle")
+    p_create.add_argument("--role", default="user", choices=["user", "admin"])
+
+    p_passwd = sub.add_parser("passwd", help="reset an account's password")
+    p_passwd.add_argument("handle")
+
+    sub.add_parser("list", help="list accounts")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "create":
+        user = store.create_user(args.handle, _prompt_password(), role=args.role)
+        print(f"created {user.handle!r} (id={user.id}, role={user.role})")
+    elif args.cmd == "passwd":
+        store.set_password(args.handle, _prompt_password())
+        print(f"password updated for {args.handle!r}")
+    elif args.cmd == "list":
+        for u in store.list_users():
+            print(f"{u.id}  {u.handle:<20} {u.role}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except ValueError as e:
+        sys.exit(str(e))

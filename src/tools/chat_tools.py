@@ -17,7 +17,12 @@ from maestro.run import create_run
     auto_inject_context=False,
 )
 def propose_game_spec(request: str) -> Dict:
-    run_id = create_run()
+    from tools.execution_context import get_user_id
+
+    user_id = get_user_id()
+    if not user_id:
+        raise RuntimeError("no authenticated user in context — cannot create a run")
+    run_id = create_run(user_id)
     spec = propose_spec(request, run_id)
     return {"run_id": run_id, "spec": spec}
 

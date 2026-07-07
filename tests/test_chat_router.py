@@ -9,6 +9,9 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from api.routers import chat as chat_router
+from auth.store import User
+
+U = User(id="u1", handle="alice", role="user")
 
 
 class _FakeAgent:
@@ -38,9 +41,9 @@ def test_chat_streams_sse_events_in_order(monkeypatch):
         {"type": "done", "message": "Hello"},
     ]
     agent = _FakeAgent(events)
-    monkeypatch.setattr(chat_router, "_get_or_create_session", lambda session_id: agent)
+    monkeypatch.setattr(chat_router, "_get_or_create_session", lambda user_id: agent)
 
-    response = asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi", session_id="s1")))
+    response = asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi"), user=U))
     assert response.media_type == "text/event-stream"
 
     chunks = _drain(response)
@@ -50,14 +53,40 @@ def test_chat_streams_sse_events_in_order(monkeypatch):
     assert agent.received == ["hi"]
 
 
+def test_chat_session_is_keyed_to_the_user(monkeypatch):
+    seen = []
+    monkeypatch.setattr(chat_router, "_get_or_create_session",
+                        lambda user_id: (seen.append(user_id) or _FakeAgent([{"type": "done"}])))
+    asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi"), user=U))
+    assert seen == ["u1"]
+
+
+def test_session_is_created_bound_to_the_authed_user(monkeypatch):
+    """The run-creating tool gets the authed user from the per-user agent, not a contextvar
+    set around the stream (which does not survive Starlette's threadpool iteration)."""
+    made = {}
+
+    class _Stub:
+        def __init__(self, agent_id, user_id):
+            made["user_id"] = user_id
+        def chat_stream(self, message):
+            yield {"type": "done"}
+
+    monkeypatch.setattr("agents.main_agent.MainAgent", _Stub)
+    chat_router._sessions.pop("u1", None)
+    response = asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi"), user=U))
+    _drain(response)
+    assert made["user_id"] == "u1"
+
+
 def test_chat_session_creation_failure_raises_http_500(monkeypatch):
-    def boom(session_id):
+    def boom(user_id):
         raise RuntimeError("no model configured")
 
     monkeypatch.setattr(chat_router, "_get_or_create_session", boom)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi")))
+        asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi"), user=U))
     assert exc.value.status_code == 500
 
 
@@ -67,9 +96,9 @@ def test_chat_mid_stream_error_is_surfaced_as_sse_error_event(monkeypatch):
             yield {"type": "token", "content": "partial"}
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(chat_router, "_get_or_create_session", lambda session_id: _BrokenAgent())
+    monkeypatch.setattr(chat_router, "_get_or_create_session", lambda user_id: _BrokenAgent())
 
-    response = asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi")))
+    response = asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi"), user=U))
     chunks = _drain(response)
 
     parsed = [json.loads(c[len("data: "):-2]) for c in chunks]
@@ -78,8 +107,8 @@ def test_chat_mid_stream_error_is_surfaced_as_sse_error_event(monkeypatch):
     assert "boom" in parsed[1]["message"]
 
 
-def test_clear_session_removes_session():
-    chat_router._sessions["to-clear"] = object()
-    result = asyncio.run(chat_router.clear_session("to-clear"))
-    assert result == {"cleared": "to-clear"}
-    assert "to-clear" not in chat_router._sessions
+def test_clear_session_removes_the_users_own_session():
+    chat_router._sessions["u1"] = object()
+    result = asyncio.run(chat_router.clear_session(user=U))
+    assert result == {"cleared": "u1"}
+    assert "u1" not in chat_router._sessions

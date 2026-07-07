@@ -21,6 +21,11 @@ app.add_middleware(
 )
 
 from api.routers import system, settings, agents, outputs, websocket, chat, games
+from auth.router import router as auth_router
+from auth.deps import install_auth
+
+# Gate every route behind a valid bearer token (public paths + the WebSocket handle themselves).
+install_auth(app)
 
 @app.on_event("startup")
 async def startup_event():
@@ -66,6 +71,7 @@ async def root(request: Request):
         raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
 
 # Mount routers
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])

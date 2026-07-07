@@ -4,31 +4,37 @@ The chat turn streams: the agent's `chat_stream` is a long, tool-using generator
 (spec drafting/amending can take a while on a local model), so the endpoint pushes
 each token/tool-progress event over SSE as it happens rather than blocking on the
 whole turn and returning one blob.
+
+Sessions are keyed to the authenticated user — there is no shared session. The user is
+bound onto the per-user agent, which re-establishes it in the call context around each tool
+call so run-creating tools attribute new runs to their owner.
 """
 
 import json
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from auth.deps import get_current_user
+from auth.store import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Server-side session store: session_id → MainAgent instance
+# Server-side session store: user_id → MainAgent instance
 _sessions: dict = {}
 
 
-def _get_or_create_session(session_id: str):
-    if session_id not in _sessions:
+def _get_or_create_session(user_id: str):
+    if user_id not in _sessions:
         from agents.main_agent import MainAgent
-        _sessions[session_id] = MainAgent(agent_id="chat")
-    return _sessions[session_id]
+        _sessions[user_id] = MainAgent(agent_id="chat", user_id=user_id)
+    return _sessions[user_id]
 
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = "default"
 
 
 def _sse_encode(event: dict) -> str:
@@ -36,6 +42,9 @@ def _sse_encode(event: dict) -> str:
 
 
 def _chat_event_stream(agent, message: str):
+    # The authed user rides on the per-user agent (`agent.user_id`), re-established around
+    # each tool call — a contextvar set here would not survive Starlette driving this sync
+    # generator across threadpool `next()` boundaries (each resumption gets a fresh context).
     try:
         for event in agent.chat_stream(message):
             yield _sse_encode(event)
@@ -45,9 +54,9 @@ def _chat_event_stream(agent, message: str):
 
 
 @router.post("")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, user: User = Depends(get_current_user)):
     try:
-        agent = _get_or_create_session(request.session_id)
+        agent = _get_or_create_session(user.id)
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -59,8 +68,7 @@ async def chat(request: ChatRequest):
     )
 
 
-@router.delete("/{session_id}")
-async def clear_session(session_id: str):
-    if session_id in _sessions:
-        del _sessions[session_id]
-    return {"cleared": session_id}
+@router.delete("")
+async def clear_session(user: User = Depends(get_current_user)):
+    _sessions.pop(user.id, None)
+    return {"cleared": user.id}

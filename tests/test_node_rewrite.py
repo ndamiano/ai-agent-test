@@ -15,6 +15,9 @@ from maestro.rewrite import rewrite_node
 from maestro.agent_loop import AgentLoop
 from api.routers import games
 from maestro import run_control
+from auth.store import User
+
+U = User(id="u1", handle="alice", role="user")
 
 
 def _spec():
@@ -124,14 +127,17 @@ def _patch(monkeypatch, base):
 
 def test_auto_pause_toggle_requires_build(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
+    state = RunState(tmp_path / "g")
+    state.write_spec({"title": "G", "frozen": True, "components": []})
+    state.write_owner("u1")
     run_control.remove("g")
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(games.auto_pause_game("g", games.AutoPauseBody(enabled=True)))
+        asyncio.run(games.auto_pause_game("g", games.AutoPauseBody(enabled=True), user=U))
     assert exc.value.status_code == 409
 
     ctrl = run_control.get_or_create("g")
     try:
-        asyncio.run(games.auto_pause_game("g", games.AutoPauseBody(enabled=True)))
+        asyncio.run(games.auto_pause_game("g", games.AutoPauseBody(enabled=True), user=U))
         assert ctrl.auto_pause is True
     finally:
         run_control.remove("g")
@@ -142,13 +148,14 @@ def test_rewrite_endpoint_kicks_thread(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     state = RunState(tmp_path / "g")
     state.write_spec({"title": "G", "frozen": True, "components": []})
+    state.write_owner("u1")
     _seed_nodes(state)
 
     done = threading.Event()
     monkeypatch.setattr("maestro.run.rewrite_node_run",
                         lambda rid, nid, note: done.set())
 
-    res = asyncio.run(games.rewrite_node_game("g", "n1", games.RewriteBody(note="tenser")))
+    res = asyncio.run(games.rewrite_node_game("g", "n1", games.RewriteBody(note="tenser"), user=U))
     assert res["status"] == "rewriting"
     assert done.wait(timeout=5)
     for _ in range(50):
@@ -162,9 +169,10 @@ def test_node_content_edit_endpoint(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     state = RunState(tmp_path / "g")
     state.write_spec({"title": "G", "frozen": True, "components": []})
+    state.write_owner("u1")
     _seed_nodes(state)
 
     new = {"lines": [{"speaker": "a", "text": "hand edited"}], "end": {"type": "end"}}
-    res = asyncio.run(games.edit_node_game("g", "n1", games.NodeEditBody(content=new)))
+    res = asyncio.run(games.edit_node_game("g", "n1", games.NodeEditBody(content=new), user=U))
     assert res["ok"] is True
     assert state.read_component("nodes")["nodes"]["n1"] == new

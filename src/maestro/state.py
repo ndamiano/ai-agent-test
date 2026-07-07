@@ -25,9 +25,10 @@ STORY_STATE_FILE = "story_state.json"
 HUMAN_TODOS_FILE = "human_todos.json"
 WAIVERS_FILE = "waivers.json"
 DIRTY_FILE = "dirty.json"
+OWNER_FILE = "owner.json"
 
 # Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, DIRTY_FILE}
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, DIRTY_FILE, OWNER_FILE}
 
 
 class RunState:
@@ -67,6 +68,14 @@ class RunState:
 
     def read_spec(self) -> Optional[Dict]:
         return self._read(SPEC_FILE)
+
+    # ── ownership (the run's owning user; set at create) ──────────────────────
+    def write_owner(self, user_id: str) -> None:
+        self._write(OWNER_FILE, {"user_id": user_id})
+
+    def read_owner(self) -> Optional[str]:
+        data = self._read(OWNER_FILE)
+        return data.get("user_id") if data else None
 
     # ── story state (Phase 6) ─────────────────────────────────────────────────
     def write_story_state(self, state: Dict) -> None:

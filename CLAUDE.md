@@ -26,6 +26,14 @@ It steals the old pipeline's two good properties (completion guarantee, no conte
 ```
 src/
   agents/       MainAgent (chat persona — drafts/amends specs) + agent_store, chat.json / summarizer.json
+  auth/         The identity + access layer (sqlite): store.py (users + bearer sessions, pbkdf2
+                passwords, token stored only as a hash), deps.py (the app-level middleware that gates
+                EVERY http route + the get_current_user dependency), router.py (POST /auth/login —
+                login ONLY, no signup), cli.py (`python -m auth.cli create <handle>` — manual
+                provisioning). Runs are owned: create_run stamps owner.json, games.py scopes every
+                run op to its owner (cross-user = 403), the WebSocket authenticates itself (token
+                query param — http middleware never sees the ws scope), and chat sessions key on
+                the authed user. There is deliberately no self-serve account creation.
   api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket)
   config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py

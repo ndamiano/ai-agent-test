@@ -30,8 +30,11 @@ src/
                 ledger, pbkdf2 passwords, token stored only as a hash), deps.py (the app-level
                 middleware that gates EVERY http route + the get_current_user dependency), router.py
                 (POST /auth/login — login ONLY, no signup), billing.py (cost(spec) — the one swappable
-                build-pricing function, flat 1 today), cli.py (`python -m auth.cli create <handle>` —
-                manual provisioning). Runs are owned: create_run stamps owner.json, games.py scopes
+                build-pricing function, flat 1 today), credits.py (the provider-agnostic top-up
+                seam: CreditProvider ABC + PurchaseEvent + get/set_provider; default
+                UnconfiguredProvider refuses every event so there is no unsigned credit path — a
+                concrete Stripe/Paddle verify is a TODO wired here), cli.py (`python -m auth.cli
+                create <handle>` — manual provisioning; `grant <handle> <n>` — manual credit top-up). Runs are owned: create_run stamps owner.json, games.py scopes
                 every run op to its owner (cross-user = 403), the WebSocket authenticates itself (token
                 query param — http middleware never sees the ws scope), and chat sessions key on
                 the authed user. Credits gate builds: create_user seeds INITIAL_CREDITS; build_game
@@ -40,7 +43,10 @@ src/
                 cancelled while queued or run_build raises — one net deduction per real build. Every
                 balance change also lands a signed row in credit_transactions, so the ledger
                 reconciles with the balance. There is deliberately no self-serve account creation.
-  api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket) +
+  api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket,
+                billing — the payment webhook `POST /api/billing/webhook`, PUBLIC in
+                auth.deps.PUBLIC_PATHS: a provider posts server-to-server with no user token, so
+                it's authed by its signature inside the CreditProvider, not the user-token gate) +
                 build_queue.py (the single-GPU build serializer: one worker drains a FIFO queue,
                 one build in flight, extras wait with a visible `queue_position`; a queued run
                 already holds its RunControl so pause/cancel land before it starts). WS events

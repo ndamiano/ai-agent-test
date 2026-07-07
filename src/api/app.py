@@ -20,7 +20,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import system, settings, agents, outputs, websocket, chat, games
+from api.routers import system, settings, agents, outputs, websocket, chat, games, billing
 from auth.router import router as auth_router
 from auth.deps import install_auth
 
@@ -86,6 +86,7 @@ app.include_router(outputs.router, prefix="/api/outputs", tags=["outputs"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
+app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 
 def reinitialize_connectors():
     """Reinitialize connectors with updated settings (call after settings change)"""

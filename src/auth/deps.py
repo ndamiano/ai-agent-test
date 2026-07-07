@@ -12,8 +12,10 @@ from starlette.responses import JSONResponse
 
 from auth.store import User, resolve_token
 
-# Reachable without a token: the health probe, the login endpoint, and the API docs.
-PUBLIC_PATHS = {"/", "/auth/login", "/docs", "/redoc", "/openapi.json"}
+# Reachable without a token: the health probe, the login endpoint, the API docs, and the
+# payment webhook (server-to-server — no user token; authed by the provider's signature,
+# verified inside the CreditProvider, never by this gate).
+PUBLIC_PATHS = {"/", "/auth/login", "/docs", "/redoc", "/openapi.json", "/api/billing/webhook"}
 
 
 def bearer_token(request: Request) -> Optional[str]:

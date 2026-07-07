@@ -70,14 +70,21 @@ per-user ownership, and a credit ledger that gates builds.
       402-below-balance / refund-on-AlreadyQueued), `test_build_queue.py` (refund on cancel-while-
       queued + on `run_build` raising).
 
-## T4 — Buy credits (seam only, no integration yet)
-- [ ] **Admin grant op** — `grant_credits(user, n)` via CLI (the "manual" path). *(The store-level
-      `grant(user_id, n, reason)` primitive already exists from T3; T4 wires the CLI command to it.)*
-- [ ] **Provider-agnostic top-up seam** — a `credit_provider` interface + a webhook endpoint stub
-      that credits the ledger on a verified purchase event. Leave the concrete Stripe/Paddle
-      implementation as a TODO wired to this seam.
-- [ ] **Tests:** a grant increments the balance + logs a transaction; the webhook seam credits on a
-      (faked) verified event.
+## T4 — Buy credits (seam only, no integration yet)  ✅ DONE
+- [x] **Admin grant op** — `python -m auth.cli grant <handle> <n>` (the "manual" path), wired to the
+      store's `grant(user_id, n, "admin_grant")`; unknown handle exits non-zero with a clean message.
+- [x] **Provider-agnostic top-up seam** — `auth.credits` (`CreditProvider` ABC +
+      `PurchaseEvent` + `get_provider`/`set_provider`; default `UnconfiguredProvider` refuses every
+      event, so no unsigned credit path) + a webhook stub (`api/routers/billing.py`,
+      `POST /api/billing/webhook`) that hands the raw body to the provider and, on a verified event,
+      credits the ledger via `store.grant(..., "purchase")`. The concrete Stripe/Paddle verify is a
+      `NotImplementedError` TODO wired to the seam.
+- [x] **Webhook auth** — the path is registered **public** (`auth.deps.PUBLIC_PATHS`): a provider
+      posts server-to-server with no user token, so it's authed by its signature (verified inside the
+      `CreditProvider`), never by the user-token gate.
+- [x] **Tests** (`test_billing_seam.py`): CLI grant increments balance + logs a txn; CLI grant on an
+      unknown handle exits cleanly; the webhook credits on a stubbed verified event, rejects an
+      unverified one (400, credits nothing), and is not blocked by the user-auth middleware.
 
 ## T5 — Frontend gate
 - [ ] **Login screen** + gate the app behind it.

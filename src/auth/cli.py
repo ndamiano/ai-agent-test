@@ -2,6 +2,7 @@
 
     python -m auth.cli create <handle> [--role admin]   # prompts for a password
     python -m auth.cli passwd <handle>                   # reset a password
+    python -m auth.cli grant  <handle> <n>               # add credits (manual top-up)
     python -m auth.cli list
 
 The store lives at <working_directory>/auth.db (same base path as the run dirs).
@@ -34,6 +35,10 @@ def main(argv=None) -> int:
     p_passwd = sub.add_parser("passwd", help="reset an account's password")
     p_passwd.add_argument("handle")
 
+    p_grant = sub.add_parser("grant", help="add credits to an account (manual top-up)")
+    p_grant.add_argument("handle")
+    p_grant.add_argument("n", type=int)
+
     sub.add_parser("list", help="list accounts")
 
     args = parser.parse_args(argv)
@@ -44,6 +49,12 @@ def main(argv=None) -> int:
     elif args.cmd == "passwd":
         store.set_password(args.handle, _prompt_password())
         print(f"password updated for {args.handle!r}")
+    elif args.cmd == "grant":
+        user = store.get_user_by_handle(args.handle)
+        if user is None:
+            sys.exit(f"no user {args.handle!r}")
+        new_balance = store.grant(user.id, args.n, "admin_grant")
+        print(f"granted {args.n} to {user.handle!r} (balance={new_balance})")
     elif args.cmd == "list":
         for u in store.list_users():
             print(f"{u.id}  {u.handle:<20} {u.role}")

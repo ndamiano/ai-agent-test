@@ -1,6 +1,6 @@
 requests
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 ddgs
 beautifulsoup4

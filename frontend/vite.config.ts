@@ -7,6 +7,8 @@ export default defineConfig({
     environment: 'jsdom',
   },
   server: {
+    host: true,
+    allowedHosts: ['.ts.net'],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

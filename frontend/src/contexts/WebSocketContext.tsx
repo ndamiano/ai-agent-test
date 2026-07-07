@@ -67,7 +67,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const connect = () => {
             if (unmountedRef.current) return
 
-            const url = `${import.meta.env.VITE_WS_URL}/api/ws`
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+            const url = `${proto}//${window.location.host}/api/ws`
             const ws = new WebSocket(url)
             wsRef.current = ws
 

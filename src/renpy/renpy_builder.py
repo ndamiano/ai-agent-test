@@ -107,20 +107,24 @@ def _distribute(project_dir: str, sdk_path: str) -> dict:
         return {"dist_error": f"SDK path does not exist: {sdk_path}"}
 
     launcher_dir = os.path.join(sdk_path, "launcher")
+    # Self-contained platform archives land in a known <run>/dist so the download endpoint can
+    # serve them without depending on Ren'Py's default (project-parent) output location.
+    dist_dir = os.path.join(os.path.dirname(os.path.abspath(project_dir)), "dist")
+    dest = ["--destination", dist_dir]
     system = platform.system()
     if system == "Windows":
         renpy_bin = os.path.join(sdk_path, "renpy.exe")
         if not os.path.exists(renpy_bin):
             py = _find_sdk_python(sdk_path)
-            cmd = [py, os.path.join(sdk_path, "renpy.py"), launcher_dir, "distribute", os.path.abspath(project_dir)]
+            cmd = [py, os.path.join(sdk_path, "renpy.py"), launcher_dir, "distribute", os.path.abspath(project_dir), *dest]
         else:
-            cmd = [renpy_bin, launcher_dir, "distribute", os.path.abspath(project_dir)]
+            cmd = [renpy_bin, launcher_dir, "distribute", os.path.abspath(project_dir), *dest]
     else:
         renpy_sh = os.path.join(sdk_path, "renpy.sh")
         if not os.path.exists(renpy_sh):
             print(f"[renpy_builder] ERROR: renpy.sh not found in SDK: {sdk_path}")
             return {"dist_error": f"renpy.sh not found in SDK: {sdk_path}"}
-        cmd = [renpy_sh, launcher_dir, "distribute", os.path.abspath(project_dir)]
+        cmd = [renpy_sh, launcher_dir, "distribute", os.path.abspath(project_dir), *dest]
 
     print("[renpy_builder] Building distribution...")
     print(f"  SDK:     {sdk_path}")
@@ -144,6 +148,7 @@ def _distribute(project_dir: str, sdk_path: str) -> dict:
             "dist_returncode": proc.returncode,
             "dist_stdout":     proc.stdout,
             "dist_stderr":     proc.stderr,
+            "dist_dir":        dist_dir if proc.returncode == 0 else None,
         }
     except subprocess.TimeoutExpired as e:
         print(f"[renpy_builder] ERROR: SDK timed out after {e.timeout}s (likely waiting for input).")

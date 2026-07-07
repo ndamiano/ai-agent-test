@@ -139,6 +139,24 @@ def test_combat_ir_lifts_into_project(tmp_path):
     assert any(e.get("world") == {"remove_item": "potion"} for e in quaff["effects"])
 
 
+def test_asset_files_get_keep_import_sidecars(tmp_path):
+    """Godot strips the raw source of any file it imports; the runtime reads every asset as raw
+    bytes (FileAccess), so each must ship untouched via importer=keep or it vanishes from the
+    exported .pck. Proven end-to-end (png/webp/glb read at full size in a real export)."""
+    out = tmp_path / "godot_output"
+    write_godot_project(_rpg_example(), out)
+
+    images = out / "images"
+    assets = [f for f in images.iterdir() if f.suffix != ".import"]
+    assert assets, "no placeholder assets written"
+    for f in assets:
+        sidecar = f.with_name(f.name + ".import")
+        assert sidecar.exists(), f"missing .import for {f.name}"
+        assert 'importer="keep"' in sidecar.read_text()
+    # a .import file must not itself get a sidecar
+    assert not list(images.glob("*.import.import"))
+
+
 def test_decomposed_rpg_combat_compiles(tmp_path):
     """The shape a REAL build writes: separate on-disk components (a walkable places map with
     tiles/spawn + a combat block + nodes) must assemble + compile to a Godot project — proving

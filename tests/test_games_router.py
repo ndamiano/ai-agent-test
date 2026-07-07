@@ -74,24 +74,45 @@ def test_freeze_game_404(tmp_path, monkeypatch):
     assert exc.value.status_code == 404
 
 
-def test_reveal_opens_run_dir(tmp_path, monkeypatch):
+def test_download_serves_godot_self_contained_zip(tmp_path, monkeypatch):
     _patch_for_run(monkeypatch, tmp_path)
-    RunState(tmp_path / "g").write_spec({"title": "G", "frozen": False, "components": []})
+    state = RunState(tmp_path / "g")
+    state.write_spec({"title": "G", "frozen": True, "components": []})
+    zip_path = state.run_dir / "godot_dist.zip"
+    zip_path.write_bytes(b"PK\x03\x04 fake zip")
 
-    import subprocess
-    calls = []
-    monkeypatch.setattr(subprocess, "Popen", lambda args, *a, **k: calls.append(args))
-
-    result = asyncio.run(games.reveal_game("g"))
-    assert result["path"] == str(tmp_path / "g")
-    assert calls and calls[0][-1] == str(tmp_path / "g")
+    result = asyncio.run(games.download_game("g"))
+    assert Path(result.path) == zip_path
+    assert result.media_type == "application/zip"
 
 
-def test_reveal_404_for_unknown(tmp_path, monkeypatch):
+def test_download_zips_renpy_dist_dir(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    state = RunState(tmp_path / "g")
+    state.write_spec({"title": "G", "frozen": True, "components": []})
+    dist = state.run_dir / "dist"
+    dist.mkdir()
+    (dist / "MyGame-1.0-pc.zip").write_bytes(b"platform build")
+
+    result = asyncio.run(games.download_game("g"))
+    assert Path(result.path) == state.run_dir / "download.zip"
+    assert Path(result.path).exists()
+
+
+def test_download_409_when_not_packaged(tmp_path, monkeypatch):
+    _patch_for_run(monkeypatch, tmp_path)
+    RunState(tmp_path / "g").write_spec({"title": "G", "frozen": True, "components": []})
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.download_game("g"))
+    assert exc.value.status_code == 409
+
+
+def test_download_404_for_unknown(tmp_path, monkeypatch):
     _patch_for_run(monkeypatch, tmp_path)
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(games.reveal_game("ghost"))
+        asyncio.run(games.download_game("ghost"))
     assert exc.value.status_code == 404
 
 

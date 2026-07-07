@@ -301,7 +301,19 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         await api.regenerateAssets(runId)
         setFeed(prev => [...prev.slice(-60), '✓ images regenerated (recompile to repackage)'])
     }, 'Regenerate failed')
-    const reveal = () => act(() => api.revealGame(runId), 'Open folder failed', false)
+    const download = () => act(async () => {
+        // Package into a self-contained build (engine bundled) before pulling it, so the user
+        // never needs Ren'Py or Godot installed to play.
+        setFeed(prev => [...prev.slice(-60), '⏳ packaging self-contained build…'])
+        const r = await api.compileGame(runId, true)
+        if (!r.ok) { setFeed(prev => [...prev.slice(-60), `✗ package failed: ${r.reason}`]); return }
+        const a = document.createElement('a')
+        a.href = api.downloadGameUrl(runId)
+        a.download = ''
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+    }, 'Download failed', false)
     const componentIds: string[] = Object.keys(detail?.artifact ?? {})
     const addTodo = () => act(async () => {
         await api.addTodo(runId, newTodoComp || componentIds[0] || '', newTodoText)
@@ -385,8 +397,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                         </label>
                     )}
                     {stage !== 'draft' && (
-                        <button onClick={reveal} disabled={acting} title="open this run's folder in your file manager"
-                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium ml-auto">Open folder</button>
+                        <button onClick={download} disabled={acting || !editable} title={editable ? 'package a self-contained build and download it' : 'pause the build first'}
+                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium ml-auto">Download</button>
                     )}
                 </div>
 

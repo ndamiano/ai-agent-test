@@ -79,7 +79,9 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
 
     dist_path = None
     if not errs and distribute:
-        dist_path = _zip(output_dir)
+        # Prefer a self-contained export (engine embedded — the player needs no Godot install).
+        # Fall back to the raw project zip only when no godot binary/templates are present.
+        dist_path = _export_dist(output_dir) or _zip(output_dir)
 
     reason = ("invalid IR — " + "; ".join(errs[:5])) if errs else None
     return {
@@ -111,6 +113,20 @@ def write_godot_project(ir: Dict, output_dir, src_images=None) -> None:
         for img in Path(src_images).iterdir():
             if img.is_file():
                 shutil.copy2(img, images_dir / img.name)
+
+    _keep_imports(images_dir)
+
+
+def _keep_imports(images_dir: Path) -> None:
+    """The runtime reads every asset as RAW BYTES (FileAccess.get_file_as_bytes), never via the
+    resource system. Godot's default import converts images/meshes to engine resources and STRIPS
+    the source file from the export, so FileAccess reads nothing in the exported .pck. importer=keep
+    ships each file untouched — the raw bytes survive in the pack. (It also skips the expensive
+    per-image import conversion.)"""
+    for f in images_dir.iterdir():
+        if f.is_file() and f.suffix != ".import":
+            f.with_name(f.name + ".import").write_text(
+                '[remap]\n\nimporter="keep"\n', encoding="utf-8")
 
 
 def _copy_runtime(runtime: Path, output_dir: Path) -> None:
@@ -179,6 +195,25 @@ def export_build(project_dir, preset: str = "Web") -> Optional[str]:
     except (subprocess.SubprocessError, OSError):
         return None
     return str(out_path.parent) if proc.returncode == 0 and out_path.exists() else None
+
+
+def _export_dist(project_dir) -> Optional[str]:
+    """Export self-contained desktop binaries (Linux + Windows) and zip them into one archive —
+    the player needs no Godot install. Returns None when no godot binary/templates are present,
+    so the caller falls back to the raw project zip."""
+    project_dir = Path(project_dir)
+    exported = [p for p in ("Linux", "Windows") if export_build(project_dir, p)]
+    if not exported:
+        return None
+    export_dir = project_dir / "export"
+    if not export_dir.exists():
+        return None
+    dist = project_dir.parent / "godot_dist.zip"
+    with zipfile.ZipFile(dist, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in export_dir.rglob("*"):
+            if f.is_file():
+                z.write(f, f.relative_to(export_dir))
+    return str(dist.resolve())
 
 
 def _zip(output_dir: Path) -> Optional[str]:

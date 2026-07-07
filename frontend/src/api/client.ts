@@ -124,8 +124,8 @@ export const api = {
         }),
     assetFileUrl: (runId: string, filename: string) =>
         `${base}/games/${runId}/asset-file/${encodeURIComponent(filename)}`,
-    revealGame: (runId: string) =>
-        request<{ run_id: string; path: string }>(`/games/${runId}/reveal`, { method: 'POST' }),
+    downloadGameUrl: (runId: string) =>
+        `${base}/games/${runId}/download`,
     editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
         request<{ ok: boolean }>(`/games/${runId}/component/${componentId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
     editNode: (runId: string, nodeId: string, content: Record<string, any>) =>

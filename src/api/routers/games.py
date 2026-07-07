@@ -428,21 +428,36 @@ async def compile_game(run_id: str, body: CompileBody = CompileBody()):
     return compile_for(spec.engine)(state.run_dir, distribute=body.distribute)
 
 
-@router.post("/{run_id}/reveal", response_model=Dict)
-async def reveal_game(run_id: str):
-    """Open the run's folder in the host's file manager. Only works when the backend
-    runs on the same machine as the user (it does — Maestro is a local app)."""
-    import subprocess
-    import sys
+@router.get("/{run_id}/download")
+async def download_game(run_id: str):
+    """Stream the SELF-CONTAINED distributable (engine bundled) so the player needs no Ren'Py or
+    Godot install. The backend is network-reachable (remote box), so there is no local file
+    manager to 'reveal' into — the user pulls the finished game over HTTP.
+
+    Ren'Py's `distribute` writes per-platform archives to <run>/dist; Godot's export writes one
+    zip of desktop binaries to <run>/godot_dist.zip. Package the game first to produce them."""
+    import shutil
 
     state = _require_state(run_id)
-    path = str(state.run_dir)
-    opener = {"darwin": ["open"], "win32": ["explorer"]}.get(sys.platform, ["xdg-open"])
-    try:
-        subprocess.Popen([*opener, path])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"could not open folder: {e}")
-    return {"run_id": run_id, "path": path}
+    run = state.run_dir
+
+    godot_dist = run / "godot_dist.zip"
+    if godot_dist.exists():
+        return FileResponse(
+            path=godot_dist, filename=f"{run_id}.zip", media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{run_id}.zip"'})
+
+    renpy_dist = run / "dist"
+    if renpy_dist.is_dir() and any(renpy_dist.iterdir()):
+        zip_base = run / "download"
+        shutil.make_archive(str(zip_base), "zip", renpy_dist)
+        return FileResponse(
+            path=zip_base.with_suffix(".zip"), filename=f"{run_id}.zip", media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{run_id}.zip"'})
+
+    raise HTTPException(
+        status_code=409,
+        detail="no self-contained build yet — package the game (distribute) first")
 
 
 # Node rewrites in flight (one per node), so the UI can disable a node's button while it runs.

@@ -105,8 +105,7 @@ class WildEncounters(Module):
         from maestro import context_render as cr
         from maestro.modules import combat, world
         art = ctx.get("artifact") or {}
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
+        lines = cr.target_block(ctx)
         lines += combat.combat_index_block(art)
         lines += world.places_index_block(art)
         lines += cr.tail_block(ctx)

@@ -11,6 +11,7 @@ Example games:
 
 from typing import Dict, Optional
 
+from maestro import context_render as cr
 from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
@@ -190,18 +191,20 @@ class Story(Module):
         Check("min_beats", _d_min_beats, tools=_BEAT_TOOLS, guard=_BEAT_GUARD,
               prompt="story_beats_add.txt", skeleton=SKEL_BEAT_ONE),
         Check("beat_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "story.beats", fields=["id", "summary", "type", "purpose", "tension"]))),
+            ctx.artifact, "story.beats", fields=["id", "summary", "type", "purpose", "tension"])),
+            context=cr.ctx_structural),
         Check("distinct_beats", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "story.beats", key="id")), job="fix"),
+            ctx.artifact, "story.beats", key="id")), job="fix", context=cr.ctx_structural),
         Check("min_endings", _d_min_endings, tools=_ENDING_TOOLS, guard=_ENDING_GUARD,
               prompt="story_endings_add.txt", skeleton=SKEL_ENDING_ONE),
         Check("distinct_endings", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "story.endings", key="id")), job="fix"),
+            ctx.artifact, "story.endings", key="id")), job="fix", context=cr.ctx_structural),
         Check("ending_path_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "story.ending_paths", fields=["ending", "earned_by"]))),
+            ctx.artifact, "story.ending_paths", fields=["ending", "earned_by"])),
+            context=cr.ctx_structural),
         Check("endings_planned", lambda chk, m, ctx: m.wrap(chk, checks.refs_resolve(
             ctx.artifact, "story.endings", "story.ending_paths",
-            from_key="id", to_key="ending")), job="fix"),
+            from_key="id", to_key="ending")), job="fix", context=cr.ctx_structural),
     ]
 
     def params(self) -> Dict:
@@ -213,14 +216,12 @@ class Story(Module):
                                      "competencies", "example_lines"]}
 
     def render_context(self, ctx: Dict) -> str:
-        # The story is planned FROM the cast (drives collide into a plot) and the story SO FAR:
-        # the central question, the arc's beats with full summaries, the endings already written —
-        # so the next item continues the arc and stays distinct.
-        from maestro import context_render as cr
+        # The story is planned FROM the premise + cast (drives collide into a plot) and the story SO
+        # FAR: the central question, the arc's beats with full summaries, the endings already
+        # written — so the next item continues the arc and stays distinct.
         from maestro.modules import cast
         art = ctx.get("artifact") or {}
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
+        lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
         lines += cast.character_cards(art)
         cq = (art.get("story") or {}).get("central_question")
         if cq:
@@ -229,6 +230,18 @@ class Story(Module):
         lines += endings_detail_block(art)
         lines += cr.tail_block(ctx)
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> list:
+        # Structural repair on the story component — the beats, endings, and planned paths as ids +
+        # summaries so a dedup/field fix can see exactly what to merge or complete.
+        art = artifact
+        paths = [p for p in (art.get("story") or {}).get("ending_paths", [])
+                 if isinstance(p, dict)]
+        out = beats_detail_block(art) + endings_detail_block(art)
+        if paths:
+            out += ["", "ENDING PATHS (ending → earned_by):",
+                    *(f"  {p.get('ending')} ← {p.get('earned_by')}" for p in paths)]
+        return out
 
 
 MODULE = Story()

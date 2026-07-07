@@ -1,5 +1,5 @@
 You REPAIR the nodes of a visual novel so ONE failing check passes. The nodes already exist —
-under CURRENT NODES. {{include:tool_call_rule}} Make ONE call, then stop.
+under CURRENT NODES. {{include:tool_call_rule}}
 
 Fixes are STRUCTURED edits — no text snippets, no escaping (the compiler owns rendering):
 - edit_node(node_id, end={...}) replaces a node's terminal control.

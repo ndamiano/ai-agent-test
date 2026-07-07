@@ -11,6 +11,7 @@ Example games:
 
 from typing import Dict, Optional, Tuple
 
+from maestro import context_render as cr
 from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
@@ -23,6 +24,17 @@ def locations_block(artifact: Dict) -> list:
         return []
     return ["", "LOCATIONS (a node's `location` / a room's `background` is one of these EXACT ids):",
             *(f"  {b['id']} — {b.get('description', '')}" for b in bgs)]
+
+
+def location_index(artifact: Dict) -> list:
+    """Background ids + a one-clause hint, no full prose — what a crossref fix needs to repoint a
+    node's `location` / a room's `background`; the full `locations_block` is for authoring calls."""
+    bgs = [b for b in (artifact.get("asset_manifest") or {}).get("backgrounds", [])
+           if isinstance(b, dict) and b.get("id")]
+    if not bgs:
+        return []
+    return ["", "LOCATIONS (these EXACT background ids):",
+            *(f"  {b['id']} — {(b.get('description', '') or '')[:60]}" for b in bgs)]
 
 
 def _d_character_ids(chk, m, ctx):
@@ -83,28 +95,34 @@ class Assets(Module):
         Check("backgrounds_exist", lambda chk, m, ctx: m.wrap(chk, checks.exists(
             ctx.artifact, "asset_manifest.backgrounds")), blocking=True),
         Check("background_ids", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "asset_manifest.backgrounds", fields=["id"]))),
-        Check("character_ids", _d_character_ids),
+            ctx.artifact, "asset_manifest.backgrounds", fields=["id"])), context=cr.ctx_structural),
+        Check("character_ids", _d_character_ids, context=cr.ctx_structural),
     ]
 
     def affected_components(self) -> Tuple[str, ...]:
         return ("asset_manifest",)
 
     def render_context(self, ctx: Dict) -> str:
-        # The manifest derives from who and what exists: character cards (sprite descriptions come
-        # from the person), the story (backgrounds come from where it happens), the item catalogue
-        # (inventory icons).
-        from maestro import context_render as cr
+        # The manifest derives from who and where: the premise (backgrounds come from where the
+        # story happens), the character ids (sprite entries must match them), the item ids (icons
+        # match place items). Ids, not cards — the manifest names assets, it doesn't write people.
         from maestro.modules import cast, inventory, story
         art = ctx.get("artifact") or {}
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
-        lines += cast.character_cards(art)
+        lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
+        lines += cast.character_index(art)
         lines += story.story_block(art)
-        lines += inventory.items_block(art)
+        lines += inventory.item_index(art)
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> list:
+        am = artifact.get("asset_manifest") or {}
+        chars = [c.get("id") for c in am.get("characters", []) if isinstance(c, dict)]
+        out = location_index(artifact)
+        if chars:
+            out += ["", f"MANIFEST CHARACTER IDS: {chars}"]
+        return out
 
 
 MODULE = Assets()

@@ -698,48 +698,52 @@ class World(Module):
         Check("min_places", _d_min_places, prompt=_w_author_prompt, skeleton=_w_skeleton,
               tools=_T_MIN_PLACES, guard=_PLACE_GUARD),
         Check("start_authored", _d_start_authored, job="fix", prompt="places_fix.txt",
-              skeleton=_w_skeleton, tools=_T_LAYOUT),
+              skeleton=_w_skeleton, tools=_T_LAYOUT, context=cr.ctx_structural),
         Check("each_place_min_interactables", lambda chk, m, ctx: m.wrap(
             chk, each_place_min_interactables(ctx.artifact,
                                                      min=ctx.param("min_interactables", 2))),
               prompt=_w_author_prompt, skeleton=_w_skeleton, tools=_T_INTERACT),
-        Check("places_reachable", lambda chk, m, ctx: m.wrap(chk, places_reachable(ctx.artifact)), job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_REACH),
+        Check("places_reachable", lambda chk, m, ctx: m.wrap(chk, places_reachable(ctx.artifact)),
+              job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_REACH,
+              context=cr.ctx_structural),
         Check("rpg_layout", _d_rpg_layout, job="fix", prompt="places_fix.txt", skeleton=_w_skeleton,
-              tools=_T_LAYOUT),
+              tools=_T_LAYOUT, context=cr.ctx_structural),
         Check("rpg_connectivity", _d_rpg_connectivity, job="fix", prompt="places_fix.txt",
-              skeleton=_w_skeleton, tools=_T_REACH),
-        Check("nodes_entered", lambda chk, m, ctx: m.wrap(chk, nodes_world_entered(ctx.artifact)), job="fix", prompt="places_fix.txt", skeleton=_w_skeleton,
-            tools=_T_TERMINAL),
+              skeleton=_w_skeleton, tools=_T_REACH, context=cr.ctx_structural),
+        Check("nodes_entered", lambda chk, m, ctx: m.wrap(chk, nodes_world_entered(ctx.artifact)),
+              job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_TERMINAL,
+              context=cr.ctx_crossref),
         Check("crossref", _d_crossref, job="fix", when_clean=True, prompt="places_fix.txt",
-              skeleton=_w_skeleton, tools=_T_TERMINAL),
+              skeleton=_w_skeleton, tools=_T_TERMINAL, context=cr.ctx_crossref),
         Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="places_fix.txt",
-              skeleton=_w_skeleton, tools=_T_TERMINAL),
+              skeleton=_w_skeleton, tools=_T_TERMINAL, context=cr.ctx_crossref),
     ]
 
     def params(self) -> Dict:
         return {"min_places": 4, "min_interactables": 3}
 
     def render_context(self, ctx: Dict) -> str:
-        # The world author's context, crafted: the items to place (full catalogue — takes and
-        # gates reference them), the scenes that exist (talk targets), declared encounters
-        # (start_combat), locations (a room's background id), the story's shape (what winning
-        # means), plus the map view. Tile rows and scene text never enter.
+        # The world AUTHOR's context, crafted: the premise (name/theme the rooms), the item ids to
+        # reference in takes/gates, the scenes (talk targets), declared encounters (start_combat),
+        # background ids (a room's `background`), the story's shape (what winning means), plus the
+        # map view. Tile rows, scene text, full item/location prose, and story-state never enter.
         from maestro.modules import assets, combat, inventory, scenes, story
         art = ctx.get("artifact") or {}
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
-        lines += inventory.items_block(art)
+        lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
+        lines += inventory.item_index(art)
         lines += scenes.nodes_index_block(art)
         lines += combat.combat_index_block(art)
-        lines += assets.locations_block(art)
+        lines += assets.location_index(art)
         lines += story.story_block(art)
         view = ctx.get("active_view") or {}
         if view.get("place_ids"):
             lines += _place_view_block(view)
-        lines += cr.story_state_block(ctx)
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> List[str]:
+        return places_index_block(artifact)
 
 
 MODULE = World()

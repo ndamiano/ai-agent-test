@@ -1139,46 +1139,52 @@ class Scenes(Module):
         Check("ending_nodes_end", _d_ending_nodes_end, job="fix", prompt="nodes_fix.txt",
               tools=_T_EDIT, run=_force_ending_end),
         Check("premature_endings", _d_premature_endings, job="fix", prompt="nodes_fix.txt",
-              tools=_T_EDIT),
-        Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, node_targets_resolve(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT_WRITE),
-        Check("reachable_from_start", lambda chk, m, ctx: m.wrap(chk, reachable_from_start(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
+              tools=_T_EDIT, context=cr.ctx_structural),
+        Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, node_targets_resolve(ctx.artifact)),
+              job="fix", prompt="nodes_fix.txt", tools=_T_EDIT_WRITE, context=cr.ctx_crossref),
+        Check("reachable_from_start", lambda chk, m, ctx: m.wrap(chk, reachable_from_start(ctx.artifact)),
+              job="fix", prompt="nodes_fix.txt", tools=_T_EDIT, context=cr.ctx_structural),
         Check("each_node_min_lines", lambda chk, m, ctx: m.wrap(chk, each_node_min_lines(ctx.artifact, min=ctx.param("each_node_min_lines", 3))), tools=_T_EDIT_WRITE),
-        Check("each_node_has_location", lambda chk, m, ctx: m.wrap(chk, each_node_has_location(ctx.artifact)), job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
+        Check("each_node_has_location", lambda chk, m, ctx: m.wrap(chk, each_node_has_location(ctx.artifact)),
+              job="fix", prompt="nodes_fix.txt", tools=_T_EDIT, context=cr.ctx_crossref),
         Check("no_dead_gates", lambda chk, m, ctx: m.wrap(chk, no_dead_gates(ctx.artifact)),
-              job="fix", prompt="nodes_fix.txt", tools=_T_EDIT),
+              job="fix", prompt="nodes_fix.txt", tools=_T_EDIT, context=cr.ctx_structural),
         Check("min_branches", _d_min_branches, tools=_T_EDIT_WRITE),
         Check("all_characters_speak", _d_all_characters_speak, tools=_T_EDIT_WRITE),
         Check("crossref", _d_crossref, job="fix", when_clean=True, prompt="nodes_fix.txt",
-              tools=_T_EDIT_WRITE),
+              tools=_T_EDIT_WRITE, context=cr.ctx_crossref),
         Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="nodes_fix.txt",
-              tools=_T_EDIT_WRITE),
+              tools=_T_EDIT_WRITE, context=cr.ctx_crossref),
     ]
 
     def params(self) -> Dict:
         return {"min_branches": 1, "each_node_min_lines": 3}
 
     def render_context(self, ctx: Dict) -> str:
-        # The dialogue author's context, crafted: WHO speaks (full character cards), WHERE it
-        # happens (locations with descriptions), WHAT the story is driving at (question/endings),
-        # which items exist to move, plus the graph view + assigned slot with its real lead-in
-        # lines. Scene TEXT never enters except the lead-in — the window is the budget.
+        # The dialogue AUTHOR's context, crafted: WHO speaks (full character cards — the quality
+        # path), WHERE it happens (locations with descriptions, for staging), WHAT the story drives
+        # at (question/endings), which item ids exist to move, plus the graph view + assigned slot
+        # with its real lead-in lines, and the LIVE continuity tail. Scene TEXT never enters except
+        # the lead-in; the cumulative established_facts dump never does.
         from maestro.modules import assets, cast, inventory, story
         art = ctx.get("artifact") or {}
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
+        lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
         lines += cast.character_cards(art)
         lines += assets.locations_block(art)
         lines += story.story_block(art)
-        lines += inventory.items_block(art)
+        lines += inventory.item_index(art)
         view = ctx.get("active_view") or {}
         if view.get("node_ids"):
             lines += _node_view_block(view, ctx.get("slot_index", 0))
         else:
             lines += _render_slot_focus(view, ctx.get("slot_index", 0))
-        lines += cr.story_state_block(ctx)
+        lines += cr.story_tail_block(ctx)
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> list:
+        return nodes_index_block(artifact)
 
 
 MODULE = Scenes()

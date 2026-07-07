@@ -19,6 +19,7 @@ Example games:
 
 from typing import Dict, List, Optional
 
+from maestro import context_render as cr
 from maestro.modules import checks
 from maestro.modules.module import Check, Error, Module, register_module
 
@@ -619,32 +620,36 @@ class Combat(Module):
               skeleton=_skel_with_ids(SKEL_PROGRESSION, [_F_COMBATANTS, _F_STATS])),
         Check("combat_structural", _d_structural, job="fix", blocking=True, tools=_CROSSREF_TOOLS,
               skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
-                                                 _F_COMBATANTS, _F_CAST, _F_NODES])),
-        Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS, skeleton=SKEL_FIX),
+                                                 _F_COMBATANTS, _F_CAST, _F_NODES]),
+              context=cr.ctx_structural),
+        Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS, skeleton=SKEL_FIX,
+              context=cr.ctx_crossref),
         Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS,
               skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
-                                                 _F_COMBATANTS, _F_CAST, _F_NODES])),
+                                                 _F_COMBATANTS, _F_CAST, _F_NODES]),
+              context=cr.ctx_crossref),
     ]
 
     def params(self) -> Dict:
         return {"min_abilities": 3, "min_combatants": 3, "min_encounters": 2}
 
     def render_context(self, ctx: Dict) -> str:
-        # The combat author's context, crafted: the character cards (a combatant IS a cast member
-        # — competencies inform abilities, drives inform who fights), the scenes that exist
+        # The combat AUTHOR's context, crafted: the premise + character cards (a combatant IS a cast
+        # member — competencies inform abilities, drives inform who fights), the scenes that exist
         # (on_victory/on_defeat jump targets), and the places (a fight is entered from a map).
         # The declared combat ids ride on each step's skeleton, not here.
-        from maestro import context_render as cr
         from maestro.modules import cast, scenes, world
         art = ctx.get("artifact") or {}
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
+        lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
         lines += cast.character_cards(art)
         lines += scenes.nodes_index_block(art)
         lines += world.places_index_block(art)
         lines += cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> list:
+        return combat_index_block(artifact)
 
 
 MODULE = Combat()

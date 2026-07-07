@@ -13,6 +13,7 @@ Example games:
 
 from typing import Dict, List, Optional
 
+from maestro import context_render as cr
 from maestro.modules import checks, views
 from maestro.modules.module import Check, Error, Module, register_module
 
@@ -26,6 +27,17 @@ def items_block(artifact: Dict) -> list:
         return []
     return ["", "ITEMS (the declared catalogue — take/require these EXACT ids):",
             *(f"  {i['id']} — {i.get('name', '')}: {i.get('examine', '')}" for i in items)]
+
+
+def item_index(artifact: Dict) -> list:
+    """Ids + names only, no examine prose — what a crossref/structural fix needs to name a real
+    item; the full `items_block` (with examine) is for authoring calls that place or gate items."""
+    items = [i for i in (artifact.get("items") or {}).get("items", [])
+             if isinstance(i, dict) and i.get("id")]
+    if not items:
+        return []
+    return ["", "ITEMS (these EXACT ids):",
+            *(f"  {i['id']} — {i.get('name', '')}" for i in items)]
 
 
 def v_item_one(it: Dict) -> Optional[str]:
@@ -161,29 +173,30 @@ class Inventory(Module):
     # use in context. The field/distinct checks are cheap safety on the items already written.
     checks = [
         Check("item_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "items.items", fields=["id", "name"])) if _has_items(ctx) else []),
+            ctx.artifact, "items.items", fields=["id", "name"])) if _has_items(ctx) else [],
+            context=cr.ctx_structural),
         Check("distinct_items", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "items.items", key="id")) if _has_items(ctx) else []),
+            ctx.artifact, "items.items", key="id")) if _has_items(ctx) else [],
+            context=cr.ctx_structural),
         Check("demanded_items", _d_demanded_items, tools=_ADD_TOOLS, when_clean=True,
               prompt="inventory_add.txt", skeleton=SKEL_ITEM_ONE),
     ]
 
     def render_context(self, ctx: Dict) -> str:
-        # The item is authored FROM its demand: where it's used (the consuming site), plus the
-        # story/cast so it fits the world. Never a floating catalogue invented ahead of need.
-        from maestro import context_render as cr
-        from maestro.modules import cast, story
+        # The item is authored FROM its demand: the premise for flavour + where it's used (the
+        # consuming site) + the items already declared (so it stays distinct). Never full cast cards
+        # or a story dump — an item's name/examine needs the USE, not the whole world.
         art = ctx.get("artifact") or {}
         target = ctx.get("target")
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
-        lines += story.story_block(art)
-        lines += cast.character_cards(art)
+        lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
         if target is not None and getattr(target, "ref", None):
             lines += _item_usage_block(art, target.ref)
-        lines += items_block(art)
+        lines += item_index(art)
         lines += cr.tail_block(ctx)
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> list:
+        return item_index(artifact)
 
 
 MODULE = Inventory()

@@ -101,6 +101,10 @@ class Check:
     skeleton: object = None                # str | callable(ctx)->str | None (=> module.skeleton)
     guard: Optional[Dict] = None           # slot guard for a create tool (count targets)
     max_tokens: Optional[int] = None
+    context: Optional[Callable] = None     # (module, rd) -> str: the per-error user payload;
+                                           # None => module.render_context. A repair check points
+                                           # at a lean archetype (ctx_structural/ctx_crossref) so
+                                           # the fix ships ONLY what that check needs, no dumps.
     build_prompt: Optional[Callable] = None   # (module, ctx, error) -> CorrectionPrompt
     run: Optional[Callable] = None         # (module, ctx, error, slot, services, dispatch) -> None:
                                            # the whole fix body (multi-call subloop); replaces the
@@ -199,7 +203,7 @@ class Module(ABC):
         system = load_prompt(prompt or self.mode_prompt)
         if skel:
             system += "\n\n" + skeleton_guide(self.component, skel)
-        user = self.render_context(rd)
+        user = chk.context(self, rd) if (chk and chk.context) else self.render_context(rd)
         # Parallel siblings each pick the single most obvious id (everyone writes the hero) and
         # collide on the no-overwrite guard; a view with open_slots already differentiates via the
         # assigned slot, everything else gets told its ordinal.
@@ -215,16 +219,27 @@ class Module(ABC):
 
     # ── overridable hooks (sensible defaults) ────────────────────────────────
     def render_context(self, ctx: Dict) -> str:
-        """The per-step user message. There is no generic component dump — every module is
-        expected to override this and CRAFT the context its call needs from `ctx['artifact']`
-        (the cr.*_block helpers are the shared formats). This default carries only the
-        run-state frame."""
+        """The per-step user message for an AUTHORING check. There is no generic component dump —
+        an authoring module overrides this and CRAFTS exactly the upstream its call needs from
+        `ctx['artifact']` (the cr.*_block helpers are the shared formats). Repair checks skip this
+        entirely by pointing `Check.context` at a lean archetype. This default carries only the
+        target + run-state frame — no spec dump, no story-state dump."""
         from maestro import context_render as cr
-        lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx)
-        lines += cr.story_state_block(ctx) + cr.tail_block(ctx)
+        lines = cr.target_block(ctx) + cr.self_digest_block(self, ctx) + cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)
+
+    def self_digest(self, artifact: Dict) -> List[str]:
+        """A COMPACT view of this module's OWN component, for a structural repair on it (dedup a
+        field, merge duplicate ids, fix a broken graph edge). The default is the projector's graph
+        view if the module has one, else nothing — a small-component module overrides with an
+        id-level index. Never the raw component prose."""
+        view = self.view(artifact)
+        if not view:
+            return []
+        import json
+        return ["", f"CURRENT {self.component or 'component'} (graph view):",
+                json.dumps(view, ensure_ascii=False)]
 
     def params(self) -> Dict:
         """Tunable knobs -> FLOOR (int knobs take the max when composed, list knobs the union). The

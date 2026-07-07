@@ -10,6 +10,7 @@ Example games:
 
 from typing import Dict, Optional
 
+from maestro import context_render as cr
 from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
 
@@ -33,6 +34,17 @@ def character_cards(artifact: Dict, only=None) -> list:
         for ln in c.get("example_lines") or []:
             out.append(f'    says: "{ln}"')
     return out
+
+
+def character_index(artifact: Dict) -> list:
+    """Ids only — id + name + role, no cards. What a crossref/structural fix needs to name a real
+    character; the full `character_cards` is reserved for authoring calls that write a person."""
+    chars = [c for c in (artifact.get("characters") or {}).get("characters", [])
+             if isinstance(c, dict) and c.get("id")]
+    if not chars:
+        return []
+    return ["", "CHARACTERS (these EXACT ids):",
+            *(f"  {c['id']} — {c.get('name', '')} ({c.get('role', 'npc')})" for c in chars)]
 
 
 def v_character_one(ch: Dict) -> Optional[str]:
@@ -130,13 +142,16 @@ class Cast(Module):
               prompt="characters_add.txt", skeleton=SKEL_CHARACTER_ONE),
         Check("character_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "characters.characters",
-            fields=ctx.param("character_fields", ["id", "name"])))),
+            fields=ctx.param("character_fields", ["id", "name"]))), context=cr.ctx_structural),
         Check("distinct_characters", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "characters.characters", key="id"))),
+            ctx.artifact, "characters.characters", key="id")), context=cr.ctx_structural),
     ]
 
     def params(self) -> Dict:
         return {"min_characters": 1, "character_fields": ["id", "name"]}
+
+    def self_digest(self, artifact: Dict) -> list:
+        return character_index(artifact)
 
     def render_context(self, ctx: Dict) -> str:
         # The cast is the source every later scene draws from — author it from the bare request, not

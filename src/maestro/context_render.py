@@ -1,4 +1,4 @@
-"""The run-state FRAME every build step shares: spec, to-do, target, scratchpad, story state,
+"""The run-state FRAME every build step shares: spec, to-do, target, story state,
 and the trailing result/stall nudge.
 
 Nothing module-specific lives here. Each module is the one-stop shop for its own domain — it
@@ -34,10 +34,6 @@ def target_block(ctx: Dict) -> List[str]:
         f"[{target.component}] {target.code}: {target.message}",
         "Make the change that clears it. Don't chase other to-do items.",
     ]
-
-
-def scratchpad_block(ctx: Dict) -> List[str]:
-    return ["", f"SCRATCHPAD: {json.dumps(ctx.get('scratchpad', {}) or {}, ensure_ascii=False)}"]
 
 
 def story_state_block(ctx: Dict) -> List[str]:

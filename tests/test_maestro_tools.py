@@ -152,15 +152,6 @@ def test_generate_asset_refuses_when_unfrozen(tmp_path):
         tools["generate_asset"]()
 
 
-def test_update_scratchpad(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
-    tools["update_scratchpad"](current_goal="write premise", open_questions=["which tone?"])
-    pad = state.read_scratchpad()
-    assert pad["current_goal"] == "write premise"
-    assert pad["open_questions"] == ["which tone?"]
-
-
 def test_request_review_returns_pending(tmp_path):
     tools = build_tools(_spec(), RunState(tmp_path))
     res = tools["request_review"]("Romance or tragedy?", ["romance", "tragedy"])
@@ -363,6 +354,7 @@ def test_crossref_crash_is_surfaced_not_swallowed():
 
     class Ctx:
         artifact = art
+        spec = {}
 
     chk = Check("crossref", lambda *a: [], job="fix")
     assert combat_mod._d_crossref(chk, None, Ctx()) == []      # not a combat slice
@@ -622,9 +614,9 @@ def test_state_bare_declaration_cut_is_mechanical(tmp_path):
     assert svc.allowed is None
 
 
-def test_state_bare_item_at_floor_wires_instead_of_cutting(tmp_path):
-    # observed: cut at the floor -> min_items authors another unwired item -> cut again,
-    # an author/cut oscillation that rode a live build to the step cap
+def test_state_bare_item_is_cut(tmp_path):
+    # With demand-driven items (no floor), a declared-but-unreferenced item is dead — cut it
+    # deterministically. (The old min_items floor that WIRED it instead is gone.)
     from maestro.modules.context import build_context
     from maestro.modules.state import MODULE as st, _cut_bare_declaration
 
@@ -637,27 +629,86 @@ def test_state_bare_item_at_floor_wires_instead_of_cutting(tmp_path):
                "end": {"type": "menu", "choices": [
                    {"text": "go", "target": "n1", "requires": {"item": "item_live"}},
                    {"text": "stay", "target": "n1"}]}}}})
-    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes", "inventory"],
-                 "params": {"min_items": 2}})
+    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes", "inventory"], "params": {}})
     ctx = build_context(spec.data, state)
     err = next(e for e in st.get_errors(ctx)
                if e.code == "state_wiring" and e.ref == "item_dead")
 
+    calls = []
+
     class Svc:
         allowed = None
-        ran = False
 
         def dispatch(self, name, args):
-            raise AssertionError("at the floor the fix must go to the LLM, not a code cut")
+            calls.append(name)
+            if name == "write_component":
+                state.write_component("items", args["content"])
+            return {"ok": True}
 
         def run(self, prompt, dispatch=None):
-            Svc.ran = True
-            assert "do NOT cut this item" in prompt.user
+            raise AssertionError("a bare item must be cut deterministically, not sent to the LLM")
+
+        def _report(self, msg):
+            pass
 
     svc = Svc()
     _cut_bare_declaration(st, ctx, err, 0, svc, svc.dispatch)
-    assert Svc.ran
-    assert [i["id"] for i in state.read_component("items")["items"]] == ["item_dead", "item_live"]
+    assert calls and calls[0] == "write_component"
+    assert [i["id"] for i in state.read_component("items")["items"]] == ["item_live"]
+
+
+def test_add_character_appends_and_guards_dup(tmp_path):
+    from maestro.modules.cast import cast_view
+    from maestro.services import _create_guard
+    state = RunState(tmp_path)
+    # floor 2 keeps `characters` unlocked after the first person (else it locks at floor 1 and the
+    # guard-add below is correctly refused as "component complete").
+    tools = build_tools(Spec({"title": "T", "frozen": True, "modules": ["cast"],
+                              "params": {"min_characters": 2}}), state)
+    assert tools["add_character"]("evelyn", {"name": "Evelyn", "sex": "female"})["ok"]
+    assert tools["add_character"]("evelyn", {"name": "E2", "sex": "female"})["ok"] is False   # dup id
+    assert tools["add_character"]("tom", {"name": "Tom", "sex": "guy"})["ok"] is False         # bad enum
+    assert [c["id"] for c in state.read_component("characters")["characters"]] == ["evelyn"]
+    # the slot guard also refuses an existing id (belt-and-suspenders under parallel authoring)
+    g = _create_guard(lambda n, a: tools[n](**a), lambda: cast_view(state.load_artifact()),
+                      "add_character", "character_id", "character_ids", "character")
+    assert g("add_character", {"character_id": "evelyn",
+                               "content": {"name": "X", "sex": "male"}})["ok"] is False
+    assert g("add_character", {"character_id": "marcus",
+                               "content": {"name": "Marcus", "sex": "male"}})["ok"]
+
+
+def test_story_tools_author_spine_beats_and_endings(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(Spec({"title": "T", "frozen": True,
+                              "modules": ["story", "cast", "scenes"], "params": {}}), state)
+    assert tools["set_central_question"]("Will they stay?")["ok"]
+    assert tools["add_beat"]("beat_01", {"summary": "they meet", "type": "bonding",
+                                         "purpose": "setup", "tension": "none"})["ok"]
+    assert tools["add_beat"]("beat_01", {"summary": "dup", "type": "plot",
+                                         "purpose": "setup", "tension": "none"})["ok"] is False
+    assert tools["add_beat"]("beat_02", {"summary": "thin"})["ok"] is False   # missing type/purpose/tension
+    # add_ending writes the ending AND its path in one call — endings_planned holds by construction
+    assert tools["add_ending"]("ending_stay", "They stay and rebuild.", "the beat_01 choice")["ok"]
+    story = state.read_component("story")
+    assert story["central_question"] == "Will they stay?"
+    assert [b["id"] for b in story["beats"]] == ["beat_01"]
+    assert story["ending_paths"] == [{"ending": "ending_stay", "earned_by": "the beat_01 choice"}]
+
+
+def test_add_item_only_where_demanded(tmp_path):
+    state = RunState(tmp_path)
+    state.write_component("nodes", {"node_ids": ["n1"], "nodes": {"n1": {
+        "lines": [{"speaker": "a", "text": "take it", "effects": [{"add_item": "item_key"}]}],
+        "end": {"type": "end"}}}})
+    tools = build_tools(Spec({"title": "T", "frozen": True,
+                              "modules": ["scenes", "inventory", "cast"], "params": {}}), state)
+    # an item nothing references is refused — items are born where used
+    assert tools["add_item"]("item_ghost", {"name": "Ghost", "examine": "x"})["ok"] is False
+    assert tools["add_item"]("item_key", {"name": "Brass Key", "examine": "a small key"})["ok"]
+    assert [i["id"] for i in state.read_component("items")["items"]] == ["item_key"]
+    # already declared -> refused (no overwrite)
+    assert tools["add_item"]("item_key", {"name": "Other", "examine": "y"})["ok"] is False
 
 
 def test_render_beat_carries_type_and_stake():

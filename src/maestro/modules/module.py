@@ -221,7 +221,7 @@ class Module(ABC):
         run-state frame."""
         from maestro import context_render as cr
         lines = cr.spec_block(ctx) + [""] + cr.todo_block(ctx.get("todo", []))
-        lines += cr.target_block(ctx) + cr.scratchpad_block(ctx)
+        lines += cr.target_block(ctx)
         lines += cr.story_state_block(ctx) + cr.tail_block(ctx)
         lines += ["", "Call one tool to address the first to-do item."]
         return "\n".join(lines)

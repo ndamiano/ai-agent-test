@@ -24,7 +24,7 @@ from maestro.story_state import init_story_state
 
 logger = logging.getLogger(__name__)
 
-_SKIP = {"scratchpad.json", "human_todos.json", "waivers.json", STORY_STATE_FILE}
+_SKIP = {"human_todos.json", "waivers.json", STORY_STATE_FILE}
 
 
 def clone_run(src_run_id: str, label: str) -> str:

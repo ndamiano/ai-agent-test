@@ -546,7 +546,7 @@ SKEL_RPG = (
 
 _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "add_interactable",
                                "read_place", "set_places_meta", "read_component", "validate",
-                               "update_scratchpad", "request_review"})
+                               "request_review"})
 _T_MIN_PLACES = frozenset({"write_component", "write_place"})
 _T_INTERACT = frozenset({"read_place", "add_interactable", "edit_place"})
 _T_REACH = frozenset({"read_place", "add_interactable", "edit_place", "read_component"})
@@ -630,10 +630,15 @@ def _d_rpg_connectivity(chk, m, ctx):
 
 def _d_crossref(chk, m, ctx):
     from maestro.ir_crossref import slice_token
+    has_inv = "inventory" in (ctx.spec.get("modules") or [])
     out = []
     for rec in checks.crossref_failures(ctx.artifact):
         # combat owns its slices' refs (it can rewrite the combat doc; world cannot).
         if slice_token(rec.get("path") or "") in _COMBAT_SLICES:
+            continue
+        # A dangling item ref is DEMAND to author that item — inventory owns it (author, not
+        # repoint). Without inventory composed, world still handles it (strip the reference).
+        if has_inv and rec.get("kind") == "item":
             continue
         out.append(Error(type=chk.tier, code=chk.code, component="places", message=rec["message"],
                          path=rec.get("path"), ref=rec.get("ref")))

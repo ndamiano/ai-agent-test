@@ -62,7 +62,7 @@ SKEL_TABLE = (
 )
 
 _TABLE_TOOLS = frozenset({"set_encounter_table", "read_place", "read_component",
-                          "update_scratchpad", "request_review"})
+                          "request_review"})
 
 
 def _d_wild_tables(chk, m, ctx):

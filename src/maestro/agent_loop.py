@@ -11,6 +11,7 @@ detection (the same top error after a full fix attempt → start the next fix es
 import logging
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -25,8 +26,13 @@ logger = logging.getLogger(__name__)
 
 _TYPE_RANK = {ErrorType.HUMAN: 0, ErrorType.BUILD: 1, ErrorType.FIX: 2}
 _FIX_CAP = 25   # the most steps any one fix may spend (the loop also clamps to the global remaining)
-_ATTEMPT_CAP = 6   # failed fixes per error identity before it's PARKED (a stuck error must not
-                   # monopolize the budget — a live build burned 26 steps on one wrong field name)
+# Stuck detection: keep the last N error-list SNAPSHOTS; if the SAME snapshot recurs this many
+# times the build is spinning — give up on its top error so the rest can proceed. Snapshotting the
+# error SET (not its size) is robust two ways a count is not: it catches A/B oscillation (both sets
+# recur), and it does NOT false-park authoring that spawns downstream demand (a beat add removes a
+# min_beats slot but adds a scene slot — the count stays flat while the SET changes every step).
+_STUCK_WINDOW = 10
+_STUCK_REPEATS = 5
 
 
 @dataclass
@@ -214,7 +220,8 @@ class AgentLoop:
         passed = all_components - {e.component for _, e in pairs}
         self.step = 0
         self._n_failing = len(pairs)
-        self._attempts: dict = {}
+        self._parked: set = set()                     # error identities the loop has given up on
+        self._recent = deque(maxlen=_STUCK_WINDOW)    # the last N error-list snapshots
         self._t0 = time.time()
         self._emit("build_started", n_failing=len(pairs), max_steps=self.max_steps,
                    todo=_todo_from_pairs(pairs), started_at=self._t0)
@@ -225,10 +232,9 @@ class AgentLoop:
                 if not pairs:
                     self._emit("build_done", ok=True, steps=self.step)
                     return LoopResult(ok=True, steps=self.step)
-                # An error that survived _ATTEMPT_CAP fix attempts is PARKED — it needs a human,
-                # and every further step spent on it starves the rest of the build.
-                active = [(m, e) for m, e in pairs
-                          if self._attempts.get(e.identity(), 0) < _ATTEMPT_CAP]
+                # Parked errors need a human; every further step on them starves the rest of the
+                # build. Parking is decided below by the stuck detector, not a per-error counter.
+                active = [(m, e) for m, e in pairs if e.identity() not in self._parked]
                 if not active:
                     self._emit("build_done", ok=False, steps=self.step)
                     return LoopResult(ok=False, steps=self.step, failures=[e for _, e in pairs])
@@ -242,22 +248,22 @@ class AgentLoop:
                 ctx, pairs = self._context()
                 self._pairs = pairs
                 self._n_failing = len(pairs)
-                if len(pairs) < len(prev):
-                    # Forward progress un-parks everything: slot identities are POSITIONAL
-                    # (#001 persists while siblings land), so counters only mean "stuck" while
-                    # the build as a whole isn't moving.
-                    self._attempts.clear()
-                else:
-                    still = {e.identity() for _, e in pairs}
-                    for _m, e, _s in batch:
-                        if e.identity() in still:
-                            n = self._attempts[e.identity()] = \
-                                self._attempts.get(e.identity(), 0) + 1
-                            if n == _ATTEMPT_CAP:
-                                self._emit("error_parked", identity=list(e.identity()),
-                                           message=e.message)
-                                print(f"  parked after {n} failed fixes: [{e.component}] "
-                                      f"{e.code}: {e.message[:120]}", flush=True)
+                # The build is spinning if the SAME error list keeps recurring across the window
+                # (count catches oscillation; a changing SET means real progress even when the size
+                # holds). Give up on the current top error so the loop moves on, then reset the
+                # window so parking is PACED (one per stuck stretch), never a cascade.
+                snap = frozenset(e.identity() for _, e in pairs)
+                self._recent.append(snap)
+                if snap and self._recent.count(snap) >= _STUCK_REPEATS:
+                    spinning = [(m, e) for m, e in pairs if e.identity() not in self._parked]
+                    if spinning:
+                        _m, e = prioritize(spinning)
+                        self._parked.add(e.identity())
+                        self._emit("error_parked", identity=list(e.identity()), message=e.message)
+                        print(f"  parked (build spun on the same error list "
+                              f"{self._recent.count(snap)}/{len(self._recent)} steps): "
+                              f"[{e.component}] {e.code}: {e.message[:120]}", flush=True)
+                    self._recent.clear()
                 now_failing = {e.component for _, e in pairs}
                 for cid in (all_components - now_failing) - passed:
                     self._fire_milestone(cid)

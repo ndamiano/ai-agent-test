@@ -5,10 +5,10 @@ registry the Executor consumes; the agent chooses which to call and when.
 
 The build tools (write_component, generate_asset) refuse to run until the spec is
 frozen — the human gate is load-bearing. read_component, validate, compile_renpy
-and update_scratchpad are safe before freezing.
+are safe before freezing.
 
 State is bounded on purpose: there is no raw read_file/write_file. Components are
-written by id; scratchpad is replaced, not appended.
+written by id.
 """
 
 import json
@@ -95,6 +95,55 @@ TOOL_SCHEMAS: List[Dict] = [
             "component_id": {"type": "string", "description": "Component id, e.g. 'characters'"},
             "content": {"type": "object", "description": "The component's full content as JSON"},
         }, "required": ["component_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "add_character",
+        "description": "Author ONE character into `characters` (raises the cast count). Author the "
+                       "people one at a time — each distinct from the ones already written.",
+        "parameters": {"type": "object", "properties": {
+            "character_id": {"type": "string", "description": "snake_case id, e.g. 'evelyn'"},
+            "content": {"type": "object", "description":
+                "{name, role: protagonist|antagonist|npc, voice, sex: male|female, temperament, "
+                "drive, history:[...], competencies:[...], example_lines:[...], color}"},
+        }, "required": ["character_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "set_central_question",
+        "description": "Set the story's CENTRAL QUESTION — the dramatic question the endings answer "
+                       "differently. The spine the beats and endings hang from; author it first.",
+        "parameters": {"type": "object", "properties": {
+            "central_question": {"type": "string"},
+        }, "required": ["central_question"]}}},
+    {"type": "function", "function": {
+        "name": "add_beat",
+        "description": "Author ONE story beat into `story` (raises the beat count). The beat-sheet is "
+                       "grown one beat at a time, in dramatic order, each continuing the arc so far.",
+        "parameters": {"type": "object", "properties": {
+            "beat_id": {"type": "string", "description": "e.g. 'beat_03'"},
+            "content": {"type": "object", "description":
+                "{summary: the scene author's whole brief, type: bonding|comedy|friction|plot|"
+                "character, purpose: setup|inciting|escalation|midpoint_turn|crisis|climax|"
+                "resolution, tension: the stakes dial ('none' is a real answer)}"},
+        }, "required": ["beat_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "add_ending",
+        "description": "Author ONE ending into `story` (raises the ending count) together with how "
+                       "it is EARNED. Each ending answers the central question a different way.",
+        "parameters": {"type": "object", "properties": {
+            "ending_id": {"type": "string", "description": "e.g. 'ending_solitude'"},
+            "description": {"type": "string", "description":
+                "the concrete final scene — who does/says what, in-world words; never an abstract label"},
+            "earned_by": {"type": "string", "description":
+                "the SPECIFIC beat + choice that earns this ending, e.g. 'the beat_04 choice to stay'"},
+        }, "required": ["ending_id", "description", "earned_by"]}}},
+    {"type": "function", "function": {
+        "name": "add_item",
+        "description": "Declare ONE item into `items` — a thing the player holds. Author it where a "
+                       "reference already demands it (a take hotspot, a use/requires gate, an "
+                       "add_item effect); items are created where used, not guessed up front.",
+        "parameters": {"type": "object", "properties": {
+            "item_id": {"type": "string", "description":
+                "snake_case, prefixed item_, e.g. 'item_key' — the EXACT referenced id"},
+            "content": {"type": "object", "description": "{name, examine: what it IS and DOES}"},
+        }, "required": ["item_id", "content"]}}},
     {"type": "function", "function": {
         "name": "write_node",
         "description": "Write one dialogue node into `nodes` AND merge its story-state delta in "
@@ -308,14 +357,6 @@ TOOL_SCHEMAS: List[Dict] = [
             "component_id": {"type": "string", "description": "Optional: scope to one component"}},
             "required": []}}},
     {"type": "function", "function": {
-        "name": "update_scratchpad",
-        "description": "Replace your working memory (current goal, recent decisions, open questions).",
-        "parameters": {"type": "object", "properties": {
-            "current_goal": {"type": "string"},
-            "recent_decisions": {"type": "array", "items": {"type": "string"}},
-            "open_questions": {"type": "array", "items": {"type": "string"}},
-        }, "required": []}}},
-    {"type": "function", "function": {
         "name": "request_review",
         "description": "Ask the human to choose, when genuinely stuck between options.",
         "parameters": {"type": "object", "properties": {
@@ -438,6 +479,124 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 content["synopses"] = prior["synopses"]
         state.write_component(component_id, content)
         return {"ok": True, "component_id": component_id}
+
+    def add_character(character_id: str, content) -> Dict:
+        """Author ONE character into `characters` (append-by-id, no overwrite) — mirrors the combat
+        write_* slices. The cast is grown one person at a time so each is authored with the others
+        already in context."""
+        _require_frozen()
+        if _locked("characters"):
+            return _locked_error("characters")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object (the character's fields)"}
+        from maestro.modules.cast import v_character_one
+        chars = state.read_component("characters") or {"characters": []}
+        if any(isinstance(c, dict) and c.get("id") == character_id
+               for c in chars.get("characters", [])):
+            return {"ok": False, "error": f"character {character_id!r} already exists — to raise the "
+                    f"cast count write a NEW character id, do not rewrite one."}
+        full = {**content, "id": character_id}
+        err = v_character_one(full)
+        if err:
+            return {"ok": False, "error": err}
+        chars.setdefault("characters", []).append(full)
+        state.write_component("characters", chars)
+        return {"ok": True, "character_id": character_id}
+
+    # ── story: the dramatic plan, authored piece by piece (central_question, then beats, then
+    #    endings). Each writes a slice of the `story` component (like combat's write_* slices).
+    def _story_doc() -> Dict:
+        story = state.read_component("story") or {}
+        for k in ("beats", "endings", "ending_paths"):
+            story.setdefault(k, [])
+        return story
+
+    def set_central_question(central_question: str) -> Dict:
+        """Set the story's spine — the dramatic question the endings answer differently."""
+        _require_frozen()
+        if _locked("story"):
+            return _locked_error("story")
+        if not isinstance(central_question, str) or not central_question.strip():
+            return {"ok": False, "error": "central_question must be a non-empty string — the "
+                    "dramatic question the endings answer differently"}
+        story = _story_doc()
+        story["central_question"] = central_question.strip()
+        state.write_component("story", story)
+        return {"ok": True}
+
+    def add_beat(beat_id: str, content) -> Dict:
+        """Author ONE story beat (append-by-id, no overwrite) — the beat-sheet grows one beat at a
+        time, in dramatic order."""
+        _require_frozen()
+        if _locked("story"):
+            return _locked_error("story")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object (the beat's fields)"}
+        from maestro.modules.story import v_beat_one
+        story = _story_doc()
+        if any(isinstance(b, dict) and b.get("id") == beat_id for b in story["beats"]):
+            return {"ok": False, "error": f"beat {beat_id!r} already exists — to raise the beat "
+                    f"count write a NEW beat id, do not rewrite one."}
+        full = {**content, "id": beat_id}
+        err = v_beat_one(full)
+        if err:
+            return {"ok": False, "error": err}
+        story["beats"].append(full)
+        state.write_component("story", story)
+        return {"ok": True, "beat_id": beat_id}
+
+    def add_ending(ending_id: str, description: str, earned_by: str) -> Dict:
+        """Author ONE ending together with how it is earned — appends to `endings` AND `ending_paths`
+        so every ending has its plan by construction."""
+        _require_frozen()
+        if _locked("story"):
+            return _locked_error("story")
+        if not isinstance(description, str) or not description.strip():
+            return {"ok": False, "error": "description must be the concrete final scene in in-world "
+                    "words (non-empty), never an abstract label"}
+        if not isinstance(earned_by, str) or not earned_by.strip():
+            return {"ok": False, "error": "earned_by must name the SPECIFIC beat + choice that earns "
+                    "this ending (non-empty)"}
+        story = _story_doc()
+        if any(isinstance(e, dict) and e.get("id") == ending_id for e in story["endings"]):
+            return {"ok": False, "error": f"ending {ending_id!r} already exists — to raise the "
+                    f"ending count write a NEW ending id, do not rewrite one."}
+        story["endings"].append({"id": ending_id, "description": description.strip()})
+        story["ending_paths"].append({"ending": ending_id, "earned_by": earned_by.strip()})
+        state.write_component("story", story)
+        return {"ok": True, "ending_id": ending_id}
+
+    def add_item(item_id: str, content) -> Dict:
+        """Declare ONE item (append-by-id, no overwrite) — but ONLY where a reference already demands
+        it. Items are born where used: a hotspot/effect/gate names the id, then this fills it in, so
+        the catalogue is exactly what the game uses (never a floating list `state` must then police)."""
+        _require_frozen()
+        if _locked("items"):
+            return _locked_error("items")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object (name + examine)"}
+        from maestro.modules.inventory import v_item_one, demanded_items
+        items = state.read_component("items") or {"items": []}
+        if any(isinstance(i, dict) and i.get("id") == item_id for i in items.get("items", [])):
+            return {"ok": False, "error": f"item {item_id!r} already exists — do not rewrite it."}
+        demanded = demanded_items(state.load_artifact())
+        if item_id not in demanded:
+            if not demanded:
+                return {"ok": False, "error": "no undeclared item is referenced yet — an item is "
+                        "authored only where a hotspot/effect/gate names it. Add the reference first."}
+            return {"ok": False, "error": f"item {item_id!r} is not referenced anywhere — items are "
+                    f"authored only where used. Author one of {demanded} (each is named by a "
+                    f"hotspot/effect/gate), or add the reference first."}
+        full = {**content, "id": item_id}
+        err = v_item_one(full)
+        if err:
+            return {"ok": False, "error": err}
+        items.setdefault("items", []).append(full)
+        state.write_component("items", items)
+        return {"ok": True, "item_id": item_id}
 
     def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
                    force: bool = False, beat: Optional[str] = None, **delta_fields) -> Dict:
@@ -981,13 +1140,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     # after every step, so a manual trigger only wastes a step — and lets the agent compile
     # early, fighting the deliberate when_clean ordering of the compile check.
 
-    # ── working memory ───────────────────────────────────────────────────────
-    def update_scratchpad(current_goal: str = "",
-                          recent_decisions: Optional[List[str]] = None,
-                          open_questions: Optional[List[str]] = None) -> Dict:
-        state.write_scratchpad(current_goal, recent_decisions, open_questions)
-        return {"ok": True}
-
     def request_review(question: str, options: Optional[List[str]] = None) -> Dict:
         # Scoped escape hatch. Phase 5 surfaces this to the human over the event
         # bus; here it just returns a structured pending marker.
@@ -1016,6 +1168,11 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
 
     return {
         "write_component": write_component,
+        "add_character": add_character,
+        "set_central_question": set_central_question,
+        "add_beat": add_beat,
+        "add_ending": add_ending,
+        "add_item": add_item,
         "write_node": write_node,
         "write_scene": write_scene,
         "edit_node": edit_node,
@@ -1035,7 +1192,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "read_story_state": read_story_state,
         "generate_asset": generate_asset,
         "validate": validate_tool,
-        "update_scratchpad": update_scratchpad,
         "request_review": request_review,
         "set_dirty": set_dirty,
         "thumbs_up": thumbs_up,

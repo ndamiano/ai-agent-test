@@ -87,7 +87,7 @@ SKEL_NODES = (
 )
 
 _NODE_MODE_TOOLS = frozenset({"write_node", "edit_node", "read_node", "read_story_state",
-                              "validate", "update_scratchpad", "request_review"})
+                              "validate", "request_review"})
 _T_WRITE = frozenset({"write_scene"})                                # add a scene (screenplay text)
 _T_EDIT = frozenset({"read_node", "edit_node"})                      # correct an existing node
 _T_EDIT_WRITE = frozenset({"read_node", "edit_node", "write_node"})  # correct OR add
@@ -570,9 +570,13 @@ def _d_all_characters_speak(chk, m, ctx):
 def _d_crossref(chk, m, ctx):
     if not _owns_compile(ctx.artifact):
         return []
+    # A dangling item ref is DEMAND to author that item — inventory owns it (author, not repoint).
+    # Without inventory composed, scenes still handles it (strip the reference).
+    has_inv = "inventory" in (ctx.spec.get("modules") or [])
     return [Error(type=chk.tier, code=chk.code, component="nodes", message=rec["message"],
                   path=rec.get("path"), ref=rec.get("ref"))
-            for rec in checks.crossref_failures(ctx.artifact)]
+            for rec in checks.crossref_failures(ctx.artifact)
+            if not (has_inv and rec.get("kind") == "item")]
 
 
 def _d_compiles(chk, m, ctx):

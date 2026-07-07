@@ -450,23 +450,23 @@ _F_COMBATANTS = ("combatants", lambda a: sorted(_ids(a.get("combat") or {}, "com
 _F_CAST = ("cast character ids (for `character`)", _cast_ids)
 _F_NODES = ("node ids (for on_victory/on_defeat jump targets)", _node_ids)
 
-_META_TOOLS = frozenset({"set_combat_meta", "read_component", "update_scratchpad", "request_review"})
-_ABILITY_TOOLS = frozenset({"write_ability", "read_component", "update_scratchpad", "request_review"})
-_COMBATANT_TOOLS = frozenset({"write_combatant", "read_component", "update_scratchpad", "request_review"})
+_META_TOOLS = frozenset({"set_combat_meta", "read_component", "request_review"})
+_ABILITY_TOOLS = frozenset({"write_ability", "read_component", "request_review"})
+_COMBATANT_TOOLS = frozenset({"write_combatant", "read_component", "request_review"})
 # Encounters place combatants — but an encounter often wants an enemy the combatant floor never
 # authored (three fights, three distinct monsters). So the encounter phase can ALSO write_combatant:
 # author the missing enemy, then reference it. Without this the loop deadlocks — write_encounter
 # rejects the phantom ref and write_combatant is out of scope, so no allowed tool can fix it.
 _ENCOUNTER_TOOLS = frozenset({"write_encounter", "write_combatant", "read_component", "read_node",
-                              "update_scratchpad", "request_review"})
+                              "request_review"})
 _MODE_TOOLS = frozenset({"set_combat_meta", "write_ability", "write_combatant", "write_encounter",
-                         "read_component", "update_scratchpad", "request_review"})
+                         "read_component", "request_review"})
 # A combat-slice crossref (a combatant's external character, an ability's flag gate) is fixed by
 # rewriting the owning slice; an unreachable encounter by wiring a start_combat hotspot.
 _CROSSREF_TOOLS = frozenset({"set_combat_meta", "write_ability", "write_combatant", "write_encounter",
-                             "read_component", "read_node", "update_scratchpad", "request_review"})
+                             "read_component", "read_node", "request_review"})
 _REACH_TOOLS = frozenset({"read_component", "read_place", "add_interactable", "edit_place",
-                          "write_place", "update_scratchpad", "request_review"})
+                          "write_place", "request_review"})
 
 _GUARDS = {
     "min_abilities": {"count_tool": "write_ability", "id_key": "ability_id",
@@ -478,7 +478,7 @@ _GUARDS = {
 }
 
 _PROGRESSION_TOOLS = frozenset({"set_progression", "write_combatant", "read_component",
-                                "update_scratchpad", "request_review"})
+                                "request_review"})
 
 SKEL_PROGRESSION = (
     '{\n'

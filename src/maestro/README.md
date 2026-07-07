@@ -67,7 +67,7 @@ Three layers:
 | `ir_assemble.py` | Lift the decomposed on-disk components → one engine-neutral IR dict. |
 | `ir_crossref.py` | Gate that every id reference in the IR resolves; emits structured records routed by `slice_owner`. |
 | `engines.py` | `compile_for(spec.engine)` — map engine tag → backend compile entry. |
-| `tools.py` | The artifact tools (`build_tools`) + `TOOL_SCHEMAS`. `write_component` / `write_node` / `edit_node`, reads, `generate_asset`, `validate`, `compile_*`, `update_scratchpad`, `request_review`. |
+| `tools.py` | The artifact tools (`build_tools`) + `TOOL_SCHEMAS`. `write_component` / `write_node` / `edit_node`, reads, `generate_asset`, `validate`, `compile_*`, `request_review`. |
 | `prompts/` | One `.txt` per LLM call (climbable). Partials under `prompts/partials/` dedupe shared rules via `{{include:NAME}}`. |
 
 ---

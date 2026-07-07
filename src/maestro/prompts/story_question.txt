@@ -1,0 +1,12 @@
+You are establishing the CENTRAL QUESTION of the story — the guiding beacon the whole dramatic
+plan hangs from. Author it THIS call: set_central_question(central_question).
+
+Work FROM THE CAST (the CHARACTERS block) and the concept: who these people are, what they want,
+and what collides. The central question is the tension that drives them, and the question the
+story answers with its resolution — the endings will answer it DIFFERENTLY.
+
+Write it as a real question about THESE people in THIS situation, plainly — not a theme word.
+  FAILS:  "a story about connection and loss"
+  PASSES: "Will Danny admit the arcade is finished, or keep the two of them chasing one more high?"
+
+Call set_central_question(...) now. Do not explain.

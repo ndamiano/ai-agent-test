@@ -73,7 +73,7 @@ class Assets(Module):
     priority = 20
     component = "asset_manifest"
     mode_prompt = "assets_write.txt"
-    mode_tools = frozenset({"write_component", "update_scratchpad", "request_review"})
+    mode_tools = frozenset({"write_component", "request_review"})
     skeleton = SKEL_ASSET_MANIFEST
     schemas = {"asset_manifest": v_asset_manifest}
     skeletons = {"asset_manifest": SKEL_ASSET_MANIFEST}

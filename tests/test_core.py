@@ -58,7 +58,6 @@ def _ctx(spec, art):
         run_dir = "/tmp/none"
         def load_artifact(self): return art
         def read_story_state(self): return {}
-        def read_scratchpad(self): return {}
         def read_waivers(self): return []
         def read_human_todos(self): return []
     return Context(spec=spec, state=S(), artifact=art)
@@ -71,6 +70,58 @@ def test_cast_errors_param_driven():
     assert not any(e.code == "min_characters" for e in cast.get_errors(_ctx({"params": {}}, art)))
     errs = cast.get_errors(_ctx({"params": {"min_characters": 2}}, art))
     assert any(e.code == "min_characters" and e.type is ErrorType.BUILD for e in errs)
+
+
+# ── decomposed authoring: cast / story / items grown one item per step ────────
+def test_cast_min_characters_fans_into_per_slot_creates():
+    cast = MODULE_REGISTRY["cast"]
+    slots = [e for e in cast.get_errors(_ctx({"params": {"min_characters": 3}}, {}))
+             if e.code == "min_characters"]
+    assert len(slots) == 3 and {e.path for e in slots} == {"#001", "#002", "#003"}
+    guard = cast._check_for("min_characters").guard
+    assert guard["count_tool"] == "add_character" and guard["id_list_key"] == "character_ids"
+    # authoring one shrinks the owed set (visible progress, stable identity)
+    art = {"characters": {"characters": [{"id": "a", "name": "A"}]}}
+    assert len([e for e in cast.get_errors(_ctx({"params": {"min_characters": 3}}, art))
+                if e.code == "min_characters"]) == 2
+
+
+def test_story_central_question_blocks_then_beats_and_endings_fan():
+    story = MODULE_REGISTRY["story"]
+    p = {"params": story.params()}
+    # no story -> ONLY the blocking central_question error (spine before the rest)
+    assert [e.code for e in story.get_errors(_ctx(p, {}))] == ["central_question"]
+    # cq set -> beats fan to their floor, then endings fan to theirs
+    errs = story.get_errors(_ctx(p, {"story": {"central_question": "Q?", "beats": [],
+                                                "endings": [], "ending_paths": []}}))
+    assert len([e for e in errs if e.code == "min_beats"]) == 5
+    assert len([e for e in errs if e.code == "min_endings"]) == 3
+    # beats/endings are authored ONE at a time (arc coherence), not batched in parallel
+    assert story._check_for("min_beats").guard["cap"](None) == 1
+    assert story._check_for("min_endings").guard["cap"](None) == 1
+
+
+def test_items_are_demand_driven_no_floor():
+    from maestro.modules import inventory
+    inv = MODULE_REGISTRY["inventory"]
+    # nothing references an item -> no work, no floor (empty or absent catalog is clean)
+    assert inv.get_errors(_ctx({"params": {}}, {})) == []
+    assert inv.get_errors(_ctx({"params": {}}, {"items": {"items": []}})) == []
+    # a node add_item effect DEMANDS that exact item
+    art = {"items": {"items": []}, "nodes": {"node_ids": ["n1"], "nodes": {"n1": {
+        "lines": [{"speaker": "a", "text": "x", "effects": [{"add_item": "item_key"}]}],
+        "end": {"type": "end"}}}}}
+    assert inventory.demanded_items(art) == ["item_key"]
+    demanded = [e for e in inv.get_errors(_ctx({"params": {}}, art)) if e.code == "demanded_items"]
+    assert len(demanded) == 1 and demanded[0].ref == "item_key"
+    # once declared, the demand clears
+    art["items"]["items"].append({"id": "item_key", "name": "Key", "examine": "a key"})
+    assert inventory.demanded_items(art) == []
+
+
+def test_scratchpad_tool_is_gone():
+    from maestro.tools import TOOL_SCHEMAS
+    assert not any(s["function"]["name"] == "update_scratchpad" for s in TOOL_SCHEMAS)
 
 
 def test_state_wiring_demands_producer_and_consumer():
@@ -661,14 +712,12 @@ def test_stuck_error_parks_instead_of_burning_budget(tmp_path):
     assert result.failures and result.failures[0].code == "unfixable"
 
 
-def test_progress_unparks_attempt_counters(tmp_path):
-    # Slot identities are positional (#001 persists while siblings land), so counters reset on
-    # any forward progress — a retryable authoring slot must not get parked mid-build.
+def test_flaky_but_progressing_slot_not_parked(tmp_path):
+    # A slot that whiffs a few times between successes must not be parked: each success changes the
+    # error SET (one fewer slot), so the same snapshot never recurs enough to look stuck.
     state = RunState(tmp_path)
 
     class _FlakyAdd:
-        """Every write attempt fails 5x then succeeds — under the cap only because progress
-        (an eventual success) clears the counters."""
         def __init__(self):
             self.i = 0
 
@@ -681,7 +730,7 @@ def test_progress_unparks_attempt_counters(tmp_path):
 
     def add(id, **kw):
         fails["n"] += 1
-        if fails["n"] % 6 != 0:   # 5 failures, then one success, repeatedly
+        if fails["n"] % 4 != 0:   # 3 whiffs, then a success, repeatedly (< the stuck threshold)
             return {"ok": False, "error": "rejected"}
         items = state.read_component("items") or {"ids": []}
         items["ids"].append(id)
@@ -691,7 +740,65 @@ def test_progress_unparks_attempt_counters(tmp_path):
     loop = AgentLoop({"frozen": True}, state, [_Counter3()], {"add": add},
                      connector=_FlakyAdd(), max_steps=60)
     result = loop.run()
-    assert result.ok is True   # never parked: each success resets the counters
+    assert result.ok is True   # never parked: the snapshot changes each time a slot lands
+
+
+def test_flat_error_count_with_changing_set_not_parked(tmp_path):
+    # The regression the snapshot detector fixes: authoring that SPAWNS downstream demand keeps the
+    # error COUNT flat while the SET changes every step (a beat add removes a min_beats slot but
+    # adds a scene slot). The old len-based park killed builds like this after 6 flat steps.
+    state = RunState(tmp_path)
+
+    def _widgets(chk, m, ctx):
+        n = len((ctx.artifact.get("widgets") or {}).get("ids", []))
+        return checks.slot_errors(max(0, 8 - n), type=chk.tier, code=chk.code,
+                                  component="widgets", noun="widget")
+
+    def _gadgets(chk, m, ctx):   # one gadget owed per widget already authored (demand grows)
+        w = len((ctx.artifact.get("widgets") or {}).get("ids", []))
+        g = len((ctx.artifact.get("gadgets") or {}).get("ids", []))
+        return checks.slot_errors(max(0, w - g), type=chk.tier, code=chk.code,
+                                  component="gadgets", noun="gadget")
+
+    class _Producer(Module):
+        id = "_producer"; component = "widgets"; priority = 10
+        mode_prompt = "nodes_write.txt"; mode_tools = frozenset({"add_widget"})
+        checks = [Check("widgets", _widgets, guard={"count_tool": "add_widget", "id_key": "id",
+                        "id_list_key": "ids", "noun": "widget"})]
+        def view(self, art): return {"ids": (art.get("widgets") or {}).get("ids", []), "open_slots": None}
+        def render_context(self, ctx): return "add"
+
+    class _Consumer(Module):
+        id = "_consumer"; component = "gadgets"; priority = 20
+        mode_prompt = "nodes_write.txt"; mode_tools = frozenset({"add_gadget"})
+        checks = [Check("gadgets", _gadgets, guard={"count_tool": "add_gadget", "id_key": "id",
+                        "id_list_key": "ids", "noun": "gadget"})]
+        def view(self, art): return {"ids": (art.get("gadgets") or {}).get("ids", []), "open_slots": None}
+        def render_context(self, ctx): return "add"
+
+    class _Conn:
+        def __init__(self, st): self.st = st; self.i = 0
+        def generate_with_tools(self, messages, schemas, **kw):
+            self.i += 1
+            w = len((self.st.read_component("widgets") or {}).get("ids", []))
+            name = "add_widget" if w < 8 else "add_gadget"   # widgets first (lower priority)
+            return {"choices": [{"message": {"tool_calls": [{"id": "1", "function": {
+                "name": name, "arguments": f'{{"id": "{name}_{self.i}"}}'}}]}}]}
+
+    def _adder(comp):
+        def add(id, **kw):
+            c = state.read_component(comp) or {"ids": []}
+            c["ids"].append(id); state.write_component(comp, c)
+            return {"ok": True, "id": id}
+        return add
+
+    loop = AgentLoop({"frozen": True}, state, [_Producer(), _Consumer()],
+                     {"add_widget": _adder("widgets"), "add_gadget": _adder("gadgets")},
+                     connector=_Conn(state), max_steps=60)
+    result = loop.run()
+    assert result.ok is True                                   # not parked despite 8 flat-count steps
+    assert len(state.read_component("widgets")["ids"]) == 8
+    assert len(state.read_component("gadgets")["ids"]) == 8
 
 
 # ── parallel create prompts differentiate by slot ordinal ────────────────────

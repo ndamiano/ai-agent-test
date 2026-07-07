@@ -24,7 +24,6 @@ def test_load_artifact_excludes_reserved_files(tmp_path):
     state = RunState(tmp_path)
     state.write_component("premise", {"x": 1})
     state.write_spec({"frozen": False})
-    state.write_scratchpad(current_goal="do thing")
     state.write_story_state({"established_facts": []})
 
     artifact = state.load_artifact()
@@ -36,17 +35,6 @@ def test_reserved_name_rejected_as_component(tmp_path):
     state = RunState(tmp_path)
     with pytest.raises(ValueError):
         state.write_component("spec", {"oops": True})
-
-
-def test_scratchpad_replaces_and_has_forced_fields(tmp_path):
-    state = RunState(tmp_path)
-    state.write_scratchpad(current_goal="first", recent_decisions=["a"])
-    state.write_scratchpad(current_goal="second")  # replace, not append
-
-    pad = state.read_scratchpad()
-    assert pad["current_goal"] == "second"
-    assert pad["recent_decisions"] == []          # replaced
-    assert set(pad) == {"current_goal", "recent_decisions", "open_questions"}
 
 
 def test_spec_roundtrip(tmp_path):

@@ -162,9 +162,10 @@ def cond_state_refs(cond) -> set:
 # ── reference integrity + terminal build (the two heavy checks) ──────────────
 def crossref_failures(artifact: Dict):
     """Every IR id reference resolves — a cheap data-walk, no engine build. Returns a list of
-    {message, path, ref} for the unresolved references (empty = clean). The IR may not be
-    assemblable mid-build (structure still forming); that's not a crossref failure, so it returns
-    []. The caller (a projected module) wraps each into a FIX Error on its component."""
+    {message, path, ref, kind} for the unresolved references (empty = clean). `kind` routes the
+    failure (an item-kind dangling ref is authored by `inventory`, not repointed by the holder). The
+    IR may not be assemblable mid-build (structure still forming); that's not a crossref failure, so
+    it returns []. The caller (a projected module) wraps each into a FIX Error on its component."""
     from maestro.ir_assemble import assemble_ir
     from maestro.ir_crossref import crossref_records
     try:
@@ -180,8 +181,9 @@ def crossref_failures(artifact: Dict):
         return [{"message": f"IR reference walk crashed ({type(e).__name__}: {e}) — a node "
                             f"effect/end is malformed (e.g. an effect that isn't an object, or "
                             f"a menu choice missing 'target'). Find and fix the malformed field.",
-                 "path": None, "ref": None}]
-    return [{"message": r["message"], "path": r.get("path"), "ref": r.get("ref")} for r in records]
+                 "path": None, "ref": None, "kind": None}]
+    return [{"message": r["message"], "path": r.get("path"), "ref": r.get("ref"),
+             "kind": r.get("kind")} for r in records]
 
 
 def compile_failure(run_dir, engine: str) -> CheckResult:

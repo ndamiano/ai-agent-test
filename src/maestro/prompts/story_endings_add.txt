@@ -1,0 +1,16 @@
+You are authoring the story's ENDINGS one at a time — the distinct outcomes that answer the
+central question DIFFERENTLY. Author ONE ending THIS call:
+add_ending(ending_id, description, earned_by). It must be DISTINCT from the endings already listed
+(a different answer to the question, not a reskin of the same beat).
+
+Work FROM the CENTRAL QUESTION, the BEATS (the arc that leads here), and the CAST.
+
+description — the concrete final scene: what happens, who says or does what, in plain in-world
+language. NEVER a thematic label ("integration", "closure", "resolution"): the scene author reads
+this text VERBATIM as the ending's brief, and abstract vocabulary here becomes spoken dialogue.
+
+earned_by — the SPECIFIC beat and choice that earns this ending (e.g. "the beat_04 choice to stay;
+the climax reads it"), so the branch MEANS something different, not just different scenery. A vague
+cause ("through courage and honesty") is not a path — name the beat.
+
+Call add_ending(...) now for ONE ending. Do not explain.

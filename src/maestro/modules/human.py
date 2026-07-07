@@ -31,7 +31,7 @@ from maestro.modules.module import (
 _HUMAN_TOOLS: Tuple[str, ...] = (
     "write_component", "write_node", "edit_node", "write_place", "edit_place",
     "add_interactable", "set_places_meta", "write_match", "edit_match", "generate_asset",
-    "read_component", "read_node", "read_place", "update_scratchpad",
+    "read_component", "read_node", "read_place",
 )
 
 
@@ -174,7 +174,7 @@ def _human_prompt(m, context, error: Error) -> CorrectionPrompt:
     return CorrectionPrompt(system=system, user="\n".join(lines), allowed_tools=_HUMAN_TOOLS)
 
 
-_READONLY = {"read_component", "read_node", "read_place", "update_scratchpad"}
+_READONLY = {"read_component", "read_node", "read_place"}
 
 
 def _run_todo_fix(module, context, error, slot, services, dispatch):

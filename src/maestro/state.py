@@ -4,7 +4,6 @@ Each game gets its own run directory under <working_directory>/runs/<run_id>/.
 Inside it:
   - <component_id>.json   one file per artifact component (characters, nodes, ...)
   - spec.json             the frozen contract
-  - scratchpad.json       structured working memory (replaced, never appended)
   - story_state.json      continuity bible (Phase 6)
 
 Component ids map directly to the filenames the compiler reads (characters.json,
@@ -22,17 +21,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 SPEC_FILE = "spec.json"
-SCRATCHPAD_FILE = "scratchpad.json"
 STORY_STATE_FILE = "story_state.json"
 HUMAN_TODOS_FILE = "human_todos.json"
 WAIVERS_FILE = "waivers.json"
 DIRTY_FILE = "dirty.json"
 
 # Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, SCRATCHPAD_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE,
-             DIRTY_FILE}
-
-_SCRATCHPAD_FIELDS = ("current_goal", "recent_decisions", "open_questions")
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, DIRTY_FILE}
 
 
 class RunState:
@@ -72,20 +67,6 @@ class RunState:
 
     def read_spec(self) -> Optional[Dict]:
         return self._read(SPEC_FILE)
-
-    # ── scratchpad (structured, replace-not-append) ──────────────────────────
-    def write_scratchpad(self, current_goal: str = "",
-                         recent_decisions: Optional[List[str]] = None,
-                         open_questions: Optional[List[str]] = None) -> None:
-        self._write(SCRATCHPAD_FILE, {
-            "current_goal": current_goal,
-            "recent_decisions": recent_decisions or [],
-            "open_questions": open_questions or [],
-        })
-
-    def read_scratchpad(self) -> Dict:
-        data = self._read(SCRATCHPAD_FILE) or {}
-        return {f: data.get(f, "" if f == "current_goal" else []) for f in _SCRATCHPAD_FIELDS}
 
     # ── story state (Phase 6) ─────────────────────────────────────────────────
     def write_story_state(self, state: Dict) -> None:

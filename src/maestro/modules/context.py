@@ -38,9 +38,6 @@ class Context:
     def story_state(self) -> Dict:
         return self.state.read_story_state() or {}
 
-    def scratchpad(self) -> Dict:
-        return self.state.read_scratchpad() or {}
-
 
 def build_context(spec: Dict, state, errors: Optional[List] = None, last_result: Optional[str] = None,
                   last_read: Optional[str] = None, stalled: bool = False) -> Context:
@@ -59,7 +56,6 @@ def render_dict(ctx: Context, *, active: Optional[str], target=None, active_view
         "todo": ctx.errors,
         "target": target,
         "active_view": active_view,
-        "scratchpad": ctx.scratchpad(),
         "story_state": ctx.story_state(),
         "last_result": ctx.last_result,
         "last_read": ctx.last_read,

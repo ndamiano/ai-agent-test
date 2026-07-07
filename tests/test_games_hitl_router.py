@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from api.routers import games
+from api.build_queue import build_queue
 from maestro.state import RunState
 from maestro import run_control
 from auth.store import User
@@ -146,7 +147,7 @@ def test_edit_allowed_while_building_unpaused(tmp_path, monkeypatch):
     """Epic C3: edits are UN-GATED — allowed mid-build, not just while paused/idle."""
     _patch(monkeypatch, tmp_path)
     state = _frozen_run(tmp_path)
-    games._active_builds.add("g")
+    build_queue._current = "g"
     run_control.get_or_create("g")  # status defaults to "running"
     try:
         res = asyncio.run(games.edit_component_game(
@@ -154,14 +155,14 @@ def test_edit_allowed_while_building_unpaused(tmp_path, monkeypatch):
         assert res["ok"] is True
         assert state.read_component("notes") == {"x": 1}
     finally:
-        games._active_builds.discard("g")
+        build_queue._current = None
         run_control.remove("g")
 
 
 def test_edit_allowed_while_paused(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     state = _frozen_run(tmp_path)
-    games._active_builds.add("g")
+    build_queue._current = "g"
     ctrl = run_control.get_or_create("g")
     ctrl.set_status("paused")
     try:
@@ -170,7 +171,7 @@ def test_edit_allowed_while_paused(tmp_path, monkeypatch):
         assert res["ok"] is True
         assert state.read_component("notes") == {"x": 1}
     finally:
-        games._active_builds.discard("g")
+        build_queue._current = None
         run_control.remove("g")
 
 
@@ -208,14 +209,14 @@ def test_compile_still_blocked_while_building_unpaused(tmp_path, monkeypatch):
     """Only EDITS were un-gated (C3) — compile/regenerate/rewrite still race the build thread."""
     _patch(monkeypatch, tmp_path)
     _frozen_run(tmp_path)
-    games._active_builds.add("g")
+    build_queue._current = "g"
     run_control.get_or_create("g")
     try:
         with pytest.raises(HTTPException) as exc:
             asyncio.run(games.compile_game("g", games.CompileBody(), user=U))
         assert exc.value.status_code == 409
     finally:
-        games._active_builds.discard("g")
+        build_queue._current = None
         run_control.remove("g")
 
 
@@ -427,7 +428,7 @@ def test_regenerate_asset_blocked_while_building_unpaused(tmp_path, monkeypatch)
     """Same gate as regenerate-assets/compile — races the executor thread on the same files."""
     _patch(monkeypatch, tmp_path)
     _frozen_run(tmp_path)
-    games._active_builds.add("g")
+    build_queue._current = "g"
     run_control.get_or_create("g")
     try:
         with pytest.raises(HTTPException) as exc:
@@ -435,7 +436,7 @@ def test_regenerate_asset_blocked_while_building_unpaused(tmp_path, monkeypatch)
                                                     user=U))
         assert exc.value.status_code == 409
     finally:
-        games._active_builds.discard("g")
+        build_queue._current = None
         run_control.remove("g")
 
 

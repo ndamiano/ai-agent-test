@@ -8,65 +8,62 @@ from api.websocket.manager import ConnectionManager
 
 
 class TestConnectionManagerBroadcast(unittest.IsolatedAsyncioTestCase):
-    """Tests for ConnectionManager.broadcast_to_all exception handling."""
+    """Broadcast routing + exception handling."""
 
     async def asyncSetUp(self):
         self.manager = ConnectionManager()
-        self.ws1 = AsyncMock(spec=WebSocket)
-        self.ws2 = AsyncMock(spec=WebSocket)
+        self.ws1 = AsyncMock(spec=WebSocket)   # user u1
+        self.ws2 = AsyncMock(spec=WebSocket)   # user u2
+        await self.manager.connect(self.ws1, "u1")
+        await self.manager.connect(self.ws2, "u2")
 
-    async def test_broadcast_sends_to_all_connections(self):
-        self.manager.active_connections = {self.ws1, self.ws2}
-        await self.manager.broadcast_to_all({"type": "status", "task_id": "task-1"})
+    async def test_broadcast_to_user_reaches_only_that_users_sockets(self):
+        await self.manager.broadcast_to_user("u1", {"type": "status", "run_id": "r"})
 
-        self.ws1.send_json.assert_awaited_once_with({"type": "status", "task_id": "task-1"})
-        self.ws2.send_json.assert_awaited_once_with({"type": "status", "task_id": "task-1"})
+        self.ws1.send_json.assert_awaited_once_with({"type": "status", "run_id": "r"})
+        self.ws2.send_json.assert_not_awaited()
+
+    async def test_broadcast_to_all_reaches_every_socket(self):
+        await self.manager.broadcast_to_all({"type": "status"})
+
+        self.ws1.send_json.assert_awaited_once_with({"type": "status"})
+        self.ws2.send_json.assert_awaited_once_with({"type": "status"})
 
     async def test_broadcast_logs_and_disconnects_failed_client(self):
-        self.manager.active_connections = {self.ws1, self.ws2}
         self.ws1.send_json = AsyncMock(side_effect=ConnectionError("gone away"))
 
         with self.assertLogs(self.manager.logger, level=logging.ERROR) as cm:
-            await self.manager.broadcast_to_all({"type": "status", "task_id": "task-1"})
+            await self.manager.broadcast_to_all({"type": "status"})
 
         self.assertIn("gone away", cm.output[0])
-        # ws1 removed, ws2 remains
-        self.assertIn(self.ws2, self.manager.active_connections)
-        self.assertNotIn(self.ws1, self.manager.active_connections)
+        # ws1 removed, ws2 remains reachable
+        await self.manager.broadcast_to_user("u2", {"type": "again"})
+        self.ws2.send_json.assert_awaited_with({"type": "again"})
+        self.assertNotIn(self.ws1, self.manager._user_by_ws)
 
-    async def test_broadcast_removes_key_when_all_clients_fail(self):
-        self.ws1.send_json = AsyncMock(side_effect=ConnectionError("fail"))
-        self.ws2.send_json = AsyncMock(side_effect=ConnectionError("fail"))
-        self.manager.active_connections = {self.ws1, self.ws2}
-
-        with self.assertLogs(self.manager.logger, level=logging.ERROR):
-            await self.manager.broadcast_to_all({"type": "status", "task_id": "task-1"})
-
-        # Both should be removed
-        self.assertEqual(len(self.manager.active_connections), 0)
-
-    async def test_broadcast_noop_for_unknown_task(self):
-        # Empty connections - should not raise
-        await self.manager.broadcast_to_all({"type": "status", "task_id": "nonexistent"})
+    async def test_broadcast_to_unknown_user_is_noop(self):
+        await self.manager.broadcast_to_user("nobody", {"type": "status"})
+        self.ws1.send_json.assert_not_awaited()
+        self.ws2.send_json.assert_not_awaited()
 
 
 class TestConnectionManagerDisconnect(unittest.IsolatedAsyncioTestCase):
-    """Tests for ConnectionManager.disconnect cleanup."""
+    """disconnect cleans both indexes."""
 
     async def test_disconnect_removes_connection(self):
         manager = ConnectionManager()
         ws = AsyncMock(spec=WebSocket)
-        manager.active_connections = {ws}
+        await manager.connect(ws, "u1")
 
         manager.disconnect(ws)
 
-        self.assertNotIn(ws, manager.active_connections)
+        self.assertNotIn(ws, manager._user_by_ws)
+        self.assertNotIn("u1", manager._sockets_by_user)
 
-    async def test_disconnect_noop_for_missing_task(self):
+    async def test_disconnect_noop_for_missing_socket(self):
         manager = ConnectionManager()
         ws = AsyncMock(spec=WebSocket)
-        # Should not raise even if ws not in set
-        manager.disconnect(ws)
+        manager.disconnect(ws)  # should not raise
 
 
 class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):

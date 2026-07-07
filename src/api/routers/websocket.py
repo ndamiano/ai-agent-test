@@ -11,19 +11,20 @@ router = APIRouter()
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
-    Global WebSocket endpoint for real-time updates across all tasks.
-    Clients connect once and receive all events, filtering by task_id on the client side.
+    Per-user WebSocket endpoint for real-time build updates. A client receives only events for
+    runs it owns — the event bus routes each event to the owning user's sockets server-side.
 
     HTTP middleware never sees the WebSocket scope, so the socket authenticates itself: a valid
     bearer token must ride on the `token` query param (browsers can't set headers on a WS upgrade).
     """
     from auth.store import resolve_token
 
-    if resolve_token(websocket.query_params.get("token")) is None:
+    user = resolve_token(websocket.query_params.get("token"))
+    if user is None:
         await websocket.close(code=1008)  # policy violation
         return
 
-    await manager.connect(websocket)
+    await manager.connect(websocket, user.id)
 
     try:
         # Send connection acknowledgment

@@ -36,6 +36,11 @@ async def startup_event():
         await event_bus.start()
         logging.info("Event bus started")
 
+        # Start the single-GPU build worker (serializes builds; extras queue with a position).
+        from api.build_queue import build_queue
+        build_queue.start()
+        logging.info("Build queue started")
+
         # Import tool modules — decorators register tools at import time
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
@@ -51,6 +56,8 @@ async def startup_event():
 async def shutdown_event():
     """Shutdown event handler to clean up resources."""
     try:
+        from api.build_queue import build_queue
+        build_queue.stop()
         from api.websocket.event_bus import event_bus
         await event_bus.shutdown()
         logging.info("Event bus stopped")

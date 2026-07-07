@@ -66,17 +66,20 @@ capacity), so design the spine now, fill it later.
 ## S1 — Concurrent multi-user builds (launch blocker)
 Turn "raw threads against globals" into a bounded job/worker model with isolated inference access.
 
-- [ ] **Build queue + worker pool.** Replace the per-request raw `threading.Thread` (`games.py:221`)
-      with a bounded queue + worker pool (cap = how many builds the inference backend can serve).
-      Excess builds queue with a visible "position N" state, not 100 contending threads.
+- [x] **Build queue + worker pool.** *(pre-alpha subset: cap=1.)* Replaced the per-request raw
+      `threading.Thread` with `api/build_queue.py` — one daemon worker draining a FIFO queue, one
+      build in flight, extras queued with a visible `queue_position` (surfaced on GET /games/{id}
+      + a `build_queued` event). A queued run holds its RunControl so pause/cancel land before it
+      starts; a cancel-while-queued skips the build. Pool>1 is deferred (single GPU).
 - [ ] **Per-run inference handle, not a shared singleton.** Give each build its own connector /
       inference route (or a pooled lease) so `reset_connector_cache` and settings swaps can't yank
       a running build's connector. Decouple from the process-global (`connector_selector.py`).
 - [ ] **Rate-limit / capacity per backend, not one global 2 req/s bucket** (`rate_limiter.py:60`).
       Size the limiter to actual backend capacity; scale it with the worker pool.
-- [ ] **Per-run (and per-user) WS routing.** Filter server-side by run_id/user in the event bus
-      (`event_bus.py`, `manager.py`) so a client only receives its own builds' events — today it's
-      client-side cosmetic only. Fixes both the leak and the shared-queue bottleneck.
+- [x] **Per-run (and per-user) WS routing.** Server-side filter: `manager.py` keys sockets by the
+      authenticated user; `event_bus.py` resolves each event's run → owner (owner.json, cached) and
+      sends only to that user's sockets (no-run_id events fall back to a global broadcast). The leak
+      is closed — a client only receives its own runs' events.
 - [ ] **Per-session chat isolation.** Kill the shared `session_id="default"` (`chat.py:31`); key
       sessions to the authenticated user.
 - [ ] **Tests:** two concurrent builds don't cross-contaminate state/events; queue caps at N;

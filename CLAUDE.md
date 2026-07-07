@@ -34,7 +34,13 @@ src/
                 run op to its owner (cross-user = 403), the WebSocket authenticates itself (token
                 query param — http middleware never sees the ws scope), and chat sessions key on
                 the authed user. There is deliberately no self-serve account creation.
-  api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket)
+  api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket) +
+                build_queue.py (the single-GPU build serializer: one worker drains a FIFO queue,
+                one build in flight, extras wait with a visible `queue_position`; a queued run
+                already holds its RunControl so pause/cancel land before it starts). WS events
+                route per-user server-side: event_bus resolves each event's run → owner (owner.json,
+                cached) and sends only to that user's sockets (manager keys sockets by user id);
+                events with no run_id fall back to a global broadcast.
   config/       settings_schema.py (Pydantic), settings_manager.py (singleton)
   llm_clients/  connector_selector.py, openai_compatible_connector.py, message_builder.py
                 inference.py — PipelineAgent, call_llm, json_with_correction (shared inference primitives)

@@ -19,6 +19,20 @@ class EventBus:
         self.consumer_task: Optional[asyncio.Task] = None
         self._shutdown = False
         self.logger = logging.getLogger(__name__)
+        # run_id -> owning user id. owner.json is write-once, so a cached owner never goes stale.
+        self._owner_cache: dict = {}
+
+    def _owner_of(self, run_id: str) -> Optional[str]:
+        owner = self._owner_cache.get(run_id)
+        if owner is None:
+            from maestro.state import RunState
+            try:
+                owner = RunState.for_run(run_id).read_owner()
+            except Exception:
+                owner = None
+            if owner is not None:
+                self._owner_cache[run_id] = owner
+        return owner
 
     async def start(self) -> None:
         """Initialize the event bus and start consuming events."""
@@ -73,7 +87,15 @@ class EventBus:
             while not self._shutdown:
                 try:
                     event = await asyncio.wait_for(self.queue.get(), timeout=0.1)
-                    await manager.broadcast_to_all(event)
+                    run_id = event.get("run_id")
+                    if run_id is None:
+                        await manager.broadcast_to_all(event)  # not scoped to a run
+                    else:
+                        owner = self._owner_of(run_id)
+                        if owner is None:
+                            self.logger.debug("dropping event for unowned run %s", run_id)
+                        else:
+                            await manager.broadcast_to_user(owner, event)
                 except asyncio.TimeoutError:
                     continue
                 except Exception as e:

@@ -15,12 +15,12 @@ thrashing the single GPU.** Four pieces:
 1. **Manual auth + gate + run ownership** — `auth_and_billing.md` **T1 + T2**. Login, gate all routes
    (incl. WebSocket), attach `user_id` to runs, scope list/get/control to the owner. Manual account
    creation only — **no signup**.
-2. **Build queue (serialize on the one GPU)** — `scaleout.md` **S1, queue subset only**. A couple of
-   users must not run two builds at once on the single 5090. One build at a time; others queue with a
-   visible position. (Full concurrency/isolation is later.)
-3. **Per-user access + WS routing** — `scaleout.md` **S1 WS routing** (server-side filter by
-   user/run so a person sees only their own build events) + a minimal reachable way for the couple of
-   testers to hit the app (Tailscale or a simple deploy).
+2. **Build queue (serialize on the one GPU)** — ✅ DONE (`scaleout.md` **S1, queue subset**).
+   `api/build_queue.py`: one worker, one build in flight, extras queue with a visible
+   `queue_position`. (Full concurrency/isolation is later.)
+3. **Per-user access + WS routing** — ✅ DONE (server-side filter in `event_bus.py`/`manager.py`: a
+   person sees only their own build events). Still open: a minimal reachable way for the testers to
+   hit the app (Tailscale or a simple deploy).
 4. **Credits stubbed/manual** — `auth_and_billing.md` **T3 minimal** — a granted balance + deduct, or
    effectively unlimited — enough to exercise the gate. **No real payments in pre-alpha.**
 

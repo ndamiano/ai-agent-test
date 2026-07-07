@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from api.build_queue import build_queue, AlreadyQueued
 from auth.deps import get_current_user
 from auth.store import User
 
@@ -88,9 +89,8 @@ class ThumbBody(BaseModel):
 class AssetRegenBody(BaseModel):
     filename: str
 
-# Run ids with a build thread in flight. Guards against double-builds and lets the
-# UI show a "building" state on load (the live event stream covers the rest).
-_active_builds: set = set()
+# Node rewrites in flight (one per node) guard lock. Builds are serialized by the build queue
+# (api.build_queue); rewrites run on their own threads and only need double-fire protection.
 _active_lock = threading.Lock()
 
 
@@ -139,7 +139,7 @@ async def list_games(user: User = Depends(get_current_user)):
             "title": spec.get("title", ""),
             "frozen": bool(spec.get("frozen")),
             "built": _is_built(run_dir),
-            "building": run_dir.name in _active_builds,
+            "building": build_queue.is_active(run_dir.name),
             "n_components": len(state.component_ids()),
             "mtime": run_dir.stat().st_mtime,
         })
@@ -161,6 +161,13 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     ctrl = get_control(run_id)
     built = _is_built(state.run_dir)
     images = state.run_dir / "game_output" / "game" / "images"
+    qstate = build_queue.state_of(run_id)
+    if qstate and qstate["status"] == "queued":
+        status, queue_position = "queued", qstate["position"]
+    elif qstate:   # building now — the control carries the live running/paused status
+        status, queue_position = (ctrl.status if ctrl else "running"), None
+    else:
+        status, queue_position = (ctrl.status if ctrl else ("built" if built else "idle")), None
     return {
         "run_id": run_id,
         "spec": spec_data,
@@ -170,8 +177,9 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "waivers": state.read_waivers(),
         "frozen": spec.frozen,
         "built": built,
-        "building": run_id in _active_builds,
-        "status": ctrl.status if ctrl else ("built" if built else "idle"),
+        "building": qstate is not None,
+        "status": status,
+        "queue_position": queue_position,
         "auto_pause": ctrl.auto_pause if ctrl else False,
         "assets_exist": images.is_dir() and any(images.glob("*.png")),
     }
@@ -200,33 +208,19 @@ async def freeze_game(run_id: str, user: User = Depends(get_current_user)):
 @router.post("/{run_id}/build", response_model=Dict)
 async def build_game(run_id: str, body: BuildBody = BuildBody(),
                      user: User = Depends(get_current_user)):
-    """Kick a build on a background thread. Progress streams over the websocket."""
-    from maestro.run import run_build
-
+    """Queue a build on the single GPU. It runs immediately if the worker is free, else it waits
+    with a `queue_position`. Progress streams over the websocket."""
     spec_data = _require_state(run_id, user).read_spec()
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
-    from maestro.run_control import get_or_create
+    try:
+        position = build_queue.enqueue(run_id, user.id, body.auto_pause)
+    except AlreadyQueued:
+        raise HTTPException(status_code=409, detail="build already in progress")
 
-    with _active_lock:
-        if run_id in _active_builds:
-            raise HTTPException(status_code=409, detail="build already in progress")
-        _active_builds.add(run_id)
-    # Register the control before the thread starts so an immediate pause/cancel finds it.
-    get_or_create(run_id).set_auto_pause(body.auto_pause)
-
-    def _run():
-        try:
-            run_build(run_id)
-        except Exception:
-            logger.exception("build failed for %s", run_id)
-        finally:
-            with _active_lock:
-                _active_builds.discard(run_id)
-
-    threading.Thread(target=_run, daemon=True, name=f"build-{run_id}").start()
-    return {"status": "building", "run_id": run_id}
+    return {"status": "building" if position == 0 else "queued",
+            "run_id": run_id, "queue_position": position}
 
 
 def _control(run_id: str):
@@ -317,7 +311,7 @@ def _require_editable(run_id: str):
     allowed at any build state and reflags its downstream closure instead of blocking."""
     from maestro.run_control import get as get_control
 
-    if run_id in _active_builds:
+    if build_queue.is_active(run_id):
         ctrl = get_control(run_id)
         if ctrl is None or ctrl.status not in ("paused", "awaiting_human"):
             raise HTTPException(status_code=409,

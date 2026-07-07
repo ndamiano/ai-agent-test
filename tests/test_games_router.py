@@ -7,6 +7,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from api.routers import games
+from api.build_queue import build_queue
+from maestro import run_control
 from maestro.state import RunState
 from auth.store import User
 
@@ -183,7 +185,7 @@ def test_build_403_for_another_user(tmp_path, monkeypatch):
     assert exc.value.status_code == 403
 
 
-def test_build_starts_thread_and_guards_double_build(tmp_path, monkeypatch):
+def test_build_enqueues_and_guards_double_build(tmp_path, monkeypatch):
     import threading
     _patch_for_run(monkeypatch, tmp_path)
     _owned(tmp_path, frozen=True)
@@ -196,23 +198,24 @@ def test_build_starts_thread_and_guards_double_build(tmp_path, monkeypatch):
         release.wait(timeout=5)
 
     monkeypatch.setattr("maestro.run.run_build", fake_run_build)
-
+    build_queue.start()
     try:
         assert asyncio.run(games.build_game("g", user=U))["status"] == "building"
         assert started.wait(timeout=5)
-        # Second build while the first is in flight is rejected.
+        # A second build of the same run while it's in flight is rejected.
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc:
             asyncio.run(games.build_game("g", user=U))
         assert exc.value.status_code == 409
     finally:
         release.set()
-    # After the thread finishes, the guard clears.
+        build_queue.stop()
+        run_control.remove("g")
     for _ in range(50):
-        if "g" not in games._active_builds:
+        if not build_queue.is_active("g"):
             break
         import time; time.sleep(0.05)
-    assert "g" not in games._active_builds
+    assert not build_queue.is_active("g")
 
 
 def test_amend_spec_reresolves_modules_and_unfreezes(tmp_path, monkeypatch):

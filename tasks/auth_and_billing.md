@@ -50,19 +50,29 @@ per-user ownership, and a credit ledger that gates builds.
       404s an unknown run / 403s another user's; `list_games` filters to the caller. Closes the hole.
 - [x] **Tests:** `test_run_ownership.py` + cross-user 403 cases across the games routers.
 
-## T3 — Credit ledger
-- [ ] **Balance + transaction log per user** in the store (grant / deduct / refund entries).
-- [ ] **Deduct-on-build, refund-on-fail.** Gate `build_game` (`games.py:191`) on sufficient balance;
-      deduct atomically at build start; refund if the build can't start / errors before producing.
-- [ ] **Cost formula = one swappable function.** Start `cost(spec) -> 1` (flat). Keep it isolated so
-      the metered/tiered variants (see the earlier decision) drop in later. Feed it usage from
-      `scaleout.md` S3's metering hook when that lands.
-- [ ] **Insufficient-credits response** the frontend can render (not a 500).
-- [ ] **Tests:** build below balance is refused; a successful build deducts once; a failed-to-start
-      build refunds; ledger entries reconcile.
+## T3 — Credit ledger  ✅ DONE
+- [x] **Balance + transaction log per user** in the store — `credits` column on `users` +
+      `credit_transactions` (signed `delta`, reason, run_id); `balance` / `grant` / `deduct` /
+      `refund` (`src/auth/store.py`). `deduct` is a single check-and-decrement UPDATE (atomic,
+      never goes negative) returning a bool, not raising for control flow.
+- [x] **Grant-on-create.** `create_user` seeds `INITIAL_CREDITS` and logs an `initial_grant` txn.
+- [x] **Deduct-on-build, refund-on-fail.** `build_game` deducts atomically BEFORE enqueue; the
+      queue worker refunds the exact deducted `cost` (carried on `_Item`) if the run is cancelled
+      while queued or `run_build` raises. Exactly one net deduction per real build (cancel path and
+      exception path are structurally exclusive — the cancel short-circuit sits outside the
+      `run_build` try/except).
+- [x] **Cost formula = one swappable function.** `src/auth/billing.py` `cost(spec) -> 1` (flat),
+      isolated so metered/tiered variants drop in without touching the ledger or the gate.
+- [x] **Insufficient-credits response** — clean HTTP **402** `{reason, balance, cost}` (never a 500,
+      never enqueues).
+- [x] **Tests:** `test_credits.py` (grant/deduct/refund, non-negative atomic deduct under two
+      concurrent threads, ledger reconciles with balance), `test_games_router.py` (deduct-once /
+      402-below-balance / refund-on-AlreadyQueued), `test_build_queue.py` (refund on cancel-while-
+      queued + on `run_build` raising).
 
 ## T4 — Buy credits (seam only, no integration yet)
-- [ ] **Admin grant op** — `grant_credits(user, n)` via CLI (the "manual" path).
+- [ ] **Admin grant op** — `grant_credits(user, n)` via CLI (the "manual" path). *(The store-level
+      `grant(user_id, n, reason)` primitive already exists from T3; T4 wires the CLI command to it.)*
 - [ ] **Provider-agnostic top-up seam** — a `credit_provider` interface + a webhook endpoint stub
       that credits the ledger on a verified purchase event. Leave the concrete Stripe/Paddle
       implementation as a TODO wired to this seam.

@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from api.routers import games
-from api.build_queue import build_queue
+from api.build_queue import build_queue, AlreadyQueued
 from maestro import run_control
 from maestro.state import RunState
 from auth.store import User
@@ -84,6 +84,17 @@ def test_get_game_403_for_another_users_run(tmp_path, monkeypatch):
 def _patch_for_run(monkeypatch, base):
     monkeypatch.setattr(RunState, "for_run",
                         classmethod(lambda cls, rid: RunState(base / rid)))
+
+
+def _fund(monkeypatch, tmp_path, user_id="u1", credits=10):
+    """Point the ledger at a tmp auth.db and seed `user_id` with a spendable balance."""
+    from auth import store
+    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
+    with store._db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO users (id, handle, password_hash, role, credits, created_at) "
+            "VALUES (?, ?, '', 'user', ?, 0)", (user_id, user_id, credits))
+    return store
 
 
 def _owned(base, run_id="g", *, frozen=False, owner="u1", **spec):
@@ -188,6 +199,7 @@ def test_build_403_for_another_user(tmp_path, monkeypatch):
 def test_build_enqueues_and_guards_double_build(tmp_path, monkeypatch):
     import threading
     _patch_for_run(monkeypatch, tmp_path)
+    _fund(monkeypatch, tmp_path)
     _owned(tmp_path, frozen=True)
 
     release = threading.Event()
@@ -257,3 +269,62 @@ def test_get_game_returns_spec_artifact_todo(tmp_path, monkeypatch):
     assert result["spec"]["title"] == "G1"
     assert result["artifact"]["premise"]["central_question"] == "Q?"
     assert result["todo"] == []  # no modules -> nothing to do
+
+
+# ── T3: credit gate on build ──────────────────────────────────────────────────
+@pytest.fixture
+def _credit_user(tmp_path, monkeypatch):
+    """A real ledger user in a tmp auth.db, returned as the authed User for the build route."""
+    from auth import store
+    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
+    u = store.create_user("alice", "pw")
+    return User(id=u.id, handle=u.handle, role=u.role), store
+
+
+def test_build_deducts_one_credit_on_successful_enqueue(tmp_path, monkeypatch, _credit_user):
+    user, store = _credit_user
+    _patch_for_run(monkeypatch, tmp_path)
+    _owned(tmp_path, "g", frozen=True, owner=user.id, modules=[], params={})
+    monkeypatch.setattr(build_queue, "enqueue", lambda *a, **k: 0)
+
+    before = store.balance(user.id)
+    result = asyncio.run(games.build_game("g", games.BuildBody(), user=user))
+
+    assert result["status"] == "building"
+    assert store.balance(user.id) == before - 1   # exactly one deduction
+
+
+def test_build_below_balance_is_refused_with_402(tmp_path, monkeypatch, _credit_user):
+    from fastapi import HTTPException
+    user, store = _credit_user
+    _patch_for_run(monkeypatch, tmp_path)
+    _owned(tmp_path, "g", frozen=True, owner=user.id, modules=[], params={})
+    store.deduct(user.id, store.balance(user.id), "drain")   # zero the balance
+    # enqueue must never be reached when the gate rejects.
+    monkeypatch.setattr(build_queue, "enqueue",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("enqueued while broke")))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.build_game("g", games.BuildBody(), user=user))
+
+    assert exc.value.status_code == 402
+    assert exc.value.detail["balance"] == 0 and exc.value.detail["cost"] == 1
+    assert store.balance(user.id) == 0   # nothing deducted on refusal
+
+
+def test_build_refunds_when_enqueue_rejects(tmp_path, monkeypatch, _credit_user):
+    from fastapi import HTTPException
+    user, store = _credit_user
+    _patch_for_run(monkeypatch, tmp_path)
+    _owned(tmp_path, "g", frozen=True, owner=user.id, modules=[], params={})
+
+    def _already(*a, **k):
+        raise AlreadyQueued("g")
+    monkeypatch.setattr(build_queue, "enqueue", _already)
+
+    before = store.balance(user.id)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.build_game("g", games.BuildBody(), user=user))
+
+    assert exc.value.status_code == 409
+    assert store.balance(user.id) == before   # the failed-to-start build refunded its deduction

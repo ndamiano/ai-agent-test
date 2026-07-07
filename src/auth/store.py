@@ -21,6 +21,9 @@ from typing import List, Optional
 
 _PBKDF2_ROUNDS = 200_000
 
+# Credits seeded on account creation (grant-on-create, deduct-per-build).
+INITIAL_CREDITS = 100
+
 
 @dataclass(frozen=True)
 class User:
@@ -47,11 +50,20 @@ def _db():
             handle        TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             role          TEXT NOT NULL DEFAULT 'user',
+            credits       INTEGER NOT NULL DEFAULT 0,
             created_at    REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS sessions (
             token_hash TEXT PRIMARY KEY,
             user_id    TEXT NOT NULL REFERENCES users(id),
+            created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS credit_transactions (
+            id         TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL REFERENCES users(id),
+            delta      INTEGER NOT NULL,
+            reason     TEXT NOT NULL,
+            run_id     TEXT,
             created_at REAL NOT NULL
         );
         """
@@ -100,9 +112,11 @@ def create_user(handle: str, password: str, role: str = "user") -> User:
         if conn.execute("SELECT 1 FROM users WHERE handle = ?", (handle,)).fetchone():
             raise ValueError(f"handle {handle!r} already exists")
         conn.execute(
-            "INSERT INTO users (id, handle, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
-            (user.id, user.handle, _hash_password(password), role, time.time()),
+            "INSERT INTO users (id, handle, password_hash, role, credits, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user.id, user.handle, _hash_password(password), role, INITIAL_CREDITS, time.time()),
         )
+        _log_txn(conn, user.id, INITIAL_CREDITS, "initial_grant", None)
     return user
 
 
@@ -165,3 +179,50 @@ def resolve_token(token: Optional[str]) -> Optional[User]:
 def revoke_token(token: str) -> None:
     with _db() as conn:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+
+
+# ── credit ledger ───────────────────────────────────────────────────────────────
+# Balance lives on the user row; every change also lands a signed row in
+# credit_transactions, so the balance always reconciles with the log's sum. Deduct is a
+# single check-and-decrement statement — atomic under concurrency, refuses to go negative,
+# and returns False (not an exception) so the caller branches on it rather than catching.
+def _log_txn(conn, user_id: str, delta: int, reason: str, run_id: Optional[str]) -> None:
+    conn.execute(
+        "INSERT INTO credit_transactions (id, user_id, delta, reason, run_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (uuid.uuid4().hex[:16], user_id, delta, reason, run_id, time.time()),
+    )
+
+
+def balance(user_id: str) -> int:
+    with _db() as conn:
+        row = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row["credits"] if row else 0
+
+
+def grant(user_id: str, n: int, reason: str = "grant", run_id: Optional[str] = None) -> int:
+    """Add `n` credits and log it. Returns the new balance."""
+    with _db() as conn:
+        conn.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (n, user_id))
+        _log_txn(conn, user_id, n, reason, run_id)
+        row = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row["credits"] if row else 0
+
+
+def deduct(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> bool:
+    """Atomically remove `n` credits, refusing to go negative. Returns True if charged, False if the
+    balance was insufficient (or the user is unknown) — no partial deduction, no exception."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE users SET credits = credits - ? WHERE id = ? AND credits >= ?",
+            (n, user_id, n),
+        )
+        if cur.rowcount != 1:
+            return False
+        _log_txn(conn, user_id, -n, reason, run_id)
+    return True
+
+
+def refund(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> int:
+    """Return `n` credits for a build that never ran. Returns the new balance."""
+    return grant(user_id, n, reason, run_id)

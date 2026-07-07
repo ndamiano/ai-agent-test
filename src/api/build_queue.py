@@ -21,10 +21,11 @@ class AlreadyQueued(Exception):
 
 
 class _Item:
-    def __init__(self, run_id: str, user_id: str, auto_pause: bool):
+    def __init__(self, run_id: str, user_id: str, auto_pause: bool, cost: int):
         self.run_id = run_id
         self.user_id = user_id
         self.auto_pause = auto_pause
+        self.cost = cost   # credits deducted at enqueue — refunded here iff the build never runs
 
 
 class BuildQueue:
@@ -52,9 +53,10 @@ class BuildQueue:
             self._not_empty.notify_all()
 
     # ── enqueue + status ──────────────────────────────────────────────────────
-    def enqueue(self, run_id: str, user_id: str, auto_pause: bool = False) -> int:
+    def enqueue(self, run_id: str, user_id: str, auto_pause: bool = False, cost: int = 0) -> int:
         """Register the run's control and queue its build. Returns the queue position
-        (0 = builds immediately). Raises AlreadyQueued if it's already building/waiting."""
+        (0 = builds immediately). Raises AlreadyQueued if it's already building/waiting.
+        `cost` is the credits already deducted for this build — refunded iff it never runs."""
         from maestro.run_control import get_or_create
 
         with self._not_empty:
@@ -62,7 +64,7 @@ class BuildQueue:
                 raise AlreadyQueued(run_id)
             # Register control before the run leaves the queue so an immediate pause/cancel finds it.
             get_or_create(run_id).set_auto_pause(auto_pause)
-            self._pending.append(_Item(run_id, user_id, auto_pause))
+            self._pending.append(_Item(run_id, user_id, auto_pause, cost))
             self._queued_ids.add(run_id)
             position = self._position_locked(run_id)
             self._not_empty.notify()
@@ -95,6 +97,7 @@ class BuildQueue:
     # ── worker ────────────────────────────────────────────────────────────────
     def _drain(self) -> None:
         import maestro.run  # module ref so tests can monkeypatch run_build
+        from auth import store
         from maestro.run_control import get, remove
 
         while True:
@@ -110,15 +113,25 @@ class BuildQueue:
             # Everyone still waiting just moved up one — re-emit their positions.
             self._emit_positions()
 
+            ctrl = get(item.run_id)
+            if ctrl is not None and ctrl.cancelled:
+                # Cancelled while queued: run_build never runs, so refund here and skip it. Kept out
+                # of the run_build try/except so this refund and the build-failed one below can never
+                # both fire for one item.
+                remove(item.run_id)
+                if item.cost:
+                    store.refund(item.user_id, item.cost, "build_cancelled", item.run_id)
+                self._emit("build_cancelled", item.run_id)
+                with self._lock:
+                    self._current = None
+                continue
+
             try:
-                ctrl = get(item.run_id)
-                if ctrl is not None and ctrl.cancelled:
-                    remove(item.run_id)   # run_build won't run, so unregister here
-                    self._emit("build_cancelled", item.run_id)
-                    continue
                 maestro.run.run_build(item.run_id)   # removes its own control in finally
             except Exception:
                 logger.exception("build failed for %s", item.run_id)
+                if item.cost:
+                    store.refund(item.user_id, item.cost, "build_failed", item.run_id)
             finally:
                 with self._lock:
                     self._current = None

@@ -144,3 +144,57 @@ def test_enqueue_emits_build_queued_with_position(q, monkeypatch):
     pos = q.enqueue("a", "u1")
     assert pos == 0
     assert q.events[-1] == {"type": "build_queued", "run_id": "a", "position": 0}
+
+
+# ── T3: credit refunds when a build never runs ────────────────────────────────
+@pytest.fixture
+def user(tmp_path, monkeypatch):
+    """A ledger user in a tmp auth.db; the worker refunds through this same store."""
+    from auth import store
+    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
+    u = store.create_user("alice", "pw")
+    return u.id, store
+
+
+def _wait(pred, timeout=5):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_cancel_while_queued_refunds_the_credit(q, monkeypatch, user):
+    uid, store = user
+    fake, started, releases, calls = _gate()
+    monkeypatch.setattr("maestro.run.run_build", fake)
+    q.start()
+
+    q.enqueue("a", uid)                              # holds the GPU
+    assert started["a"].wait(timeout=5)
+    store.deduct(uid, 1, "build", "b")               # b's credit taken at (simulated) enqueue-time
+    before = store.balance(uid)
+    q.enqueue("b", uid, cost=1)
+    run_control.get("b").request_cancel()
+
+    releases["a"].set()
+    assert _wait(lambda: q.state_of("b") is None and "a" in calls)
+    assert not started["b"].is_set()                 # b never built
+    assert store.balance(uid) == before + 1          # its credit came back
+
+
+def test_build_that_raises_before_output_refunds(q, monkeypatch, user):
+    uid, store = user
+
+    def boom(run_id, *a, **k):
+        run_control.remove(run_id)                   # real run_build clears its control in finally
+        raise RuntimeError("build blew up before producing output")
+    monkeypatch.setattr("maestro.run.run_build", boom)
+    q.start()
+
+    store.deduct(uid, 1, "build", "a")
+    before = store.balance(uid)
+    q.enqueue("a", uid, cost=1)
+
+    assert _wait(lambda: store.balance(uid) == before + 1)   # failed build refunded

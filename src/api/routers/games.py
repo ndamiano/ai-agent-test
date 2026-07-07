@@ -214,10 +214,22 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
+    from auth import store
+    from auth.billing import cost
+
+    price = cost(spec_data)
+    if not store.deduct(user.id, price, "build", run_id):
+        raise HTTPException(status_code=402, detail={
+            "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+
     try:
-        position = build_queue.enqueue(run_id, user.id, body.auto_pause)
+        position = build_queue.enqueue(run_id, user.id, body.auto_pause, cost=price)
     except AlreadyQueued:
+        store.refund(user.id, price, "build_not_started", run_id)
         raise HTTPException(status_code=409, detail="build already in progress")
+    except Exception:
+        store.refund(user.id, price, "build_not_started", run_id)
+        raise
 
     return {"status": "building" if position == 0 else "queued",
             "run_id": run_id, "queue_position": position}

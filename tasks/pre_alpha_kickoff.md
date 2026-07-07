@@ -21,8 +21,10 @@ thrashing the single GPU.** Four pieces:
 3. **Per-user access + WS routing** — ✅ DONE (server-side filter in `event_bus.py`/`manager.py`: a
    person sees only their own build events). Still open: a minimal reachable way for the testers to
    hit the app (Tailscale or a simple deploy).
-4. **Credits stubbed/manual** — `auth_and_billing.md` **T3 minimal** — a granted balance + deduct, or
-   effectively unlimited — enough to exercise the gate. **No real payments in pre-alpha.**
+4. **Credits stubbed/manual** — ✅ DONE (`auth_and_billing.md` **T3**). Ledger in `auth/store.py`
+   (balance + `credit_transactions`), grant-on-create (`INITIAL_CREDITS`), atomic deduct-on-build /
+   refund-on-fail through the queue, flat `cost(spec)=1` (`auth/billing.py`), 402 on empty balance.
+   **No real payments in pre-alpha** (T4 buy-credits seam still open).
 
 **Explicitly OUT of pre-alpha:** payments (T4), self-serve signup, the full safety filter (trusted
 users — but do a basic block and START `safety_filter.md` Phase 1 research), concurrency-at-scale,

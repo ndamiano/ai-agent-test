@@ -26,14 +26,20 @@ It steals the old pipeline's two good properties (completion guarantee, no conte
 ```
 src/
   agents/       MainAgent (chat persona — drafts/amends specs) + agent_store, chat.json / summarizer.json
-  auth/         The identity + access layer (sqlite): store.py (users + bearer sessions, pbkdf2
-                passwords, token stored only as a hash), deps.py (the app-level middleware that gates
-                EVERY http route + the get_current_user dependency), router.py (POST /auth/login —
-                login ONLY, no signup), cli.py (`python -m auth.cli create <handle>` — manual
-                provisioning). Runs are owned: create_run stamps owner.json, games.py scopes every
-                run op to its owner (cross-user = 403), the WebSocket authenticates itself (token
+  auth/         The identity + access layer (sqlite): store.py (users + bearer sessions + the credit
+                ledger, pbkdf2 passwords, token stored only as a hash), deps.py (the app-level
+                middleware that gates EVERY http route + the get_current_user dependency), router.py
+                (POST /auth/login — login ONLY, no signup), billing.py (cost(spec) — the one swappable
+                build-pricing function, flat 1 today), cli.py (`python -m auth.cli create <handle>` —
+                manual provisioning). Runs are owned: create_run stamps owner.json, games.py scopes
+                every run op to its owner (cross-user = 403), the WebSocket authenticates itself (token
                 query param — http middleware never sees the ws scope), and chat sessions key on
-                the authed user. There is deliberately no self-serve account creation.
+                the authed user. Credits gate builds: create_user seeds INITIAL_CREDITS; build_game
+                deducts cost(spec) atomically (single check-and-decrement, never negative, 402 if
+                short) BEFORE enqueue; the build queue refunds the exact deducted cost if the run is
+                cancelled while queued or run_build raises — one net deduction per real build. Every
+                balance change also lands a signed row in credit_transactions, so the ledger
+                reconciles with the balance. There is deliberately no self-serve account creation.
   api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket) +
                 build_queue.py (the single-GPU build serializer: one worker drains a FIFO queue,
                 one build in flight, extras wait with a visible `queue_position`; a queued run

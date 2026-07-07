@@ -5,9 +5,6 @@ from typing import Dict, Any
 from threading import Lock
 import logging
 
-from pydantic import ValidationError
-from config.settings_schema import AppSettings
-
 logger = logging.getLogger(__name__)
 
 
@@ -84,25 +81,6 @@ class SettingsManager:
     def get_settings(self) -> Dict[str, Any]:
         with self._settings_lock:
             return self._settings.copy()
-
-    def update_settings(self, new_settings: Dict[str, Any]) -> Dict[str, Any]:
-        with self._settings_lock:
-            merged = dict(self._settings)
-            for key, value in new_settings.items():
-                if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                    merged[key] = {**merged[key], **value}
-                else:
-                    merged[key] = value
-            self._validate_settings(merged)
-            self._settings = merged
-            self._save_settings(merged)
-            return self._settings.copy()
-
-    def _validate_settings(self, settings: Dict[str, Any]) -> None:
-        try:
-            AppSettings(**settings)
-        except ValidationError as e:
-            raise ValueError(str(e)) from e
 
     def get_connector_settings(self, connector_type: str) -> Dict[str, Any]:
         with self._settings_lock:

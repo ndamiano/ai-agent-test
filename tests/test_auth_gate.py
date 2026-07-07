@@ -26,7 +26,6 @@ def app_client(tmp_path, monkeypatch):
 # routers proves the whole surface.
 GATED_PATHS = [
     "/api/games",
-    "/api/settings",
     "/api/agents/",
     "/api/system/status",
     "/api/outputs/whatever.txt",

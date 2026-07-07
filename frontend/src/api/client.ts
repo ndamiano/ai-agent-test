@@ -1,4 +1,4 @@
-import type { Game, GameDetail, SystemStatus, Settings, Asset } from '../types'
+import type { Game, GameDetail, SystemStatus, Asset } from '../types'
 import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
@@ -247,10 +247,4 @@ export const api = {
     streamChatMessage,
     clearChatSession: (session_id = 'default') =>
         fetch(`${base}/chat/${session_id}`, { method: 'DELETE', headers: authHeaders() }),
-
-    // Settings
-    getSettings: () =>
-        request<Settings>('/settings'),
-    updateSettings: (settings: Settings) =>
-        request<Settings>('/settings', { method: 'PUT', body: JSON.stringify(settings) }),
 }

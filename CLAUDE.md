@@ -43,7 +43,7 @@ src/
                 cancelled while queued or run_build raises — one net deduction per real build. Every
                 balance change also lands a signed row in credit_transactions, so the ledger
                 reconciles with the balance. There is deliberately no self-serve account creation.
-  api/          FastAPI routers (chat, games, settings, agents, outputs, system, websocket,
+  api/          FastAPI routers (chat, games, agents, outputs, system, websocket,
                 billing — the payment webhook `POST /api/billing/webhook`, PUBLIC in
                 auth.deps.PUBLIC_PATHS: a provider posts server-to-server with no user token, so
                 it's authed by its signature inside the CreditProvider, not the user-token gate) +

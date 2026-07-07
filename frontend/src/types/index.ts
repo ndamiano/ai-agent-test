@@ -149,31 +149,3 @@ export interface AssetUpdatedEvent extends WebSocketMessage {
     item_id: string
 }
 
-export interface LMStudioSettings {
-    base_url: string
-    model: string
-    max_tokens?: number
-}
-
-export interface ClineSettings {
-    api_key: string
-    base_url?: string
-    model: string
-    max_tokens?: number
-}
-
-export interface ComfyUISettings {
-    endpoint: string
-    vram_management: boolean
-}
-
-export interface Settings {
-    connector_type: string
-    model_category?: 'large' | 'medium' | 'small'
-    working_directory?: string
-    refine_before_execution?: boolean
-    renpy_sdk_path?: string
-    lmstudio?: LMStudioSettings
-    cline?: ClineSettings
-    comfyui?: ComfyUISettings
-}

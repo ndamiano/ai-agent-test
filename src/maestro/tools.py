@@ -513,15 +513,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
 
     _UNSET = object()
 
-    def _propagate(component: str, item_id: str) -> None:
-        # Only a genuine EDIT of already-existing content reflags downstream — an authoring
-        # write (write_node/write_component creating a new asset) never calls this; during the
-        # initial build downstream is already dirty/unbuilt, so this would be a no-op anyway, but
-        # a brand-new asset has no meaningful "downstream" yet to begin with.
-        from maestro.depgraph import mark_downstream_dirty
-        from maestro.modules.human import asset_idkey
-        mark_downstream_dirty(state, spec, asset_idkey(component, item_id))
-
     def edit_node(node_id: str, line_index: Optional[int] = None, text: Optional[str] = None,
                   speaker=_UNSET, emotion: Optional[str] = None,
                   effects: Optional[List] = None, end: Optional[Dict] = None,
@@ -551,7 +542,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 content["beat"] = nodes[node_id]["beat"]
             nodes[node_id] = normalize_narration(content)
             state.write_component("nodes", ns)
-            _propagate("nodes", node_id)
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
         if location is not None:
@@ -595,7 +585,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             if effects is not None:
                 lines[line_index]["effects"] = effects
         state.write_component("nodes", ns)
-        _propagate("nodes", node_id)
         return {"ok": True, "node_id": node_id}
 
     def _resolve_feature_spawns(places: Dict) -> None:
@@ -768,7 +757,6 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             h["label"] = label
         _resolve_feature_spawns(places)
         state.write_component("places", places)
-        _propagate("places", place_id)
         return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
 
     def add_interactable(place_id: str, interactable: Dict) -> Dict:

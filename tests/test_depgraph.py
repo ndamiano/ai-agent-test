@@ -185,7 +185,11 @@ def _seed_two_node_chain(state):
     }})
 
 
-def test_edit_node_propagates_to_referencer(tmp_path):
+# The build-tool edits (edit_node/edit_place) are what the AGENT LOOP calls to fix wiring during
+# iteration; they must NOT reflag downstream dirty (that reflag re-emits as a HUMAN error, re-drives
+# the fix, edits again — unbounded churn). Downstream propagation is a HUMAN-edit concern only, done
+# by the API layer's `_after_edit`; see test_rewrite_node_propagates_to_referencer for the human path.
+def test_edit_node_does_not_propagate(tmp_path):
     state = RunState(tmp_path)
     state.write_spec(_spec())
     _seed_two_node_chain(state)
@@ -193,12 +197,10 @@ def test_edit_node_propagates_to_referencer(tmp_path):
 
     res = tools["edit_node"]("a", line_index=0, text="hello there")
     assert res["ok"] is True
-    entries = human_mod.dirty_entries(state)
-    assert {d["idkey"] for d in entries} == {"nodes:b"}
-    assert entries[0]["note"]   # a real instruction, not a blank note
+    assert human_mod.dirty_entries(state) == []
 
 
-def test_edit_node_full_content_replace_also_propagates(tmp_path):
+def test_edit_node_full_content_replace_does_not_propagate(tmp_path):
     state = RunState(tmp_path)
     state.write_spec(_spec())
     _seed_two_node_chain(state)
@@ -207,10 +209,10 @@ def test_edit_node_full_content_replace_also_propagates(tmp_path):
     new = {"lines": [{"speaker": "mara", "text": "brand new"}], "end": {"type": "end"}}
     res = tools["edit_node"]("a", content=new, force=True)
     assert res["ok"] is True
-    assert "nodes:b" in {d["idkey"] for d in human_mod.dirty_entries(state)}
+    assert human_mod.dirty_entries(state) == []
 
 
-def test_edit_place_propagates(tmp_path):
+def test_edit_place_does_not_propagate(tmp_path):
     state = RunState(tmp_path)
     state.write_spec(_spec())
     state.write_component("places", {"place_ids": ["room_a", "room_b"], "places": {
@@ -223,8 +225,20 @@ def test_edit_place_propagates(tmp_path):
 
     res = tools["edit_place"]("room_b", "door_back", label="Sturdy Door")
     assert res["ok"] is True
-    # editing room_b dirties whoever MOVES to room_b, i.e. room_a
-    assert "places:room_a" in {d["idkey"] for d in human_mod.dirty_entries(state)}
+    assert human_mod.dirty_entries(state) == []
+
+
+def test_human_edit_path_propagates(tmp_path):
+    # The human API layer's shared post-edit hook is where downstream-dirty propagation lives now.
+    from api.routers.games import _after_edit
+
+    state = RunState(tmp_path)
+    state.write_spec(_spec())
+    _seed_two_node_chain(state)
+
+    result = _after_edit("run1", _spec(), state, "nodes", ["a"])
+    assert "nodes:b" in result["flagged_dependents"]
+    assert "nodes:b" in {d["idkey"] for d in human_mod.dirty_entries(state)}
 
 
 def test_write_node_creating_a_new_node_does_not_propagate(tmp_path, monkeypatch):

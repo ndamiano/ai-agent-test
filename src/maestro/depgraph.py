@@ -16,7 +16,9 @@ re-walks them at ASSET (idkey) granularity instead of the coarser granularity ea
 
 Both normalize to one shape: `graph[X]` is the set of asset idkeys that must go dirty when X is
 edited — the direction propagation walks. `build_dependency_graph` is pure (artifact in, edges
-out); `mark_downstream_dirty` is the side-effecting entry point B3's tool hooks call.
+out); `mark_downstream_dirty` is the side-effecting entry point the HUMAN-edit paths call
+(the API layer's `_after_edit`, `rewrite_node`) — the agent loop's edits never propagate, so
+in-loop iteration can't churn the dirty store.
 """
 
 from typing import Dict, List, Set

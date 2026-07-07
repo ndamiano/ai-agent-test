@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react'
 import type { WebSocketMessage } from '../types'
+import { useAuth } from './AuthContext'
 
 interface WebSocketContextValue {
     messages: WebSocketMessage[]
@@ -19,6 +20,7 @@ function getBackoffDelay(attempt: number): number {
 }
 
 export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const { token } = useAuth()
     const [messages, setMessages] = useState<WebSocketMessage[]>([])
     const [connected, setConnected] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -47,6 +49,9 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, [])
 
     useEffect(() => {
+        // The socket authenticates via a `token` query param (browsers can't set headers on a WS
+        // upgrade). No token → no socket; a login/logout re-runs this effect and (re)connects.
+        if (!token) return
         unmountedRef.current = false
 
         const cleanup = () => {
@@ -68,7 +73,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (unmountedRef.current) return
 
             const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-            const url = `${proto}//${window.location.host}/api/ws`
+            const url = `${proto}//${window.location.host}/api/ws?token=${encodeURIComponent(token)}`
             const ws = new WebSocket(url)
             wsRef.current = ws
 
@@ -121,7 +126,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             unmountedRef.current = true
             cleanup()
         }
-    }, [])
+    }, [token])
 
     return (
         <WebSocketContext.Provider value={{ messages, connected, error, subscribe }}>

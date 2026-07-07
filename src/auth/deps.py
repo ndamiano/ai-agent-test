@@ -41,7 +41,10 @@ def install_auth(app) -> None:
     async def _auth_gate(request: Request, call_next):
         if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
             return await call_next(request)
-        user = resolve_token(bearer_token(request))
+        # A browser <img src>/download anchor can't set an Authorization header, so a GET may
+        # instead carry its token in a `token` query param (same channel the WebSocket uses).
+        token = bearer_token(request) or request.query_params.get("token")
+        user = resolve_token(token)
         if user is None:
             return JSONResponse(status_code=401, content={"detail": "authentication required"})
         request.state.user = user

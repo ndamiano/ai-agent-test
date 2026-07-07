@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
+import { useAuth } from '../contexts/AuthContext'
 import type { Game, GameDetail, TodoItem, WebSocketMessage } from '../types'
 import ComponentBrowser from './browser'
 
@@ -161,6 +162,7 @@ const SpecPlan: React.FC<{ spec: Record<string, any>; editable: boolean; busy: b
 
 const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ runId, onChanged }) => {
     const { subscribe } = useWebSocket()
+    const { refreshBalance } = useAuth()
     const [detail, setDetail] = useState<GameDetail | null>(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
@@ -283,8 +285,16 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const build = async () => {
         setActing(true); setBuilding(true); setStatus('running')
         try { await api.buildGame(runId, autoPause) }
-        catch (e) { setBuilding(false); setStatus('idle'); setError(e instanceof Error ? e.message : 'Build failed') }
-        finally { setActing(false) }
+        catch (e) {
+            setBuilding(false); setStatus('idle')
+            if (e instanceof ApiError && e.status === 402) {
+                const b = e.body ?? {}
+                setError(`Out of credits — this build costs ${b.cost}, your balance is ${b.balance}.`)
+            } else {
+                setError(e instanceof Error ? e.message : 'Build failed')
+            }
+        }
+        finally { setActing(false); refreshBalance() }  // a build spends credits — resync the header
     }
     const toggleAutoPause = async (enabled: boolean) => {
         setAutoPause(enabled)

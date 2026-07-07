@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import ChatPanel from './ChatPanel'
 import GamesPanel from './GamesPanel'
 import { useWebSocket } from '../contexts/WebSocketContext'
+import { useAuth } from '../contexts/AuthContext'
 
 interface LayoutProps {
     onSettingsClick: () => void
@@ -10,6 +11,7 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ onSettingsClick }) => {
     const [tab, setTab] = useState<'chat' | 'games'>('chat')
     const { messages } = useWebSocket()
+    const { user, balance, logout } = useAuth()
     const [focusRun, setFocusRun] = useState<string | null>(null)
     const seenMsgs = useRef(0)
 
@@ -47,6 +49,19 @@ const Layout: React.FC<LayoutProps> = ({ onSettingsClick }) => {
                         ))}
                     </div>
                 </div>
+                <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-300" title="credit balance">
+                        {balance ?? '—'} <span className="text-gray-500">credits</span>
+                    </span>
+                    {user && (
+                        <button
+                            onClick={logout}
+                            className="text-gray-500 hover:text-gray-300 transition-colors text-xs"
+                            title={`Sign out ${user.handle}`}
+                        >
+                            Sign out
+                        </button>
+                    )}
                 <button
                     onClick={onSettingsClick}
                     className="text-gray-400 hover:text-white transition-colors p-1"
@@ -57,6 +72,7 @@ const Layout: React.FC<LayoutProps> = ({ onSettingsClick }) => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </button>
+                </div>
             </div>
 
             <div className="flex-1 overflow-hidden">

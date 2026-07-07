@@ -3,6 +3,57 @@ import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
 
+// ── auth token (bearer) ────────────────────────────────────────────────────────
+// The token lives in localStorage under `maestro_token` and is injected on every request.
+// A 401 clears it and fires the unauthorized handler so the app drops back to login centrally.
+let authToken: string | null = localStorage.getItem('maestro_token')
+let onUnauthorized: (() => void) | null = null
+
+export function setAuthToken(token: string | null): void {
+    authToken = token
+    if (token) localStorage.setItem('maestro_token', token)
+    else localStorage.removeItem('maestro_token')
+}
+
+export function getAuthToken(): string | null {
+    return authToken
+}
+
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+    onUnauthorized = fn
+}
+
+function authHeaders(extra?: HeadersInit): HeadersInit {
+    return {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...extra,
+    }
+}
+
+// A browser <img src>/download anchor can't send a header — carry the token in the query string.
+function tokenQuery(): string {
+    return authToken ? `?token=${encodeURIComponent(authToken)}` : ''
+}
+
+// Carries the HTTP status + parsed body so callers can react to a specific failure — notably a
+// 402 build gate ({reason, balance, cost}) — instead of a bare status string.
+export class ApiError extends Error {
+    status: number
+    body: any
+    constructor(status: number, body: any) {
+        super(body?.reason ?? String(status))
+        this.name = 'ApiError'
+        this.status = status
+        this.body = body
+    }
+}
+
+function handleUnauthorized(): void {
+    setAuthToken(null)
+    onUnauthorized?.()
+}
+
 async function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -10,8 +61,8 @@ async function sleep(ms: number): Promise<void> {
 async function request<T>(path: string, init?: RequestInit, retries = 2): Promise<T> {
     for (let attempt = 0; attempt <= retries; attempt++) {
         const res = await fetch(`${base}${path}`, {
-            headers: { 'Content-Type': 'application/json' },
             ...init,
+            headers: authHeaders(init?.headers),
         })
 
         // Handle rate limiting with exponential backoff
@@ -27,7 +78,10 @@ async function request<T>(path: string, init?: RequestInit, retries = 2): Promis
             if (res.status === 429) {
                 throw new Error('Rate limit exceeded. Please try again in a moment.')
             }
-            throw new Error(`${res.status}`)
+            let body: any = null
+            try { body = await res.json() } catch { /* no/empty body */ }
+            if (res.status === 401) handleUnauthorized()
+            throw new ApiError(res.status, body)
         }
 
         return res.json() as Promise<T>
@@ -62,11 +116,12 @@ export async function* streamChatMessage(
 ): AsyncGenerator<ChatStreamEvent> {
     const res = await fetch(`${base}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ message, session_id }),
     })
+    if (res.status === 401) handleUnauthorized()
     if (!res.ok || !res.body) {
-        throw new Error(`${res.status}`)
+        throw new ApiError(res.status, null)
     }
 
     const reader = res.body.getReader()
@@ -91,6 +146,27 @@ export async function* streamChatMessage(
 }
 
 export const api = {
+    // Auth — login lives at /auth (not under /api); no signup endpoint exists.
+    login: async (handle: string, password: string) => {
+        const res = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ handle, password }),
+        })
+        if (!res.ok) {
+            let body: any = null
+            try { body = await res.json() } catch { /* no body */ }
+            throw new ApiError(res.status, body)
+        }
+        return res.json() as Promise<{ token: string; user: { id: string; handle: string; role: string } }>
+    },
+    me: async () => {
+        const res = await fetch('/auth/me', { headers: authHeaders() })
+        if (res.status === 401) handleUnauthorized()
+        if (!res.ok) throw new ApiError(res.status, null)
+        return res.json() as Promise<{ id: string; handle: string; role: string; balance: number }>
+    },
+
     // Games
     listGames: () =>
         request<Game[]>('/games'),
@@ -123,9 +199,9 @@ export const api = {
             method: 'POST', body: JSON.stringify({ filename }),
         }),
     assetFileUrl: (runId: string, filename: string) =>
-        `${base}/games/${runId}/asset-file/${encodeURIComponent(filename)}`,
+        `${base}/games/${runId}/asset-file/${encodeURIComponent(filename)}${tokenQuery()}`,
     downloadGameUrl: (runId: string) =>
-        `${base}/games/${runId}/download`,
+        `${base}/games/${runId}/download${tokenQuery()}`,
     editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
         request<{ ok: boolean }>(`/games/${runId}/component/${componentId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
     editNode: (runId: string, nodeId: string, content: Record<string, any>) =>
@@ -170,7 +246,7 @@ export const api = {
     // Chat
     streamChatMessage,
     clearChatSession: (session_id = 'default') =>
-        fetch(`${base}/chat/${session_id}`, { method: 'DELETE' }),
+        fetch(`${base}/chat/${session_id}`, { method: 'DELETE', headers: authHeaders() }),
 
     // Settings
     getSettings: () =>

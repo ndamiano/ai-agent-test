@@ -86,10 +86,22 @@ per-user ownership, and a credit ledger that gates builds.
       unknown handle exits cleanly; the webhook credits on a stubbed verified event, rejects an
       unverified one (400, credits nothing), and is not blocked by the user-auth middleware.
 
-## T5 — Frontend gate
-- [ ] **Login screen** + gate the app behind it.
-- [ ] **Show balance**; surface "out of credits" on the build action.
-- [ ] **No signup UI.**
+## T5 — Frontend gate  ✅ DONE
+- [x] **Login screen** + gate the app behind it. `AuthProvider` (`contexts/AuthContext.tsx`, token
+      in `localStorage['maestro_token']`) wraps the app outside `WebSocketProvider`; `App` renders
+      `LoginScreen` (handle+password → `POST /auth/login`, no signup) when there's no token, the app
+      otherwise. The central client (`api/client.ts`) injects the bearer on all three fetch paths
+      (`request`/`streamChatMessage`/`clearChatSession`) + the `?token=` WS query param + the
+      browser-driven `asset-file`/`download` URLs (the auth gate now also accepts a `token` query
+      param for those header-less GETs). A 401 from any call clears the token and drops back to login.
+- [x] **Show balance** — `GET /auth/me` (new, gated) is the source; the header shows it (Layout),
+      refreshed after every build. **Out of credits**: the client parses the 402 body into an
+      `ApiError` and `GamesPanel.build()` surfaces `{reason, balance, cost}`.
+- [x] **No signup UI.**
+- [x] **Tests:** backend `test_auth_me.py` (anon 401, balance for a valid token, query-param auth);
+      frontend `api/auth.test.ts` (bearer injected, 402 parsed not swallowed, 401 de-auths, token on
+      asset/download URLs) + `components/AuthGate.test.tsx` (login gate when no token / app + balance
+      when present).
 
 ## Ordering
 T1 (auth) + T2 (ownership) first — they're the security floor and unblock `scaleout.md` S1. T3

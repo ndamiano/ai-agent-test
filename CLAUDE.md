@@ -74,8 +74,8 @@ src/
                 state.py — RunState: durable per-run dir <working_dir>/runs/<run_id>/
                 modules/ — THE module system (one `Module` ABC, no subclasses; see below):
                   module.py — Module ABC + Check + Error/ErrorType/CorrectionPrompt + MODULE_REGISTRY +
-                    compose() + Preset/PRESETS + the (engine,module) projection registry +
-                    load_prompt/skeleton_guide. A module IS a list of `Check`s (each a detector +
+                    compose() + the (engine,module) projection registry +
+                    resolve_modules/selectable_catalog/engine_for + load_prompt/skeleton_guide. A module IS a list of `Check`s (each a detector +
                     how-to-fix); the base runs them — `get_errors` sweeps the checks, `get_fix`/
                     `get_correction_prompt` build the fix for an emitted error from its check.
                   checks.py — the check library a module's Check detectors compose (path-addressed

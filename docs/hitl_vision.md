@@ -171,11 +171,12 @@ Grouped into epics. Each issue: rough size (S/M/L), surface (FE/BE/both), and ty
 
 ### Epic D — Decisions, not errors (the gate as a crisp choice)
 
-- **D1 — Wire `awaiting_human`.** The loop actually pauses (sets
-  `RunControl.status="awaiting_human"` + emits the event) when the top error is
-  human-owned, instead of burning `_ATTEMPT_CAP` fix attempts and quitting with
-  `build_done ok=false`. This is a dead wire today (UI + docs advertise it; nothing
-  emits it) and it's the foundation for D2/D3. *(M, BE, wire)*
+- **D1 — ~~Wire `awaiting_human`~~ (SUPERSEDED).** `hitl_architecture.md` settles this the
+  other way: the loop never *waits* on the human, so there is no `awaiting_human` state to
+  build — human-owned errors keep `ok=true` from firing and the build ends parked (`ok=false`),
+  which the human resolves via edit/waive then re-triggers. `awaiting_human` is a dead status to
+  **delete**, not wire. D2/D3 (decision cards) build on the park + re-trigger model instead. *(see
+  `hitl_architecture.md` "Settled policy")*
 - **D2 — Decision cards.** When the loop faces a genuine fork or an unresolvable
   park, a module emits a structured *decision* (options + one-line consequences),
   not a raw error string; the human taps a choice and the loop resumes with it.

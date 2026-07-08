@@ -38,10 +38,11 @@ engine — so a mixed game picks real-time and degrades discrete parts to scenes
 
 ## Layer 2 — Mechanic-modules (many, composable; the AI selects + fills)
 
-A `Module` is **behavior, not a data bag**: the only required method is `get_errors(context) ->
-[Error]`, and the core invariant is **detector = fixer** — a module reports an error only if *it*
-can fix it. `compose(module_ids)` resolves ids → live instances; the loop reads gating off the
-composed set, never a genre string. Two flavors:
+A `Module` is **behavior, not a data bag**: a module IS its `checks` list — each `Check` pairs a
+detector with how the loop fixes what it emits. The base `get_errors`/`get_fix` sweep that list;
+no module overrides them. The core invariant is **detector = fixer** — a check reports an error
+only if it also declares the fix. `compose(module_ids)` resolves ids → live instances; the loop
+reads gating off the composed set, never a genre string. Two flavors:
 
 - **content** modules author a component (`scenes`→nodes, `world`→places, `combat`→encounters,
   `cast`→characters, `story`→story, `inventory`→items).

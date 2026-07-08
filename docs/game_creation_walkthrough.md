@@ -95,7 +95,7 @@ The loop is **not an LLM.** Each iteration:
    shape: a single correction step. A count-driven target isn't special — its `get_errors`
    fans the shortfall into one **per-slot create-error** each (`checks.slot_errors`), and
    the loop authors them one at a time. Each create step's write tool is slot-guarded
-   (`_create_guard`, installed from the module's `create_guards`).
+   (`_create_guard`, installed from the emitting check's `guard`).
 5. **Run the fix through `Services`** — the bounded gateway (connector + tool dispatch +
    pause/cancel checkpoint + **per-fix step budget**). `BudgetExhausted` is a
    `BaseException`, so a fix physically cannot churn past its cap. The module owns the
@@ -161,10 +161,11 @@ prints `ok / steps / elapsed` and the project path (`<run_dir>/game_output`).
 
 ## The human is in the loop, not watching it
 
-Throughout Phase 2 the human can pause/resume/cancel (`run_control.RunControl`, checked at
-every step boundary), hand-edit a node and recompile, add **human todos** that block
-completion (the build parks in `awaiting_human`), and **waive** a machine error they
-accept (the `human` module holds the todo/waiver store). So the real completion rule is:
+Throughout Phase 2 the human can pause/resume (`run_control.RunControl`, checked at
+every step boundary — there is no cancel), hand-edit a node and recompile, add **human todos**
+that block completion (open todos emit `HUMAN` errors, so the build ends `ok=false`/parked while
+they remain), and **waive** a machine error they accept (the `human` module holds the todo/waiver
+store). So the real completion rule is:
 
 ```
 done  ⇔  effective errors empty

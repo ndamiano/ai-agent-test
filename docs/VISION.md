@@ -54,7 +54,7 @@ A build that takes 45 minutes and produces a great game is better than one that 
 Maestro works with models as-is. Improving output comes from better prompt design, better build architecture, and better decomposition — not from modifying the model.
 
 **Not cloud-first.**  
-Local model support is a core requirement, not an afterthought. Designing for local models (resource constraints, no API keys, OpenAI-compatible endpoints) keeps the architecture honest and the product accessible.
+Local model support is a core requirement, not an afterthought. Designing for local models (resource constraints, no API keys, OpenAI-compatible endpoints) keeps the architecture honest and the product accessible. This is an *architecture* stance, not a delivery one: Maestro is also becoming a hosted, authed, paid service (see `docs/ROADMAP.md` — auth + credits, containerized deploy, real payments at public beta). Local-first below; hosted delivery on top.
 
 **Not a marketplace or platform (yet).**  
 Plugin systems, third-party modules and engines, and contribution frameworks come after the core output quality is proven. Building platform infrastructure before the product works is the wrong order.

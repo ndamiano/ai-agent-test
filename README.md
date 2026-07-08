@@ -6,23 +6,22 @@ See `docs/VISION.md` for the philosophy, `docs/ROADMAP.md` for the plan and curr
 
 ## How it works
 
-You talk to Maestro through a chat interface. When you ask for something, Maestro does **not** write the artifact by hand and does **not** run a fixed pipeline. It drafts a per-game **spec** — a contract of components, each with checkable done-conditions — for you to review and freeze. Once frozen, a non-LLM **executor** drives an agentic loop that builds the artifact against the spec until every done-condition passes. "Done" means the artifact satisfies the frozen spec, decided by `validate` — never the agent claiming it.
+You talk to Maestro through a chat interface. When you ask for something, Maestro does **not** write the artifact by hand and does **not** run a fixed pipeline. It drafts a per-game **spec** — a contract of components, each with checkable done-conditions — for you to review and freeze. Once frozen, a non-LLM **executor** drives an agentic loop that builds the artifact against the spec until every done-condition passes. "Done" means the artifact satisfies the frozen spec, decided by the modules' checks (`get_errors`, minus the human's waivers) — never the agent claiming it.
 
 The agent emits the engine-neutral **Game IR** (JSON — `docs/game_ir.schema.json`), never raw engine source. A selected backend projects the assembled IR to a runnable artifact.
 
-**Genres** (the shape of the game):
+There is no genre or preset box. The spec drafter picks **mechanic-modules** from a catalog
+(`scenes`, `world`, `combat`, `cast`, `story`, `inventory`, …) — a `{module_id: reason}` map it
+must justify against the story it just wrote — and the composed set determines what gets built:
+a dialogue-graph visual novel, a room/hotspot adventure, a walkable RPG with card/turn combat, or
+any composition of these.
 
-| Genre | Produces |
-|---|---|
-| `vn` | A visual novel — dialogue graph (`nodes`) with choices, character sprites with per-line emotions, generated backgrounds |
-| `point_and_click` | A room/hotspot adventure — clickable places, inventory, item-use puzzles, NPC dialogue, a win goal |
-
-**Engines** (the target the IR projects to):
+**Engines** (the target the IR projects to; selected automatically from the module set):
 
 | Engine | Output |
 |---|---|
-| `renpy` | A packaged Ren'Py project (requires the Ren'Py SDK) |
-| `web` | A self-contained static site — `game.json` + a pre-tested runtime; opens in any browser |
+| `renpy` | A packaged Ren'Py project (requires the Ren'Py SDK) — visual novels + point-and-click |
+| `godot` | A Godot 4 project — `game.json` + a static GDScript runtime; needed for `combat` + walkable worlds; browser via Godot Web export |
 
 ## Setup
 
@@ -127,10 +126,10 @@ src/
   api/          FastAPI routers + WebSocket event bus
   config/       settings schema/manager
   llm_clients/  connectors, message builder, shared inference primitives
-  maestro/      the agentic build system — spec, state, validate, executor, tools,
-                build agent, IR assemble/crossref, engine dispatch
+  maestro/      the agentic build system — spec, state, modules/, agent_loop (the
+                non-LLM executor), services, tools, IR assemble/crossref, engine dispatch
   renpy/        Ren'Py engine backend (IR → script.rpy → packaged project)
-  web/          Web engine backend (IR → game.json + static runtime)
+  godot/        Godot 4 engine backend (IR → game.json + static GDScript runtime)
   tools/        tool manager, ComfyUI, system tools, execution context
 frontend/       chat-first React + Vite UI
 eval/           rubrics, briefs, judge, scoring CLI

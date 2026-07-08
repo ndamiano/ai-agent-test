@@ -29,8 +29,9 @@ thumbs-up *clears* one; the loop keeps working around them. That's the entire sy
 
 ## The dirty flag
 
-Every component schema carries `dirty: bool` (default clean) and an optional
-`review_note` (why it's flagged / what to change).
+Each component can be flagged `dirty` (default clean) with an optional `review_note` (why it's
+flagged / what to change). The flag lives in a **sidecar** in the `human` HITL store, not on the
+component schemas — zero component-schema changes (see "where `dirty` lives" below).
 
 **Set dirty by:**
 
@@ -213,7 +214,8 @@ the dependency graph (`ir_crossref` records + `state` producer/consumer edges);
 
 **New:**
 
-1. **`dirty: bool` + `review_note` on every component schema**, persisted.
+1. **`dirty: bool` + `review_note` per component**, persisted in a sidecar in the `human`
+   store (not on the component schemas).
 2. **Dirty propagation** — on edit, walk the existing edges and flag direct
    dependents (+ a manual "flag everything after" verb).
 3. **Dirty as a new error kind** — one Check emits it, the existing drain clears it;

@@ -32,22 +32,22 @@ representing current state.
 - **`docs/*`** — deep rationale + schemas (IR decisions, architecture, HITL model, tool granularity).
 - **`tasks/*`** — active work plans; **`finished.md`** — shipped ledger.
 
-## T1 — Initial audit (do once)
-- [ ] **`CLAUDE.md`** — cross-check the architecture + "how it works" sections against current
-      `src/maestro/modules/`, `engines.py`, the presenters, and the auth/scale reality (it currently
-      describes a system with no auth/tenancy — note where that's now aspirational vs real). Flag any
-      stale class/file/flow claims.
-- [ ] **`docs/ROADMAP.md`** — verify no `[x]` done items remain (just trimmed) and forward items are still
-      real intentions.
-- [ ] **`docs/VISION.md`** — still aligned with the actual direction (games-first, on-demand, local)?
-      Reconcile with the scale/auth/launch ambitions now surfacing.
-- [ ] **`README.md`** — does it still orient a newcomer correctly (run commands, layout)?
-- [ ] **`docs/*`** — check `ir_architecture.md`, `hitl_architecture.md`, `tool_granularity.md`,
-      `game_creation_walkthrough.md` for pre-rewrite terms + describe-current-code accuracy. Verify
-      `hitl_vision.md` vs `hitl_architecture.md` (the backlog says architecture supersedes vision) —
-      collapse or cross-link so they don't contradict.
-- [ ] **Produce a drift report** — per doc: accurate / stale-section / contradicts-code — then fix
-      inline or file follow-ups.
+## T1 — Initial audit (do once) — DONE 2026-07-08
+Audited all living docs against `src/` at HEAD; drift report produced; every finding fixed inline.
+- [x] **`CLAUDE.md`** — accurate except one stale API listing: fixed (`Preset/PRESETS` removed from
+      module.py contents, real selection API named). Auth/tenancy section VERIFIED real (not
+      aspirational) — every file it names exists.
+- [x] **`docs/ROADMAP.md`** — accurate; no `[x]` items, all forward task-file refs resolve. No change.
+- [x] **`docs/VISION.md`** — added a reconciling line (local-first architecture vs hosted paid delivery).
+- [x] **`README.md`** — fixed: dead Genres table → module-catalog framing; `web` engine → `godot`;
+      `validate`/`executor`/`web/` layout → `agent_loop`/`modules/`/`godot/`; "decided by validate"
+      → modules' `get_errors`.
+- [x] **`docs/*`** — fixed: `ir_architecture.md` Module contract (get_errors → checks-list);
+      `game_creation_walkthrough.md` (`create_guards` → check's `guard`; dead `awaiting_human`/cancel);
+      `tool_granularity.md` (dead `matches` component); `hitl_architecture.md` (`dirty` sidecar, not
+      schema); `hitl_vision.md` D1 marked SUPERSEDED + cross-linked (resolves the awaiting_human
+      contradiction).
+- [x] **Drift report produced** — 4 HIGH / 4 MEDIUM / 3 LOW, all verified against code, all fixed inline.
 
 ## T2 — Anti-drift governance (standing)
 - [ ] **Reinforce the same-commit rule** as a review checklist item (`CLAUDE.md` already mandates it

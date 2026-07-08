@@ -33,7 +33,7 @@ is the price of that floor.
   single `write_component` call. A granular tool buys nothing for the build.
 
 The discriminator for the second clause: **one-shot vs. repaired collection.** One-shots (characters,
-asset_manifest, matches) need no granular tools. Collections the loop builds/fixes item-by-item
+asset_manifest, story meta) need no granular tools. Collections the loop builds/fixes item-by-item
 under sub-loop targets (nodes, places, interactables) earn them.
 
 ## Tools are scaffolding pegged to the floor — prune as it rises

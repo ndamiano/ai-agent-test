@@ -26,3 +26,6 @@ src/logs/
 .DS_Store
 scratchpad/
 tmp/
+
+# Personal notes — never ship
+tasks/nicknotes.md

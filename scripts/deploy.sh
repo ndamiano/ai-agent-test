@@ -31,6 +31,7 @@ rsync -az --delete \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
   --exclude 'src/logs/' \
+  --exclude 'tasks/nicknotes.md' \
   --exclude 'outputs/' \
   --exclude '.env' \
   --exclude 'src/config/settings.json' \

@@ -12,15 +12,22 @@ RENPY_VERSION="8.5.2"
 RENPY_SDK_HOST="${RENPY_SDK_HOST:-$HOME/renpy-${RENPY_VERSION}-sdk}"
 RENPY_URL="https://www.renpy.org/dl/${RENPY_VERSION}/renpy-${RENPY_VERSION}-sdk.tar.bz2"
 
-# TODO: pin GODOT_VERSION to whatever the build was validated against; the export templates MUST
-# match the binary version exactly or native export fails.
-GODOT_VERSION="${GODOT_VERSION:-4.3-stable}"
+# Pinned to the version the builds are validated against (dev box runs 4.7.stable). The export
+# templates MUST match the binary version exactly or native export fails.
+GODOT_VERSION="${GODOT_VERSION:-4.7-stable}"
 GODOT_BIN_HOST="${GODOT_BIN_HOST:-/usr/local/bin/godot}"
 GODOT_TEMPLATES_HOST="${GODOT_TEMPLATES_HOST:-$HOME/.local/share/godot/export_templates}"
 GODOT_BIN_URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
 GODOT_TEMPLATES_URL="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
 
 log() { echo -e "\n\033[1;36m==> $*\033[0m"; }
+
+# ── Fetch + extract prerequisites ────────────────────────────────────────────────────────────
+# A minimal Ubuntu image ships without these: bzip2 (Ren'Py SDK is .tar.bz2) and unzip (Godot
+# binary/templates). Without them the extracts below fail. Idempotent — a no-op once present.
+log "Installing prerequisites (curl, bzip2, unzip)"
+sudo apt-get update
+sudo apt-get install -y curl ca-certificates bzip2 unzip
 
 # ── Docker + compose plugin (Debian/Ubuntu) ────────────────────────────────────────────────────
 if command -v docker >/dev/null 2>&1; then

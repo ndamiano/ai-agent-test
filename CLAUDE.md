@@ -4,7 +4,7 @@ An AI platform that makes things. The goal is simple: user says "make me a game"
 
 The north star is magical output. A novel that rivals Dostoevsky. A game worth sharing. Not "technically completed" — actually good.
 
-See `ROADMAP.md` for the full plan and current status.
+See `docs/ROADMAP.md` for the full plan and current status.
 
 ---
 
@@ -284,7 +284,7 @@ Write tests for every non-trivial change. Tests must be meaningful — test beha
 After implementing any non-trivial change, self-review the diff: check for security issues, unintended scope creep, missing tests, and regressions. Do this before declaring done.
 
 ### Documentation
-Keep CLAUDE.md and ROADMAP.md in sync with reality. When shipping a feature: mark it done in ROADMAP.md, update the current state section if the architecture changed, and update CLAUDE.md if the "how it works" or architecture sections are now wrong. Do this in the same commit as the code.
+Keep CLAUDE.md and docs/ROADMAP.md in sync with reality. When shipping a feature: mark it done in docs/ROADMAP.md, update the current state section if the architecture changed, and update CLAUDE.md if the "how it works" or architecture sections are now wrong. Do this in the same commit as the code.
 
 ### Comments
 Default: none. Only when the WHY is non-obvious (hidden constraint, workaround, subtle invariant). Never comment WHAT the code does.

@@ -2,7 +2,7 @@
 
 An AI platform that makes things. The user says "make me a game" — an hour later, a good game exists. AI output quality is the product; everything else is scaffolding.
 
-See `VISION.md` for the philosophy, `ROADMAP.md` for the plan and current state, and `CLAUDE.md` for architecture and code standards.
+See `docs/VISION.md` for the philosophy, `docs/ROADMAP.md` for the plan and current state, and `CLAUDE.md` for architecture and code standards.
 
 ## How it works
 

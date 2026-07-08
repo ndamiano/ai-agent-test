@@ -15,10 +15,10 @@ representing current state.
   truth map below).
 
 ## Background (VERIFIED — the living docs)
-- **Root:** `CLAUDE.md` (architecture + code standards — the primary), `README.md`, `ROADMAP.md`
-  (just trimmed to forward-only), `VISION.md`.
-- **`docs/`:** `ir_architecture.md`, `game_ir_decisions.md`, `game_ir.schema.json`,
-  `asset_manifest.schema.json`, `hitl_architecture.md`, `hitl_vision.md`, `tool_granularity.md`,
+- **Root:** `CLAUDE.md` (architecture + code standards — the primary), `README.md`.
+- **`docs/`:** `ROADMAP.md` (forward-only), `VISION.md`, `DEPLOY.md`, `ir_architecture.md`,
+  `game_ir_decisions.md`, `game_ir.schema.json`, `asset_manifest.schema.json`,
+  `hitl_architecture.md`, `hitl_vision.md`, `tool_granularity.md`,
   `game_creation_walkthrough.md`, `examples/`.
 - **`tasks/`:** the work plans (this dir). **`finished.md`:** shipped ledger.
 - Drift evidence: pre-rewrite vocabulary (`validate.py`, `executor.build_context`, `done_condition`
@@ -26,8 +26,8 @@ representing current state.
 
 ## Source-of-truth map (who owns what — enforce, don't duplicate)
 - **`CLAUDE.md`** — current architecture + how it works + code standards.
-- **`VISION.md`** — the north-star / product scope (games-first, on-demand tool).
-- **`ROADMAP.md`** — forward plan only (done work lives in `tasks/finished.md`, not here).
+- **`docs/VISION.md`** — the north-star / product scope (games-first, on-demand tool).
+- **`docs/ROADMAP.md`** — forward plan only (done work lives in `tasks/finished.md`, not here).
 - **`README.md`** — entry point / orientation.
 - **`docs/*`** — deep rationale + schemas (IR decisions, architecture, HITL model, tool granularity).
 - **`tasks/*`** — active work plans; **`finished.md`** — shipped ledger.
@@ -37,9 +37,9 @@ representing current state.
       `src/maestro/modules/`, `engines.py`, the presenters, and the auth/scale reality (it currently
       describes a system with no auth/tenancy — note where that's now aspirational vs real). Flag any
       stale class/file/flow claims.
-- [ ] **`ROADMAP.md`** — verify no `[x]` done items remain (just trimmed) and forward items are still
+- [ ] **`docs/ROADMAP.md`** — verify no `[x]` done items remain (just trimmed) and forward items are still
       real intentions.
-- [ ] **`VISION.md`** — still aligned with the actual direction (games-first, on-demand, local)?
+- [ ] **`docs/VISION.md`** — still aligned with the actual direction (games-first, on-demand, local)?
       Reconcile with the scale/auth/launch ambitions now surfacing.
 - [ ] **`README.md`** — does it still orient a newcomer correctly (run commands, layout)?
 - [ ] **`docs/*`** — check `ir_architecture.md`, `hitl_architecture.md`, `tool_granularity.md`,

@@ -18,7 +18,7 @@ distinct legs sharing one spine (declare in the manifest → generate → wire p
 - **Engine playback surfaces:** Ren'Py has native `play music` / `play sound` (via `ir_vn`/`ir_pnc`
   + templates); Godot needs `AudioStreamPlayer` / `AnimationPlayer` in the runtime presenters.
 - **Ties:**
-  - `ROADMAP.md` already lists "Music generation (MusicGen / Suno)".
+  - `docs/ROADMAP.md` already lists "Music generation (MusicGen / Suno)".
   - `scaleout.md` S2 — parallel asset gen must include these new passes.
   - `game_style.md` — motion/transition style tokens overlap the animation leg.
   - `asset_pipeline_redesign` direction — couple asset stubs to content authoring + a styled prompt

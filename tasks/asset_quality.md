@@ -26,7 +26,7 @@ file makes the art good; that file catches when it isn't.
   hex palette) + `make_seamless_tile`; fallback = role-aware DreamShaper formulas.
 - **Meshes (hd2d):** Hunyuan3D-2.1 (~9s, untextured→triplanar projection) or TRELLIS.2-4B (~50-90s,
   native PBR) via `settings.comfyui.mesh_backend`. Known gaps: TRELLIS plinth slab + occasional black
-  bakes (tracked in `ROADMAP.md` "Godot/3D polish").
+  bakes (tracked in `docs/ROADMAP.md` "Godot/3D polish").
 - **Feature objects:** item workflow + BiRefNet matting → matted sprite.
 - **Prompts** are generated prose in the manifest; no styled/curated prompt stage yet.
 
@@ -54,9 +54,9 @@ file makes the art good; that file catches when it isn't.
       zone-requirements + a biome palette (mechanical OR palette, never free-form) + global geography;
       WFC scoped to fill, not backbone. (See the map-gen redesign direction — this is its home.)
 - [ ] **Asset monotony → locations-with-states** — the same-place-every-scene problem is addressed by
-      IR 0.2 first-class `locations` with img2img'd state variants (tracked in `ROADMAP.md` Build
+      IR 0.2 first-class `locations` with img2img'd state variants (tracked in `docs/ROADMAP.md` Build
       quality; cross-ref, don't duplicate the work here).
-- [ ] **Mesh polish** — TRELLIS plinth slab + black bakes (`ROADMAP.md` "Godot/3D polish").
+- [ ] **Mesh polish** — TRELLIS plinth slab + black bakes (`docs/ROADMAP.md` "Godot/3D polish").
 
 ## T4 — Consistency
 - [ ] **Character identity across scenes** — sprite drift; anchor generation so a character reads as

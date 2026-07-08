@@ -170,7 +170,7 @@ wiring/sufficiency checks over content the engine modules already grow).
 - [ ] Update `CLAUDE.md`: the module architecture section gains the engine/aspect layering (aspects =
       LLM-facing modules that `require` engine modules + add specific checks/params; picking is
       nouns-primary). Keep the "no genre box" invariant wording.
-- [ ] Update `ROADMAP.md` if it tracks this.
+- [ ] Update `docs/ROADMAP.md` if it tracks this.
 
 ---
 
@@ -266,7 +266,7 @@ returns `slot_errors`-shaped per-cell create-errors with stable paths):
       capped — per `CLAUDE.md`, no silent truncation).
 
 ### B7 — Docs
-- [ ] Update `CLAUDE.md`/`ROADMAP.md`: scale = declared requirement space (coverage grids +
+- [ ] Update `CLAUDE.md`/`docs/ROADMAP.md`: scale = declared requirement space (coverage grids +
       recursive depth) filled by the existing one-item-per-step loop; magnitude is spec-declared
       structure, not emergent; compute is the ceiling, parallelization the relief.
 
@@ -287,5 +287,5 @@ returns `slot_errors`-shaped per-cell create-errors with stable paths):
   the foundation B's scale-aspects build on). B's coverage/recursion are cleanest expressed AS aspects
   (`open_world`, `settlements`), so A's layer should exist before B wires them in.
 - **Tests before done** (`cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`).
-  Self-review the diff for scope creep + missing tests per `CLAUDE.md`. Keep `CLAUDE.md`/`ROADMAP.md`
+  Self-review the diff for scope creep + missing tests per `CLAUDE.md`. Keep `CLAUDE.md`/`docs/ROADMAP.md`
   in sync in the same commit as the code. Do NOT commit unless explicitly asked.

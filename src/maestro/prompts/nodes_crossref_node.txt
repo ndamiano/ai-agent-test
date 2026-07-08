@@ -1,0 +1,16 @@
+A jump or menu points at a NODE that does not exist. The TARGET names the holder and path, e.g.
+`nodes[start].end.target: 'crypt_altar' is not a declared node`.
+
+Fix it ONE of two ways — reuse EXACT ids from the NODES list below:
+
+  - Repoint the reference to a node that already exists (usually the right fix — the target was a
+    typo or a renamed scene):
+        edit_node(node_id="<holder>", end={"type": "jump", "target": "<a real node id>"})
+    (for a menu choice, repoint that choice's target instead.)
+
+  - Only if that scene genuinely must exist and is simply missing, CREATE it:
+        write_node(node_id="<the missing id>", content=...)
+
+Do NOT rename the holder node. Do NOT invent unrelated ids. A jump/menu target must be one of the
+listed node ids (or a node you create now).
+{{include:tool_call_rule}}

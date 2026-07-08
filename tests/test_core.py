@@ -895,3 +895,21 @@ def test_parse_action_salvages_text_response():
 def test_parse_action_no_schemas_no_salvage():
     resp = {"choices": [{"message": {"content": '{"node_id": "x", "content": {}}'}}]}
     assert parse_action(resp) == {}
+
+
+def test_crossref_character_error_gets_kind_specific_prompt():
+    """A hallucinated speaker (kind=character) gets its OWN fix prompt + the cast roster — not the
+    generic node-repair menu (which spun 100+ steps in prod)."""
+    from maestro.modules import scenes
+    art = {"characters": {"characters": [{"id": "aris_thorne", "name": "Aris"}]},
+           "nodes": {"node_ids": ["end1"], "nodes": {
+               "end1": {"lines": [{"speaker": "mara_lin", "text": "hi"}], "end": {"type": "end"}}}}}
+    ctx = _ctx({"params": {}, "modules": ["cast", "scenes"]}, art)
+    err = Error(type=ErrorType.FIX, code="crossref", component="nodes",
+                message="nodes[end1].lines[0].speaker: 'mara_lin' is not a declared character",
+                path="nodes[end1].lines[0].speaker", ref="mara_lin", kind="character")
+    cp = scenes._crossref_correction(scenes.MODULE, ctx, err)
+    assert "COMMON FAILURES" not in cp.system         # not the generic menu
+    assert "never an object" in cp.system.lower()      # the kind-specific speaker rule
+    assert "aris_thorne" in cp.user                    # the roster to pick from
+    assert "mara_lin" in cp.user                       # the target names the bad ref

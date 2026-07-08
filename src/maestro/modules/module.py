@@ -49,6 +49,8 @@ class Error:
     message: str              # human-facing description; reword-safe, outside identity()
     path: Optional[str] = None      # locator within the component (id / json path)
     ref: Optional[str] = None       # for reference errors: the unresolved id
+    kind: Optional[str] = None      # for reference errors: what KIND of id failed to resolve
+                                    # (character/node/item/...) — lets a fix build a per-kind prompt
 
     def identity(self) -> Tuple:
         """Stable key the loop compares across steps for stall detection, across rewordings of

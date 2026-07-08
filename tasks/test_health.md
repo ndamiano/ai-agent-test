@@ -48,34 +48,55 @@ fixtures + conventions + fixing a small weak fraction + filling load-bearing gap
 - [x] **Adopt a `parametrize` convention** for case lists (combat-shape variants, module resolution),
       so new variants are rows not functions. Convention in `tests/README.md` AND applied by the G5
       FOLD pass (7 files converted — see G5).
-- [~] **Standardize on pytest-style.** `test_settings_manager.py` migrated off `unittest.TestCase`
-      (during the FOLD pass — deep-copy `_valid()` helper replaces `setUp`). REMAINING:
-      `test_time_utils.py`, `test_tools.py`, integration.
-- [ ] **Add markers + fix the slow file.** Mark `slow`/`timing`; convert `test_llm_rate_limit.py`
-      wall-clock asserts to a fake/injected clock (or mark slow) so the default run is fast +
-      deterministic.
+- [x] **Standardize on pytest-style.** All 4 `unittest.TestCase` files migrated:
+      `test_settings_manager.py` (FOLD pass), `test_time_utils.py` + `test_tools.py` (folded where
+      variants existed). Integration file left (live-service, out of default run). No `unittest`
+      import remains in the unit suite.
+- [x] **Add markers + fix the slow file.** `test_llm_rate_limit.py` rewritten onto a `FakeClock` —
+      the limiter now takes a `clock`/`sleep` seam (defaults = real `time.time`/`time.sleep`, zero
+      prod change); the timing tests advance virtual time, run in 0.03s, no wall-clock flake. No
+      `slow` marker needed (nothing touches real time).
 
 ## G2 — Fix the weak ~5–8%
-- [ ] `test_comfyui_prompt.py:42,55,57` — assert the *behaviour* (right checkpoint/params selected),
-      not literal graph node indices.
-- [ ] `test_llm_rate_limit.py` timing asserts → fake clock (covered by G1).
-- [ ] Thin `ok is True`-only tests → assert the observable follow-up state.
-- [ ] Tighten brittle `.rpy`/`.gd` substring greps where cheap (judgment call — some are fine for a
-      projector).
+- [x] `test_comfyui_prompt.py` node-index/`ckpt_name` asserts — removed in the G5 cut pass (the
+      `:42,55,57` literal-index + checkpoint-name asserts are gone; the positive prompt-content
+      contract kept in each test). Remaining `wf["5"] width==height` / `wf["7"]` scenery-negative
+      asserts are observable prompt-construction behaviour, not the literal-index smell — kept.
+- [x] `test_llm_rate_limit.py` timing asserts → fake clock (done via G1 seam).
+- [~] Thin `ok is True`-only tests → assert the observable follow-up state. `test_services` now
+      asserts follow-up state on the dispatch/guard paths; the `test_maestro_tools:42-44`-style thin
+      asserts not separately swept (low value; fold pass already tightened that file).
+- [ ] Tighten brittle `.rpy`/`.gd` substring greps where cheap — HELD (G5 flagged these as the only
+      runtime coverage on CI without a godot binary; fix via G3-style runtime drive, don't delete).
 
-## G3 — Fill load-bearing coverage gaps (source with NO/thin direct tests)
-- [ ] **`src/maestro/services.py` (278 lines) — dedicated `test_services.py`.** The "LIMITS" half of
-      the loop contract (budget→`BudgetExhausted`, `dispatch` tool-scope enforcement, `salvage_tool_call`,
-      `parse_action`, `_create_guard`) is only piggybacked in `test_core.py:831-847`.
-- [ ] **`src/llm_clients/message_builder.py` — NO tests.** `_deduplicate_tool_results`, `_cap_tool_results`,
-      `_enforce_budget` — stateful transforms that rot silently.
-- [ ] **`src/maestro/context_render.py` (125) — NO tests.** Every build step's prompt context flows
-      through it.
-- [ ] **`src/maestro/climb.py` (99) — NO tests** (the hill-climb harness).
-- [ ] **Projection registry — no direct test** of the `(engine, module_id)` map / `unprojectable`
-      fail-fast (`renpy/projections.py`, `godot/projections.py`); only transitively exercised.
-- [ ] **`spec_tools` freeze/unfreeze state machine** + `propose_spec`/`amend_spec` — thin (only via
-      router). The param/reason resolvers are well covered; the state machine isn't.
+## G3 — Fill load-bearing coverage gaps (source with NO/thin direct tests) — DONE 2026-07-08
+Six new test files, +99 items, suite green (695→794). Each pins observable contracts (LLM/loop
+boundary stubbed, never live).
+- [x] **`src/maestro/services.py` → `test_services.py`** (24 tests) — `BudgetExhausted` is a
+      `BaseException` a fix can't swallow + fires at cap; `dispatch` tool-scope refuse/allow;
+      `salvage_tool_call`; `parse_action`; `_create_guard` no-overwrite/slot-advance.
+- [x] **`src/llm_clients/message_builder.py` → `test_message_builder.py`** (12) —
+      `_deduplicate_tool_results`/`_cap_tool_results`/`_enforce_budget` + `build()` composition.
+- [x] **`src/maestro/context_render.py` → `test_context_render.py`** (21) — every block builder
+      (emits-data / omits-when-empty), `id_catalogues`, `ctx_structural`/`ctx_crossref`,
+      `_kind_catalogue`, `crossref_correction`.
+- [x] **`src/maestro/climb.py` → `test_climb.py`** (10) — `clone_run` (component copy, HITL-skip,
+      story reseed, distinct ids), `run_module` wipe/keep selection (loop stubbed), `_cli` args +
+      exit codes. Live-loop drive not unit-testable (no offline seam) — noted.
+- [x] **Projection registry → `test_projections.py`** (14) — `(engine, module_id)` pairs,
+      `engine_for` (combat→godot), `unprojectable` fail-fast signal.
+- [x] **`spec_tools` state machine → `test_spec_tools.py`** (18) — propose (unfrozen, foundation +
+      deps, floors, VN fallback, presentation), amend (re-opens a frozen spec — the un-freeze IS
+      the contract), freeze (re-holds floors, not a pure flag flip), frozen-gate end-to-end.
+
+### G3 findings (latent bugs surfaced by the new tests — NOT fixed, tests-only pass)
+- `message_builder._enforce_budget` protects the latest user turn by an index computed on the
+  PRE-mutation list; drops shift indices, so the guard is stale. Safe today (loop stops once it
+  fits, before reaching the shifted index) but fragile if drops ever pass that point.
+- `message_builder._cap_tool_results` can make slightly-over-cap content LONGER (elision notice +
+  two retained halves > original). Only shrinks well above the notice size.
+- `services.dispatch` uses two error-dict shapes: scope/guard refusals `{ok:False,error}` vs
+  unknown-tool/tool-exception `{error}` (no `ok`). Inconsistent, not wrong.
 
 ## G4 — Governance policy (write it down)
 - [x] **A test-conventions doc / section** — `tests/README.md` written: behaviour-not-implementation;

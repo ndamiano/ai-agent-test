@@ -192,3 +192,21 @@ def compile_failure(run_dir, engine: str) -> CheckResult:
     from maestro.engines import compile_for
     res = compile_for(engine)(run_dir, distribute=False)
     return bool(res.get("ok")), None if res.get("ok") else f"compile failed: {res.get('reason')}"
+
+
+def compile_errors(run_dir, engine: str) -> list:
+    """The STRUCTURED per-error list behind compile_failure — one `path: message` string per IR
+    error. Lets a compile check attribute each error to the slice (and thus the module) that owns
+    it, so a combat-slice failure isn't emitted by the realization module that can't fix it."""
+    from maestro.engines import compile_for
+    res = compile_for(engine)(run_dir, distribute=False)
+    if res.get("ok"):
+        return []
+    return list(res.get("ir_errors") or res.get("lint_errors") or [])
+
+
+def compile_slice(err: str) -> str:
+    """The IR slice an `encounters/0/...: msg` compile error belongs to — its leading path token,
+    the same routing key `ir_crossref.slice_token` gives a crossref path."""
+    import re
+    return re.split(r"[/\[.:\s]", err.strip(), 1)[0]

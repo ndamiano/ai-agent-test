@@ -646,7 +646,14 @@ def _d_crossref(chk, m, ctx):
 
 
 def _d_compiles(chk, m, ctx):
-    return m.wrap(chk, checks.compile_failure(ctx.run_dir, ctx.engine))
+    # World runs the whole-IR compile, but a combat-slice IR error belongs to COMBAT (only combat
+    # can rewrite that slice) — emit the non-combat errors, and let combat's own compiles check own
+    # the rest. Emitting a combat error here would violate detector=fixer: world can't fix it.
+    errs = [e for e in checks.compile_errors(ctx.run_dir, ctx.engine)
+            if checks.compile_slice(e) not in _COMBAT_SLICES]
+    if not errs:
+        return []
+    return m.wrap(chk, (False, "compile failed: invalid IR — " + "; ".join(errs[:5])))
 
 
 def _place_view_block(view: Dict) -> List[str]:

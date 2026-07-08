@@ -204,6 +204,14 @@ def _encounter_error(e: Dict, combatant_ids: set) -> Optional[str]:
                           f"{sorted(_FACTIONS)}")
         else:
             seen_factions.add(slot["faction"])
+        pos = slot.get("position")
+        if pos is not None and (not isinstance(pos, dict) or set(pos) - {"cell", "feature"}
+                                or not (pos.get("cell") or pos.get("feature"))):
+            issues.append(
+                f"encounter['{eid}'] combatant {ref!r} has a bad position — it must be "
+                f'{{"cell": {{"x": <int>, "y": <int>}}}} or {{"feature": "<id>"}}, NEVER a flat '
+                f'{{"x", "y"}}. Wrap the coordinates in "cell", or drop position entirely '
+                f"(it is optional — a turn-based fight needs no map cell).")
     if "player" not in seen_factions or not (seen_factions & {"enemy", "neutral"}):
         issues.append(f"encounter['{eid}'] needs at least one 'player' combatant and one opponent "
                       f"('enemy') — otherwise there is no fight")
@@ -571,6 +579,26 @@ def _structural_fix(module, ctx, error):
         catalogue=combat_index_block(ctx.artifact))
 
 
+def _d_compiles(chk, m, ctx):
+    """A whole-IR compile error whose path is in a COMBAT slice — combat owns it (the realization
+    module that runs the compile can't rewrite the combat doc). Carry the failing slice on `path`
+    so the fix routes to that slice's write tool."""
+    errs = [e for e in checks.compile_errors(ctx.run_dir, ctx.engine)
+            if checks.compile_slice(e) in _COMBAT_SLICES]
+    if not errs:
+        return []
+    return [Error(type=chk.tier, code=chk.code, component="combat",
+                  message="compile failed: invalid combat IR — " + "; ".join(errs[:5]),
+                  path=errs[0].split(":", 1)[0].strip())]
+
+
+def _compile_fix(module, ctx, error):
+    """Route a combat compile error to its slice's write tool + a compile-repair prompt."""
+    return _slice_fix_prompt(
+        module, ctx, error, slice_key=checks.compile_slice(error.path or error.message or ""),
+        system_file="combat_compile_fix.txt", catalogue=combat_index_block(ctx.artifact))
+
+
 def _ctx_reach(module, rd: Dict) -> str:
     """An unreachable encounter is wired from a PLACE, not combat — target + the place index (where a
     start_combat hotspot goes) + run-state. The encounter itself is not touched."""
@@ -708,6 +736,8 @@ class Combat(Module):
         Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS,
               prompt="combat_reach_fix.txt", context=_ctx_reach),
         Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS, build_prompt=_crossref_fix),
+        Check("compiles", _d_compiles, job="fix", when_clean=True, tools=_CROSSREF_TOOLS,
+              build_prompt=_compile_fix),
     ]
 
     def params(self) -> Dict:

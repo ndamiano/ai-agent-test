@@ -1,0 +1,16 @@
+The combat IR failed to compile — one slice item has an invalid SHAPE. The TARGET (and LAST RESULT)
+names the exact path, e.g. `encounters/0/combatants/0/position: Additional properties ('x','y')` or
+`abilities/2/effect: ...`. The path reads `<slice>/<index>/<field>` — the slice is combat's
+`encounters` / `combatants` / `abilities` / `stats` / `statuses`.
+
+Re-author ONLY that one item with its slice's write tool (write_encounter / write_combatant /
+write_ability / …), restating the fields it already has and fixing the one the error names. Keep
+every other field and every other item untouched — you are correcting a shape, not redesigning.
+
+Common shape faults:
+  - a combatant `position` written flat as `{"x":..,"y":..}` — it must be `{"cell":{"x":..,"y":..}}`
+    or `{"feature":"<id>"}`, or dropped entirely (a turn-based fight needs no map cell).
+  - `on_victory`/`on_defeat` written as a bare node-id string — it must be an object,
+    `{"type":"jump","target":"<a node id>"}` or `{"type":"end","ending":"<id>"}`.
+
+Read the item first, then write it back corrected. {{include:tool_call_rule}}

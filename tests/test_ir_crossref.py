@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.ir_crossref import crossref_errors
@@ -37,109 +39,129 @@ def test_clean_base_has_no_errors():
     assert crossref_errors(_base()) == []
 
 
-def test_bad_speaker():
-    ir = _base()
-    ir["nodes"][0]["lines"][0]["speaker"] = "ghost"
-    errs = crossref_errors(ir)
-    assert any("ghost" in e and "character" in e for e in errs)
-
-
 def test_null_speaker_is_narration_ok():
     ir = _base()
     ir["nodes"][0]["lines"][0]["speaker"] = None
     assert crossref_errors(ir) == []
 
 
-def test_bad_talk_node():
-    ir = _base()
+# --- dangling-reference detection over _base() --------------------------------
+# WHY: every one of these was a distinct `test_bad_*` proving crossref names both
+# the offending token and the ref kind. They are one detector exercised over many
+# paths; folding them into rows keeps the coverage and kills the clone bloat.
+# A row is (mutate_fn, [(token, kind), ...], exact_count): mutate a FRESH _base(),
+# then for each pair assert some error mentions both token and kind (kind=None =>
+# token alone, for the sites crossref reports without a kind word). exact_count
+# pins the total error count where a case must prove no over-reporting.
+
+def _m_speaker(ir):
+    ir["nodes"][0]["lines"][0]["speaker"] = "ghost"
+
+
+def _m_talk_node(ir):
     ir["places"][0]["interactables"][0]["action"]["node"] = "nope"
-    assert any("nope" in e and "node" in e for e in crossref_errors(ir))
 
 
-def test_bad_jump_and_menu_targets():
-    ir = _base()
+def _m_jump_target(ir):
     ir["nodes"][0]["end"] = {"type": "jump", "target": "missing"}
-    assert any("missing" in e and "node" in e for e in crossref_errors(ir))
 
-    ir2 = _base()
-    ir2["nodes"][0]["end"] = {"type": "menu", "choices": [
+
+def _m_menu_target(ir):
+    ir["nodes"][0]["end"] = {"type": "menu", "choices": [
         {"text": "go", "target": "phantom"}]}
-    assert any("phantom" in e and "node" in e for e in crossref_errors(ir2))
 
 
-def test_bad_move_target():
-    ir = _base()
+def _m_move_target(ir):
     ir["places"][0]["interactables"][0]["action"] = {"type": "move", "target": "void"}
-    assert any("void" in e and "place" in e for e in crossref_errors(ir))
 
 
-def test_bad_item_in_take_and_condition():
-    ir = _base()
+def _m_take_item(ir):
     ir["places"][0]["interactables"][0]["action"] = {"type": "take", "item": "ghost_item"}
-    assert any("ghost_item" in e and "item" in e for e in crossref_errors(ir))
-
-    ir2 = _base()
-    ir2["goal"] = {"item": "phantom_item"}
-    assert any("phantom_item" in e and "item" in e for e in crossref_errors(ir2))
 
 
-def test_bad_flag_in_condition_and_effect():
-    ir = _base()
+def _m_goal_item(ir):
+    ir["goal"] = {"item": "phantom_item"}
+
+
+def _m_goal_flag(ir):
     ir["goal"] = {"flag": "unknown_flag"}
-    assert any("unknown_flag" in e and "flag" in e for e in crossref_errors(ir))
-
-    ir2 = _base()
-    ir2["nodes"][0]["lines"][0]["effects"] = [{"set_flag": "phantom_flag"}]
-    assert any("phantom_flag" in e and "flag" in e for e in crossref_errors(ir2))
 
 
-def test_bad_var_in_condition_operand_and_effect():
-    # var on the left of a comparison
-    ir = _base()
+def _m_effect_flag(ir):
+    ir["nodes"][0]["lines"][0]["effects"] = [{"set_flag": "phantom_flag"}]
+
+
+def _m_goal_var(ir):
     ir["goal"] = {"var": "missing_var", "op": ">", "value": 1}
-    assert any("missing_var" in e and "variable" in e for e in crossref_errors(ir))
-
-    # var-vs-var: the operand on the right
-    ir2 = _base()
-    ir2["goal"] = {"var": "trust", "op": ">", "value": {"var": "ghost_var"}}
-    assert any("ghost_var" in e and "variable" in e for e in crossref_errors(ir2))
-
-    # var inside an effect
-    ir3 = _base()
-    ir3["nodes"][0]["lines"][0]["effects"] = [{"add_var": {"var": "nope_var", "delta": 1}}]
-    assert any("nope_var" in e and "variable" in e for e in crossref_errors(ir3))
 
 
-def test_use_clauses_and_fallback_refs():
-    ir = _base()
+def _m_var_operand(ir):
+    ir["goal"] = {"var": "trust", "op": ">", "value": {"var": "ghost_var"}}
+
+
+def _m_effect_var(ir):
+    ir["nodes"][0]["lines"][0]["effects"] = [{"add_var": {"var": "nope_var", "delta": 1}}]
+
+
+def _m_use_clauses(ir):
     ir["places"][0]["interactables"][0]["action"] = {
         "type": "use",
         "clauses": [{"requires": {"item": "no_item"},
                      "outcome": {"effects": [{"set_flag": "no_flag"}]}}],
         "fallback": {"effects": [{"add_var": {"var": "no_var", "delta": -1}}]},
     }
-    errs = crossref_errors(ir)
-    assert any("no_item" in e for e in errs)
-    assert any("no_flag" in e for e in errs)
-    assert any("no_var" in e for e in errs)
 
 
-def test_bad_start_refs():
-    ir = _base()
+def _m_start_place(ir):
     ir["start"] = {"place": "nowhere"}
-    assert any("start.place" in e and "nowhere" in e for e in crossref_errors(ir))
-
-    ir2 = _base()
-    ir2["start"] = {"node": "no_node"}
-    assert any("start.node" in e and "no_node" in e for e in crossref_errors(ir2))
 
 
-def test_nested_composite_condition():
-    ir = _base()
+def _m_start_node(ir):
+    ir["start"] = {"node": "no_node"}
+
+
+def _m_nested_condition(ir):
     ir["goal"] = {"all": [{"flag": "door_open"},
                           {"any": [{"item": "item_key"}, {"flag": "ghost_flag"}]}]}
+
+
+_BASE_CASES = [
+    ("bad_speaker", _m_speaker, [("ghost", "character")], None),
+    ("bad_talk_node", _m_talk_node, [("nope", "node")], None),
+    ("bad_jump_target", _m_jump_target, [("missing", "node")], None),
+    ("bad_menu_target", _m_menu_target, [("phantom", "node")], None),
+    ("bad_move_target", _m_move_target, [("void", "place")], None),
+    ("bad_take_item", _m_take_item, [("ghost_item", "item")], None),
+    ("bad_goal_item", _m_goal_item, [("phantom_item", "item")], None),
+    ("bad_goal_flag", _m_goal_flag, [("unknown_flag", "flag")], None),
+    ("bad_effect_flag", _m_effect_flag, [("phantom_flag", "flag")], None),
+    ("bad_goal_var", _m_goal_var, [("missing_var", "variable")], None),
+    ("bad_var_operand", _m_var_operand, [("ghost_var", "variable")], None),
+    ("bad_effect_var", _m_effect_var, [("nope_var", "variable")], None),
+    ("use_clauses_and_fallback", _m_use_clauses,
+     [("no_item", None), ("no_flag", None), ("no_var", None)], None),
+    ("bad_start_place", _m_start_place, [("nowhere", "start.place")], None),
+    ("bad_start_node", _m_start_node, [("no_node", "start.node")], None),
+    ("nested_composite_condition", _m_nested_condition, [("ghost_flag", None)], 1),
+]
+
+
+@pytest.mark.parametrize(
+    "mutate, expected, exact_count",
+    [(m, exp, n) for _id, m, exp, n in _BASE_CASES],
+    ids=[_id for _id, *_ in _BASE_CASES],
+)
+def test_base_ref_resolution(mutate, expected, exact_count):
+    ir = _base()
+    mutate(ir)
     errs = crossref_errors(ir)
-    assert len(errs) == 1 and "ghost_flag" in errs[0]
+    if exact_count is not None:
+        assert len(errs) == exact_count, errs
+    for token, kind in expected:
+        if kind is None:
+            assert any(token in e for e in errs), (token, errs)
+        else:
+            assert any(token in e and kind in e for e in errs), (token, kind, errs)
 
 
 # --- combat references --------------------------------------------------------
@@ -178,57 +200,70 @@ def test_combat_base_resolves():
     assert crossref_errors(_combat()) == []
 
 
-def test_bad_combatant_character_and_stat_and_ability():
-    ir = _combat()
+# --- dangling-reference detection over _combat() ------------------------------
+# WHY: the combat IR grew its own family of `test_bad_*` clones; same detector,
+# combat-shaped ref sites (combatant/ability/status/encounter/start_combat). Each
+# original mutated ONE _combat() and asserted several tokens+kinds, so a row here
+# carries a list of pairs; same fold contract as the _base cases above.
+
+def _c_combatant(ir):
     ir["combatants"][0]["character"] = "nobody"
     ir["combatants"][0]["stats"][0]["stat"] = "no_stat"
     ir["combatants"][0]["abilities"] = ["no_ability"]
-    errs = crossref_errors(ir)
-    assert any("nobody" in e and "character" in e for e in errs)
-    assert any("no_stat" in e and "stat" in e for e in errs)
-    assert any("no_ability" in e and "ability" in e for e in errs)
 
 
-def test_bad_ability_cost_and_effect_and_scaling():
-    ir = _combat()
+def _c_ability(ir):
     ir["abilities"][0]["cost"] = [{"stat": "ghost_stat", "amount": 2}]
     ir["abilities"][0]["effects"][0]["stat"] = "phantom_stat"
     ir["abilities"][0]["effects"][0]["formula"]["scales_with"] = "no_mod"
-    errs = crossref_errors(ir)
-    assert any("ghost_stat" in e for e in errs)
-    assert any("phantom_stat" in e for e in errs)
-    assert any("no_mod" in e for e in errs)
 
 
-def test_bad_status_in_effect_and_world_bridge():
-    ir = _combat()
+def _c_status_world(ir):
     ir["abilities"][0]["effects"] = [
         {"status": "no_status", "duration": 2},
         {"world": {"set_flag": "no_flag"}},
     ]
-    errs = crossref_errors(ir)
-    assert any("no_status" in e and "status" in e for e in errs)
-    assert any("no_flag" in e and "flag" in e for e in errs)
 
 
-def test_bad_status_tick_stat():
-    ir = _combat()
+def _c_status_tick(ir):
     ir["statuses"][0]["tick"][0]["stat"] = "ghost_hp"
-    assert any("ghost_hp" in e and "stat" in e for e in crossref_errors(ir))
 
 
-def test_bad_encounter_ref_and_condition_and_resolution():
-    ir = _combat()
+def _c_encounter(ir):
     ir["encounters"][0]["combatants"][0]["ref"] = "no_combatant"
     ir["encounters"][0]["defeat"] = {"when": {"flag": "ghost_flag"}}
     ir["encounters"][0]["on_victory"] = {"type": "jump", "target": "no_node"}
-    errs = crossref_errors(ir)
-    assert any("no_combatant" in e and "combatant" in e for e in errs)
-    assert any("ghost_flag" in e and "flag" in e for e in errs)
-    assert any("no_node" in e and "node" in e for e in errs)
 
 
-def test_bad_start_combat_encounter_ref():
-    ir = _combat()
+def _c_start_combat(ir):
     ir["places"][0]["interactables"][0]["action"]["encounter"] = "no_enc"
-    assert any("no_enc" in e and "encounter" in e for e in crossref_errors(ir))
+
+
+_COMBAT_CASES = [
+    ("bad_combatant_character_stat_ability", _c_combatant,
+     [("nobody", "character"), ("no_stat", "stat"), ("no_ability", "ability")]),
+    ("bad_ability_cost_effect_scaling", _c_ability,
+     [("ghost_stat", None), ("phantom_stat", None), ("no_mod", None)]),
+    ("bad_status_in_effect_and_world_bridge", _c_status_world,
+     [("no_status", "status"), ("no_flag", "flag")]),
+    ("bad_status_tick_stat", _c_status_tick, [("ghost_hp", "stat")]),
+    ("bad_encounter_ref_condition_resolution", _c_encounter,
+     [("no_combatant", "combatant"), ("ghost_flag", "flag"), ("no_node", "node")]),
+    ("bad_start_combat_encounter_ref", _c_start_combat, [("no_enc", "encounter")]),
+]
+
+
+@pytest.mark.parametrize(
+    "mutate, expected",
+    [(m, exp) for _id, m, exp in _COMBAT_CASES],
+    ids=[_id for _id, *_ in _COMBAT_CASES],
+)
+def test_combat_ref_resolution(mutate, expected):
+    ir = _combat()
+    mutate(ir)
+    errs = crossref_errors(ir)
+    for token, kind in expected:
+        if kind is None:
+            assert any(token in e for e in errs), (token, errs)
+        else:
+            assert any(token in e and kind in e for e in errs), (token, kind, errs)

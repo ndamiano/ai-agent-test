@@ -180,17 +180,27 @@ def test_write_node_stamps_system_beat(tmp_path):
     assert state.read_component("nodes")["nodes"]["scene_01"]["beat"] == "beat_03"
 
 
-def test_write_node_rejects_bad_shape(tmp_path):
+# write_node is the born-compliant gate: a structurally malformed node is REJECTED at the tool
+# call and never persisted, so the loop never enters a repair phase for shape it could refuse.
+# Each row is one bad shape produced live; err_substr (when set) proves the message is actionable.
+@pytest.mark.parametrize("node_id, content, err_substr", [
+    ("s1", "label s1:\n  a \"hi\"", None),                              # string, not object
+    ("s1", {"lines": [], "end": {"type": "return"}}, None),             # empty lines
+    ("s1", {"lines": [{"text": "x"}]}, None),                           # no end
+    ("s1", {"lines": [{"text": "x"}], "end": {"type": "boom"}}, None),  # bad end type
+    ("start", _node(), None),                                           # reserved start id
+    ("s1", {"lines": [{"speaker": "a", "text": "x"}],
+            "end": {"type": "menu", "choices": [{"text": "a", "target": "s2"}, {"text": "b"}]}},
+     "target"),                                                         # a menu choice with no target
+    ("s1", {"lines": [{"speaker": "a", "text": "x", "effects": ["set_flag"]}],
+            "end": {"type": "return"}}, "effect OBJECT"),               # effect is a bare string
+])
+def test_write_node_rejects_malformed(tmp_path, node_id, content, err_substr):
     tools = build_tools(_spec(), RunState(tmp_path))
-    assert tools["write_node"]("s1", "label s1:\n  a \"hi\"")["ok"] is False   # string, not object
-    assert tools["write_node"]("s1", {"lines": [], "end": {"type": "return"}})["ok"] is False  # empty
-    assert tools["write_node"]("s1", {"lines": [{"text": "x"}]})["ok"] is False  # no end
-    assert tools["write_node"]("s1", {"lines": [{"text": "x"}], "end": {"type": "boom"}})["ok"] is False
-
-
-def test_write_node_rejects_start_id(tmp_path):
-    tools = build_tools(_spec(), RunState(tmp_path))
-    assert tools["write_node"]("start", _node())["ok"] is False
+    res = tools["write_node"](node_id, content)
+    assert res["ok"] is False
+    if err_substr:
+        assert err_substr in res["error"]
 
 
 def test_write_node_merges_story_state_delta(tmp_path):
@@ -267,22 +277,6 @@ def test_write_node_overwrite_preserves_beat(tmp_path):
     tools["write_node"]("s1", {"lines": [{"speaker": "a", "text": "rewritten"}],
                                "end": {"type": "return"}})
     assert state.read_component("nodes")["nodes"]["s1"]["beat"] == "beat_01"
-
-
-def test_menu_choice_requires_target(tmp_path):
-    tools = build_tools(_spec(), RunState(tmp_path))
-    bad = {"lines": [{"speaker": "a", "text": "x"}],
-           "end": {"type": "menu", "choices": [{"text": "a", "target": "s2"}, {"text": "b"}]}}
-    res = tools["write_node"]("s1", bad)
-    assert res["ok"] is False and "target" in res["error"]
-
-
-def test_effects_must_be_objects(tmp_path):
-    tools = build_tools(_spec(), RunState(tmp_path))
-    bad = {"lines": [{"speaker": "a", "text": "x", "effects": ["set_flag"]}],
-           "end": {"type": "return"}}
-    res = tools["write_node"]("s1", bad)
-    assert res["ok"] is False and "effect OBJECT" in res["error"]
 
 
 def test_write_component_nodes_preserves_beats_and_synopses(tmp_path):
@@ -794,15 +788,52 @@ def test_location_check_flags_unknown_background(tmp_path):
     assert ok is False and "s1" in msg and "bg_real" in msg
 
 
-def test_write_node_rejects_bad_emotion(tmp_path):
+# Each menu/emotion invariant is enforced at write time with an ACTIONABLE error (err_substr),
+# AND the corresponding well-formed node(s) must still be accepted — a reject that also blocked
+# the good shape would strand the loop. Rows: bad emotion enum, hub-and-spoke wide menu (which
+# guts the arc), all-gated menu (empty at runtime → dead-end), and same-target fake fork.
+@pytest.mark.parametrize("bad, err_substr, goods", [
+    ({"lines": [{"speaker": "a", "text": "hi", "emotion": "weary"}], "end": {"type": "return"}},
+     "weary",
+     [{"lines": [{"speaker": "a", "text": "hi", "emotion": "worried"}], "end": {"type": "return"}}]),
+    ({"lines": [{"speaker": "a", "text": "go where?"}],
+      "end": {"type": "menu", "choices": [
+          {"text": f"room {i}", "target": f"scene_{i}"} for i in range(5)]}},
+     "dramatic fork",
+     [{"lines": [{"speaker": "a", "text": "go where?"}],
+       "end": {"type": "menu", "choices": [
+           {"text": "open it", "target": "ending_truth"},
+           {"text": "leave it", "target": "ending_silence"}]}},
+      # linear flow is unaffected — a jump can lead anywhere, no width limit applies.
+      _node(end={"type": "jump", "target": "s2"})]),
+    ({"lines": [{"speaker": "a", "text": "the crisis"}],
+      "end": {"type": "menu", "choices": [
+          {"text": "earned", "target": "ending_truth",
+           "requires": {"var": "trust", "op": ">=", "value": 2}},
+          {"text": "also gated", "target": "ending_silence",
+           "requires": {"var": "trust", "op": "<", "value": 0}}]}},
+     "fallback",
+     [{"lines": [{"speaker": "a", "text": "the crisis"}],
+       "end": {"type": "menu", "choices": [
+           {"text": "earned", "target": "ending_truth",
+            "requires": {"var": "trust", "op": ">=", "value": 2}},
+           {"text": "fallback", "target": "ending_silence"}]}}]),
+    ({"lines": [{"speaker": "a", "text": "pick one"}],
+      "end": {"type": "menu", "choices": [
+          {"text": "left", "target": "scene_02"},
+          {"text": "right", "target": "scene_02"}]}},
+     "same scene",
+     [{"lines": [{"speaker": "a", "text": "pick one"}],
+       "end": {"type": "menu", "choices": [
+           {"text": "left", "target": "scene_02"},
+           {"text": "right", "target": "scene_03"}]}}]),
+])
+def test_write_node_validates_menu_and_emotion(tmp_path, bad, err_substr, goods):
     tools = build_tools(_spec(), RunState(tmp_path))
-    bad = {"lines": [{"speaker": "a", "text": "hi", "emotion": "weary"}],
-           "end": {"type": "return"}}
-    res = tools["write_node"]("s1", bad)
-    assert res["ok"] is False and "weary" in res["error"]
-    good = {"lines": [{"speaker": "a", "text": "hi", "emotion": "worried"}],
-            "end": {"type": "return"}}
-    assert tools["write_node"]("s1", good)["ok"] is True
+    res = tools["write_node"]("bad", bad)
+    assert res["ok"] is False and err_substr in res["error"].lower()
+    for i, good in enumerate(goods):
+        assert tools["write_node"](f"good_{i}", good)["ok"] is True
 
 
 def test_write_node_enforces_min_lines_floor(tmp_path):
@@ -816,63 +847,6 @@ def test_write_node_enforces_min_lines_floor(tmp_path):
     assert res["ok"] is False and "at least 3" in res["error"]
     fat = {"lines": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "end": {"type": "return"}}
     assert tools["write_node"]("s1", fat)["ok"] is True
-
-
-def test_write_node_caps_menu_width(tmp_path):
-    # A wide menu is the hub-and-spoke star that guts the arc: rejected at write time so the
-    # slot-driven loop can't hit its node quota by fanning one node into many stub branches.
-    tools = build_tools(_spec(), RunState(tmp_path))
-    wide = {"lines": [{"speaker": "a", "text": "go where?"}],
-            "end": {"type": "menu", "choices": [
-                {"text": f"room {i}", "target": f"scene_{i}"} for i in range(5)]}}
-    res = tools["write_node"]("hub", wide)
-    assert res["ok"] is False and "dramatic fork" in res["error"].lower()
-
-    ok = {"lines": [{"speaker": "a", "text": "go where?"}],
-          "end": {"type": "menu", "choices": [
-              {"text": "open it", "target": "ending_truth"},
-              {"text": "leave it", "target": "ending_silence"}]}}
-    assert tools["write_node"]("fork", ok)["ok"] is True
-    # linear flow is unaffected — a jump can lead anywhere, no width limit applies.
-    assert tools["write_node"]("s1", _node(end={"type": "jump", "target": "s2"}))["ok"] is True
-
-
-def test_write_node_rejects_all_gated_menu(tmp_path):
-    # A menu where every choice is gated by `requires` can come up empty at runtime → dead-end.
-    # Require at least one unconditional fallback.
-    tools = build_tools(_spec(), RunState(tmp_path))
-    all_gated = {"lines": [{"speaker": "a", "text": "the crisis"}],
-                 "end": {"type": "menu", "choices": [
-                     {"text": "earned", "target": "ending_truth",
-                      "requires": {"var": "trust", "op": ">=", "value": 2}},
-                     {"text": "also gated", "target": "ending_silence",
-                      "requires": {"var": "trust", "op": "<", "value": 0}}]}}
-    res = tools["write_node"]("crisis", all_gated)
-    assert res["ok"] is False and "fallback" in res["error"].lower()
-
-    with_fallback = {"lines": [{"speaker": "a", "text": "the crisis"}],
-                     "end": {"type": "menu", "choices": [
-                         {"text": "earned", "target": "ending_truth",
-                          "requires": {"var": "trust", "op": ">=", "value": 2}},
-                         {"text": "fallback", "target": "ending_silence"}]}}
-    assert tools["write_node"]("crisis", with_fallback)["ok"] is True
-
-
-def test_write_node_rejects_fake_fork(tmp_path):
-    # A menu whose choices all lead to the same scene is illusory agency — rejected.
-    tools = build_tools(_spec(), RunState(tmp_path))
-    fake = {"lines": [{"speaker": "a", "text": "pick one"}],
-            "end": {"type": "menu", "choices": [
-                {"text": "left", "target": "scene_02"},
-                {"text": "right", "target": "scene_02"}]}}
-    res = tools["write_node"]("fork", fake)
-    assert res["ok"] is False and "same scene" in res["error"].lower()
-
-    real = {"lines": [{"speaker": "a", "text": "pick one"}],
-            "end": {"type": "menu", "choices": [
-                {"text": "left", "target": "scene_02"},
-                {"text": "right", "target": "scene_03"}]}}
-    assert tools["write_node"]("fork", real)["ok"] is True
 
 
 def test_read_node_returns_object(tmp_path):

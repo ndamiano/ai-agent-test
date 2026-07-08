@@ -7,8 +7,11 @@ import copy
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from conftest import make_spec
 from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.tools import build_tools
@@ -43,15 +46,108 @@ def _z1(**patch):
 
 
 # ── spatial validator ────────────────────────────────────────────────────────
+# Each row is one defect the layout gate must catch (or a valid map it must pass): a small model
+# produces exactly these bad layouts, and a wrong/missing message sends it fixing the wrong thing.
 
-def test_valid_walkable_map_passes():
-    assert _rpg_world_error(_VALID) is None
+def _missing_tiles():
+    b = copy.deepcopy(_VALID)
+    del b["places"]["z1"]["tiles"]
+    return b
 
 
-def test_out_of_bounds_cell_caught():
-    bad = _z1(interactables=[{"id": "x", "position": {"cell": {"x": 9, "y": 1}},
-                             "action": {"type": "examine", "text": "t"}}])
-    assert "outside the 4x3 grid" in _rpg_world_error(bad)
+def _no_start_spawn():
+    b = copy.deepcopy(_VALID)
+    del b["start_spawn"]
+    return b
+
+
+def _corridor():
+    # A 5x1 corridor: spawn (0,0), enemy (4,0), a wall at (2,0) — enemy is NOT on a wall but is
+    # unreachable. This is the load-bearing reachability check (schema can't see it).
+    return {
+        "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}},
+        "place_ids": ["z1"],
+        "places": {"z1": {"kind": "world_map", "tiles": _tiles(["..#.."]),
+            "interactables": [
+                {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
+                 "action": {"type": "examine", "text": "t"}}]}}}
+
+
+def _move_no_spawn():
+    two = copy.deepcopy(_VALID)
+    two["place_ids"].append("z2")
+    two["places"]["z2"] = {"kind": "interior", "tiles": _tiles(["...", "...", "..."]),
+        "interactables": [{"id": "back", "position": {"cell": {"x": 0, "y": 0}},
+                           "action": {"type": "examine", "text": "t"}}]}
+    # a move from z1 -> z2 (walkable) WITHOUT a spawn must be rejected
+    two["places"]["z1"]["interactables"].append(
+        {"id": "door", "position": {"cell": {"x": 0, "y": 0}},
+         "action": {"type": "move", "target": "z2"}})
+    return two
+
+
+def _bad_arrival_spawn():
+    # The spawn is DECLARED on a move hotspot in another zone; a message naming only the
+    # destination sends the model rewriting the wrong place (live-build thrash).
+    two = copy.deepcopy(_VALID)
+    two["place_ids"] = ["z1", "z2"]
+    two["places"]["z2"] = {"kind": "interior", "tiles": _tiles(["....", "....", "...."]),
+                           "interactables": [{"id": "sign", "position": {"cell": {"x": 1, "y": 1}},
+                                              "action": {"type": "examine", "text": "t"}}]}
+    two["places"]["z1"]["interactables"].append(
+        {"id": "h_to_z2", "label": "door", "position": {"cell": {"x": 2, "y": 1}},
+         "action": {"type": "move", "target": "z2", "spawn": {"cell": {"x": 9, "y": 9}}}})
+    return two
+
+
+def _pnc_room():
+    return {"places": {"r": {"kind": "room", "interactables": [
+        {"id": "h", "position": {"rect": {"x": 1, "y": 1, "w": 9, "h": 9}},
+         "action": {"type": "examine", "text": "t"}}]}}}
+
+
+@pytest.mark.parametrize("artifact, expect", [
+    (_VALID, None),
+    # custom legend char is honoured, not flagged as unknown
+    (_z1(tiles={"legend": {"W": {"role": "blocked", "theme": "hedge"}},
+                "rows": ["..W.", "....", "..W."]}), None),
+    # a point-and-click room (rect hotspots) is not subject to the walkable-grid checks
+    (_pnc_room(), None),
+    (_z1(interactables=[{"id": "x", "position": {"cell": {"x": 9, "y": 1}},
+                         "action": {"type": "examine", "text": "t"}}]),
+     ["outside the 4x3 grid"]),
+    (_z1(interactables=[
+        {"id": "a", "position": {"cell": {"x": 1, "y": 1}}, "action": {"type": "examine", "text": "t"}},
+        {"id": "b", "position": {"cell": {"x": 1, "y": 1}}, "action": {"type": "examine", "text": "t"}}]),
+     ["two interactables on tile"]),
+    # re-paint so the enemy's tile (3,1) is a wall — an interactable can't sit on a blocked tile
+    (_z1(tiles=_tiles(["..#.", "...#", "..#."])), ["on a blocked tile"]),
+    (_z1(tiles=_tiles(["....", "..", "...."])), ["ragged"]),
+    (_z1(tiles=_tiles(["..Q.", "....", "...."])), ["no legend entry"]),
+    (_corridor(), ["walled off from the spawn"]),
+    (_missing_tiles(), ["'tiles'"]),
+    (_no_start_spawn(), ["walkable start place"]),
+    (_move_no_spawn(), ["no 'spawn'"]),
+    # two independent defects surface in ONE message — reporting them one at a time makes the model
+    # ping-pong
+    (_z1(interactables=[
+        {"id": "oob", "position": {"cell": {"x": 9, "y": 1}},
+         "action": {"type": "examine", "text": "t"}},
+        {"id": "walled", "position": {"cell": {"x": 2, "y": 0}},
+         "action": {"type": "examine", "text": "t"}}]),
+     ["outside the 4x3 grid", "on a blocked tile"]),
+    # the message names the SOURCE move ('h_to_z2' in 'z1'), not just the destination
+    (_bad_arrival_spawn(), ["'h_to_z2'", "'z1'"]),
+], ids=["valid", "custom_legend", "pnc_room_untouched", "out_of_bounds", "overlapping",
+        "on_blocked_tile", "ragged_rows", "unknown_char", "walled_off", "missing_tiles",
+        "start_needs_spawn", "move_needs_spawn", "all_issues_together", "bad_arrival_names_source"])
+def test_rpg_world_error(artifact, expect):
+    err = _rpg_world_error(artifact)
+    if expect is None:
+        assert err is None
+    else:
+        for frag in expect:
+            assert frag in err
 
 
 def test_phantom_start_place_flagged_and_not_seeded():
@@ -76,103 +172,6 @@ def test_phantom_start_place_flagged_and_not_seeded():
     assert views.reachable_places(["p1"], art["places"]["places"], "phantom") == {"p1"}
 
 
-def test_bad_arrival_spawn_names_the_source_move():
-    # The spawn is DECLARED on a move hotspot in another zone; a message naming only the
-    # destination sends the model rewriting the wrong place (live-build thrash).
-    two = copy.deepcopy(_VALID)
-    two["place_ids"] = ["z1", "z2"]
-    two["places"]["z2"] = {"kind": "interior", "tiles": _tiles(["....", "....", "...."]),
-                           "interactables": [{"id": "sign", "position": {"cell": {"x": 1, "y": 1}},
-                                              "action": {"type": "examine", "text": "t"}}]}
-    two["places"]["z1"]["interactables"].append(
-        {"id": "h_to_z2", "label": "door", "position": {"cell": {"x": 2, "y": 1}},
-         "action": {"type": "move", "target": "z2", "spawn": {"cell": {"x": 9, "y": 9}}}})
-    msg = _rpg_world_error(two)
-    assert "'h_to_z2'" in msg and "'z1'" in msg   # the source move, not just the destination
-
-
-def test_all_layout_issues_reported_together():
-    # Two independent defects (one out-of-bounds, one on a wall) surface in ONE message — reporting
-    # them one at a time makes the model ping-pong.
-    bad = _z1(interactables=[
-        {"id": "oob", "position": {"cell": {"x": 9, "y": 1}},
-         "action": {"type": "examine", "text": "t"}},
-        {"id": "walled", "position": {"cell": {"x": 2, "y": 0}},
-         "action": {"type": "examine", "text": "t"}}])
-    msg = _rpg_world_error(bad)
-    assert "outside the 4x3 grid" in msg and "on a blocked tile" in msg
-
-
-def test_overlapping_tiles_caught():
-    bad = _z1(interactables=[
-        {"id": "a", "position": {"cell": {"x": 1, "y": 1}}, "action": {"type": "examine", "text": "t"}},
-        {"id": "b", "position": {"cell": {"x": 1, "y": 1}}, "action": {"type": "examine", "text": "t"}}])
-    assert "two interactables on tile" in _rpg_world_error(bad)
-
-
-def test_interactable_on_blocked_tile_caught():
-    # Re-paint so the enemy's tile (3,1) is a wall — an interactable can't sit on a blocked tile.
-    assert "on a blocked tile" in _rpg_world_error(_z1(tiles=_tiles(["..#.", "...#", "..#."])))
-
-
-def test_ragged_rows_caught():
-    assert "ragged" in _rpg_world_error(_z1(tiles=_tiles(["....", "..", "...."])))
-
-
-def test_unknown_char_caught():
-    assert "no legend entry" in _rpg_world_error(_z1(tiles=_tiles(["..Q.", "....", "...."])))
-
-
-def test_custom_legend_char_passes():
-    v = _z1(tiles={"legend": {"W": {"role": "blocked", "theme": "hedge"}},
-                   "rows": ["..W.", "....", "..W."]})
-    assert _rpg_world_error(v) is None
-
-
-def test_walled_off_interactable_caught():
-    # A 5x1 corridor: spawn (0,0), enemy (4,0), a wall at (2,0) — enemy is NOT on a wall but is
-    # unreachable. This is the load-bearing reachability check (schema can't see it).
-    corridor = {
-        "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}},
-        "place_ids": ["z1"],
-        "places": {"z1": {"kind": "world_map", "tiles": _tiles(["..#.."]),
-            "interactables": [
-                {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
-                 "action": {"type": "examine", "text": "t"}}]}}}
-    assert "walled off from the spawn" in _rpg_world_error(corridor)
-
-
-def test_missing_tiles_caught():
-    bad = copy.deepcopy(_VALID)
-    del bad["places"]["z1"]["tiles"]
-    assert "'tiles'" in _rpg_world_error(bad)
-
-
-def test_walkable_start_place_needs_spawn():
-    bad = copy.deepcopy(_VALID)
-    del bad["start_spawn"]
-    assert "walkable start place" in _rpg_world_error(bad)
-
-
-def test_move_into_walkable_place_needs_spawn():
-    two = copy.deepcopy(_VALID)
-    two["place_ids"].append("z2")
-    two["places"]["z2"] = {"kind": "interior", "tiles": _tiles(["...", "...", "..."]),
-        "interactables": [{"id": "back", "position": {"cell": {"x": 0, "y": 0}},
-                           "action": {"type": "examine", "text": "t"}}]}
-    # a move from z1 -> z2 (walkable) WITHOUT a spawn must be rejected
-    two["places"]["z1"]["interactables"].append(
-        {"id": "door", "position": {"cell": {"x": 0, "y": 0}},
-         "action": {"type": "move", "target": "z2"}})
-    assert "no 'spawn'" in _rpg_world_error(two)
-
-
-def test_pnc_room_is_untouched_by_rpg_checks():
-    assert _rpg_world_error({"places": {"r": {"kind": "room", "interactables": [
-        {"id": "h", "position": {"rect": {"x": 1, "y": 1, "w": 9, "h": 9}},
-         "action": {"type": "examine", "text": "t"}}]}}}) is None
-
-
 # ── return-trip connectivity ───────────────────────────────────────────────────
 
 def _two_zone(z1_moves_back: bool):
@@ -190,31 +189,32 @@ def _two_zone(z1_moves_back: bool):
                 "z2": {"kind": "world_map", "tiles": _tiles([".."]), "interactables": z2_inter}}}
 
 
-def test_one_way_trip_flagged():
-    err = _return_path_error(_two_zone(z1_moves_back=False))
-    assert err and "no way back" in err.lower() and "z2" in err
-
-
-def test_round_trip_passes():
-    assert _return_path_error(_two_zone(z1_moves_back=True)) is None
+@pytest.mark.parametrize("moves_back, expect", [
+    # a one-way trip strands the player in z2; a round trip is clean
+    (False, ["no way back", "z2"]),
+    (True, None),
+], ids=["one_way_flagged", "round_trip_passes"])
+def test_return_path(moves_back, expect):
+    err = _return_path_error(_two_zone(z1_moves_back=moves_back))
+    if expect is None:
+        assert err is None
+    else:
+        for frag in expect:
+            assert frag in err.lower()
 
 
 # ── tool plumbing: set_places_meta start_spawn ────────────────────────────────
 
-def _spec():
-    return Spec({"title": "T", "frozen": True, "modules": [], "params": {}})
-
-
 def test_set_places_meta_stores_start_spawn(tmp_path):
     state = RunState(tmp_path)
-    tools = build_tools(_spec(), state)
+    tools = build_tools(make_spec(), state)
     res = tools["set_places_meta"](start_place="z1", start_spawn={"cell": {"x": 2, "y": 3}})
     assert res["ok"] and res["start_spawn"] == {"cell": {"x": 2, "y": 3}}
     assert state.read_component("places")["start_spawn"] == {"cell": {"x": 2, "y": 3}}
 
 
 def test_set_places_meta_rejects_bad_spawn(tmp_path):
-    tools = build_tools(_spec(), RunState(tmp_path))
+    tools = build_tools(make_spec(), RunState(tmp_path))
     assert tools["set_places_meta"](start_spawn={"x": 1, "y": 2})["ok"] is False  # not a {cell:...}
 
 
@@ -259,42 +259,37 @@ class _Ctx:
         return "godot"
 
 
-def test_combat_game_selects_rpg_skeleton_and_prompt():
-    ctx = _Ctx(["world", "scenes", "combat"])
+@pytest.mark.parametrize("modules, skel, prompt", [
+    # combat in the set => walkable RPG skeleton + prompt; without it => point-and-click
+    (["world", "scenes", "combat"], SKEL_RPG, "places_rpg_write.txt"),
+    (["world", "scenes"], SKEL_PLACES, "places_write.txt"),
+], ids=["combat_game_rpg", "non_combat_pnc"])
+def test_author_style_selection(modules, skel, prompt):
+    ctx = _Ctx(modules)
     author = WORLD._check_for("start_place")   # a style-dependent author check
-    assert author.skeleton(ctx) is SKEL_RPG
-    assert author.prompt(ctx) == "places_rpg_write.txt"
+    assert author.skeleton(ctx) is skel
+    assert author.prompt(ctx) == prompt
 
 
-def test_non_combat_game_selects_pnc_skeleton_and_prompt():
-    ctx = _Ctx(["world", "scenes"])
-    author = WORLD._check_for("start_place")
-    assert author.skeleton(ctx) is SKEL_PLACES
-    assert author.prompt(ctx) == "places_write.txt"
-
-
-def test_get_errors_emits_rpg_layout_for_broken_map():
-    # a combat game whose only zone walls its enemy off — get_errors must surface rpg_layout
-    art = {"places": {
+@pytest.mark.parametrize("art, code", [
+    # a combat game whose only zone walls its enemy off -> rpg_layout
+    ({"places": {
         "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}}, "place_ids": ["z1"],
         "places": {"z1": {"kind": "world_map", "tiles": _tiles(["..#.."]),
             "interactables": [
                 {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
                  "action": {"type": "start_combat", "encounter": "e"}},
                 {"id": "sign", "position": {"cell": {"x": 1, "y": 0}},
-                 "action": {"type": "examine", "text": "t"}}]}}}}
+                 "action": {"type": "examine", "text": "t"}}]}}}},
+     "rpg_layout"),
+    # a one-way multi-zone map -> rpg_connectivity
+    ({"places": _two_zone(z1_moves_back=False)}, "rpg_connectivity"),
+], ids=["broken_map_layout", "one_way_connectivity"])
+def test_get_errors_emits_rpg_code(art, code):
     ctx = _Ctx(["world", "scenes", "combat"], artifact=art)
     ctx.spec["params"] = {"min_places": 1, "min_interactables": 1}
     codes = [e.code for e in WORLD.get_errors(ctx)]
-    assert "rpg_layout" in codes
-
-
-def test_get_errors_emits_rpg_connectivity_for_one_way_map():
-    art = {"places": _two_zone(z1_moves_back=False)}
-    ctx = _Ctx(["world", "scenes", "combat"], artifact=art)
-    ctx.spec["params"] = {"min_places": 1, "min_interactables": 1}
-    codes = [e.code for e in WORLD.get_errors(ctx)]
-    assert "rpg_connectivity" in codes
+    assert code in codes
 
 
 def test_combat_game_rejects_a_point_and_click_room():

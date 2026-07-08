@@ -1,14 +1,16 @@
 """scenes module: every repair check builds its OWN specific fix prompt (not the generic
-`nodes_fix.txt` menu and not the whole-component authoring prompt). Each test drives
+`nodes_fix.txt` menu and not the whole-component authoring prompt). Each parametrize row drives
 `get_correction_prompt` for one error code and asserts the right system prompt, tool scope, and
 that the relevant catalogue / target locator is in the user payload."""
 
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.modules.context import Context
+from conftest import make_ctx
 from maestro.modules.module import Error, ErrorType
 from maestro.modules.scenes import MODULE as SCENES, _T_EDIT, _T_EDIT_WRITE
 
@@ -53,111 +55,69 @@ def _art():
     }
 
 
-class _State:
-    run_dir = "/tmp/none"
-    def read_story_state(self): return {}
-    def load_artifact(self): return _art()
+_SPEC = {"title": "The Office", "concept": "a leaving", "request": "make it",
+         "modules": ["cast", "story", "scenes"], "params": {}}
 
 
-def _ctx():
-    return Context(spec={"title": "The Office", "concept": "a leaving", "request": "make it",
-                         "modules": ["cast", "story", "scenes"], "params": {}},
-                   state=_State(), artifact=_art())
-
-
-def _prompt(code, **err_kw):
-    err = Error(type=err_kw.pop("type", ErrorType.FIX), code=code, component="nodes", **err_kw)
-    return SCENES.get_correction_prompt(_ctx(), err)
+def _prompt(**err_kw):
+    err = Error(type=err_kw.pop("type", ErrorType.FIX), component="nodes", **err_kw)
+    return SCENES.get_correction_prompt(make_ctx(_SPEC, _art()), err)
 
 
 def _tset(tools):
     return tuple(sorted(tools))
 
 
-# ── the terminal compile fix ───────────────────────────────────────────────────
-def test_compiles_gets_compile_fix_prompt():
-    cp = _prompt("compiles", message="compile failed: [scene_02] speaker 'ghost' undefined")
-    assert "FAILED to compile" in cp.system
-    assert "BAD SPEAKER" in cp.system and "MALFORMED END" in cp.system
-    assert "COMMON FAILURES" not in cp.system          # not the generic menu
-    assert cp.allowed_tools == _tset(_T_EDIT_WRITE)
-    # ctx_crossref gives the id catalogues a repoint needs
-    assert "CHARACTERS" in cp.user and "LOCATIONS" in cp.user
-    assert "scene_02" in cp.user                        # the attributed target
-
-
-def test_premature_ending_prompt():
-    cp = _prompt("premature_endings", path="scene_02",
-                 message="scene 'scene_02' ends the game while the story has barely started")
-    assert "ENDS the game too early" in cp.system
-    assert "PLANNED" in cp.system                       # leave planned endings alone
-    assert cp.allowed_tools == _tset(_T_EDIT)
-    assert "scene_02" in cp.user
-
-
-def test_no_dead_gates_prompt():
-    cp = _prompt("no_dead_gates",
-                 message="choices gated on state that is never raised: scene_02 (gates on 'has_key')")
-    assert "GATED on state" in cp.system
-    assert "set_flag" in cp.system and "add_var" in cp.system
-    assert cp.allowed_tools == _tset(_T_EDIT)
-    assert "SCENES" in cp.user                          # structural self-view of the graph
-
-
-def test_reachable_from_start_prompt():
-    cp = _prompt("reachable_from_start", message="nodes unreachable from 'scene_01': ['scene_02']")
-    assert "ORPHAN" in cp.system
-    assert "recreate" in cp.system                      # don't recreate the orphan
-    assert cp.allowed_tools == _tset(_T_EDIT)
-    assert "scene_01" in cp.user
-
-
-def test_each_node_has_location_prompt():
-    cp = _prompt("each_node_has_location", message="nodes with no location/background: ['scene_02']")
-    assert "no background" in cp.system
-    assert "location" in cp.system
-    assert cp.allowed_tools == _tset(_T_EDIT)
-    # ctx_crossref surfaces the valid background ids
-    assert "LOCATIONS" in cp.user and "bg_office" in cp.user
-
-
-def test_min_branches_prompt():
-    cp = _prompt("min_branches", type=ErrorType.BUILD,
-                 message="only 0 menu(s), need 1 — add player choices")
-    assert "too few player CHOICES" in cp.system
-    assert "DIFFERENT" in cp.system                     # two distinct targets
-    assert cp.allowed_tools == _tset(_T_EDIT_WRITE)
-    assert "SCENES" in cp.user
-
-
-def test_all_characters_speak_prompt():
-    cp = _prompt("all_characters_speak", type=ErrorType.BUILD,
-                 message="characters who never speak: ['silent_sam'] — give them lines")
-    assert "NEVER speak" in cp.system
-    assert "read_node" in cp.system and "write_node" in cp.system   # the append-via-rewrite path
-    assert cp.allowed_tools == _tset(_T_EDIT_WRITE)
-    assert "silent_sam" in cp.user
-
-
-def test_each_node_min_lines_prompt():
-    cp = _prompt("each_node_min_lines", type=ErrorType.BUILD,
-                 message="nodes with < 3 lines: ['scene_02 (1)']")
-    assert "too THIN" in cp.system
-    assert "verbatim" in cp.system                      # keep existing lines
-    assert cp.allowed_tools == _tset(_T_EDIT_WRITE)
-    assert "scene_02" in cp.user
-
-
-def test_endings_are_nodes_prompt():
-    cp = _prompt("endings_are_nodes", type=ErrorType.BUILD,
-                 message="story.endings → nodes.node_ids: unresolved refs ['ending_solitude']")
-    assert "declares an ENDING that has no scene" in cp.system
-    assert "write_node" in cp.system and '{"type":"end"}' in cp.system
-    assert cp.allowed_tools == _tset(_T_EDIT_WRITE)
-    # authoring context carries the ending's description so the scene can be written
-    assert "ending_solitude" in cp.user
-    # the whole-component skeleton is suppressed for this single-node create
-    assert "node_ids" not in cp.system
+# ── every repair check builds its OWN specific fix prompt: right system prose, right tool scope,
+#    and the catalogue / target locator the fix needs — one row per error code ─────────────────────
+@pytest.mark.parametrize("err_kw, sys_in, sys_out, tools, user_in", [
+    # the terminal compile fix — ctx_crossref hands the id catalogues a repoint needs; NOT the menu
+    (dict(code="compiles", message="compile failed: [scene_02] speaker 'ghost' undefined"),
+     ["FAILED to compile", "BAD SPEAKER", "MALFORMED END"], ["COMMON FAILURES"],
+     _T_EDIT_WRITE, ["CHARACTERS", "LOCATIONS", "scene_02"]),
+    # premature ending — leave PLANNED endings alone
+    (dict(code="premature_endings", path="scene_02",
+          message="scene 'scene_02' ends the game while the story has barely started"),
+     ["ENDS the game too early", "PLANNED"], [], _T_EDIT, ["scene_02"]),
+    # dead gates — set_flag/add_var to raise the state a choice gates on
+    (dict(code="no_dead_gates",
+          message="choices gated on state that is never raised: scene_02 (gates on 'has_key')"),
+     ["GATED on state", "set_flag", "add_var"], [], _T_EDIT, ["SCENES"]),
+    # orphan node — don't recreate it, wire it in
+    (dict(code="reachable_from_start", message="nodes unreachable from 'scene_01': ['scene_02']"),
+     ["ORPHAN", "recreate"], [], _T_EDIT, ["scene_01"]),
+    # missing background — ctx_crossref surfaces the valid background ids
+    (dict(code="each_node_has_location", message="nodes with no location/background: ['scene_02']"),
+     ["no background", "location"], [], _T_EDIT, ["LOCATIONS", "bg_office"]),
+    # too few branches — two DIFFERENT targets
+    (dict(code="min_branches", type=ErrorType.BUILD,
+          message="only 0 menu(s), need 1 — add player choices"),
+     ["too few player CHOICES", "DIFFERENT"], [], _T_EDIT_WRITE, ["SCENES"]),
+    # silent character — append lines via the read_node/write_node path
+    (dict(code="all_characters_speak", type=ErrorType.BUILD,
+          message="characters who never speak: ['silent_sam'] — give them lines"),
+     ["NEVER speak", "read_node", "write_node"], [], _T_EDIT_WRITE, ["silent_sam"]),
+    # thin node — keep existing lines verbatim
+    (dict(code="each_node_min_lines", type=ErrorType.BUILD,
+          message="nodes with < 3 lines: ['scene_02 (1)']"),
+     ["too THIN", "verbatim"], [], _T_EDIT_WRITE, ["scene_02"]),
+    # ending with no scene — author a single ending node; whole-component skeleton suppressed
+    (dict(code="endings_are_nodes", type=ErrorType.BUILD,
+          message="story.endings → nodes.node_ids: unresolved refs ['ending_solitude']"),
+     ["declares an ENDING that has no scene", "write_node", '{"type":"end"}'], ["node_ids"],
+     _T_EDIT_WRITE, ["ending_solitude"]),
+], ids=["compiles", "premature_endings", "no_dead_gates", "reachable_from_start",
+        "each_node_has_location", "min_branches", "all_characters_speak", "each_node_min_lines",
+        "endings_are_nodes"])
+def test_per_error_repair_prompt(err_kw, sys_in, sys_out, tools, user_in):
+    cp = _prompt(**err_kw)
+    for s in sys_in:
+        assert s in cp.system, s
+    for s in sys_out:
+        assert s not in cp.system, s
+    assert cp.allowed_tools == _tset(tools)
+    for u in user_in:
+        assert u in cp.user, u
 
 
 # ── the whole set: no check still rides the generic menu ─────────────────────────

@@ -45,12 +45,12 @@ fixtures + conventions + fixing a small weak fraction + filling load-bearing gap
       Suite green (691). REMAINING: `_frozen_run` (hitl) + `_ctx` (core) call sites not yet
       threaded onto the fixtures — they're heavier per-call migrations; the fixtures exist so new
       tests use them and the two files can be drained incrementally.
-- [ ] **Adopt a `parametrize` convention** for case lists (combat-shape variants, module resolution),
-      so new variants are rows not functions. (Convention written into `tests/README.md`; no
-      existing case-list converted yet.)
-- [ ] **Standardize on pytest-style.** Migrate the 4 `unittest.TestCase` files
-      (`test_settings_manager.py`, `test_time_utils.py`, `test_tools.py`, integration) so there's one
-      setup idiom to copy.
+- [x] **Adopt a `parametrize` convention** for case lists (combat-shape variants, module resolution),
+      so new variants are rows not functions. Convention in `tests/README.md` AND applied by the G5
+      FOLD pass (7 files converted — see G5).
+- [~] **Standardize on pytest-style.** `test_settings_manager.py` migrated off `unittest.TestCase`
+      (during the FOLD pass — deep-copy `_valid()` helper replaces `setUp`). REMAINING:
+      `test_time_utils.py`, `test_tools.py`, integration.
 - [ ] **Add markers + fix the slow file.** Mark `slow`/`timing`; convert `test_llm_rate_limit.py`
       wall-clock asserts to a fake/injected clock (or mark slow) so the default run is fast +
       deterministic.
@@ -119,10 +119,14 @@ promised, or that re-prove one contract N times.
       runtime coverage on CI without a godot binary (real self-tests are `skipif`); fix via G3 (drive
       the runtime), don't delete. Plus the UNSURE "doesn't do X" list (compile-tool-absent,
       no-cancel-endpoint, no-signup, foreign-font hygiene) — each may encode a real posture.
-- [ ] **Apply the FOLD pass** (~80→~19 parametrized) — the real structural reduction. Biggest files:
-      `test_settings_manager` (13→2), `test_ir_crossref` (15→2), `test_world_rpg` (12→2),
-      `test_maestro_tools` write_node family (9→2), `test_scenes_prompts`/`test_content_prompts`/
-      `test_world_prompts` (~7 each→2). Assertions preserved as rows; net −~60 fns.
+- [x] **Apply the FOLD pass** — DONE (2026-07-08, 7 files, suite green). Net **−70 `def test_`
+      functions** (173→103); every assertion preserved as a `parametrize` row. Per file:
+      `test_settings_manager` 18→6 (+unittest→pytest), `test_ir_crossref` 20→6, `test_world_rpg`
+      37→21, `test_maestro_tools` write_node family 64→58, `test_scenes_prompts` 10→2,
+      `test_content_prompts` 11→3, `test_world_prompts` 13→7. Collected ITEMS rose 686→695 (a fold
+      of a multi-IR original into separate rows = finer isolation, not more surface). Divergent-
+      assertion look-alikes deliberately left standalone (noted inline) — the goal was clone
+      removal, not forcing unrelated tests together.
 - **Guardrail:** the goal is fewer tests that each guard MORE contract, not a coverage-% drop for its
   own sake. Never cut a validation/authz/money refusal. When unsure whether a refusal is a promise,
   KEEP + flag for the human.

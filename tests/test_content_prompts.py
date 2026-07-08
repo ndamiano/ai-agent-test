@@ -10,26 +10,18 @@ the authoring skeleton suppressed. These tests pin that wiring and the built cor
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.modules.context import Context
+from conftest import make_ctx
 from maestro.modules.module import MODULE_REGISTRY, load_prompt, skeleton_guide
-
-
-def _ctx(spec, art):
-    class S:
-        run_dir = "/tmp/none"
-        def load_artifact(self): return art
-        def read_story_state(self): return {}
-        def read_waivers(self): return []
-        def read_human_todos(self): return []
-    return Context(spec=spec, state=S(), artifact=art)
 
 
 def _fire(module_id, spec, art, code):
     """Build the module's correction prompt for the (single) error whose check has `code`."""
     m = MODULE_REGISTRY[module_id]
-    ctx = _ctx(spec, art)
+    ctx = make_ctx(spec, art)
     errs = [e for e in m.get_errors(ctx) if e.code == code]
     assert errs, f"expected a {code!r} error from {module_id}, got {[e.code for e in m.get_errors(ctx)]}"
     return m, m.get_correction_prompt(ctx, errs[0])
@@ -77,114 +69,105 @@ def test_repair_prompts_render_and_carry_tool_call_rule():
             assert "{{include" not in text, f"{prompt_file} left an unresolved include"
 
 
-# ── cast ──────────────────────────────────────────────────────────────────────
-def test_cast_field_patch_is_surgical_not_authoring():
-    art = {"characters": {"characters": [
-        {"id": "mara", "name": "Mara", "voice": "curt"},
-        {"id": "jon", "name": "Jon"}]}}  # jon missing voice
-    m, p = _fire("cast", {"params": {"character_fields": ["id", "name", "voice"]}}, art,
-                 "character_fields")
-    assert "read_component" in p.system and "write_component" in p.system
-    assert "read_component" in p.allowed_tools and "write_component" in p.allowed_tools
-    assert "add_character" not in p.allowed_tools
-    # the target names the exact offending path
-    assert "characters.characters[1] missing 'voice'" in p.user
-    # the authoring skeleton is NOT appended (no clobber-invite)
-    assert skeleton_guide("characters", "") not in p.system
-    assert "JSON SHAPE" not in p.system
+# ── the built correction prompts: each repair is surgical (specific target path + read/write scope,
+#    no authoring skeleton / clobber-invite), one row per (module, error code) ────────────────────
 
-
-def test_cast_rename_duplicate_targets_the_dup_id():
-    art = {"characters": {"characters": [
-        {"id": "mara", "name": "Mara"}, {"id": "mara", "name": "Other"}]}}
-    m, p = _fire("cast", {"params": {}}, art, "distinct_characters")
-    assert "unique" in p.system.lower()
-    assert "duplicate values: ['mara']" in p.user
-    assert "JSON SHAPE" not in p.system
-
-
-# ── story ─────────────────────────────────────────────────────────────────────
+# arts reused across the story rows (a valid-shaped story that trips exactly one check)
 _STORY_PARAMS = {"params": {"min_beats": 1, "min_endings": 1}}
+_STORY_BAD_BEAT = {"story": {"central_question": "Q?",
+                             "beats": [{"id": "b1", "summary": "s", "type": "plot", "purpose": "setup"}],
+                             "endings": [{"id": "e1", "description": "d"}],
+                             "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
+_STORY_ORPHAN_ENDING = {"story": {"central_question": "Q?",
+                                  "beats": [{"id": "b1", "summary": "s", "type": "plot",
+                                             "purpose": "setup", "tension": "none"}],
+                                  "endings": [{"id": "e1", "description": "d1"},
+                                              {"id": "e2", "description": "d2"}],
+                                  "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
+_STORY_DUP_ENDING = {"story": {"central_question": "Q?",
+                               "beats": [{"id": "b1", "summary": "s", "type": "plot",
+                                          "purpose": "setup", "tension": "none"}],
+                               "endings": [{"id": "e1", "description": "d1"},
+                                           {"id": "e1", "description": "d2"}],
+                               "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
 
 
-def test_story_beat_field_patch():
-    art = {"story": {"central_question": "Q?",
-                     "beats": [{"id": "b1", "summary": "s", "type": "plot", "purpose": "setup"}],
-                     "endings": [{"id": "e1", "description": "d"}],
-                     "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
-    m, p = _fire("story", _STORY_PARAMS, art, "beat_fields")
-    assert "story.beats[0] missing 'tension'" in p.user
-    assert "write_component" in p.system
-    assert "JSON SHAPE" not in p.system
-
-
-def test_story_endings_plan_fix_is_ref_resolution():
-    # e2 exists but no ending_paths entry names it -> unreachable ending
-    art = {"story": {"central_question": "Q?",
-                     "beats": [{"id": "b1", "summary": "s", "type": "plot",
-                                "purpose": "setup", "tension": "none"}],
-                     "endings": [{"id": "e1", "description": "d1"},
-                                 {"id": "e2", "description": "d2"}],
-                     "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
-    m, p = _fire("story", _STORY_PARAMS, art, "endings_planned")
-    # names the orphaned ending
-    assert "e2" in p.user
-    # asks for the ONE missing ending_paths entry
-    assert "ending_paths" in p.system and "earned_by" in p.system
-    # hands the valid beat + ending id lists (via ctx_structural self-view)
-    assert "b1" in p.user and "e1" in p.user
-    assert "write_component" in p.system
-
-
-def test_story_distinct_endings_uses_rename_prompt():
-    art = {"story": {"central_question": "Q?",
-                     "beats": [{"id": "b1", "summary": "s", "type": "plot",
-                                "purpose": "setup", "tension": "none"}],
-                     "endings": [{"id": "e1", "description": "d1"},
-                                 {"id": "e1", "description": "d2"}],
-                     "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
-    m, p = _fire("story", _STORY_PARAMS, art, "distinct_endings")
-    assert "duplicate values: ['e1']" in p.user
-    assert "ending_paths" in p.system  # reminds to sync the plan on a rename
-
-
-# ── assets ────────────────────────────────────────────────────────────────────
-def test_assets_background_field_patch():
-    art = {"asset_manifest": {"backgrounds": [{"id": "bg_a", "description": "hall"},
-                                              {"description": "no id"}],
-                              "characters": [], "cgs": []}}
-    m, p = _fire("assets", {"params": {}}, art, "background_ids")
-    assert "asset_manifest.backgrounds[1] missing 'id'" in p.user
-    assert "read_component" in p.allowed_tools  # assets mode_tools omit it; the repair scope adds it
-    assert "JSON SHAPE" not in p.system
-
-
-def test_assets_character_ids_fix_hands_the_cast_roster():
-    art = {"characters": {"characters": [{"id": "mara", "name": "Mara", "role": "protagonist"}]},
-           "asset_manifest": {"backgrounds": [{"id": "bg_a", "description": "hall"}],
-                              "characters": [{"image_file": "x.png", "description": "the woman"}],
-                              "cgs": []}}
-    m, p = _fire("assets", {"params": {}}, art, "character_ids")
-    # crossref-shaped: the exact cast id roster is in the user message to pick from
-    assert "mara" in p.user
-    # and the system prompt says match a cast id as a plain string
-    assert "cast id" in p.system.lower() and "plain string" in p.system.lower()
-    assert "read_component" in p.allowed_tools
-
-
-# ── inventory ─────────────────────────────────────────────────────────────────
-def test_inventory_field_patch_scoped_to_write_not_add_item():
-    art = {"items": {"items": [{"id": "item_key"}]}}  # missing name
-    m, p = _fire("inventory", {"params": {}}, art, "item_fields")
-    assert "items.items[0] missing 'name'" in p.user
-    assert "write_component" in p.allowed_tools
-    assert "add_item" not in p.allowed_tools   # the old prose said add_item while scoped to write
-    assert "JSON SHAPE" not in p.system
-
-
-def test_inventory_distinct_items_drops_the_duplicate():
-    art = {"items": {"items": [{"id": "item_key", "name": "Key"},
-                               {"id": "item_key", "name": "Key2"}]}}
-    m, p = _fire("inventory", {"params": {}}, art, "distinct_items")
-    assert "duplicate values: ['item_key']" in p.user
-    assert "redundant" in p.system.lower()
+@pytest.mark.parametrize("c", [
+    # cast field patch: surgical (read+write in prose AND scope), never add_character, no skeleton
+    dict(id="cast_field", module="cast",
+         spec={"params": {"character_fields": ["id", "name", "voice"]}},
+         art={"characters": {"characters": [
+             {"id": "mara", "name": "Mara", "voice": "curt"},
+             {"id": "jon", "name": "Jon"}]}},  # jon missing voice
+         code="character_fields",
+         user_in=["characters.characters[1] missing 'voice'"],
+         sys_in=["read_component", "write_component"], sys_out=["JSON SHAPE"],
+         tools_in=["read_component", "write_component"], tools_out=["add_character"],
+         skeleton_absent=("characters", "")),
+    # cast rename duplicate: targets the dup id, asks for uniqueness, no authoring skeleton
+    dict(id="cast_rename_dup", module="cast", spec={"params": {}},
+         art={"characters": {"characters": [
+             {"id": "mara", "name": "Mara"}, {"id": "mara", "name": "Other"}]}},
+         code="distinct_characters",
+         user_in=["duplicate values: ['mara']"], sys_lower_in=["unique"], sys_out=["JSON SHAPE"]),
+    # story beat field patch: names the exact missing field, write-scoped, no skeleton
+    dict(id="story_beat_field", module="story", spec=_STORY_PARAMS, art=_STORY_BAD_BEAT,
+         code="beat_fields",
+         user_in=["story.beats[0] missing 'tension'"], sys_in=["write_component"],
+         sys_out=["JSON SHAPE"]),
+    # story endings plan fix is ref-resolution: names orphaned ending, asks for the ONE missing
+    # ending_paths entry, hands the valid beat + ending id lists (ctx_structural self-view)
+    dict(id="story_endings_plan", module="story", spec=_STORY_PARAMS, art=_STORY_ORPHAN_ENDING,
+         code="endings_planned",
+         user_in=["e2", "b1", "e1"], sys_in=["ending_paths", "earned_by", "write_component"]),
+    # story distinct endings rides the rename prompt + reminds to sync the plan on a rename
+    dict(id="story_distinct_endings", module="story", spec=_STORY_PARAMS, art=_STORY_DUP_ENDING,
+         code="distinct_endings",
+         user_in=["duplicate values: ['e1']"], sys_in=["ending_paths"]),
+    # assets background field patch: names the offending path; repair scope ADDS read_component
+    # (assets mode_tools omit it); no skeleton
+    dict(id="assets_bg_field", module="assets", spec={"params": {}},
+         art={"asset_manifest": {"backgrounds": [{"id": "bg_a", "description": "hall"},
+                                                 {"description": "no id"}],
+                                 "characters": [], "cgs": []}},
+         code="background_ids",
+         user_in=["asset_manifest.backgrounds[1] missing 'id'"], sys_out=["JSON SHAPE"],
+         tools_in=["read_component"]),
+    # assets character_ids fix is crossref-shaped: hands the cast roster to pick from + says match a
+    # cast id as a plain string
+    dict(id="assets_char_ids", module="assets", spec={"params": {}},
+         art={"characters": {"characters": [{"id": "mara", "name": "Mara", "role": "protagonist"}]},
+              "asset_manifest": {"backgrounds": [{"id": "bg_a", "description": "hall"}],
+                                 "characters": [{"image_file": "x.png", "description": "the woman"}],
+                                 "cgs": []}},
+         code="character_ids",
+         user_in=["mara"], sys_lower_in=["cast id", "plain string"], tools_in=["read_component"]),
+    # inventory field patch: write-scoped, never add_item (old prose said add_item), no skeleton
+    dict(id="inventory_field", module="inventory", spec={"params": {}},
+         art={"items": {"items": [{"id": "item_key"}]}},  # missing name
+         code="item_fields",
+         user_in=["items.items[0] missing 'name'"], sys_out=["JSON SHAPE"],
+         tools_in=["write_component"], tools_out=["add_item"]),
+    # inventory distinct items drops the redundant duplicate
+    dict(id="inventory_distinct", module="inventory", spec={"params": {}},
+         art={"items": {"items": [{"id": "item_key", "name": "Key"},
+                                  {"id": "item_key", "name": "Key2"}]}},
+         code="distinct_items",
+         user_in=["duplicate values: ['item_key']"], sys_lower_in=["redundant"]),
+], ids=lambda c: c["id"])
+def test_content_repair_prompt(c):
+    m, p = _fire(c["module"], c["spec"], c["art"], c["code"])
+    for s in c.get("user_in", []):
+        assert s in p.user, s
+    for s in c.get("sys_in", []):
+        assert s in p.system, s
+    for s in c.get("sys_lower_in", []):
+        assert s in p.system.lower(), s
+    for s in c.get("sys_out", []):
+        assert s not in p.system, s
+    for t in c.get("tools_in", []):
+        assert t in p.allowed_tools, t
+    for t in c.get("tools_out", []):
+        assert t not in p.allowed_tools, t
+    if c.get("skeleton_absent"):
+        assert skeleton_guide(*c["skeleton_absent"]) not in p.system

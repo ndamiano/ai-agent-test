@@ -6,6 +6,8 @@ carries its specific guidance."""
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro import context_render as cr
@@ -86,83 +88,75 @@ def test_all_fix_prompts_load_with_includes_resolved():
 
 # ── each prompt carries its SPECIFIC repair (tool + guardrail), not a menu ────
 
-def test_start_prompt_offers_both_repairs():
-    t = load_prompt("world_start_fix.txt")
-    assert "set_places_meta(start_place=" in t and "write_place(place_id=" in t
-    assert "verbatim" in t                              # author under the EXACT phantom id
-
-
-def test_orphan_prompt_adds_a_move_and_forbids_repointing():
-    t = load_prompt("world_orphan_fix.txt")
-    assert "add_interactable(place_id=" in t
-    assert "REACHABLE" in t
-    assert "repointing an EXISTING" in t                # never break an existing route
-
-
-def test_layout_prompt_is_a_tile_map_repair_not_point_and_click():
-    t = load_prompt("world_layout_fix.txt")
-    assert "WALKABLE" in t and "WASD" in t
-    # It must DISOWN point-and-click, not steer toward it (the old prompt's bug).
-    assert "NOT a point-and-click" in t
-    assert "NEVER a {\"rect\":...}" in t or 'NEVER a {"rect": ...}' in t
-    assert "write_place(place_id=" in t and 'edit_place(place_id=' in t
-    assert '"spawn": {"feature":' in t
-
-
-def test_return_prompt_adds_a_back_route_without_touching_forward():
-    t = load_prompt("world_return_fix.txt")
-    assert "add_interactable(place_id=" in t
-    assert '"type": "move"' in t
-    assert "do NOT delete or repoint the forward move" in t
-
-
-def test_entry_prompt_wires_a_talk_into_the_dead_scene():
-    t = load_prompt("world_entry_fix.txt")
-    assert '"type": "talk"' in t
-    assert "add_interactable(place_id=" in t
-    assert "edit_node(node_id=" in t                    # or repoint an entered scene
-
-
-def test_compile_prompt_keys_on_the_bracketed_place():
-    t = load_prompt("places_compile_fix.txt")
-    assert "brackets" in t
-    assert "read_place(place_id=" in t
-    assert "edit_place(place_id=" in t and "add_interactable(place_id=" in t
+@pytest.mark.parametrize("prompt, present, any_of", [
+    # start: offers BOTH repairs and authors under the EXACT phantom id (verbatim)
+    ("world_start_fix.txt",
+     ["set_places_meta(start_place=", "write_place(place_id=", "verbatim"], []),
+    # orphan: adds a move to make the place REACHABLE, forbids repointing an existing route
+    ("world_orphan_fix.txt",
+     ["add_interactable(place_id=", "REACHABLE", "repointing an EXISTING"], []),
+    # layout: a WALKABLE tile-map repair that DISOWNS point-and-click (the old prompt's bug)
+    ("world_layout_fix.txt",
+     ["WALKABLE", "WASD", "NOT a point-and-click", "write_place(place_id=",
+      "edit_place(place_id=", '"spawn": {"feature":'],
+     [['NEVER a {"rect":...}', 'NEVER a {"rect": ...}']]),
+    # return: adds a back route without touching the forward move
+    ("world_return_fix.txt",
+     ["add_interactable(place_id=", '"type": "move"', "do NOT delete or repoint the forward move"],
+     []),
+    # entry: wires a talk into the dead scene (or repoints an entered scene)
+    ("world_entry_fix.txt",
+     ['"type": "talk"', "add_interactable(place_id=", "edit_node(node_id="], []),
+    # compile: keys on the bracketed place, reads then edits it
+    ("places_compile_fix.txt",
+     ["brackets", "read_place(place_id=", "edit_place(place_id=", "add_interactable(place_id="],
+     []),
+], ids=["start", "orphan", "layout", "return", "entry", "compile"])
+def test_fix_prompt_carries_specific_repair(prompt, present, any_of):
+    t = load_prompt(prompt)
+    for s in present:
+        assert s in t, (prompt, s)
+    for group in any_of:
+        assert any(s in t for s in group), (prompt, group)
 
 
 # ── integration: get_correction_prompt actually renders the new prompt + a lean
 #    structural user payload (target + places index, no cross-module prose) ────
 
-def test_start_authored_correction_uses_new_prompt_and_structural_user():
-    art = {"places": {"start_place": "phantom", "place_ids": ["z1"],
-                      "places": {"z1": {"kind": "room", "interactables": [
-                          {"id": "h1", "action": {"type": "examine", "text": "t"}}]}}}}
-    ctx = _ctx(art, ["world", "scenes"])
-    chk = WORLD._check_for("start_authored")
+_ART_START = {"places": {"start_place": "phantom", "place_ids": ["z1"],
+                         "places": {"z1": {"kind": "room", "interactables": [
+                             {"id": "h1", "action": {"type": "examine", "text": "t"}}]}}}}
+# A combat game whose only zone walls its enemy off -> rpg_layout fires -> tile-map fix prompt.
+_ART_LAYOUT = {"places": {
+    "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}}, "place_ids": ["z1"],
+    "places": {"z1": {"kind": "world_map", "tiles": {"legend": {}, "rows": ["..#.."]},
+                      "interactables": [
+                          {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
+                           "action": {"type": "start_combat", "encounter": "e"}},
+                          {"id": "sign", "position": {"cell": {"x": 1, "y": 0}},
+                           "action": {"type": "examine", "text": "t"}}]}}}}
+
+
+@pytest.mark.parametrize("art, modules, code, sys_startswith, sys_in, user_in, tools_in", [
+    # start_authored: renders world_start_fix.txt (not the menu) over a ctx_structural places index
+    (_ART_START, ["world", "scenes"], "start_authored", "`start_place` names a place", [],
+     ["start_authored", "phantom", "PLACES (start:", "z1"], ["set_places_meta"]),
+    # rpg_layout: renders the tile-map prompt, names the specific walled-off defect in the target
+    (_ART_LAYOUT, ["world", "scenes", "combat"], "rpg_layout", None, ["WALKABLE TILE MAP"],
+     ["walled off from the spawn"], []),
+], ids=["start_authored", "rpg_layout"])
+def test_correction_renders_new_prompt_and_structural_user(
+        art, modules, code, sys_startswith, sys_in, user_in, tools_in):
+    ctx = _ctx(art, modules)
+    chk = WORLD._check_for(code)
     errs = chk.detect(chk, WORLD, ctx)
     assert errs
     cp = WORLD.get_correction_prompt(ctx, errs[0])
-    assert cp.system.startswith("`start_place` names a place")   # world_start_fix.txt, not the menu
-    assert "start_authored" in cp.user and "phantom" in cp.user  # the target error
-    assert "PLACES (start:" in cp.user                           # ctx_structural -> places index
-    assert "z1" in cp.user
-    assert "set_places_meta" in tuple(cp.allowed_tools) or "set_places_meta" in cp.allowed_tools
-
-
-def test_layout_correction_uses_tile_map_prompt():
-    # A combat game whose only zone walls its enemy off -> rpg_layout fires -> tile-map fix prompt.
-    art = {"places": {
-        "start_place": "z1", "start_spawn": {"cell": {"x": 0, "y": 0}}, "place_ids": ["z1"],
-        "places": {"z1": {"kind": "world_map", "tiles": {"legend": {}, "rows": ["..#.."]},
-            "interactables": [
-                {"id": "enemy", "position": {"cell": {"x": 4, "y": 0}},
-                 "action": {"type": "start_combat", "encounter": "e"}},
-                {"id": "sign", "position": {"cell": {"x": 1, "y": 0}},
-                 "action": {"type": "examine", "text": "t"}}]}}}}
-    ctx = _ctx(art, ["world", "scenes", "combat"])
-    chk = WORLD._check_for("rpg_layout")
-    errs = chk.detect(chk, WORLD, ctx)
-    assert errs
-    cp = WORLD.get_correction_prompt(ctx, errs[0])
-    assert "WALKABLE TILE MAP" in cp.system
-    assert "walled off from the spawn" in cp.user       # the specific defect, named in the target
+    if sys_startswith is not None:
+        assert cp.system.startswith(sys_startswith)
+    for s in sys_in:
+        assert s in cp.system, s
+    for u in user_in:
+        assert u in cp.user, u
+    for t in tools_in:
+        assert t in cp.allowed_tools, t

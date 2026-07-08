@@ -1,85 +1,91 @@
 """Test LLM API rate limiting"""
 
-import time
 from llm_clients.rate_limiter import LLMRateLimiter
+
+
+class FakeClock:
+    """Controllable monotonic clock: sleep advances virtual time instead of
+    blocking, so token-bucket timing is exercised deterministically with zero
+    real wall-clock waiting (the old wall-clock asserts flaked on loaded CI)."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += max(0.0, seconds)
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class TestLLMRateLimiter:
     """Test the LLM rate limiter functionality"""
 
     def test_rate_limiter_allows_burst(self):
-        """Test that rate limiter allows initial burst"""
-        limiter = LLMRateLimiter(rate=2.0, capacity=2)
+        # Contract: a fresh bucket permits an immediate burst up to capacity, then refuses.
+        clock = FakeClock()
+        limiter = LLMRateLimiter(rate=2.0, capacity=2, clock=clock.time, sleep=clock.sleep)
 
-        # Should allow 2 immediate requests
         assert limiter.acquire(blocking=False) is True
         assert limiter.acquire(blocking=False) is True
 
-        # Third request should fail without blocking
+        # Capacity exhausted, no time has passed: third non-blocking acquire fails.
         assert limiter.acquire(blocking=False) is False
 
     def test_rate_limiter_refills_tokens(self):
-        """Test that rate limiter refills tokens over time"""
-        limiter = LLMRateLimiter(rate=2.0, capacity=2)
+        # Contract: tokens refill at the configured rate (2/s => one token per 0.5s).
+        clock = FakeClock()
+        limiter = LLMRateLimiter(rate=2.0, capacity=2, clock=clock.time, sleep=clock.sleep)
 
-        # Consume all tokens
         limiter.acquire(blocking=False)
         limiter.acquire(blocking=False)
-
-        # Should fail immediately
         assert limiter.acquire(blocking=False) is False
 
-        # Wait for one token to refill (0.5 seconds at 2 req/s)
-        time.sleep(0.6)
+        # Not enough elapsed for a full token yet — still refused.
+        clock.advance(0.4)
+        assert limiter.acquire(blocking=False) is False
 
-        # Should succeed now
+        # Past the 0.5s refill threshold — one token is back.
+        clock.advance(0.2)
         assert limiter.acquire(blocking=False) is True
 
     def test_rate_limiter_blocks_until_available(self):
-        """Test that rate limiter blocks until token is available"""
-        limiter = LLMRateLimiter(rate=2.0, capacity=1)
+        # Contract: a blocking acquire waits exactly until a token refills, then succeeds.
+        clock = FakeClock()
+        limiter = LLMRateLimiter(rate=2.0, capacity=1, clock=clock.time, sleep=clock.sleep)
 
-        # Consume the token
         limiter.acquire(blocking=False)
 
-        # This should block for ~0.5 seconds
-        start_time = time.time()
         assert limiter.acquire(blocking=True, timeout=2) is True
-        elapsed = time.time() - start_time
-
-        # Should have waited at least 0.4 seconds (allowing some margin)
-        assert elapsed >= 0.4
+        # It slept forward to the ~0.5s refill point rather than spinning or over-waiting.
+        assert clock.now >= 0.4
+        assert clock.now <= 0.6
 
     def test_rate_limiter_timeout(self):
-        """Test that rate limiter respects timeout"""
-        limiter = LLMRateLimiter(rate=2.0, capacity=1)
+        # Contract: a blocking acquire gives up once the timeout window elapses.
+        clock = FakeClock()
+        limiter = LLMRateLimiter(rate=2.0, capacity=1, clock=clock.time, sleep=clock.sleep)
 
-        # Consume the token
         limiter.acquire(blocking=False)
 
-        # Try to acquire with short timeout (should fail)
-        start_time = time.time()
+        # Timeout (0.2s) is shorter than the 0.5s refill, so it must fail near the deadline.
         assert limiter.acquire(blocking=True, timeout=0.2) is False
-        elapsed = time.time() - start_time
-
-        # Should have timed out quickly
-        assert elapsed < 0.3
+        assert clock.now <= 0.3
 
     def test_rate_limiter_reset(self):
-        """Test that reset restores full capacity"""
-        limiter = LLMRateLimiter(rate=2.0, capacity=2)
+        # Contract: reset restores full capacity regardless of prior drain.
+        clock = FakeClock()
+        limiter = LLMRateLimiter(rate=2.0, capacity=2, clock=clock.time, sleep=clock.sleep)
 
-        # Consume all tokens
         limiter.acquire(blocking=False)
         limiter.acquire(blocking=False)
-
-        # Should be empty
         assert limiter.acquire(blocking=False) is False
 
-        # Reset
         limiter.reset()
 
-        # Should be full again
         assert limiter.acquire(blocking=False) is True
         assert limiter.acquire(blocking=False) is True
 
@@ -87,18 +93,22 @@ class TestLLMRateLimiter:
 class TestLLMRateLimiterIntegration:
     """Test rate limiting integration with the connector"""
 
-    def test_connector_rate_limiting(self):
-        """Test that the connector properly applies rate limiting"""
+    def test_connector_rate_limiting(self, monkeypatch):
+        # Contract: the shared singleton is sized so a full parallel-fix batch (8) bursts
+        # through, then the rate gates until tokens refill. Driven on a fake clock so the
+        # singleton's real capacity/rate wiring is verified without wall-clock waits.
         from llm_clients.rate_limiter import get_llm_rate_limiter
 
+        clock = FakeClock()
         limiter = get_llm_rate_limiter()
-        limiter.reset()  # Start fresh
+        monkeypatch.setattr(limiter, "_clock", clock.time)
+        monkeypatch.setattr(limiter, "_sleep", clock.sleep)
+        limiter.reset()
 
-        # Burst capacity covers a full parallel-fix batch (8), then the rate gates.
         for _ in range(8):
             assert limiter.acquire(blocking=False) is True
         assert limiter.acquire(blocking=False) is False
 
-        # Wait and try again
-        time.sleep(0.6)
+        # After a full refill window a token is available again.
+        clock.advance(0.6)
         assert limiter.acquire(blocking=False) is True

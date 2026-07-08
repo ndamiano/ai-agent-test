@@ -1,24 +1,32 @@
 import time
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 
 class LLMRateLimiter:
     """Thread-safe token bucket rate limiter."""
 
-    def __init__(self, rate: float = 2.0, capacity: Optional[int] = None):
+    def __init__(
+        self,
+        rate: float = 2.0,
+        capacity: Optional[int] = None,
+        clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         self.rate = rate
         self.capacity = capacity if capacity is not None else int(rate)
         self.tokens = float(self.capacity)
-        self.last_update = time.time()
+        self._clock = clock
+        self._sleep = sleep
+        self.last_update = clock()
         self.lock = threading.Lock()
 
     def acquire(self, blocking: bool = True, timeout: Optional[float] = None) -> bool:
-        deadline = None if timeout is None else time.time() + timeout
+        deadline = None if timeout is None else self._clock() + timeout
 
         while True:
             with self.lock:
-                now = time.time()
+                now = self._clock()
                 elapsed = now - self.last_update
 
                 # Add tokens based on elapsed time
@@ -43,16 +51,16 @@ class LLMRateLimiter:
 
             # Wait outside the lock
             if deadline is not None:
-                wait_time = min(wait_time, deadline - time.time())
+                wait_time = min(wait_time, deadline - self._clock())
                 if wait_time <= 0:
                     return False
 
-            time.sleep(wait_time)
+            self._sleep(wait_time)
 
     def reset(self):
         with self.lock:
             self.tokens = float(self.capacity)
-            self.last_update = time.time()
+            self.last_update = self._clock()
 
 
 # Capacity covers the largest parallel-fix batch (settings parallel_fixes <= 8), so a whole batch

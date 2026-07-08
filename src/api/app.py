@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import logging
+import os
 
 # Create FastAPI app
 app = FastAPI(
@@ -10,11 +11,18 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure CORS to allow all origins, methods, and headers
+# Allowed browser origins come from MAESTRO_CORS_ORIGINS (comma-separated); default to the local
+# dev servers. Auth is a Bearer header, not a cookie, so credentials are off — a pinned origin
+# list is what keeps other sites from scripting the API on a logged-in user's behalf.
+_cors_origins = [
+    o.strip() for o in
+    os.getenv("MAESTRO_CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -63,18 +71,10 @@ async def shutdown_event():
     except Exception as e:
         logging.error(f"Shutdown error: {str(e)}")
 
-@app.get("/", response_model=Dict[str, Any])
-async def root(request: Request):
-    """Root endpoint that returns health check information."""
-    try:
-        return {
-            "status": "healthy",
-            "server": "running",
-            "database": "healthy",
-            "lmstudio": "healthy",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+@app.get("/healthz", response_model=Dict[str, Any])
+async def healthz():
+    """Liveness probe. (`/` serves the SPA in a deployed build, so health lives here.)"""
+    return {"status": "healthy", "server": "running"}
 
 # Mount routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
@@ -84,5 +84,14 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+
+# Serve the built frontend same-origin (one process, one Funnel port, no CORS). Mounted LAST so
+# the API routers above win; skipped when dist/ is absent (dev runs the Vite server instead).
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+_frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="spa")
 
 __all__ = ["app"]

@@ -1,0 +1,28 @@
+# Build context excludes — keep the image small and never bake local state/secrets.
+.git/
+.githooks/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Frontend (source is copied for the node build stage; these are rebuilt/ignored)
+frontend/node_modules/
+frontend/dist/
+
+# Local state + secrets — must never enter the image (durable state lives on the /data volume)
+outputs/
+src/config/settings.json
+src/logs/
+
+# Scratch / editor / OS
+*.log
+.env
+.DS_Store
+scratchpad/
+tmp/

@@ -25,6 +25,12 @@ Deployed off the owner's box; manual accounts + granted credits; basic safety; o
 good with refund-on-fail. Measure real cost/time/failure per game.
 - **Bar:** people want it, and the unit economics are real (`tasks/unit_economics.md`).
 - **Detail:** `tasks/launch_plan.md` Stage 0.
+- **Deploy:** `DEPLOY.md` — single worker serves API + SPA same-origin, public HTTPS via Tailscale
+  Funnel. Pre-open hardening landed: prod launch (no dev reload), pinned/same-origin CORS,
+  per-handle login throttle.
+- **Deferred risks (fix before public beta):** single-GPU DoS (unbounded build queue, no per-user
+  in-flight cap), `.rpy` Python injection via unescaped effect var names in `renpy/ir_vn.py`, 30-day
+  session TTL, public `/docs`. Detail in `DEPLOY.md` § Known deferred risks.
 
 ### Public beta (paid) — *first dollar*
 Real payments + pricing, safety filter proper, legal set, concurrency for N users.

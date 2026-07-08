@@ -30,8 +30,13 @@ src/
                 `private/` subtree no file-serving route is rooted in, kept out of the run dirs):
                 store.py (users + bearer sessions + the credit ledger, pbkdf2 passwords, token stored
                 only as a hash + a TTL so a leaked token doesn't live forever), deps.py (the app-level
-                middleware that gates EVERY http route — HEADER-ONLY, no token in the URL — + the
-                get_current_user dependency), router.py (POST /auth/login + POST /auth/logout — login
+                middleware that gates the API — HEADER-ONLY, no token in the URL: every /api and
+                /auth route needs a valid bearer token; the static SPA shell + assets (any other
+                path) are served in the clear so the login page can load pre-auth — + the
+                get_current_user dependency), ratelimit.py (in-process per-handle login throttle:
+                5 failures / 15 min → 429 + Retry-After, cleared on success — caps online password
+                guessing against the manual accounts; single-worker deploy so process-local is
+                enough), router.py (POST /auth/login + POST /auth/logout — login
                 ONLY, no signup; logout revokes the token server-side), billing.py (cost(spec) — the one swappable
                 build-pricing function, flat 1 today), credits.py (the provider-agnostic top-up
                 seam: CreditProvider ABC + PurchaseEvent + get/set_provider; default

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# INSTANT hook — never builds or deploys (deploy is an explicit, remote, minutes-long step).
+# It only reminds you how to ship. Enable once with:
+#   git config core.hooksPath .githooks
+#   chmod +x .githooks/post-commit
+echo "Committed. To ship to prod: PROD_HOST=user@host ./scripts/deploy.sh"

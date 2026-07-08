@@ -39,7 +39,12 @@ def install_auth(app) -> None:
 
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
-        if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+        path = request.url.path
+        # The API lives under /api and /auth; everything else is the static SPA shell + its
+        # assets, which the browser must fetch (unauthenticated) before it can even show the
+        # login form. So gate only the API surfaces — the frontend is served in the clear.
+        if (request.method == "OPTIONS" or path in PUBLIC_PATHS
+                or (not path.startswith("/api") and not path.startswith("/auth"))):
             return await call_next(request)
         # Header-only: a token never rides in the URL, so it can't leak into access logs, browser
         # history, or Referer. Browser <img>/download fetches attach the header via authed fetch +

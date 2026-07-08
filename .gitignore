@@ -24,6 +24,7 @@ output/
 
 # Logs
 logs/
+*.log
 
 # Database
 data/

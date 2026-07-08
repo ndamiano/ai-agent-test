@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -14,11 +15,14 @@ if __name__ == "__main__":
     for logger_name in ["agents", "tools", "database", "maestro", "llm_clients", "renpy"]:
         log_config["loggers"][logger_name] = {"handlers": ["default"], "level": "INFO", "propagate": False}
 
+    # reload is the dev auto-reloader (file watcher, extra processes) — off by default so the
+    # public/prod launch is a plain single worker; set MAESTRO_DEV=1 for local iteration.
+    dev = os.getenv("MAESTRO_DEV") == "1"
     uvicorn.run(
         "api.app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000")),
+        reload=dev,
         log_level="info",
         log_config=log_config
     )

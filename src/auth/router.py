@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from auth import store
 from auth.deps import bearer_token, get_current_user
+from auth.ratelimit import login_throttle
 from auth.store import User
 
 router = APIRouter()
@@ -18,9 +19,19 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 async def login(body: LoginRequest):
+    key = body.handle.strip().lower()
+    wait = login_throttle.retry_after(key)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail="too many login attempts, try again later",
+            headers={"Retry-After": str(wait)},
+        )
     user = store.authenticate(body.handle, body.password)
     if user is None:
+        login_throttle.record_failure(key)
         raise HTTPException(status_code=401, detail="invalid handle or password")
+    login_throttle.clear(key)
     token = store.issue_token(user.id)
     return {
         "token": token,

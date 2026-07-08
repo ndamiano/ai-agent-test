@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maestro:latest
+    env_file: .env
+    ports:
+      - "${PORT:-8000}:8000"
+    restart: unless-stopped
+
+    # Reach the GPU services (LM Studio, ComfyUI, TTS, Trellis) running on the HOST. The .env
+    # endpoints point at http://host.docker.internal:<port>, resolved here to the host gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      # Durable state (runs/ + private/auth.db). Named volume => survives image rebuilds. THIS is
+      # the critical invariant: losing it wipes user accounts + games.
+      - maestro-data:/data
+
+      # Host-mounted engines (read-only) — NOT baked into the image. Host paths come from .env.
+      # Ren'Py SDK: code locates it via RENPY_SDK (=/opt/renpy inside the container).
+      - "${RENPY_SDK_HOST:-/home/nick/renpy-8.5.2-sdk}:/opt/renpy:ro"
+      # Godot binary: code finds it on PATH via `which godot`, so mount onto /usr/local/bin/godot.
+      - "${GODOT_BIN_HOST:-/usr/local/bin/godot}:/usr/local/bin/godot:ro"
+      # Godot export templates (version-matched, separate large dir). Godot looks under
+      # $HOME/.local/share/godot/export_templates/<version>/; HOME=/home/maestro in the image.
+      - "${GODOT_TEMPLATES_HOST:-/home/nick/.local/share/godot/export_templates}:/home/maestro/.local/share/godot/export_templates:ro"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  maestro-data:

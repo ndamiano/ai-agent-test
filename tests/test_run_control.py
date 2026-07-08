@@ -35,7 +35,7 @@ def _write_call():
 
 
 class _Conn:
-    """Returns a write_component tool call; runs `on_call` once (e.g. to pause/cancel)."""
+    """Returns a write_component tool call; runs `on_call` once (e.g. to pause)."""
     def __init__(self, on_call=None):
         self.on_call = on_call
         self.fired = False
@@ -64,17 +64,6 @@ def _state(tmp_path):
     state = RunState(tmp_path)
     state._events = []
     return state
-
-
-def test_cancel_before_run_writes_nothing(tmp_path):
-    state = _state(tmp_path)
-    control = RunControl()
-    control.request_cancel()
-    result = _loop(state, control, _Conn()).run()
-    assert result.ok is False
-    assert any(e["type"] == "build_cancelled" for e in state._events)
-    assert control.status == "cancelled"
-    assert state.read_component("premise") is None
 
 
 def test_pause_then_resume_completes(tmp_path):

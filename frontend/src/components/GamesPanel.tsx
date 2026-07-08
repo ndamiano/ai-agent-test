@@ -246,11 +246,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'build_resumed':
                     setStatus('running'); setFeed(prev => [...prev.slice(-60), '▶ resumed'])
                     break
-                case 'build_cancelled':
-                    setBuilding(false); setStatus('cancelled'); setLiveTodo(null)
-                    setFeed(prev => [...prev.slice(-60), '✗ build cancelled'])
-                    load(); onChanged()
-                    break
                 case 'component_complete':
                     setFeed(prev => [...prev.slice(-60), `✓ ${msg.component_id} complete`])
                     load()
@@ -302,7 +297,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     }
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
-    const cancel = () => act(() => api.cancelGame(runId), 'Cancel failed', false)
     const compile = () => act(async () => {
         const r = await api.compileGame(runId, true)
         setFeed(prev => [...prev.slice(-60), r.ok ? '✓ packaged' : `✗ package failed: ${r.reason}`])
@@ -346,7 +340,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     if (error && !detail) return <div className="p-6 text-red-400 text-sm">Error: {error}</div>
     if (!detail) return null
 
-    const statusTone = status === 'cancelled' ? 'gray' : (status === 'paused' || running) ? 'amber' : 'gray'
+    const statusTone = (status === 'paused' || running) ? 'amber' : 'gray'
     const todo = liveTodo ?? detail.todo
 
     // Epic E1: a light per-component summary derived from data already on the to-do (no new
@@ -392,9 +386,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     )}
                     {building && status === 'paused' && (
                         <button onClick={resume} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Resume</button>
-                    )}
-                    {building && (
-                        <button onClick={cancel} disabled={acting} className="bg-red-600/80 hover:bg-red-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Cancel</button>
                     )}
                     {stage === 'built' && (
                         <button onClick={compile} disabled={acting || !editable} title={editable ? 'rebuild the package from the current components' : 'pause the build first'}
@@ -511,7 +502,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 // Build/spec lifecycle events that change a row's badges or add a row — refresh the list on these.
 const LIST_REFRESH_EVENTS = new Set([
     'spec_proposed', 'spec_frozen', 'build_started', 'build_paused', 'build_resumed',
-    'component_complete', 'build_cancelled', 'build_done',
+    'component_complete', 'build_done',
 ])
 
 const GamesPanel: React.FC<{ focusRunId?: string | null }> = ({ focusRunId }) => {

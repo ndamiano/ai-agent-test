@@ -26,9 +26,11 @@ HUMAN_TODOS_FILE = "human_todos.json"
 WAIVERS_FILE = "waivers.json"
 DIRTY_FILE = "dirty.json"
 OWNER_FILE = "owner.json"
+CHARGED_FILE = "charged.json"
 
 # Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, DIRTY_FILE, OWNER_FILE}
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, DIRTY_FILE, OWNER_FILE,
+             CHARGED_FILE}
 
 
 class RunState:
@@ -76,6 +78,16 @@ class RunState:
     def read_owner(self) -> Optional[str]:
         data = self._read(OWNER_FILE)
         return data.get("user_id") if data else None
+
+    # ── billing (durable "this run has been charged once" marker) ──────────────
+    def is_charged(self) -> bool:
+        """True once this run has been charged for a build. The charge is per-run and idempotent:
+        a build enqueued for an already-charged run (re-trigger, resume-after-crash) is never
+        deducted again — charged stays charged as long as the run can eventually finish."""
+        return self._read(CHARGED_FILE) is not None
+
+    def mark_charged(self) -> None:
+        self._write(CHARGED_FILE, {"charged": True})
 
     # ── story state (Phase 6) ─────────────────────────────────────────────────
     def write_story_state(self, state: Dict) -> None:

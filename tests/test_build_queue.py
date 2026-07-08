@@ -41,7 +41,7 @@ def _gate(run_ids=("a", "b", "c")):
         started[run_id].set()
         releases[run_id].wait(timeout=5)
         run_control.remove(run_id)   # real run_build removes its own control in finally
-        return _Result(ok=True)      # a completed build; the queue charges it (no refund)
+        return _Result(ok=True)      # a completed build
 
     return fake, started, releases, calls
 
@@ -108,26 +108,6 @@ def test_position_shifts_as_builds_start(q, monkeypatch):
     releases["c"].set()
 
 
-def test_cancel_while_queued_skips_the_build(q, monkeypatch):
-    fake, started, releases, calls = _gate()
-    monkeypatch.setattr("maestro.run.run_build", fake)
-    q.start()
-
-    q.enqueue("a", "u1")
-    assert started["a"].wait(timeout=5)
-    q.enqueue("b", "u1")
-    run_control.get("b").request_cancel()        # cancel b before it leaves the queue
-
-    releases["a"].set()
-    for _ in range(100):
-        if "a" in calls and q.state_of("b") is None:
-            break
-        time.sleep(0.02)
-    assert calls == ["a"]                         # b's build never ran
-    assert not started["b"].is_set()
-    assert any(e["type"] == "build_cancelled" and e["run_id"] == "b" for e in q.events)
-
-
 def test_queued_run_has_a_control_for_pause(q, monkeypatch):
     fake, started, releases, _ = _gate()
     monkeypatch.setattr("maestro.run.run_build", fake)
@@ -153,10 +133,10 @@ def test_enqueue_emits_build_queued_with_position(q, monkeypatch):
     assert q.events[-1] == {"type": "build_queued", "run_id": "a", "position": 0}
 
 
-# ── T3: credit refunds when a build never runs ────────────────────────────────
+# ── charged-once model: the queue NEVER auto-refunds ──────────────────────────
 @pytest.fixture
 def user(tmp_path, monkeypatch):
-    """A ledger user in a tmp auth.db; the worker refunds through this same store."""
+    """A ledger user in a tmp auth.db; the queue shares this same store."""
     from auth import store
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
     u = store.create_user("alice", "pw")
@@ -172,26 +152,9 @@ def _wait(pred, timeout=5):
     return False
 
 
-def test_cancel_while_queued_refunds_the_credit(q, monkeypatch, user):
-    uid, store = user
-    fake, started, releases, calls = _gate()
-    monkeypatch.setattr("maestro.run.run_build", fake)
-    q.start()
-
-    q.enqueue("a", uid)                              # holds the GPU
-    assert started["a"].wait(timeout=5)
-    store.deduct(uid, 1, "build", "b")               # b's credit taken at (simulated) enqueue-time
-    before = store.balance(uid)
-    q.enqueue("b", uid, cost=1)
-    run_control.get("b").request_cancel()
-
-    releases["a"].set()
-    assert _wait(lambda: q.state_of("b") is None and "a" in calls)
-    assert not started["b"].is_set()                 # b never built
-    assert store.balance(uid) == before + 1          # its credit came back
-
-
-def test_build_that_raises_before_output_refunds(q, monkeypatch, user):
+def test_build_that_raises_keeps_the_charge(q, monkeypatch, user):
+    """A run is charged once (durable flag, set at enqueue). A build that dies mid-flight is
+    resumable, so the charge stays put — the queue never auto-refunds."""
     uid, store = user
 
     def boom(run_id, *a, **k):
@@ -201,16 +164,17 @@ def test_build_that_raises_before_output_refunds(q, monkeypatch, user):
     q.start()
 
     store.deduct(uid, 1, "build", "a")
-    before = store.balance(uid)
-    q.enqueue("a", uid, cost=1)
+    after_deduct = store.balance(uid)
+    q.enqueue("a", uid)
 
-    assert _wait(lambda: store.balance(uid) == before + 1)   # failed build refunded
+    assert _wait(lambda: q.state_of("a") is None)   # build drained (raised)
+    time.sleep(0.1)                                 # let any (erroneous) refund land
+    assert store.balance(uid) == after_deduct       # charge stayed put
 
 
-def test_build_that_finishes_unmet_refunds(q, monkeypatch, user):
-    """A build that RUNS to a terminal state but doesn't satisfy the spec (result.ok False —
-    stuck-parked / cancelled mid-build / out of steps) is refunded: the user pays only for a
-    finished game, not for compute that failed to deliver."""
+def test_build_that_finishes_unmet_keeps_the_charge(q, monkeypatch, user):
+    """A build that runs to a non-ok terminal state (stuck-parked / out of steps) is still
+    resumable, so the charge stays — no automatic refund."""
     uid, store = user
 
     def unmet(run_id, *a, **k):
@@ -220,14 +184,16 @@ def test_build_that_finishes_unmet_refunds(q, monkeypatch, user):
     q.start()
 
     store.deduct(uid, 1, "build", "a")
-    before = store.balance(uid)
-    q.enqueue("a", uid, cost=1)
+    after_deduct = store.balance(uid)
+    q.enqueue("a", uid)
 
-    assert _wait(lambda: store.balance(uid) == before + 1)
+    assert _wait(lambda: q.state_of("a") is None)
+    time.sleep(0.1)
+    assert store.balance(uid) == after_deduct
 
 
 def test_successful_build_is_charged_not_refunded(q, monkeypatch, user):
-    """The complement: a build that completes (result.ok True) keeps the deducted credit."""
+    """A build that completes (result.ok True) keeps the deducted credit."""
     uid, store = user
 
     def done(run_id, *a, **k):
@@ -238,7 +204,7 @@ def test_successful_build_is_charged_not_refunded(q, monkeypatch, user):
 
     store.deduct(uid, 1, "build", "a")
     after_deduct = store.balance(uid)
-    q.enqueue("a", uid, cost=1)
+    q.enqueue("a", uid)
 
     assert _wait(lambda: q.state_of("a") is None)   # build drained
     time.sleep(0.1)                                 # let any (erroneous) refund land

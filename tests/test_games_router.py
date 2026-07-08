@@ -294,6 +294,24 @@ def test_build_deducts_one_credit_on_successful_enqueue(tmp_path, monkeypatch, _
     assert store.balance(user.id) == before - 1   # exactly one deduction
 
 
+def test_build_charges_once_second_build_does_not_deduct(tmp_path, monkeypatch, _credit_user):
+    """A run is charged ONCE, gated on the durable `charged` flag. Re-triggering a build (or
+    resuming a dead one) re-enqueues but never re-deducts — the core double-charge fix."""
+    user, store = _credit_user
+    _patch_for_run(monkeypatch, tmp_path)
+    state = _owned(tmp_path, "g", frozen=True, owner=user.id, modules=[], params={})
+    monkeypatch.setattr(build_queue, "enqueue", lambda *a, **k: 0)
+
+    before = store.balance(user.id)
+    asyncio.run(games.build_game("g", games.BuildBody(), user=user))
+    assert store.balance(user.id) == before - 1
+    assert state.is_charged() is True
+
+    # Second build of the same (now charged) run — re-enqueues, but does NOT deduct again.
+    asyncio.run(games.build_game("g", games.BuildBody(), user=user))
+    assert store.balance(user.id) == before - 1   # still just one deduction
+
+
 def test_build_below_balance_is_refused_with_402(tmp_path, monkeypatch, _credit_user):
     from fastapi import HTTPException
     user, store = _credit_user
@@ -312,7 +330,9 @@ def test_build_below_balance_is_refused_with_402(tmp_path, monkeypatch, _credit_
     assert store.balance(user.id) == 0   # nothing deducted on refusal
 
 
-def test_build_refunds_when_enqueue_rejects(tmp_path, monkeypatch, _credit_user):
+def test_build_409_when_already_queued_no_refund(tmp_path, monkeypatch, _credit_user):
+    """An AlreadyQueued collision returns 409 and does NOT auto-refund — charged stays charged
+    (refunds are a manual admin action)."""
     from fastapi import HTTPException
     user, store = _credit_user
     _patch_for_run(monkeypatch, tmp_path)
@@ -327,4 +347,11 @@ def test_build_refunds_when_enqueue_rejects(tmp_path, monkeypatch, _credit_user)
         asyncio.run(games.build_game("g", games.BuildBody(), user=user))
 
     assert exc.value.status_code == 409
-    assert store.balance(user.id) == before   # the failed-to-start build refunded its deduction
+    assert store.balance(user.id) == before - 1   # charged once; no automatic refund
+
+
+def test_no_cancel_endpoint_exists():
+    """Cancel was removed entirely — there is no cancel handler and no /cancel route."""
+    assert not hasattr(games, "cancel_game")
+    paths = {r.path for r in games.router.routes}
+    assert not any(p.endswith("/cancel") for p in paths)

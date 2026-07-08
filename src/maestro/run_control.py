@@ -1,10 +1,10 @@
 """Cross-thread build control — the human-in-the-loop signal channel.
 
 A build runs on a background thread (api.routers.games) while the executor blocks.
-The control endpoints run on a different thread, so pause/resume/cancel need an
-in-memory signal the executor checks at step boundaries. (Human todos and waivers
-ride on durable disk state instead — the executor rebuilds context from disk every
-step, so it picks those up for free; only pause/cancel need this.)
+The control endpoints run on a different thread, so pause/resume need an in-memory
+signal the executor checks at step boundaries. (Human todos and waivers ride on
+durable disk state instead — the executor rebuilds context from disk every step, so
+it picks those up for free; only pause needs this.)
 
 `status` is the source of truth the API reads back for the run's live state.
 """
@@ -13,16 +13,10 @@ import threading
 from typing import Dict, Optional
 
 
-class BuildCancelled(BaseException):
-    """Raised inside the executor to unwind a cancelled build. A BaseException so a
-    sub-loop's `except Exception` (tool dispatch, runner) can't swallow it."""
-
-
 class RunControl:
     def __init__(self):
         self._cond = threading.Condition()
         self._paused = False
-        self._cancelled = False
         self._auto_pause = False
         self.status = "running"
 
@@ -36,11 +30,6 @@ class RunControl:
             self._auto_pause = enabled
 
     @property
-    def cancelled(self) -> bool:
-        with self._cond:
-            return self._cancelled
-
-    @property
     def paused(self) -> bool:
         with self._cond:
             return self._paused
@@ -51,25 +40,18 @@ class RunControl:
 
     def request_pause(self) -> None:
         with self._cond:
-            if not self._cancelled:
-                self._paused = True
+            self._paused = True
 
     def request_resume(self) -> None:
         with self._cond:
             self._paused = False
             self._cond.notify_all()
 
-    def request_cancel(self) -> None:
-        with self._cond:
-            self._cancelled = True
-            self._paused = False
-            self._cond.notify_all()
-
     def wait_while_paused(self) -> None:
-        """Block until resumed or cancelled. Wakes periodically so a cancel that
-        races the pinned condition is still observed promptly."""
+        """Block until resumed. Wakes periodically so a resume that races the pinned
+        condition is still observed promptly."""
         with self._cond:
-            while self._paused and not self._cancelled:
+            while self._paused:
                 self._cond.wait(timeout=0.5)
 
 

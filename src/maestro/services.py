@@ -2,7 +2,7 @@
 
 A module's `get_fix` returns a callable `Fix(services) -> None`; the loop builds a fresh `Services`
 per fix and invokes it. The module owns the SHAPE of the fix (one call or an iterative author loop);
-`Services` owns the LIMITS — every LLM call runs the pause/cancel checkpoint and consumes a per-fix
+`Services` owns the LIMITS — every LLM call runs the pause checkpoint and consumes a per-fix
 step budget. When the budget hits zero `infer` raises `BudgetExhausted`, a BaseException a fix cannot
 catch, so even a naive `while True:` fix unwinds back to the loop. Modules never see the connector.
 
@@ -14,8 +14,6 @@ step's dispatch by `Module._single_fix`, keeps each write additive + in order).
 import json
 import logging
 from typing import Dict, Optional
-
-from maestro.run_control import BuildCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -191,14 +189,10 @@ class Services:
         c = self.control
         if c is None:
             return
-        if c.cancelled:
-            raise BuildCancelled()
         if c.paused:
             c.set_status("paused")
             self._emit("build_paused", step=self.spent)
             c.wait_while_paused()
-            if c.cancelled:
-                raise BuildCancelled()
             c.set_status("running")
             self._emit("build_resumed", step=self.spent)
 

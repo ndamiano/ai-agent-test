@@ -4,8 +4,8 @@ The box has one GPU with one resident model, so exactly one build runs at a time
 daemon worker drains a FIFO queue; extra builds wait with a visible "position N" the client
 reads back over GET /games/{run_id} and the live `build_queued` event.
 
-A queued run already has its RunControl registered (at enqueue), so a pause/cancel lands even
-before its build leaves the queue — a cancel-while-queued skips the build entirely.
+A queued run already has its RunControl registered (at enqueue), so a pause lands even before
+its build leaves the queue.
 """
 
 import logging
@@ -21,11 +21,10 @@ class AlreadyQueued(Exception):
 
 
 class _Item:
-    def __init__(self, run_id: str, user_id: str, auto_pause: bool, cost: int):
+    def __init__(self, run_id: str, user_id: str, auto_pause: bool):
         self.run_id = run_id
         self.user_id = user_id
         self.auto_pause = auto_pause
-        self.cost = cost   # credits deducted at enqueue — refunded here iff the build never runs
 
 
 class BuildQueue:
@@ -53,18 +52,17 @@ class BuildQueue:
             self._not_empty.notify_all()
 
     # ── enqueue + status ──────────────────────────────────────────────────────
-    def enqueue(self, run_id: str, user_id: str, auto_pause: bool = False, cost: int = 0) -> int:
+    def enqueue(self, run_id: str, user_id: str, auto_pause: bool = False) -> int:
         """Register the run's control and queue its build. Returns the queue position
-        (0 = builds immediately). Raises AlreadyQueued if it's already building/waiting.
-        `cost` is the credits already deducted for this build — refunded iff it never runs."""
+        (0 = builds immediately). Raises AlreadyQueued if it's already building/waiting."""
         from maestro.run_control import get_or_create
 
         with self._not_empty:
             if run_id == self._current or run_id in self._queued_ids:
                 raise AlreadyQueued(run_id)
-            # Register control before the run leaves the queue so an immediate pause/cancel finds it.
+            # Register control before the run leaves the queue so an immediate pause finds it.
             get_or_create(run_id).set_auto_pause(auto_pause)
-            self._pending.append(_Item(run_id, user_id, auto_pause, cost))
+            self._pending.append(_Item(run_id, user_id, auto_pause))
             self._queued_ids.add(run_id)
             position = self._position_locked(run_id)
             self._not_empty.notify()
@@ -97,8 +95,6 @@ class BuildQueue:
     # ── worker ────────────────────────────────────────────────────────────────
     def _drain(self) -> None:
         import maestro.run  # module ref so tests can monkeypatch run_build
-        from auth import store
-        from maestro.run_control import get, remove
 
         while True:
             with self._not_empty:
@@ -113,31 +109,14 @@ class BuildQueue:
             # Everyone still waiting just moved up one — re-emit their positions.
             self._emit_positions()
 
-            ctrl = get(item.run_id)
-            if ctrl is not None and ctrl.cancelled:
-                # Cancelled while queued: run_build never runs, so refund here and skip it. Kept out
-                # of the run_build try/except so this refund and the build-failed one below can never
-                # both fire for one item.
-                remove(item.run_id)
-                if item.cost:
-                    store.refund(item.user_id, item.cost, "build_cancelled", item.run_id)
-                self._emit("build_cancelled", item.run_id)
-                with self._lock:
-                    self._current = None
-                continue
-
             try:
-                result = maestro.run.run_build(item.run_id)   # removes its own control in finally
-                # A build only reaches here in a terminal state (a paused/awaiting-human build
-                # blocks inside the loop, never returns), so `not ok` means it genuinely failed to
-                # deliver — stuck-parked, cancelled mid-build, or out of steps. Charge only for a
-                # build that produced the finished game; refund every other outcome.
-                if item.cost and not result.ok:
-                    store.refund(item.user_id, item.cost, "build_failed", item.run_id)
+                # The run is charged once (durable `charged` flag, set before enqueue). Pause,
+                # container death, and park-for-human are all resumable and do NOT refund — as long
+                # as the run can eventually finish, it stays charged. Refunds are a manual admin
+                # action only, never automatic here.
+                maestro.run.run_build(item.run_id)   # removes its own control in finally
             except Exception:
                 logger.exception("build failed for %s", item.run_id)
-                if item.cost:
-                    store.refund(item.user_id, item.cost, "build_failed", item.run_id)
             finally:
                 with self._lock:
                     self._current = None

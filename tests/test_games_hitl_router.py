@@ -31,14 +31,49 @@ def _frozen_run(base, run_id="g", modules=None, params=None, owner="u1"):
 
 
 # ── control endpoints ─────────────────────────────────────────────────────────
-def test_control_409_when_no_build(tmp_path, monkeypatch):
+def test_pause_409_when_no_build(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     _frozen_run(tmp_path)
     run_control.remove("g")
-    for fn in (games.pause_game, games.resume_game, games.cancel_game):
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(fn("g", user=U))
-        assert exc.value.status_code == 409
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.pause_game("g", user=U))
+    assert exc.value.status_code == 409
+
+
+def test_resume_of_dead_control_reenqueues_without_charging(tmp_path, monkeypatch):
+    """A build whose thread died (container restart) has no live control. Resume must RE-ENQUEUE
+    the build from durable state — not 409 — and must not re-charge (the run is already charged)."""
+    _patch(monkeypatch, tmp_path)
+    _frozen_run(tmp_path)
+    games._require_state("g", U).mark_charged()   # the run was built (charged); its thread then died
+    run_control.remove("g")
+
+    enqueued = {}
+
+    def _fake_enqueue(run_id, user_id, *a, **k):
+        enqueued["run"] = run_id
+        return 0
+    monkeypatch.setattr(games.build_queue, "enqueue", _fake_enqueue)
+
+    from auth import store
+    deducts = []
+    monkeypatch.setattr(store, "deduct", lambda *a, **k: deducts.append(a) or True)
+
+    res = asyncio.run(games.resume_game("g", user=U))
+    assert res["status"] == "building"
+    assert enqueued["run"] == "g"
+    assert deducts == []   # resume never charges
+
+
+def test_resume_of_uncharged_run_is_rejected(tmp_path, monkeypatch):
+    """Resume must not enqueue a build for a run that was never charged — otherwise a direct
+    POST /resume on a fresh frozen run is a free build (billing bypass)."""
+    _patch(monkeypatch, tmp_path)
+    _frozen_run(tmp_path)
+    run_control.remove("g")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(games.resume_game("g", user=U))
+    assert exc.value.status_code == 409
 
 
 def test_control_403_for_another_users_run(tmp_path, monkeypatch):
@@ -53,7 +88,7 @@ def test_control_403_for_another_users_run(tmp_path, monkeypatch):
         run_control.remove("g")
 
 
-def test_pause_resume_cancel_flip_control(tmp_path, monkeypatch):
+def test_pause_resume_flip_control(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     _frozen_run(tmp_path)
     ctrl = run_control.get_or_create("g")
@@ -62,8 +97,6 @@ def test_pause_resume_cancel_flip_control(tmp_path, monkeypatch):
         assert ctrl.paused is True
         asyncio.run(games.resume_game("g", user=U))
         assert ctrl.paused is False
-        asyncio.run(games.cancel_game("g", user=U))
-        assert ctrl.cancelled is True
     finally:
         run_control.remove("g")
 

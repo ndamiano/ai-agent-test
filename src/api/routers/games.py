@@ -209,27 +209,31 @@ async def freeze_game(run_id: str, user: User = Depends(get_current_user)):
 async def build_game(run_id: str, body: BuildBody = BuildBody(),
                      user: User = Depends(get_current_user)):
     """Queue a build on the single GPU. It runs immediately if the worker is free, else it waits
-    with a `queue_position`. Progress streams over the websocket."""
-    spec_data = _require_state(run_id, user).read_spec()
+    with a `queue_position`. Progress streams over the websocket.
+
+    A run is charged ONCE, gated on a durable `charged` flag: the first enqueue deducts
+    `cost(spec)`; every later enqueue for the same run (a re-trigger, a resume after a dead build)
+    finds it already flagged and never re-charges. Charged stays charged — there is no automatic
+    refund."""
+    state = _require_state(run_id, user)
+    spec_data = state.read_spec()
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
     from auth import store
     from auth.billing import cost
 
-    price = cost(spec_data)
-    if not store.deduct(user.id, price, "build", run_id):
-        raise HTTPException(status_code=402, detail={
-            "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+    if not state.is_charged():
+        price = cost(spec_data)
+        if not store.deduct(user.id, price, "build", run_id):
+            raise HTTPException(status_code=402, detail={
+                "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+        state.mark_charged()
 
     try:
-        position = build_queue.enqueue(run_id, user.id, body.auto_pause, cost=price)
+        position = build_queue.enqueue(run_id, user.id, body.auto_pause)
     except AlreadyQueued:
-        store.refund(user.id, price, "build_not_started", run_id)
         raise HTTPException(status_code=409, detail="build already in progress")
-    except Exception:
-        store.refund(user.id, price, "build_not_started", run_id)
-        raise
 
     return {"status": "building" if position == 0 else "queued",
             "run_id": run_id, "queue_position": position}
@@ -255,18 +259,27 @@ async def pause_game(run_id: str, user: User = Depends(get_current_user)):
 
 @router.post("/{run_id}/resume", response_model=Dict)
 async def resume_game(run_id: str, user: User = Depends(get_current_user)):
-    """Resume a paused build."""
-    _require_state(run_id, user)
-    _control(run_id).request_resume()
-    return {"run_id": run_id, "status": "running"}
+    """Resume a build. If a live control exists (a paused in-flight build), resume it in place. If
+    not (the build thread died — container restart, redeploy), RE-ENQUEUE the build from durable
+    on-disk state so it rebuilds where it left off. The run is already `charged`, so re-enqueue
+    never re-charges."""
+    from maestro.run_control import get as get_control
 
-
-@router.post("/{run_id}/cancel", response_model=Dict)
-async def cancel_game(run_id: str, user: User = Depends(get_current_user)):
-    """Cancel a running build — it unwinds at the next step boundary."""
-    _require_state(run_id, user)
-    _control(run_id).request_cancel()
-    return {"run_id": run_id, "status": "cancelling"}
+    state = _require_state(run_id, user)
+    ctrl = get_control(run_id)
+    if ctrl is not None:
+        ctrl.request_resume()
+        return {"run_id": run_id, "status": "running"}
+    # No live control = the build thread died (restart/redeploy). Rebuild from durable state — but
+    # only for a run that was actually built. Never let resume enqueue a free, uncharged build.
+    if not state.is_charged():
+        raise HTTPException(status_code=409, detail="no build to resume for this run")
+    try:
+        position = build_queue.enqueue(run_id, user.id)
+    except AlreadyQueued:
+        raise HTTPException(status_code=409, detail="build already in progress")
+    return {"status": "building" if position == 0 else "queued",
+            "run_id": run_id, "queue_position": position}
 
 
 @router.post("/{run_id}/auto-pause", response_model=Dict)

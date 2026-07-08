@@ -195,8 +195,6 @@ export const api = {
         request<{ status: string }>(`/games/${runId}/pause`, { method: 'POST' }),
     resumeGame: (runId: string) =>
         request<{ status: string }>(`/games/${runId}/resume`, { method: 'POST' }),
-    cancelGame: (runId: string) =>
-        request<{ status: string }>(`/games/${runId}/cancel`, { method: 'POST' }),
     setAutoPause: (runId: string, enabled: boolean) =>
         request<{ auto_pause: boolean }>(`/games/${runId}/auto-pause`, { method: 'POST', body: JSON.stringify({ enabled }) }),
     compileGame: (runId: string, distribute = false) =>

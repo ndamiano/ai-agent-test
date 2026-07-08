@@ -20,7 +20,6 @@ from maestro.modules import human as human_mod
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType, Module, idkey
 from maestro.services import BudgetExhausted, Services
-from maestro.run_control import BuildCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -131,14 +130,10 @@ class AgentLoop:
         c = self.control
         if c is None:
             return
-        if c.cancelled:
-            raise BuildCancelled()
         if c.paused:
             c.set_status("paused")
             self._emit("build_paused", step=step)
             c.wait_while_paused()
-            if c.cancelled:
-                raise BuildCancelled()
             c.set_status("running")
             self._emit("build_resumed", step=step)
 
@@ -178,8 +173,7 @@ class AgentLoop:
 
     def _run_fixes(self, ctx, batch: List[Tuple[Module, Error, int]], stalled: bool) -> int:
         """Run the batch — one thread per fix (LLM calls overlap; tool dispatch serializes on the
-        loop's lock). Returns the total steps spent. BuildCancelled from any worker re-raises after
-        the others finish (they see the same cancel at their next checkpoint)."""
+        loop's lock). Returns the total steps spent."""
         # The global remainder is shared across the batch — each worker gets its share, so N
         # workers can't jointly overshoot max_steps by N× the remainder.
         budget = min(_FIX_CAP, max(1, (self.max_steps - self.step) // max(1, len(batch))))
@@ -198,16 +192,8 @@ class AgentLoop:
         if len(batch) == 1:
             done = [one(*batch[0])]
         else:
-            cancelled: Optional[BuildCancelled] = None
-            done = []
             with ThreadPoolExecutor(max_workers=len(batch)) as ex:
-                for f in [ex.submit(one, m, e, s) for m, e, s in batch]:
-                    try:
-                        done.append(f.result())
-                    except BuildCancelled as exc:
-                        cancelled = exc
-            if cancelled is not None:
-                raise cancelled
+                done = [f.result() for f in [ex.submit(one, m, e, s) for m, e, s in batch]]
         self.last_read = next((s.last_read for s in reversed(done) if s.last_read), None)
         return sum(s.spent for s in done)
 
@@ -227,51 +213,45 @@ class AgentLoop:
                    todo=_todo_from_pairs(pairs), started_at=self._t0)
         prev: Optional[List] = None
         while self.step < self.max_steps:
-            try:
-                self._checkpoint(self.step)
-                if not pairs:
-                    self._emit("build_done", ok=True, steps=self.step)
-                    return LoopResult(ok=True, steps=self.step)
-                # Parked errors need a human; every further step on them starves the rest of the
-                # build. Parking is decided below by the stuck detector, not a per-error counter.
-                active = [(m, e) for m, e in pairs if e.identity() not in self._parked]
-                if not active:
-                    self._emit("build_done", ok=False, steps=self.step)
-                    return LoopResult(ok=False, steps=self.step, failures=[e for _, e in pairs])
-                stalled = prev is not None and _same(prev, pairs)
-                module, error = prioritize(active)
-                batch = self._batch(ctx, active, module, error)
-                if self._run_fixes(ctx, batch, stalled) == 0:
-                    self.step += 1   # a batch that made no LLM call still advances, so we can't spin
-
-                prev = pairs
-                ctx, pairs = self._context()
-                self._pairs = pairs
-                self._n_failing = len(pairs)
-                # The build is spinning if the SAME error list keeps recurring across the window
-                # (count catches oscillation; a changing SET means real progress even when the size
-                # holds). Give up on the current top error so the loop moves on, then reset the
-                # window so parking is PACED (one per stuck stretch), never a cascade.
-                snap = frozenset(e.identity() for _, e in pairs)
-                self._recent.append(snap)
-                if snap and self._recent.count(snap) >= _STUCK_REPEATS:
-                    spinning = [(m, e) for m, e in pairs if e.identity() not in self._parked]
-                    if spinning:
-                        _m, e = prioritize(spinning)
-                        self._parked.add(e.identity())
-                        self._emit("error_parked", identity=list(e.identity()), message=e.message)
-                        print(f"  parked (build spun on the same error list "
-                              f"{self._recent.count(snap)}/{len(self._recent)} steps): "
-                              f"[{e.component}] {e.code}: {e.message[:120]}", flush=True)
-                    self._recent.clear()
-                now_failing = {e.component for _, e in pairs}
-                for cid in (all_components - now_failing) - passed:
-                    self._fire_milestone(cid)
-                passed = all_components - now_failing
-            except BuildCancelled:
-                if self.control is not None:
-                    self.control.set_status("cancelled")
-                self._emit("build_cancelled", steps=self.step)
+            self._checkpoint(self.step)
+            if not pairs:
+                self._emit("build_done", ok=True, steps=self.step)
+                return LoopResult(ok=True, steps=self.step)
+            # Parked errors need a human; every further step on them starves the rest of the
+            # build. Parking is decided below by the stuck detector, not a per-error counter.
+            active = [(m, e) for m, e in pairs if e.identity() not in self._parked]
+            if not active:
+                self._emit("build_done", ok=False, steps=self.step)
                 return LoopResult(ok=False, steps=self.step, failures=[e for _, e in pairs])
+            stalled = prev is not None and _same(prev, pairs)
+            module, error = prioritize(active)
+            batch = self._batch(ctx, active, module, error)
+            if self._run_fixes(ctx, batch, stalled) == 0:
+                self.step += 1   # a batch that made no LLM call still advances, so we can't spin
+
+            prev = pairs
+            ctx, pairs = self._context()
+            self._pairs = pairs
+            self._n_failing = len(pairs)
+            # The build is spinning if the SAME error list keeps recurring across the window
+            # (count catches oscillation; a changing SET means real progress even when the size
+            # holds). Give up on the current top error so the loop moves on, then reset the
+            # window so parking is PACED (one per stuck stretch), never a cascade.
+            snap = frozenset(e.identity() for _, e in pairs)
+            self._recent.append(snap)
+            if snap and self._recent.count(snap) >= _STUCK_REPEATS:
+                spinning = [(m, e) for m, e in pairs if e.identity() not in self._parked]
+                if spinning:
+                    _m, e = prioritize(spinning)
+                    self._parked.add(e.identity())
+                    self._emit("error_parked", identity=list(e.identity()), message=e.message)
+                    print(f"  parked (build spun on the same error list "
+                          f"{self._recent.count(snap)}/{len(self._recent)} steps): "
+                          f"[{e.component}] {e.code}: {e.message[:120]}", flush=True)
+                self._recent.clear()
+            now_failing = {e.component for _, e in pairs}
+            for cid in (all_components - now_failing) - passed:
+                self._fire_milestone(cid)
+            passed = all_components - now_failing
         self._emit("build_done", ok=not pairs, steps=self.step)
         return LoopResult(ok=not pairs, steps=self.step, failures=[e for _, e in pairs])

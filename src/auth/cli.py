@@ -3,6 +3,7 @@
     python -m auth.cli create <handle> [--role admin]   # prompts for a password
     python -m auth.cli passwd <handle>                   # reset a password
     python -m auth.cli grant  <handle> <n>               # add credits (manual top-up)
+    python -m auth.cli refund <handle> <n>               # return credits (manual refund)
     python -m auth.cli list
 
 The store lives at <working_directory>/private/auth.db — a `private/` subtree that no
@@ -40,6 +41,10 @@ def main(argv=None) -> int:
     p_grant.add_argument("handle")
     p_grant.add_argument("n", type=int)
 
+    p_refund = sub.add_parser("refund", help="return credits to an account (manual refund)")
+    p_refund.add_argument("handle")
+    p_refund.add_argument("n", type=int)
+
     sub.add_parser("list", help="list accounts")
 
     args = parser.parse_args(argv)
@@ -56,6 +61,12 @@ def main(argv=None) -> int:
             sys.exit(f"no user {args.handle!r}")
         new_balance = store.grant(user.id, args.n, "admin_grant")
         print(f"granted {args.n} to {user.handle!r} (balance={new_balance})")
+    elif args.cmd == "refund":
+        user = store.get_user_by_handle(args.handle)
+        if user is None:
+            sys.exit(f"no user {args.handle!r}")
+        new_balance = store.refund(user.id, args.n, "admin_refund")
+        print(f"refunded {args.n} to {user.handle!r} (balance={new_balance})")
     elif args.cmd == "list":
         for u in store.list_users():
             print(f"{u.id}  {u.handle:<20} {u.role}")

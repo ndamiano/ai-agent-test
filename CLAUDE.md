@@ -45,12 +45,15 @@ src/
                 create <handle>` — manual provisioning; `grant <handle> <n>` — manual credit top-up). Runs are owned: create_run stamps owner.json, games.py scopes
                 every run op to its owner (cross-user = 403), the WebSocket authenticates itself (token
                 query param — http middleware never sees the ws scope), and chat sessions key on
-                the authed user. Credits gate builds: create_user seeds INITIAL_CREDITS; build_game
-                deducts cost(spec) atomically (single check-and-decrement, never negative, 402 if
-                short) BEFORE enqueue; the build queue refunds the exact deducted cost whenever the build fails
-                to deliver — cancelled while queued, run_build raises, or it returns result.ok False
-                (stuck-parked / cancelled mid-build / out of steps) — so the user pays only for a
-                finished game, one net deduction per delivered build. Every
+                the authed user. Credits gate builds: create_user seeds INITIAL_CREDITS; a run is charged ONCE,
+                gated on a durable `charged` marker (state.is_charged/mark_charged): the first
+                enqueue deducts cost(spec) atomically (single check-and-decrement, never negative,
+                402 if short) then marks the run charged; every later enqueue for that run (a
+                re-trigger, a resume after a dead build) finds it charged and never re-deducts.
+                Charged stays charged — compute was used, and the run stays resumable, so there is
+                NO automatic refund (a killed/paused/parked/redeployed build is not refunded; it's
+                finished by resuming). Refunds are a MANUAL admin action only (`python -m auth.cli
+                refund <handle> <n>`). There is no build cancel — pause/resume only. Every
                 balance change also lands a signed row in credit_transactions, so the ledger
                 reconciles with the balance. There is deliberately no self-serve account creation.
   api/          FastAPI routers (chat, games, agents, system, websocket,
@@ -59,7 +62,7 @@ src/
                 it's authed by its signature inside the CreditProvider, not the user-token gate) +
                 build_queue.py (the single-GPU build serializer: one worker drains a FIFO queue,
                 one build in flight, extras wait with a visible `queue_position`; a queued run
-                already holds its RunControl so pause/cancel land before it starts). WS events
+                already holds its RunControl so a pause lands before it starts). WS events
                 route per-user server-side: event_bus resolves each event's run → owner (owner.json,
                 cached) and sends only to that user's sockets (manager keys sockets by user id);
                 events with no run_id fall back to a global broadcast.
@@ -111,7 +114,7 @@ src/
                   serializes on one lock, and a nodes-style view caps the batch at its real
                   open_slots. Keeps completion + cross-fix stall; auto-pauses a finished component.
                 services.py — Services, the BOUNDED gateway a Fix calls through (connector +
-                  tool dispatch + pause/cancel checkpoint + per-fix step budget; BudgetExhausted
+                  tool dispatch + pause checkpoint + per-fix step budget; BudgetExhausted
                   is a BaseException, so a fix can't churn past its cap). A count-driven target
                   needs no bespoke loop: `get_errors` fans a shortfall into one per-slot create-error
                   each (`checks.slot_errors`), so the outer loop authors one item per step. The
@@ -137,7 +140,7 @@ src/
                   module's component, drive the loop with only that module composed (same upstream
                   artifact + a candidate prompt = a comparable output).
                   `python -m maestro.climb <src_run_id> <module_id> [--label tag] [--keep]`
-                run_control.py — cross-thread RunControl (pause/resume/cancel + auto_pause flag)
+                run_control.py — cross-thread RunControl (pause/resume + auto_pause flag)
                   + per-run registry, the human-in-the-loop signal channel into the build thread
                 tools.py — artifact tools (build_tools) + TOOL_SCHEMAS. write_component/
                   write_node/edit_node take a human-only `force` to override the done-lock

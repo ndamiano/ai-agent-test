@@ -189,7 +189,8 @@ TOOL_SCHEMAS: List[Dict] = [
             "node_id": {"type": "string"},
             "line_index": {"type": "integer", "description": "index into lines to patch (0-based)"},
             "text": {"type": "string", "description": "new text for that line"},
-            "speaker": {"description": "new speaker id for that line (null for narration)"},
+            "speaker": {"type": ["string", "null"], "description": "a plain cast character id "
+                        "STRING, or null for narration — never an object or list"},
             "emotion": {"type": "string", "description": "new speaker expression: one of "
                         "neutral, happy, sad, angry, surprised, worried"},
             "effects": {"type": "array", "items": {"type": "object"},

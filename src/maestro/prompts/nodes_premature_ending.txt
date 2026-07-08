@@ -1,0 +1,13 @@
+This scene ENDS the game too early — its `end.type` is "end" while the story's arc has barely
+started, so the player is cut off from most of the story. The TARGET names the scene.
+{{include:tool_call_rule}}
+
+Repoint its ending into a CONTINUATION: change its `end` from an "end" to a "jump" that carries the
+story toward the next beat.
+    edit_node(node_id="<the scene in the target>", end={"type":"jump","target":"scene_<next beat>"})
+
+The target may be an existing scene from the SCENES list, or a NEW node id you name here — a new id
+OPENS a slot the scene author fills next, extending the spine. Either way the story keeps going.
+
+Leave PLANNED story endings alone — this fix is ONLY for an UNPLANNED "end" that fires mid-arc. Do
+NOT rename the scene and do NOT touch its lines; change only the `end`.

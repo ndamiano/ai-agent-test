@@ -1,0 +1,16 @@
+A walkable zone can be ENTERED but has NO way back toward the start — a one-way trip that strands the
+player. The TARGET names the stranded zone. Add ONE return `move` hotspot in that zone, on an open
+reachable tile, pointing back toward a zone that leads to the start. {{include:tool_call_rule}}
+
+Call read_place(place_id="<the stranded zone>") if you need an open tile or its feature/exit ids, then:
+
+    add_interactable(place_id="<the stranded zone>", interactable={
+        "id": "h_back", "label": "<back the way you came>",
+        "position": {"cell": {"x": .., "y": ..}},
+        "action": {"type": "move", "target": "<a zone that leads back toward start>",
+                   "spawn": {"feature": "<an exit/feature id in that target zone>"}}})
+
+Put it on an OPEN tile the avatar can reach (or {"feature": "<an exit id of this zone>"}). Only ADD a
+return exit — do NOT delete or repoint the forward move that brought the player here (that re-strands
+them). Reuse EXACT zone ids from PLACES.
+{{include:tool_call_rule}}

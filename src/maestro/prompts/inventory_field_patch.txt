@@ -1,0 +1,15 @@
+One item in the catalogue is MISSING a required field — the TARGET names the exact index and field,
+e.g. `items.items[0] missing 'name'`. Every other item is correct; leave them.
+
+There is no per-item edit tool that overwrites (add_item only APPENDS new ids), so patch through the
+whole component:
+
+  1. read_component("items") to get the current catalogue verbatim.
+  2. write_component("items", <that exact content, with ONLY the one missing field filled in on the
+     named item>).
+
+`name` is the plain display name the player sees; `examine` is what the item IS and DOES (material,
+condition, function) — never what it means. Read the item's other fields and stay consistent. Keep
+every other item and field exactly as you read them. Change the ONE named field on the ONE named
+item, nothing else.
+{{include:tool_call_rule}}

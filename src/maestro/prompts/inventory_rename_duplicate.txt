@@ -1,0 +1,14 @@
+Two entries in the item catalogue share the SAME id — the TARGET names it, e.g.
+`items.items has duplicate values: ['item_key']`. An item id is referenced by exactly the hotspot /
+effect / gate that demanded it, so ONE catalogue entry per id is correct; the duplicate is redundant.
+
+There is no per-item edit tool, so fix through the whole component:
+
+  1. read_component("items") to get the current catalogue verbatim.
+  2. Keep the BETTER-described of the two colliding entries (the one with the fuller examine text)
+     and DROP the other.
+  3. write_component("items", <that exact content, minus the redundant duplicate entry>).
+
+Keep every OTHER item exactly as you read it — same ids, same order. Remove ONLY the one redundant
+duplicate, nothing else.
+{{include:tool_call_rule}}

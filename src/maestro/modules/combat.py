@@ -17,6 +17,7 @@ Example games:
   - "duel the four elemental masters of the tower" — cast + world + scenes + combat
 """
 
+import re
 from typing import Dict, List, Optional
 
 from maestro import context_render as cr
@@ -411,14 +412,6 @@ SKEL_ENCOUNTER = (
     '// ENTRY: a place interactable needs action {type:start_combat, encounter:"enc_<slug>"} to start it.'
 )
 
-SKEL_FIX = (
-    '// Fix the named combat error with the slice tool it belongs to:\n'
-    '//   set_combat_meta (model/stats/statuses) | write_ability | write_combatant | write_encounter.\n'
-    '// A crossref on a combatant.character => rewrite that combatant (write_combatant) with a real cast id.\n'
-    '// An unreachable encounter => add a start_combat interactable on a world place (add_interactable).'
-)
-
-
 # ── live-id skeletons: the skeleton's example ids ("hp"/"slash") are the #1 thing a small model
 #    copies, so every slice skeleton ends with the ACTUAL declared ids to use instead ─────────────
 def _cast_ids(art: Dict) -> list:
@@ -495,6 +488,97 @@ SKEL_PROGRESSION = (
     '// and heals to full. Also make sure every ENEMY combatant carries "xp_yield": <n>\n'
     '// (re-author with write_combatant if one is missing).'
 )
+
+
+# ── per-error fix routing: a combat slice REWRITES the whole item (write_ability/write_combatant/
+#    write_encounter/set_combat_meta/set_progression), so a crossref or structural repair on a slice
+#    re-authors THAT ONE item with its slice tool — never edit_node. The map keys are the slice tokens
+#    (ir_crossref.slice_token of a crossref path; the message prefix of a structural error): each →
+#    (the slice's write tool, its authoring skeleton, the live-id fields to append). ─────────────────
+_SLICE_FIX = {
+    "combat_model": ("set_combat_meta", SKEL_META, []),
+    "stats":        ("set_combat_meta", SKEL_META, []),
+    "statuses":     ("set_combat_meta", SKEL_META, []),
+    "abilities":    ("write_ability",   SKEL_ABILITY,     [_F_STATS, _F_STATUSES]),
+    "combatants":   ("write_combatant", SKEL_COMBATANT,   [_F_STATS, _F_ABILITIES, _F_CAST]),
+    "encounters":   ("write_encounter", SKEL_ENCOUNTER,   [_F_COMBATANTS, _F_NODES]),
+    "progression":  ("set_progression", SKEL_PROGRESSION, [_F_COMBATANTS, _F_STATS]),
+}
+_SLICE_FIX_DEFAULT = ("write_encounter", SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES])
+
+# A crossref kind → the ONE catalogue the dangling ref must resolve into (ids only) + its kind-specific
+# fix prompt. Kinds not listed (stat/status/ability/combatant/background) are combat-internal repoints
+# → the generic prompt + combat's own declared ids.
+_CROSSREF_KIND_PROMPT = {
+    "character": "combat_crossref_character.txt",
+    "node":      "combat_crossref_node.txt",
+    "flag":      "combat_crossref_flag.txt",
+    "variable":  "combat_crossref_variable.txt",
+    "item":      "combat_crossref_item.txt",
+}
+
+
+def _crossref_catalogue(kind: str, art: Dict) -> List[str]:
+    from maestro.modules import cast, inventory, scenes
+    if kind == "character":
+        return cast.character_index(art)
+    if kind == "node":
+        return scenes.nodes_index_block(art)
+    if kind == "item":
+        return inventory.item_index(art)
+    if kind in ("flag", "variable"):
+        return scenes.nodes_index_block(art)
+    return combat_index_block(art)
+
+
+def _structural_slice(msg: str) -> str:
+    """The combat slice a v_combat structural message is about, from its `combat.<slice>` prefix."""
+    m = re.match(r"combat\.([a-z_]+)", msg or "")
+    return m.group(1) if m else ""
+
+
+def _slice_fix_prompt(module, ctx, error, *, slice_key: str, system_file: str, catalogue: List[str]):
+    """Assemble a slice-repair CorrectionPrompt: the kind/structural system prompt + the resolving
+    catalogue + the failing slice's own write skeleton (live ids) + run-state, scoped to that slice's
+    write tool. The model re-authors THE ONE named item, restating its valid fields and fixing the
+    named one — no other slice is touched."""
+    from maestro.modules.context import render_dict
+    from maestro.modules.module import CorrectionPrompt, load_prompt
+    write_tool, skel_base, fields = _SLICE_FIX.get(slice_key, _SLICE_FIX_DEFAULT)
+    tools = ("read_component", "read_node", write_tool, "request_review")
+    rd = render_dict(ctx, active="combat", target=error, available_tools=frozenset(tools))
+    skeleton = _skel_with_ids(skel_base, fields)(ctx)
+    user = "\n".join(cr.target_block(rd) + catalogue + ["", skeleton] + cr.tail_block(rd))
+    return CorrectionPrompt(system=load_prompt(system_file), user=user, allowed_tools=tools)
+
+
+def _crossref_fix(module, ctx, error):
+    """A dangling combat-slice reference: repoint it (or drop the gate) by re-authoring the slice
+    that holds it. The kind picks the resolving catalogue + prompt; the path's slice picks the tool."""
+    from maestro.ir_crossref import slice_token
+    return _slice_fix_prompt(
+        module, ctx, error, slice_key=slice_token(error.path or ""),
+        system_file=_CROSSREF_KIND_PROMPT.get(error.kind, "combat_crossref_generic.txt"),
+        catalogue=_crossref_catalogue(error.kind, ctx.artifact))
+
+
+def _structural_fix(module, ctx, error):
+    """A v_combat structural failure (bad field/shape on one slice): re-author that one item with
+    its slice tool, restating valid fields + fixing the named one. The slice comes from the message."""
+    return _slice_fix_prompt(
+        module, ctx, error, slice_key=_structural_slice(error.message or ""),
+        system_file="combat_structural_fix.txt",
+        catalogue=combat_index_block(ctx.artifact))
+
+
+def _ctx_reach(module, rd: Dict) -> str:
+    """An unreachable encounter is wired from a PLACE, not combat — target + the place index (where a
+    start_combat hotspot goes) + run-state. The encounter itself is not touched."""
+    from maestro.modules import world
+    art = rd.get("artifact") or {}
+    lines = cr.target_block(rd) + world.places_index_block(art) + cr.tail_block(rd)
+    lines += ["", "Add a start_combat interactable to a walkable place. Do NOT touch the encounter."]
+    return "\n".join(lines)
 
 
 def _start_combat_targets(art: Dict) -> set:
@@ -582,7 +666,8 @@ def _d_crossref(chk, m, ctx):
     for rec in checks.crossref_failures(ctx.artifact):
         if slice_token(rec.get("path") or "") in _COMBAT_SLICES:
             out.append(Error(type=chk.tier, code=chk.code, component="combat",
-                             message=rec["message"], path=rec.get("path"), ref=rec.get("ref")))
+                             message=rec["message"], path=rec.get("path"),
+                             ref=rec.get("ref"), kind=rec.get("kind")))
     return out
 
 
@@ -619,15 +704,10 @@ class Combat(Module):
         Check("build_progression", _d_progression, blocking=True, tools=_PROGRESSION_TOOLS,
               skeleton=_skel_with_ids(SKEL_PROGRESSION, [_F_COMBATANTS, _F_STATS])),
         Check("combat_structural", _d_structural, job="fix", blocking=True, tools=_CROSSREF_TOOLS,
-              skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
-                                                 _F_COMBATANTS, _F_CAST, _F_NODES]),
-              context=cr.ctx_structural),
-        Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS, skeleton=SKEL_FIX,
-              context=cr.ctx_crossref),
-        Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS,
-              skeleton=_skel_with_ids(SKEL_FIX, [_F_STATS, _F_STATUSES, _F_ABILITIES,
-                                                 _F_COMBATANTS, _F_CAST, _F_NODES]),
-              context=cr.ctx_crossref),
+              build_prompt=_structural_fix),
+        Check("encounters_reachable", _d_reachable, job="fix", tools=_REACH_TOOLS,
+              prompt="combat_reach_fix.txt", context=_ctx_reach),
+        Check("crossref", _d_crossref, job="fix", tools=_CROSSREF_TOOLS, build_prompt=_crossref_fix),
     ]
 
     def params(self) -> Dict:

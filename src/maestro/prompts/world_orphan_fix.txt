@@ -1,0 +1,17 @@
+One or more places cannot be reached from the start — orphans with no route in. The TARGET names the
+orphan(s) and which places ARE reachable. Fix it by ADDING a NEW `move` hotspot in a REACHABLE place
+that points AT the orphan. {{include:tool_call_rule}}
+
+Call read_place(place_id="<a reachable place>") if you need an open tile, then:
+
+    add_interactable(place_id="<a REACHABLE place from the target>", interactable={
+        "id": "h_to_<orphan>", "label": "<where it leads>",
+        "position": {"cell": {"x": .., "y": ..}},
+        "action": {"type": "move", "target": "<the orphan id>"}})
+
+position is {"rect": {"x": .., "y": .., "w": .., "h": ..}} for a point-and-click room; for a walkable
+target zone add "spawn": {"feature": "<an exit/feature id in the orphan>"} to the action.
+
+The move must live in a REACHABLE place and point AT the orphan — NOT the reverse, and NOT by
+repointing an EXISTING hotspot (that breaks its current route). Reuse EXACT ids from PLACES.
+{{include:tool_call_rule}}

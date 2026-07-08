@@ -108,6 +108,10 @@ SKEL_CHARACTER_ONE = (
 )
 
 _ADD_TOOLS = frozenset({"add_character", "read_component", "request_review"})
+# The post-authoring safety repairs (missing field, dup id) round-trip through write_component:
+# there is no per-character edit tool, and add_character refuses an existing id, so the fix reads
+# the cast then rewrites it with ONE change. The specific prompts below forbid a clobber-rewrite.
+_REPAIR_TOOLS = frozenset({"read_component", "write_component", "request_review"})
 _CAST_GUARD = {"count_tool": "add_character", "id_key": "character_id",
                "id_list_key": "character_ids", "noun": "character"}
 
@@ -142,9 +146,11 @@ class Cast(Module):
               prompt="characters_add.txt", skeleton=SKEL_CHARACTER_ONE),
         Check("character_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "characters.characters",
-            fields=ctx.param("character_fields", ["id", "name"]))), context=cr.ctx_structural),
+            fields=ctx.param("character_fields", ["id", "name"]))), context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="cast_field_patch.txt", skeleton=""),
         Check("distinct_characters", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "characters.characters", key="id")), context=cr.ctx_structural),
+            ctx.artifact, "characters.characters", key="id")), context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="cast_rename_duplicate.txt", skeleton=""),
     ]
 
     def params(self) -> Dict:

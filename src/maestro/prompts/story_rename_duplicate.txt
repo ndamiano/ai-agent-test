@@ -1,0 +1,15 @@
+Two entries in the story share the SAME id — the TARGET names the list and the duplicated value,
+e.g. `story.beats has duplicate values: ['beat_02']` or `story.endings has duplicate values:
+['ending_solitude']`. Ids must be unique; rename ONE of the colliding entries.
+
+There is no per-entry edit tool, so fix through the whole component WITHOUT re-authoring the story:
+
+  1. read_component("story") to get the current story verbatim.
+  2. Give ONE of the two colliding entries a new, unique id (e.g. a second 'beat_02' becomes
+     'beat_03', renumbered to its real place in the arc).
+  3. write_component("story", <that exact content, with ONLY the one duplicate's id changed>).
+
+If you rename an ENDING, also update its matching story.ending_paths entry's `ending` to the new id
+so the plan still points at it. Keep every entry's content exactly as you read it — you are ONLY
+making two ids distinct, not rewriting beats or endings.
+{{include:tool_call_rule}}

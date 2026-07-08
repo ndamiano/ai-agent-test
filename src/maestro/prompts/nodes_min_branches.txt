@@ -1,0 +1,13 @@
+The game has too few player CHOICES — it plays as a straight line. The TARGET says how many menus
+exist and how many are needed. Add a real branch. {{include:tool_call_rule}}
+
+Turn ONE scene's single `jump` into a MENU whose two choices lead to DIFFERENT scenes:
+    edit_node(node_id="<a scene that currently jumps>",
+              end={"type":"menu","choices":[
+                  {"text":"<one path>","target":"<node id A>"},
+                  {"text":"<the other path>","target":"<node id B>"}]})
+
+The two targets MUST be DIFFERENT real node ids (from SCENES) — a menu whose choices go to the same
+scene is a fake choice and is rejected. If the second path needs a scene that doesn't exist yet, name
+a NEW node id as its target (that opens a slot the author fills) or write_node it. Pick a scene where
+a genuine fork makes sense; a menu has AT MOST 3 choices.

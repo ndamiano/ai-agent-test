@@ -1,0 +1,14 @@
+A combat piece references a combat id (a stat, status, ability, or combatant) that is not declared.
+The TARGET names the exact site, e.g. `combatants[cb_foe].abilities[0]: 'firebolt' is not a declared
+ability`.
+
+Every combat id must already exist — the COMBAT block below lists the declared stats, statuses,
+abilities, and combatants. Re-author ONLY the one slice the TARGET names, with its write tool shown
+under the skeleton below, keeping every other field and setting the bad reference to an EXACT id from
+that list:
+
+  - a stat/status/ability that is missing => point at one already declared (or drop the reference).
+  - a combatant `ref` that is missing => point at a declared combatant.
+
+Do not invent or rename ids. Fix only the named reference; restate the slice's other fields so
+nothing is lost. Touch no other slice. {{include:tool_call_rule}}

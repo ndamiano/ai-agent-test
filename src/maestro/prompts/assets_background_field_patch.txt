@@ -1,0 +1,14 @@
+One background in the asset_manifest is MISSING its `id` — the TARGET names the exact index, e.g.
+`asset_manifest.backgrounds[2] missing 'id'`. A background id is what a scene's `location` / a room's
+`background` points at; without it the art can't be wired.
+
+There is no per-entry edit tool, so patch through the whole component WITHOUT rewriting the manifest:
+
+  1. read_component("asset_manifest") to get the current manifest verbatim.
+  2. write_component("asset_manifest", <that exact content, with ONLY the missing `id` added to the
+     named background>).
+
+Set `id` to a snake_case id that fits that background's description, prefixed bg_ (e.g. 'bg_office').
+Keep every other background, character, item, and field exactly as you read them. Add the ONE missing
+id, nothing else.
+{{include:tool_call_rule}}

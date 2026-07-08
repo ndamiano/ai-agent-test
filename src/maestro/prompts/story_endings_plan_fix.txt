@@ -1,0 +1,17 @@
+An ENDING has no plan — it exists in story.endings but no story.ending_paths entry names it, so the
+game can never reach it. The TARGET names the orphaned ending id, e.g.
+`story.endings → story.ending_paths: unresolved refs ['ending_solitude']`.
+
+Fix it by adding the ONE missing ending_paths entry — an {ending, earned_by} object — that plans how
+the player reaches that ending. There is no per-path tool, so patch through the whole component:
+
+  1. read_component("story") to see the beats, the endings, and the ending_paths already written.
+  2. write_component("story", <that exact content, with ONE new entry APPENDED to ending_paths>):
+        "ending": "<the orphaned ending id from your target>",
+        "earned_by": "the SPECIFIC beat plus choice that earns it, e.g. the beat_04 choice to stay"
+
+`ending` MUST be the exact orphaned id named in your target — a real story.endings id (the endings
+are listed below). `earned_by` names a real beat from the arc (the beat ids are listed below) plus
+the choice made at it; a vague cause ("through courage") is not a path. Add ONLY that one entry —
+keep central_question, every beat, every ending, and every existing path exactly as you read them.
+{{include:tool_call_rule}}

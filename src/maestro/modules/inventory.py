@@ -128,6 +128,12 @@ def _item_usage_block(artifact: Dict, item_id: str) -> list:
 
 
 _ADD_TOOLS = frozenset({"add_item", "read_component", "request_review"})
+# The safety repairs (missing field, dup id) round-trip through write_component: add_item only
+# APPENDS a new id (it refuses an existing one and can't remove), so it cannot patch a field or drop
+# a duplicate — the fix reads the catalogue then rewrites it with ONE change. The specific prompts
+# below match write_component (the old fallback pointed the model at add_item while scoped to
+# write_component — a tool/prompt mismatch).
+_REPAIR_TOOLS = frozenset({"read_component", "write_component", "request_review"})
 
 SKEL_ITEM_ONE = (
     '// item_id (the tool arg) is the snake_case id, prefixed item_ (use the EXACT id from your\n'
@@ -174,10 +180,12 @@ class Inventory(Module):
     checks = [
         Check("item_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "items.items", fields=["id", "name"])) if _has_items(ctx) else [],
-            context=cr.ctx_structural),
+            context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="inventory_field_patch.txt", skeleton=""),
         Check("distinct_items", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
             ctx.artifact, "items.items", key="id")) if _has_items(ctx) else [],
-            context=cr.ctx_structural),
+            context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="inventory_rename_duplicate.txt", skeleton=""),
         Check("demanded_items", _d_demanded_items, tools=_ADD_TOOLS, when_clean=True,
               prompt="inventory_add.txt", skeleton=SKEL_ITEM_ONE),
     ]

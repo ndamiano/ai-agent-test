@@ -141,6 +141,11 @@ def _one(_view) -> int:
     return 1
 
 
+# The post-authoring safety repairs (missing field, dup id, orphaned ending) round-trip through
+# write_component: there is no per-beat / per-ending / per-path edit tool, and add_beat/add_ending
+# refuse an existing id, so the fix reads the story then rewrites it with ONE change. The specific
+# prompts below name the exact path and forbid a clobber-rewrite.
+_REPAIR_TOOLS = frozenset({"read_component", "write_component", "request_review"})
 _CQ_TOOLS = frozenset({"set_central_question", "read_component", "request_review"})
 _BEAT_TOOLS = frozenset({"add_beat", "read_component", "request_review"})
 _ENDING_TOOLS = frozenset({"add_ending", "read_component", "request_review"})
@@ -192,19 +197,24 @@ class Story(Module):
               prompt="story_beats_add.txt", skeleton=SKEL_BEAT_ONE),
         Check("beat_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "story.beats", fields=["id", "summary", "type", "purpose", "tension"])),
-            context=cr.ctx_structural),
+            context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="story_field_patch.txt", skeleton=""),
         Check("distinct_beats", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "story.beats", key="id")), job="fix", context=cr.ctx_structural),
+            ctx.artifact, "story.beats", key="id")), job="fix", context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="story_rename_duplicate.txt", skeleton=""),
         Check("min_endings", _d_min_endings, tools=_ENDING_TOOLS, guard=_ENDING_GUARD,
               prompt="story_endings_add.txt", skeleton=SKEL_ENDING_ONE),
         Check("distinct_endings", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "story.endings", key="id")), job="fix", context=cr.ctx_structural),
+            ctx.artifact, "story.endings", key="id")), job="fix", context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="story_rename_duplicate.txt", skeleton=""),
         Check("ending_path_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "story.ending_paths", fields=["ending", "earned_by"])),
-            context=cr.ctx_structural),
+            context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="story_field_patch.txt", skeleton=""),
         Check("endings_planned", lambda chk, m, ctx: m.wrap(chk, checks.refs_resolve(
             ctx.artifact, "story.endings", "story.ending_paths",
-            from_key="id", to_key="ending")), job="fix", context=cr.ctx_structural),
+            from_key="id", to_key="ending")), job="fix", context=cr.ctx_structural,
+            tools=_REPAIR_TOOLS, prompt="story_endings_plan_fix.txt", skeleton=""),
     ]
 
     def params(self) -> Dict:

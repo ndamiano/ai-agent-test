@@ -1,0 +1,15 @@
+One character in the cast is MISSING a required field — the TARGET names the exact one, e.g.
+`characters.characters[2] missing 'voice'`. Every OTHER character and field is correct; leave them.
+
+There is no per-character edit tool, so patch through the whole component WITHOUT rewriting anyone:
+
+  1. read_component("characters") to get the current cast verbatim.
+  2. write_component("characters", <that exact content, with ONLY the one missing field filled in on
+     the named character>).
+
+Fill the missing field to fit the character it belongs to — read their other fields (voice, drive,
+history) and stay consistent with who they already are. Keep every other character and every other
+field BYTE-FOR-BYTE as you read them: same ids, same names, same order. Do NOT re-invent the cast,
+re-word anything, or add or drop a character. Change the ONE named field on the ONE named character,
+nothing else.
+{{include:tool_call_rule}}

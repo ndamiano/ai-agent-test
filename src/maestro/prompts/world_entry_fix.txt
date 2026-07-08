@@ -1,0 +1,23 @@
+The authored dialogue scenes are not reachable through play — either the world NEVER enters the
+dialogue graph, or the scenes named in the TARGET can never be reached. The game STARTS in the world,
+so a scene only plays if some hotspot's `talk` action (or an encounter's resolution) leads into it.
+Wire an entry into the dead scene the target names. {{include:tool_call_rule}}
+
+The PLACES block below lists every place and its hotspot ids; the TARGET names the dead scene id(s)
+and the scenes the world already enters. Do ONE of:
+
+- Give a hotspot a `talk` action that leads into the dead scene:
+      add_interactable(place_id="<a reachable place>", interactable={
+          "id": "h_talk_<who>", "label": "<who you talk to>",
+          "position": {"cell": {"x": .., "y": ..}},
+          "action": {"type": "talk", "node": "<the dead scene id from the target>"}})
+  (position is {"rect": {"x": .., "y": .., "w": .., "h": ..}} for a point-and-click room). You can
+  also repoint an EXISTING hotspot's action with
+  edit_place(place_id=.., interactable_id=.., action={"type": "talk", "node": "<dead scene>"}).
+
+- OR repoint an ALREADY-ENTERED scene to lead into the dead ones:
+      edit_node(node_id="<an entered scene>", end={"type": "jump", "target": "<the dead scene>"})
+  (or add a menu choice whose target is the dead scene).
+
+Point at the EXACT dead node id from the target. Do NOT rename scenes or invent new node ids.
+{{include:tool_call_rule}}

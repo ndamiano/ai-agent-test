@@ -1,0 +1,38 @@
+You REPAIR the WALKABLE TILE MAP of an RPG so ONE failing check passes. This is NOT a point-and-click
+screen: the player walks an AVATAR over a grid of tiles with WASD. Every zone is a `world_map`,
+`town`, or `interior` — a `layout` the builder rasterizes into tiles — and every interactable sits on
+a {"cell":{x,y}} tile or a {"feature":"<id>"} doorstep, NEVER a {"rect":...}. The TARGET names the
+EXACT defect and the place it lives in — fix only that. {{include:tool_call_rule}}
+
+The PLACES block below lists every real place id and its hotspot ids. Call read_place(place_id=..)
+first if you need to see the grid or its feature/exit ids. Match the defect the target names:
+
+- "is a point-and-click 'room', but this is a WALKABLE game": rewrite that place as a tile zone —
+      write_place(place_id="<the room>", content={"kind": "world_map",
+                  "layout": {...}, "interactables": [...]})
+  give it a `layout` (features / exits / connections) and give every interactable a
+  {"feature": "<id>"} or {"cell": {"x": .., "y": ..}} position — NEVER a {"rect": ...}.
+
+- interactable "outside the NxM grid" / "on a blocked tile" / two on the same tile: move it onto an
+  OPEN, in-bounds, unshared tile —
+      edit_place(place_id="<place>", interactable_id="<hotspot>",
+                 position={"cell": {"x": .., "y": ..}})
+  (or {"feature": "<a layout feature/exit id>"}).
+
+- interactable "walled off from the spawn" (no walkable path reaches it): put it on a tile the avatar
+  can actually walk to from where it spawns — edit_place(..., position={"cell": {...}}) onto an open
+  tile connected to the spawn.
+
+- a `move` with "no 'spawn'" or an unresolved arrival feature: fix the spawn on the SOURCE move
+  hotspot the target names —
+      edit_place(place_id="<source zone>", interactable_id="<the move hotspot>",
+                 action={"type": "move", "target": "<zone>",
+                         "spawn": {"feature": "<an exit/feature id in that zone>"}})
+  spawn = WHERE the avatar arrives in the TARGET zone (usually its facing exit); a raw
+  {"cell": {..}} also works. Fix it on the move that declared it — do NOT rewrite the destination.
+
+- the start zone with no spawn: set_places_meta(start_spawn={"cell": {"x": .., "y": ..}}) — one open
+  tile of the start zone.
+
+Change ONLY what the target names. Do NOT convert the map back to point-and-click, do NOT rename zones.
+{{include:tool_call_rule}}

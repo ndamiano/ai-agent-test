@@ -1,0 +1,13 @@
+An encounter exists but nothing ever STARTS it — no place hotspot enters it. The TARGET names the
+encounter, e.g. `encounter 'enc_boss' is never started`.
+
+A fight is entered from the MAP, not from combat. Fix it by adding a `start_combat` interactable to a
+walkable place from the PLACES list below (pick the place where this fight should happen):
+
+    add_interactable(place_id="<a place from PLACES>", interactable={
+        "id": "fight_<slug>", "position": {"cell": {"x": <n>, "y": <n>}},
+        "action": {"type": "start_combat", "encounter": "<the encounter in the TARGET>"}})
+
+Use the encounter id EXACTLY as the TARGET names it. Do NOT edit the encounter and do NOT author any
+combat — the encounter is already built; it only needs a way in. Add exactly one hotspot.
+{{include:tool_call_rule}}

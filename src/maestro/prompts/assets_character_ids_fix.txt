@@ -1,0 +1,17 @@
+A sprite entry in asset_manifest.characters is MISSING its `id` — the TARGET names the exact index,
+e.g. `asset_manifest.characters[1] missing 'id'`. A manifest character id is NOT a free choice: it
+must EXACTLY match the id of the cast character this sprite depicts, so the engine swaps the right
+face onto the right speaker.
+
+There is no per-entry edit tool, so patch through the whole component:
+
+  1. read_component("asset_manifest") to get the current manifest verbatim — note which sprite entry
+     is missing its id and what it depicts (its image_file / description).
+  2. write_component("asset_manifest", <that exact content, with ONLY the missing `id` set on that
+     entry>).
+
+Set `id` to the CAST id this sprite depicts — a plain string, one of the EXACT ids listed under
+CHARACTERS below, never an object and never a display name. Do NOT invent a new id and do NOT rename
+anyone. Keep every other entry and field exactly as you read them; set the ONE missing id, nothing
+else.
+{{include:tool_call_rule}}

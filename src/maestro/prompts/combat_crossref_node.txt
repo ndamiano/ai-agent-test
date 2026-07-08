@@ -1,0 +1,16 @@
+An encounter's `on_victory` or `on_defeat` jumps to a `nodes` id that does not exist. The TARGET
+names the encounter + which end, e.g. `encounters[enc_boss].on_victory.target: 'aftermath' is not a
+declared node`.
+
+Re-author ONLY that one encounter with write_encounter, keeping all its other fields, and repoint
+the named node_end to an EXACT id from the NODES list below (or make it a bare ending):
+
+    write_encounter(encounter_id="<the encounter in the TARGET>", content={
+        ...its existing combatants / victory / defeat...,
+        "on_victory": {"type": "jump", "target": "<a node id from NODES>"},
+        "on_defeat":  {"type": "end",  "ending": "game_over"}})
+
+A node_end is an OBJECT: {"type":"jump","target":<a nodes id>} to resume the story, or
+{"type":"end","ending":"<label>"} to end the game — never a bare id string. Do not invent a node and
+do not rename one; choose from the list, or end the game. Restate the encounter's other fields so
+nothing is lost. Touch no other encounter. {{include:tool_call_rule}}

@@ -75,6 +75,19 @@ then re-run `deploy.sh` from dev. `deploy.sh` `rsync`s the source (excluding `ve
 `.git/`, the working dir, `.env`, `settings.json`), runs `docker compose build && docker compose up
 -d`, and curls prod `/healthz` — failing loudly if any step errors.
 
+### Editing `.env` after the first boot
+
+A plain `docker compose up -d` does **not** re-read a changed `.env` for an already-running container
+— it keeps the env baked in at its last (re)creation, so your edit silently has no effect. Force it:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+Then confirm the value actually landed: `docker compose exec app printenv <VAR>`. (This bites the
+inference endpoints in particular — a stale `LMSTUDIO_BASE_URL`/`COMFYUI_ENDPOINT` yields connection
+-refused against the old host/port while `.env` on disk looks correct.)
+
 ### Accounts (no signup — manual only)
 
 The CLI lives at `/app/src/auth/cli.py`; the container WORKDIR is `/app`, so run it from `/app/src`:

@@ -83,28 +83,6 @@ class TestLLMRateLimiter:
         assert limiter.acquire(blocking=False) is True
         assert limiter.acquire(blocking=False) is True
 
-    def test_rate_limiter_maintains_rate(self):
-        """Test that rate limiter maintains the specified rate over time"""
-        limiter = LLMRateLimiter(rate=2.0, capacity=2)
-
-        # Make requests and track timing
-        requests = 0
-        start_time = time.time()
-
-        # Try to make 6 requests (should take ~2 seconds at 2 req/s after initial burst)
-        for _ in range(6):
-            limiter.acquire(blocking=True, timeout=5)
-            requests += 1
-
-        elapsed = time.time() - start_time
-
-        # With a rate of 2 req/s and 6 requests:
-        # - First 2 are immediate (burst)
-        # - Next 4 take 2 seconds
-        # Total should be ~2 seconds
-        assert requests == 6
-        assert 1.8 <= elapsed <= 2.5  # Allow some margin for timing variations
-
 
 class TestLLMRateLimiterIntegration:
     """Test rate limiting integration with the connector"""

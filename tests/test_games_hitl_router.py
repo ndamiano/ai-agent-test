@@ -13,14 +13,10 @@ from api.build_queue import build_queue
 from maestro.state import RunState
 from maestro import run_control
 from auth.store import User
+from conftest import patch_run_state_for as _patch
 
 U = User(id="u1", handle="alice", role="user")
 OTHER = User(id="u2", handle="bob", role="user")
-
-
-def _patch(monkeypatch, base):
-    monkeypatch.setattr(RunState, "for_run",
-                        classmethod(lambda cls, rid: RunState(base / rid)))
 
 
 def _frozen_run(base, run_id="g", modules=None, params=None, owner="u1"):

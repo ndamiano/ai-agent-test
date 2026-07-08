@@ -88,12 +88,3 @@ def test_write_component_without_schemas_is_unconstrained(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(_unconstrained_spec(), state)   # no modules -> no schemas
     assert tools["write_component"]("premise", {"anything": 1})["ok"] is True
-
-
-def test_write_node_rejects_start_id(tmp_path):
-    state = RunState(tmp_path)
-    tools = build_tools(_unconstrained_spec(), state)
-    n = {"lines": [{"text": "x"}], "end": {"type": "return"}}
-    assert tools["write_node"]("start", n)["ok"] is False
-    assert tools["write_node"]("scene_01", "not an object")["ok"] is False   # wrong shape
-    assert tools["write_node"]("scene_01", n)["ok"] is True

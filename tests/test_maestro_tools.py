@@ -8,12 +8,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.spec import Spec
 from maestro.state import RunState
 from maestro.tools import build_tools, SpecNotFrozen
+from conftest import make_spec
 
 
 def _spec(frozen=True):
     # Unconstrained: no modules => no structural schemas / locks, so these tests exercise the tool
     # mechanics (frozen gate, persistence, edits) without per-component validation getting in the way.
-    return Spec({"title": "T", "frozen": frozen, "modules": [], "params": {}})
+    return make_spec(frozen=frozen)
 
 
 def _node(text="hi", end=None):
@@ -23,7 +24,7 @@ def _node(text="hi", end=None):
 # ── add_interactable: append a hotspot without clobbering siblings ────────────
 
 def _places_spec():
-    return Spec({"title": "T", "frozen": True, "modules": [], "params": {}})
+    return make_spec()
 
 
 def _seed_place(state):

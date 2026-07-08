@@ -8,9 +8,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from renpy.ir_compiler import compile_ir
 from renpy.fns import _get_sdk_path
+from conftest import load_example
 
-_EXAMPLE = json.loads(
-    (Path(__file__).parent.parent / "docs" / "examples" / "vn_crappy.json").read_text())
+_EXAMPLE = load_example("vn_crappy")
 
 
 def _write_run(run_dir: Path):
@@ -48,8 +48,7 @@ def test_compile_ir_rejects_malformed_ir(tmp_path):
 
 
 def test_compile_ir_rejects_walkable_places(tmp_path):
-    pnc = json.loads(
-        (Path(__file__).parent.parent / "docs" / "examples" / "pnc_crappy.json").read_text())
+    pnc = load_example("pnc_crappy")
     (tmp_path / "spec.json").write_text(json.dumps({"title": pnc["meta"]["title"]}))
     (tmp_path / "characters.json").write_text(json.dumps({"characters": pnc["characters"]}))
     (tmp_path / "asset_manifest.json").write_text(json.dumps({"backgrounds": [], "characters": []}))

@@ -9,9 +9,9 @@ from maestro.ir_crossref import crossref_errors
 from maestro.engines import compile_for
 from godot.compiler import compile_godot
 from godot.ir_compiler import write_godot_project
+from conftest import load_example
 
 _SCHEMA = Path(__file__).parent.parent / "docs" / "game_ir.schema.json"
-_COMBAT_EXAMPLE = Path(__file__).parent.parent / "docs" / "examples" / "combat_game.json"
 _RUNTIME_FILES = ("project.godot", "Main.tscn", "Game.gd", "ir.gd", "vn.gd", "pnc.gd",
                   "overworld.gd", "combat.gd")
 
@@ -43,7 +43,7 @@ def _write_vn(run_dir: Path, *, dangling=False, broken=False):
 
 
 def _rpg_example() -> dict:
-    return json.loads(_COMBAT_EXAMPLE.read_text())
+    return load_example("combat_game")
 
 
 def test_compile_godot_writes_project(tmp_path):

@@ -37,13 +37,17 @@ fixtures + conventions + fixing a small weak fraction + filling load-bearing gap
   fixtures; the `_ctx`/fake-`State` pattern (`test_core.py:56`); WHY-comment-per-test.
 
 ## G1 — Anti-bloat infrastructure (the main lever)
-- [ ] **Populate `conftest.py` with shared fixtures** and delete the per-file clones: `spec_factory`
-      / `frozen_run` (reinvented in `test_maestro_tools.py:13,25`, `test_games_hitl_router.py:21`),
-      `run_state(tmp_path)`, `ctx` (`test_core.py:56`), `example_ir` loader (copy-pasted across
-      `test_voice.py:16`, `test_compile_ir.py:13`, `test_ir_pnc.py:16`, `test_ir_assemble.py:74`,
-      `test_godot_compile.py:46`), `patch_for_run` (dup'd `test_games_router.py`↔`test_games_hitl_router.py:16`).
+- [x] **Populate `conftest.py` with shared fixtures + helpers** — `spec_factory`/`make_spec`,
+      `run_state`, `frozen_run`/`seed_frozen_run`, `patch_for_run`/`patch_run_state_for`,
+      `example_ir`/`load_example`, `ctx_factory`/`make_ctx`. Deleted the identical `_patch`/
+      `_patch_for_run` clones (routers now import the shared helper); migrated the `example_ir`
+      loaders in all 5 IR test files + `_spec`/`_places_spec` in `test_maestro_tools.py`.
+      Suite green (691). REMAINING: `_frozen_run` (hitl) + `_ctx` (core) call sites not yet
+      threaded onto the fixtures — they're heavier per-call migrations; the fixtures exist so new
+      tests use them and the two files can be drained incrementally.
 - [ ] **Adopt a `parametrize` convention** for case lists (combat-shape variants, module resolution),
-      so new variants are rows not functions.
+      so new variants are rows not functions. (Convention written into `tests/README.md`; no
+      existing case-list converted yet.)
 - [ ] **Standardize on pytest-style.** Migrate the 4 `unittest.TestCase` files
       (`test_settings_manager.py`, `test_time_utils.py`, `test_tools.py`, integration) so there's one
       setup idiom to copy.
@@ -74,13 +78,57 @@ fixtures + conventions + fixing a small weak fraction + filling load-bearing gap
       router). The param/reason resolvers are well covered; the state machine isn't.
 
 ## G4 — Governance policy (write it down)
-- [ ] **A test-conventions doc / section** (in `CLAUDE.md` or `tests/README.md`): behaviour-not-
-      implementation; WHY-comment required; reuse `conftest` fixtures + `docs/examples`; `parametrize`
-      for variants; mark slow; one framework (pytest). A reviewer checklist so the suite grows in
-      quality, not count.
+- [x] **A test-conventions doc / section** — `tests/README.md` written: behaviour-not-implementation;
+      WHY-comment required; reuse `conftest` fixtures/helpers + `docs/examples`; `parametrize` for
+      variants; mark slow; one framework (pytest); + a reviewer checklist.
 - [ ] **Re-audit cadence** — a periodic map/quality pass (this recon is the template) each milestone,
       so drift and bloat get caught early.
 
+## G5 — Reduction: test contracts, not "doesn't do X" (net-negative pass)
+The suite trends toward too many tests. Prune toward **contracts**, not coverage. A test earns its
+place by pinning a promise the code makes; delete tests that pin incidental non-behaviour nobody
+promised, or that re-prove one contract N times.
+- **KEEP a negative test** only when the refusal IS the contract: validation boundaries (reject
+  malformed IR, dupe id, bad shape), security/authz (cross-user 403, off-scope tool refused, frozen
+  gate), money (402 when short, charge-once), and any invariant a real bug proved load-bearing (the
+  WHY-comment names it). "It refuses X" where X-refusal is the promise = a contract test. Keep.
+- **CUT** a test that: (a) asserts an incidental non-behaviour no contract states ("doesn't touch
+  unrelated field Y"); (b) re-proves a contract already covered elsewhere (fold into a `parametrize`
+  row or delete the dup); (c) pins an implementation detail (node index, literal `.rpy`/`.gd`
+  substring, private call order) rather than an observable promise; (d) is a tautology / restates the
+  mock.
+- [x] **Audit for cut candidates** — DONE (2026-07-08, 55 files). Finding: bloat is STRUCTURAL
+      (clone-not-parametrize), not weak-assert. True cuts small (~11); big lever is FOLD (~80 near-dup
+      `def test_` fns → ~19 `parametrize`). Headline "doesn't do X" incidental cuts confirmed only in
+      `test_comfyui_prompt.py`.
+- [~] **Apply approved cuts** — partial (2026-07-08). Applied the high-confidence, contract-preserving
+      set (691→686, green):
+      - `test_comfyui_prompt`: cut `test_no_pony_booru_quality_tags_leak` (incidental score_* absence);
+        trimmed incidental "not in prompt" negatives + `ckpt_name` node-index from `test_item_job` /
+        `test_background` / `test_cg` (kept the positive contract in each, renamed).
+      - `test_renpy_component_schemas::test_write_node_rejects_start_id` (redundant — `test_maestro_tools`
+        covers it).
+      - `test_auth_router::test_auth_router_exposes_no_signup_route` (redundant — `test_auth_gate`
+        app-level route set is the stronger surface).
+      - `test_execution_context::test_nested_contexts` (redundant — `test_nesting_restores_outer_values`
+        supersedes: adds subtask_id).
+      - `test_llm_rate_limit::test_rate_limiter_maintains_rate` (flaky wall-clock re-proving the bucket
+        that `allows_burst`+`refills_tokens` already pin).
+      HELD FOR HUMAN: the godot/renpy `.gd`-substring greps (`test_godot_runtime_gd`,
+      `test_renpy_fns` overworld, `test_tile_assets` trellis) — technically impl-detail, but the ONLY
+      runtime coverage on CI without a godot binary (real self-tests are `skipif`); fix via G3 (drive
+      the runtime), don't delete. Plus the UNSURE "doesn't do X" list (compile-tool-absent,
+      no-cancel-endpoint, no-signup, foreign-font hygiene) — each may encode a real posture.
+- [ ] **Apply the FOLD pass** (~80→~19 parametrized) — the real structural reduction. Biggest files:
+      `test_settings_manager` (13→2), `test_ir_crossref` (15→2), `test_world_rpg` (12→2),
+      `test_maestro_tools` write_node family (9→2), `test_scenes_prompts`/`test_content_prompts`/
+      `test_world_prompts` (~7 each→2). Assertions preserved as rows; net −~60 fns.
+- **Guardrail:** the goal is fewer tests that each guard MORE contract, not a coverage-% drop for its
+  own sake. Never cut a validation/authz/money refusal. When unsure whether a refusal is a promise,
+  KEEP + flag for the human.
+
 ## Ordering
 G1 first (it removes the bloat mechanism and makes every later test cheaper). G4 alongside G1 (codify
-while building the fixtures). G2/G3 are steady cleanup/fill-in.
+while building the fixtures). G2/G3 are steady cleanup/fill-in. G5 (reduction) is the counterweight
+to G3 — run them together so the suite fills real gaps while shedding incidental/redundant tests;
+net test count should stay flat or fall, not balloon.

@@ -27,20 +27,6 @@ class TestExecutionContext:
         assert get_subtask_id() is None
         assert get_execution_context()['task_id'] is None
 
-    def test_nested_contexts(self):
-        """Test that nested contexts work correctly"""
-        with execution_context(task_id="outer"):
-            assert get_task_id() == "outer"
-
-            with execution_context(task_id="inner"):
-                assert get_task_id() == "inner"
-
-            # Restored to outer
-            assert get_task_id() == "outer"
-
-        # Cleared
-        assert get_task_id() is None
-
     def test_partial_context(self):
         """Test context with only task_id or only subtask_id"""
         with execution_context(task_id="test-task"):

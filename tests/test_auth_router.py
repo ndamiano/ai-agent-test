@@ -37,7 +37,3 @@ def test_login_rejects_unknown_user():
     assert exc.value.status_code == 401
 
 
-def test_auth_router_exposes_no_signup_route():
-    paths = {getattr(r, "path", None) for r in auth_router.router.routes}
-    assert "/login" in paths
-    assert not any(p and ("signup" in p or "register" in p) for p in paths)

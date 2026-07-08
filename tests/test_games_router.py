@@ -11,6 +11,7 @@ from api.build_queue import build_queue, AlreadyQueued
 from maestro import run_control
 from maestro.state import RunState
 from auth.store import User
+from conftest import patch_run_state_for as _patch_for_run
 
 U = User(id="u1", handle="alice", role="user")
 OTHER = User(id="u2", handle="bob", role="user")
@@ -62,8 +63,7 @@ def test_list_games_empty_when_no_runs_dir(tmp_path, monkeypatch):
 
 
 def test_get_game_404_for_unknown(tmp_path, monkeypatch):
-    monkeypatch.setattr(RunState, "for_run",
-                        classmethod(lambda cls, rid: RunState(tmp_path / rid)))
+    _patch_for_run(monkeypatch, tmp_path)
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
         asyncio.run(games.get_game("ghost", user=U))
@@ -79,11 +79,6 @@ def test_get_game_403_for_another_users_run(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(games.get_game("g", user=OTHER))
     assert exc.value.status_code == 403
-
-
-def _patch_for_run(monkeypatch, base):
-    monkeypatch.setattr(RunState, "for_run",
-                        classmethod(lambda cls, rid: RunState(base / rid)))
 
 
 def _fund(monkeypatch, tmp_path, user_id="u1", credits=10):
@@ -255,8 +250,7 @@ def test_amend_spec_404_for_unknown(tmp_path, monkeypatch):
 
 
 def test_get_game_returns_spec_artifact_todo(tmp_path, monkeypatch):
-    monkeypatch.setattr(RunState, "for_run",
-                        classmethod(lambda cls, rid: RunState(tmp_path / rid)))
+    _patch_for_run(monkeypatch, tmp_path)
     state = RunState(tmp_path / "g1")
     # no modules -> no checks, so the to-do is empty once the spec is frozen
     state.write_spec({"title": "G1", "frozen": True, "modules": [], "params": {}})

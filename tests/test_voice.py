@@ -1,5 +1,4 @@
 """Voice generation: filename derivation, projection, placeholder backfill, gating."""
-import json
 import sys
 import wave
 from pathlib import Path
@@ -9,12 +8,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from maestro.ir_assemble import voice_file, voiced_lines
 from renpy.ir_vn import compile_vn
 from tools.tts_tools import pick_voice
-
-_EXAMPLE = Path(__file__).parent.parent / "docs" / "examples" / "vn_crappy.json"
+from conftest import load_example
 
 
 def _ir():
-    return json.loads(_EXAMPLE.read_text())
+    return load_example("vn_crappy")
 
 
 # --- derivation -------------------------------------------------------------

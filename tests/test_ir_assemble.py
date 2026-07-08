@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import jsonschema
 from maestro.ir_assemble import assemble_ir
 from maestro.ir_crossref import crossref_errors
+from conftest import load_example
 
 _SCHEMA = json.loads((Path(__file__).parent.parent / "docs" / "game_ir.schema.json").read_text())
 _VALIDATOR = jsonschema.Draft202012Validator({k: v for k, v in _SCHEMA.items() if k != "examples"})
@@ -71,7 +72,7 @@ def test_crossref_catches_dangling_ref_after_assemble():
 
 
 def test_example_roundtrips_through_components():
-    ex = json.loads((Path(__file__).parent.parent / "docs" / "examples" / "vn_crappy.json").read_text())
+    ex = load_example("vn_crappy")
     art = {
         "characters": {"characters": ex["characters"]},
         "asset_manifest": {"backgrounds": [], "characters": []},

@@ -11,9 +11,10 @@ from renpy.ir_pnc import compile_pnc
 from renpy.ir_compiler import compile_ir
 from renpy.fns import _get_sdk_path
 from maestro.ir_crossref import crossref_errors
+from conftest import load_example
 
 _ROOT = Path(__file__).parent.parent
-_EXAMPLE = json.loads((_ROOT / "docs" / "examples" / "pnc_crappy.json").read_text())
+_EXAMPLE = load_example("pnc_crappy")
 _SCHEMA = json.loads((_ROOT / "docs" / "game_ir.schema.json").read_text())
 _VALIDATOR = jsonschema.Draft202012Validator({k: v for k, v in _SCHEMA.items() if k != "examples"})
 

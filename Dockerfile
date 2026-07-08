@@ -54,6 +54,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY run.py ./
 COPY src/ ./src/
 COPY --from=frontend /build/frontend/dist ./frontend/dist
+# Runtime data, not just docs: the IR JSON-Schema is loaded at build time by the crossref gate,
+# both engine compilers, and world.py. Resolved as <repo>/docs/*.schema.json == /app/docs/.
+COPY docs/*.schema.json ./docs/
 
 # Durable state (runs/ + private/auth.db) lives OUTSIDE the source tree on a named volume.
 # Creating + chowning the mountpoint means the empty named volume inherits maestro's ownership on

@@ -1,0 +1,9 @@
+A `start_combat` hotspot names an ENCOUNTER id that isn't declared. The TARGET names the place +
+hotspot. Repoint it to a real encounter, or drop the hotspot:
+
+    edit_place / add_interactable so the start_combat action's `encounter` is one of the encounter
+    ids listed under COMBAT below.
+
+Do NOT author combat here — just point the hotspot at a declared encounter (or remove the
+start_combat action). Reuse EXACT ids.
+{{include:tool_call_rule}}

@@ -1,0 +1,12 @@
+An effect or a `requires` gate reads/sets a VARIABLE that no scene declares. Fix the ONE site the
+TARGET names:
+
+  - give it a producer earlier —
+        edit_node(node_id="<an earlier node from NODES>", line_index=N,
+                  effects=[{"add_var":{"var":"<the var>","by":1}}])   // or set_var
+  - OR remove the dangling reference: edit this node/place to drop the variable from its
+    effects/requires.
+
+A variable id is a plain STRING; a gate reads it as {"var":"<id>","op":"...","value":...}. Fix only
+the named one.
+{{include:tool_call_rule}}

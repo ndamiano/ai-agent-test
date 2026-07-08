@@ -123,3 +123,57 @@ def ctx_crossref(module, rd: Dict) -> str:
     lines = target_block(rd) + id_catalogues(art) + tail_block(rd)
     lines += ["", "Repoint the reference to a real id above (or create the missing one)."]
     return "\n".join(lines)
+
+
+# ── per-kind crossref repair (shared by scenes / world / combat) ──────────────
+# A dangling reference is fixed by EDITING the slice that HOLDS it (tools from the path) and
+# repointing to a real id of the KIND that failed (system prompt + the ONLY catalogue that kind
+# resolves into, from Error.kind). No generic menu, no whole-catalogue dump: each kind ships its own
+# specific instruction. A crossref check wires `build_prompt=crossref_correction` and its detector
+# carries `kind=rec.get("kind")` on the Error.
+_SLICE_TOOLS = {
+    "nodes": ("read_node", "edit_node", "write_node"),
+    "start.node": ("read_node", "edit_node", "write_node"),
+    "places": ("read_place", "edit_place", "add_interactable"),
+    "start.place": ("read_place", "edit_place", "set_places_meta"),
+}
+
+
+def _kind_catalogue(kind: str):
+    def fn(art: Dict) -> List[str]:
+        from maestro.modules import assets, cast, combat, inventory, scenes, world
+        by_kind = {
+            "character": cast.character_index, "node": scenes.nodes_index_block,
+            "place": world.places_index_block, "item": inventory.item_index,
+            "encounter": combat.combat_index_block, "location": assets.location_index,
+            # flags/variables have no id catalogue — they're declared in nodes; show where.
+            "flag": scenes.nodes_index_block, "variable": scenes.nodes_index_block,
+        }
+        return by_kind.get(kind, id_catalogues)(art)
+    return fn
+
+
+_KIND_FIX = {
+    "character": "crossref_character.txt", "node": "crossref_node.txt",
+    "place": "crossref_place.txt", "item": "crossref_item.txt",
+    "encounter": "crossref_encounter.txt", "flag": "crossref_flag.txt",
+    "variable": "crossref_variable.txt",
+}
+
+
+def crossref_correction(module, ctx, error):
+    from maestro.ir_crossref import slice_token
+    from maestro.modules.context import render_dict
+    from maestro.modules.module import CorrectionPrompt, load_prompt
+
+    art = ctx.artifact
+    tools = _SLICE_TOOLS.get(slice_token(error.path or ""),
+                             tuple(getattr(module, "mode_tools", ()) or ()))
+    rd = render_dict(ctx, active=error.component, target=error, available_tools=frozenset(tools))
+    prompt_file = _KIND_FIX.get(error.kind)
+    if prompt_file:
+        system, catalogue = load_prompt(prompt_file), _kind_catalogue(error.kind)(art)
+    else:
+        system, catalogue = load_prompt("crossref_generic.txt"), id_catalogues(art)
+    user = "\n".join(target_block(rd) + catalogue + tail_block(rd))
+    return CorrectionPrompt(system=system, user=user, allowed_tools=tuple(tools))

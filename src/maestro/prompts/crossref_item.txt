@@ -1,0 +1,9 @@
+A take / add_item / remove_item effect or a `requires:{item}` gate names an ITEM id that isn't
+declared, and this game has no item catalogue to add it to. Fix the ONE named site:
+
+  - repoint it to an existing item from ITEMS below if one genuinely fits, OR
+  - remove the dangling item reference — edit the holding node/place to drop the take/effect/gate
+    that names it.
+
+Do NOT invent an item. Edit only the site the TARGET names.
+{{include:tool_call_rule}}

@@ -641,7 +641,7 @@ def _d_crossref(chk, m, ctx):
         if has_inv and rec.get("kind") == "item":
             continue
         out.append(Error(type=chk.tier, code=chk.code, component="places", message=rec["message"],
-                         path=rec.get("path"), ref=rec.get("ref")))
+                         path=rec.get("path"), ref=rec.get("ref"), kind=rec.get("kind")))
     return out
 
 
@@ -713,8 +713,8 @@ class World(Module):
         Check("nodes_entered", lambda chk, m, ctx: m.wrap(chk, nodes_world_entered(ctx.artifact)),
               job="fix", prompt="places_fix.txt", skeleton=_w_skeleton, tools=_T_TERMINAL,
               context=cr.ctx_crossref),
-        Check("crossref", _d_crossref, job="fix", when_clean=True, prompt="places_fix.txt",
-              skeleton=_w_skeleton, tools=_T_TERMINAL, context=cr.ctx_crossref),
+        Check("crossref", _d_crossref, job="fix", when_clean=True,
+              build_prompt=cr.crossref_correction, tools=_T_TERMINAL),
         Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="places_fix.txt",
               skeleton=_w_skeleton, tools=_T_TERMINAL, context=cr.ctx_crossref),
     ]

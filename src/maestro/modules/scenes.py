@@ -15,9 +15,7 @@ from typing import Dict, List, Optional, Set
 from maestro import context_render as cr
 from maestro.ir_assemble import EMOTIONS as _EMOTIONS_TUPLE
 from maestro.modules import checks, views
-from maestro.modules.context import render_dict
-from maestro.modules.module import (Check, CorrectionPrompt, Error, Module, load_prompt,
-                                    register_module)
+from maestro.modules.module import Check, Error, Module, load_prompt, register_module
 from maestro.modules.story import render_beat
 
 _END_TYPES = {"jump", "menu", "return", "end"}
@@ -579,36 +577,6 @@ def _d_crossref(chk, m, ctx):
                   path=rec.get("path"), ref=rec.get("ref"), kind=rec.get("kind"))
             for rec in checks.crossref_failures(ctx.artifact)
             if not (has_inv and rec.get("kind") == "item")]
-
-
-# ── per-kind crossref repair ──────────────────────────────────────────────────
-# The detector already knows WHAT failed (Error.kind) and WHERE (path/ref). Instead of one generic
-# "repair the nodes" menu, each ref kind gets its OWN fix prompt + ONLY the id catalogue it can
-# resolve into. Add a kind = add a (prompt.txt, catalogue) entry — no generic fallback survives an
-# audit. `_CROSSREF_KINDS` maps kind -> (system prompt file, catalogue(art) -> [str]).
-def _cast_index(art):
-    from maestro.modules import cast
-    return cast.character_index(art)
-
-
-_CROSSREF_KINDS = {
-    "character": ("nodes_crossref_character.txt", _cast_index),
-    "node": ("nodes_crossref_node.txt", nodes_index_block),
-}
-
-
-def _crossref_correction(m, context, error: Error) -> CorrectionPrompt:
-    rd = render_dict(context, active=error.component, target=error, available_tools=_T_EDIT_WRITE)
-    art = context.artifact
-    entry = _CROSSREF_KINDS.get(error.kind)
-    if entry:
-        system, catalogue = load_prompt(entry[0]), entry[1](art)
-    else:
-        # A kind without a specific prompt yet: the shared repair prompt + all catalogues. Every
-        # such kind is a TODO for the per-error prompt audit — this branch should shrink to nothing.
-        system, catalogue = load_prompt("nodes_fix.txt"), cr.id_catalogues(art)
-    user = "\n".join(cr.target_block(rd) + catalogue + cr.tail_block(rd))
-    return CorrectionPrompt(system=system, user=user, allowed_tools=tuple(_T_EDIT_WRITE))
 
 
 def _d_compiles(chk, m, ctx):
@@ -1184,7 +1152,7 @@ class Scenes(Module):
         Check("min_branches", _d_min_branches, tools=_T_EDIT_WRITE),
         Check("all_characters_speak", _d_all_characters_speak, tools=_T_EDIT_WRITE),
         Check("crossref", _d_crossref, job="fix", when_clean=True,
-              build_prompt=_crossref_correction, tools=_T_EDIT_WRITE),
+              build_prompt=cr.crossref_correction, tools=_T_EDIT_WRITE),
         Check("compiles", _d_compiles, job="fix", when_clean=True, prompt="nodes_fix.txt",
               tools=_T_EDIT_WRITE, context=cr.ctx_crossref),
     ]

@@ -8,7 +8,7 @@ import EncounterCard from './EncounterCard'
 import AssetManifestCard from './AssetManifestCard'
 import { api } from '../../../api/client'
 
-const asset = (component: string, id: string, content: Record<string, any>): Asset => ({
+const asset = (component: string, id: string, content: Record<string, unknown>): Asset => ({
     component, id, idkey: `${component}:${id}`, content, dirty: false, review_note: '',
 })
 
@@ -76,7 +76,7 @@ describe('D4 bespoke component-browser renderers mount for a sample asset of the
     })
 
     it('EncounterCard renders each flattened combat item shape', () => {
-        const cases: [string, Record<string, any>][] = [
+        const cases: [string, Record<string, unknown>][] = [
             ['hp', { id: 'hp', default: 30, role: 'resource_depletable', min: 0, max: 30 }],
             ['slash', { id: 'slash', name: 'Slash', targeting: { shape: 'single', faction: 'enemy' }, effects: [{ stat: 'hp', op: 'damage', formula: { base: 4 } }] }],
             ['cb_hero', { id: 'cb_hero', character: 'mara', stats: [{ stat: 'hp', value: 30 }], abilities: ['slash'], xp_yield: 10 }],

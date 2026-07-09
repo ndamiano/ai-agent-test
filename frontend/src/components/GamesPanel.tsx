@@ -264,10 +264,12 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const feedRef = useRef<HTMLDivElement>(null)
     useEffect(() => { feedRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed])
 
-    // A build is actively writing only when running — when paused the executor is parked, so
-    // hand-edits / compile / regenerate are safe.
+    // Compile / package / regenerate read + rewrite the whole run, so they still wait for the
+    // executor to be parked (paused or done). Per-asset content EDITS do NOT — the browser edits
+    // any component mid-build (backend C3 dropped the paused-build gate; an edit just reflags).
     const running = building && status !== 'paused'
     const editable = !!detail?.frozen && !running
+    const contentEditable = !!detail?.frozen
 
     const act = async (fn: () => Promise<unknown>, errMsg: string, reload = true) => {
         setActing(true); setError(null)
@@ -488,7 +490,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 component. ── */}
             <div className="flex-1 flex flex-col min-h-0">
                 <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
-                    <ComponentBrowser runId={runId} componentIds={componentIds} editable={editable}
+                    <ComponentBrowser runId={runId} componentIds={componentIds} editable={contentEditable}
                         specNode={<>
                             <SpecPlan spec={detail.spec as Record<string, any>} editable={planEditable} busy={acting} onAmend={amend} />
                             {detail.spec.request && <p className="text-gray-400 text-sm">{detail.spec.request}</p>}
@@ -542,9 +544,8 @@ const GamesPanel: React.FC<{ focusRunId?: string | null }> = ({ focusRunId }) =>
         <div className="h-full flex">
             {/* List */}
             <div className="w-72 flex-shrink-0 border-r border-white/[0.06] flex flex-col">
-                <div className="flex-shrink-0 px-3 py-2 flex items-center justify-between border-b border-white/[0.06]">
+                <div className="flex-shrink-0 px-3 py-2 flex items-center border-b border-white/[0.06]">
                     <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide">Games</span>
-                    <button onClick={refresh} className="text-gray-600 hover:text-gray-300 text-xs">Refresh</button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
                     {loading && <div className="p-3 text-gray-500 text-sm">Loading…</div>}

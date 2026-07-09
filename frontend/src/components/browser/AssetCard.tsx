@@ -10,7 +10,7 @@ const AssetCard: React.FC<{
     asset: Asset
     editable: boolean
     busy: boolean
-    onSave: (content: Record<string, any>) => Promise<void>
+    onSave: (content: Record<string, unknown>) => Promise<void>
     onThumbsUp: () => void
     onThumbsDown: (note: string) => void
 }> = ({ asset, editable, busy, onSave, onThumbsUp, onThumbsDown }) => {

@@ -1,31 +1,78 @@
 {
   "stage": "story",
   "pipeline": "renpy",
+  "scale": {
+    "min": 0,
+    "max": 4,
+    "display_multiplier": 25
+  },
+  "note": "You are reading the dramatic PLAN for a branching visual novel, not its finished scenes. The plan has four parts: a central question (the tension the whole story turns on), a beat-sheet arc (an ordered list of beats, each with a summary of what happens plus a register and a dramatic job), a set of endings (each a concrete final scene), and, for each ending, the specific beat and choice that earns it. Judge only the dramatic structure the plan lays out — whether the question is a real dilemma, whether the endings genuinely disagree about how to answer it, whether the beats escalate and each move the situation somewhere new, and whether each ending is earned by a distinct choice. You are not judging prose quality, dialogue, or line-level craft; those are written later. Score on the story's own register — a quiet, low-stakes premise can reach the top level on its own terms, and a plan is never better for reaching for grand stakes. The top level is a plan a writer would actually build from, not a flawless one. For each criterion, pick the single level (0-4) whose description best matches the plan, and cite the specific question, beat, or ending as evidence.",
   "criteria": [
     {
-      "name": "endings_answer_differently",
-      "description": "Each ending's 'answer' field takes a genuinely different position on the central question, and the summary delivers that position through a choice the protagonist makes. Test: if two endings give the same answer with different outcomes (both 'she chooses the family' but one happy, one sad), score 0–40. If covering the answer fields and re-deriving them from the summaries alone is possible, and they all differ, score 75+.",
-      "weight": 2.0
+      "name": "central_question_real",
+      "weight": 2.0,
+      "_authoring": "The spine everything hangs from. Two failure attractors: (1) a theme WORD dressed as a question ('a story about connection and loss') instead of a question about these people in this situation, and (2) a question with an obvious right answer or a yes/no plot outcome ('will they escape the building?') rather than a values tension a reasonable person could answer either way. A real central question forces a trade-off between two things the protagonist genuinely wants or values.",
+      "description": "Does the central question pose a real values tension about these specific people — a trade-off a reasonable person could answer either way — rather than a theme word or a question with an obvious answer?",
+      "levels": {
+        "0": "Not a real question. It is a theme label ('connection versus isolation') or a plot outcome with one obvious answer ('will she survive?') — there is no values tension, nothing a thoughtful person would genuinely disagree about.",
+        "1": "A question in form only. It names the situation but the answer is foregone, or it stays so abstract that no concrete choice by this protagonist would settle it.",
+        "2": "A workable dilemma. It poses a real trade-off about these people, though it is stated broadly enough that it could belong to many stories, or one side is clearly weighted over the other.",
+        "3": "A genuine tension. The question forces a specific trade-off between two things this protagonist wants or values, and both answers are defensible — you can imagine an honest person landing on either side.",
+        "4": "The exact fault line. The question is inseparable from this cast and situation, cuts to a cost the protagonist cannot avoid paying, and is sharp enough that every beat and ending can be read as taking a position on it."
+      }
     },
     {
-      "name": "no_repeated_conflicts",
-      "description": "Across trunk and arms, no two scenes stage the same confrontation between the same people about the same thing. Each scene's whats_new states a real change (something learned, a relationship shifted, a door closed) — not 'tension increases.' Test: if any scene could be deleted and the chain of whats_new still holds, score 0–45. If every scene moves the situation somewhere it hasn't been, score 70+.",
-      "weight": 2.0
+      "name": "endings_diverge",
+      "weight": 2.5,
+      "gate": {"threshold": 2},
+      "_authoring": "The load-bearing criterion and the whole point of a branching story: the endings must take genuinely DIFFERENT positions on the central question, not the same answer in different weather. The persistent failure is 'same answer, different mood' — two endings where the protagonist makes the same choice but one is happy and one is sad, or endings distinguished only by who survives rather than by what was decided. Also anchored: abstract-label endings ('integration', 'closure') that state no position at all. Test the author can run: cover the endings' framing and re-derive each one's stance on the question from what actually happens — if two collapse to the same stance, this is below level 2. GATE: below level 2 caps the overall at its own score — a plan whose branches all mean the same thing is not a branching story no matter how good its beats are.",
+      "description": "Does each ending take a genuinely different position on the central question — a different answer, not the same answer with a different outcome or mood?",
+      "levels": {
+        "0": "One answer wearing costumes. The endings resolve the question the same way and differ only in mood or in who ends up where (all 'she stays', but one bittersweet, one bleak), or they are abstract labels ('integration', 'acceptance') that take no position on the question at all.",
+        "1": "Barely distinct. At most one ending truly answers differently; the rest give the same stance with cosmetic variation, or an ending's position on the question cannot be read from what happens in it.",
+        "2": "Positions differ. The endings land on recognizably different answers to the question, though one may be a near-duplicate of another or a middle option that reads as a compromise between two others rather than its own stance.",
+        "3": "Each stakes its own claim. Every ending answers the central question a distinct way and you could re-derive its stance from the concrete scene alone; the set covers a real spread of how the tension could resolve.",
+        "4": "A true fork. Each ending is an unmistakable, committed answer to the question — no two could be swapped or merged — and together they map the honest range of the dilemma, each paying a different price."
+      }
     },
     {
-      "name": "choice_quality",
-      "description": "The commitment choice and crisis choices are dilemmas a reasonable player could defend either way, written as concrete protagonist actions with visible cost — pulling toward different answers to the central question. Test: 'be honest / lie' or 'go left / go right' scores 0–40. If both options are defensible strategies and a player would hesitate, score 70+. The two arm strategies must be genuinely different approaches, not the same plan with different moods.",
-      "weight": 1.5
+      "name": "beats_escalate",
+      "weight": 2.0,
+      "_authoring": "Covers the old 'no_repeated_conflicts' intent against current vocab. Each beat's summary must move the situation somewhere it has not been; the failure is beats that restage the same confrontation between the same people about the same thing, or a summary that reports a mood-shift ('tension rises') instead of a concrete change (something learned, a line crossed, a door closed). The rise should be BACK-LOADED — the heavy beats late — with the crisis/fork as the last beat, and not every beat needs stakes (an early bonding/comedy beat at tension 'none' is correct). Test: could a beat be deleted and the chain still hold? If yes, it did no unique work.",
+      "description": "Do the beats escalate toward the crisis, with each beat moving the situation somewhere it has not been — a concrete change, not a repeat of an earlier confrontation or a vague rise in tension?",
+      "levels": {
+        "0": "Running in place. Beats restage the same conflict between the same people about the same thing, or summaries report mood ('tension increases') with no concrete change; delete any beat and nothing downstream breaks.",
+        "1": "Mostly static. A couple of beats do real work but several are interchangeable or repeat an earlier confrontation, and there is no clear rise toward a crisis.",
+        "2": "Advances, unevenly. The arc generally moves forward and reaches a crisis, but the escalation is front-loaded or flat in stretches, or one or two beats restate what is already established.",
+        "3": "A real rise. Each beat makes a specific change that no other beat makes, the pressure builds toward a late crisis, and the crisis/fork sits at the end where the protagonist must choose on the question.",
+        "4": "Tightly escalating. Every beat turns the situation somewhere new and raises the cost, the rise is back-loaded so the heaviest beats land last, and something planted early clearly pays off in the crisis — the arc could not lose a beat without weakening."
+      }
     },
     {
-      "name": "scene_variety",
-      "description": "scene_type varies — no two consecutive scenes of the same type within a segment, and the story is not wall-to-wall confrontation. At least one respite or revelation scene exists. Locations vary. Scene casts follow from whose unresolved business collides with the protagonist's path, not from putting everyone in every scene.",
-      "weight": 1.0
+      "name": "endings_earned",
+      "weight": 1.5,
+      "_authoring": "Merges the old 'choice_quality' and 'arc_coherence' intent onto current vocab: the crisis/fork is the last beat, and each ending's earned_by (also mirrored in ending_paths) must name the SPECIFIC beat and choice that produces it — so the branches mean different decisions, not different scenery. Failures: a vague cause ('through courage and honesty'), an ending with no path, or every ending tracing to the same undifferentiated choice. The choice at the fork should be a real dilemma with a visible cost, pulling toward the different answers the endings represent — not 'be honest / lie' or a free pick with no consequence.",
+      "description": "Is each ending earned by a specific beat and choice at the crisis — a real decision with a visible cost that pulls toward that ending's answer — rather than by a vague cause or scenery alone?",
+      "levels": {
+        "0": "Endings from nowhere. The paths are vague ('through perseverance'), missing, or all trace to the same undifferentiated moment; the crisis is not a real choice, so which ending you reach feels arbitrary.",
+        "1": "Loosely attached. Some endings name a cause but it is generic, or the fork is a shallow pick (do the good thing / the bad thing) with no cost that would make a player hesitate.",
+        "2": "Traceable. Each ending points to a beat and a choice, though a couple of paths are thin or two endings lean on the same decision distinguished only by degree.",
+        "3": "Each ending is earned. Every ending names the specific beat and choice that produces it, the fork is a genuine dilemma with a visible cost, and each branch clearly enacts a different answer to the central question.",
+        "4": "Consequence, not scenery. Every ending is the unmistakable result of a distinct, costly choice at the crisis; the fork forces the protagonist to pay for whichever answer they pick, and the branches diverge because the decisions do."
+      }
     },
     {
-      "name": "arc_coherence",
-      "description": "The trunk escalates believably from opening to the commitment choice; each arm plays out its stated strategy meeting reality; final scenes set up their endings without resolving past them. Arms feel like consequences of the choice that opened them, not interchangeable continuations.",
-      "weight": 1.5
+      "name": "register_variety",
+      "weight": 1.0,
+      "_authoring": "Modernizes the old 'scene_variety' onto the beat's real fields — the beat `type` register (bonding | comedy | friction | plot | character) and its opening-register rule. NOT scene_type (stale). Failure: wall-to-wall friction/plot with no lighter beat, or an opening register that ignores the premise (a 'bonding' beat with adversaries, small talk between an interrogator and a detainee). A good arc lets a heavy late beat land because its topic first arrived light. A grim premise can be uniformly tense and still be right — judge fit to the premise, not a quota.",
+      "description": "Does the beats' register vary in a way that fits the premise — an opening register true to who these people are, and lighter or quieter beats where the relationship warrants them — rather than one uniform note throughout?",
+      "levels": {
+        "0": "One note, wrong note. Every beat is the same register (wall-to-wall friction/plot), or the opening register contradicts the premise (a bonding beat between adversaries, small talk grafted onto a hostile situation).",
+        "1": "Monotone. The registers barely differ and nothing sets up a later payoff; the opening does not clearly come from who these people are.",
+        "2": "Some variation. The registers shift here and there and the opening roughly fits, but the arc leans heavily on one register or misses a chance to let a light beat set up a heavy one.",
+        "3": "Varied and fitting. The registers move with the story, the opening register is true to the premise, and at least one lighter or quieter beat gives the heavier ones room to land.",
+        "4": "Register in service of the arc. The mix of registers is deliberate — an early light beat plants what a late heavy beat pays off — and every register choice reads as the right one for that moment in this particular story."
+      }
     }
   ]
 }

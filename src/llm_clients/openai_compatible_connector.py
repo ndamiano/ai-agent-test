@@ -260,7 +260,7 @@ class OpenAICompatibleConnector(BaseConnector):
 
     def generate_with_tools(self, messages: list, tools: list = None, response_format: dict = None,
                             max_tokens: int = None, reasoning=_REASONING_UNSET,
-                            model: str = None) -> dict:
+                            model: str = None, temperature: float = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -269,7 +269,7 @@ class OpenAICompatibleConnector(BaseConnector):
 
         request_id = str(uuid.uuid4())
         return self._call_responses(messages, tools, response_format, max_tokens, request_id,
-                                    reasoning, model=model)
+                                    reasoning, model=model, temperature=temperature)
 
     def _evict_for(self, target_model: str) -> None:
         """llama-server's router autoloads but never evicts — two ~22GB models can't coexist, so
@@ -312,13 +312,14 @@ class OpenAICompatibleConnector(BaseConnector):
 
     def _responses_payload(self, messages: list, tools: list, response_format: Optional[dict],
                            max_tokens: Optional[int], stream: bool,
-                           reasoning=_REASONING_UNSET, model: str = None) -> dict:
+                           reasoning=_REASONING_UNSET, model: str = None,
+                           temperature: float = None) -> dict:
         """Build the Responses-API request body from chat-shaped inputs."""
         instructions, input_items = _chat_messages_to_responses_input(messages)
         payload = {
             "model": model or self.model_name,
             "input": input_items,
-            "temperature": 0.7,
+            "temperature": 0.7 if temperature is None else temperature,
             "max_output_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "frequency_penalty": self.frequency_penalty,
             "stream": stream,
@@ -347,7 +348,8 @@ class OpenAICompatibleConnector(BaseConnector):
 
     def _call_responses(self, messages: list, tools: list, response_format: Optional[dict],
                         max_tokens: Optional[int], request_id: str,
-                        reasoning=_REASONING_UNSET, model: str = None) -> dict:
+                        reasoning=_REASONING_UNSET, model: str = None,
+                        temperature: float = None) -> dict:
         """Call the OpenAI-compatible Responses endpoint, translating to/from chat shape.
 
         The Responses API honors reasoning.effort — how we keep a local reasoning model from
@@ -355,7 +357,8 @@ class OpenAICompatibleConnector(BaseConnector):
         callers as the old chat path did, so call sites are unchanged."""
         self._evict_for(model or self.model_name)
         payload = self._responses_payload(messages, tools, response_format, max_tokens,
-                                          stream=False, reasoning=reasoning, model=model)
+                                          stream=False, reasoning=reasoning, model=model,
+                                          temperature=temperature)
         endpoint = self.api_endpoint
         _log_request_to_file(payload=payload, endpoint=endpoint, request_id=request_id,
                              metadata={"method": "responses", "model": self.model_name,

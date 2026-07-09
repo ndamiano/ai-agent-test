@@ -1,0 +1,65 @@
+{
+  "stage": "combat",
+  "pipeline": "godot",
+  "scale": {
+    "min": 0,
+    "max": 4,
+    "display_multiplier": 25
+  },
+  "note": "You are reading the combat system of a turn-based RPG as structured data: the stats a fighter carries (hp/mp/attack and the like), the abilities that damage, heal, or apply statuses, the combatants (stat blocks tied to characters), the encounters that place combatants on opposing sides with win/lose conditions, and the progression that grows the player across fights. Judge the DESIGN of the fighting game, not any prose. Simulate it in your head: what happens turn by turn, does the player get stronger, does a later fight feel harder than the first, could any single move trivially win or any wall make a fight unwinnable. Score on the game's own scale — a small three-fight crypt can reach the top level on its own terms; more content is not automatically better. A merely valid system — one that meets the minimum counts and wires up cleanly — is a middling game, not a top one. For each criterion, pick the single level (0-4) whose description best matches the design, and cite specific ids, numbers, or stat blocks as evidence.",
+  "criteria": [
+    {
+      "name": "ability_variety",
+      "weight": 2.5,
+      "gate": {"threshold": 2},
+      "_authoring": "The one-note test — the load-bearing criterion for mechanic depth. The persistent failure is every enemy sharing the same one or two moves so every fight plays identically. GATE: below level 2 this caps the overall at its own score — a combat system where all fighters do the same thing is a shallow game no matter how flavorful its framing or how clean its numbers. Keep the gate mechanic out of judge-facing text; the judge just scores the level.",
+      "description": "Across the whole roster, do fighters bring meaningfully different kits — distinct abilities, and statuses that actually change how a fight plays — or does everyone throw the same one or two moves?",
+      "levels": {
+        "0": "One note. Every combatant fields the same single attack, or a lone enemy stat block is reused for every fight. There is one thing that happens in combat and it happens every turn; statuses are absent or declared but never used. A single ability could be deleted with nothing lost.",
+        "1": "Barely two-dimensional. There are a couple of abilities but they are near-duplicates (two single-target damage moves that differ only in a number), and enemies differ only in hp. Nothing a fighter does forces a different response.",
+        "2": "Functional spread. Distinct abilities exist across a few effect types (single vs. area, damage vs. heal) and at least one status or resource cost is real, but enemies still largely share a kit and the player's choices rarely matter to how a fight goes.",
+        "3": "Varied roles. Fighters read as different — a caster with a costed ranged hit, a bruiser, something that debuffs or applies a status — and enemies force different play (an area move to clear adds, a heal saved for a boss). Statuses and costs create real turn-to-turn decisions.",
+        "4": "A real kit. Every combatant has a recognizable identity expressed in what it does, not just its hp; abilities interact (a status sets up a payoff, a buff/debuff swings a fight), resources gate the strong options, and no two enemies play the same way. The player has genuinely different fights to think through."
+      }
+    },
+    {
+      "name": "difficulty_escalation",
+      "weight": 2.0,
+      "_authoring": "Level 0 anchored to the observed attractor: every encounter the same difficulty and progression declared but inert (growth values that don't change any outcome). Mechanical validity — two encounters exist and progression is wired, the build's floor — sits at level 2, not the top.",
+      "description": "Do the fights form a rising curve — later encounters meaningfully tougher than the first — and is the growth loop real, so leveling up and stat gains keep pace with the escalation rather than sitting inert?",
+      "levels": {
+        "0": "Flat. Every encounter is the same difficulty — interchangeable enemy stat blocks, same count, same threat — and either there is no progression or the growth is inert (level-ups that grant nothing that changes an outcome, xp_yield of zero, a curve that never moves the player). A fight late is no harder than a fight early.",
+        "1": "Token ramp. One fight is nominally bigger (a few more hp) but the jump is trivial, and progression exists on paper without a curve you can feel — growth is negligible against the enemy numbers.",
+        "2": "Wired but shallow. The encounters and the progression loop are both present and valid — a couple of fights, xp and level growth declared — but the escalation is mild and mechanical: a boss with more hp, growth that roughly tracks but was not tuned to the fights it gates.",
+        "3": "A curve. Later encounters are clearly harder — tougher blocks, more or deadlier enemies, a new demand — and the growth loop answers it: earned levels and stat gains let a player who fought the earlier fights meet the next one on fair footing.",
+        "4": "A designed arc. Difficulty rises deliberately and each step introduces a new pressure (a status to manage, a phase, an enemy that punishes the old plan), and progression is paced so the player arrives at each fight stronger by roughly the amount the fight demands — earned, not gifted, and never trivializing what comes next."
+      }
+    },
+    {
+      "name": "economy_integrity",
+      "weight": 2.0,
+      "_authoring": "The non-degenerate-loop test. Anchored to the two real break modes: an ability whose damage base is at or above an enemy's max hp (one-shot everything), and a heal or defense that outpaces all incoming damage (unlosable) — plus the mirror wall (enemy damage exceeds player hp before the player can act). The build guarantees a fight CAN end (a depletable stat exists) but never that the loop is fair; that guarantee is a floor, so a merely-terminating loop is mid-scale.",
+      "description": "Is the win/lose loop reachable and non-degenerate — no move that trivially one-shots any fight, no heal or defense that makes the player unlosable, no unwinnable wall — with resource costs, damage, and XP/level/stat growth all sized to keep fights live and carry sensibly across the campaign?",
+      "levels": {
+        "0": "Degenerate. The loop is broken: a single ability's damage meets or exceeds an enemy's max hp so every fight is one turn, or a heal/defense outpaces all incoming damage so the player can never lose, or an enemy deals more than the player's hp before the player can act (an unwinnable wall). One number breaks the game.",
+        "1": "Badly tuned. The loop technically resolves but the numbers are lopsided — most fights end in a turn or two with no real risk, resource costs are free or irrelevant, and growth either explodes or never matters. The player is rarely in danger or rarely has a real choice.",
+        "2": "Holds together. Fights end the right way and the numbers are plausible — damage is a sensible fraction of hp, costs exist — but the balance is loose: some resources are decorative, the safe line is obvious, and growth carries across fights without being tuned to them.",
+        "3": "Live and coherent. Damage, hp, healing, and costs are sized so fights stay in doubt without a dominant move; resources force real trade-offs; XP, levels, and stat growth carry across encounters at a rate that keeps later fights fair. Nothing trivializes and nothing walls.",
+        "4": "Tuned. The economy is balanced end to end — every resource earns its place, the strongest options are gated by cost or condition so they cannot be spammed, damage and healing trade against each other so outcomes turn on decisions, and growth compounds across the campaign exactly enough to matter without breaking the curve."
+      }
+    },
+    {
+      "name": "encounter_flavor",
+      "weight": 1.5,
+      "_authoring": "Depth-of-fiction, kept a scored criterion not a gate — a faceless-but-balanced system should still score, just not top. Level 0 is the pure-parameter attractor: cb_hero vs cb_foe with no identity, no framing, no stakes. Score the framing the data actually carries (enemy identity, where a fight is entered, what victory/defeat lead to), not authored prose quality.",
+      "description": "Do the fights have identity and stakes — enemies that read as distinct threats, encounters tied to a place and a moment, and win/lose outcomes that lead somewhere in the story — or are they faceless stat blocks with no context?",
+      "levels": {
+        "0": "Faceless. Encounters are pure parameters: generically-named combatants, no tie to a place or story beat, and victory/defeat that lead nowhere or loop back indistinguishably. Nothing tells you who you are fighting or why it matters.",
+        "1": "Named only. Enemies have names but no character beyond a stat block, and the fights are not anchored — where a fight happens or what winning changes is arbitrary or absent.",
+        "2": "Some context. Fights are entered from real places and outcomes route back to the story, but the enemies are interchangeable and the stakes are generic — a fight because there is a fight, not because this one matters.",
+        "3": "Situated. Enemies read as distinct threats fitting the fiction, fights are entered where they belong and resolve into consequences that differ (a victory that opens the way, a defeat that costs something), and at least the set-piece fights feel like moments in the story.",
+        "4": "Dramatized. Each fight is a scene — a specific antagonist with an identity, a place and a reason it happens now, and win/lose outcomes that push the story in genuinely different directions. The mechanics and the fiction reinforce each other; the fights are events, not encounters on a list."
+      }
+    }
+  ]
+}

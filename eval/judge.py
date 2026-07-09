@@ -14,6 +14,8 @@ from llm_clients.inference import strip_fences
 
 logger = logging.getLogger(__name__)
 
+_JUDGE_TEMPERATURE = 0.1
+
 _SCORE_SYSTEM = (
     "You are a prefessional judge, who has played many visual novels."
     "Your goal is to score a visual novel between 0 and 4 extremely critically.  "
@@ -169,6 +171,20 @@ def _overall(scores: dict, rubric: dict) -> float:
     return _axis_overall(scores, rubric) if _has_axes(rubric) else _weighted_average(scores, rubric)
 
 
+def _apply_gates(overall: float, scores: dict, rubric: dict) -> float:
+    """A criterion may declare a `gate`: below its threshold level it caps the overall at its
+    own score. Encodes 'this criterion is load-bearing' — e.g. a scene of fluent nonsense
+    cannot post a decent overall on the strength of its craft."""
+    for c in rubric["criteria"]:
+        gate = c.get("gate")
+        entry = scores.get(c["name"])
+        if not gate or not isinstance(entry, dict) or "level" not in entry:
+            continue
+        if entry["level"] < gate.get("threshold", 2):
+            overall = min(overall, float(entry["score"]))
+    return overall
+
+
 def _weighted_average(scores: dict, rubric: dict) -> float:
     total_weight = sum(c.get("weight", 1.0) for c in rubric["criteria"])
     if not total_weight:
@@ -188,7 +204,11 @@ class Judge:
     def _call(self, system: str, user: str, json_mode: bool = False) -> str:
         messages = MessageBuilder(system).extend([MessageBuilder.user_msg(user)]).build()
         fmt = {"type": "json_object"} if json_mode else None
-        result = self._connector.generate_with_tools(messages, [], response_format=fmt)
+        # A judge must be near-greedy — at the generation default (0.7) the same artifact swings a
+        # full level on several criteria per pass (a global per-grade "mood"), roughly doubling
+        # aggregate variance. 0.1 makes most criteria deterministic per artifact.
+        result = self._connector.generate_with_tools(messages, [], response_format=fmt,
+                                                      temperature=_JUDGE_TEMPERATURE)
         if "error" in result:
             raise RuntimeError(f"Judge LLM error: {result['error']}")
         return result["choices"][0]["message"]["content"].strip()
@@ -207,6 +227,7 @@ class Judge:
                     overall = _axis_overall(scores, rubric)
                 else:
                     overall = parsed.get("overall") or _weighted_average(scores, rubric)
+            overall = _apply_gates(overall, scores, rubric)
             return {"scores": scores, "overall": float(overall)}
         except Exception as e:
             logger.warning(f"Judge scoring failed: {e}")

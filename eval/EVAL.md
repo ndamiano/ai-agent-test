@@ -63,6 +63,8 @@ The live rubric is `rubrics/renpy_e2e.json` — **level-based** and **axis-struc
 
 **Technical validity is a gate, not a scored axis.** A game that fails lint / the Ren'Py build is marked failed and excluded from scoring rather than scored as a bad game, so a pretty-but-broken game can never post a high creative score. With no Ren'Py SDK installed, lint can't run and the gate passes.
 
+**Criterion gates (a load-bearing criterion caps the overall).** A criterion may declare `"gate": {"threshold": N}`. When the judge scores it below level `N`, the overall is capped at that criterion's own score — the rest of the rubric can't lift it. Use this for a criterion that is the whole game: if it fails, nothing else matters. The live example is `coherence` in `renpy_node_scripts.json` (`threshold: 2`) — a scene of fluent nonsense scores *as* nonsense no matter how distinct its voices or tight its economy. Applied in `_apply_gates` after the overall is computed; inert on rubrics that declare no gate. Keep the gate description in an `_authoring` field, not judge-facing text — the judge scores the level normally and never sees the cap mechanic.
+
 ## Files
 
 ```

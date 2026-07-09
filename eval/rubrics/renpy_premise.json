@@ -1,31 +1,65 @@
 {
   "stage": "premise",
   "pipeline": "renpy",
+  "scale": {
+    "min": 0,
+    "max": 4,
+    "display_multiplier": 25
+  },
+  "note": "You are reading a game premise drafted from a user's request. It gives a title, a one-line concept hook, a story paragraph (named characters with backstories, the situation's central tension, and 2-3 mutually exclusive branching endings), a set of game-mechanic modules chosen for the game (each with a one-sentence reason tying it to the story), and a story_state_schema of the continuity the game hinges on. Judge whether this is a real, buildable story worth making — on its own register: a quiet, small-scale premise can reach the top level on its own terms, and a premise is never better for being grand or high-concept. Slop is scale-invariant — a hook is not a premise and a quirk is not a character, at any size. You have only what the premise states; do not credit merits it does not show. For each criterion, pick the single level (0-4) whose description best matches, and quote specific text as evidence.",
   "criteria": [
     {
+      "name": "central_tension",
+      "weight": 2.5,
+      "gate": {"threshold": 2},
+      "_authoring": "The load-bearing criterion — a premise with no real dilemma is decorative no matter how vivid its prose, so this is the one thing the whole build rests on. Anchored to the two persistent attractors: the logistics question (settled by effort, no values at stake) and the one-obvious-answer proposition (a pole only a monster would pick). GATE: below level 2 this caps the overall at its own score — a decorative or yes/no 'tension' cannot post a decent number on the strength of its characters or its fidelity.",
+      "description": "Does the premise's central tension pose a genuine values collision — two things the characters truly value and cannot both keep, where a thoughtful person could choose either pole? Not a problem settled by effort or competence, and not a question with one obviously defensible answer.",
+      "levels": {
+        "0": "No real tension. The premise poses a question effort or competence settles ('can she finish the project in time?'), a yes/no with one defensible answer ('should she save the children?' — only a monster picks otherwise), or names a 'central tension' that is really a plot obstacle with nothing of value at stake on both sides.",
+        "1": "A dilemma in name only. Two options are stated, but one pole is undefendable — the choice has an obvious right answer, so there is nothing for a reasonable person to weigh.",
+        "2": "A real either/or exists but is thinly argued. Both poles have some worth, yet the premise doesn't make the pull of each felt, or the tension sits beside the situation rather than arising from it.",
+        "3": "A genuine values tension. Two things the characters value collide and cannot both be kept; reasonable people would split on the answer, and the situation itself is what argues it.",
+        "4": "The tension is inseparable from this exact situation — both poles fully alive and worth wanting — and the branching endings each honor a different honest answer to it, none of them the single 'correct' one."
+      }
+    },
+    {
+      "name": "stands_without_devices",
+      "weight": 2.0,
+      "_authoring": "Anchored to the graft failure the drafter is explicitly warned against — a crime, a death, a villain, or a deadline bolted onto a situation that didn't imply one — plus the archetype-with-adjectives character ('a gruff warrior haunted by war'). The bar: strip every device and the premise still compels. A healthy relationship under a life change is already a story.",
+      "description": "Does the premise stand on the situation itself, with no gimmick propping it up? Characters should read as particular people, not archetypes with adjectives; the concept should be a premise, not just a catchy hook; and the story should not lean on a grafted device — a crime, a death, a villain, or an imposed deadline the request never implied.",
+      "levels": {
+        "0": "Built on a device. A hook with no story beneath it, characters defined by a quirk or an adjective stack ('a gruff warrior haunted by war'), or a dark past / villain / ticking deadline grafted on to manufacture drama the situation should have produced on its own.",
+        "1": "Leans heavily on devices. There is a situation, but its interest comes mostly from a bolted-on twist or a character gimmick; remove the device and little remains.",
+        "2": "Partly earned. Some characters or beats are specific and situation-driven, but at least one leans on an archetype-with-adjectives or an unneeded dark graft.",
+        "3": "Largely stands on its own. Characters read as particular people whose specifics come from their situation, and the drama arises from the premise rather than an added device.",
+        "4": "Needs zero gimmicks. Every character is one specific person, the concept is a genuine premise rather than a hook, and the story would still compel with any device stripped out."
+      }
+    },
+    {
       "name": "brief_fidelity",
-      "description": "The premise is recognizably the story the brief asked for — same subject matter, same kind of cast, same spirit. Test: if the brief asked for a family trip and the premise is a corporate conspiracy with a deadline, score 0–25. If someone reading only the premise could guess what the user asked for, score 70+.",
-      "weight": 2.0
+      "weight": 2.0,
+      "_authoring": "Anchored to the premise-swap failure: the drafter quietly replaces the requested game with one of its own (a family road trip becomes a corporate conspiracy). The drafter is told to invent the specifics the request leaves open but never a different premise than the one asked for — reward invention that serves the brief, penalize invention that replaces it.",
+      "description": "Is the premise recognizably the game the request asked for — same subject, cast, and spirit — with invented specifics that serve the request rather than replace it?",
+      "levels": {
+        "0": "A different game. The request asked for one thing and the premise delivers another (a family road trip becomes a corporate conspiracy), or it swaps the requested premise for the drafter's own.",
+        "1": "Drifts off-brief. The premise keeps a surface tie to the request but changes its subject, tone, or stakes enough that it no longer answers what was asked.",
+        "2": "Recognizable but reshaped. You can tell what was asked for, though the premise adds or omits enough that its spirit is partly altered.",
+        "3": "Faithful. Someone reading only the premise could reconstruct the request; invented specifics serve it, and where the request implies no rift or deadline none is invented.",
+        "4": "Fully in service of the brief. The premise realizes exactly what was asked, its invented specifics deepen the request without ever swapping its premise, and its register matches what the request implied."
+      }
     },
     {
-      "name": "central_question",
-      "description": "The central_question is a collision between two things the protagonist genuinely values and cannot have at once — X or Y, where a thoughtful person could want either. Not a logistics problem (settled by competence or effort) and not a proposition with one obvious answer (where the losing side is undefendable). Test: 'Can she finish in time?' fails (0–35) — effort settles it, no values are in tension. 'Should she save the kids?' fails (0–35) — only a monster picks the other pole. 'Does the knight honor the oracle's acceptance of death, or fight for a life she has already surrendered?' passes (70+) — her agency and her life are both worth wanting, and reasonable people would split. The question must be one this premise's situation actually argues, not a bolted-on abstraction.",
-      "weight": 2.0
-    },
-    {
-      "name": "grimgong_test",
-      "description": "Each character's situation reads as one particular person, not an archetype with adjectives. 'A gruff warrior haunted by war' fails (0–35); 'a purpose-bred imperial crusher; the war is over and the thing he was built for no longer exists' passes (70+). Specificity must come from the situation, not stacked adjectives. The charge field names something genuinely unresolved or magnetic, and no character exists merely to fill a plot function (no love-interest-by-quota, no designated villain without their own situation).",
-      "weight": 2.0
-    },
-    {
-      "name": "voice_specificity",
-      "description": "Voice descriptions name concrete, imitable mechanics a writer could use to impersonate the character cold — vocabulary level, sentence length and rhythm, and what changes under pressure. Adjectives are not mechanics. Test: 'speaks softly,' 'blunt,' 'uses technical jargon' score 0–40 — these are labels, not instructions a writer can type from. 'Clipped, verbless fragments that grow longer and more formal when he is cornered' scores 70+ — a writer knows exactly what to produce. Distinctness between characters is NOT required and must not be scored: two characters may legitimately share a similar voice (siblings, same upbringing). Judge each voice solely on whether it is concrete enough to imitate.",
-      "weight": 1.5
-    },
-    {
-      "name": "downstream_utility",
-      "description": "Downstream stages can consume the premise without hitting a broken reference or a placeholder. protagonist_id resolves to a character in the list. appearance_tags have concrete values, not 'unknown' or empty. Each tone_directive ties to a specific dialogue behavior, not just a mood word. The setting's physical_description is concrete enough to generate consistent images. Test: any unresolved id, placeholder value, or mood-word-without-behavior brings the score below 50; a premise where every field is directly usable by the next stage scores 70+.",
-      "weight": 1.0
+      "name": "module_fit",
+      "weight": 1.5,
+      "_authoring": "Guards against reflexive over-picking. The drafter must tie every chosen module to one concrete thing its story does and leave out any it can't — a module that does nothing for this particular game is a wrong pick even if commonly used. Realization is either branching conversation, an explorable world, or both composed; grade whether the chosen realization matches the play the story describes.",
+      "description": "Is each chosen module justified by the story the premise actually wrote — tied to a concrete thing that story does — and is the game's realization (branching conversation vs. an explorable world, or both) matched to the play described?",
+      "levels": {
+        "0": "Modules don't fit the story. A module is picked with no tie to anything the story does (combat for a quiet two-hander), reasons are generic restatements rather than grounded in the story, or the realization is wrong for the play described (a walkable world for a pure conversation piece, or conversation-only for a story about exploring a place).",
+        "1": "Mostly mismatched. More than one pick is speculative or reflexive, or its reason names nothing specific in the story.",
+        "2": "Adequate. The core picks fit, but at least one is loosely justified or looks included by habit rather than need.",
+        "3": "Well-matched. Each module ties to a specific element of the story, and the realization suits the described play.",
+        "4": "Exactly the smallest set the story needs. Every module's reason names a concrete story element it serves, nothing speculative is included, and the realization plus presentation fit the play precisely."
+      }
     }
   ]
 }

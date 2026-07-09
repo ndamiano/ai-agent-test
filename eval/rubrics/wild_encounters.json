@@ -1,0 +1,52 @@
+{
+  "stage": "wild_encounters",
+  "pipeline": "godot",
+  "scale": {
+    "min": 0,
+    "max": 4,
+    "display_multiplier": 25
+  },
+  "_authoring": "Judges the wild encounter TABLES a game's dangerous zones carry — the meta-layer that turns a short enemy roster into a zone's worth of roaming fights. Distinct artifact from combat's fights themselves (combatants, abilities, encounter set-pieces): this rubric reads only which authored enemies roam where, how often, and at what scaled difficulty. The build already guarantees mechanical validity (rate in (0,1], non-empty entries, real combatant ids, positive weights/tiers), so a valid-but-flat table lands at level 2, never higher. NO gate: nothing here is load-bearing enough to cap the overall — a weak table is a weak zone, not a broken game. OVERLAP FLAG: tier_scaling leans on the player-progression curve that the combat module owns; if a combat/godot e2e rubric is ever authored, these three criteria could fold into it as a single 'roaming danger' axis rather than a separate stage.",
+  "note": "You are reading the wild encounter tables of a game's dangerous walkable zones — the wilderness, dungeons, and infested places a player crosses on foot. Each dangerous zone carries a table: a per-step spawn rate and a weighted list of enemies, each entry naming an already-authored enemy plus a spawn weight (how often it is drawn) and a tier multiplier (how much its stats are scaled up for this zone). Safe hubs like a town carry no table, which is correct. You are also shown the enemy roster the tables draw from. Judge whether each zone's roaming danger reads as intentional design rather than filler — variety of foes, difficulty that fits where the zone sits in the journey, and weights that shape a common-vs-rare texture. Mechanical validity is already guaranteed and is not itself a merit: a valid but characterless table sits mid-scale. For each criterion, pick the single level (0-4) whose description best matches the tables, and cite specific entries as evidence.",
+  "criteria": [
+    {
+      "name": "table_variety",
+      "weight": 2.0,
+      "_authoring": "Anchor 0 to the single-enemy-spammed attractor — a table the build passes (entries is non-empty) but that makes every step in a zone the identical fight.",
+      "description": "Does each dangerous zone field a mix of foes a player actually meets crossing it, rather than one enemy repeated — and do different zones roam different creatures?",
+      "levels": {
+        "0": "One fight, forever. A dangerous zone's table lists a single enemy (or the same enemy repeated), so every wild encounter in that zone is the identical fight.",
+        "1": "Nominal variety only. Tables list more than one enemy, but the roster barely changes from zone to zone — one or two archetypes reused across the whole map, so no zone has an identity of its own.",
+        "2": "Functional mix. Each dangerous zone lists a couple of distinct enemies, but the selection is generic — the foes are valid draws without reading as chosen for that particular place.",
+        "3": "Zone-shaped roster. Each dangerous zone fields a small, distinct set of enemies that suits it — the wilds and the dungeon do not roll the same creatures, and a zone's line-up reads as belonging there.",
+        "4": "A legible ecology. Every zone's roster is a deliberate handful of foes that fit the place and each other and differ from neighbouring zones, so where the player is stands revealed by what attacks them."
+      }
+    },
+    {
+      "name": "tier_scaling",
+      "weight": 2.0,
+      "_authoring": "Anchor 0 to the wrong-end mismatch actually possible under the loose validator — an early zone at elite tiers, or a late zone still at base tier. Needs the zone/progression order to judge; grade against whatever ordering the shown output makes legible, and if progression is genuinely unknowable, judge only internal consistency of the ramp.",
+      "description": "Does each zone's difficulty — its spawn rate and per-entry tier multipliers — fit where the zone sits in the player's journey, so danger rises as the player advances rather than jumping or flatlining?",
+      "levels": {
+        "0": "Danger in the wrong place. A starting or early zone rolls elite-tier enemies that would flatten a fresh player, or a late-game zone still spawns base-tier fodder that poses no threat.",
+        "1": "Flat or arbitrary. Tiers sit at nearly the same multiplier everywhere, or vary with no relation to the zone — difficulty does not track the player's progress across the map.",
+        "2": "Crude ramp. Difficulty roughly climbs from earlier zones to later ones, but the steps are blunt — a valid escalation with no sense of a curve, or one zone plainly out of sequence.",
+        "3": "Fits the journey. Each zone's rate and tiers suit its place in the arc — early zones stay survivable, later ones scale up, and no single draw is grossly over- or under-tuned for where it is met.",
+        "4": "A designed curve. Each zone's rate and per-entry tiers pitch its fights just above the player's expected strength there, so the world escalates smoothly and every zone feels tuned to the moment the player reaches it."
+      }
+    },
+    {
+      "name": "weighting",
+      "weight": 1.5,
+      "_authoring": "Anchor 0 to the backwards split — the elite drawn as often as or more than the staple — and to the single-entry case where weight is moot but variety is implied. Level 1 is the flat all-equal table.",
+      "description": "Do the spawn weights read as an intentional common-vs-rare split — a staple foe met often and rarer, meaner draws met occasionally — rather than flat or backwards?",
+      "levels": {
+        "0": "Backwards or moot. The rare, tougher enemy is drawn as often as or more often than the baseline foe, so the meanest thing is what the player meets most — or a lone entry makes weight meaningless while the design implies a mix.",
+        "1": "Flat. Every entry shares the same weight — all foes equally likely, so the encounters carry no common-vs-rare texture at all.",
+        "2": "Token split. A heavier and a lighter entry exist, but the difference is nominal — the numbers differ without meaningfully shaping how often the player actually meets each.",
+        "3": "Clear texture. Weights establish a common baseline foe and rarer draws — the player meets the staple often and the meaner variant as an occasional spike, and that reads straight off the numbers.",
+        "4": "Tuned distribution. A legible pecking order of common, uncommon, and rare across the roster makes each zone's fights feel textured, the elite draw a genuine event rather than routine."
+      }
+    }
+  ]
+}

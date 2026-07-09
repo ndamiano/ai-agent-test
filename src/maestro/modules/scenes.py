@@ -1040,10 +1040,20 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         # one consumer that can make a choice actually pay toward its planned ending.
         earned = {p.get("ending"): p.get("earned_by")
                   for p in (art.get("story") or {}).get("ending_paths", []) if isinstance(p, dict)}
+        # Live reachability: an ending only exists as a node once something targets it. Mark the
+        # endings no written node points at yet, so the closer routes a fork toward them before the
+        # arc closes instead of orphaning them (the reachable_from_start failure).
+        targeted = set()
+        for n in ((art.get("nodes") or {}).get("nodes") or {}).values():
+            targeted |= set(views.node_targets(n))
         node_lines.append("STORY ENDINGS (a menu choice toward one must MATCH what earns it):")
         for e in endings:
             eid = e.get("id", "")
-            node_lines.append(f"  {eid}" + (f" — earned by: {earned[eid]}" if earned.get(eid) else ""))
+            unreached = eid and eid not in targeted
+            node_lines.append(
+                f"  {eid}"
+                + (f" — earned by: {earned[eid]}" if earned.get(eid) else "")
+                + ("  [NO PATH YET — a fork must still route here]" if unreached else ""))
     bgs = (art.get("asset_manifest") or {}).get("backgrounds", [])
     if bgs:
         node_lines.append("LOCATIONS: " + ", ".join(b.get("id", "") for b in bgs))

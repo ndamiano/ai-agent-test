@@ -23,7 +23,7 @@ from maestro.modules.module import (  # noqa: F401
 )
 from maestro.modules import views, checks, context  # noqa: F401
 
-# Mechanic modules (registration side effects) — human, assets, state are always present (forced).
+# Engine modules (registration side effects) — human, assets, state are always present (forced).
 from maestro.modules import (  # noqa: F401
     human,
     assets,
@@ -36,3 +36,6 @@ from maestro.modules import (  # noqa: F401
     wild_encounters,
     world,
 )
+
+# Aspects LAST — each requires an engine module registered above (register_module enforces it).
+from maestro.modules import aspects  # noqa: F401

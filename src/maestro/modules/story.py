@@ -169,6 +169,7 @@ def _d_min_endings(chk, m, ctx):
 
 class Story(Module):
     id = "story"
+    layer = "engine"
     description = ("A dramatic plan: the central question, a beat-sheet arc, and distinct endings. "
                    "REQUIRED whenever the story you wrote has a plot arc, named endings, or "
                    "characters whose conversations matter — without it the script has no "

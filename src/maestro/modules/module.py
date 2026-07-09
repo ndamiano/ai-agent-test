@@ -128,6 +128,9 @@ class Module(ABC):
     priority: int = 100   # order within an error tier; lower acts first (cast < dialogue)
 
     # ── spec-composition surface (what the proposer picks from) ──────────────
+    layer: str = "engine"               # "engine" = internal machinery, hidden from the catalog;
+                                        # "aspect" = the concrete, LLM-facing pick that RESOLVES to
+                                        # its engine module(s) via `requires` (nouns-primary)
     description: str = ""               # one-line, LLM-facing: what this mechanic adds
     selectable: bool = True             # False = always-on foundation, hidden from the catalog
     requires: Tuple[str, ...] = ()      # modules pulled in automatically when this is chosen
@@ -291,6 +294,16 @@ MODULE_REGISTRY: Dict[str, Module] = {}
 
 
 def register_module(m: Module) -> None:
+    """Register a module. An `aspect` module is LLM-facing sugar over engine machinery — it MUST
+    require at least one already-registered `engine` module (an aspect with no owning engine module
+    is illegal; the guardrail is enforced here at import time, not at build). Engine modules are
+    imported before the aspects that require them, so the lookup resolves."""
+    if m.layer == "aspect":
+        engine_deps = [r for r in m.requires
+                       if (dep := MODULE_REGISTRY.get(r)) is not None and dep.layer == "engine"]
+        if not engine_deps:
+            raise ValueError(
+                f"aspect module {m.id!r} must require ≥1 engine module (requires={m.requires!r})")
     MODULE_REGISTRY[m.id] = m
 
 
@@ -318,9 +331,12 @@ _REALIZATION: Tuple[str, ...] = ("scenes", "world")  # modules that produce a pl
 
 
 def selectable_catalog() -> List[Tuple[str, str]]:
-    """(id, description) for every module the proposer may choose — the always-on foundation
-    (human/assets) is hidden because it is force-included regardless."""
-    return [(m.id, m.description) for m in MODULE_REGISTRY.values() if m.selectable]
+    """(id, description) for every ASPECT the proposer may choose. The catalog is nouns-primary:
+    only `layer == "aspect"` modules are LLM-facing — the engine modules they resolve to are
+    internal machinery, and the always-on foundation (human/assets/state) is force-included
+    regardless, so both are hidden."""
+    return [(m.id, m.description) for m in MODULE_REGISTRY.values()
+            if m.selectable and m.layer == "aspect"]
 
 
 def _forced_ids() -> List[str]:

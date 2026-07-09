@@ -701,6 +701,7 @@ def _d_crossref(chk, m, ctx):
 
 class Combat(Module):
     id = "combat"
+    layer = "engine"
     description = ("Turn-based combat: stats, abilities, and encounters the player fights through. "
                    "Godot engine only.")
     requires = ("world", "scenes")

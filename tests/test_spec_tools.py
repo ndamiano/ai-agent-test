@@ -84,6 +84,39 @@ def test_propose_module_reasons_split_picked_vs_auto(tmp_path, monkeypatch, stub
     assert reasons["human"] == spec_tools._AUTO_REASON
 
 
+def test_propose_with_aspect_picks_resolves_to_engine_and_godot(tmp_path, monkeypatch, stub_llm):
+    # WHY: the proposer picks nouns-primary ASPECTS (dialogue/exploration/turn_combat), never the
+    # engine modules. propose_spec must resolve those aspect ids through `requires` into the engine
+    # machinery + the always-on foundation, and derive the engine (turn_combat -> godot).
+    patch_run_state_for(monkeypatch, tmp_path)
+    stub_llm({"title": "Monster Valley", "request": "a creature-battler",
+              "modules": {"dialogue": "trainers talk", "exploration": "walk the routes",
+                          "turn_combat": "battle wild monsters"}})
+
+    spec = spec_tools.propose_spec("a pokemon-like", "runasp")
+
+    resolved = set(spec["modules"])
+    assert FOUNDATION.issubset(resolved)
+    assert {"dialogue", "exploration", "turn_combat"}.issubset(resolved)   # aspects kept
+    assert {"scenes", "world", "combat", "cast"}.issubset(resolved)        # + engine machinery
+    assert spec["engine"] == "godot"
+    assert spec["module_reasons"]["turn_combat"] == "battle wild monsters"
+
+
+def test_amend_with_aspect_ids_reresolves(tmp_path, monkeypatch, frozen_run):
+    # WHY: the amend path re-runs resolution too — adding the `turn_combat` aspect mid-build must
+    # expand to combat's engine machinery and re-derive the godot engine, same as a fresh propose.
+    patch_run_state_for(monkeypatch, tmp_path)
+    state = frozen_run("r", modules=["human", "assets", "state", "dialogue", "scenes", "cast"],
+                       engine="renpy")
+
+    spec_tools.amend_spec("r", {"modules": ["dialogue", "turn_combat"]}, "add battles")
+
+    persisted = state.read_spec()
+    assert {"turn_combat", "combat", "world"}.issubset(set(persisted["modules"]))
+    assert persisted["engine"] == "godot"
+
+
 def test_propose_falls_back_to_vn_bundle_when_picks_dont_compose(
         tmp_path, monkeypatch, stub_llm):
     # WHY: a build must always exist — picks with no realization module (cast alone can't be played)

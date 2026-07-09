@@ -1,6 +1,5 @@
 {
   "stage": "premise",
-  "pipeline": "renpy",
   "scale": {
     "min": 0,
     "max": 4,
@@ -11,7 +10,9 @@
     {
       "name": "central_tension",
       "weight": 2.5,
-      "gate": {"threshold": 2},
+      "gate": {
+        "threshold": 2
+      },
       "_authoring": "The load-bearing criterion — a premise with no real dilemma is decorative no matter how vivid its prose, so this is the one thing the whole build rests on. Anchored to the two persistent attractors: the logistics question (settled by effort, no values at stake) and the one-obvious-answer proposition (a pole only a monster would pick). GATE: below level 2 this caps the overall at its own score — a decorative or yes/no 'tension' cannot post a decent number on the strength of its characters or its fidelity.",
       "description": "Does the premise's central tension pose a genuine values collision — two things the characters truly value and cannot both keep, where a thoughtful person could choose either pole? Not a problem settled by effort or competence, and not a question with one obviously defensible answer.",
       "levels": {

@@ -1,6 +1,5 @@
 {
   "stage": "asset_manifest",
-  "pipeline": "renpy",
   "scale": {
     "min": 0,
     "max": 4,
@@ -11,7 +10,9 @@
     {
       "name": "visual_specificity",
       "weight": 2.5,
-      "gate": {"threshold": 2},
+      "gate": {
+        "threshold": 2
+      },
       "_authoring": "The core of the whole artifact and the easiest to wave through: a prompt built from mood words ('dark, atmospheric, dramatic') is grammatical and evocative but renders generic mush, because the generator has no concrete content to place. Anchored to the observed vague-prompt attractor. GATE: below level 2 this caps the overall at its own score — a plan of mood-summary prompts cannot post a decent number on the strength of its style notes or its coverage, because none of it renders as intended.",
       "description": "Does each description specify a concrete, renderable image — naming actual objects, their arrangement in the frame, and a specific quality of light — rather than summarizing a mood? A usable prompt says what is IN the picture; a vague one only says how it should feel.",
       "levels": {

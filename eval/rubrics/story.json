@@ -1,6 +1,5 @@
 {
   "stage": "story",
-  "pipeline": "renpy",
   "scale": {
     "min": 0,
     "max": 4,
@@ -24,7 +23,9 @@
     {
       "name": "endings_diverge",
       "weight": 2.5,
-      "gate": {"threshold": 2},
+      "gate": {
+        "threshold": 2
+      },
       "_authoring": "The load-bearing criterion and the whole point of a branching story: the endings must take genuinely DIFFERENT positions on the central question, not the same answer in different weather. The persistent failure is 'same answer, different mood' — two endings where the protagonist makes the same choice but one is happy and one is sad, or endings distinguished only by who survives rather than by what was decided. Also anchored: abstract-label endings ('integration', 'closure') that state no position at all. Test the author can run: cover the endings' framing and re-derive each one's stance on the question from what actually happens — if two collapse to the same stance, this is below level 2. GATE: below level 2 caps the overall at its own score — a plan whose branches all mean the same thing is not a branching story no matter how good its beats are.",
       "description": "Does each ending take a genuinely different position on the central question — a different answer, not the same answer with a different outcome or mood?",
       "levels": {

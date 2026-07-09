@@ -1,6 +1,5 @@
 {
   "stage": "node_scripts",
-  "pipeline": "renpy",
   "scale": {
     "min": 0,
     "max": 4,
@@ -11,7 +10,9 @@
     {
       "name": "coherence",
       "weight": 2.5,
-      "gate": {"threshold": 2},
+      "gate": {
+        "threshold": 2
+      },
       "_authoring": "The why-chain / nonsense test — the single highest-value criterion and the easiest to wave through, because fluent nonsense passes every register and structure rule while meaning nothing. Anchored to the persistent generated attractor: lines that free-associate, name objects that do not belong in the scene's place, or answer an event that never happened. GATE: below level 2 this caps the overall at its own score — a scene of fluent nonsense cannot post a decent number on the strength of its craft.",
       "description": "Does every line survive the question 'why does that follow?' — react to the previous line's actual referent, name only things this scene has made real, and parse causally?",
       "levels": {

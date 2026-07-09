@@ -35,7 +35,7 @@ BAD = {
     ],
 }
 
-rubric = json.loads((RUBRICS_DIR / "renpy_premise.json").read_text())
+rubric = json.loads((RUBRICS_DIR / "premise.json").read_text())
 judge = Judge()
 
 print("Scoring GOOD premise...")

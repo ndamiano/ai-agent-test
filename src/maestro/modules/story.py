@@ -9,6 +9,7 @@ Example games:
   - "rival chefs in a failing restaurant, three ways the night ends"  — cast + story + scenes
 """
 
+import re
 from typing import Dict, Optional
 
 from maestro import context_render as cr
@@ -277,10 +278,22 @@ _REPAIR_TOOLS = frozenset({"read_component", "write_component", "request_review"
 _SPINE_TOOLS = frozenset({"set_spine", "read_component", "request_review"})
 _STORYLINE_TOOLS = frozenset({"add_storyline", "read_component", "request_review"})
 _BEAT_TOOLS = frozenset({"add_beat", "finish_storyline", "read_component", "request_review"})
+def _fill_beat_id(view, _assigned, args):
+    """Code-fill the beat id: next free global beat_NN. Node ids are derived from beat ids, so
+    beat ids must be globally unique — a model-picked id is the surface collisions live on
+    (observed live: a side line's natural 'beat_01' spins forever against the flat guard set)."""
+    taken = view.get("beat_ids") or []
+    nums = [int(m.group(1)) for b in taken for m in [re.match(r"beat_(\d+)$", b)] if m]
+    args = dict(args or {})
+    args["beat_id"] = f"beat_{(max(nums) + 1 if nums else 1):02d}"
+    return args
+
+
 _STORYLINE_GUARD = {"count_tool": "add_storyline", "id_key": "storyline_id",
                     "id_list_key": "storyline_ids", "noun": "storyline", "cap": _one}
 _BEAT_GUARD = {"count_tool": "add_beat", "id_key": "beat_id",
-               "id_list_key": "beat_ids", "noun": "beat", "cap": _one}
+               "id_list_key": "beat_ids", "noun": "beat", "cap": _one,
+               "prepare": _fill_beat_id}
 
 
 def _declared_ids(ctx) -> set:

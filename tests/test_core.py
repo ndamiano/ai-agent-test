@@ -487,6 +487,23 @@ def test_create_guard_code_fills_the_assigned_slot_id():
     assert calls[0][1]["beat"] == "beat_02"   # system stamps the assigned slot's beat
 
 
+def test_beat_guard_code_fills_a_globally_unique_beat_id():
+    # WHY: node ids derive from beat ids, so beat ids must be globally unique — a side line's
+    # natural 'beat_01' spun a live build 10+ steps against the flat no-overwrite set. prepare
+    # overrides the model's pick with the next free global beat_NN; the write goes through.
+    from maestro.modules.story import _fill_beat_id
+    calls = []
+    ok = lambda name, args: (calls.append((name, args)), {"ok": True})[1]
+    view = {"storyline_ids": ["sl_main", "sl_side"],
+            "beat_ids": ["beat_01", "beat_02", "beat_10"]}
+    g = _create_guard(ok, lambda: view, "add_beat", "beat_id", "beat_ids", "beat",
+                      assigned=None, prepare=_fill_beat_id)
+    res = g("add_beat", {"storyline_id": "sl_side", "beat_id": "beat_01", "content": {}})
+    assert res["ok"] is True
+    assert calls and calls[0][1]["beat_id"] == "beat_11"   # next free global, not the model's dup
+    assert calls[0][1]["storyline_id"] == "sl_side"        # target line untouched
+
+
 # ── storyline slot identity: the slot's target id IS the beat it realizes ────
 def _beat(i):
     return {"id": f"beat_{i:02d}", "summary": "s", "type": "plot",

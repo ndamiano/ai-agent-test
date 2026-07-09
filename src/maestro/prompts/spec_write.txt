@@ -22,12 +22,15 @@ situation) the request leaves open, never a different premise than the one asked
   APPEAR in the scenes — never someone dead, absent, or merely referenced (a dead brother, an ex
   who never shows). If the story is confronting someone, the person confronted IS in the roster;
   the person mourned is NOT.
-- A central tension the SITUATION ITSELF produces — what someone here stands to lose, admit,
-  or become. Do NOT graft on a darker past (a crime, a death, a betrayal), a villain, or a
-  deadline the request doesn't imply; a healthy relationship under a life change is already a
-  story. If the request implies a rift, use it; if it doesn't, don't invent one.
-- A defined starting situation, a middle that forces the characters to confront the tension,
-  and 2-3 mutually exclusive branching endings.
+- A THEME and TONE the SITUATION ITSELF produces — what someone here stands to lose, admit, or
+  become, and the register the telling stays in (wry, bleak, warm, tense...). Do NOT graft on a
+  darker past (a crime, a death, a betrayal), a villain, or a deadline the request doesn't imply;
+  a healthy relationship under a life change is already a story. If the request implies a rift,
+  use it; if it doesn't, don't invent one. Do NOT force a values-fork or a dilemma with an
+  obvious right answer — most good stories run on theme and tone, not a central question.
+- A defined starting situation and a middle that develops the theme. Endings are NOT required to
+  be multiple — one well-earned ending is a complete story; only give it more than one if the
+  situation genuinely forks (branching endings are a bonus, never an obligation).
 
 Write this as a single dense paragraph, third person, present tense, matching the style and
 density of this example (a healthy relationship under a life change — no rift, no death, no
@@ -39,9 +42,8 @@ chased one elusive coral bloom for three years without ever documenting it; Sam 
 station running so long he's never had to imagine what quiet looks like. The story starts with
 the two of them closing up the station for the season, moves through the final week of work — a
 storm that nearly costs them the season's data, an argument over whether one more dive is worth
-the risk — and resolves with one of: Priya risking the dive alone and finding the bloom, the two
-of them calling the season as it stands, or Sam staying on past his retirement to see it through
-with her.
+the risk — and resolves with Sam staying on past his retirement to see the dive through with her,
+the two of them finding the bloom together on the last morning the station is open.
 
 ── MODULES ──
 Pick the mechanic-modules this game is built from. (Characters and image assets are always included;
@@ -91,7 +93,8 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
   "sizing": {}                                // OPTIONAL: see SIZING below; omit or {} keeps the floor
 }
 
-- The 2-3 mutually exclusive branching endings MUST be present in the story paragraph — name them.
+- If the story does fork into more than one ending, name each ending in the story paragraph — but
+  a single well-earned ending is a complete story on its own; do not manufacture extra endings.
 - Declare in story_state_schema what continuity this particular game hinges on (the facts, entity
   states, and open threads), derived from the story paragraph.
 
@@ -102,7 +105,12 @@ picked the module that uses it. Available knobs:
 
   {sizing_knobs}
 
-e.g. a sprawling saga: "sizing": {"min_endings": 6, "min_beats": 35, "min_branches": 6}
+Story sizing is per-storyline now: `min_beats_floor` is the hard minimum beats ANY ONE storyline
+must have (each storyline's own length beyond that floor — `target_beats` — is authored during
+the build, not set here). Endings are terminal storylines (a `game_end` terminus), not a separate
+count to size.
+
+e.g. a sprawling saga: "sizing": {"min_beats_floor": 6, "min_branches": 6, "max_storylines": 12}
 
 The floors produce a SHORT game — size for the story you actually wrote. A game meant to be
 played for an hour wants the places its arc visits (5-8), an encounter or set piece for each

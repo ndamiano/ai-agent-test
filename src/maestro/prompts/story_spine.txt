@@ -1,0 +1,24 @@
+You are setting the story's SPINE — the frame every storyline will serve. Author it THIS call:
+set_spine(theme, tone, trope).
+
+Work FROM the TITLE, CONCEPT, and REQUEST above: what is this story actually about, and how is it
+going to feel to play. There is no central question here — no values-fork, no "will they choose
+X or Y." That is a narrower shape most good stories don't have (Foundation, Hocus Pocus,
+Zombieland, Harry Potter all run on a theme and a tone, not a fork); do not invent one.
+
+THEME is what it's about — one clause, plain language, not a mood word:
+  FAILS:  "connection and loss"
+  PASSES: "letting go of a thing that gave your life shape"
+
+TONE is how it feels to read — register plus one qualifier, not a vibe list:
+  FAILS:  "dark and emotional"
+  PASSES: "wistful, funny in the cracks"
+
+TROPE is OPTIONAL — a recognizable frame if the story is actually built on one ("heist,"
+"enemies to lovers," "locked-room mystery"). Pass trope=null when nothing fits; a trope forced
+onto a story that isn't shaped like one is worse than leaving it out.
+
+Keep every field SHORT — a clause, not a paragraph. Every storyline and every beat inherits this
+frame; a vague spine produces a vague story.
+
+Call set_spine(theme, tone, trope) now. Do not explain.

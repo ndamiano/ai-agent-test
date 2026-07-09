@@ -33,10 +33,7 @@ _REPAIRS = {
     "cast": {"character_fields": "cast_field_patch.txt",
              "distinct_characters": "cast_rename_duplicate.txt"},
     "story": {"beat_fields": "story_field_patch.txt",
-              "distinct_beats": "story_rename_duplicate.txt",
-              "distinct_endings": "story_rename_duplicate.txt",
-              "ending_path_fields": "story_field_patch.txt",
-              "endings_planned": "story_endings_plan_fix.txt"},
+              "distinct_storylines": "story_rename_duplicate.txt"},
     "assets": {"background_ids": "assets_background_field_patch.txt",
                "character_ids": "assets_character_ids_fix.txt"},
     "inventory": {"item_fields": "inventory_field_patch.txt",
@@ -55,7 +52,7 @@ def test_repair_checks_are_wired_to_specific_prompts():
             assert chk.prompt != m.mode_prompt
             # a surgical read + write scope, and NOT the append-only authoring tool
             assert chk.tools == frozenset({"read_component", "write_component", "request_review"})
-            for add_tool in ("add_character", "add_beat", "add_ending", "add_item"):
+            for add_tool in ("add_character", "add_beat", "add_storyline", "add_item"):
                 assert add_tool not in chk.tools
             # the authoring skeleton is suppressed (empty string, not None -> module default)
             assert chk.skeleton == ""
@@ -73,23 +70,31 @@ def test_repair_prompts_render_and_carry_tool_call_rule():
 #    no authoring skeleton / clobber-invite), one row per (module, error code) ────────────────────
 
 # arts reused across the story rows (a valid-shaped story that trips exactly one check)
-_STORY_PARAMS = {"params": {"min_beats": 1, "min_endings": 1}}
-_STORY_BAD_BEAT = {"story": {"central_question": "Q?",
-                             "beats": [{"id": "b1", "summary": "s", "type": "plot", "purpose": "setup"}],
-                             "endings": [{"id": "e1", "description": "d"}],
-                             "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
-_STORY_ORPHAN_ENDING = {"story": {"central_question": "Q?",
-                                  "beats": [{"id": "b1", "summary": "s", "type": "plot",
-                                             "purpose": "setup", "tension": "none"}],
-                                  "endings": [{"id": "e1", "description": "d1"},
-                                              {"id": "e2", "description": "d2"}],
-                                  "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
-_STORY_DUP_ENDING = {"story": {"central_question": "Q?",
-                               "beats": [{"id": "b1", "summary": "s", "type": "plot",
-                                          "purpose": "setup", "tension": "none"}],
-                               "endings": [{"id": "e1", "description": "d1"},
-                                           {"id": "e1", "description": "d2"}],
-                               "ending_paths": [{"ending": "e1", "earned_by": "the b1 choice"}]}}
+_STORY_PARAMS = {"params": {"min_beats_floor": 1}}
+_STORY_BAD_BEAT = {"story": {"spine": {"theme": "T", "tone": "grim"}, "start_storyline": "sl_main",
+                             "storylines": [{"id": "sl_main", "kind": "main",
+                                            "target_beats": 1,
+                                            "beats": [{"id": "b1", "summary": "s", "type": "plot",
+                                                       "purpose": "setup", "tension": "none"}],
+                                            "terminus": {"type": "game_end",
+                                                         "ending": {"id": "e1", "description": "d"}}}]}}
+# distinct_storylines: two storylines sharing an id (endings_planned/ending_paths no longer exist —
+# an ending is embedded directly in its storyline's game_end terminus, correct by construction)
+_STORY_DUP_STORYLINE = {"story": {"spine": {"theme": "T", "tone": "grim"},
+                                  "start_storyline": "sl_main",
+                                  "storylines": [
+                                      {"id": "sl_main", "kind": "main", "premise": "p1",
+                                       "target_beats": 1,
+                                       "beats": [{"id": "b1", "summary": "s", "type": "plot",
+                                                  "purpose": "setup", "tension": "none"}],
+                                       "terminus": {"type": "game_end",
+                                                    "ending": {"id": "e1", "description": "d"}}},
+                                      {"id": "sl_main", "kind": "side", "premise": "p2",
+                                       "target_beats": 1,
+                                       "beats": [{"id": "b2", "summary": "s2", "type": "plot",
+                                                  "purpose": "setup", "tension": "none"}],
+                                       "terminus": {"type": "handoff"}},
+                                  ]}}
 
 
 @pytest.mark.parametrize("c", [
@@ -110,20 +115,15 @@ _STORY_DUP_ENDING = {"story": {"central_question": "Q?",
              {"id": "mara", "name": "Mara"}, {"id": "mara", "name": "Other"}]}},
          code="distinct_characters",
          user_in=["duplicate values: ['mara']"], sys_lower_in=["unique"], sys_out=["JSON SHAPE"]),
-    # story beat field patch: names the exact missing field, write-scoped, no skeleton
+    # story storyline field patch: names the exact missing field (premise), write-scoped, no skeleton
     dict(id="story_beat_field", module="story", spec=_STORY_PARAMS, art=_STORY_BAD_BEAT,
          code="beat_fields",
-         user_in=["story.beats[0] missing 'tension'"], sys_in=["write_component"],
+         user_in=["story.storylines[0] missing 'premise'"], sys_in=["write_component"],
          sys_out=["JSON SHAPE"]),
-    # story endings plan fix is ref-resolution: names orphaned ending, asks for the ONE missing
-    # ending_paths entry, hands the valid beat + ending id lists (ctx_structural self-view)
-    dict(id="story_endings_plan", module="story", spec=_STORY_PARAMS, art=_STORY_ORPHAN_ENDING,
-         code="endings_planned",
-         user_in=["e2", "b1", "e1"], sys_in=["ending_paths", "earned_by", "write_component"]),
-    # story distinct endings rides the rename prompt + reminds to sync the plan on a rename
-    dict(id="story_distinct_endings", module="story", spec=_STORY_PARAMS, art=_STORY_DUP_ENDING,
-         code="distinct_endings",
-         user_in=["duplicate values: ['e1']"], sys_in=["ending_paths"]),
+    # story distinct storylines rides the rename prompt on a duplicate storyline id
+    dict(id="story_distinct_storylines", module="story", spec=_STORY_PARAMS,
+         art=_STORY_DUP_STORYLINE, code="distinct_storylines",
+         user_in=["duplicate values: ['sl_main']"], sys_lower_in=["unique"]),
     # assets background field patch: names the offending path; repair scope ADDS read_component
     # (assets mode_tools omit it); no skeleton
     dict(id="assets_bg_field", module="assets", spec={"params": {}},

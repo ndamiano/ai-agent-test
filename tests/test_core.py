@@ -94,19 +94,26 @@ def test_cast_creates_fan_per_roster_id_or_per_slot():
     assert {e.path for e in cast.get_errors(_ctx(spec, art)) if e.code == "cast_roster"} == {"y", "z"}
 
 
-def test_story_central_question_blocks_then_beats_and_endings_fan():
+def test_story_spine_blocks_then_storylines_and_beats_fan():
     story = MODULE_REGISTRY["story"]
     p = {"params": story.params()}
-    # no story -> ONLY the blocking central_question error (spine before the rest)
-    assert [e.code for e in story.get_errors(_ctx(p, {}))] == ["central_question"]
-    # cq set -> beats fan to their floor, then endings fan to theirs
-    errs = story.get_errors(_ctx(p, {"story": {"central_question": "Q?", "beats": [],
-                                                "endings": [], "ending_paths": []}}))
-    assert len([e for e in errs if e.code == "min_beats"]) == 5
-    assert len([e for e in errs if e.code == "min_endings"]) == 3
-    # beats/endings are authored ONE at a time (arc coherence), not batched in parallel
-    assert story._check_for("min_beats").guard["cap"](None) == 1
-    assert story._check_for("min_endings").guard["cap"](None) == 1
+    # no story -> ONLY the blocking spine error (spine before the rest)
+    assert [e.code for e in story.get_errors(_ctx(p, {}))] == ["spine"]
+    # spine set, no storylines yet -> the main-storyline bootstrap error
+    spine_only = {"story": {"spine": {"theme": "corruption", "tone": "tense"},
+                            "start_storyline": "sl_main", "storylines": []}}
+    assert [e.code for e in story.get_errors(_ctx(p, spine_only))] == ["main_storyline"]
+    # a main storyline with target_beats added -> storyline_beats fans one error per beat owed
+    art = {"story": {"spine": {"theme": "corruption", "tone": "tense"},
+                     "start_storyline": "sl_main",
+                     "storylines": [{"id": "sl_main", "kind": "main", "premise": "p",
+                                     "target_beats": 4, "beats": [],
+                                     "terminus": {"type": "game_end",
+                                                  "ending": {"id": "e1", "description": "d"}}}]}}
+    errs = story.get_errors(_ctx(p, art))
+    assert len([e for e in errs if e.code == "storyline_beats"]) == 4
+    # beats are authored ONE at a time (each sees its arc so far), not batched in parallel
+    assert story._check_for("storyline_beats").guard["cap"](None) == 1
 
 
 def test_items_are_demand_driven_no_floor():
@@ -206,63 +213,55 @@ def test_scenes_floor_gated_on_story_presence():
     nodes = {"nodes": {"node_ids": ["n1"], "nodes": {
         "n1": {"location": "bg", "lines": [{"speaker": "a", "text": "x"}],
                "end": {"type": "jump", "target": "ghost"}}}}}
-    story = {"story": {"central_question": "Q", "beats": [{"id": "b1"}],
-                       "endings": [{"id": "e1"}]}}
+    story = {"story": {"spine": {"theme": "corruption", "tone": "tense"},
+                       "start_storyline": "sl_main",
+                       "storylines": [{"id": "sl_main", "kind": "main", "premise": "p",
+                                       "target_beats": 1,
+                                       "beats": [{"id": "b1", "summary": "s", "type": "plot",
+                                                  "purpose": "setup", "tension": "none"}],
+                                       "terminus": {"type": "game_end",
+                                                    "ending": {"id": "e1", "description": "d"}}}]}}
     params = {"params": {"each_node_min_lines": 1, "min_branches": 1}}
 
     light = {e.code for e in scenes.get_errors(_ctx(params, dict(nodes)))}
     rich = {e.code for e in scenes.get_errors(_ctx(params, {**nodes, **story}))}
 
-    narrative = {"beats_realized", "endings_are_nodes", "min_branches", "all_characters_speak"}
+    narrative = {"beats_realized", "min_branches", "all_characters_speak"}
     assert not (narrative & light)        # no story -> no narrative floor
     assert narrative & rich               # story present -> narrative floor fires
 
 
-def test_planned_ending_node_must_end():
-    scenes = MODULE_REGISTRY["scenes"]
-    story = {"central_question": "q", "endings": [{"id": "ending_a"}],
-             "beats": [{"id": "beat_1"}, {"id": "beat_2"}, {"id": "beat_3"}]}
-    art = {"story": story, "nodes": {"node_ids": ["n1", "ending_a"], "nodes": {
-        "n1": {"beat": "beat_1", "lines": [{"speaker": "a", "text": "x"}],
-               "end": {"type": "jump", "target": "ending_a"}},
-        "ending_a": {"lines": [{"speaker": "a", "text": "x"}],
-                     "end": {"type": "jump", "target": "n1"}},
-    }}}
-    errs = scenes.get_errors(_ctx({"params": {}}, art))
-    assert any(e.code == "ending_nodes_end" and e.path == "ending_a" for e in errs)
-    art["nodes"]["nodes"]["ending_a"]["end"] = {"type": "end"}
-    errs = scenes.get_errors(_ctx({"params": {}}, art))
-    assert not any(e.code == "ending_nodes_end" for e in errs)
-
-
-def test_premature_ending_flagged_earned_ending_allowed():
-    scenes = MODULE_REGISTRY["scenes"]
-    story = {"central_question": "q",
-             "endings": [{"id": "ending_a"}],
-             "beats": [{"id": f"beat_{i}"} for i in range(1, 6)]}
-
-    def node(beat, end):
-        return {"beat": beat, "lines": [{"speaker": "a", "text": "x"}], "end": end}
-
-    # quit-out at beat 1: an unplanned end whose path never nears the arc's finish
-    art = {"story": story, "nodes": {"node_ids": ["n1", "early_out"], "nodes": {
-        "n1": node("beat_1", {"type": "menu", "choices": [
-            {"text": "a", "target": "early_out"}, {"text": "b", "target": "n2"}]}),
-        "early_out": node(None, {"type": "end"}),
-    }}}
-    errs = scenes.get_errors(_ctx({"params": {}}, art))
-    assert any(e.code == "premature_endings" and e.path == "early_out" for e in errs)
-
-    # unplanned ending reached after the final beat: welcome
-    chain = {"node_ids": [], "nodes": {}}
-    for i in range(1, 6):
-        nid = f"n{i}"
-        chain["node_ids"].append(nid)
-        chain["nodes"][nid] = node(f"beat_{i}", {"type": "jump", "target": f"n{i+1}"})
-    chain["node_ids"].append("n6")
-    chain["nodes"]["n6"] = node(None, {"type": "end"})
-    errs = scenes.get_errors(_ctx({"params": {}}, {"story": story, "nodes": chain}))
-    assert not any(e.code == "premature_endings" for e in errs)
+def test_storyline_graph_derives_structural_ends():
+    # Each beat-node's `end` is DERIVED from the storyline structure, never model-chosen:
+    # a jump to the next beat, a menu at a branch point, the game_end terminus (end), and a
+    # handoff terminus that jumps back to the branch's encoded return beat.
+    from maestro.modules.scenes import _storyline_graph
+    story = {"spine": {"theme": "loyalty", "tone": "wry"}, "start_storyline": "sl_main",
+             "storylines": [
+                 {"id": "sl_main", "kind": "main", "premise": "p", "target_beats": 3,
+                  "beats": [{"id": "beat_01", "summary": "s", "type": "plot",
+                             "purpose": "setup", "tension": "none"},
+                            {"id": "beat_02", "summary": "s", "type": "plot",
+                             "purpose": "crisis", "tension": "high"},
+                            {"id": "beat_03", "summary": "s", "type": "plot",
+                             "purpose": "resolution", "tension": "none"}],
+                  "branches": [{"id": "br", "from_beat": "beat_02", "choice": "split up",
+                                "spinoff": "sl_side", "return_to_beat": "beat_03",
+                                "requires": None}],
+                  "terminus": {"type": "game_end",
+                               "ending": {"id": "e1", "description": "caught"}}},
+                 {"id": "sl_side", "kind": "side", "premise": "p", "target_beats": 1,
+                  "beats": [{"id": "beat_10", "summary": "s", "type": "friction",
+                             "purpose": "escalation", "tension": "outnumbered"}],
+                  "branches": [], "terminus": {"type": "handoff"}}]}
+    g = _storyline_graph({"story": story})
+    assert g["entry"] == "beat_01"
+    assert g["ends"]["beat_01"] == {"type": "jump", "target": "beat_02"}   # linear jump
+    branch = g["ends"]["beat_02"]                                          # branch → menu
+    assert branch["type"] == "menu"
+    assert {c["target"] for c in branch["choices"]} == {"beat_03", "beat_10"}
+    assert g["ends"]["beat_03"] == {"type": "end"}                        # game_end terminus
+    assert g["ends"]["beat_10"] == {"type": "jump", "target": "beat_03"}  # handoff → return beat
 
 
 # ── compose always includes human; prioritization ───────────────────────────
@@ -618,9 +617,16 @@ _RICH_ART = {
                                    "example_lines": ["Hand me the crowbar."]}]},
     "asset_manifest": {"backgrounds": [{"id": "bg_barn", "description": "a collapsing barn"}],
                        "characters": [], "cgs": []},
-    "story": {"central_question": "Can the farm be saved?",
-              "endings": [{"id": "ending_saved", "description": "she keeps it"}],
-              "beats": [{"id": "b1", "summary": "the notice arrives"}]},
+    "story": {"spine": {"theme": "saving the farm", "tone": "quiet desperation"},
+              "start_storyline": "sl_main",
+              "storylines": [{"id": "sl_main", "kind": "main",
+                              "premise": "Ana fights to keep the family farm",
+                              "target_beats": 1,
+                              "beats": [{"id": "b1", "summary": "the notice arrives",
+                                         "type": "plot", "purpose": "setup", "tension": "none"}],
+                              "terminus": {"type": "game_end",
+                                           "ending": {"id": "ending_saved",
+                                                      "description": "she keeps it"}}}]},
     "items": {"items": [{"id": "item_deed", "name": "Deed", "examine": "the farm's deed"}]},
     "nodes": {"node_ids": ["s1"], "synopses": {"s1": "the reveal"},
               "nodes": {"s1": {"lines": [{"speaker": None, "text": "sekritlongtext " * 200}],
@@ -638,7 +644,7 @@ def test_scene_author_context_is_crafted_and_bounded():
     p = scenes.get_correction_prompt(ctx, err)
     assert "history: lost the farm to the bank" in p.user   # full card, not a trim
     assert "bg_barn — a collapsing barn" in p.user           # location has its description
-    assert "central question: Can the farm be saved?" in p.user
+    assert "STORY — theme: saving the farm | tone: quiet desperation" in p.user
     assert "item_deed" in p.user
     assert "sekritlongtext" not in p.user                    # scene text stays out
 

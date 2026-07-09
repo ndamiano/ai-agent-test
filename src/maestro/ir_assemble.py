@@ -136,10 +136,11 @@ def assemble_ir(artifact: Dict) -> Dict:
         isinstance(p, dict) and p.get("kind") in ("world_map", "town", "interior")
         for p in (places_comp.get("places") or {}).values())
 
-    # `beat` is authoring provenance (which story beat a scene realizes — drives the
-    # beats_realized done-condition on the on-disk component); it's not runtime IR, and the schema
-    # is additionalProperties:false, so drop it here.
-    nodes = [{k: v for k, v in {"id": nid, **nodes_map.get(nid, {})}.items() if k != "beat"}
+    # `beat`/`storyline` are authoring provenance (which storyline beat a scene realizes — drives
+    # the beats_realized done-condition on the on-disk component); not runtime IR, and the schema
+    # is additionalProperties:false, so drop them here.
+    _PROVENANCE = {"beat", "storyline"}
+    nodes = [{k: v for k, v in {"id": nid, **nodes_map.get(nid, {})}.items() if k not in _PROVENANCE}
              for nid in node_ids]
     # A line may carry emotion: null (the model spelling out "neutral"); the schema enum has no
     # null, so drop the key — absent == neutral.

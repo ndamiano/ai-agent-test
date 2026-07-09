@@ -42,14 +42,25 @@ def _art():
                          "scene_02": "jonas relents"},
         },
         "story": {
-            "central_question": "Do they leave?",
-            "beats": [{"id": "beat_01", "summary": "the argument", "purpose": "setup"},
-                      {"id": "beat_02", "summary": "the turn", "purpose": "midpoint_turn"},
-                      {"id": "beat_03", "summary": "the crisis", "purpose": "crisis"},
-                      {"id": "beat_04", "summary": "the end", "purpose": "resolution"}],
-            "endings": [{"id": "ending_solitude", "description": "she leaves the office alone"}],
-            "ending_paths": [{"ending": "ending_solitude",
-                              "earned_by": "the beat_04 choice to stay"}],
+            "spine": {"theme": "leaving or staying", "tone": "tense"},
+            "start_storyline": "sl_main",
+            "storylines": [{
+                "id": "sl_main", "kind": "main", "premise": "mara decides whether to leave",
+                "target_beats": 4,
+                "beats": [
+                    {"id": "beat_01", "summary": "the argument", "type": "friction",
+                     "purpose": "setup", "tension": "none"},
+                    {"id": "beat_02", "summary": "the turn", "type": "plot",
+                     "purpose": "midpoint_turn", "tension": "rising"},
+                    {"id": "beat_03", "summary": "the crisis", "type": "plot",
+                     "purpose": "crisis", "tension": "high"},
+                    {"id": "beat_04", "summary": "the end", "type": "plot",
+                     "purpose": "resolution", "tension": "none"},
+                ],
+                "terminus": {"type": "game_end",
+                             "ending": {"id": "ending_solitude",
+                                        "description": "she leaves the office alone"}},
+            }],
         },
         "items": {"items": [{"id": "item_key", "name": "Brass Key"}]},
     }
@@ -75,10 +86,6 @@ def _tset(tools):
     (dict(code="compiles", message="compile failed: [scene_02] speaker 'ghost' undefined"),
      ["FAILED to compile", "BAD SPEAKER", "MALFORMED END"], ["COMMON FAILURES"],
      _T_EDIT_WRITE, ["CHARACTERS", "LOCATIONS", "scene_02"]),
-    # premature ending — leave PLANNED endings alone
-    (dict(code="premature_endings", path="scene_02",
-          message="scene 'scene_02' ends the game while the story has barely started"),
-     ["ENDS the game too early", "PLANNED"], [], _T_EDIT, ["scene_02"]),
     # dead gates — set_flag/add_var to raise the state a choice gates on
     (dict(code="no_dead_gates",
           message="choices gated on state that is never raised: scene_02 (gates on 'has_key')"),
@@ -101,14 +108,8 @@ def _tset(tools):
     (dict(code="each_node_min_lines", type=ErrorType.BUILD,
           message="nodes with < 3 lines: ['scene_02 (1)']"),
      ["too THIN", "verbatim"], [], _T_EDIT_WRITE, ["scene_02"]),
-    # ending with no scene — author a single ending node; whole-component skeleton suppressed
-    (dict(code="endings_are_nodes", type=ErrorType.BUILD,
-          message="story.endings → nodes.node_ids: unresolved refs ['ending_solitude']"),
-     ["declares an ENDING that has no scene", "write_node", '{"type":"end"}'], ["node_ids"],
-     _T_EDIT_WRITE, ["ending_solitude"]),
-], ids=["compiles", "premature_endings", "no_dead_gates", "reachable_from_start",
-        "each_node_has_location", "min_branches", "all_characters_speak", "each_node_min_lines",
-        "endings_are_nodes"])
+], ids=["compiles", "no_dead_gates", "reachable_from_start",
+        "each_node_has_location", "min_branches", "all_characters_speak", "each_node_min_lines"])
 def test_per_error_repair_prompt(err_kw, sys_in, sys_out, tools, user_in):
     cp = _prompt(**err_kw)
     for s in sys_in:

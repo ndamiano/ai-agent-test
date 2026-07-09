@@ -5,6 +5,11 @@ shared primitives they compose).
 
 from typing import Dict, List, Optional, Tuple
 
+# A menu is a dramatic fork, not a location picker. Shared here because BOTH ends of the
+# contract read it: scenes' write-time end policy caps a node's menu, and story's write-time
+# branch policy caps branches-per-beat so the derived menu (branches + 'continue') always fits.
+MAX_MENU_CHOICES = 3
+
 
 # ── nodes ─────────────────────────────────────────────────────────────────────
 def nodes_of(artifact: Dict):

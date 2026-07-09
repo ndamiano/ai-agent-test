@@ -5,74 +5,58 @@
     "max": 4,
     "display_multiplier": 25
   },
-  "note": "You are reading the dramatic PLAN for a branching visual novel, not its finished scenes. The plan has four parts: a central question (the tension the whole story turns on), a beat-sheet arc (an ordered list of beats, each with a summary of what happens plus a register and a dramatic job), a set of endings (each a concrete final scene), and, for each ending, the specific beat and choice that earns it. Judge only the dramatic structure the plan lays out — whether the question is a real dilemma, whether the endings genuinely disagree about how to answer it, whether the beats escalate and each move the situation somewhere new, and whether each ending is earned by a distinct choice. You are not judging prose quality, dialogue, or line-level craft; those are written later. Score on the story's own register — a quiet, low-stakes premise can reach the top level on its own terms, and a plan is never better for reaching for grand stakes. The top level is a plan a writer would actually build from, not a flawless one. For each criterion, pick the single level (0-4) whose description best matches the plan, and cite the specific question, beat, or ending as evidence.",
+  "note": "You are reading the dramatic PLAN for a game, not its finished scenes. The plan is a spine — a theme, a tone, and an optional trope — plus a graph of linear storylines: one main line and, optionally, side lines it branches into. Each storyline is an ordered list of beats (a summary of what happens plus a register and a dramatic job) and ends one of three ways: game_end (a concrete final scene), handoff (hands control back to the line that branched into it), or merge (flows into another line). Judge only the dramatic structure the plan lays out — whether the spine gives the storylines a clear, consistent frame, whether each storyline's beats build coherently and each does distinct work, whether any endings that exist are meaningfully distinct from each other, and whether the register stays consistent with the tone the spine declares. You are not judging prose quality, dialogue, or line-level craft; those are written later. Score on the story's own register — a quiet, low-stakes premise can reach the top level on its own terms, and a plan is never better for reaching for grand stakes. A single storyline with a single ending is a completely valid shape and should be judged on its own merits, not penalized for lacking branches. The top level is a plan a writer would actually build from, not a flawless one. For each criterion, pick the single level (0-4) whose description best matches the plan, and cite the specific storyline, beat, or ending as evidence.",
   "criteria": [
     {
-      "name": "central_question_real",
+      "name": "theme_and_tone",
       "weight": 2.0,
-      "_authoring": "The spine everything hangs from. Two failure attractors: (1) a theme WORD dressed as a question ('a story about connection and loss') instead of a question about these people in this situation, and (2) a question with an obvious right answer or a yes/no plot outcome ('will they escape the building?') rather than a values tension a reasonable person could answer either way. A real central question forces a trade-off between two things the protagonist genuinely wants or values.",
-      "description": "Does the central question pose a real values tension about these specific people — a trade-off a reasonable person could answer either way — rather than a theme word or a question with an obvious answer?",
+      "_authoring": "Replaces central_question_real now that the spine is theme+tone, not a values-fork. A theme WORD or short phrase ('loyalty tested by scarcity') is now a completely fine answer — the old requirement for a forced dilemma is gone. What matters is (1) the theme is legible in what the storylines actually do, not just asserted, and (2) the tone stays consistent — no jokes dropped into a straight tragedy, no whiplash between registers the spine didn't declare (a trope, if present, should also fit).",
+      "description": "Is there a clear theme and a consistent, fitting tone that the storylines actually serve — not just a theme asserted in the abstract, and not a tone that lurches?",
       "levels": {
-        "0": "Not a real question. It is a theme label ('connection versus isolation') or a plot outcome with one obvious answer ('will she survive?') — there is no values tension, nothing a thoughtful person would genuinely disagree about.",
-        "1": "A question in form only. It names the situation but the answer is foregone, or it stays so abstract that no concrete choice by this protagonist would settle it.",
-        "2": "A workable dilemma. It poses a real trade-off about these people, though it is stated broadly enough that it could belong to many stories, or one side is clearly weighted over the other.",
-        "3": "A genuine tension. The question forces a specific trade-off between two things this protagonist wants or values, and both answers are defensible — you can imagine an honest person landing on either side.",
-        "4": "The exact fault line. The question is inseparable from this cast and situation, cuts to a cost the protagonist cannot avoid paying, and is sharp enough that every beat and ending can be read as taking a position on it."
+        "0": "No discernible theme — the spine is a vague or generic label nothing in the storylines connects to — or the tone lurches (a comic beat dropped into an otherwise straight tragedy, or vice versa).",
+        "1": "The theme is stated but the storylines mostly don't reflect it, or the tone holds most of the time but breaks in at least one storyline in a way that reads as a mistake, not a choice.",
+        "2": "The theme shows up in some storylines but not others, or the tone is consistent but generic — it doesn't do much beyond not clashing.",
+        "3": "The theme is legible across the storylines that matter (at minimum the main line), and the tone is consistent and fits the theme and premise.",
+        "4": "Clear theme + consistent, fitting tone that every storyline visibly serves — you could describe what this story is about from the spine alone and see it borne out beat by beat."
       }
     },
     {
-      "name": "endings_diverge",
+      "name": "beats_progress",
       "weight": 2.5,
-      "gate": {
-        "threshold": 2
-      },
-      "_authoring": "The load-bearing criterion and the whole point of a branching story: the endings must take genuinely DIFFERENT positions on the central question, not the same answer in different weather. The persistent failure is 'same answer, different mood' — two endings where the protagonist makes the same choice but one is happy and one is sad, or endings distinguished only by who survives rather than by what was decided. Also anchored: abstract-label endings ('integration', 'closure') that state no position at all. Test the author can run: cover the endings' framing and re-derive each one's stance on the question from what actually happens — if two collapse to the same stance, this is below level 2. GATE: below level 2 caps the overall at its own score — a plan whose branches all mean the same thing is not a branching story no matter how good its beats are.",
-      "description": "Does each ending take a genuinely different position on the central question — a different answer, not the same answer with a different outcome or mood?",
+      "_authoring": "Load-bearing — this is the beats_escalate criterion re-scoped to be PER STORYLINE now that beats group under a linear line rather than one global sheet. Judge each storyline's beat sequence on its own: does it build coherently, with each beat doing distinct work (the delete-a-beat test: could a beat be cut and the chain still hold?). Variable length across storylines is expected and fine — a 3-beat side line is not worse than a 15-beat main line for being shorter; judge each on whether ITS beats do real work, not on line length. A storyline that restages the same beat or reports mood instead of a concrete change fails regardless of how many other storylines exist.",
+      "description": "Within each storyline, do the beats build coherently, with each beat doing distinct work no other beat in that line does — regardless of how long or short the line runs?",
       "levels": {
-        "0": "One answer wearing costumes. The endings resolve the question the same way and differ only in mood or in who ends up where (all 'she stays', but one bittersweet, one bleak), or they are abstract labels ('integration', 'acceptance') that take no position on the question at all.",
-        "1": "Barely distinct. At most one ending truly answers differently; the rest give the same stance with cosmetic variation, or an ending's position on the question cannot be read from what happens in it.",
-        "2": "Positions differ. The endings land on recognizably different answers to the question, though one may be a near-duplicate of another or a middle option that reads as a compromise between two others rather than its own stance.",
-        "3": "Each stakes its own claim. Every ending answers the central question a distinct way and you could re-derive its stance from the concrete scene alone; the set covers a real spread of how the tension could resolve.",
-        "4": "A true fork. Each ending is an unmistakable, committed answer to the question — no two could be swapped or merged — and together they map the honest range of the dilemma, each paying a different price."
+        "0": "Beats restage each other (the same confrontation replayed) or report mood ('tension rises') instead of a concrete change; delete any beat and the chain still holds. True of the main line or of most storylines that have beats.",
+        "1": "A couple of beats do real work but several are interchangeable or repeat what an earlier beat already established, in the main line or in most side lines.",
+        "2": "The main line generally advances, but the escalation is uneven — front-loaded, flat in stretches, or a beat or two restates what's already established; side lines (if any) are thin or repetitive.",
+        "3": "Every storyline's beats each make a specific change no other beat in that line makes; the main line builds toward its terminus and side lines (if any) do real, distinct work in their shorter span.",
+        "4": "Every beat in every storyline turns its line somewhere new — no line, long or short, could lose a beat without weakening — and the main line's rise is shaped so its heaviest beats land last."
       }
     },
     {
-      "name": "beats_escalate",
-      "weight": 2.0,
-      "_authoring": "Covers the old 'no_repeated_conflicts' intent against current vocab. Each beat's summary must move the situation somewhere it has not been; the failure is beats that restage the same confrontation between the same people about the same thing, or a summary that reports a mood-shift ('tension rises') instead of a concrete change (something learned, a line crossed, a door closed). The rise should be BACK-LOADED — the heavy beats late — with the crisis/fork as the last beat, and not every beat needs stakes (an early bonding/comedy beat at tension 'none' is correct). Test: could a beat be deleted and the chain still hold? If yes, it did no unique work.",
-      "description": "Do the beats escalate toward the crisis, with each beat moving the situation somewhere it has not been — a concrete change, not a repeat of an earlier confrontation or a vague rise in tension?",
-      "levels": {
-        "0": "Running in place. Beats restage the same conflict between the same people about the same thing, or summaries report mood ('tension increases') with no concrete change; delete any beat and nothing downstream breaks.",
-        "1": "Mostly static. A couple of beats do real work but several are interchangeable or repeat an earlier confrontation, and there is no clear rise toward a crisis.",
-        "2": "Advances, unevenly. The arc generally moves forward and reaches a crisis, but the escalation is front-loaded or flat in stretches, or one or two beats restate what is already established.",
-        "3": "A real rise. Each beat makes a specific change that no other beat makes, the pressure builds toward a late crisis, and the crisis/fork sits at the end where the protagonist must choose on the question.",
-        "4": "Tightly escalating. Every beat turns the situation somewhere new and raises the cost, the rise is back-loaded so the heaviest beats land last, and something planted early clearly pays off in the crisis — the arc could not lose a beat without weakening."
-      }
-    },
-    {
-      "name": "endings_earned",
+      "name": "terminal_distinctness",
       "weight": 1.5,
-      "_authoring": "Merges the old 'choice_quality' and 'arc_coherence' intent onto current vocab: the crisis/fork is the last beat, and each ending's earned_by (also mirrored in ending_paths) must name the SPECIFIC beat and choice that produces it — so the branches mean different decisions, not different scenery. Failures: a vague cause ('through courage and honesty'), an ending with no path, or every ending tracing to the same undifferentiated choice. The choice at the fork should be a real dilemma with a visible cost, pulling toward the different answers the endings represent — not 'be honest / lie' or a free pick with no consequence.",
-      "description": "Is each ending earned by a specific beat and choice at the crisis — a real decision with a visible cost that pulls toward that ending's answer — rather than by a vague cause or scenery alone?",
+      "_authoring": "Replaces endings_diverge, with the gate REMOVED and the requirement inverted: a single-ending game is now a fully valid shape and should score at the top if that one ending is well-realized — do not penalize a plan for having only one game_end terminus. This criterion only has teeth when there are >=2 game_end endings: they must be more than the same outcome restated. Clusters of similar endings (four different 'you died' scenes in different places) are fine and should NOT be scored as a collapse — collapse means two or more endings are actually identical in substance (same outcome, same stakes, no distinguishing detail beyond cosmetic dressing).",
+      "description": "If there are two or more game_end endings, are they distinct from each other rather than the same outcome restated? (A single ending is valid and should be judged on its own merit, not penalized for lacking company.)",
       "levels": {
-        "0": "Endings from nowhere. The paths are vague ('through perseverance'), missing, or all trace to the same undifferentiated moment; the crisis is not a real choice, so which ending you reach feels arbitrary.",
-        "1": "Loosely attached. Some endings name a cause but it is generic, or the fork is a shallow pick (do the good thing / the bad thing) with no cost that would make a player hesitate.",
-        "2": "Traceable. Each ending points to a beat and a choice, though a couple of paths are thin or two endings lean on the same decision distinguished only by degree.",
-        "3": "Each ending is earned. Every ending names the specific beat and choice that produces it, the fork is a genuine dilemma with a visible cost, and each branch clearly enacts a different answer to the central question.",
-        "4": "Consequence, not scenery. Every ending is the unmistakable result of a distinct, costly choice at the crisis; the fork forces the protagonist to pay for whichever answer they pick, and the branches diverge because the decisions do."
+        "0": "Two or more endings collapse to one identical outcome — same result, same stakes, distinguished only by cosmetic dressing (a different room, a different line of dialogue) with nothing else that would make a player experience them as different.",
+        "1": "Multiple endings exist but most are near-duplicates of each other; only one or two feel like their own outcome.",
+        "2": "Endings are distinguishable but a couple lean on the same underlying resolution with only minor variation (e.g. several are flavors of the same failure state without a clear reason each exists).",
+        "3": "Every ending is its own outcome — or there is a single, well-realized ending — with no pair reading as interchangeable.",
+        "4": "A single strong ending, or (if several) a set where each is an unmistakable, distinct outcome that could not be swapped for another without changing what the story means."
       }
     },
     {
-      "name": "register_variety",
-      "weight": 1.0,
-      "_authoring": "Modernizes the old 'scene_variety' onto the beat's real fields — the beat `type` register (bonding | comedy | friction | plot | character) and its opening-register rule. NOT scene_type (stale). Failure: wall-to-wall friction/plot with no lighter beat, or an opening register that ignores the premise (a 'bonding' beat with adversaries, small talk between an interrogator and a detainee). A good arc lets a heavy late beat land because its topic first arrived light. A grim premise can be uniformly tense and still be right — judge fit to the premise, not a quota.",
-      "description": "Does the beats' register vary in a way that fits the premise — an opening register true to who these people are, and lighter or quieter beats where the relationship warrants them — rather than one uniform note throughout?",
+      "name": "tone_consistency",
+      "weight": 1.5,
+      "_authoring": "Inverted from the old register_variety: variety is no longer the goal, CONSISTENCY is. The spine declares one tone; every beat's register (bonding | comedy | friction | plot | character) should serve that tone rather than clash against it. A story can still use different beat types (a bonding beat, a friction beat) while staying tonally uniform — comedy stays funny throughout, a bleak story stays bleak throughout. The failure is a beat whose register breaks the declared tone (a broad joke landing in the middle of a story whose spine says 'bleak', or a moment of real cruelty in a story whose spine says 'warm and light'), not a lack of variety.",
+      "description": "Does the register serve ONE consistent tone across the storylines — comedy staying funny, serious staying serious — rather than lurching between registers the spine doesn't support?",
       "levels": {
-        "0": "One note, wrong note. Every beat is the same register (wall-to-wall friction/plot), or the opening register contradicts the premise (a bonding beat between adversaries, small talk grafted onto a hostile situation).",
-        "1": "Monotone. The registers barely differ and nothing sets up a later payoff; the opening does not clearly come from who these people are.",
-        "2": "Some variation. The registers shift here and there and the opening roughly fits, but the arc leans heavily on one register or misses a chance to let a light beat set up a heavy one.",
-        "3": "Varied and fitting. The registers move with the story, the opening register is true to the premise, and at least one lighter or quieter beat gives the heavier ones room to land.",
-        "4": "Register in service of the arc. The mix of registers is deliberate — an early light beat plants what a late heavy beat pays off — and every register choice reads as the right one for that moment in this particular story."
+        "0": "The tone lurches badly and repeatedly — jokes dropped into a straight tragedy, or grim cruelty breaking a light story — with no sense the register serves the spine's declared tone at all.",
+        "1": "Mostly one tone, but at least one storyline or beat clearly breaks register in a way that reads as a mistake rather than a deliberate beat.",
+        "2": "The tone mostly holds, with one moment that sits slightly off the declared register without badly undermining it.",
+        "3": "The register stays consistent with the spine's tone across every storyline that matters, even as beat types vary (bonding, friction, plot beats all read as the same story).",
+        "4": "The tone is uniform and unmistakable everywhere — comedy is funny start to end, or the bleakness never breaks — and every beat's register, whatever its type, reads as serving that one tone."
       }
     }
   ]

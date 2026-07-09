@@ -42,6 +42,17 @@ def test_assemble_vn_is_schema_valid_and_clean():
     assert crossref_errors(ir) == []
 
 
+def test_authoring_provenance_stripped_from_nodes():
+    # `beat` + `storyline` are authoring-only stamps (drive the beats_realized done-condition);
+    # the IR schema is additionalProperties:false, so both must be dropped at assemble.
+    art = _vn_artifact()
+    art["nodes"]["nodes"]["n1"]["beat"] = "beat_01"
+    art["nodes"]["nodes"]["n1"]["storyline"] = "sl_main"
+    ir = assemble_ir(art)
+    assert all("beat" not in n and "storyline" not in n for n in ir["nodes"])
+    _VALIDATOR.validate(ir)
+
+
 def test_manifest_backgrounds_and_sprites_lifted():
     art = _vn_artifact()
     art["asset_manifest"] = {

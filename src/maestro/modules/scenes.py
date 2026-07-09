@@ -94,7 +94,7 @@ _T_EDIT_WRITE = frozenset({"read_node", "edit_node", "write_node"})  # correct O
 
 
 # ── write-time node policy (what write_node/edit_node enforce; tools.py just dispatches) ──────
-_MAX_MENU_CHOICES = 3
+_MAX_MENU_CHOICES = views.MAX_MENU_CHOICES
 
 
 def normalize_narration(content):
@@ -244,6 +244,69 @@ def node_write_error(content, *, min_lines: int = 0):
 
 
 # ── the compact graph projection + slot math (the system picks where the next scene goes) ─────
+def _story_storylines(artifact: Dict) -> List[Dict]:
+    return [s for s in (artifact.get("story") or {}).get("storylines") or []
+            if isinstance(s, dict) and s.get("id")]
+
+
+def _flat_beats(artifact: Dict) -> List[Dict]:
+    """Every storyline's beats flattened into ONE ordered list (spawn order, then beat order within
+    a line), each tagged with its `storyline`. This is what node_view realizes — beat ids are
+    globally unique, so a node stamped with a beat id maps back to exactly one (storyline, beat)."""
+    out = []
+    for s in _story_storylines(artifact):
+        for b in s.get("beats") or []:
+            if isinstance(b, dict) and b.get("id"):
+                out.append({**b, "storyline": s["id"]})
+    return out
+
+
+def _storyline_graph(artifact: Dict) -> Dict:
+    """Derive the node graph from the storyline structure — each beat-node's `end` is STRUCTURAL,
+    not the model's choice: a jump to the next beat, a menu at a branch point, or the storyline's
+    terminus (game_end→end, handoff→jump to the branch's return, merge→jump into another line).
+    Reachability holds by construction. Returns {entry, ends:{beat_id: end_dict}}."""
+    sls = _story_storylines(artifact)
+    by_id = {s["id"]: s for s in sls}
+    spun_by = {br["spinoff"]: br for s in sls for br in (s.get("branches") or []) if br.get("spinoff")}
+
+    def first_beat(sid):
+        bs = (by_id.get(sid) or {}).get("beats") or []
+        return bs[0]["id"] if bs and bs[0].get("id") else None
+
+    ends: Dict[str, Dict] = {}
+    for s in sls:
+        beats = [b for b in s.get("beats") or [] if b.get("id")]
+        for i, b in enumerate(beats):
+            bid = b["id"]
+            nxt = beats[i + 1]["id"] if i + 1 < len(beats) else None
+            branches = [br for br in s.get("branches") or [] if br.get("from_beat") == bid]
+            if branches:
+                choices = ([{"text": "continue", "target": nxt}] if nxt else [])
+                for br in branches:
+                    tgt = first_beat(br.get("spinoff"))
+                    if tgt:
+                        ch = {"text": (br.get("choice") or "go on")[:90], "target": tgt}
+                        if br.get("requires"):
+                            ch["requires"] = br["requires"]
+                        choices.append(ch)
+                end = ({"type": "menu", "choices": choices} if len(choices) >= 2
+                       else ({"type": "jump", "target": nxt} if nxt else {"type": "end"}))
+            elif nxt:
+                end = {"type": "jump", "target": nxt}
+            else:  # last beat of the line → its terminus
+                t = s.get("terminus") or {}
+                if t.get("type") == "merge" and t.get("at_beat"):
+                    end = {"type": "jump", "target": t["at_beat"]}
+                elif t.get("type") == "handoff":
+                    ret = (spun_by.get(s["id"]) or {}).get("return_to_beat")
+                    end = {"type": "jump", "target": ret} if ret else {"type": "end"}
+                else:  # game_end (or unknown) → end the game
+                    end = {"type": "end"}
+            ends[bid] = end
+    return {"entry": first_beat((artifact.get("story") or {}).get("start_storyline")), "ends": ends}
+
+
 def node_view(artifact: Dict) -> Dict:
     node_ids, nodes = views.nodes_of(artifact)
     synopses = (artifact.get("nodes", {}) or {}).get("synopses", {}) or {}
@@ -260,7 +323,7 @@ def node_view(artifact: Dict) -> Dict:
         if tgt in written:
             continue
         slots.setdefault(tgt, {"id": tgt, "from": []})["from"].append({"node": src, "label": label})
-    beats_full = [b for b in (artifact.get("story", {}) or {}).get("beats", []) if b.get("id")]
+    beats_full = _flat_beats(artifact)
     beat_ids = [b["id"] for b in beats_full]
     beat_index = {bid: i for i, bid in enumerate(beat_ids)}
     covered = {nodes.get(nid, {}).get("beat") for nid in node_ids}
@@ -332,7 +395,14 @@ def beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) ->
 
 def _stamp_beat(view: Dict, assigned: Optional[Dict], args: Dict) -> Dict:
     beat = beat_for_new_node(view, assigned, bool(view.get("node_ids")))
-    return {**args, "beat": beat} if beat else args
+    if not beat:
+        return args
+    storyline = next((b.get("storyline") for b in (view.get("beats") or [])
+                      if b.get("id") == beat), None)
+    stamped = {**args, "beat": beat}
+    if storyline:
+        stamped["storyline"] = storyline
+    return stamped
 
 
 def _parallel_cap(view: Dict) -> int:
@@ -417,7 +487,7 @@ def each_node_has_location(artifact: Dict):
 def unrealized_beats(artifact: Dict) -> List[str]:
     """Story beats with no scene dramatizing them yet (empty when there's no story). Each one is a
     slot the scene author still owes a node for."""
-    beats = [b.get("id") for b in (artifact.get("story", {}) or {}).get("beats", []) if b.get("id")]
+    beats = [b["id"] for b in _flat_beats(artifact)]
     if not beats:
         return []
     _, nodes = views.nodes_of(artifact)
@@ -484,72 +554,6 @@ def _d_build_nodes(chk, m, ctx):
     if checks.length(art, "nodes.node_ids") < 1:
         return checks.slot_errors(1, type=chk.tier, code=chk.code, component="nodes", noun="scene")
     return []
-
-
-def _d_endings_are_nodes(chk, m, ctx):
-    if not _has_story(ctx.artifact):
-        return []
-    return m.wrap(chk, checks.refs_resolve(ctx.artifact, "story.endings", "nodes.node_ids",
-                                           from_key="id"))
-
-
-def _force_ending_end(module, context, error, slot, services, dispatch) -> None:
-    """A planned ending node's end.type is decided by the check itself — setting it is
-    deterministic, so no LLM. Observed: the model DISAGREED with the check (it had authored a
-    continuation node) and re-asserted the same jump 250 steps straight, every edit 'ok'."""
-    services.allowed = None
-    result = dispatch("edit_node", {"node_id": error.path, "end": {"type": "end"}})
-    services._report(f"forced end on planned ending '{error.path}': "
-                     + ("ok" if result.get("ok") else f"error — {result.get('error')}"))
-
-
-def _d_ending_nodes_end(chk, m, ctx):
-    """A planned ending node that doesn't end the game loops the player back into the story
-    (observed from the turn-loop closer: an ending jumping to beat_02). The inverse of
-    premature_endings: that check frees unplanned end nodes; this one pins planned ones."""
-    if not _has_story(ctx.artifact):
-        return []
-    planned = {e.get("id") for e in (ctx.artifact.get("story") or {}).get("endings", [])}
-    node_ids, nodes = views.nodes_of(ctx.artifact)
-    return [Error(type=chk.tier, code=chk.code, component="nodes", path=nid,
-                  message=f"'{nid}' is one of the story's planned endings but its end.type is "
-                          f"{(nodes[nid].get('end') or {}).get('type')!r} — an ending node must "
-                          f"END the game. Set its end to {{\"type\": \"end\"}} (edit_node).")
-            for nid in node_ids
-            if nid in planned and (nodes.get(nid, {}).get("end") or {}).get("type") != "end"]
-
-
-def _d_premature_endings(chk, m, ctx):
-    """An UNPLANNED ending is fine — a good exit can evolve naturally from play. What's not fine
-    is ending the game while the arc is barely started: an unplanned end node whose path never
-    reaches the story's final beats cuts the player off from the whole story."""
-    if not _has_story(ctx.artifact):
-        return []
-    story = ctx.artifact.get("story") or {}
-    planned = {e.get("id") for e in story.get("endings", [])}
-    beat_index = {b["id"]: i for i, b in enumerate(story.get("beats", [])) if b.get("id")}
-    if len(beat_index) < 3:
-        return []
-    node_ids, nodes = views.nodes_of(ctx.artifact)
-    entry = node_ids[0] if node_ids else None
-    edges = {nid: views.node_targets(nodes.get(nid, {})) for nid in node_ids}
-    out = []
-    for nid in node_ids:
-        if (nodes.get(nid, {}).get("end") or {}).get("type") != "end" or nid in planned:
-            continue
-        path = views.shortest_path(entry, nid, edges) if entry else []
-        if not path:
-            continue  # unreachable — reachable_from_start owns that failure
-        reached = max((beat_index.get(nodes.get(p, {}).get("beat"), -1) for p in path),
-                      default=-1)
-        if reached < len(beat_index) - 2:
-            out.append(Error(
-                type=chk.tier, code=chk.code, component="nodes", path=nid,
-                message=f"scene '{nid}' ends the game while the story has barely started (its "
-                        f"path only reaches beat {reached + 1} of {len(beat_index)}). An "
-                        f"unplanned ending is welcome only once the arc has played out — change "
-                        f"this `end` to a jump that continues the story instead."))
-    return out
 
 
 def _d_min_branches(chk, m, ctx):
@@ -677,7 +681,7 @@ def _node_view_block(view: Dict, slot_index: int = 0) -> List[str]:
 
 
 def _has_story(art: Dict) -> bool:
-    return bool((art.get("story") or {}).get("central_question"))
+    return bool((art.get("story") or {}).get("spine"))
 
 
 def _owns_compile(art: Dict) -> bool:
@@ -877,20 +881,6 @@ _FINISH_SCHEMA = [{"type": "function", "function": {
     }, "required": ["end", "event_summary"]}}}]
 
 
-def _world_end(end, ending_ids: set) -> Dict:
-    """The exit for a conversation embedded in a walkable world. It is self-contained: it returns
-    control to the map. The one exception is the story's climax — a menu whose every choice targets
-    a story ending node — which is kept so the branching endings remain reachable from the game's
-    final decision. Everything else (jump/end/malformed) collapses to `return`."""
-    if isinstance(end, dict) and end.get("type") == "menu":
-        kept = [c for c in (end.get("choices") or [])
-                if isinstance(c, dict) and c.get("target") in ending_ids]
-        targets = {c.get("target") for c in kept}
-        if len(targets) >= 2:
-            return {"type": "menu", "choices": kept}
-    return {"type": "return"}
-
-
 def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     """Author one scene as a live conversation: each character is its own LLM call (system =
     its card; the scene so far = chat turns), a closer call files the exit + delta, and the
@@ -905,13 +895,21 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     # game and ends it the instant you speak to anyone). Endings are reached out in the world.
     in_world = "world" in (context.spec.get("modules") or [])
     view = module.view(art) or {}
+    graph = _storyline_graph(art)
     assigned = pick_slot(view, slot)
     cast = [c for c in (art.get("characters") or {}).get("characters", []) if c.get("id")]
     if len(cast) < 2:
         services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
         return
-    node_id = (assigned or {}).get("id") or ("scene_01" if not view.get("node_ids")
-                                             else f"scene_{(view.get('beats_todo') or ['x'])[0]}")
+    # A node's id IS the beat it realizes — the graph (jumps/menus/termini) is keyed on beat ids,
+    # so the derived `end` lands on a node whose id matches. An assigned slot's id is already the
+    # beat some earlier node points at; the opening node is the storyline's entry beat.
+    if assigned:
+        node_id = assigned["id"]
+    elif not view.get("node_ids"):
+        node_id = graph.get("entry") or "scene_01"
+    else:
+        node_id = (view.get("beats_todo") or ["scene_01"])[0]
     sss = context.spec.get("story_state_schema") or {}
     schema_facts = list(sss.get("established_facts") or [])
     # entity states carry the RELATIONSHIP frame — without it strangers talk like old friends
@@ -925,13 +923,6 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     if bid in beats and str(beats[bid].get("tension", "")).strip().lower() in ("", "none"):
         business += ("\nStake: NONE — nothing needs to go wrong in this scene. Do the activity, "
                      "get the jokes in, let it be easy; it exists to build these people.")
-    endings = {e.get("id"): e for e in (art.get("story") or {}).get("endings", [])}
-    is_ending = node_id in endings
-    if is_ending:
-        # The raw ending id ("ending_integration") gets parroted back as dialogue when it's in
-        # the instruction — only the concrete description enters the prompt.
-        business = ("this scene is the story's ENDING — resolve it: "
-                    f"{endings[node_id].get('description', '')}")
     min_lines = context.param("each_node_min_lines", 3)
 
     # The lead-in's last speaker just spoke — the OTHER character opens.
@@ -1034,26 +1025,6 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
     beat_ids = list(beats)
     if bid in beats and beat_ids.index(bid) + 1 < len(beat_ids):
         node_lines.append(f"NEXT BEAT: {render_beat(beats[beat_ids[beat_ids.index(bid) + 1]])}")
-    endings = (art.get("story") or {}).get("endings", [])
-    if endings:
-        # earned_by was write-only data before this — the closer decides menus, so it is the
-        # one consumer that can make a choice actually pay toward its planned ending.
-        earned = {p.get("ending"): p.get("earned_by")
-                  for p in (art.get("story") or {}).get("ending_paths", []) if isinstance(p, dict)}
-        # Live reachability: an ending only exists as a node once something targets it. Mark the
-        # endings no written node points at yet, so the closer routes a fork toward them before the
-        # arc closes instead of orphaning them (the reachable_from_start failure).
-        targeted = set()
-        for n in ((art.get("nodes") or {}).get("nodes") or {}).values():
-            targeted |= set(views.node_targets(n))
-        node_lines.append("STORY ENDINGS (a menu choice toward one must MATCH what earns it):")
-        for e in endings:
-            eid = e.get("id", "")
-            unreached = eid and eid not in targeted
-            node_lines.append(
-                f"  {eid}"
-                + (f" — earned by: {earned[eid]}" if earned.get(eid) else "")
-                + ("  [NO PATH YET — a fork must still route here]" if unreached else ""))
     bgs = (art.get("asset_manifest") or {}).get("backgrounds", [])
     if bgs:
         node_lines.append("LOCATIONS: " + ", ".join(b.get("id", "") for b in bgs))
@@ -1068,45 +1039,10 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
                 and action["args"].get("end"):
             break
     args = action.get("args") or {}
-    end = args.get("end")
-    beat_ix = {b: i for i, b in enumerate(beat_ids)}
-    my_ix = beat_ix.get(bid, -1)
-    existing = (art.get("nodes") or {}).get("nodes") or {}
-
-    def _backward(target: str) -> bool:
-        # A jump/choice into an existing node at or behind this beat loops the story
-        # (observed: beat_08's closer jumping to beat_02).
-        tb = (existing.get(target) or {}).get("beat")
-        return tb in beat_ix and beat_ix[tb] <= my_ix
-
-    nxt = beat_ids[my_ix + 1] if 0 <= my_ix and my_ix + 1 < len(beat_ids) else None
-    fallback = {"type": "jump", "target": f"scene_{nxt}"} if nxt else {"type": "end"}
-    if is_ending:
-        # A planned ending node ENDS the game — the closer has no discretion here (observed:
-        # an ending jumping back into beat_02, another ending in a self-targeting menu).
-        end = {"type": "end"}
-    elif in_world:
-        # Map conversation: hand back to the world. The ONLY non-return exit is a climactic
-        # menu whose choices ARE the story endings, so branching endings stay reachable.
-        # (`endings` was rebound to the raw ending LIST above, so derive its ids here.)
-        end = _world_end(end, {e.get("id") for e in endings
-                               if isinstance(e, dict) and e.get("id")})
-    elif not isinstance(end, dict) or end.get("type") not in _END_TYPES:
-        end = fallback
-    elif end.get("type") == "jump" and _backward(end.get("target", "")):
-        end = fallback
-    elif end.get("type") == "menu":
-        kept = [c for c in (end.get("choices") or [])
-                if isinstance(c, dict) and not _backward(c.get("target", ""))]
-        targets = {c.get("target") for c in kept if c.get("target")}
-        if len(targets) < 2:
-            # A fake menu (every choice → the same scene) would be rejected at write_scene,
-            # throwing the whole authored scene away — collapse it to the jump it really is.
-            end = {"type": "jump", "target": next(iter(targets))} if targets else fallback
-        elif len(kept) >= 2:
-            end = {"type": "menu", "choices": kept}
-        else:
-            end = fallback
+    # The node's `end` is STRUCTURAL — derived from the storyline graph (a jump to the next beat, a
+    # menu at a branch, or the storyline's terminus), never the closer's choice. The closer only
+    # files the story-state delta; its returned `end` is discarded.
+    end = graph["ends"].get(node_id) or {"type": "end"}
     delta = args.get("story_state_delta") if isinstance(args.get("story_state_delta"), dict) else {}
     if args.get("event_summary"):
         delta["event_summary"] = args["event_summary"]
@@ -1145,12 +1081,6 @@ class Scenes(Module):
               prompt="nodes_screenplay_write.txt", skeleton="", run=scene_turn_loop),
         Check("build_nodes", _d_build_nodes, tools=_T_WRITE, guard=_NODE_GUARD,
               prompt="nodes_screenplay_write.txt", skeleton="", run=scene_turn_loop),
-        Check("endings_are_nodes", _d_endings_are_nodes, tools=_T_EDIT_WRITE,
-              prompt="nodes_ending_node.txt", skeleton=""),
-        Check("ending_nodes_end", _d_ending_nodes_end, job="fix",
-              tools=_T_EDIT, run=_force_ending_end),
-        Check("premature_endings", _d_premature_endings, job="fix", prompt="nodes_premature_ending.txt",
-              tools=_T_EDIT, context=cr.ctx_structural),
         Check("node_targets_resolve", lambda chk, m, ctx: m.wrap(chk, node_targets_resolve(ctx.artifact)),
               job="fix", prompt="crossref_node.txt", tools=_T_EDIT_WRITE, context=cr.ctx_crossref),
         Check("reachable_from_start", lambda chk, m, ctx: m.wrap(chk, reachable_from_start(ctx.artifact)),

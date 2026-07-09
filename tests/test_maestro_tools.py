@@ -422,18 +422,25 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
     state = RunState(tmp_path)
     state.write_component("characters", {"characters": [
         {"id": "a", "name": "Ada", "drive": "leave"}, {"id": "b", "name": "Bo", "drive": "stay"}]})
-    state.write_component("story", {"central_question": "q",
-                                    "endings": [{"id": "ending_x", "description": "d"}],
-                                    "beats": [{"id": "beat_1", "summary": "s1"},
-                                              {"id": "beat_2", "summary": "s2"}]})
-    # a pre-existing scene seeds the cross-scene dedupe: its LONG lines' openers are spent,
-    # its short lines stay available for deadpan callbacks
+    state.write_component("story", {
+        "spine": {"theme": "leave or stay", "tone": "tense"}, "start_storyline": "sl_main",
+        "storylines": [{"id": "sl_main", "kind": "main", "premise": "p", "target_beats": 3,
+                        "beats": [{"id": "beat_1", "summary": "s1", "type": "plot",
+                                   "purpose": "setup", "tension": "none"},
+                                  {"id": "beat_2", "summary": "s2", "type": "plot",
+                                   "purpose": "escalation", "tension": "none"},
+                                  {"id": "beat_3", "summary": "s3", "type": "plot",
+                                   "purpose": "resolution", "tension": "none"}],
+                        "terminus": {"type": "game_end",
+                                     "ending": {"id": "ending_x", "description": "d"}}}]})
+    # a pre-existing scene (beat_1) seeds the cross-scene dedupe AND opens the slot for beat_2:
+    # its LONG lines' openers are spent, its short lines stay available for deadpan callbacks
     state.write_component("nodes", {"node_ids": ["intro"], "nodes": {"intro": {
-        "beat": "beat_0",
+        "beat": "beat_1",
         "lines": [{"speaker": "a",
                    "text": "The spawn rate on the final platform is inconsistent today."},
                   {"speaker": "b", "text": "We have time."}],
-        "end": {"type": "jump", "target": "scene_01"}}}})
+        "end": {"type": "jump", "target": "beat_2"}}}})
     spec = Spec({"title": "T", "frozen": True, "modules": ["scenes"],
                  "params": {"each_node_min_lines": 3}})
     scenes = [m for m in compose(("scenes",)) if m.id == "scenes"][0]
@@ -461,11 +468,11 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
             self.turn_msgs = []
 
         def infer(self, msgs, schemas, **kw):
-            if schemas:  # the closer call
+            if schemas:  # the closer call — its returned `end` is discarded (end is structural)
                 import json as j
                 return {"choices": [{"message": {"tool_calls": [{"function": {
                     "name": "finish_scene", "arguments": j.dumps({
-                        "end": {"type": "jump", "target": "scene_beat_2"},
+                        "end": {"type": "end"},
                         "event_summary": "crate fight"})}}]}}]}
             self.turn_msgs.append(msgs)
             return {"choices": [{"message": {"content": next(turn_replies)}}]}
@@ -481,9 +488,10 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
     scene_turn_loop(scenes, ctx, err, 0, svc, svc.dispatch)
 
     nodes = state.read_component("nodes")
-    assert nodes["node_ids"] == ["intro", "scene_01"]
-    node = nodes["nodes"]["scene_01"]
-    assert node["end"] == {"type": "jump", "target": "scene_beat_2"}
+    assert nodes["node_ids"] == ["intro", "beat_2"]
+    node = nodes["nodes"]["beat_2"]
+    # end is DERIVED from the storyline graph (beat_2 → beat_3), not the closer's returned end
+    assert node["end"] == {"type": "jump", "target": "beat_3"}
     assert {"speaker": None, "text": "Bo blocks the door."} in node["lines"]
     speakers = [ln["speaker"] for ln in node["lines"]]
     assert "a" in speakers and "b" in speakers
@@ -493,7 +501,7 @@ def test_scene_turn_loop_writes_via_guarded_dispatch(tmp_path):
     # cross-scene: intro's long opener is spent; its short line is a legal callback
     assert not any(t.startswith("The spawn rate on") for t in texts)
     assert "We have time." in texts
-    assert state.read_component("nodes")["synopses"]["scene_01"] == "crate fight"
+    assert state.read_component("nodes")["synopses"]["beat_2"] == "crate fight"
     # the last rounds before the turn cap carry the close-the-scene nudge; early ones don't
     assert "[END]" not in svc.turn_msgs[0][-1]["content"]
     assert "Bring the scene to a close" in svc.turn_msgs[-1][-1]["content"]
@@ -527,44 +535,6 @@ def test_reachable_from_start_vacuous_on_empty_graph():
     assert ok is True
     ok, _ = reachable_from_start({"nodes": {"node_ids": [], "nodes": {}}})
     assert ok is True
-
-
-def test_force_ending_end_is_mechanical(tmp_path):
-    from maestro.modules.context import build_context
-    from maestro.modules import compose
-    from maestro.modules.scenes import _force_ending_end
-
-    state = RunState(tmp_path)
-    state.write_component("story", {"central_question": "q",
-                                    "endings": [{"id": "ending_x", "description": "d"}],
-                                    "beats": [{"id": "b1", "summary": "s"}]})
-    state.write_component("nodes", {"node_ids": ["ending_x"], "nodes": {
-        "ending_x": {"lines": [{"speaker": None, "text": "t"}],
-                     "end": {"type": "jump", "target": "ending_x_final"}}}})
-    spec = Spec({"title": "T", "frozen": True, "modules": ["scenes"], "params": {}})
-    scenes_mod = [m for m in compose(("scenes",)) if m.id == "scenes"][0]
-    ctx = build_context(spec.data, state)
-    err = next(e for e in scenes_mod.get_errors(ctx) if e.code == "ending_nodes_end")
-    tools = build_tools(spec, state)
-
-    class Svc:
-        allowed = frozenset({"read_node"})
-
-        def __init__(self):
-            self.reports = []
-
-        def dispatch(self, name, args):
-            return tools[name](**(args or {}))
-
-        def _report(self, s):
-            self.reports.append(s)
-
-        def run(self, *a, **k):
-            raise AssertionError("forcing a planned ending's end must never call the LLM")
-
-    svc = Svc()
-    _force_ending_end(scenes_mod, ctx, err, 0, svc, svc.dispatch)
-    assert state.read_component("nodes")["nodes"]["ending_x"]["end"] == {"type": "end"}
 
 
 def test_state_bare_declaration_cut_is_mechanical(tmp_path):
@@ -673,22 +643,83 @@ def test_add_character_appends_and_guards_dup(tmp_path):
                                "content": {"name": "Marcus", "sex": "male"}})["ok"]
 
 
-def test_story_tools_author_spine_beats_and_endings(tmp_path):
+def test_story_tools_author_spine_storylines_and_beats(tmp_path):
     state = RunState(tmp_path)
     tools = build_tools(Spec({"title": "T", "frozen": True,
                               "modules": ["story", "cast", "scenes"], "params": {}}), state)
-    assert tools["set_central_question"]("Will they stay?")["ok"]
-    assert tools["add_beat"]("beat_01", {"summary": "they meet", "type": "bonding",
-                                         "purpose": "setup", "tension": "none"})["ok"]
-    assert tools["add_beat"]("beat_01", {"summary": "dup", "type": "plot",
-                                         "purpose": "setup", "tension": "none"})["ok"] is False
-    assert tools["add_beat"]("beat_02", {"summary": "thin"})["ok"] is False   # missing type/purpose/tension
-    # add_ending writes the ending AND its path in one call — endings_planned holds by construction
-    assert tools["add_ending"]("ending_stay", "They stay and rebuild.", "the beat_01 choice")["ok"]
+    assert tools["set_spine"]("staying vs leaving", "wistful")["ok"]
+    assert tools["add_storyline"]("sl_main", {
+        "kind": "main", "premise": "will they stay?", "target_beats": 2,
+        "terminus": {"type": "game_end",
+                     "ending": {"id": "ending_stay", "description": "They stay and rebuild."}}})["ok"]
+    assert tools["add_storyline"]("sl_main", {"kind": "main", "premise": "dup",
+                                              "terminus": {"type": "handoff"}})["ok"] is False
+    assert tools["add_beat"]("sl_main", "beat_01", {"summary": "they meet", "type": "bonding",
+                                                     "purpose": "setup", "tension": "none"})["ok"]
+    assert tools["add_beat"]("sl_main", "beat_01", {"summary": "dup", "type": "plot",
+                                                     "purpose": "setup", "tension": "none"})["ok"] is False
+    assert tools["add_beat"]("sl_main", "beat_02", {"summary": "thin"})["ok"] is False   # missing type/purpose/tension
+    assert tools["finish_storyline"]("sl_main")["ok"]
     story = state.read_component("story")
-    assert story["central_question"] == "Will they stay?"
-    assert [b["id"] for b in story["beats"]] == ["beat_01"]
-    assert story["ending_paths"] == [{"ending": "ending_stay", "earned_by": "the beat_01 choice"}]
+    assert story["spine"] == {"theme": "staying vs leaving", "tone": "wistful", "trope": None}
+    assert len(story["storylines"]) == 1
+    assert [b["id"] for b in story["storylines"][0]["beats"]] == ["beat_01"]
+    assert story["storylines"][0]["terminus"]["ending"]["id"] == "ending_stay"
+    assert story["storylines"][0]["done"] is True
+
+
+def test_add_storyline_branch_placement_gates(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(Spec({"title": "T", "frozen": True,
+                              "modules": ["story", "cast", "scenes"], "params": {}}), state)
+    ending = {"type": "game_end", "ending": {"id": "e1", "description": "They escape at dawn."}}
+
+    def branch(i, beat="beat_04", choice=None, ret=None):
+        return {"id": f"br_{i}", "from_beat": beat, "choice": choice or f"path {i}",
+                "spinoff": f"sl_{i}", "return_to_beat": ret}
+
+    # 3 branches stacked on one beat: continue + 3 would overflow the menu — refused at write time
+    r = tools["add_storyline"]("sl_main", {
+        "kind": "main", "premise": "p", "target_beats": 6, "terminus": ending,
+        "branches": [branch(1), branch(2), branch(3)]})
+    assert r["ok"] is False and "3 branches fork from 'beat_04'" in r["error"]
+    # same choice text twice at one beat: a fake fork — refused
+    r = tools["add_storyline"]("sl_main", {
+        "kind": "main", "premise": "p", "target_beats": 6, "terminus": ending,
+        "branches": [branch(1, choice="Who stays?"), branch(2, choice="who stays?")]})
+    assert r["ok"] is False and "same choice text" in r["error"]
+    # 2 distinct branches on one beat + 1 elsewhere: fits the menu — accepted
+    assert tools["add_storyline"]("sl_main", {
+        "kind": "main", "premise": "p", "target_beats": 6, "terminus": ending,
+        "branches": [branch(1), branch(2, ret="beat_05"), branch(3, beat="beat_02")]})["ok"]
+
+
+def test_add_storyline_spinoff_terminus_must_match_branch(tmp_path):
+    state = RunState(tmp_path)
+    tools = build_tools(Spec({"title": "T", "frozen": True,
+                              "modules": ["story", "cast", "scenes"], "params": {}}), state)
+    assert tools["add_storyline"]("sl_main", {
+        "kind": "main", "premise": "p", "target_beats": 6,
+        "terminus": {"type": "game_end", "ending": {"id": "e1", "description": "Dawn."}},
+        "branches": [
+            {"id": "br_a", "from_beat": "beat_02", "choice": "take the tunnel",
+             "spinoff": "sl_tunnel", "return_to_beat": "beat_03"},
+            {"id": "br_b", "from_beat": "beat_04", "choice": "Jax stays behind",
+             "spinoff": "sl_jax", "return_to_beat": None}]})["ok"]
+    # branch promised a return -> the spinoff must hand back
+    r = tools["add_storyline"]("sl_tunnel", {
+        "kind": "side", "premise": "p", "target_beats": 2,
+        "terminus": {"type": "game_end", "ending": {"id": "e2", "description": "Lost."}}})
+    assert r["ok"] is False and "handoff" in r["error"]
+    assert tools["add_storyline"]("sl_tunnel", {
+        "kind": "side", "premise": "p", "target_beats": 2, "terminus": {"type": "handoff"}})["ok"]
+    # branch left return null -> the spinoff is terminal, handoff is a contradiction
+    r = tools["add_storyline"]("sl_jax", {
+        "kind": "side", "premise": "p", "target_beats": 2, "terminus": {"type": "handoff"}})
+    assert r["ok"] is False and "TERMINAL" in r["error"]
+    assert tools["add_storyline"]("sl_jax", {
+        "kind": "side", "premise": "p", "target_beats": 2,
+        "terminus": {"type": "game_end", "ending": {"id": "e3", "description": "Jax's end."}}})["ok"]
 
 
 def test_add_item_only_where_demanded(tmp_path):

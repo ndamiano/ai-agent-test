@@ -106,34 +106,45 @@ TOOL_SCHEMAS: List[Dict] = [
                 "drive, history:[...], competencies:[...], example_lines:[...], color}"},
         }, "required": ["character_id", "content"]}}},
     {"type": "function", "function": {
-        "name": "set_central_question",
-        "description": "Set the story's CENTRAL QUESTION — the dramatic question the endings answer "
-                       "differently. The spine the beats and endings hang from; author it first.",
+        "name": "set_spine",
+        "description": "Set the story's SPINE — theme + tone (+ optional trope), the frame every "
+                       "storyline serves. Author it first (replaces a central question).",
         "parameters": {"type": "object", "properties": {
-            "central_question": {"type": "string"},
-        }, "required": ["central_question"]}}},
+            "theme": {"type": "string", "description": "what the story is about, e.g. 'loyalty tested by scarcity'"},
+            "tone": {"type": "string", "description": "the tone, e.g. 'wry and warm, occasionally bleak'"},
+            "trope": {"type": "string", "description": "OPTIONAL recognizable frame, e.g. 'heist', 'enemies to lovers'"},
+        }, "required": ["theme", "tone"]}}},
+    {"type": "function", "function": {
+        "name": "add_storyline",
+        "description": "Author ONE linear storyline's SHELL into `story` — its kind, premise, "
+                       "terminus (how it ends), length, and any branch points. Its beats are filled "
+                       "in later, one at a time. Exactly one storyline is kind='main'.",
+        "parameters": {"type": "object", "properties": {
+            "storyline_id": {"type": "string", "description": "e.g. 'sl_main', 'sl_cover_vale'"},
+            "content": {"type": "object", "description":
+                "{kind: main|side, premise, target_beats:int, branches:[{id, from_beat, choice, "
+                "spinoff, return_to_beat(null=terminal), requires?}], terminus:{type: game_end|"
+                "handoff|merge, ...} — game_end carries ending:{id, description}}"},
+        }, "required": ["storyline_id", "content"]}}},
     {"type": "function", "function": {
         "name": "add_beat",
-        "description": "Author ONE story beat into `story` (raises the beat count). The beat-sheet is "
-                       "grown one beat at a time, in dramatic order, each continuing the arc so far.",
+        "description": "Author ONE beat into a storyline (raises that line's beat count). Beats grow "
+                       "one at a time, in dramatic order, each continuing that line's arc so far.",
         "parameters": {"type": "object", "properties": {
-            "beat_id": {"type": "string", "description": "e.g. 'beat_03'"},
+            "storyline_id": {"type": "string", "description": "the storyline this beat belongs to"},
+            "beat_id": {"type": "string", "description": "e.g. 'beat_03' (numbered across the whole story)"},
             "content": {"type": "object", "description":
                 "{summary: the scene author's whole brief, type: bonding|comedy|friction|plot|"
                 "character, purpose: setup|inciting|escalation|midpoint_turn|crisis|climax|"
                 "resolution, tension: the stakes dial ('none' is a real answer)}"},
-        }, "required": ["beat_id", "content"]}}},
+        }, "required": ["storyline_id", "beat_id", "content"]}}},
     {"type": "function", "function": {
-        "name": "add_ending",
-        "description": "Author ONE ending into `story` (raises the ending count) together with how "
-                       "it is EARNED. Each ending answers the central question a different way.",
+        "name": "finish_storyline",
+        "description": "Declare a storyline complete at its natural length (>= the beat floor) — "
+                       "stops its beat demand. Use when the line's arc is done, not padded to a target.",
         "parameters": {"type": "object", "properties": {
-            "ending_id": {"type": "string", "description": "e.g. 'ending_solitude'"},
-            "description": {"type": "string", "description":
-                "the concrete final scene — who does/says what, in-world words; never an abstract label"},
-            "earned_by": {"type": "string", "description":
-                "the SPECIFIC beat + choice that earns this ending, e.g. 'the beat_04 choice to stay'"},
-        }, "required": ["ending_id", "description", "earned_by"]}}},
+            "storyline_id": {"type": "string"},
+        }, "required": ["storyline_id"]}}},
     {"type": "function", "function": {
         "name": "add_item",
         "description": "Declare ONE item into `items` — a thing the player holds. Author it where a "
@@ -476,6 +487,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 old = (prior.get("nodes") or {}).get(nid)
                 if isinstance(old, dict) and "beat" not in node and "beat" in old:
                     node["beat"] = old["beat"]
+                if isinstance(old, dict) and "storyline" not in node and "storyline" in old:
+                    node["storyline"] = old["storyline"]
             if "synopses" not in content and prior.get("synopses"):
                 content["synopses"] = prior["synopses"]
         state.write_component(component_id, content)
@@ -505,30 +518,59 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         state.write_component("characters", chars)
         return {"ok": True, "character_id": character_id}
 
-    # ── story: the dramatic plan, authored piece by piece (central_question, then beats, then
-    #    endings). Each writes a slice of the `story` component (like combat's write_* slices).
+    # ── story: the dramatic plan, authored piece by piece (spine, then storylines, then
+    #    beats/branches). Each writes a slice of the `story` component (like combat's write_* slices).
     def _story_doc() -> Dict:
         story = state.read_component("story") or {}
-        for k in ("beats", "endings", "ending_paths"):
-            story.setdefault(k, [])
+        story.setdefault("storylines", [])
         return story
 
-    def set_central_question(central_question: str) -> Dict:
-        """Set the story's spine — the dramatic question the endings answer differently."""
+    def _find_storyline(story, sid):
+        for s in story["storylines"]:
+            if isinstance(s, dict) and s.get("id") == sid:
+                return s
+        return None
+
+    def set_spine(theme: str, tone: str, trope: str = None) -> Dict:
+        """Set the story's SPINE — theme + tone (+ optional trope), the frame every storyline serves."""
         _require_frozen()
         if _locked("story"):
             return _locked_error("story")
-        if not isinstance(central_question, str) or not central_question.strip():
-            return {"ok": False, "error": "central_question must be a non-empty string — the "
-                    "dramatic question the endings answer differently"}
+        if not (isinstance(theme, str) and theme.strip()) or not (isinstance(tone, str) and tone.strip()):
+            return {"ok": False, "error": "set_spine needs a non-empty theme and tone (the story's frame)"}
         story = _story_doc()
-        story["central_question"] = central_question.strip()
+        story["spine"] = {"theme": theme.strip(), "tone": tone.strip(),
+                          "trope": trope.strip() if isinstance(trope, str) and trope.strip() else None}
         state.write_component("story", story)
         return {"ok": True}
 
-    def add_beat(beat_id: str, content) -> Dict:
-        """Author ONE story beat (append-by-id, no overwrite) — the beat-sheet grows one beat at a
-        time, in dramatic order."""
+    def add_storyline(storyline_id: str, content) -> Dict:
+        """Author ONE linear storyline's SHELL — kind, premise, terminus, target_beats, and any
+        branch points. Its beats are filled in later, one at a time."""
+        _require_frozen()
+        if _locked("story"):
+            return _locked_error("story")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object (the storyline shell)"}
+        from maestro.modules.story import v_spinoff_terminus, v_storyline
+        story = _story_doc()
+        if _find_storyline(story, storyline_id):
+            return {"ok": False, "error": f"storyline {storyline_id!r} already exists — write a NEW id."}
+        full = {**content, "id": storyline_id, "beats": content.get("beats") or [],
+                "branches": content.get("branches") or []}
+        err = v_storyline(full, require_beats=False) or v_spinoff_terminus(story, full)
+        if err:
+            return {"ok": False, "error": err}
+        story["storylines"].append(full)
+        if full.get("kind") == "main":
+            story["start_storyline"] = storyline_id
+        state.write_component("story", story)
+        return {"ok": True, "storyline_id": storyline_id}
+
+    def add_beat(storyline_id: str, beat_id: str, content) -> Dict:
+        """Author ONE beat into a storyline (append-by-id within that line, no overwrite) — the line
+        grows one beat at a time, in dramatic order."""
         _require_frozen()
         if _locked("story"):
             return _locked_error("story")
@@ -537,37 +579,32 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": "content must be a JSON object (the beat's fields)"}
         from maestro.modules.story import v_beat_one
         story = _story_doc()
-        if any(isinstance(b, dict) and b.get("id") == beat_id for b in story["beats"]):
-            return {"ok": False, "error": f"beat {beat_id!r} already exists — to raise the beat "
-                    f"count write a NEW beat id, do not rewrite one."}
+        sl = _find_storyline(story, storyline_id)
+        if sl is None:
+            return {"ok": False, "error": f"storyline {storyline_id!r} does not exist — add_storyline it first."}
+        sl.setdefault("beats", [])
+        if any(isinstance(b, dict) and b.get("id") == beat_id for b in sl["beats"]):
+            return {"ok": False, "error": f"beat {beat_id!r} already exists in {storyline_id!r} — write a NEW beat id."}
         full = {**content, "id": beat_id}
         err = v_beat_one(full)
         if err:
             return {"ok": False, "error": err}
-        story["beats"].append(full)
+        sl["beats"].append(full)
         state.write_component("story", story)
         return {"ok": True, "beat_id": beat_id}
 
-    def add_ending(ending_id: str, description: str, earned_by: str) -> Dict:
-        """Author ONE ending together with how it is earned — appends to `endings` AND `ending_paths`
-        so every ending has its plan by construction."""
+    def finish_storyline(storyline_id: str) -> Dict:
+        """Declare a storyline complete at its natural length (>= the beat floor) — stops its beat demand."""
         _require_frozen()
         if _locked("story"):
             return _locked_error("story")
-        if not isinstance(description, str) or not description.strip():
-            return {"ok": False, "error": "description must be the concrete final scene in in-world "
-                    "words (non-empty), never an abstract label"}
-        if not isinstance(earned_by, str) or not earned_by.strip():
-            return {"ok": False, "error": "earned_by must name the SPECIFIC beat + choice that earns "
-                    "this ending (non-empty)"}
         story = _story_doc()
-        if any(isinstance(e, dict) and e.get("id") == ending_id for e in story["endings"]):
-            return {"ok": False, "error": f"ending {ending_id!r} already exists — to raise the "
-                    f"ending count write a NEW ending id, do not rewrite one."}
-        story["endings"].append({"id": ending_id, "description": description.strip()})
-        story["ending_paths"].append({"ending": ending_id, "earned_by": earned_by.strip()})
+        sl = _find_storyline(story, storyline_id)
+        if sl is None:
+            return {"ok": False, "error": f"storyline {storyline_id!r} does not exist."}
+        sl["done"] = True
         state.write_component("story", story)
-        return {"ok": True, "ending_id": ending_id}
+        return {"ok": True, "storyline_id": storyline_id}
 
     def add_item(item_id: str, content) -> Dict:
         """Declare ONE item (append-by-id, no overwrite) — but ONLY where a reference already demands
@@ -600,7 +637,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         return {"ok": True, "item_id": item_id}
 
     def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
-                   force: bool = False, beat: Optional[str] = None, **delta_fields) -> Dict:
+                   force: bool = False, beat: Optional[str] = None,
+                   storyline: Optional[str] = None, **delta_fields) -> Dict:
         """Fused: write one IR node into `nodes` AND merge its story-state delta.
 
         `content` is an IR node object ({lines, end}); escaping/rendering is the compiler's
@@ -619,6 +657,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         content = _coerce_json(content)
         if beat and isinstance(content, dict):
             content["beat"] = beat
+        if storyline and isinstance(content, dict):
+            content["storyline"] = storyline
         from maestro.modules.scenes import node_write_error, normalize_narration
         err = node_write_error(content, min_lines=_node_min_lines)
         if err:
@@ -636,6 +676,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         prior = ns.get("nodes", {}).get(node_id)
         if isinstance(prior, dict) and "beat" not in content and "beat" in prior:
             content["beat"] = prior["beat"]
+        if isinstance(prior, dict) and "storyline" not in content and "storyline" in prior:
+            content["storyline"] = prior["storyline"]
         ns.setdefault("nodes", {})[node_id] = content
         ns.setdefault("node_ids", [])
         if node_id not in ns["node_ids"]:
@@ -656,7 +698,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
 
     def write_scene(node_id: str, script: str, end, location: Optional[str] = None,
                     story_state_delta: Optional[Dict] = None, force: bool = False,
-                    beat: Optional[str] = None, **delta_fields) -> Dict:
+                    beat: Optional[str] = None, storyline: Optional[str] = None,
+                    **delta_fields) -> Dict:
         """Screenplay-text front end to write_node: parse `NAME: text` lines into IR lines, then
         store through the same validated path. Keeps the model writing dialogue as dialogue
         instead of inside JSON string arrays."""
@@ -669,7 +712,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if location:
             content["location"] = location
         return write_node(node_id, content, story_state_delta=story_state_delta,
-                          force=force, beat=beat, **delta_fields)
+                          force=force, beat=beat, storyline=storyline, **delta_fields)
 
     _UNSET = object()
 
@@ -700,6 +743,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             # replace would silently orphan it and the loop would re-fan the beat's slot.
             if "beat" not in content and "beat" in nodes[node_id]:
                 content["beat"] = nodes[node_id]["beat"]
+            if "storyline" not in content and "storyline" in nodes[node_id]:
+                content["storyline"] = nodes[node_id]["storyline"]
             nodes[node_id] = normalize_narration(content)
             state.write_component("nodes", ns)
             return {"ok": True, "node_id": node_id}
@@ -1170,9 +1215,10 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
     return {
         "write_component": write_component,
         "add_character": add_character,
-        "set_central_question": set_central_question,
+        "set_spine": set_spine,
+        "add_storyline": add_storyline,
         "add_beat": add_beat,
-        "add_ending": add_ending,
+        "finish_storyline": finish_storyline,
         "add_item": add_item,
         "write_node": write_node,
         "write_scene": write_scene,

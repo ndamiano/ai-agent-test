@@ -1,32 +1,34 @@
-You are building the story's ARC one beat at a time — the beat-sheet the scenes will realize.
-Author ONE beat THIS call: add_beat(beat_id, { ... }) in the shape the skeleton shows. It must
-CONTINUE the beats already listed (the arc so far) and do work NONE of them do.
+You are growing ONE storyline's arc one beat at a time. THIS call, do exactly one of:
+  - add_beat(storyline_id, beat_id, { ... }) — continue the line named in YOUR TARGET above, or
+  - finish_storyline(storyline_id) — declare that line's arc DONE at its current length, if it
+    has already reached the floor YOUR TARGET names and adding another beat would only pad it.
 
-Work FROM THE CAST and the CENTRAL QUESTION. This is the plan, not the scene — the shape of what
-happens, in dramatic order.
+Find your target storyline in STORYLINES SO FAR: its premise, its kind (main/side), the branch
+that spun it off if it's a side line, and the beats it already has. Your new beat continues ONLY
+that line's own arc — other storylines are shown for context (so you don't repeat their material)
+but you are not blending lines together; each storyline is its own thread.
 
-A REAL ARC THAT EARNS ITS WEIGHT. The beats rise toward a crisis, but the rise is BACK-LOADED,
-and the OPENING REGISTER comes from the premise: friends doing a thing together open on
-bonding/comedy at tension "none"; strangers, adversaries, or a character alone open on the
-situation's own low-key tension — never small talk grafted between an interrogator and the
-person they're detaining, never a "bonding" beat with one character in it. Not every beat
-serves the plot — bonding and comedy beats are real beats where the relationship warrants
-them, and the heavy beat late in the story lands BECAUSE its topic first arrived light (a joke
-in an early beat sets up the gut-punch later; plant it and note the payoff). Then the story turns:
-  - an inciting/escalation stretch where the cost becomes real;
-  - a midpoint that REFRAMES — new information makes the question harder, the obvious answer worse;
-  - a crisis/climax where the protagonist must actually choose on the central question;
-  - resolution that lands the consequence — carried by the ENDINGS themselves. The crisis/fork is
-    the LAST beat; do not plan a beat after it (a post-fork beat can't sit on every branch, so it
-    strands unreachable).
+Work FROM the CAST and the SPINE. The spine's TONE colors every beat you write — a wry-and-warm
+story's friction beats still carry the wit; a bleak story's bonding beats still carry the chill at
+the edge. Don't write a beat that could belong to a different tone.
+
+A REAL ARC THAT EARNS ITS WEIGHT. Place the beat correctly in ITS line's rise: friends doing a
+thing together open on bonding/comedy at tension "none"; strangers, adversaries, or someone alone
+open on the situation's own low-key tension — never small talk grafted between an interrogator and
+the person they're detaining, never a "bonding" beat with one character in it. Not every beat
+serves the plot — bonding and comedy beats are real beats where the relationship warrants them,
+and a heavy beat late in the line lands BECAUSE its topic first arrived light (plant it early, note
+the payoff). If this line is heading toward its terminus (check YOUR TARGET's beat number against
+its target length), the last beat or two carries the crisis or the handoff/merge moment — do not
+plan a beat after that point, it strands unreachable.
 
 `type` names the beat's register (bonding | comedy | friction | plot | character); `purpose` names
-its dramatic job; `tension` is the stakes dial — write "none" when nothing needs to go wrong in
-the beat. The `summary` is the scene author's WHOLE brief — write it RICH: 1-2 sentences of
-concrete business (what physically happens, the specific object/place/action in play, who does or
-says the key thing), never a headline ("Arrival and setup", "The argument"). A thin summary starves
-the scene, and the model falls back on the same few props every scene — give THIS beat its OWN
-material so the scenes can't blur.
+its dramatic job; `tension` is the stakes dial — write "none" when nothing needs to go wrong in the
+beat. The `summary` is the scene author's WHOLE brief — write it RICH: 1-2 sentences of concrete
+business (what physically happens, the specific object/place/action in play, who does or says the
+key thing), never a headline ("Arrival and setup," "The argument"). A thin summary starves the
+scene, and the model falls back on the same few props every scene — give THIS beat its OWN material
+so the scenes can't blur.
   THIN (fails):  "First level down; celebration"
   RICH (passes): "First level down. Riding the high, Danny phones the pizza place in his terrible
                   fake Italian accent — the one-time bit, here. Marc barely holds it together."
@@ -34,8 +36,9 @@ Commit to ONE concrete event — never alternatives ("a phone call or a sudden r
 scene author can't choose for you. Any one-time bit or set piece (ordering the pizza in the accent,
 the toast, the reveal) lives in the beat that stages it, so it happens ONCE.
 
-Look at the BEATS SO FAR: place this one correctly in the rise, and note in its summary anything it
-plants for a later beat or pays off from an earlier one (each scene later sees only the arc, not
-the other scenes — the story is where callbacks are earned).
+Look at this line's beats SO FAR: place this one correctly in its rise, and note in its summary
+anything it plants for a later beat in the SAME line or pays off from an earlier one — a scene
+later sees only its own line's arc, not other lines, so callbacks stay within the storyline.
 
-Call add_beat(beat_id, ...) now for ONE beat. Do not explain.
+Call add_beat(storyline_id, beat_id, ...) for ONE beat, or finish_storyline(storyline_id) if this
+line's arc is already complete. Do not explain.

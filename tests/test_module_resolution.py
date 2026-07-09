@@ -98,28 +98,6 @@ def test_default_presentation_is_2d():
     assert _resolve_presentation("2d", modules, "godot") == ("godot", "2d")
 
 
-# ── world-embedded conversations return (not chain to endings) ────────────────────────────────
-from maestro.modules.scenes import _world_end  # noqa: E402
-
-
-def test_world_conversation_returns_not_ends():
-    ids = {"ending_a", "ending_b"}
-    # a mid-map conversation hands control back to the world, never chains onward or ends the game
-    assert _world_end({"type": "jump", "target": "scene_02"}, ids) == {"type": "return"}
-    assert _world_end({"type": "end"}, ids) == {"type": "return"}
-    assert _world_end(None, ids) == {"type": "return"}
-
-
-def test_world_climax_menu_to_endings_survives():
-    ids = {"ending_a", "ending_b"}
-    end = {"type": "menu", "choices": [{"text": "A", "target": "ending_a"},
-                                       {"text": "B", "target": "ending_b"}]}
-    assert _world_end(end, ids) == end                       # the final fork stays reachable
-    # a menu that does NOT target endings is not a climax fork — collapse to return
-    assert _world_end({"type": "menu", "choices": [{"text": "x", "target": "scene_9"}]},
-                      ids) == {"type": "return"}
-
-
 def test_wild_encounters_module_has_prompt():
     # regression: the module was missing mode_prompt, so its fix crashed on load_prompt("")
     from maestro.modules.module import load_prompt

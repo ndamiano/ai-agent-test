@@ -1,0 +1,44 @@
+You are authoring ONE linear storyline's SHELL — kind, premise, length, its branch points (if
+any), and how it ends. Its beats are filled in later, one at a time; author only the shell THIS
+call: add_storyline(storyline_id, { ... }).
+
+A storyline is LINEAR. It is not responsible for what it branches to — a branch just names the
+fork and the storyline it spins off; you do not plan that other line's content here, and you never
+revisit this line's arc to keep some other line coherent. Each storyline is its own self-contained
+piece of the plan.
+
+If YOUR TARGET above names a storyline that some branch already spun off, that branch (its
+`from_beat`, its `choice`, whether it set a `return_to_beat`) is shown in STORYLINES SO FAR —
+that is your starting point: this line grows out of that exact choice.
+
+Fields:
+  - `kind`: "main" or "side." There is exactly one "main" storyline in the whole story — the
+    spine of the game. Everything else is "side."
+  - `premise`: one line, what THIS line is about — concrete, not a theme restatement.
+  - `target_beats`: how long this line runs. A main line runs long enough to earn its ending; a
+    side line spun off a single choice is usually short (2-4 beats) — don't pad it.
+  - `branches`: OPTIONAL. Only add one if the story actually forks here — a real, distinct choice
+    with consequence, not a fork for its own sake. Most side lines have none. Each branch needs
+    `from_beat` (a beat id in THIS line), `choice` (what the player picks, in-world, not a menu
+    label), `spinoff` (the storyline id it starts — someone will author it later), and
+    `return_to_beat`: the beat in THIS line it resumes at once the spinoff hands back, or null if
+    the spinoff runs to its own ending instead.
+    At most TWO branches from the same beat — the scene there becomes a menu and "continue along
+    this line" always takes one of its three slots. Spread forks across the arc. Each branch's
+    `choice` is a distinct in-world action ("Jax stays behind", "take the tunnel") — never the
+    same text twice, and never the question the scene is asking.
+  - `terminus`: exactly one way this line ends.
+      - The MAIN line always ends the game: {"type": "game_end", "ending": {"id", "description"}}.
+        `description` is the concrete final scene in in-world terms, never an abstract label like
+        "closure" or "resolution."
+      - A side line whose branch set a `return_to_beat` MUST hand back: {"type": "handoff"}. It
+        cannot end the game and cannot merge — the branch already promised control returns.
+      - A side line whose branch left `return_to_beat` null is terminal: either it ends the game
+        too (another {"type": "game_end", "ending": {...}} — a distinct way the story can close),
+        or it flows into a storyline already in progress: {"type": "merge", "into": <storyline_id>,
+        "at_beat": <beat_id>}.
+
+Keep branches you add PURPOSEFUL — every spinoff you name here is a real storyline someone will
+have to author next. Don't fork just to look expansive.
+
+Call add_storyline(storyline_id, content) now for ONE storyline. Do not explain.

@@ -14,22 +14,7 @@ from typing import Dict, Optional
 from maestro import context_render as cr
 from maestro.modules import checks
 from maestro.modules.module import Check, Module, register_module
-
-
-def story_block(artifact: Dict) -> list:
-    """The dramatic plan as prompt context: question + endings (+ beat one-liners). What
-    realization steps aim at."""
-    story = artifact.get("story") or {}
-    if not story.get("central_question"):
-        return []
-    out = ["", f"STORY — central question: {story['central_question']}"]
-    for e in story.get("endings") or []:
-        if isinstance(e, dict) and e.get("id"):
-            out.append(f"  ending {e['id']}: {e.get('description', '')}")
-    beats = [b for b in story.get("beats") or [] if isinstance(b, dict) and b.get("id")]
-    if beats:
-        out.append("  beats: " + " → ".join(b["id"] for b in beats))
-    return out
+from maestro.modules.views import MAX_MENU_CHOICES
 
 
 def render_beat(b: Dict) -> str:
@@ -38,26 +23,6 @@ def render_beat(b: Dict) -> str:
                         f'stake: {b["tension"]}' if b.get("tension") else None) if t]
     suffix = f' ({", ".join(tags)})' if tags else ""
     return f'{b.get("id")} — {b.get("summary", "")}{suffix}'
-
-
-def beats_detail_block(artifact: Dict) -> list:
-    """The arc SO FAR with full summaries — the author's context for the next beat/ending (the
-    id-only story_block is for OTHER modules; here the author needs to see what each beat does)."""
-    beats = [b for b in (artifact.get("story") or {}).get("beats", [])
-             if isinstance(b, dict) and b.get("id")]
-    if not beats:
-        return []
-    return ["", "BEATS SO FAR (the arc so far — continue the rise; your next beat does work NONE "
-            "of these do):", *(f"  {render_beat(b)}" for b in beats)]
-
-
-def endings_detail_block(artifact: Dict) -> list:
-    endings = [e for e in (artifact.get("story") or {}).get("endings", [])
-               if isinstance(e, dict) and e.get("id")]
-    if not endings:
-        return []
-    return ["", "ENDINGS SO FAR (each answers the question a DIFFERENT way — yours is distinct):",
-            *(f"  {e['id']}: {e.get('description', '')}" for e in endings)]
 
 
 _BEAT_FIELDS = ("summary", "type", "purpose", "tension")
@@ -77,28 +42,137 @@ def v_beat_one(b: Dict) -> Optional[str]:
     return None
 
 
-def v_story(c: Dict) -> Optional[str]:
-    if not c.get("central_question"):
-        return "story.central_question is required (the dramatic question the endings answer)"
-    endings = c.get("endings")
-    if not isinstance(endings, list) or not endings:
-        return "story.endings must be a non-empty list of {id, description}"
-    for i, e in enumerate(endings):
-        if not isinstance(e, dict) or not e.get("id"):
-            return f"story.endings[{i}] needs an 'id' (e.g. 'ending_solitude')"
-    beats = c.get("beats")
-    if not isinstance(beats, list) or not beats:
-        return "story.beats must be a non-empty list of beat objects"
+_TERMINUS_TYPES = ("game_end", "handoff", "merge")
+
+
+def v_terminus(t: Dict) -> Optional[str]:
+    """A storyline ends exactly one of three ways. The TYPE is code-set from the storyline's kind
+    and its branch's return — the model authors the payload (an ending's final scene / a merge
+    target), never the type in isolation."""
+    if not isinstance(t, dict) or t.get("type") not in _TERMINUS_TYPES:
+        return f"terminus.type must be one of {_TERMINUS_TYPES}"
+    if t["type"] == "game_end":
+        end = t.get("ending")
+        if not isinstance(end, dict) or not end.get("id") or not end.get("description"):
+            return ("a game_end terminus needs ending:{id, description} — description is the "
+                    "concrete final scene, never an abstract label like 'closure'")
+    if t["type"] == "merge" and not (t.get("into") and t.get("at_beat")):
+        return "a merge terminus needs {into: <storyline_id>, at_beat: <beat_id>}"
+    return None
+
+
+def v_branch(b: Dict) -> Optional[str]:
+    """A branch point on the SOURCE storyline: at from_beat, a choice spins off `spinoff`, resuming
+    at return_to_beat (null ⇒ spinoff is terminal). requires is the optional state gate."""
+    if not isinstance(b, dict):
+        return "a branch must be a JSON object"
+    for f in ("id", "from_beat", "choice", "spinoff"):
+        if not b.get(f):
+            return f"branch is missing '{f}' — needs id, from_beat, choice (what the player picks), spinoff (the storyline it starts)"
+    return None
+
+
+def v_storyline(s: Dict, require_beats: bool = True) -> Optional[str]:
+    """One linear storyline: its shell (kind, premise, branches, terminus) plus — once filled — a
+    sequence of beats. `require_beats=False` at shell-creation time (add_storyline); the final
+    v_story gate requires them."""
+    if not isinstance(s, dict):
+        return "a storyline must be a JSON object"
+    if not s.get("id"):
+        return "a storyline needs an 'id' (e.g. 'sl_main')"
+    if s.get("kind") not in ("main", "side"):
+        return f"storyline {s.get('id')!r} needs kind 'main' or 'side'"
+    if not s.get("premise"):
+        return f"storyline {s['id']!r} needs a 'premise' (one line: what this line is about)"
+    beats = s.get("beats") or []
+    if require_beats and not beats:
+        return f"storyline {s['id']!r}: beats must be a non-empty list"
+    if not isinstance(beats, list):
+        return f"storyline {s['id']!r}: beats must be a list"
+    seen = set()
     for i, b in enumerate(beats):
         err = v_beat_one(b)
         if err:
-            return f"story.beats[{i}]: {err}"
-    eps = c.get("ending_paths")
-    if not isinstance(eps, list):
-        return "story.ending_paths must be a list (one per ending)"
-    for i, e in enumerate(eps):
-        if not isinstance(e, dict) or not e.get("ending"):
-            return f"story.ending_paths[{i}] needs an 'ending' (a story.endings id)"
+            return f"storyline {s['id']!r} beats[{i}]: {err}"
+        if b["id"] in seen:
+            return f"storyline {s['id']!r}: duplicate beat id {b['id']!r} (ids unique within a storyline)"
+        seen.add(b["id"])
+    by_beat: Dict = {}
+    for i, br in enumerate(s.get("branches") or []):
+        err = v_branch(br)
+        if err:
+            return f"storyline {s['id']!r} branches[{i}]: {err}"
+        by_beat.setdefault(br["from_beat"], []).append(br)
+    # The scene at a branch beat realizes as a menu of [continue] + its branches, and a menu
+    # holds MAX_MENU_CHOICES — so the branch count is bounded HERE, where the model can still
+    # move a fork, not at scene-write time where the derived menu would be unsatisfiable.
+    for bid, brs in by_beat.items():
+        if len(brs) > MAX_MENU_CHOICES - 1:
+            return (f"storyline {s['id']!r}: {len(brs)} branches fork from {bid!r} — at most "
+                    f"{MAX_MENU_CHOICES - 1} per beat (the scene's menu holds {MAX_MENU_CHOICES} "
+                    f"choices and 'continue' takes one). Move a fork to a different beat, or cut "
+                    f"one — depth over width.")
+        texts = [str(b.get("choice", "")).strip().lower() for b in brs]
+        if len(texts) != len(set(texts)):
+            return (f"storyline {s['id']!r}: two branches at {bid!r} share the same choice text "
+                    f"{brs[0].get('choice')!r} — each choice is what the player PICKS, a distinct "
+                    f"in-world action (e.g. 'Jax stays behind' vs 'Mara stays behind'), never the "
+                    f"question itself repeated.")
+    err = v_terminus(s.get("terminus") or {})
+    if err:
+        return f"storyline {s['id']!r} terminus: {err}"
+    return None
+
+
+def v_spinoff_terminus(story: Dict, s: Dict) -> Optional[str]:
+    """A spun-off line's terminus must agree with the branch that starts it: a set return_to_beat
+    promised a handoff; a null one made the line terminal (game_end or merge). Enforced at
+    add_storyline time (the branch is already on disk) and re-swept by v_story."""
+    br = next((b for other in story.get("storylines") or [] if isinstance(other, dict)
+               for b in other.get("branches") or []
+               if isinstance(b, dict) and b.get("spinoff") == s.get("id")), None)
+    if br is None:
+        return None
+    t = (s.get("terminus") or {}).get("type")
+    if br.get("return_to_beat") and t != "handoff":
+        return (f"storyline {s['id']!r}: its branch {br.get('id')!r} sets return_to_beat="
+                f"{br['return_to_beat']!r}, so this line MUST end {{\"type\": \"handoff\"}} — "
+                f"control returns to the source line; it cannot end the game or merge.")
+    if not br.get("return_to_beat") and t == "handoff":
+        return (f"storyline {s['id']!r}: its branch {br.get('id')!r} left return_to_beat null, so "
+                f"this line is TERMINAL — end it with its own game_end ending or a merge into "
+                f"another line, never handoff (there is nowhere to hand back to).")
+    return None
+
+
+def v_story(c: Dict) -> Optional[str]:
+    spine = c.get("spine")
+    if not isinstance(spine, dict) or not spine.get("theme") or not spine.get("tone"):
+        return "story.spine must be {theme, tone, trope?} — theme and tone are required (the spine, replacing a central question)"
+    storylines = c.get("storylines")
+    if not isinstance(storylines, list) or not storylines:
+        return "story.storylines must be a non-empty list of storyline objects"
+    ids = set()
+    mains = 0
+    game_ends = 0
+    for i, s in enumerate(storylines):
+        err = v_storyline(s) or v_spinoff_terminus(c, s)
+        if err:
+            return f"story.storylines[{i}]: {err}"
+        if s["id"] in ids:
+            return f"story.storylines: duplicate storyline id {s['id']!r}"
+        ids.add(s["id"])
+        if s.get("kind") == "main":
+            mains += 1
+        if (s.get("terminus") or {}).get("type") == "game_end":
+            game_ends += 1
+    if mains != 1:
+        return f"story needs exactly one kind='main' storyline (found {mains})"
+    if game_ends < 1:
+        return "story needs at least one storyline with a game_end terminus (the game must be completable)"
+    start = c.get("start_storyline")
+    if start not in ids:
+        return f"story.start_storyline must name a declared storyline (got {start!r})"
     return None
 
 
@@ -116,142 +190,210 @@ SKEL_BEAT_ONE = (
     '//   Each beat does work no other beat does. The crisis/fork is the LAST beat.'
 )
 
-SKEL_ENDING_ONE = (
-    '// add_ending(ending_id, description, earned_by):\n'
-    '//   ending_id  = "ending_<slug>"\n'
-    '//   description= the concrete final scene — who does/says what, in-world words; NEVER an\n'
-    '//                abstract label like "integration"/"closure" (the scene author reads it verbatim).\n'
-    '//   earned_by  = the SPECIFIC beat + choice that earns it, e.g. "the beat_04 choice to stay".'
+SKEL_STORYLINE_ONE = (
+    '// storyline_id (the tool arg) is the id, e.g. "sl_main" / "sl_cover_vale". `content` is\n'
+    '// the SHELL of this ONE linear storyline (its beats are filled in later, one at a time):\n'
+    '{\n'
+    '  "kind": "main | side",   // exactly one storyline is "main"\n'
+    '  "premise": "one line: what THIS linear line is about",\n'
+    '  "target_beats": 8,        // how long this line runs (>= the floor); a side quest is short\n'
+    '  "branches": [             // OPTIONAL fork points where this line spins off another line\n'
+    '                             // (at most 2 per beat; each choice distinct in-world text)\n'
+    '    {"id": "br_x", "from_beat": "beat_03", "choice": "what the player picks",\n'
+    '     "spinoff": "sl_other", "return_to_beat": "beat_04",  // null => the spinoff is terminal\n'
+    '     "requires": null}      // OPTIONAL state gate, e.g. {"flag": "trusts_vale"}\n'
+    '  ],\n'
+    '  "terminus": {"type": "game_end", "ending": {"id": "ending_caught",\n'
+    '     "description": "the concrete final scene, in-world words; NEVER an abstract label"}}\n'
+    '     // or {"type":"handoff"} (a side line that hands back) or {"type":"merge","into":"sl_x","at_beat":"beat_y"}\n'
+    '}\n'
+    '// The TYPE of terminus is yours to pick for the STORY, but a side line that a branch resumes\n'
+    '//   must be "handoff"; a main line ends the game with "game_end".'
 )
 
 
-def story_view(artifact: Dict) -> Dict:
-    """The slot-guard's view for BOTH count targets — the beat/ending ids already authored. No
-    open_slots: the ids are the model's to invent."""
+def spine_block(artifact: Dict) -> list:
+    spine = (artifact.get("story") or {}).get("spine") or {}
+    if not spine.get("theme"):
+        return []
+    trope = f' | trope: {spine["trope"]}' if spine.get("trope") else ""
+    return ["", f"SPINE — theme: {spine.get('theme','')} | tone: {spine.get('tone','')}{trope}"]
+
+
+def storylines(artifact: Dict) -> list:
+    return [s for s in (artifact.get("story") or {}).get("storylines", [])
+            if isinstance(s, dict) and s.get("id")]
+
+
+def _storyline_line(s: Dict) -> str:
+    term = (s.get("terminus") or {}).get("type", "?")
+    nb, tb = len(s.get("beats") or []), s.get("target_beats") or "?"
+    return f"  {s['id']} ({s.get('kind','?')}, {nb}/{tb} beats, ends: {term}): {s.get('premise','')}"
+
+
+def storylines_block(artifact: Dict) -> list:
+    """The storyline graph so far — what the next storyline/beat continues + stays distinct from."""
+    sls = storylines(artifact)
+    if not sls:
+        return []
+    out = ["", "STORYLINES SO FAR (each a linear line; yours does work none of these do):"]
+    for s in sls:
+        out.append(_storyline_line(s))
+        for b in s.get("beats") or []:
+            out.append(f"      {render_beat(b)}")
+        for br in s.get("branches") or []:
+            out.append(f"      ↳ branch at {br.get('from_beat')}: '{br.get('choice')}' → {br.get('spinoff')}")
+    return out
+
+
+def story_block(artifact: Dict) -> list:
+    """Id-only spine + storyline index for OTHER modules' prompts."""
     story = artifact.get("story") or {}
-    return {"beat_ids": [b["id"] for b in story.get("beats", [])
-                         if isinstance(b, dict) and b.get("id")],
-            "ending_ids": [e["id"] for e in story.get("endings", [])
-                           if isinstance(e, dict) and e.get("id")]}
+    spine = story.get("spine") or {}
+    if not spine.get("theme"):
+        return []
+    out = ["", f"STORY — theme: {spine.get('theme','')} | tone: {spine.get('tone','')}"]
+    for s in storylines(artifact):
+        out.append(_storyline_line(s))
+    return out
+
+
+def story_view(artifact: Dict) -> Dict:
+    """The slot-guard's view: storyline ids + the flat beat-id list (beats are numbered globally so
+    the guard's no-overwrite works across lines; ids are still unique within a storyline)."""
+    sls = storylines(artifact)
+    return {"storyline_ids": [s["id"] for s in sls],
+            "beat_ids": [b["id"] for s in sls for b in s.get("beats") or []
+                         if isinstance(b, dict) and b.get("id")]}
 
 
 def _one(_view) -> int:
-    """Cap beats/endings at ONE author per step: unlike a cast, the arc is a SEQUENCE, so each beat
-    must see the full prior arc (parallel siblings would each author blind to the others)."""
+    """Cap beats/storylines at ONE author per step — a storyline's arc is a SEQUENCE (each beat
+    sees the full prior arc), and a spun-off storyline is authored with its branch point in view."""
     return 1
 
 
-# The post-authoring safety repairs (missing field, dup id, orphaned ending) round-trip through
-# write_component: there is no per-beat / per-ending / per-path edit tool, and add_beat/add_ending
-# refuse an existing id, so the fix reads the story then rewrites it with ONE change. The specific
-# prompts below name the exact path and forbid a clobber-rewrite.
 _REPAIR_TOOLS = frozenset({"read_component", "write_component", "request_review"})
-_CQ_TOOLS = frozenset({"set_central_question", "read_component", "request_review"})
-_BEAT_TOOLS = frozenset({"add_beat", "read_component", "request_review"})
-_ENDING_TOOLS = frozenset({"add_ending", "read_component", "request_review"})
-_BEAT_GUARD = {"count_tool": "add_beat", "id_key": "beat_id", "id_list_key": "beat_ids",
-               "noun": "beat", "cap": _one}
-_ENDING_GUARD = {"count_tool": "add_ending", "id_key": "ending_id", "id_list_key": "ending_ids",
-                 "noun": "ending", "cap": _one}
+_SPINE_TOOLS = frozenset({"set_spine", "read_component", "request_review"})
+_STORYLINE_TOOLS = frozenset({"add_storyline", "read_component", "request_review"})
+_BEAT_TOOLS = frozenset({"add_beat", "finish_storyline", "read_component", "request_review"})
+_STORYLINE_GUARD = {"count_tool": "add_storyline", "id_key": "storyline_id",
+                    "id_list_key": "storyline_ids", "noun": "storyline", "cap": _one}
+_BEAT_GUARD = {"count_tool": "add_beat", "id_key": "beat_id",
+               "id_list_key": "beat_ids", "noun": "beat", "cap": _one}
 
 
-def _d_min_beats(chk, m, ctx):
-    need = ctx.param("min_beats", 5) - checks.length(ctx.artifact, "story.beats")
-    return checks.slot_errors(need, type=chk.tier, code=chk.code,
-                              component="story", noun="beat") if need > 0 else []
+def _declared_ids(ctx) -> set:
+    return {s["id"] for s in storylines(ctx.artifact)}
 
 
-def _d_min_endings(chk, m, ctx):
-    need = ctx.param("min_endings", 3) - checks.length(ctx.artifact, "story.endings")
-    return checks.slot_errors(need, type=chk.tier, code=chk.code,
-                              component="story", noun="ending") if need > 0 else []
+def _d_main_storyline(chk, m, ctx):
+    """Bootstrap: with no storylines yet, author the ONE main line first (its shell — premise,
+    terminus, branches, length). Beats + spun-off lines follow."""
+    if storylines(ctx.artifact):
+        return []
+    from maestro.modules.module import Error
+    return [Error(type=chk.tier, code=chk.code, component="story", path="sl_main", ref="sl_main",
+                  message="author the MAIN storyline first with add_storyline (kind='main') — its "
+                          "premise, how it ends (a game_end terminus), any branch points, and its length.")]
+
+
+def _d_demanded_storylines(chk, m, ctx):
+    """Demand-driven (mirror inventory): every storyline a branch spins off must be authored. One
+    add_storyline job per referenced-but-undeclared spinoff, keyed on the real id."""
+    from maestro.modules.module import Error
+    declared = _declared_ids(ctx)
+    if len(declared) >= ctx.param("max_storylines", 8):
+        return []
+    spun = {br.get("spinoff") for s in storylines(ctx.artifact)
+            for br in (s.get("branches") or []) if br.get("spinoff")}
+    return [Error(type=chk.tier, code=chk.code, component="story", path=sid, ref=sid,
+                  message=(f"storyline '{sid}' is spun off by a branch but not authored — add it with "
+                           f"add_storyline (a side line hands back with a 'handoff' terminus)."))
+            for sid in sorted(spun - declared)]
+
+
+def _d_storyline_beats(chk, m, ctx):
+    """Per-storyline beat floor + finished-tool: for each storyline, fan a shortfall to target_beats
+    (>= floor) into one add_beat job each — unless the author has declared it done at/above the floor."""
+    from maestro.modules.module import Error
+    floor = ctx.param("min_beats_floor", 3)
+    out = []
+    for s in storylines(ctx.artifact):
+        have = len(s.get("beats") or [])
+        if s.get("done") and have >= floor:
+            continue
+        target = max(floor, s.get("target_beats") or floor)
+        for k in range(have, target):
+            out.append(Error(type=chk.tier, code=chk.code, component="story",
+                             path=f"{s['id']}#{k + 1:03d}", ref=s["id"],
+                             message=(f"storyline '{s['id']}' needs beat {k + 1} of {target} — add it "
+                                      f"with add_beat('{s['id']}', ...); or finish_storyline('{s['id']}') "
+                                      f"if the line is complete (>= {floor} beats).")))
+    return out
 
 
 class Story(Module):
     id = "story"
-    description = ("A dramatic plan: the central question, a beat-sheet arc, and distinct endings. "
-                   "REQUIRED whenever the story you wrote has a plot arc, named endings, or "
-                   "characters whose conversations matter — without it the script has no "
-                   "narrative floor and dialogue may never be authored. Skip only for a pure "
-                   "puzzle-box with no story to tell.")
+    description = ("A dramatic plan: a theme+tone spine and a graph of linear storylines (a main "
+                   "line that ends the game, plus optional side lines it branches into). REQUIRED "
+                   "whenever the story you wrote has a plot, named outcomes, or characters whose "
+                   "conversations matter. Skip only for a pure puzzle-box with no story to tell.")
     priority = 30
     component = "story"
-    mode_prompt = "story_write.txt"
+    mode_prompt = "story_storyline_add.txt"
     mode_tools = frozenset({"write_component", "read_component", "request_review"})
-    skeleton = SKEL_BEAT_ONE
+    skeleton = SKEL_STORYLINE_ONE
     schemas = {"story": v_story}
-    skeletons = {"story": SKEL_BEAT_ONE}
+    skeletons = {"story": SKEL_STORYLINE_ONE}
     projector = staticmethod(story_view)
 
-    # The story is authored piece by piece: the central_question first (blocking — the spine the
-    # rest hangs from), then the beat-sheet ONE beat at a time (each seeing the full arc so far),
-    # then the endings ONE at a time (each authored WITH how it's earned, so ending_paths is
-    # satisfied by construction). The field/distinct/path checks are cheap safety — a per-item add
-    # validates structure + the guard blocks dup ids, so they rarely fire; when they do, the fix
-    # rewrites the whole story.
+    # Authored piece by piece: the spine first (blocking — theme+tone the rest hangs from), then the
+    # MAIN storyline shell, then each storyline's beats ONE at a time (each seeing its arc so far),
+    # then any branch-demanded side storylines (demand-driven, mirror inventory). The field/distinct
+    # checks are cheap post-authoring safety.
     checks = [
-        Check("central_question", lambda chk, m, ctx: m.wrap(chk, checks.exists(
-            ctx.artifact, "story.central_question")),
-            blocking=True, tools=_CQ_TOOLS, prompt="story_question.txt", skeleton=""),
-        Check("min_beats", _d_min_beats, tools=_BEAT_TOOLS, guard=_BEAT_GUARD,
+        Check("spine", lambda chk, m, ctx: m.wrap(chk, checks.exists(ctx.artifact, "story.spine")),
+              blocking=True, tools=_SPINE_TOOLS, prompt="story_spine.txt", skeleton=""),
+        Check("main_storyline", _d_main_storyline, tools=_STORYLINE_TOOLS, guard=_STORYLINE_GUARD,
+              prompt="story_storyline_add.txt", skeleton=SKEL_STORYLINE_ONE),
+        Check("storyline_beats", _d_storyline_beats, tools=_BEAT_TOOLS, guard=_BEAT_GUARD,
               prompt="story_beats_add.txt", skeleton=SKEL_BEAT_ONE),
+        Check("demanded_storylines", _d_demanded_storylines, tools=_STORYLINE_TOOLS,
+              guard=_STORYLINE_GUARD, when_clean=True,
+              prompt="story_storyline_add.txt", skeleton=SKEL_STORYLINE_ONE),
         Check("beat_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "story.beats", fields=["id", "summary", "type", "purpose", "tension"])),
+            ctx.artifact, "story.storylines", fields=["id", "kind", "premise"])),
             context=cr.ctx_structural,
             tools=_REPAIR_TOOLS, prompt="story_field_patch.txt", skeleton=""),
-        Check("distinct_beats", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "story.beats", key="id")), job="fix", context=cr.ctx_structural,
+        Check("distinct_storylines", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
+            ctx.artifact, "story.storylines", key="id")), job="fix", context=cr.ctx_structural,
             tools=_REPAIR_TOOLS, prompt="story_rename_duplicate.txt", skeleton=""),
-        Check("min_endings", _d_min_endings, tools=_ENDING_TOOLS, guard=_ENDING_GUARD,
-              prompt="story_endings_add.txt", skeleton=SKEL_ENDING_ONE),
-        Check("distinct_endings", lambda chk, m, ctx: m.wrap(chk, checks.distinct(
-            ctx.artifact, "story.endings", key="id")), job="fix", context=cr.ctx_structural,
-            tools=_REPAIR_TOOLS, prompt="story_rename_duplicate.txt", skeleton=""),
-        Check("ending_path_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
-            ctx.artifact, "story.ending_paths", fields=["ending", "earned_by"])),
-            context=cr.ctx_structural,
-            tools=_REPAIR_TOOLS, prompt="story_field_patch.txt", skeleton=""),
-        Check("endings_planned", lambda chk, m, ctx: m.wrap(chk, checks.refs_resolve(
-            ctx.artifact, "story.endings", "story.ending_paths",
-            from_key="id", to_key="ending")), job="fix", context=cr.ctx_structural,
-            tools=_REPAIR_TOOLS, prompt="story_endings_plan_fix.txt", skeleton=""),
     ]
 
     def params(self) -> Dict:
-        # Story-forward floors raised on the neighbours: a richer/larger cast, meatier branching
-        # scenes, and a minimum spread of endings/beats. cast/scenes read these via param union.
-        return {"min_characters": 2, "min_endings": 3, "min_beats": 5,
-                "min_branches": 1, "each_node_min_lines": 6,
+        # Story-forward floors raised on the neighbours. Per-storyline beat FLOOR (a line may run
+        # longer via target_beats); max_storylines caps runaway spinning. No min_endings — endings
+        # are terminal storylines, sized by the story.
+        return {"min_characters": 2, "min_beats_floor": 3, "max_storylines": 8,
+                "each_node_min_lines": 6,
                 "character_fields": ["voice", "temperament", "drive", "history",
                                      "competencies", "example_lines"]}
 
     def render_context(self, ctx: Dict) -> str:
-        # The story is planned FROM the premise + cast (drives collide into a plot) and the story SO
-        # FAR: the central question, the arc's beats with full summaries, the endings already
-        # written — so the next item continues the arc and stays distinct.
+        # Planned FROM the premise + cast + the spine + the storyline graph so far. For a spun-off
+        # storyline, the target carries the branch point that demanded it (via cr.target_block).
         from maestro.modules import cast
         art = ctx.get("artifact") or {}
         lines = cr.premise_block(ctx) + [""] + cr.target_block(ctx)
         lines += cast.character_cards(art)
-        cq = (art.get("story") or {}).get("central_question")
-        if cq:
-            lines += ["", f"CENTRAL QUESTION: {cq}"]
-        lines += beats_detail_block(art)
-        lines += endings_detail_block(art)
+        lines += spine_block(art)
+        lines += storylines_block(art)
         lines += cr.tail_block(ctx)
         return "\n".join(lines)
 
     def self_digest(self, artifact: Dict) -> list:
-        # Structural repair on the story component — the beats, endings, and planned paths as ids +
-        # summaries so a dedup/field fix can see exactly what to merge or complete.
-        art = artifact
-        paths = [p for p in (art.get("story") or {}).get("ending_paths", [])
-                 if isinstance(p, dict)]
-        out = beats_detail_block(art) + endings_detail_block(art)
-        if paths:
-            out += ["", "ENDING PATHS (ending → earned_by):",
-                    *(f"  {p.get('ending')} ← {p.get('earned_by')}" for p in paths)]
-        return out
+        return spine_block(artifact) + storylines_block(artifact)
 
 
 MODULE = Story()

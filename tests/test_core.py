@@ -460,7 +460,7 @@ def test_count_target_authors_one_item_per_step_to_green(tmp_path):
 import threading
 import time as _time
 
-from maestro.modules.scenes import _stamp_beat, pick_slot
+from maestro.modules.scenes import _stamp_node, pick_slot
 from maestro.services import _create_guard
 
 
@@ -472,17 +472,122 @@ def test_pick_slot_indexed_in_dramatic_order():
     assert pick_slot(view, 2) is None
 
 
-def test_create_guard_enforces_the_assigned_slot():
+def test_create_guard_code_fills_the_assigned_slot_id():
+    # WHY: the model never chooses a slot-create's node id — prepare overrides whatever id it
+    # picked with the assigned slot's (observed live: ids grabbed from sibling storylines' beats
+    # in context wedged those slots for good). The write goes through, never a refusal loop.
     calls = []
     ok = lambda name, args: (calls.append((name, args)), {"ok": True})[1]
     view = {"node_ids": ["n1"], "open_slots": [{"id": "s1"}, {"id": "s2"}], "beats": []}
     g = _create_guard(ok, lambda: view, "write_node", "node_id", "node_ids", "node",
-                      assigned={"id": "s2", "beat": "beat_02"}, prepare=_stamp_beat)
-    refused = g("write_node", {"node_id": "s1"})
-    assert refused["ok"] is False and "'s2'" in refused["error"]
-    g("write_node", {"node_id": "s2"})
+                      assigned={"id": "s2", "beat": "beat_02"}, prepare=_stamp_node)
+    res = g("write_node", {"node_id": "s1"})   # model-picked id is discarded, not refused
+    assert res["ok"] is True
     assert calls and calls[0][1]["node_id"] == "s2"
     assert calls[0][1]["beat"] == "beat_02"   # system stamps the assigned slot's beat
+
+
+# ── storyline slot identity: the slot's target id IS the beat it realizes ────
+def _beat(i):
+    return {"id": f"beat_{i:02d}", "summary": "s", "type": "plot",
+            "purpose": "setup", "tension": "none"}
+
+
+def _branching_story():
+    # The live failure's shape: a main line branching at one beat into two terminal spinoffs.
+    return {"story": {
+        "spine": {"theme": "t", "tone": "n"}, "start_storyline": "sl_main",
+        "storylines": [
+            {"id": "sl_main", "kind": "main", "premise": "p", "target_beats": 3,
+             "beats": [_beat(1), _beat(2), _beat(3)],
+             "branches": [
+                 {"id": "br_jax", "from_beat": "beat_02", "choice": "jax goes",
+                  "spinoff": "sl_jax", "return_to_beat": None},
+                 {"id": "br_mara", "from_beat": "beat_02", "choice": "mara goes",
+                  "spinoff": "sl_mara", "return_to_beat": None}],
+             "terminus": {"type": "game_end", "ending": {"id": "e1", "description": "d"}}},
+            {"id": "sl_jax", "kind": "side", "premise": "p", "target_beats": 2,
+             "beats": [_beat(10), _beat(11)], "branches": [],
+             "terminus": {"type": "game_end", "ending": {"id": "e2", "description": "d"}}},
+            {"id": "sl_mara", "kind": "side", "premise": "p", "target_beats": 1,
+             "beats": [_beat(13)], "branches": [],
+             "terminus": {"type": "game_end", "ending": {"id": "e3", "description": "d"}}}]}}
+
+
+def _node(beat, end, storyline="sl_main"):
+    return {"storyline": storyline, "beat": beat,
+            "lines": [{"speaker": "a", "text": "x"}], "end": end}
+
+
+def _branched_art():
+    # beat_02's structural menu fans three open slots: the main continuation + both spinoff roots.
+    menu = {"type": "menu", "choices": [{"text": "on", "target": "beat_03"},
+                                        {"text": "jax", "target": "beat_10"},
+                                        {"text": "mara", "target": "beat_13"}]}
+    return {**_branching_story(), "nodes": {
+        "node_ids": ["beat_01", "beat_02"],
+        "nodes": {"beat_01": _node("beat_01", {"type": "jump", "target": "beat_02"}),
+                  "beat_02": _node("beat_02", menu)}}}
+
+
+def test_branch_slot_realizes_its_own_beat_not_the_parents_successor():
+    # WHY: the live park at step 833 — every open slot's beat was derived as "parent's beat + 1
+    # in the flat list", so both spinoff roots (beat_10, beat_13) were stamped (sl_main, beat_05)
+    # and their real beats stayed "unrealized" forever. The slot's target id IS its beat.
+    from maestro.modules.scenes import node_view
+    view = node_view(_branched_art())
+    by_id = {s["id"]: s for s in view["open_slots"]}
+    assert set(by_id) == {"beat_03", "beat_10", "beat_13"}
+    assert by_id["beat_03"]["beat"] == "beat_03"
+    assert by_id["beat_10"]["beat"] == "beat_10"
+    assert by_id["beat_13"]["beat"] == "beat_13"
+
+
+def test_parallel_slots_stamp_distinct_storyline_beat_pairs():
+    # WHY: a batch of parallel fixes must never share a (storyline, beat) — the live build wrote
+    # three sibling nodes all stamped (sl_main, beat_05) in one batch.
+    from maestro.modules.scenes import node_view
+    view = node_view(_branched_art())
+    stamps = []
+    for i in range(3):
+        assigned = pick_slot(view, i)
+        args = _stamp_node(view, assigned, {})
+        assert args["node_id"] == assigned["id"]
+        stamps.append((args["storyline"], args["beat"]))
+    assert sorted(stamps) == [("sl_jax", "beat_10"), ("sl_main", "beat_03"),
+                              ("sl_mara", "beat_13")]
+
+
+def test_node_id_realizes_its_beat_even_when_the_stamp_disagrees():
+    # WHY: the terminal spin — a node named beat_10 existed with a WRONG stamp, so beat_10 kept
+    # fanning a create-error that write_scene could only answer with "already exists". A node
+    # whose id names a beat realizes it regardless of its stamp, so the escape hatch can never
+    # be pointed at an id that is already taken.
+    from maestro.modules.scenes import node_view, unrealized_beats
+    art = _branched_art()
+    art["nodes"]["node_ids"].append("beat_10")
+    art["nodes"]["nodes"]["beat_10"] = _node("beat_03", {"type": "jump", "target": "beat_11"})
+    todo = unrealized_beats(art)
+    assert "beat_10" not in todo
+    view = node_view(art)
+    assert "beat_10" not in view["beats_todo"]
+    # the escape hatch (no assigned slot) targets an UNWRITTEN beat, never an existing node
+    forced = _stamp_node(view, None, {})
+    assert forced["node_id"] in view["beats_todo"]
+    assert forced["node_id"] not in art["nodes"]["node_ids"]
+
+
+def test_opening_node_id_is_the_start_storylines_entry_beat():
+    # WHY: the opening node's id is code-picked from start_storyline (not list order, not the
+    # model) so the structural graph's entry lands on a node whose id matches.
+    from maestro.modules.scenes import node_view
+    art = _branching_story()
+    art["story"]["storylines"].reverse()          # start_storyline is now listed LAST
+    view = node_view(art)
+    assert view["entry_beat"] == "beat_01"
+    args = _stamp_node(view, None, {"node_id": "model_pick"})
+    assert args["node_id"] == "beat_01"
+    assert args["storyline"] == "sl_main" and args["beat"] == "beat_01"
 
 
 def _need3(chk, m, ctx):

@@ -27,6 +27,11 @@
     "voices": [],
     "format": "wav"
   },
+  "music": {
+    "backend": "stub",
+    "endpoint": "",
+    "seconds": 30
+  },
   "trellis": {
     "endpoint": "http://localhost:8189"
   }

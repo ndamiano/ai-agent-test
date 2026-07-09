@@ -17,6 +17,7 @@ func play_node(start_id) -> void:
 		var node = g.node_by_id[id]
 		if node.has("location"):
 			g.set_scene(node["location"])
+			g.play_music(g._track_for_location(node["location"]))
 		_stage_sprites(node)
 		for line in node.get("lines", []):
 			_highlight(line.get("speaker"))

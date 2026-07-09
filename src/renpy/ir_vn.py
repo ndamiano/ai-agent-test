@@ -231,9 +231,17 @@ def compile_vn(ir: Dict, voiced: bool = False) -> str:
     out.append(f"{_IND}jump {ir['start']['node']}")
     out.append("")
 
+    from maestro.music import track_for_location, file_for_track
+    music = ir.get("music")
+
     current_bg: Optional[str] = None
     for node in ir.get("nodes", []):
         pre, restage, current_bg = stage(node, current_bg)
+        # Ambient bed per scene: `if_changed` makes Ren'Py ignore a repeat of the playing track, so
+        # emitting it on every node is safe and the score only switches when the location's bed does.
+        mf = file_for_track(music, track_for_location(music, node.get("location")))
+        if mf:
+            pre = [f'{_IND}play music "audio/music/{mf}" fadeout 1.0 fadein 1.0 if_changed'] + pre
         out.extend(node_block(node, pre, restage, voiced=voiced))
         out.append("")
 

@@ -156,9 +156,38 @@ func _initialize():
 """
 
 
-def _run_selftest(tmp_path, script):
+# The runtime parses the PCM WAV the music pipeline writes into an AudioStreamWAV by hand (Godot
+# 4.2 has no runtime WAV-from-buffer loader). Feed it a real stub pad + a silent placeholder and
+# assert the parse (format/rate/loop) + the missing-file → null (silent) degrade.
+_MUSIC_SELFTEST = """
+extends SceneTree
+
+func _fail(msg):
+\tprint("SELFTEST FAIL: ", msg)
+\tquit(1)
+
+func _initialize():
+\tvar g = load("res://Game.gd").new()
+\tvar s = g._load_wav("res://audio/music/music_main.wav")
+\tif s == null: _fail("stub pad not parsed"); return
+\tif s.format != AudioStreamWAV.FORMAT_16_BITS: _fail("format"); return
+\tif s.mix_rate != 22050: _fail("mix_rate %d" % s.mix_rate); return
+\tif s.loop_mode != AudioStreamWAV.LOOP_FORWARD: _fail("loop_mode"); return
+\tif s.data.size() == 0: _fail("no pcm data"); return
+\tif g._load_wav("res://audio/music/silent.wav") == null: _fail("silent not parsed"); return
+\tif g._load_wav("res://audio/music/missing.wav") != null: _fail("missing must be null"); return
+\tg.free()
+\tprint("SELFTEST OK")
+\tquit(0)
+"""
+
+
+def _run_selftest(tmp_path, script, extra=None):
     proj = tmp_path / "proj"
     shutil.copytree(_RUNTIME, proj)
+    for rel, data in (extra or {}).items():
+        (proj / rel).parent.mkdir(parents=True, exist_ok=True)
+        (proj / rel).write_bytes(data)
     (proj / "SelfTest.gd").write_text(script)
     proc = subprocess.run(
         [_GODOT, "--headless", "--path", str(proj), "--script", "res://SelfTest.gd"],
@@ -180,6 +209,30 @@ def test_combat_resolution_and_menu_flow(tmp_path):
 @pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
 def test_overworld_snaps_spawn_to_open(tmp_path):
     _run_selftest(tmp_path, _OVERWORLD_SELFTEST)
+
+
+@pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
+def test_runtime_parses_music_wavs(tmp_path):
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from utils.audio import ambient_pad_bytes, write_silent_wav
+    silent = tmp_path / "s.wav"
+    write_silent_wav(silent, seconds=1.0)
+    _run_selftest(tmp_path, _MUSIC_SELFTEST, extra={
+        "audio/music/music_main.wav": ambient_pad_bytes("music_main"),
+        "audio/music/silent.wav": silent.read_bytes(),
+    })
+
+
+def test_game_plays_music_per_place_and_scene():
+    src = (_RUNTIME / "Game.gd").read_text()
+    assert "func play_music(" in src and "func _load_wav(" in src
+    assert "AudioStreamWAV.LOOP_FORWARD" in src
+    # place entry + VN boot both trigger a bed; re-entry is a no-op (track compared before play)
+    world = src.split("func _run_world(")[1].split("\nfunc ")[0]
+    assert "play_music(_track_for_place(place_id))" in world
+    assert "if track_id == null or track_id == _music_now:" in src
+    vn = (_RUNTIME / "vn.gd").read_text()
+    assert "g.play_music(g._track_for_location(node[\"location\"]))" in vn
 
 
 def test_overworld_spawn_never_lands_on_wall():

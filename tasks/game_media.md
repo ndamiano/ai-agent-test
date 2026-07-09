@@ -34,15 +34,32 @@ distinct legs sharing one spine (declare in the manifest → generate → wire p
 - **Local-first generation preferred** (matches the local-runnable vision) — evaluate local models
   before committing to an API; note the tradeoff per leg.
 
-## Leg M1 — Music (score / ambient)
-- [ ] **Model choice** — local (MusicGen / stable-audio) vs API (Suno). Latency/quality/license/
-      local-fit tradeoff. Prefer local; note the call.
-- [ ] **Declaration** — music tied to scene/zone/mood (per node `location`+mood, per `place`, per
-      story beat). Author from story tone + `story_state`. Manifest schema fragment.
-- [ ] **Generation pass** — a `generate_music` step (coverage + fallback like voices).
-- [ ] **Playback** — Ren'Py `play music` per scene; Godot `AudioStreamPlayer` keyed on place/mood in
-      the runtime presenters. IR lift + crossref.
-- [ ] **Tests:** declared tracks generate or fall back silently; the right track plays per scene/zone.
+## Leg M1 — Music (score / ambient) — SHIPPED
+- [x] **Model choice** — local wins. v1 ships a local procedural `stub` backend (a deterministic,
+      license-free ambient pad synthesized with the stdlib `wave` module — numpy isn't a dep) behind
+      a clean `music.backend`/`endpoint` settings seam (mirrors `mesh_backend`), so a real local model
+      (MusicGen / stable-audio, via ComfyUI or a sibling HTTP server) is a drop-in, no rewrite. The
+      stub needs no server, so the wiring runs on every build and proves end-to-end.
+- [x] **Declaration** — `maestro/music.py` derives the track set deterministically (no LLM call):
+      one ambient bed per place KIND for a world/PnC game (keyed by place id), one bed per used scene
+      LOCATION for a VN (keyed by background id), plus a `default` main-theme bed; prompts carry the
+      story spine's tone/theme. Declared as data — schema fragments in `docs/asset_manifest.schema.json`
+      (`music_track`, the future-authoring shape) and `docs/game_ir.schema.json` (`music`, the lifted
+      runtime block). Derivation is a manifest-style backfill (like `_merge_cast_into_manifest`).
+- [x] **Generation pass** — `renpy.fns.generate_music` (called from `run.run_build`): one file per
+      track under `game/audio/music/`, fail-soft like voices — a failed synth degrades to a silent
+      `.wav` placeholder, and compile-time `_ensure_music_placeholders` backfills anything missing so
+      lint/runtime never break.
+- [x] **Playback** — `assemble_ir` lifts the derived set to `ir.music` (engine-agnostic seam, no
+      crossref churn — refs are derived from ids that already resolve). Ren'Py: `play music … if_changed`
+      per VN scene (`ir_vn`) and per PnC place (`ir_pnc`). Godot: an `AudioStreamPlayer` on `Game`,
+      `play_music` keyed on place (`_run_world`) and scene (`vn.play_node`), with a hand-rolled PCM-WAV
+      parser (`_load_wav`) since the runtime targets 4.2 and reads assets as raw bytes; a missing/unparseable
+      track is silent, never a crash.
+- [x] **Tests:** `tests/test_music.py` (derivation, IR-lift schema validity, per-engine playback,
+      stub-generates-real vs backend-failure-degrades-to-silence, placeholder backfill, Godot packaging)
+      + `tests/test_godot_runtime_gd.py` (live runtime parses the stub pad + silent placeholder; missing
+      → silent).
 
 ## Leg M2 — Sound effects
 - [ ] **Model / source** — local SFX gen (AudioGen / stable-audio) vs a curated library (license

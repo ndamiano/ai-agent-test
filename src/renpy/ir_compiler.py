@@ -20,7 +20,8 @@ from renpy.compiler import compile_gate
 from renpy.ir_vn import compile_vn
 from renpy.lint import node_line_ranges, run_final_lint, pnc_line_ranges
 from renpy.fns import (_get_sdk_path, _merge_cast_into_manifest, _ensure_placeholder_images,
-                       _ensure_expression_placeholders, _ensure_voice_placeholders)
+                       _ensure_expression_placeholders, _ensure_voice_placeholders,
+                       _ensure_music_placeholders)
 from renpy.renpy_builder import _copy_templates, _distribute, write_options_rpy
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -123,6 +124,7 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
         _ensure_expression_placeholders(ir, game_dir)
         if voiced:
             _ensure_voice_placeholders(ir, game_dir)
+    _ensure_music_placeholders(ir, game_dir)
 
     # Wire the generated title card onto the main menu. The stock `main_menu` screen does
     # `add gui.main_menu_background`, and Ren'Py's screen language CONST-FOLDS that `define`d

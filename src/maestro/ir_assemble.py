@@ -230,4 +230,13 @@ def assemble_ir(artifact: Dict) -> Dict:
     if missing_flags:
         ir["flags"] = list(ir.get("flags", [])) + missing_flags
 
+    # Derive the ambient/score track set (engine-neutral): one bed per place kind (world/PnC) or
+    # per scene location (VN), keyed to place/background ids the engines already carry. Manifest-
+    # driven data, not authored — see maestro.music.
+    from maestro.music import derive_music
+    spine = (artifact.get("story", {}) or {}).get("spine", {}) or {}
+    music = derive_music(ir, tone=spine.get("tone", ""), theme=spine.get("theme", ""))
+    if music:
+        ir["music"] = music
+
     return ir

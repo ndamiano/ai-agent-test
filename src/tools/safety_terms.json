@@ -1,0 +1,22 @@
+{
+  "minor_terms": [
+    "child", "children", "kid", "kids", "minor", "minors", "underage", "under-age",
+    "toddler", "infant", "tween", "preteen", "pre-teen", "prepubescent",
+    "little girl", "little boy", "schoolgirl", "school girl", "schoolboy", "school boy",
+    "elementary school", "middle school", "middle schooler", "high schooler",
+    "loli", "lolita", "shota", "teen", "teenager", "teenage"
+  ],
+  "minor_age_patterns": [
+    "\\b(?:[3-9]|1[0-7])\\s*[- ]?year[- ]?old\\b",
+    "\\bage(?:d)?\\s+(?:[3-9]|1[0-7])\\b"
+  ],
+  "sexual_terms": [
+    "nude", "naked", "nudity", "sex", "sexual", "erotic", "porn", "pornographic",
+    "explicit", "fetish", "masturbat", "orgasm", "genitals", "intercourse",
+    "molest", "rape", "fondle"
+  ],
+  "unambiguous_terms": [
+    "child porn", "childporn", "child pornography", "child sexual abuse material",
+    "csam", "kiddie porn", "loli porn", "lolicon porn", "shotacon porn"
+  ]
+}

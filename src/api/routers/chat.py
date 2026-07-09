@@ -18,12 +18,19 @@ from pydantic import BaseModel
 
 from auth.deps import get_current_user
 from auth.store import User
+from tools.safety import screen_text, log_violation
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Server-side session store: user_id → MainAgent instance
 _sessions: dict = {}
+
+_REFUSAL_MESSAGE = (
+    "This request can't be processed — it matches a category Maestro refuses to generate "
+    "(sexual content involving minors). Mature or dark themes are fine; this specific "
+    "combination is not."
+)
 
 
 def _get_or_create_session(user_id: str):
@@ -55,6 +62,19 @@ def _chat_event_stream(agent, message: str):
 
 @router.post("")
 async def chat(request: ChatRequest, user: User = Depends(get_current_user)):
+    violation = screen_text(request.message)
+    if violation is not None:
+        log_violation(violation, user_id=user.id, source="chat")
+
+        def _refusal_stream():
+            yield _sse_encode({"type": "error", "message": _REFUSAL_MESSAGE})
+
+        return StreamingResponse(
+            _refusal_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     try:
         agent = _get_or_create_session(user.id)
     except Exception as e:

@@ -40,34 +40,64 @@ filters either.
   identity) — another reason auth lands first.
 
 ## Phase 1 — Research
-- [ ] **Define the policy scope.** Enumerate the hard-illegal categories to block (CSAM first; then
+- [x] **Define the policy scope.** Enumerate the hard-illegal categories to block (CSAM first; then
       jurisdiction-dependent illegal categories). Distinguish explicitly from allowed mature content.
       Get legal input on obligations (esp. CSAM reporting/preservation).
-- [ ] **Survey moderation options** for each modality:
+      → `tasks/safety_phase1_notes.md`. Legal input on reporting/preservation obligations is still
+      an open action item (flagged, not resolved — no counsel consulted).
+- [x] **Survey moderation options** for each modality:
   - **Text** — hosted moderation APIs (OpenAI moderation, Anthropic, Google) vs local classifiers;
     latency/cost/accuracy tradeoffs; that it must run against *generated* output, not just input.
   - **Images** — pre-gen prompt screening (blocklists/classifier on the prompt) AND post-gen image
     classification; CSAM-specific detection (hash-matching services + their access gating), NSFW
     classifiers; false-positive tolerance against legitimate mature art.
-- [ ] **Decide the architecture:** which hook points (1–6 above) get a filter, and what each does
+      → `tasks/safety_phase1_notes.md`.
+- [x] **Decide the architecture:** which hook points (1–6 above) get a filter, and what each does
       (block / regenerate / flag-for-human / hard-stop-and-report). Input-side + output-side both —
       output-side is non-negotiable for images.
-- [ ] **False-positive strategy** — how a wrongly-blocked legitimate build is surfaced/appealed
+      → `tasks/safety_phase1_notes.md`; the pre-alpha basic block (below) implements hook points 1
+      and 4 only (input + pre-gen image prompt). 3/5/6 (authored text, post-gen image classifier,
+      final artifact gate) are Phase 2.
+- [x] **False-positive strategy** — how a wrongly-blocked legitimate build is surfaced/appealed
       (ties to the human-in-the-loop review surface).
-- [ ] **Deliverable:** a short design doc (policy + chosen tools + hook map + block/report actions)
-      reviewed before implementing.
+      → `tasks/safety_phase1_notes.md`; narrow keyword/combination matching (not a prudish filter) +
+      a clear refusal message is the pre-alpha mitigation. A formal appeal path is Phase 2.
+- [x] **Deliverable:** a short design doc (policy + chosen tools + hook map + block/report actions)
+      reviewed before implementing. → `tasks/safety_phase1_notes.md`.
+
+## Pre-alpha basic block (landed, ahead of full Phase 2)
+A narrow, fail-closed keyword/pattern screen for the CSAM-adjacent category only (violence-in-
+fiction and other dark/mature themes are explicitly NOT filtered):
+- `src/tools/safety.py` (+ data file `src/tools/safety_terms.json`) — the shared `screen_text` /
+  `screen_image_prompt` + `log_violation`.
+- Hook point A (input) — `src/api/routers/chat.py` screens the raw chat message before it reaches
+  the agent; `src/tools/chat_tools.py:propose_game_spec` screens the spec request paragraph too
+  (defense in depth, since the agent may reformulate the request before proposing a spec).
+- Hook point B (image prompts) — `src/tools/comfyui_tools.py:run_jobs` (the chokepoint every build
+  image job funnels through) and the standalone `generate_image` chat tool screen each finalized
+  prompt; a flagged prompt is skipped (never sent to the model) and degrades like any other failed
+  job (placeholder/fallback), never crashing the build.
+- Violations are logged (`maestro.safety` logger) with the authed user id where available — never
+  the full flagged text, only the matched term(s).
+- Tests: `tests/test_safety.py` (synthetic proxy phrasing only).
+
+Still open for full Phase 2: authored-text moderation (hook 3), post-gen image classification
+(hook 5), the final artifact gate (hook 6), and a classifier/hash-matching upgrade path (explicitly
+out of scope for this pass — see Guardrails above).
 
 ## Phase 2 — Implement (shape TBD by Phase 1)
-- [ ] **Input screening** on the request (chat + spec) — cheap first line.
+- [x] **Input screening** on the request (chat + spec) — cheap first line. (pre-alpha basic block)
 - [ ] **Output text moderation** on authored content before it's accepted into the artifact.
-- [ ] **Image safety** — prompt screening pre-gen + classifier post-gen at the `generate_images`
-      seam; CSAM handling per the research (detect → block → the legally-required action).
+- [x] **Image safety** — prompt screening pre-gen at the `run_jobs` seam (pre-alpha basic block).
+      Post-gen classifier + CSAM-specific detection (hash-matching per the research) still open.
 - [ ] **A blocking gate** at the artifact boundary (`run.py` packaging) as the backstop.
-- [ ] **Logging / flagging / attribution** — violations recorded against the user (needs auth) for
-      review + account action.
-- [ ] **Tests:** known-bad prompts/text are blocked; legitimate mature content is NOT blocked
-      (false-positive guard); the image seam rejects a flagged generation; the artifact gate fails
-      closed on a violation. (Use synthetic/proxy fixtures — never real illegal content in tests.)
+- [x] **Logging / flagging / attribution** — violations recorded (with user id where available) via
+      the `maestro.safety` logger. A persistent per-user violation record for account action is
+      still open (today it's log-only).
+- [x] **Tests:** known-bad prompts/text are blocked; legitimate mature content is NOT blocked
+      (false-positive guard); the image seam rejects a flagged generation. (Use synthetic/proxy
+      fixtures — never real illegal content in tests.) The artifact-gate fail-closed test is still
+      open (hook 6 not yet implemented).
 
 ## Ordering
 Research (Phase 1) before any implementation — the tool + obligation decisions drive everything.

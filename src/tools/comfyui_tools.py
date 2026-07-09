@@ -13,6 +13,7 @@ import urllib.parse
 import urllib.error
 
 from tools.tool_manager import tool_manager
+from tools.safety import screen_image_prompt, log_violation
 
 logger = logging.getLogger(__name__)
 
@@ -1010,10 +1011,21 @@ def vram_bracket():
 
 def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Run image jobs sequentially (no VRAM management — wrap in `vram_bracket`). Each job:
-    {"prompt": str, "workflow_override": dict | None}."""
+    {"prompt": str, "workflow_override": dict | None}.
+
+    The local image model (uncensored SDXL) has no built-in guardrails, so every finalized
+    prompt is screened here before it reaches the model — the one chokepoint every image job
+    (character/background/item/tile/cg/title-card) funnels through. A flagged prompt is
+    skipped (never sent) and degrades like any other failed job (placeholder/fallback in the
+    caller); it never crashes the build."""
     endpoint = _get_comfyui_endpoint()
     results = []
     for job in jobs:
+        violation = screen_image_prompt(job.get("prompt"))
+        if violation is not None:
+            log_violation(violation, source="image_prompt")
+            results.append({"success": False, "error": "blocked by safety filter"})
+            continue
         try:
             result = _run_comfyui_job(endpoint, job["prompt"],
                                       job.get("workflow_override"))
@@ -1029,6 +1041,11 @@ def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     auto_inject_context=False,
 )
 def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dict[str, Any]:
+    violation = screen_image_prompt(prompt)
+    if violation is not None:
+        log_violation(violation, source="generate_image_tool")
+        return {"success": False, "error": "blocked by safety filter"}
+
     comfyui_settings = _get_comfyui_settings()
     vram_management  = comfyui_settings.get("vram_management", False)
     endpoint         = _get_comfyui_endpoint()

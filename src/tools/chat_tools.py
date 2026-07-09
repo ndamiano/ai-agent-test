@@ -7,6 +7,7 @@ from typing import Dict
 
 from tools.tool_manager import tool_manager
 from tools.spec_tools import propose_spec, amend_spec
+from tools.safety import screen_text, log_violation
 from maestro.run import create_run
 
 
@@ -22,6 +23,15 @@ def propose_game_spec(request: str) -> Dict:
     user_id = get_user_id()
     if not user_id:
         raise RuntimeError("no authenticated user in context — cannot create a run")
+
+    violation = screen_text(request)
+    if violation is not None:
+        log_violation(violation, user_id=user_id, source="spec_request")
+        raise RuntimeError(
+            "This request can't be built — it matches a category Maestro refuses to generate "
+            "(sexual content involving minors)."
+        )
+
     run_id = create_run(user_id)
     spec = propose_spec(request, run_id)
     return {"run_id": run_id, "spec": spec}

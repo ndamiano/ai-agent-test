@@ -31,9 +31,10 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred.
 - [ ] **Download works** — already does (Ren'Py distribute / Godot export); confirm delivery in the
       deployed env.
-- [ ] **Safety posture** — trusted alpha lowers risk, but image gen is uncensored: at minimum start
-      `safety_filter.md` Phase 1 (research) and a basic block; don't hand it to anyone outside a
-      trusted circle without it.
+- [x] **Safety posture** — `safety_filter.md` Phase 1 (research, `safety_phase1_notes.md`) done +
+      a basic fail-closed CSAM-adjacent block landed (chat/spec input + the image-generation
+      seam, `src/tools/safety.py`). Still pre-alpha tier (keyword/pattern only, no classifier/
+      hash-matching) — don't hand it to anyone outside a trusted circle without Phase 2.
 - [ ] **Minimal legal** — `legal_ops.md` alpha tier (short ToS + privacy note).
 - [ ] **Measure** — real cost/time/failure per game (`unit_economics.md`) during these builds.
 

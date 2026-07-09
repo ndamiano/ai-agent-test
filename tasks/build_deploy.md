@@ -6,8 +6,9 @@ with the inference stack started by hand. Public launch needs reproducible build
 suite, a deploy path, and persistence for the new user/credit data. Greenfield: no Dockerfile, no
 compose, no CI exists today.
 
-## Background (VERIFIED)
-- **No `Dockerfile`, `docker-compose`, or `.github/` CI** in the repo.
+## Background (VERIFIED — updated 2026-07-08)
+- `Dockerfile` + `docker-compose.yml` + `scripts/deploy.sh` + `docs/DEPLOY.md` now exist (T2/T3/T4).
+  **Still no `.github/` CI** — T1 is the one remaining cheap, high-value gap.
 - **Current run recipe** (`CLAUDE.md` + `tasks/nicknotes.md`): `source venv/bin/activate && python
   run.py` (backend), `cd frontend && npm run dev` (frontend), plus manual services: `comfy-start`,
   `docker start kokoro` (TTS), and a `llama-server` invocation for the LLM.
@@ -31,26 +32,27 @@ compose, no CI exists today.
 - [ ] **Frontend build + typecheck** in CI.
 - [ ] **Lint** (whatever the project standardizes on).
 
-## T2 — Containerize
-- [ ] **Backend image** — FastAPI app + Python deps, reproducible.
-- [ ] **Frontend build** — static build served/hosted (decide host in T4).
-- [ ] **Inference stack images** — LLM server, ComfyUI, Trellis, TTS as buildable images. These are
-      the **runpod worker images** for `scaleout.md` S3 — build once, use in both places.
-- [ ] **Compose (or equivalent) for local/dev parity** — one command to bring the stack up instead of
-      4 manual service starts.
+## T2 — Containerize  ✅ MOSTLY DONE
+- [x] **Backend image** — `Dockerfile` (FastAPI app + Python deps).
+- [x] **Frontend build** — static SPA served same-origin by the backend image.
+- [ ] **Inference stack images** — LLM server, ComfyUI, Trellis, TTS as buildable images. DEFERRED
+      by design: engines are **host-mounted** (compose `extra_hosts` + read-only mounts) and reached
+      over Tailscale for alpha. Becomes the **runpod worker images** for `scaleout.md` S3 later.
+- [x] **Compose for local/dev parity** — `docker-compose.yml` (one `app` service, host-gateway to the
+      GPU stack, named data volume, healthcheck).
 
-## T3 — Persistence & config
-- [ ] **Pick + provision the datastore** for users/credits/run-ownership (`auth_and_billing.md`
-      depends on this — sqlite to start, a path to postgres). Migrations story.
-- [ ] **Environment/secrets management** — prod settings + secret injection, replacing the ad-hoc
-      `settings.json`.
-- [ ] **Persistent volume for run dirs** (the artifacts) in a deployed environment.
+## T3 — Persistence & config  ✅ DONE
+- [x] **Datastore provisioned** — sqlite at `private/auth.db` for users/credits/ownership
+      (`auth_and_billing.md`). Path to postgres open when needed.
+- [x] **Environment/secrets** — `.env` (`env_file` in compose); host engine paths + endpoints injected.
+- [x] **Persistent volume for run dirs** — named `maestro-data` volume mounted at `/data` (runs/ +
+      auth.db); survives image rebuilds (the critical data invariant, per `docs/DEPLOY.md`).
 
-## T4 — Deploy
-- [ ] **Hosting decision** (see Parked) — own box / cloud VM / managed / runpod-for-everything.
-- [ ] **One-command (or CI-driven) deploy** — build → push images → release.
-- [ ] **Frontend hosting/CDN.**
-- [ ] **Health checks + basic observability** (logs, build-worker status).
+## T4 — Deploy  ✅ DONE (private-alpha tier)
+- [x] **Hosting decision** — own/remote box, rsync + compose over Tailscale (`docs/DEPLOY.md`).
+- [x] **One-command deploy** — `scripts/deploy.sh` (rsync source → remote → rebuild + restart container).
+- [x] **Frontend hosting** — same-origin static serve (no separate CDN for alpha).
+- [x] **Health checks** — `/healthz` + compose healthcheck. Deeper observability deferred.
 
 ## T5 — Release hygiene
 - [ ] **Versioning + tags**; a changelog (could be fed from `tasks/finished.md`).
@@ -62,6 +64,6 @@ persistence; T3 unblocks auth). T4 deploy once there's something to deploy. Shar
 images with `scaleout.md` S3.
 
 ## Parked (needs owner input)
-- **Hosting target:** self-hosted box vs cloud vs runpod-for-everything — drives T4 and the scaleout
-  runpod design.
-- **Datastore:** sqlite-to-start vs postgres-from-day-one for the user/credit store.
+- **Hosting target:** RESOLVED for alpha — self-hosted remote box over Tailscale (`scripts/deploy.sh`).
+  Cloud/runpod-for-everything revisited at scale (`scaleout.md` S3).
+- **Datastore:** RESOLVED — sqlite to start (`private/auth.db`); postgres path open for later.

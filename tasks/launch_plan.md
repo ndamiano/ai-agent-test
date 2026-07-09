@@ -15,22 +15,25 @@ good, expand later.
 Before demand validation, prove the loop works for a non-owner. Inference stays on the owner's PC
 (5090) over Tailscale; a couple of trusted people; manual accounts, stubbed credits, no payments.
 **The build playbook + copy-paste agent prompts live in `pre_alpha_kickoff.md`.** A narrow subset of
-Stage 0: auth+ownership, a single-GPU build queue, per-user WS routing, stubbed credits. Everything
-else below is Stage 0 (private alpha) and later.
+Stage 0: auth+ownership, a single-GPU build queue, per-user WS routing, stubbed credits. **All four
+build pieces DONE** (auth+ownership T1/T2, build queue, per-user WS routing, credits stub T3 — suite
+green). **Validated end-to-end on a second box** — a non-owner drove the full loop. Everything else
+below is Stage 0 (private alpha) and later.
 
 ## Stage 0 — MVP / Private Alpha (no pricing required)
 **Goal:** put game generation in front of a few trusted people; validate demand + that it works;
 measure real cost/time/failure (`unit_economics.md`). No real payments, no self-serve signup.
 
-- [ ] **Auth (manual accounts)** — `auth_and_billing.md` T1 + T2 (login + run ownership). No signup.
-- [ ] **Credits stubbed** — ledger + deduct/refund (`auth` T3) with **manual grants** (`auth` T4 admin
-      op). No payment integration yet.
-- [ ] **Deployed + reachable** — `build_deploy.md` T1 (CI) + T2 (containerize) + T3 (datastore for
-      users/credits). Can't run an alpha off a dev shell.
+- [x] **Auth (manual accounts)** — `auth_and_billing.md` T1 + T2 DONE (login + run ownership, no signup).
+- [x] **Credits stubbed** — ledger + atomic deduct/refund (`auth` T3) + manual grants (`auth` T4 admin
+      op) DONE. No payment integration yet (T4 seam only).
+- [x] **Deployed + reachable** — `build_deploy.md` T2 (containerize) + T3 (datastore/volumes) + T4
+      (deploy) DONE (Dockerfile + compose + named-volume persistence + `scripts/deploy.sh` +
+      `docs/DEPLOY.md`); validated on a second box, non-owner drove the full loop. Only T1 (CI —
+      no `.github/` yet) is a nice-to-have follow-up.
 - [ ] **Reliably good on ONE genre** — narrow to the best-working path (VN/dialogue). Judge-in-loop
-      (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred.
-- [ ] **Download works** — already does (Ren'Py distribute / Godot export); confirm delivery in the
-      deployed env.
+      (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred. NOT STARTED.
+- [x] **Download works** — Ren'Py distribute / Godot export; delivery confirmed in the deployed env.
 - [ ] **Safety posture** — trusted alpha lowers risk, but image gen is uncensored: at minimum start
       `safety_filter.md` Phase 1 (research) and a basic block; don't hand it to anyone outside a
       trusted circle without it.

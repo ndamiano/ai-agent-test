@@ -152,6 +152,9 @@ src/
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
                 tools/chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
                 ir_assemble.py — lift the decomposed components → one engine-neutral IR dict
+                music.py — derive the ambient/score track set (deterministic, no LLM): one bed per
+                  place kind (world/PnC) or per scene location (VN) + a default, keyed to place/bg
+                  ids; assemble_ir lifts it to ir.music, each engine projects playback
                 ir_crossref.py — gate that every id reference in the IR resolves (crossref_records:
                   structured {path,ref,kind} → routing). Runs both as a cheap per-step `crossref`
                   done-condition (attributed) and inside the engine compile (backstop)
@@ -168,7 +171,10 @@ src/
                 fns.py (two-pass image gen —
                 neutral sprite + img2img expression variants — + manifest/expression
                 placeholder backfills; generate_voices — best-effort per-line TTS for VN, silent
-                .wav placeholder backfill), renpy_builder.py, templating.py, renpy_templates/
+                .wav placeholder backfill; generate_music — best-effort ambient/score, one track per
+                derived bed, fail-soft silent .wav fallback, local procedural `stub` backend by
+                default behind a music.backend/endpoint seam), renpy_builder.py, templating.py,
+                renpy_templates/
   godot/        Godot 4 backend (second engine). Same assemble_ir + crossref pivot;
                 compiler.py/ir_compiler.py write game.json (the IR) + a static, pre-tested
                 GDScript runtime (runtime/*.gd) that interprets the IR live — no per-game codegen.
@@ -228,7 +234,9 @@ src/
                 and colour-fills when art is absent. Player chrome lives in the runtime:
                 title screen (title_card + New Game/Continue/Quit), Esc pause menu with
                 save-anywhere (user://save.json: state + place + avatar cell), ending overlay
-                with Play Again, bottom-right inventory strip, PnC hotspot hover.
+                with Play Again, bottom-right inventory strip, PnC hotspot hover, and an
+                AudioStreamPlayer that plays the ir.music bed per place/scene (a hand-rolled PCM-WAV
+                parser since the runtime reads assets as raw bytes; a missing track is silent).
                 Game.run_action is the one shared verb dispatch both presenters call, so a new
                 navigation modality = a new presenter + one registry entry, never a router edit.
                 docs/examples/combat_game.json is the hand-authored showcase exercising the full

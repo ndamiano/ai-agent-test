@@ -20,11 +20,28 @@
     "assets": {
       "type": "array",
       "items": { "$ref": "#/$defs/asset" }
+    },
+    "music": {
+      "type": "array",
+      "description": "Ambient/score tracks tied to WHERE a track plays (place ids for a world/room game, background ids for a VN scene). v1 DERIVES this set deterministically from place kinds + scene locations + story tone (maestro.music.derive_music) — no LLM authoring yet; the shape is declared here so a future version can author or override tracks the way it authors sprites. Each entry generates one audio file the engine plays per place/scene.",
+      "items": { "$ref": "#/$defs/music_track" }
     }
   },
 
   "$defs": {
     "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+
+    "music_track": {
+      "type": "object",
+      "required": ["id", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id", "description": "Track id; its audio file is <id>.wav under game/audio/music/." },
+        "prompt": { "type": "string", "description": "Generation prompt (mood/instrumentation) for the music model." },
+        "places": { "type": "array", "items": { "$ref": "#/$defs/id" }, "description": "Place ids this track scores." },
+        "locations": { "type": "array", "items": { "$ref": "#/$defs/id" }, "description": "Background ids (VN scene locations) this track scores." }
+      }
+    },
 
     "asset": {
       "type": "object",

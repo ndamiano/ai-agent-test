@@ -60,11 +60,15 @@ def _place_screen(place: Dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _place_driver(place: Dict) -> str:
+def _place_driver(place: Dict, music: Dict = None) -> str:
+    from maestro.music import track_for_place, file_for_track
     pid = place["id"]
+    mf = file_for_track(music, track_for_place(music, pid))
+    music_line = f'    play music "audio/music/{mf}" fadeout 1.0 fadein 1.0 if_changed\n' if mf else ""
     return (
         f"label {pid}:\n"
         f'    $ current_room = "{pid}"\n'
+        f"{music_line}"
         f'    scene {place.get("background", "black")}\n'
         f"label _loop_{pid}:\n"
         f"    call screen {pid}\n"
@@ -174,8 +178,9 @@ def compile_pnc(ir: Dict) -> str:
             "label start:", f"    jump {start}", "",
             "label win:", "    scene black", '    centered "You won."', "    return", ""]
 
+    music = ir.get("music")
     for p in places:
-        out.append(_place_driver(p))
+        out.append(_place_driver(p, music))
         for h in p.get("interactables", []):
             out.append(_hotspot_block(p["id"], h))
 

@@ -114,16 +114,39 @@ def write_godot_project(ir: Dict, output_dir, src_images=None) -> None:
             if img.is_file():
                 shutil.copy2(img, images_dir / img.name)
 
+    # Audio (voice + music): the runtime loads it as raw bytes too, so it ships beside the images.
+    # Copy the generated tree, then backfill a silent placeholder for any referenced-but-missing
+    # music track (belt-and-suspenders — the runtime also degrades to no-music on a load miss).
+    audio_dir = output_dir / "audio"
+    if src_images is not None and (Path(src_images).parent / "audio").is_dir():
+        shutil.copytree(Path(src_images).parent / "audio", audio_dir, dirs_exist_ok=True)
+    _write_music_placeholders(ir, audio_dir)
+
     _keep_imports(images_dir)
+    music_dir = audio_dir / "music"
+    if music_dir.is_dir():
+        _keep_imports(music_dir)
+    voice_dir = audio_dir / "voice"
+    if voice_dir.is_dir():
+        _keep_imports(voice_dir)
 
 
-def _keep_imports(images_dir: Path) -> None:
+def _write_music_placeholders(ir: Dict, audio_dir: Path) -> None:
+    from utils.audio import write_silent_wav
+    music_dir = audio_dir / "music"
+    for t in (ir.get("music") or {}).get("tracks", []):
+        path = music_dir / t["file"]
+        if not path.exists():
+            write_silent_wav(path, seconds=1.0)
+
+
+def _keep_imports(files_dir: Path) -> None:
     """The runtime reads every asset as RAW BYTES (FileAccess.get_file_as_bytes), never via the
-    resource system. Godot's default import converts images/meshes to engine resources and STRIPS
-    the source file from the export, so FileAccess reads nothing in the exported .pck. importer=keep
-    ships each file untouched — the raw bytes survive in the pack. (It also skips the expensive
-    per-image import conversion.)"""
-    for f in images_dir.iterdir():
+    resource system. Godot's default import converts images/meshes/audio to engine resources and
+    STRIPS the source file from the export, so FileAccess reads nothing in the exported .pck.
+    importer=keep ships each file untouched — the raw bytes survive in the pack. (It also skips the
+    expensive per-file import conversion.)"""
+    for f in files_dir.iterdir():
         if f.is_file() and f.suffix != ".import":
             f.with_name(f.name + ".import").write_text(
                 '[remap]\n\nimporter="keep"\n', encoding="utf-8")

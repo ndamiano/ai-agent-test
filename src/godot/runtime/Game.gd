@@ -47,6 +47,7 @@ var avatar_cell = null
 var _place_id = null
 var _title_open := false
 var _inv_last := []
+var _music_now = null
 
 signal advanced
 signal menu_picked
@@ -62,6 +63,7 @@ var _menu_pick := -1
 @onready var _menu := VBoxContainer.new()
 @onready var _inv := HBoxContainer.new()
 @onready var _hud := Label.new()
+@onready var _music := AudioStreamPlayer.new()
 
 
 func _ready() -> void:
@@ -139,6 +141,7 @@ func _boot() -> void:
 	if start.has("place"):
 		await _run_world(start["place"], start.get("spawn"))
 	elif start.has("node"):
+		play_music(ir.get("music", {}).get("default"))
 		await Vn.new(self).play_node(start["node"])
 
 
@@ -267,6 +270,7 @@ func _run_world(place_id, spawn) -> void:
 	while true:
 		_place_id = place_id
 		avatar_cell = null
+		play_music(_track_for_place(place_id))
 		var kind = place_by_id[place_id].get("kind", "room")
 		var cls = PRESENTERS.get(kind, Pnc)
 		if cls == Overworld and ir.get("meta", {}).get("presentation") == "hd2d":
@@ -415,6 +419,9 @@ func _build_ui() -> void:
 	_inv.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_inv.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_inv)
+
+	_music.bus = "Master"
+	add_child(_music)
 
 
 # The strip rebuilds only when the item set changes — take/use/combat world effects all mutate
@@ -606,6 +613,81 @@ func _texture_file(file: String):
 	if img.load_png_from_buffer(FileAccess.get_file_as_bytes(path)) != OK:
 		return null
 	return ImageTexture.create_from_image(img)
+
+
+# ── music (per place / per scene, keyed off ir.music) ──────────────────────────────────────────
+func _track_for_place(place_id):
+	var m = ir.get("music", {})
+	if m.is_empty():
+		return null
+	return m.get("by_place", {}).get(place_id, m.get("default"))
+
+
+func _track_for_location(bg_id):
+	var m = ir.get("music", {})
+	if m.is_empty():
+		return null
+	return m.get("by_location", {}).get(bg_id, m.get("default"))
+
+
+# Switch the ambient bed. No-op when the track is already playing (re-entering a place doesn't
+# restart it) or when the track/file is absent — a missing soundtrack is silent, never a crash.
+func play_music(track_id) -> void:
+	if track_id == null or track_id == _music_now:
+		return
+	var file := ""
+	for t in ir.get("music", {}).get("tracks", []):
+		if t.get("id") == track_id:
+			file = String(t.get("file", ""))
+			break
+	if file == "":
+		return
+	var stream = _load_wav("res://audio/music/" + file)
+	if stream == null:
+		return
+	_music_now = track_id
+	_music.stream = stream
+	_music.play()
+
+
+# Godot 4.2 has no runtime WAV-from-buffer loader, and the runtime never imports resources
+# (importer=keep), so parse the PCM WAV we control (mono/stereo, 8/16-bit) into an AudioStreamWAV by
+# hand. Returns null on any parse miss — the caller stays silent.
+func _load_wav(path: String):
+	if not FileAccess.file_exists(path):
+		return null
+	var b := FileAccess.get_file_as_bytes(path)
+	if b.size() < 44 or b.slice(0, 4).get_string_from_ascii() != "RIFF" \
+			or b.slice(8, 12).get_string_from_ascii() != "WAVE":
+		return null
+	var channels := 1
+	var rate := 22050
+	var bits := 16
+	var data := PackedByteArray()
+	var pos := 12
+	while pos + 8 <= b.size():
+		var cid := b.slice(pos, pos + 4).get_string_from_ascii()
+		var csize := b.decode_u32(pos + 4)
+		var body := pos + 8
+		if cid == "fmt " and body + 16 <= b.size():
+			channels = b.decode_u16(body + 2)
+			rate = b.decode_u32(body + 4)
+			bits = b.decode_u16(body + 14)
+		elif cid == "data":
+			data = b.slice(body, min(body + csize, b.size()))
+		pos = body + csize + (csize & 1)
+	if data.size() == 0:
+		return null
+	var s := AudioStreamWAV.new()
+	s.format = AudioStreamWAV.FORMAT_16_BITS if bits == 16 else AudioStreamWAV.FORMAT_8_BITS
+	s.mix_rate = rate
+	s.stereo = channels == 2
+	s.data = data
+	s.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	s.loop_begin = 0
+	var frame_bytes := (2 if bits == 16 else 1) * (2 if channels == 2 else 1)
+	s.loop_end = data.size() / frame_bytes
+	return s
 
 
 # The persistent player combat block (stats + grown maxes) for the progression loop — lives in

@@ -531,6 +531,88 @@ def generate_voices(inputs: Dict, working_dir: Path) -> Dict:
     return {"status": "ok", "generated": generated, "failed": failed}
 
 
+def _music_settings() -> Dict:
+    try:
+        from config.settings_manager import settings_manager
+        return settings_manager.get_settings().get("music") or {}
+    except Exception:
+        return {}
+
+
+def _music_backend() -> str:
+    return (_music_settings().get("backend") or "stub").strip() or "stub"
+
+
+def _synthesize_music(prompt: str, track_id: str, backend: str) -> bytes:
+    """Produce one track's audio bytes. The local `stub` backend synthesizes a procedural ambient
+    pad (no server); any other backend POSTs the prompt to the configured endpoint. Raises on
+    failure — the caller degrades to a silent placeholder (fail-soft)."""
+    from utils.audio import ambient_pad_bytes
+    if backend == "stub":
+        return ambient_pad_bytes(track_id)
+    endpoint = (_music_settings().get("endpoint") or "").rstrip("/")
+    if not endpoint:
+        raise RuntimeError(f"music backend {backend!r} has no endpoint configured")
+    import json
+    import urllib.request
+    req = urllib.request.Request(
+        f"{endpoint}/generate",
+        data=json.dumps({"prompt": prompt,
+                         "seconds": _music_settings().get("seconds", 30)}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=600) as resp:
+        return resp.read()
+
+
+def generate_music(inputs: Dict, working_dir: Path) -> Dict:
+    """Best-effort music pass: one ambient/score track per DERIVED music entry, written to
+    game/audio/music/ where both engines' playback references it. Fail-soft like generate_voices —
+    a track that fails to generate degrades to a silent placeholder, and the whole pass never blocks
+    delivery. The default `stub` backend needs no server (a local procedural pad), so unlike voice
+    this runs for every game; a real model drops in behind `music.backend`/`endpoint` in settings."""
+    from maestro.ir_assemble import assemble_ir
+    from tools.comfyui_tools import vram_bracket
+    from utils.audio import write_silent_wav
+
+    music = assemble_ir(inputs).get("music")
+    if not music or not music.get("tracks"):
+        return {"status": "skipped", "reason": "no music tracks"}
+
+    backend = _music_backend()
+    audio_dir = working_dir / "game_output" / "game" / "audio" / "music"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    generated: List[str] = []
+    failed: List[Dict] = []
+    with vram_bracket():
+        print(f"    [music]  generating {len(music['tracks'])} track(s) via {backend}")
+        for t in music["tracks"]:
+            fname = t["file"]
+            dest = audio_dir / fname
+            try:
+                dest.write_bytes(_synthesize_music(t.get("prompt", ""), t["id"], backend))
+                generated.append(fname)
+                print(f"    [music]  ok: {fname}")
+            except Exception as e:
+                write_silent_wav(dest, seconds=1.0)
+                failed.append({"file": fname, "error": str(e)})
+                print(f"    [music]  failed ({e}), silent placeholder: {fname}")
+    return {"status": "ok", "generated": generated, "failed": failed, "backend": backend}
+
+
+def _ensure_music_placeholders(ir: Dict, game_dir: str) -> None:
+    """Every music track the script references must have an audio file on disk or Ren'Py lint flags
+    it. The music pass fills these; where it didn't run or failed, write a silent placeholder.
+    Mirrors _ensure_voice_placeholders."""
+    from utils.audio import write_silent_wav
+    audio_dir = Path(game_dir) / "audio" / "music"
+    for t in (ir.get("music") or {}).get("tracks", []):
+        path = audio_dir / t["file"]
+        if not path.exists():
+            write_silent_wav(path, seconds=1.0)
+
+
 def _tts_voices() -> List[str]:
     try:
         from config.settings_manager import settings_manager

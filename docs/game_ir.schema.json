@@ -44,6 +44,39 @@
       },
       "additionalProperties": false
     },
+    "music": {
+      "type": "object",
+      "description": "Ambient/score soundtrack, DERIVED from place kinds + scene locations + story tone (maestro.music.derive_music) and lifted here so each engine projects playback the same way. Fail-soft: a track whose audio never generated is a silent placeholder, never a build break.",
+      "additionalProperties": false,
+      "required": ["tracks", "default"],
+      "properties": {
+        "tracks": {
+          "type": "array",
+          "description": "The distinct audio beds. Each generates one file under game/audio/music/.",
+          "items": {
+            "type": "object",
+            "required": ["id", "file"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "$ref": "#/$defs/id" },
+              "file": { "type": "string", "description": "filename under game/audio/music/." },
+              "prompt": { "type": "string", "description": "Generation prompt for a real music model." }
+            }
+          }
+        },
+        "default": { "$ref": "#/$defs/id", "description": "Track id played when a place/scene has no specific bed." },
+        "by_place": {
+          "type": "object",
+          "description": "place id -> track id (world/point-and-click games).",
+          "additionalProperties": { "$ref": "#/$defs/id" }
+        },
+        "by_location": {
+          "type": "object",
+          "description": "background id -> track id (visual novels; a node's scene bed).",
+          "additionalProperties": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
     "characters": {
       "type": "array",
       "description": "Character cast. A dialogue line's `speaker` MUST be an id here (or null for narration).",

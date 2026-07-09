@@ -58,6 +58,17 @@ class TTSSettings(BaseModel):
     format: Literal["wav", "ogg", "mp3", "opus"] = "wav"
 
 
+class MusicSettings(BaseModel):
+    """Ambient/score generation. `backend` selects HOW a track's audio is produced: "stub" is the
+    local procedural ambient pad (no server, license-free — the default, so the wiring always runs)
+    and anything else (e.g. "musicgen") POSTs the prompt to `endpoint` for a real model. An
+    unconfigured/unreachable real backend degrades to silent placeholders — music never blocks a
+    build (mirrors the voice pass)."""
+    backend: str = Field("stub")
+    endpoint: str = Field("", description="HTTP endpoint for a non-stub music model.")
+    seconds: int = Field(30, ge=1, description="Requested track length for a real backend.")
+
+
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
     max_iterations: int = Field(10, ge=1)
@@ -86,3 +97,4 @@ class AppSettings(BaseModel):
     comfyui: Optional[ComfyUISettings] = None
     trellis: Optional[TrellisSettings] = None
     tts: Optional[TTSSettings] = None
+    music: Optional[MusicSettings] = None

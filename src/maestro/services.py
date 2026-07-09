@@ -131,12 +131,18 @@ def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun, assigned=N
     must fill THE ASSIGNED SLOT. `assigned` is the slot dict picked at prompt-build time — the SAME
     snapshot the prompt rendered, so prompt and guard agree by construction (a sibling parallel fix
     landing in between shifts live slot indices, so the guard must not re-pick from the live view).
-    `prepare` is the owning module's arg-finisher (scenes stamps the system-picked beat) — this
-    guard knows no module's policy. Entry + no-open-slots are exempt so it can't deadlock."""
+    `prepare` is the owning module's arg-finisher (scenes code-fills the node id + the
+    (storyline, beat) stamp) — this guard knows no module's policy. Entry + no-open-slots are
+    exempt so it can't deadlock."""
     def guarded(name, args) -> Dict:
         if name != tool:
             return dispatch(name, args)
         view = view_fn() or {}
+        if prepare is not None:
+            # prepare runs FIRST: the owning module may code-fill the write's identity (scenes
+            # forces the assigned slot's node id), so the checks below validate what will
+            # actually be written, never a model-picked id that prepare would discard.
+            args = prepare(view, assigned, args or {})
         existing = set(view.get(id_list_key) or [])
         iid = (args or {}).get(id_key)
         if iid in existing:
@@ -147,8 +153,6 @@ def _create_guard(dispatch, view_fn, tool, id_key, id_list_key, noun, assigned=N
             return {"ok": False, "error":
                     f"{noun} {iid!r} is not the assigned slot — write {assigned['id']!r} next (the "
                     f"scene the story leads into). Use that EXACT id as the {noun} id."}
-        if prepare is not None:
-            args = prepare(view, assigned, args or {})
         return dispatch(name, args)
     return guarded
 

@@ -326,8 +326,14 @@ def node_view(artifact: Dict) -> Dict:
     beats_full = _flat_beats(artifact)
     beat_ids = [b["id"] for b in beats_full]
     beat_index = {bid: i for i, bid in enumerate(beat_ids)}
-    covered = {nodes.get(nid, {}).get("beat") for nid in node_ids}
+    # A node whose ID names a beat realizes it even if its stamp disagrees — the id is the graph
+    # position (the structural ends key on beat ids); counting it uncovered fans a create-error
+    # no write can satisfy (observed: write_scene('beat_11') refused "already exists" to park).
+    covered = {nodes.get(nid, {}).get("beat") for nid in node_ids} | written
     uncovered = [b for b in beat_ids if b not in covered]
+    start = (artifact.get("story") or {}).get("start_storyline")
+    entry_beat = next((b["id"] for b in beats_full if b["storyline"] == start),
+                      beat_ids[0] if beat_ids else None)
 
     for tgt, slot in slots.items():
         parent = slot["from"][0]["node"]
@@ -336,14 +342,14 @@ def node_view(artifact: Dict) -> Dict:
         slot["lead_in"] = [
             {"speaker": ln.get("speaker"), "text": ln.get("text", "")}
             for ln in (nodes.get(parent, {}).get("lines") or [])[-6:] if isinstance(ln, dict)]
-        pbeat = nodes.get(parent, {}).get("beat")
-        if pbeat in beat_index:
-            nxt = beat_index[pbeat] + 1
-            slot["beat"] = beat_ids[nxt] if nxt < len(beat_ids) else None
-        else:
-            slot["beat"] = uncovered[0] if uncovered else None
+        # The slot's target id IS the beat it realizes — the structural graph keys node ids on
+        # beat ids. Deriving it from the parent's beat mis-stamps every branch root (observed:
+        # a spinoff's first beat stamped with the source line's next beat, three parallel slots
+        # all carrying the SAME (storyline, beat)). A non-beat target realizes no beat.
+        slot["beat"] = tgt if tgt in beat_index else None
 
     return {
+        "entry_beat": entry_beat,
         "node_ids": node_ids,
         "edges": {nid: sorted(set(e)) for nid, e in edges.items()},
         "reachable": sorted(reach),
@@ -382,27 +388,41 @@ def pick_slot(view: Dict, index: int = 0) -> Optional[Dict]:
 
 def beat_for_new_node(view: Dict, chosen: Optional[Dict], has_existing: bool) -> Optional[str]:
     """The beat the system stamps on the node being written — it picked the slot, so it owns the
-    beat too. The assigned slot's beat; the first beat for the opening node; the first
-    still-unrealized beat for an escape-hatch branch root."""
+    beat too. The assigned slot's beat; the start storyline's entry beat for the opening node; the
+    first still-unrealized beat for an escape-hatch branch root."""
     if chosen is not None:
         return chosen.get("beat")
-    beat_ids = [b["id"] for b in (view.get("beats") or []) if b.get("id")]
     if not has_existing:
-        return beat_ids[0] if beat_ids else None
+        return view.get("entry_beat")
     todo = view.get("beats_todo") or []
     return todo[0] if todo else None
 
 
-def _stamp_beat(view: Dict, assigned: Optional[Dict], args: Dict) -> Dict:
+def _slot_node_id(view: Dict, assigned: Optional[Dict]) -> Optional[str]:
+    """A slot-create's node id is SYSTEM-owned: the assigned slot's target, else the beat being
+    realized (the structural graph keys node ids on beat ids, so id and beat coincide by
+    construction). None only when there is no story — a free scene the author may name."""
+    if assigned is not None:
+        return assigned.get("id")
+    return beat_for_new_node(view, assigned, bool(view.get("node_ids")))
+
+
+def _stamp_node(view: Dict, assigned: Optional[Dict], args: Dict) -> Dict:
+    """The guard's prepare hook: code-fill the write's identity — node id + (storyline, beat)
+    stamp. The model never picks a slot-create's id (observed: ids grabbed from sibling
+    storylines' beats in context wedged those slots for good)."""
+    args = dict(args)
+    node_id = _slot_node_id(view, assigned)
+    if node_id:
+        args["node_id"] = node_id
     beat = beat_for_new_node(view, assigned, bool(view.get("node_ids")))
-    if not beat:
-        return args
-    storyline = next((b.get("storyline") for b in (view.get("beats") or [])
-                      if b.get("id") == beat), None)
-    stamped = {**args, "beat": beat}
-    if storyline:
-        stamped["storyline"] = storyline
-    return stamped
+    if beat:
+        args["beat"] = beat
+        storyline = next((b.get("storyline") for b in (view.get("beats") or [])
+                          if b.get("id") == beat), None)
+        if storyline:
+            args["storyline"] = storyline
+    return args
 
 
 def _parallel_cap(view: Dict) -> int:
@@ -413,7 +433,7 @@ def _parallel_cap(view: Dict) -> int:
 
 
 _NODE_GUARD = {"count_tool": "write_scene", "id_key": "node_id", "id_list_key": "node_ids",
-               "noun": "node", "assign": pick_slot, "prepare": _stamp_beat, "cap": _parallel_cap}
+               "noun": "node", "assign": pick_slot, "prepare": _stamp_node, "cap": _parallel_cap}
 
 
 # ── the node-graph policy checks ──────────────────────────────────────────────
@@ -490,8 +510,8 @@ def unrealized_beats(artifact: Dict) -> List[str]:
     beats = [b["id"] for b in _flat_beats(artifact)]
     if not beats:
         return []
-    _, nodes = views.nodes_of(artifact)
-    covered = {n.get("beat") for n in nodes.values() if n.get("beat")}
+    node_ids, nodes = views.nodes_of(artifact)
+    covered = {n.get("beat") for n in nodes.values() if n.get("beat")} | set(node_ids)
     return [b for b in beats if b not in covered]
 
 
@@ -902,14 +922,9 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
         services.run(module.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
         return
     # A node's id IS the beat it realizes — the graph (jumps/menus/termini) is keyed on beat ids,
-    # so the derived `end` lands on a node whose id matches. An assigned slot's id is already the
-    # beat some earlier node points at; the opening node is the storyline's entry beat.
-    if assigned:
-        node_id = assigned["id"]
-    elif not view.get("node_ids"):
-        node_id = graph.get("entry") or "scene_01"
-    else:
-        node_id = (view.get("beats_todo") or ["scene_01"])[0]
+    # so the derived `end` lands on a node whose id matches. Same derivation as the guard's
+    # prepare hook (_stamp_node), so the id written here and the id the guard forces agree.
+    node_id = _slot_node_id(view, assigned) or "scene_01"
     sss = context.spec.get("story_state_schema") or {}
     schema_facts = list(sss.get("established_facts") or [])
     # entity states carry the RELATIONSHIP frame — without it strangers talk like old friends
@@ -918,7 +933,9 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
                      if isinstance(v, str)]
     brief = _scene_brief(view, assigned, cast, art, schema_facts=schema_facts)
     beats = {b["id"]: b for b in (view.get("beats") or []) if b.get("id")}
-    bid = (assigned or {}).get("beat") or (next(iter(beats), None))
+    # The SAME beat the guard will stamp — the brief must dramatize the beat this node realizes
+    # (observed: an escape-hatch node briefed on beat_01 while stamped with the todo beat).
+    bid = beat_for_new_node(view, assigned, bool(view.get("node_ids")))
     business = render_beat(beats[bid]) if bid in beats else "the conversation reaches a turn"
     if bid in beats and str(beats[bid].get("tension", "")).strip().lower() in ("", "none"):
         business += ("\nStake: NONE — nothing needs to go wrong in this scene. Do the activity, "

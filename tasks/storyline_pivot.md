@@ -407,17 +407,21 @@ this). 5. **≥1 reachable `game_end` terminus.** 6. If ≥2 game_end endings, t
       a forced ≥2-choice climax; walk the goblin-spare→flag→gated-callback path end-to-end.
 
 ### T8 — Beat→storyline node mapping (the heaviest code risk)
-- [ ] `scenes.py` UPDATE `node_view` (`scenes.py:247-293`): beat math per-storyline; a menu-child
-      slot (a spinoff target) is stamped with the FIRST beat of the storyline that choice spins
-      (NOT parent+1) — needs the choice→spinoff map.
-- [ ] `pick_slot` (`scenes.py:308-317`): order by `(storyline spawn order, beat-index within
-      storyline)`.
-- [ ] `beat_for_new_node`/`_stamp_beat` (`scenes.py:320-335`): add `_stamp_storyline`;
-      `_NODE_GUARD.prepare` (`scenes.py:345-346`) stamps both.
-- [ ] `unrealized_beats`/`_d_beats_realized` (`scenes.py:417-425,468-474`): iterate the flattened
-      `(storyline, beat)` set.
-- [ ] Verify: targeted `node_view` tests — a menu-child is stamped the spun line's first beat
-      (not parent+1); a main-line child is parent+1; two storylines build in spawn order.
+Risk #5 fired live before this landed (run e360844f3b35, parked at step 833): parent+1 stamped
+both spinoff roots with the source line's next beat, coverage never converged, and the escape
+hatch spun on an already-written node id.
+- [x] `node_view`: no choice→spinoff map needed — the structural graph keys node ids on beat
+      ids, so a slot's target id IS the beat it realizes (`slot["beat"] = tgt`); a non-beat
+      target realizes none. Coverage also counts a node whose ID names a beat (a mis-stamped
+      node must never re-fan a create-error for an id that exists).
+- [x] `pick_slot`: ordered by the flattened beat index = (storyline spawn order, beat-index
+      within storyline).
+- [x] `_stamp_node` (`_NODE_GUARD.prepare`): stamps `(storyline, beat)` AND code-fills the
+      node id (assigned slot / entry beat / first unrealized beat) — the model never picks a
+      slot-create's id; the guard runs prepare before its checks.
+- [x] `unrealized_beats`/`_d_beats_realized`: iterate the flattened set, covered by stamp or id.
+- [x] Verify: targeted tests in `tests/test_core.py` (branch-slot stamps, parallel distinctness,
+      stamp-disagrees recovery, entry-beat opening).
 
 ### T9 — Round-trip + provenance strip
 - [ ] `ir_assemble.py:142` strip `storyline` alongside `beat` (and any choice-level `spins`/

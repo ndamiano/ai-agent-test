@@ -682,6 +682,7 @@ def _place_view_block(view: Dict) -> List[str]:
 
 class World(Module):
     id = "world"
+    layer = "engine"
     description = ("Clickable rooms/screens you move between — a point-and-click world with "
                    "hotspots, items, and movement. Pair with `scenes` for talkable NPCs.")
     priority = 50

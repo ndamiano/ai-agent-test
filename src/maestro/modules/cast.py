@@ -142,6 +142,7 @@ def _d_cast(chk, m, ctx):
 
 class Cast(Module):
     id = "cast"
+    layer = "engine"
     description = ("Named characters with role, backstory, voice, and temperament. Include whenever "
                    "the game has people who speak or act.")
     priority = 10

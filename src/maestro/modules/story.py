@@ -335,6 +335,7 @@ def _d_storyline_beats(chk, m, ctx):
 
 class Story(Module):
     id = "story"
+    layer = "engine"
     description = ("A dramatic plan: a theme+tone spine and a graph of linear storylines (a main "
                    "line that ends the game, plus optional side lines it branches into). REQUIRED "
                    "whenever the story you wrote has a plot, named outcomes, or characters whose "

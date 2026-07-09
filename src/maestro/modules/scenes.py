@@ -1057,6 +1057,7 @@ def scene_turn_loop(module, context, error, slot, services, dispatch) -> None:
 
 class Scenes(Module):
     id = "scenes"
+    layer = "engine"
     description = ("A branching, choice-driven dialogue/scene graph — the playable script. With "
                    "`story` it IS the game (a visual novel); with `world` it supplies room "
                    "conversations.")

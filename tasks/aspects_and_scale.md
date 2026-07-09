@@ -81,33 +81,34 @@ instance needs genuinely new check logic → it's a different aspect, not an ins
 
 ## Tasks
 
-### A1 — Introduce the engine/aspect distinction
-- [ ] Add `Module.layer: str = "engine"` (default) in `module.py`. `layer == "aspect"` = LLM-facing.
-- [ ] Change `selectable_catalog()` to list `layer == "aspect"` modules (keep hiding `selectable=False`
+### A1 — Introduce the engine/aspect distinction ✅ DONE
+- [x] Add `Module.layer: str = "engine"` (default) in `module.py`. `layer == "aspect"` = LLM-facing.
+- [x] Change `selectable_catalog()` to list `layer == "aspect"` modules (keep hiding `selectable=False`
       foundation). The catalog the proposer sees is now aspects only.
-- [ ] Add validation in `resolve_modules` / a registration check: an `aspect` module MUST declare
+- [x] Add validation in `resolve_modules` / a registration check: an `aspect` module MUST declare
       `requires` with ≥1 `engine` module, else raise at register time (fail fast, not at build).
-- [ ] `_REALIZATION` gate still works: an aspect's required engine module (`scenes`/`world`) satisfies
-      "has a realization module". Verify `resolve_modules` still finds a realization + engine after
-      reclassification.
-- [ ] Tests: an aspect resolves to its engine modules; catalog shows aspects not engines; an aspect
-      with no engine `requires` is rejected.
+      → enforced in `register_module`; aspects import LAST so their engine deps are already registered.
+- [x] `_REALIZATION` gate still works: an aspect's required engine module (`scenes`/`world`) satisfies
+      "has a realization module". Verified — `resolve_modules(["dialogue"])` finds `scenes` + engine.
+- [x] Tests: an aspect resolves to its engine modules; catalog shows aspects not engines; an aspect
+      with no engine `requires` is rejected. (`tests/test_module_resolution.py`)
 
-### A2 — Reclassify the existing catalog
-- [ ] Mark current machinery modules `layer="engine"` (internal): `cast`, `story`, `combat`, `world`,
+### A2 — Reclassify the existing catalog ✅ DONE (with NO-RENAME deviation)
+**DEVIATION (owner decision):** did NOT rename any files or engine module ids. `scenes.py` stays
+`scenes.py` with `id="scenes"`; `world`/`combat`/`story` keep their ids. The thin aspects are ADDED
+in a new `maestro/modules/aspects.py` and wrap the engine modules by `requires` — no file/id churn,
+no prompt renames. Aspect ids are kept DISTINCT from the engine ids they wrap (registry is keyed by
+id): `turn_combat` (not `combat`), `roaming_encounters` (not `wild_encounters`).
+- [x] Mark current machinery modules `layer="engine"` (internal): `cast`, `story`, `combat`, `world`,
       `scenes`, `inventory`, `wild_encounters`, plus foundation `state`/`assets`/`human`
-      (already `selectable=False`).
-- [ ] For each engine module that is ALSO a natural LLM-facing concept, add a thin degenerate aspect
-      so the vocabulary stays uniform (LLM always picks aspects):
-  - `scenes` engine → **rename the concept to `dialogue`** (per Nick: "scenes" is a poor name) and
-    add a `dialogue` aspect (`requires=("scenes"/"dialogue",)`). Rename `scenes.py`→`dialogue.py`,
-    `id="dialogue"`, and its prompts (`nodes_*`, `scene_*`) consistently. Move call sites; no shim.
-  - `world` engine → `exploration` aspect (walkable rooms/world).
-  - `combat` engine → `combat` aspect (the default turn combat).
-  - `story` engine → `narrative` aspect (branching story-forward).
-- [ ] `cast`/`assets`/`state`/`human` stay foundation (auto-pulled), no aspect needed.
-- [ ] Tests: composing the `dialogue` aspect yields the same built module set as picking `scenes`
-      does today (behavior parity for the VN path).
+      (already `selectable=False`, default layer engine).
+- [x] Thin degenerate aspects (in `aspects.py`) so the vocabulary stays uniform (LLM always picks
+      aspects): `dialogue`→`scenes`, `narrative`→`story`, `exploration`→`world`,
+      `turn_combat`→`combat`, `items`→`inventory`, `roaming_encounters`→`wild_encounters`.
+      (Added `items`/`roaming_encounters` beyond the doc's four so no pick capability is lost.)
+- [x] `cast`/`assets`/`state`/`human` stay foundation (auto-pulled), no aspect needed.
+- [x] Tests: composing the `dialogue` aspect yields the same ENGINE module set as picking `scenes`
+      does today (behavior parity for the VN path — the aspect id itself is inert).
 
 ### A3 — First real proof: economy + its aspects
 This is the proof the layer earns its keep. Build the engine module thin (wiring only) and put the
@@ -143,22 +144,23 @@ wiring/sufficiency checks over content the engine modules already grow).
       exactly one fixable error; purchasables are grown one per step; the assembled IR crossrefs
       resolve; compile does not fail `unprojectable`.
 
-### A4 — Rewrite spec authoring to nouns-primary
-- [ ] Rewrite `src/maestro/prompts/spec_write.txt`: the `MODULES` section becomes an `ASPECTS`
+### A4 — Rewrite spec authoring to nouns-primary ✅ DONE (the machinery-facing parts)
+- [x] Rewrite `src/maestro/prompts/spec_write.txt`: the `MODULES` section becomes an `ASPECTS`
       section. The proposer picks aspects from `selectable_catalog()` (now aspects), still as a
-      `{id: reason}` map with one-sentence justification each. Keep the "smallest set / justify each /
-      leave out what you can't tie to the story" rules.
-- [ ] `spec_tools._spec_prompt_ctx` already feeds `selectable_catalog()` — verify it now surfaces
-      aspects. `resolve_modules` already expands `requires`, so aspect picks resolve to engine
-      modules automatically. Confirm `module_reasons` / freeze-gate visibility still reads well
-      (the human sees WHY each aspect is in).
-- [ ] Params floors: aspect `params()` compose the same way (`_param_floors` union). Verify sizing
-      knobs surfaced in the prompt come from the composed aspects.
-- [ ] **`amend_spec` path too** (`spec_tools.amend_spec`): mid-build aspect add/remove re-resolves via
-      `resolve_modules` (mostly free), but confirm the aspect→engine expansion + `module_reasons`
-      re-derivation hold when `changes["modules"]` carries aspect ids. Un-freeze/re-freeze still gates.
-- [ ] Tests: `propose_spec` on a "pokemon-like" request picks aspects (e.g. `shop`, `combat`,
-      `exploration`, `dialogue`) and resolves to a buildable module+engine set.
+      `{id: reason}` map with one-sentence justification each. Kept the "smallest set / justify each /
+      leave out what you can't tie to the story" rules; updated realization + PRESENTATION prose to
+      name `dialogue`/`exploration` (not `scenes`/`world`).
+- [x] `spec_tools._spec_prompt_ctx` feeds `selectable_catalog()` — now surfaces aspects. `resolve_modules`
+      expands `requires`, so aspect picks resolve to engine modules automatically. `module_reasons`
+      keeps the proposer's per-aspect reason (engine/foundation get the auto note).
+- [x] Params floors: aspect `params()` compose the same way (`_param_floors` union) — degenerate
+      aspects declare none, so floors still come from the composed engine modules.
+- [x] **`amend_spec` path**: aspect ids in `changes["modules"]` re-resolve via `resolve_modules`
+      (aspect→engine expansion + engine re-derivation hold; `module_reasons` re-derived).
+      Test: `test_amend_with_aspect_ids_reresolves`.
+- [x] Tests: `propose_spec` on a "pokemon-like" request picks aspects (`dialogue`, `exploration`,
+      `turn_combat`) and resolves to a buildable module+engine set (godot).
+      Test: `test_propose_with_aspect_picks_resolves_to_engine_and_godot`.
 
 ### A5 — Optional decompose spec authoring (nicety, only if catalog bloat bites)
 - [ ] If the aspect catalog grows large enough to distract the small model, decompose picking into an

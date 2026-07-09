@@ -88,6 +88,7 @@ def _d_wild_tables(chk, m, ctx):
 
 class WildEncounters(Module):
     id = "wild_encounters"
+    layer = "engine"
     description = ("Roaming danger: dangerous zones roll random fights while the player walks "
                    "them (weighted, tier-scaled enemies feeding the XP loop). Pick when the "
                    "WORLD itself threatens — wilderness, dungeons, infestations; skip when "

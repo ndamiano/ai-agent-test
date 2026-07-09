@@ -23,12 +23,16 @@ def test_reasons_keep_justifications_and_flag_gaps():
     assert set(reasons) == set(modules)                     # one reason per resolved module
 
 
-def test_catalog_hides_always_on_foundation():
+def test_catalog_shows_aspects_not_engine_modules():
+    # The catalog is nouns-primary: the proposer sees ASPECTS (dialogue/exploration/...), never the
+    # engine modules they resolve to (scenes/world/combat) nor the always-on foundation.
     catalog = dict(M.selectable_catalog())
-    assert "human" not in catalog and "assets" not in catalog
-    real = {"scenes", "world", "cast", "inventory", "story", "combat"}
-    assert real <= set(catalog)
-    assert all(catalog[mid] for mid in real)  # every real module is described
+    aspects = {"dialogue", "narrative", "exploration", "turn_combat", "items", "roaming_encounters"}
+    assert aspects <= set(catalog)
+    assert all(catalog[a] for a in aspects)                       # every aspect is described
+    engine_and_foundation = {"scenes", "world", "cast", "inventory", "story", "combat",
+                             "wild_encounters", "human", "assets", "state"}
+    assert engine_and_foundation.isdisjoint(catalog)             # engines/foundation are hidden
 
 
 def test_foundation_is_always_forced_in():
@@ -72,6 +76,76 @@ def test_unknown_ids_are_dropped():
     modules, _ = M.resolve_modules(["scenes", "made_up_module"])
     assert "made_up_module" not in modules
     assert "scenes" in modules
+
+
+# ── aspects: the nouns-primary pick layer resolves to engine modules ──────────────────────────
+import pytest  # noqa: E402
+from maestro.modules.module import Module, register_module, MODULE_REGISTRY  # noqa: E402
+
+
+def _engine_ids(ids):
+    """The resolved set with the LLM-facing aspect ids stripped — the actual engine machinery."""
+    modules, _ = M.resolve_modules(ids)
+    return {mid for mid in modules if MODULE_REGISTRY[mid].layer != "aspect"}
+
+
+def test_aspect_resolves_to_its_engine_modules():
+    # picking the `dialogue` aspect pulls in its engine module (scenes) + that module's deps (cast).
+    modules, engine = M.resolve_modules(["dialogue"])
+    assert {"dialogue", "scenes", "cast"} <= set(modules)
+    assert engine == "renpy"
+
+
+def test_dialogue_aspect_engine_parity_with_picking_scenes():
+    # behavior parity for the VN path: composing `dialogue` builds the SAME engine machinery as
+    # naming the raw `scenes` engine module does today (the aspect id itself is inert — no checks).
+    assert _engine_ids(["dialogue"]) == _engine_ids(["scenes"])
+    assert M.MODULE_REGISTRY["dialogue"].checks == []             # degenerate wrapper, authors nothing
+
+
+def test_combat_aspect_routes_to_godot():
+    # the `turn_combat` aspect resolves through combat -> world/scenes/cast and forces the godot engine.
+    modules, engine = M.resolve_modules(["turn_combat"])
+    assert {"turn_combat", "combat", "world", "scenes", "cast"} <= set(modules)
+    assert engine == "godot"
+
+
+def test_every_catalog_aspect_carries_an_engine_requirement():
+    for mid, _ in M.selectable_catalog():
+        m = MODULE_REGISTRY[mid]
+        assert m.layer == "aspect"
+        engine_reqs = [r for r in m.requires if MODULE_REGISTRY[r].layer == "engine"]
+        assert engine_reqs, f"aspect {mid!r} must require an engine module"
+
+
+def test_aspect_without_engine_requires_is_rejected_at_register():
+    # the guardrail: an aspect with no owning engine module is illegal — caught at import/register
+    # time (fail fast), not silently at build.
+    class Orphan(Module):
+        id = "_orphan_aspect_test"
+        layer = "aspect"
+        requires = ()                                            # no engine module
+        description = "illegal aspect"
+
+    try:
+        with pytest.raises(ValueError, match="must require"):
+            register_module(Orphan())
+    finally:
+        MODULE_REGISTRY.pop("_orphan_aspect_test", None)
+
+
+def test_aspect_requiring_only_another_aspect_is_rejected():
+    class OnlyAspect(Module):
+        id = "_only_aspect_test"
+        layer = "aspect"
+        requires = ("dialogue",)                                 # an aspect, not an engine module
+        description = "illegal aspect"
+
+    try:
+        with pytest.raises(ValueError, match="must require"):
+            register_module(OnlyAspect())
+    finally:
+        MODULE_REGISTRY.pop("_only_aspect_test", None)
 
 
 # ── presentation (hd2d 3D routing) ────────────────────────────────────────────────────────────

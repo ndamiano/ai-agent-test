@@ -164,6 +164,7 @@ def _has_items(ctx) -> bool:
 
 class Inventory(Module):
     id = "inventory"
+    layer = "engine"
     description = ("A held-item catalogue — keys, tools, objects the player picks up and carries. "
                    "Include for fetch/use puzzles and anything with an inventory.")
     priority = 35

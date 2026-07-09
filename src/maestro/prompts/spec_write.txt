@@ -1,9 +1,9 @@
-You are designing a game from a user's request: you invent its STORY and choose the MECHANIC-MODULES
-that make it buildable.
+You are designing a game from a user's request: you invent its STORY and choose the ASPECTS that
+make it buildable.
 
 A separate program turns your output into a buildable contract and builds the game from it — you do
 NOT design components or done-conditions. Your jobs: (1) state the CONCEPT in one line, (2) expand
-the request into a vivid, concrete story and the continuity it hinges on, and (3) pick the modules
+the request into a vivid, concrete story and the continuity it hinges on, and (3) pick the aspects
 the game needs.
 
 Request:
@@ -45,32 +45,33 @@ storm that nearly costs them the season's data, an argument over whether one mor
 the risk — and resolves with Sam staying on past his retirement to see the dive through with her,
 the two of them finding the bloom together on the last morning the station is open.
 
-── MODULES ──
-Pick the mechanic-modules this game is built from. (Characters and image assets are always included;
-you don't list them.) Choose from this catalog:
+── ASPECTS ──
+Pick the aspects this game is built from — the concrete things it lets the player DO. (Characters
+and image assets are always included; you don't list them.) Choose from this catalog:
 
 {module_catalog}
 
 RULES for picking:
 - Pick the SMALLEST set that delivers the game you described — nothing speculative.
-- For EVERY module you pick, write ONE concrete sentence naming what IN YOUR STORY it serves. If you
-  cannot tie a module to a specific thing the story does, LEAVE IT OUT. A module that does nothing
+- For EVERY aspect you pick, write ONE concrete sentence naming what IN YOUR STORY it serves. If you
+  cannot tie an aspect to a specific thing the story does, LEAVE IT OUT. An aspect that does nothing
   for this particular game is wrong, even if it's commonly used.
-- Pick a realization: `scenes` (the game is branching conversation/choices) and/or `world` (the
-  player explores clickable rooms). They COMPOSE — a `world` with `scenes` gives rooms whose NPCs
-  you can talk to. Pick `story` for a story-forward game (it makes the cast richer and the script
-  branch); omit it for a pure mechanic/puzzle game.
-- Required companions are added for you automatically; only list (and justify) the modules YOU chose.
+- Pick how the game is played: `dialogue` (branching conversation/choices) and/or `exploration`
+  (the player walks clickable rooms/a world). They COMPOSE — `exploration` with `dialogue` gives
+  rooms whose NPCs you can talk to. Pick `narrative` for a story-forward game (it makes the cast
+  richer and the script branch); omit it for a pure mechanic/puzzle game.
+- The machinery each aspect needs is pulled in for you automatically; only list (and justify) the
+  aspects YOU chose.
 
 ── PRESENTATION ──
 How the game renders. "hd2d" renders the walkable world as real 3D (Octopath-style); "2d" is
 flat sprites.
-- If you picked the `world` module (the player walks around a map), use "hd2d" — a walkable world
-  is meant to be explored in 3D. This is the default; keep it.
+- If you picked the `exploration` aspect (the player walks around a map), use "hd2d" — a walkable
+  world is meant to be explored in 3D. This is the default; keep it.
 - Use "2d" only when the request explicitly wants a flat / retro / classic-2D look on that
   walkable world.
-- For a pure conversation/`scenes` game (no `world`), presentation does not matter — leave "hd2d"
-  and it auto-falls back to "2d" (there is nothing to render in 3D).
+- For a pure conversation/`dialogue` game (no `exploration`), presentation does not matter — leave
+  "hd2d" and it auto-falls back to "2d" (there is nothing to render in 3D).
 
 Output ONLY this JSON structure (fill it in; comments are for you, do not emit them):
 
@@ -82,8 +83,8 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
     { "id": "snake_case_id", "name": "Display Name", "who": "one line: who they are and their part in THIS story" }
   ],
   "presentation": "hd2d",                     // "hd2d" (walkable world in 3D — the default) or "2d" — see PRESENTATION above
-  "modules": {                                // each module you pick -> ONE sentence: what IN THIS STORY it serves
-    // "scenes": "the whole game is the scientist's branching descent told through his own dialogue"
+  "modules": {                                // each ASPECT you pick -> ONE sentence: what IN THIS STORY it serves
+    // "dialogue": "the whole game is the scientist's branching descent told through his own dialogue"
   },
   "story_state_schema": {
     "established_facts": [],                  // what continuity hinges on for THIS game
@@ -101,7 +102,7 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
 SIZING — the build enforces a minimum size for each part of the game. To make a BIGGER, richer
 story than the floor, raise any of these knobs in "sizing" (name -> integer). You may only RAISE
 them; a value below the floor is ignored. Omit a knob to keep its floor. A knob only applies if you
-picked the module that uses it. Available knobs:
+picked an aspect that uses it. Available knobs:
 
   {sizing_knobs}
 

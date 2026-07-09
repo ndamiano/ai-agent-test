@@ -102,7 +102,12 @@ src/
                     mechanic-modules, each a direct Module subclass; each owns its component's
                     structural write-time validator + authoring skeleton INLINE (no shared
                     validators/skeletons file). state/human author no component (cross-cutting):
-                    state is the always-on wiring invariant, human holds the HITL todo/waiver store.
+                    state is the always-on wiring invariant, human holds the HITL todo/waiver +
+                    DIRTY store (a sidecar of asset idkeys+review notes, waivers' shape; a
+                    dirty_asset Check emits one HUMAN error per flag that the loop drains by
+                    rewriting — review_note = the instruction — cleared by a human thumbs-up or the
+                    rewrite; nodes reuse rewrite_node, other components take the human-edit step.
+                    See docs/hitl_architecture.md).
                 agent_loop.py — AgentLoop, the non-LLM loop that DRIVES the modules (not itself a
                   module): collects each module's get_errors, subtracts the human's waivers,
                   prioritizes by error TYPE (human>build>fix) then Module.priority then the check's
@@ -135,7 +140,14 @@ src/
                   ending nodes are forced to end; backward jumps/choices are rejected in code.
                   Turn calls run reasoning "none" (the connector maps it to chat_template_kwargs
                   enable_thinking:false — llama.cpp ignores reasoning.effort).
-                rewrite.py — rewrite_node: regenerate ONE node from a human note (per-scene control)
+                rewrite.py — rewrite_node: regenerate ONE node from a human note (per-scene control);
+                  on success reflags the node's downstream closure dirty via depgraph
+                depgraph.py — the reified asset-dependency graph (HITL propagation): build_dependency_
+                  graph re-walks ir_crossref's reference edges + the state module's producer→consumer
+                  pairs at ASSET (idkey) granularity; mark_downstream_dirty flags an edited asset's
+                  whole transitive downstream closure dirty. Hooked ONLY on human-edit paths (the
+                  games API's _after_edit + rewrite_node) — the agent loop's own edits never
+                  propagate, so in-loop iteration can't churn the dirty store
                 climb.py — module re-runner for prompt hill-climbing: clone a finished run, wipe ONE
                   module's component, drive the loop with only that module composed (same upstream
                   artifact + a candidate prompt = a comparable output).
@@ -145,7 +157,9 @@ src/
                 tools.py — artifact tools (build_tools) + TOOL_SCHEMAS. write_component/
                   write_node/edit_node take a human-only `force` to override the done-lock
                   (the agent never sets it — not in TOOL_SCHEMAS); edit_node also takes full
-                  `content` to replace a whole node (the manual per-scene editor)
+                  `content` to replace a whole node (the manual per-scene editor). Human-only
+                  set_dirty/thumbs_up/thumbs_down tools (also kept out of TOOL_SCHEMAS, like `force`)
+                  drive the dirty store
                 tools/spec_tools.py — propose_spec / amend_spec / freeze_spec (human gate); resolves
                   spec.params from each module's params() floors (int→max, list→union)
                 story_state.py — continuity bible (facts, entities, threads, recent tail)

@@ -20,56 +20,56 @@ the browser replaces it.
 
 ---
 
-## Epic A — Dirty core (backend foundation)
+## Epic A — Dirty core (backend foundation) — ✅ DONE (backend, commits 7d1f055 + 03edeac)
 
 The whole model is "dirty is an error." This epic makes that literal.
 
-- **A1 — Dirty sidecar store.** A set of asset idkeys + `review_note`s, persisted in
+- [x] **A1 — Dirty sidecar store.** A set of asset idkeys + `review_note`s, persisted in
   `RunState` next to waivers. Extend the `human` module's existing HITL store — same
   shape as waivers, zero component-schema change. *(S, BE — `maestro/modules/human.py`,
   `maestro/state.py`)*
-- **A2 — Dirty-emits-error check.** One `Check` on the `human` module sweeps the
+- [x] **A2 — Dirty-emits-error check.** One `Check` on the `human` module sweeps the
   store and emits one `Error` per dirty idkey; its `Fix` routes to the owning
   module's rewrite/author path (`review_note` = instruction). The existing loop drain
   clears it — no loop change. *(M, BE — `human.py`, `maestro/modules/checks.py`)*
-- **A3 — Human-only dirty/thumb tools.** `set_dirty(idkey, note)`,
+- [x] **A3 — Human-only dirty/thumb tools.** `set_dirty(idkey, note)`,
   `thumbs_up(idkey)` (clear), `thumbs_down(idkey, note)` (= set_dirty). Human-only,
   like `force` — NOT in agent `TOOL_SCHEMAS`. *(S, BE — `maestro/tools.py`)*
-- **A4 — Thumbs-down note → rewrite instruction.** The `review_note` flows into the
+- [x] **A4 — Thumbs-down note → rewrite instruction.** The `review_note` flows into the
   rewrite prompt (`rewrite_node` already takes a note). *(reuse/S, BE —
   `maestro/rewrite.py`)*
 
-## Epic B — Propagation (the dependency DAG)
+## Epic B — Propagation (the dependency DAG) — ✅ DONE (commit 7d1f055; hook narrowed in 03edeac)
 
 Reflag the downstream closure on any edit. The graph already exists — reify it.
 
-- **B1 — Reify the dependency graph.** Expose a queryable edge set keyed by asset
+- [x] **B1 — Reify the dependency graph.** Expose a queryable edge set keyed by asset
   idkey, assembled from `ir_crossref`'s `{path, ref, kind}` records + the `state`
   module's producer→consumer pairs. *(M, BE — new `maestro/depgraph.py`,
   `maestro/ir_crossref.py`, `maestro/modules/state.py`)*
-- **B2 — `mark_downstream_dirty(idkey)`.** Transitive downstream-closure walk; set
+- [x] **B2 — `mark_downstream_dirty(idkey)`.** Transitive downstream-closure walk; set
   dirty on every reachable dependent (blessed-long-ago included). *(S, BE —
   `depgraph.py`)*
-- **B3 — Hook propagation into edits.** After any human-initiated
+- [x] **B3 — Hook propagation into edits.** After any human-initiated
   `edit_node` / `edit_component` / `rewrite_node`, call `mark_downstream_dirty`.
   *(S, BE — `maestro/tools.py`)*
 
-## Epic C — API + events (plumbing the model to the client)
+## Epic C — API + events (plumbing the model to the client) — ✅ DONE (backend, commit 7d1f055)
 
 The UI shell is component-blind; it needs a uniform, event-driven data surface.
 
-- **C1 — Uniform asset API.** `list assets of type X` + `get asset detail`, generic
+- [x] **C1 — Uniform asset API.** `list assets of type X` + `get asset detail`, generic
   over every component type (drive off the composed module set + decomposed on-disk
   components). *(M, both — `api/routers/games.py`, `frontend/src/api/client.ts`)*
-- **C2 — Dirty/thumb endpoints.** POST set_dirty / thumbs_up / thumbs_down / note →
+- [x] **C2 — Dirty/thumb endpoints.** POST set_dirty / thumbs_up / thumbs_down / note →
   the A3 tools. *(S, both — `games.py`, `client.ts`)*
-- **C3 — Uniform edit endpoint, un-gated.** Edit any asset's content; **drop the
+- [x] **C3 — Uniform edit endpoint, un-gated.** Edit any asset's content; **drop the
   paused-build gate** (`_require_editable`) — edits are allowed mid-build (they just
   reflag). *(M, both — `games.py`)*
-- **C4 — Dirty + asset-state events.** Emit on dirty set/cleared, asset generated,
+- [x] **C4 — Dirty + asset-state events.** Emit on dirty set/cleared, asset generated,
   asset state change, so the browser updates live without refetch. *(M, BE —
   `maestro/agent_loop.py`, `api/websocket/event_bus.py`, `maestro/run.py`)*
-- **C5 — Attach live state to build events.** Put the effective todo/component-state
+- [x] **C5 — Attach live state to build events.** Put the effective todo/component-state
   on `build_step`/`build_started` (fixes the null-`todo` dead wire so the board is
   live). *(S, BE — `agent_loop.py`)*
 

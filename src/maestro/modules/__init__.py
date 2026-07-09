@@ -28,6 +28,7 @@ from maestro.modules import (  # noqa: F401
     human,
     assets,
     state,
+    bible,
     cast,
     combat,
     inventory,

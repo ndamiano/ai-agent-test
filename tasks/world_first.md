@@ -198,12 +198,15 @@ Per-place, error-driven build state (NOT spec-frozen), mirroring the furniture-l
 
 ## Tasks
 
-### W1 — bible module
-- [ ] `src/maestro/modules/bible.py`: component + validators + checks (blocking setting,
-      tension floor/scale, faction refs), `set_bible` slice tools in tools.py, `bible_block`
-      presentation, params (`min_tensions: 3`). Register; NO projection (authoring-only).
-- [ ] Prompts: `bible_write.txt` (setting+factions), `bible_tension_add.txt` (one per step).
-- [ ] Tests: check fan-out, tension/faction ref validation, block renders.
+### W1 — bible module — DONE 2026-07-09
+- [x] `src/maestro/modules/bible.py`: v_bible + checks (blocking setting → tension floor
+      slot-fan (cap=1) → one-main fix → demand-driven faction_refs), tools set_bible/
+      add_faction/add_tension, `bible_block`, params min_tensions:3. Registered, no projection.
+- [x] Prompts: `bible_write.txt`, `bible_tension_add.txt` (skeleton-first).
+- [x] Tests: tests/test_bible.py (24) — validators, check ordering/fan-out, tools round-trip,
+      never-lifted-into-IR regression.
+- DEFERRED to W3: the "every faction/tension consumed downstream" use-it-or-cut-it check —
+  nothing consumes a tension until objectives/quests exist.
 
 ### W2 — objectives engine module + IR
 - [ ] `src/maestro/modules/objectives.py`: archetype library (step templates), demand-from-

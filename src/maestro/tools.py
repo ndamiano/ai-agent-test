@@ -146,6 +146,38 @@ TOOL_SCHEMAS: List[Dict] = [
             "storyline_id": {"type": "string"},
         }, "required": ["storyline_id"]}}},
     {"type": "function", "function": {
+        "name": "set_bible",
+        "description": "Set the world BIBLE's setting + factions on `bible` — the world premise and "
+                       "the groups its conflicts run between. Author it first (the world root the "
+                       "places/residents/quests derive from). Merges: pass only what changes.",
+        "parameters": {"type": "object", "properties": {
+            "setting": {"type": "string", "description":
+                "one vivid line: the place, its tech level, the pressure on it, e.g. "
+                "'a drought-starved river barony, iron-age, superstitious'"},
+            "factions": {"type": "array", "items": {"type": "object"}, "description":
+                "[{id, name, wants}] — 2-4 groups whose wants collide"},
+        }, "required": ["setting"]}}},
+    {"type": "function", "function": {
+        "name": "add_faction",
+        "description": "Author ONE faction into `bible` — a named group with a want the world's "
+                       "tensions pull on. Use to declare a faction a tension already references.",
+        "parameters": {"type": "object", "properties": {
+            "faction_id": {"type": "string", "description": "snake_case, e.g. 'fac_guild'"},
+            "content": {"type": "object", "description":
+                "{name, wants: what it is after, in one clause}"},
+        }, "required": ["faction_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "add_tension",
+        "description": "Author ONE tension into `bible` (raises the tension count) — a standing "
+                       "conflict pulling the world, between declared factions. Exactly one tension "
+                       "is scale='main' (the world's central conflict). Grow them one at a time.",
+        "parameters": {"type": "object", "properties": {
+            "tension_id": {"type": "string", "description": "e.g. 'tension_levy'"},
+            "content": {"type": "object", "description":
+                "{summary: the concrete conflict, scale: main|side, between: [faction ids this "
+                "conflict runs between]}"},
+        }, "required": ["tension_id", "content"]}}},
+    {"type": "function", "function": {
         "name": "add_item",
         "description": "Declare ONE item into `items` — a thing the player holds. Author it where a "
                        "reference already demands it (a take hotspot, a use/requires gate, an "
@@ -605,6 +637,84 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         sl["done"] = True
         state.write_component("story", story)
         return {"ok": True, "storyline_id": storyline_id}
+
+    # ── bible: the world root, authored piece by piece (setting+factions, then tensions one at a
+    #    time). Each writes a slice of the `bible` component (like story's slices). Authoring-only —
+    #    the bible is never lifted into the IR.
+    def set_bible(setting, factions=None) -> Dict:
+        """Set the world's setting + (optionally) its faction roster. Merges by faction id."""
+        _require_frozen()
+        if _locked("bible"):
+            return _locked_error("bible")
+        if not (isinstance(setting, str) and setting.strip()):
+            return {"ok": False, "error": "set_bible needs a non-empty setting (the world premise)"}
+        from maestro.modules.bible import v_faction
+        bible = state.read_component("bible") or {}
+        bible["setting"] = setting.strip()
+        by_id = {f["id"]: f for f in bible.get("factions") or []
+                 if isinstance(f, dict) and f.get("id")}
+        if factions is not None:
+            factions = _coerce_json(factions)
+            if not isinstance(factions, list):
+                return {"ok": False, "error": "factions must be a list of {id, name, wants}"}
+            for f in factions:
+                err = v_faction(f)
+                if err:
+                    return {"ok": False, "error": err}
+                by_id[f["id"]] = f
+        bible["factions"] = list(by_id.values())
+        bible.setdefault("tensions", [])
+        state.write_component("bible", bible)
+        return {"ok": True, "factions": [f["id"] for f in bible["factions"]]}
+
+    def add_faction(faction_id: str, content) -> Dict:
+        """Author ONE faction (append-by-id, no overwrite)."""
+        _require_frozen()
+        if _locked("bible"):
+            return _locked_error("bible")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object {name, wants}"}
+        from maestro.modules.bible import v_faction
+        bible = state.read_component("bible") or {}
+        factions = bible.setdefault("factions", [])
+        if any(isinstance(f, dict) and f.get("id") == faction_id for f in factions):
+            return {"ok": False, "error": f"faction {faction_id!r} already exists — write a NEW id."}
+        full = {**content, "id": faction_id}
+        err = v_faction(full)
+        if err:
+            return {"ok": False, "error": err}
+        factions.append(full)
+        bible.setdefault("tensions", [])
+        state.write_component("bible", bible)
+        return {"ok": True, "faction_id": faction_id}
+
+    def add_tension(tension_id: str, content) -> Dict:
+        """Author ONE tension (append-by-id, no overwrite). Rejects a SECOND scale='main' — exactly
+        one tension is the world's central conflict."""
+        _require_frozen()
+        if _locked("bible"):
+            return _locked_error("bible")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object (the tension's fields)"}
+        from maestro.modules.bible import v_tension
+        bible = state.read_component("bible") or {}
+        tensions = bible.setdefault("tensions", [])
+        if any(isinstance(t, dict) and t.get("id") == tension_id for t in tensions):
+            return {"ok": False, "error": f"tension {tension_id!r} already exists — write a NEW id."}
+        full = {**content, "id": tension_id}
+        err = v_tension(full)
+        if err:
+            return {"ok": False, "error": err}
+        if full.get("scale") == "main" and any(
+                isinstance(t, dict) and t.get("scale") == "main" for t in tensions):
+            return {"ok": False, "error": "a main tension already exists — this one must be "
+                    "scale='side' (exactly one tension is the world's central conflict)."}
+        tensions.append(full)
+        bible.setdefault("factions", [])
+        state.write_component("bible", bible)
+        return {"ok": True, "tension_id": tension_id}
 
     def add_item(item_id: str, content) -> Dict:
         """Declare ONE item (append-by-id, no overwrite) — but ONLY where a reference already demands
@@ -1219,6 +1329,9 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "add_storyline": add_storyline,
         "add_beat": add_beat,
         "finish_storyline": finish_storyline,
+        "set_bible": set_bible,
+        "add_faction": add_faction,
+        "add_tension": add_tension,
         "add_item": add_item,
         "write_node": write_node,
         "write_scene": write_scene,

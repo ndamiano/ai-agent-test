@@ -98,7 +98,7 @@ src/
                     blocks + the run-state frame (maestro/context_render.py holds ONLY that frame)
                     — the consumer knows what its call needs and owns the window budget that
                     implies (scene text never enters a prompt except the assigned slot's lead-in).
-                  cast/story/scenes/world/assets/inventory/state/combat/human.py — the
+                  cast/story/scenes/world/assets/inventory/state/combat/bible/human.py — the
                     mechanic-modules, each a direct Module subclass; each owns its component's
                     structural write-time validator + authoring skeleton INLINE (no shared
                     validators/skeletons file). state/human author no component (cross-cutting):
@@ -108,6 +108,8 @@ src/
                     rewriting — review_note = the instruction — cleared by a human thumbs-up or the
                     rewrite; nodes reuse rewrite_node, other components take the human-edit step.
                     See docs/hitl_architecture.md).
+                    bible is the world-game root (setting/factions/tensions) — authoring-only like
+                    story, NEVER lifted into the IR; cited by id downstream via bible_block.
                 agent_loop.py — AgentLoop, the non-LLM loop that DRIVES the modules (not itself a
                   module): collects each module's get_errors, subtracts the human's waivers,
                   prioritizes by error TYPE (human>build>fix) then Module.priority then the check's

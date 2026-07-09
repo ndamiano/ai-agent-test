@@ -26,14 +26,14 @@
     {
       "name": "example_line_range",
       "weight": 2.0,
-      "_authoring": "Load-bearing support for the voice gate: the three example lines are quoted verbatim to the dialogue author, so their craft directly sets output quality. Level 0/1 anchored to the proven failure laws - a repeated catchphrase across lines becomes a tic spammed every scene, and 'the profession talking' (jargon/inspection-report speech) instead of a person off-duty.",
-      "description": "The three example lines are the strongest signal of how a person talks. Do they model a range a writer can work across - different modes (a flat logistical line, a dry jab, a plain reaction), no shared catchphrase or motto, everyday spoken words rather than the character's job or profession doing the talking?",
+      "_authoring": "The three example lines are quoted COLD to the dialogue author as the model of the voice, so their job is to demonstrate the voice STANDALONE. A line that only works with scene context ('the couch had it coming' needs the couch) is a WEAK model even if it reads fine in a finished scene — self-containment is the axis, NOT performed 'range' (a logistics + a quip + a reaction on cue rewards crafted variety over a real voice, and penalizes a consistent one). Level 0/1 keep the proven failure laws: a shared catchphrase becomes a tic the dialogue spams; the profession talking (jargon/inspection-report) instead of a person off-duty.",
+      "description": "The three example lines are quoted COLD to the dialogue author as the model of how this person talks. Do they demonstrate the voice STANDALONE — each line parseable and character-revealing WITHOUT needing scene context to work — with no shared catchphrase or motto, and everyday spoken words rather than the job/profession talking? A line that only lands with scene context the card doesn't provide is a weak model; a line that shows the voice on its own is a strong one. A consistent voice across the three is fine; the failure is a tic, a slogan, or context-dependence — not a lack of variety.",
       "levels": {
-        "0": "The lines defeat their purpose - all three are the same move or share a repeated signature phrase (a catchphrase the dialogue would spam every scene), or every line is the profession talking (jargon, an inspection report) rather than a person off-duty.",
-        "1": "Two of the three collapse into one mode or echo the same phrasing; the set models a tic, not a voice.",
-        "2": "The lines are distinct enough and plainly spoken, but generic - nothing in them could only be this person, and a similar character could say all three.",
-        "3": "Three genuinely different modes, no repeated phrasing, plainly spoken, and at least one line is unmistakably this person.",
-        "4": "Three lines that each open a different register, share nothing, read as real human speech, and together map a voice a writer could range across freely."
+        "0": "Useless as models - the lines share a repeated signature phrase (a catchphrase the dialogue would spam), or all are the profession talking (jargon, an inspection report) rather than a person off-duty, or none conveys the voice without scene context the card does not provide.",
+        "1": "Weak models - two collapse into one move or echo the same phrasing, or most lean on scene context the reader does not have; a writer learns little about how this person actually talks.",
+        "2": "Serviceable - the lines stand on their own and are plainly spoken, but generic: they show a voice a similar character could share, nothing only this person would say.",
+        "3": "Strong models - each line stands alone, shows this person's specific voice, no repeated move or catchphrase, plain everyday words.",
+        "4": "Exactly what a writer wants - every line is self-contained, unmistakably this person's voice, plainly spoken, together giving a writer everything needed to write more of them."
       }
     },
     {

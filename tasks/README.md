@@ -13,6 +13,7 @@ shippable to many users.
 | File | Workstream | Status |
 |------|-----------|--------|
 | [quality_backlog.md](quality_backlog.md) | Judge-in-loop, prompt iteration, continuity, mechanic depth | §1 (judge) is the lever; ship first |
+| [world_first.md](world_first.md) | World-first content model: bible, objectives/quests, residents, ambient dialogue | Designed 2026-07-09 — depends on aspects A1/A2; W7 gold game can start now |
 | [aspects_and_scale.md](aspects_and_scale.md) | Nouns-primary aspect layer (A) + declared scale/coverage (B) | Not started — A before B |
 | [module_catalog.md](module_catalog.md) | Build out the mechanic library (card game, shop, affinity, quests…) | Depends on aspect layer (A) |
 | [game_style.md](game_style.md) | LLM-authored style module + projection theming (the OUTPUT game's look/UX) | Not started — schema+module first |

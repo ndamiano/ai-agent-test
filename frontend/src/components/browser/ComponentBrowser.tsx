@@ -27,7 +27,9 @@ const ComponentBrowser: React.FC<{
 
     useEffect(() => {
         if (!tabIds.includes(active)) setActive(componentIds[0] ?? (hasSpec ? 'spec' : ''))
-    }, [componentIds, active, hasSpec])   // tabIds is derived from componentIds + hasSpec
+        // tabIds is derived from componentIds + hasSpec, so it's covered by the listed deps.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [componentIds, active, hasSpec])
 
     const assets = board[active] ?? []
     const activeIndex = Math.min(indexByComponent[active] ?? 0, Math.max(0, assets.length - 1))
@@ -49,6 +51,8 @@ const ComponentBrowser: React.FC<{
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
+        // setActiveIndex is a stable setter wrapper over the listed state.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active, board, indexByComponent])
 
     const dirtyCounts = computeDirtyCounts(board, componentIds)
@@ -60,7 +64,7 @@ const ComponentBrowser: React.FC<{
         finally { setBusyIdkey(null) }
     }
 
-    const saveAsset = (a: Asset) => (content: Record<string, any>) => withBusy(a.idkey, async () => {
+    const saveAsset = (a: Asset) => (content: Record<string, unknown>) => withBusy(a.idkey, async () => {
         const res = await api.editAsset(runId, a.component, a.id, content)
         applyPatch(a.component, a.id, { content, dirty: res.cleared_own_dirty ? false : a.dirty })
         markDirty(res.flagged_dependents)

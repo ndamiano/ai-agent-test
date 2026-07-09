@@ -73,56 +73,62 @@ The UI shell is component-blind; it needs a uniform, event-driven data surface.
   on `build_step`/`build_started` (fixes the null-`todo` dead wire so the board is
   live). *(S, BE — `agent_loop.py`)*
 
-## Epic D — The component browser UI (the rebuild)
+## Epic D — The component browser UI (the rebuild) — ✅ DONE (commits dcac91a + this branch)
 
 The user's core vision: every component, real-time, exact state, touchable, editable,
-modular. This replaces `GamesPanel.tsx` wholesale.
+modular. `frontend/src/components/browser/` is the run's primary view; `GamesPanel.tsx`
+now hosts it (list rail + build controls + progress header) instead of the old tab/log body.
 
-- **D1 — Shell scaffold.** Tabbed component browser; **tabs driven by the composed
+- [x] **D1 — Shell scaffold.** Tabbed component browser; **tabs driven by the composed
   module set** (new module → new tab automatically). Replaces the tab/log layout.
   *(L, FE — new `frontend/src/components/browser/` tree)*
-- **D2 — Central card + navigation.** Big central card, position indicator ("Scene 4
-  of 12"), prev/next arrows within a type, **jump-to-next-dirty**. *(M, FE)*
-- **D3 — Renderer registry + generic fallback.** `COMPONENT_VIEWS` map + a
+- [x] **D2 — Central card + navigation.** Big central card, position indicator ("Scene 4
+  of 12"), prev/next arrows within a type (mouse + keyboard ←/→), **jump-to-next-dirty**. *(M, FE)*
+- [x] **D3 — Renderer registry + generic fallback.** `COMPONENT_VIEWS` map + a
   schema-driven `SchemaCard` so a brand-new component is fully usable (view/edit/thumb)
   day one, pretty renderer later. Mirrors the backend "module owns its presentation."
   *(M, FE)*
-- **D4 — Initial per-component renderers.** `SceneCard` (screenplay), `CharacterCard`,
-  `PlaceCard` (map/layout), `EncounterCard` (stat block). Each is independent — add
-  incrementally, generic fallback covers the rest. *(M each, FE)*
-- **D5 — Inline edit on every field.** Edit any content in place; save → C3 →
-  propagation. *(M, FE)*
-- **D6 — Thumbs + "change this" on every card.** Up = C2 clear; down = C2 set +
+- [x] **D4 — Initial per-component renderers.** `SceneCard` (screenplay), `CharacterCard`,
+  `PlaceCard` (rows+legend rendered as a colored map), `EncounterCard` (stat block), plus
+  `AssetManifestCard` (image gallery). Each is independent — generic fallback covers the rest. *(M each, FE)*
+- [x] **D5 — Inline edit on every field.** Edit any content in place; save → C3 →
+  propagation (`flagged_dependents` reflag the board live). *(M, FE)*
+- [x] **D6 — Thumbs + "change this" on every card.** Up = C2 clear; down = C2 set +
   capture the note. *(S, FE)*
-- **D7 — Dirty highlighting.** Tab-badge counts, card banner showing `review_note`,
+- [x] **D7 — Dirty highlighting.** Tab-badge counts, card banner showing `review_note`,
   nav-strip markers so dirty cards are findable. *(S, FE)*
-- **D8 — Live wiring.** Subscribe to C4 events; update the board in real time. *(M,
+- [x] **D8 — Live wiring.** Subscribe to C4 events (`useAssetBoard`); update the board in real time. *(M,
   FE — `frontend/src/contexts/WebSocketContext.tsx`)*
 
-## Epic E — Live build legibility (exact state, real-time)
+## Epic E — Live build legibility (exact state, real-time) — ✅ DONE
 
-- **E1 — Component-state model.** Derive per-asset state (missing / generating /
-  fresh / dirty) from events + the dirty store; drive the board's badges. *(M, both)*
-- **E2 — Progress + elapsed.** step N/max + an elapsed timer (emit `elapsed`, already
-  computed server-side). *(S, both — `run.py`, FE)*
-- **E3 — Park/thrash surfacing.** Handle `error_parked` (emitted, unhandled today);
-  show it on the relevant asset card, not a silent build-end. *(S, both)*
+- [x] **E1 — Component-state model.** Per-asset state from events + the dirty store: an
+  asset present on disk is fresh, in the dirty store is dirty (badge + banner), arriving
+  via `asset_updated` appears live; a light per-component done/failing summary drives the header. *(M, both)*
+- [x] **E2 — Progress + elapsed.** step N/max bar + a running elapsed timer
+  (`started_at`/`elapsed` off `build_started`/`build_step`). *(S, both — `run.py`, FE)*
+- [x] **E3 — Park/thrash surfacing.** `error_parked` handled — shown as a "Parked — needs
+  you" notice on the build header with a per-error waive, not a silent build-end. *(S, both)*
 
-## Epic F — Chat front door
+## Epic F — Chat front door — ✅ DONE
 
-- **F1 — Stream chat responses + tool progress.** Replace the block-on-`to_thread`
-  bouncing-dots with streamed tokens + "drafting spec…". *(M, both —
+- [x] **F1 — Stream chat responses + tool progress.** `chat.py` SSE stream
+  (`text/event-stream`) consumed by `ChatPanel` — streamed tokens + per-tool
+  "Drafting the spec…" progress lines replace the bouncing dots. *(M, both —
   `api/routers/chat.py`, `frontend/src/components/ChatPanel.tsx`)*
-- **F2 — Chat→build continuity.** A chat-created run auto-surfaces and auto-selects —
-  no tab switch + manual Refresh. *(S, both)*
+- [x] **F2 — Chat→build continuity.** A chat-created run's `spec_proposed` event
+  auto-switches to the games view and focuses the run — no tab switch + manual Refresh
+  (`Layout.tsx`). *(S, both)*
 
-## Epic G — Delete the old UX (last)
+## Epic G — Delete the old UX (last) — ✅ DONE
 
-- **G1 — Rip out the old surface.** The log-as-primary view, the old tab body, the
-  contract tab, the pause-to-edit gate — all replaced by the browser. *(M, FE —
-  `GamesPanel.tsx`)*
-- **G2 — Remove dead wires.** The never-fired `awaiting_human` UI/handler, manual
-  Refresh, optimistic-control desync patches — obviated by C4/C5's live events. *(S,
+- [x] **G1 — Rip out the old surface.** The old Scenes/Contract artifact tabs and the
+  log-as-primary body are gone — the browser is the primary run view. The pause-to-edit
+  gate on content editing is removed (the browser edits any component mid-build per C3;
+  compile/package/download still wait for the executor to park, a real write-race guard,
+  not an edit gate). *(M, FE — `GamesPanel.tsx`)*
+- [x] **G2 — Remove dead wires.** The never-fired `awaiting_human` UI/handler and the
+  manual games-list Refresh are gone — the list and board update off C4/C5's live events. *(S,
   FE + BE)*
 
 ---

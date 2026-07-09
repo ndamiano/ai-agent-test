@@ -21,7 +21,8 @@ const KIND_TONE: Record<CombatKind, Tone> = {
     stat: 'gray', ability: 'purple', combatant: 'blue', encounter: 'red', status: 'amber',
 }
 
-const endSummary = (end: any) => end && `${end.type}${end.target ? ` → ${end.target}` : ''}`
+const endSummary = (end: { type?: string; target?: string } | undefined | null) =>
+    end && `${end.type}${end.target ? ` → ${end.target}` : ''}`
 
 // Stat block — one card body per combat item shape (ability/combatant/encounter/stat/status),
 // keyed off `detectKind`. Numbers and ids read as a compact stat sheet rather than raw JSON.
@@ -48,20 +49,20 @@ const EncounterCard: AssetRenderer = ({ asset, editable, onSave }) => {
                     {c.name != null && <div className="text-white text-sm font-medium">{String(c.name)}</div>}
                     {Array.isArray(c.cost) && c.cost.length > 0 && (
                         <div className="flex flex-wrap gap-1">
-                            {c.cost.map((x: any, i: number) => <Pill key={i} tone="amber">{x.stat} −{x.amount}</Pill>)}
+                            {c.cost.map((x: { stat: string; amount: number }, i: number) => <Pill key={i} tone="amber">{x.stat} −{x.amount}</Pill>)}
                         </div>
                     )}
                     {c.targeting != null && (
-                        <Row label="targeting" value={`${(c.targeting as any).shape ?? '?'} → ${(c.targeting as any).faction ?? '?'}`} />
+                        <Row label="targeting" value={`${c.targeting.shape ?? '?'} → ${c.targeting.faction ?? '?'}`} />
                     )}
                     {Array.isArray(c.effects) && c.effects.length > 0 && (
                         <div className="space-y-0.5">
-                            {c.effects.map((e: any, i: number) => (
+                            {c.effects.map((e: { stat: string; op: string; formula?: unknown }, i: number) => (
                                 <div key={i} className="text-[12px] text-gray-300 flex gap-1.5 items-baseline">
                                     <span className="text-purple-300">▸</span>
                                     <span>{e.stat}</span>
                                     <span className="text-gray-500">{e.op}</span>
-                                    {e.formula && <span className="font-mono text-gray-500 text-[11px]">{JSON.stringify(e.formula)}</span>}
+                                    {e.formula != null && <span className="font-mono text-gray-500 text-[11px]">{JSON.stringify(e.formula)}</span>}
                                 </div>
                             ))}
                         </div>
@@ -74,7 +75,7 @@ const EncounterCard: AssetRenderer = ({ asset, editable, onSave }) => {
                     {c.character != null && <Row label="character" value={String(c.character)} />}
                     {Array.isArray(c.stats) && c.stats.length > 0 && (
                         <div className="flex flex-wrap gap-1">
-                            {c.stats.map((s: any, i: number) => <Pill key={i}>{s.stat}: {s.value}</Pill>)}
+                            {c.stats.map((s: { stat: string; value: number }, i: number) => <Pill key={i}>{s.stat}: {s.value}</Pill>)}
                         </div>
                     )}
                     {Array.isArray(c.abilities) && c.abilities.length > 0 && (
@@ -91,7 +92,7 @@ const EncounterCard: AssetRenderer = ({ asset, editable, onSave }) => {
                     {c.background != null && <Row label="background" value={String(c.background)} />}
                     {Array.isArray(c.combatants) && c.combatants.length > 0 && (
                         <div className="space-y-0.5">
-                            {c.combatants.map((cb: any, i: number) => (
+                            {c.combatants.map((cb: { ref: string; faction?: string }, i: number) => (
                                 <div key={i} className="text-[12px] flex gap-1.5 items-baseline">
                                     <span className="text-purple-300">▸</span>
                                     <span className="font-mono text-gray-300">{cb.ref}</span>
@@ -112,7 +113,7 @@ const EncounterCard: AssetRenderer = ({ asset, editable, onSave }) => {
                     {c.blocks_action === true && <Pill tone="red">blocks action</Pill>}
                     {Array.isArray(c.tick) && c.tick.length > 0 && (
                         <div className="space-y-0.5">
-                            {c.tick.map((e: any, i: number) => (
+                            {c.tick.map((e: { stat: string; op: string }, i: number) => (
                                 <div key={i} className="text-[12px] text-gray-300 flex gap-1.5">
                                     <span>{e.stat}</span><span className="text-gray-500">{e.op}</span>
                                 </div>

@@ -109,7 +109,6 @@ const MeshBadge: React.FC<{ runId: string; featureSlug: string; version: number 
 
     useEffect(() => {
         let cancelled = false
-        setHas(null)
         api.assetFileExists(runId, `feature_${featureSlug}.glb`)
             .then(ok => { if (!cancelled) setHas(ok) })
             .catch(() => { if (!cancelled) setHas(false) })

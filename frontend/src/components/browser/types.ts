@@ -6,5 +6,5 @@ import type { Asset } from '../../types'
 export type AssetRenderer = React.FC<{
     asset: Asset
     editable: boolean
-    onSave: (content: Record<string, any>) => Promise<void>
+    onSave: (content: Record<string, unknown>) => Promise<void>
 }>

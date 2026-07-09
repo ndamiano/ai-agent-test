@@ -31,7 +31,7 @@ export const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label
 export const RawFieldsFallback: React.FC<{
     asset: Asset
     editable: boolean
-    onSave: (content: Record<string, any>) => Promise<void>
+    onSave: (content: Record<string, unknown>) => Promise<void>
 }> = ({ asset, editable, onSave }) => (
     <details className="mt-2.5 pt-2 border-t border-white/[0.05]">
         <summary className="text-gray-600 hover:text-gray-400 text-[10px] uppercase tracking-wide cursor-pointer select-none">

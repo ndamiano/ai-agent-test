@@ -30,8 +30,8 @@ _FIX_CAP = 25   # the most steps any one fix may spend (the loop also clamps to 
 # error SET (not its size) is robust two ways a count is not: it catches A/B oscillation (both sets
 # recur), and it does NOT false-park authoring that spawns downstream demand (a beat add removes a
 # min_beats slot but adds a scene slot — the count stays flat while the SET changes every step).
-_STUCK_WINDOW = 10
-_STUCK_REPEATS = 5
+_STUCK_WINDOW = 40
+_STUCK_REPEATS = 20
 
 
 @dataclass

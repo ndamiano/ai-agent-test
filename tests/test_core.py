@@ -708,7 +708,9 @@ def test_stuck_error_parks_instead_of_burning_budget(tmp_path):
                      connector=conn, max_steps=100)
     result = loop.run()
     assert result.ok is False
-    assert result.steps < 15                      # parked long before max_steps
+    # Parks once the same error-list has recurred _STUCK_REPEATS times — well before max_steps (100).
+    from maestro.agent_loop import _STUCK_REPEATS
+    assert result.steps < _STUCK_REPEATS + 10
     assert result.failures and result.failures[0].code == "unfixable"
 
 

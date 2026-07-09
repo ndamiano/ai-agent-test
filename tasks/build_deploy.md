@@ -6,9 +6,9 @@ with the inference stack started by hand. Public launch needs reproducible build
 suite, a deploy path, and persistence for the new user/credit data. Greenfield: no Dockerfile, no
 compose, no CI exists today.
 
-## Background (VERIFIED — updated 2026-07-08)
-- `Dockerfile` + `docker-compose.yml` + `scripts/deploy.sh` + `docs/DEPLOY.md` now exist (T2/T3/T4).
-  **Still no `.github/` CI** — T1 is the one remaining cheap, high-value gap.
+## Background (VERIFIED — updated 2026-07-09)
+- `Dockerfile` + `docker-compose.yml` + `scripts/deploy.sh` + `docs/DEPLOY.md` exist (T2/T3/T4).
+- `.github/workflows/ci.yml` exists (T1): unit suite + frontend lint/build on push/PR to master.
 - **Current run recipe** (`CLAUDE.md` + `tasks/nicknotes.md`): `source venv/bin/activate && python
   run.py` (backend), `cd frontend && npm run dev` (frontend), plus manual services: `comfy-start`,
   `docker start kokoro` (TTS), and a `llama-server` invocation for the LLM.
@@ -25,12 +25,14 @@ compose, no CI exists today.
 - Secrets never committed (settings.json already gitignored) — real secret handling in deploy.
 - Don't hand-roll bespoke deploy scripts that duplicate what a standard tool does.
 
-## T1 — CI (cheap, guards everything — do first)
-- [ ] **Run the unit suite on push/PR** — `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
-      (keep integration out of CI; it needs live services). Coordinate with `test_health.md` G1 so CI
-      stays fast/deterministic (the rate-limiter timing file is the current flake risk).
-- [ ] **Frontend build + typecheck** in CI.
-- [ ] **Lint** (whatever the project standardizes on).
+## T1 — CI (cheap, guards everything — do first) ✅ DONE
+- [x] **Run the unit suite on push/PR** — `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
+      (keep integration out of CI; it needs live services). Installs `pytest` + `httpx` (test-only
+      deps, kept out of requirements.txt) and bootstraps `settings.json` from the example. Trigger:
+      push/PR to master.
+- [x] **Frontend build + typecheck** in CI — runs `npm ci`, `npm run build` (which runs `tsc -b && vite build`).
+- [ ] **Lint** — DEFERRED: 52 pre-existing ESLint errors; add the step once the frontend is
+      lint-clean (revisit after the HITL component-browser rebuild replaces the old surface).
 
 ## T2 — Containerize  ✅ MOSTLY DONE
 - [x] **Backend image** — `Dockerfile` (FastAPI app + Python deps).

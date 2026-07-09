@@ -38,7 +38,9 @@ def test_anonymous_request_is_rejected(app_client, path):
 
 
 def test_health_and_login_are_public(app_client):
-    assert app_client.get("/").status_code == 200
+    # the SPA shell must bypass the gate; the mount only exists when frontend/dist is
+    # built, so the contract here is "not 401", not "200" (404 on an unbuilt checkout is fine).
+    assert app_client.get("/").status_code != 401
     # login reached without a token (422 = body validation, i.e. it got PAST the gate).
     assert app_client.post("/auth/login").status_code == 422
 

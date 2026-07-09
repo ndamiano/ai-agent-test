@@ -109,6 +109,71 @@ def _schema_errors(ir: dict) -> list:
             for e in v.iter_errors(ir)]
 
 
+def test_world_game_is_valid_ir():
+    """The hand-authored open-world gold (docs/examples/world_game.json) is the world-game eval
+    standard — it must stay a complete, schema-valid IR with every reference resolving, or the
+    W6 runtime contract it defines has drifted from the file that defines it."""
+    ir = load_example("world_game")
+    assert _schema_errors(ir) == []
+    assert crossref_errors(ir) == []
+
+
+def test_world_game_lifts_into_project(tmp_path):
+    """Prove the open-world showcase projects to a playable Godot build: an all-walkable multi-zone
+    world, the flag-built quest chains, and the combat/progression/wild-fight systems all survive
+    the lift into game.json + the static runtime."""
+    ir = load_example("world_game")
+    out = tmp_path / "godot_output"
+    write_godot_project(ir, out)
+    game = json.loads((out / "game.json").read_text())
+
+    # a combat/RPG world is all-walkable — never a point-and-click room.
+    assert game["genre"] == "rpg"
+    kinds = {p["kind"] for p in game["places"]}
+    assert kinds and kinds <= {"world_map", "town", "interior"}
+    assert len(game["places"]) == 5
+    assert game["start"]["place"] == "town_vessle"
+
+    # combat spine + growth loop + a wild encounter table all present.
+    assert {e["id"] for e in game["encounters"]} == {"enc_bog", "enc_kel"}
+    assert game["progression"]["player"] == "cb_wanderer"
+    assert any(p.get("encounter_table") for p in game["places"])
+    assert (out / "overworld.gd").exists() and (out / "combat.gd").exists()
+
+    # three quest chains, each a giver-set flag consumed by a gated turn-in variant. The main
+    # quest's flag (weir_open) is the win goal.
+    assert game["goal"] == {"flag": "weir_open"}
+    flags = set(game["flags"])
+    assert {"weir_open", "rot_cleared", "debt_paid", "debt_refused"} <= flags
+
+    def flags_set():
+        s = set()
+        for n in game["nodes"]:
+            for ln in n["lines"]:
+                for e in ln.get("effects", []):
+                    if "set_flag" in e:
+                        s.add(e["set_flag"])
+            end = n["end"]
+            if end["type"] == "menu":
+                for ch in end["choices"]:
+                    for e in ch.get("effects", []):
+                        if "set_flag" in e:
+                            s.add(e["set_flag"])
+        return s
+
+    # every quest-state flag is produced by dialogue/effects somewhere (no orphan gate).
+    assert {"weir_heard", "rot_heard", "debt_heard", "debt_paid", "debt_refused"} <= flags_set()
+
+    # the inventory->world bridge the world leans on: the sluice gate opens only with the mill
+    # crank in hand AND the guard beaten (a two-key gate authored as a use clause).
+    sluice = next(it for p in game["places"] if p["id"] == "the_weir"
+                  for it in p["interactables"] if it["id"] == "wr_sluice")
+    open_clause = next(c for c in sluice["action"]["clauses"]
+                       if any(e.get("set_flag") == "weir_open" for e in c["outcome"]["effects"]))
+    keys = open_clause["requires"]["all"]
+    assert {"item": "sluice_crank"} in keys and {"flag": "kel_defeated"} in keys
+
+
 def test_combat_ir_lifts_into_project(tmp_path):
     """Godot's reason to exist: it projects combat the other engines stub. Write the showcase IR
     straight into a project and prove the fight data + the walkable-world wiring survive."""

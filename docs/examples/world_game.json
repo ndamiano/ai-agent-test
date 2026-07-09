@@ -1,0 +1,1747 @@
+{
+  "version": "0.1",
+  "genre": "rpg",
+  "meta": {
+    "title": "The Low Water",
+    "premise": "The barony of Vessle is dying of thirst below the baron's new weir. A wanderer can open the gate and give the river back \u2014 but the smith, the steward, the sergeant, and the drowning farmers each want something different from the water."
+  },
+  "characters": [
+    {
+      "id": "wanderer",
+      "name": "Wanderer",
+      "sprite": "wanderer.png"
+    },
+    {
+      "id": "hessa",
+      "name": "Hessa",
+      "sprite": "hessa.png"
+    },
+    {
+      "id": "perrin",
+      "name": "Old Perrin",
+      "sprite": "perrin.png"
+    },
+    {
+      "id": "tomas",
+      "name": "Tomas",
+      "sprite": "tomas.png"
+    },
+    {
+      "id": "bly",
+      "name": "Bly",
+      "sprite": "bly.png"
+    },
+    {
+      "id": "mella",
+      "name": "Mella",
+      "sprite": "mella.png"
+    },
+    {
+      "id": "garrow",
+      "name": "Garrow",
+      "sprite": "garrow.png"
+    },
+    {
+      "id": "kel",
+      "name": "Sergeant Kel",
+      "sprite": "kel.png"
+    },
+    {
+      "id": "doryn",
+      "name": "Steward Doryn",
+      "sprite": "doryn.png"
+    },
+    {
+      "id": "bog_beast",
+      "name": "Fen-Rot"
+    },
+    {
+      "id": "feral_dog",
+      "name": "Starving Dog"
+    },
+    {
+      "id": "scavenger",
+      "name": "Road Scavenger"
+    },
+    {
+      "id": "mill_rat",
+      "name": "Mill Rat"
+    }
+  ],
+  "backgrounds": [
+    {
+      "id": "bg_reeds",
+      "image_file": "reeds.png"
+    },
+    {
+      "id": "bg_weir",
+      "image_file": "weir.png"
+    }
+  ],
+  "items": [
+    {
+      "id": "sluice_crank",
+      "name": "Sluice Crank",
+      "examine": "A pitted iron crank off the old mill-gate. Its teeth still bite."
+    },
+    {
+      "id": "coin_pouch",
+      "name": "Miller's Purse",
+      "examine": "Nine silver bits, wrapped in oilcloth and hidden under a floorboard. About what the low farms owe."
+    },
+    {
+      "id": "antitoxin",
+      "name": "Reed-Salve",
+      "examine": "Perrin's cure for fen-sickness. Bitter enough to bring you back from the dark."
+    }
+  ],
+  "flags": [
+    "weir_heard",
+    "weir_open",
+    "kel_defeated",
+    "rot_heard",
+    "rot_cleared",
+    "debt_heard",
+    "debt_paid",
+    "debt_refused"
+  ],
+  "variables": [
+    {
+      "id": "xp",
+      "default": 0,
+      "level_var": "level",
+      "per_level": 10
+    },
+    {
+      "id": "level",
+      "default": 1
+    }
+  ],
+  "start": {
+    "place": "town_vessle",
+    "spawn": {
+      "cell": {
+        "x": 4,
+        "y": 3
+      }
+    }
+  },
+  "goal": {
+    "flag": "weir_open"
+  },
+  "combat_model": "turn_based",
+  "stats": [
+    {
+      "id": "hp",
+      "default": 24,
+      "min": 0,
+      "max": 24,
+      "role": "resource_depletable"
+    },
+    {
+      "id": "vigor",
+      "default": 6,
+      "min": 0,
+      "max": 6,
+      "role": "resource_regenerating"
+    },
+    {
+      "id": "atk",
+      "default": 4,
+      "role": "modifier"
+    }
+  ],
+  "statuses": [
+    {
+      "id": "sickened",
+      "name": "Fen-Sick",
+      "tick": [
+        {
+          "stat": "hp",
+          "op": "damage",
+          "formula": {
+            "base": 2
+          }
+        }
+      ]
+    }
+  ],
+  "abilities": [
+    {
+      "id": "strike",
+      "name": "Strike",
+      "targeting": {
+        "shape": "single",
+        "faction": "enemy",
+        "range": "melee"
+      },
+      "effects": [
+        {
+          "stat": "hp",
+          "op": "damage",
+          "formula": {
+            "base": 4,
+            "scales_with": "atk",
+            "scale": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "cleave",
+      "name": "Cleave",
+      "targeting": {
+        "shape": "all",
+        "faction": "enemy",
+        "range": "melee"
+      },
+      "effects": [
+        {
+          "stat": "hp",
+          "op": "damage",
+          "formula": {
+            "base": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "hard_swing",
+      "name": "Hard Swing",
+      "cost": [
+        {
+          "stat": "vigor",
+          "amount": 3
+        }
+      ],
+      "targeting": {
+        "shape": "single",
+        "faction": "enemy",
+        "range": "melee"
+      },
+      "effects": [
+        {
+          "stat": "hp",
+          "op": "damage",
+          "formula": {
+            "base": 8,
+            "scales_with": "atk",
+            "scale": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "quaff",
+      "name": "Reed-Salve",
+      "requires": {
+        "item": "antitoxin"
+      },
+      "targeting": {
+        "shape": "self",
+        "faction": "self"
+      },
+      "effects": [
+        {
+          "stat": "hp",
+          "op": "heal",
+          "formula": {
+            "base": 16
+          }
+        },
+        {
+          "world": {
+            "remove_item": "antitoxin"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bite",
+      "name": "Fouled Bite",
+      "targeting": {
+        "shape": "single",
+        "faction": "enemy",
+        "range": "melee"
+      },
+      "effects": [
+        {
+          "stat": "hp",
+          "op": "damage",
+          "formula": {
+            "base": 4
+          }
+        },
+        {
+          "status": "sickened",
+          "duration": 3
+        }
+      ]
+    }
+  ],
+  "combatants": [
+    {
+      "id": "cb_wanderer",
+      "character": "wanderer",
+      "stats": [
+        {
+          "stat": "hp",
+          "value": 24
+        },
+        {
+          "stat": "vigor",
+          "value": 6
+        },
+        {
+          "stat": "atk",
+          "value": 5
+        }
+      ],
+      "abilities": [
+        "strike",
+        "cleave",
+        "hard_swing",
+        "quaff"
+      ]
+    },
+    {
+      "id": "cb_bog",
+      "character": "bog_beast",
+      "stats": [
+        {
+          "stat": "hp",
+          "value": 22
+        },
+        {
+          "stat": "atk",
+          "value": 5
+        }
+      ],
+      "abilities": [
+        "bite"
+      ],
+      "xp_yield": 12
+    },
+    {
+      "id": "cb_kel",
+      "character": "kel",
+      "stats": [
+        {
+          "stat": "hp",
+          "value": 30
+        },
+        {
+          "stat": "atk",
+          "value": 7
+        }
+      ],
+      "abilities": [
+        "strike",
+        "cleave"
+      ],
+      "xp_yield": 20
+    },
+    {
+      "id": "cb_dog",
+      "character": "feral_dog",
+      "stats": [
+        {
+          "stat": "hp",
+          "value": 10
+        },
+        {
+          "stat": "atk",
+          "value": 4
+        }
+      ],
+      "abilities": [
+        "strike"
+      ],
+      "xp_yield": 4
+    },
+    {
+      "id": "cb_scav",
+      "character": "scavenger",
+      "stats": [
+        {
+          "stat": "hp",
+          "value": 14
+        },
+        {
+          "stat": "atk",
+          "value": 4
+        }
+      ],
+      "abilities": [
+        "strike"
+      ],
+      "xp_yield": 6
+    },
+    {
+      "id": "cb_rat",
+      "character": "mill_rat",
+      "stats": [
+        {
+          "stat": "hp",
+          "value": 7
+        },
+        {
+          "stat": "atk",
+          "value": 3
+        }
+      ],
+      "abilities": [
+        "strike"
+      ],
+      "xp_yield": 2
+    }
+  ],
+  "encounters": [
+    {
+      "id": "enc_bog",
+      "background": "bg_reeds",
+      "combatants": [
+        {
+          "ref": "cb_wanderer",
+          "faction": "player",
+          "position": {
+            "cell": {
+              "x": 1,
+              "y": 2
+            }
+          }
+        },
+        {
+          "ref": "cb_bog",
+          "faction": "enemy",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 2
+            }
+          }
+        }
+      ],
+      "victory": {
+        "all_defeated": "enemy"
+      },
+      "defeat": {
+        "all_defeated": "player"
+      },
+      "on_victory": {
+        "type": "jump",
+        "target": "node_bog_win"
+      },
+      "on_defeat": {
+        "type": "jump",
+        "target": "node_bog_lost"
+      }
+    },
+    {
+      "id": "enc_kel",
+      "background": "bg_weir",
+      "combatants": [
+        {
+          "ref": "cb_wanderer",
+          "faction": "player",
+          "position": {
+            "cell": {
+              "x": 1,
+              "y": 2
+            }
+          }
+        },
+        {
+          "ref": "cb_kel",
+          "faction": "enemy",
+          "position": {
+            "cell": {
+              "x": 5,
+              "y": 2
+            }
+          }
+        }
+      ],
+      "victory": {
+        "all_defeated": "enemy"
+      },
+      "defeat": {
+        "all_defeated": "player"
+      },
+      "on_victory": {
+        "type": "jump",
+        "target": "node_kel_win"
+      },
+      "on_defeat": {
+        "type": "jump",
+        "target": "node_kel_lost"
+      }
+    }
+  ],
+  "progression": {
+    "player": "cb_wanderer",
+    "xp_var": "xp",
+    "growth": [
+      {
+        "stat": "hp",
+        "per_level": 4
+      },
+      {
+        "stat": "atk",
+        "per_level": 1
+      }
+    ]
+  },
+  "places": [
+    {
+      "id": "town_vessle",
+      "kind": "town",
+      "tiles": {
+        "rows": [
+          "HH..T..HH",
+          "H.......H",
+          ".........",
+          ",,,,,,,,,",
+          ".........",
+          "H.......H",
+          "HH.....HH"
+        ],
+        "legend": {
+          "H": {
+            "role": "blocked",
+            "theme": "cracked timber house"
+          },
+          "T": {
+            "role": "blocked",
+            "theme": "dead orchard tree"
+          },
+          ".": {
+            "role": "open",
+            "theme": "sun-baked dust"
+          },
+          ",": {
+            "role": "open",
+            "theme": "market path"
+          }
+        }
+      },
+      "interactables": [
+        {
+          "id": "tv_hessa",
+          "label": "Hessa the Smith",
+          "sprite": "hessa.png",
+          "position": {
+            "cell": {
+              "x": 2,
+              "y": 1
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_hessa"
+          }
+        },
+        {
+          "id": "tv_perrin",
+          "label": "Old Perrin",
+          "sprite": "perrin.png",
+          "position": {
+            "cell": {
+              "x": 6,
+              "y": 1
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_perrin"
+          }
+        },
+        {
+          "id": "tv_tomas",
+          "label": "Tomas",
+          "sprite": "tomas.png",
+          "position": {
+            "cell": {
+              "x": 2,
+              "y": 5
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_tomas"
+          }
+        },
+        {
+          "id": "tv_bly",
+          "label": "Bly the Innkeep",
+          "sprite": "bly.png",
+          "position": {
+            "cell": {
+              "x": 6,
+              "y": 5
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_bly"
+          }
+        },
+        {
+          "id": "tv_mella",
+          "label": "Mella",
+          "sprite": "mella.png",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_mella"
+          }
+        },
+        {
+          "id": "tv_board",
+          "label": "Notice Board",
+          "position": {
+            "cell": {
+              "x": 3,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "examine",
+            "text": "Nailed under the baron's seal: WATER-RIGHT LEVY, DUE AT THE NEW WEIR. By order, all draw from the low race is taxed per the crown gallon. Someone has scratched beneath it: THE RIVER WAS NEVER HIS."
+          }
+        },
+        {
+          "id": "tv_well",
+          "label": "Town Well",
+          "position": {
+            "cell": {
+              "x": 5,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "use",
+            "clauses": [
+              {
+                "requires": {
+                  "flag": "rot_cleared"
+                },
+                "outcome": {
+                  "text": "The bucket comes up clear and cold for the first time in a season. It even tastes of the hills."
+                }
+              }
+            ],
+            "fallback": {
+              "text": "The water comes up brown, with a smell like a wet dog left in the sun. You let the bucket back down."
+            }
+          }
+        },
+        {
+          "id": "tv_to_river",
+          "label": "Down to the River",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 6
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "riverside",
+            "spawn": {
+              "cell": {
+                "x": 5,
+                "y": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "tv_to_keep",
+          "label": "The Keep Road",
+          "position": {
+            "cell": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "keep_gate",
+            "spawn": {
+              "cell": {
+                "x": 4,
+                "y": 4
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "riverside",
+      "kind": "world_map",
+      "tiles": {
+        "rows": [
+          "TT.......TT",
+          "T.........T",
+          ",,,,,,,,,,,",
+          ".........~~",
+          "......rr.~~",
+          "T........~~",
+          "TT.......TT"
+        ],
+        "legend": {
+          "T": {
+            "role": "blocked",
+            "theme": "dead willow"
+          },
+          "r": {
+            "role": "blocked",
+            "theme": "fouled reeds"
+          },
+          "~": {
+            "role": "blocked",
+            "theme": "stagnant backwater"
+          },
+          ".": {
+            "role": "open",
+            "theme": "cracked riverbed mud"
+          },
+          ",": {
+            "role": "open",
+            "theme": "dry ford path"
+          }
+        }
+      },
+      "interactables": [
+        {
+          "id": "rs_to_town",
+          "label": "Back up to Vessle",
+          "position": {
+            "cell": {
+              "x": 5,
+              "y": 0
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "town_vessle",
+            "spawn": {
+              "cell": {
+                "x": 3,
+                "y": 4
+              }
+            }
+          }
+        },
+        {
+          "id": "rs_to_mill",
+          "label": "The Old Mill",
+          "position": {
+            "cell": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "old_mill",
+            "spawn": {
+              "cell": {
+                "x": 4,
+                "y": 4
+              }
+            }
+          }
+        },
+        {
+          "id": "rs_to_weir",
+          "label": "Upriver to the Weir",
+          "position": {
+            "cell": {
+              "x": 10,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "the_weir",
+            "spawn": {
+              "cell": {
+                "x": 1,
+                "y": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "rs_sign",
+          "label": "Ford Marker",
+          "position": {
+            "cell": {
+              "x": 3,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "examine",
+            "text": "A drowned man's marker, meant to gauge the ford. Its lowest notch stands a full hand above the trickle now passing for the Vhel."
+          }
+        },
+        {
+          "id": "rs_bog",
+          "label": "Something in the Reeds",
+          "position": {
+            "cell": {
+              "x": 5,
+              "y": 4
+            }
+          },
+          "action": {
+            "type": "start_combat",
+            "encounter": "enc_bog",
+            "requires": {
+              "not": {
+                "flag": "rot_cleared"
+              }
+            }
+          }
+        },
+        {
+          "id": "rs_win",
+          "label": "The Returning Water",
+          "position": {
+            "cell": {
+              "x": 5,
+              "y": 3
+            }
+          },
+          "action": {
+            "type": "win",
+            "requires": {
+              "flag": "weir_open"
+            }
+          }
+        }
+      ],
+      "encounter_table": {
+        "rate": 0.15,
+        "entries": [
+          {
+            "combatant": "cb_dog",
+            "weight": 2,
+            "tier": 1.0
+          },
+          {
+            "combatant": "cb_scav",
+            "weight": 1,
+            "tier": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "old_mill",
+      "kind": "interior",
+      "tiles": {
+        "rows": [
+          "####.####",
+          "#.......#",
+          "#.......#",
+          "#.......#",
+          "#.......#",
+          "####.####"
+        ],
+        "legend": {
+          "#": {
+            "role": "blocked",
+            "theme": "mortared millstone wall"
+          },
+          ".": {
+            "role": "open",
+            "theme": "grain-dusted plank floor"
+          }
+        }
+      },
+      "interactables": [
+        {
+          "id": "om_to_river",
+          "label": "Out to the River",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 5
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "riverside",
+            "spawn": {
+              "cell": {
+                "x": 1,
+                "y": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "om_garrow",
+          "label": "Garrow",
+          "sprite": "garrow.png",
+          "position": {
+            "cell": {
+              "x": 2,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_garrow"
+          }
+        },
+        {
+          "id": "om_crank",
+          "label": "Mill-Gate Crank",
+          "position": {
+            "cell": {
+              "x": 6,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "take",
+            "item": "sluice_crank",
+            "text": "You lever the crank off the dead mill-gate. Same fitting as the weir's, Garrow swore."
+          }
+        },
+        {
+          "id": "om_boards",
+          "label": "Loose Floorboard",
+          "position": {
+            "cell": {
+              "x": 6,
+              "y": 4
+            }
+          },
+          "action": {
+            "type": "take",
+            "item": "coin_pouch",
+            "text": "Under the third board from the wall: an oilcloth purse. The miller ran before the levy took it. Nine bits of silver."
+          }
+        },
+        {
+          "id": "om_wheel",
+          "label": "The Broken Wheel",
+          "position": {
+            "cell": {
+              "x": 2,
+              "y": 4
+            }
+          },
+          "action": {
+            "type": "examine",
+            "text": "The great wheel hasn't turned since the river dropped below its lip. A swallow has nested in the top paddle."
+          }
+        }
+      ],
+      "encounter_table": {
+        "rate": 0.12,
+        "entries": [
+          {
+            "combatant": "cb_rat",
+            "weight": 1,
+            "tier": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "id": "the_weir",
+      "kind": "world_map",
+      "tiles": {
+        "rows": [
+          "~~~~~~~~~",
+          "#########",
+          ".........",
+          ",,,,,,,,,",
+          ".........",
+          "#...#...#",
+          "........."
+        ],
+        "legend": {
+          "~": {
+            "role": "blocked",
+            "theme": "penned floodwater"
+          },
+          "#": {
+            "role": "blocked",
+            "theme": "baron's earthwork"
+          },
+          ".": {
+            "role": "open",
+            "theme": "sluice apron stone"
+          },
+          ",": {
+            "role": "open",
+            "theme": "guard walk"
+          }
+        }
+      },
+      "interactables": [
+        {
+          "id": "wr_to_river",
+          "label": "Back Downriver",
+          "position": {
+            "cell": {
+              "x": 0,
+              "y": 3
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "riverside",
+            "spawn": {
+              "cell": {
+                "x": 9,
+                "y": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "wr_kel_talk",
+          "label": "Sergeant Kel",
+          "sprite": "kel.png",
+          "position": {
+            "cell": {
+              "x": 2,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_kel"
+          }
+        },
+        {
+          "id": "wr_kel_fight",
+          "label": "Push Past Kel",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "start_combat",
+            "encounter": "enc_kel",
+            "requires": {
+              "not": {
+                "flag": "kel_defeated"
+              }
+            }
+          }
+        },
+        {
+          "id": "wr_sluice",
+          "label": "The Sluice Gate",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "action": {
+            "type": "use",
+            "clauses": [
+              {
+                "requires": {
+                  "all": [
+                    {
+                      "item": "sluice_crank"
+                    },
+                    {
+                      "flag": "kel_defeated"
+                    }
+                  ]
+                },
+                "outcome": {
+                  "text": "You seat the crank and throw your weight against it. Iron shrieks, the gate lifts a hand's width, then a foot \u2014 and the Vhel remembers where it's meant to go.",
+                  "effects": [
+                    {
+                      "set_flag": "weir_open"
+                    }
+                  ]
+                }
+              },
+              {
+                "requires": {
+                  "all": [
+                    {
+                      "item": "sluice_crank"
+                    },
+                    {
+                      "not": {
+                        "flag": "kel_defeated"
+                      }
+                    }
+                  ]
+                },
+                "outcome": {
+                  "text": "You have the crank, but Kel is still on his feet between you and the gate, and he isn't a man who steps aside."
+                }
+              },
+              {
+                "requires": {
+                  "flag": "kel_defeated"
+                },
+                "outcome": {
+                  "text": "The way to the gate is clear, but the crank socket is bare \u2014 the fitting was stripped for scrap. You need a crank that matches. The mill had one."
+                }
+              }
+            ],
+            "fallback": {
+              "text": "A bare iron socket, jammed with rust. It wants a crank, and Kel wants your throat. Neither is solved by staring."
+            }
+          }
+        },
+        {
+          "id": "wr_lookout",
+          "label": "The Reservoir",
+          "position": {
+            "cell": {
+              "x": 7,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "examine",
+            "text": "Above the weir the water stands deep and still, dark green, thick with the carp the baron stocked. Below it, Vessle cracks like old leather."
+          }
+        }
+      ]
+    },
+    {
+      "id": "keep_gate",
+      "kind": "town",
+      "tiles": {
+        "rows": [
+          "####G####",
+          "#.......#",
+          "#.......#",
+          "#.......#",
+          "#.......#",
+          "###...###"
+        ],
+        "legend": {
+          "#": {
+            "role": "blocked",
+            "theme": "keep curtain wall"
+          },
+          "G": {
+            "role": "blocked",
+            "theme": "iron portcullis"
+          },
+          ".": {
+            "role": "open",
+            "theme": "swept courtyard cobble"
+          }
+        }
+      },
+      "interactables": [
+        {
+          "id": "kg_to_town",
+          "label": "Back to Town",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 5
+            }
+          },
+          "action": {
+            "type": "move",
+            "target": "town_vessle",
+            "spawn": {
+              "cell": {
+                "x": 1,
+                "y": 4
+              }
+            }
+          }
+        },
+        {
+          "id": "kg_doryn",
+          "label": "Steward Doryn",
+          "sprite": "doryn.png",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 2
+            }
+          },
+          "action": {
+            "type": "talk",
+            "node": "node_doryn"
+          }
+        },
+        {
+          "id": "kg_gate",
+          "label": "The Portcullis",
+          "position": {
+            "cell": {
+              "x": 4,
+              "y": 1
+            }
+          },
+          "action": {
+            "type": "examine",
+            "text": "Fresh oil on the winch chain, fresh paint on the baron's carp-and-crown. Whatever's short in Vessle, it isn't spent here."
+          }
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "node_bye",
+      "lines": [
+        {
+          "text": "You nod, and let it lie.",
+          "speaker": null
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_hessa",
+      "lines": [
+        {
+          "text": "You're not from the levy, or you'd have led with a ledger. Good. Then you can hear it straight.",
+          "speaker": "hessa",
+          "emotion": "neutral",
+          "effects": [
+            {
+              "set_flag": "weir_heard"
+            }
+          ]
+        },
+        {
+          "text": "Two summers dry, and we bore it. Then the baron threw up that weir to keep his carp fat and his moat pretty, and now the Vhel's a thread. He calls it flood-work and charges us to drink what's left.",
+          "speaker": "hessa",
+          "emotion": "angry"
+        },
+        {
+          "text": "The guild won't march \u2014 half of us owe him. But a stranger with a strong back could open that gate, and then there'd be no levy to pay, because there'd be a river again.",
+          "speaker": "hessa"
+        }
+      ],
+      "end": {
+        "type": "menu",
+        "choices": [
+          {
+            "text": "It's done. The gate's up \u2014 the water's coming back.",
+            "requires": {
+              "flag": "weir_open"
+            },
+            "target": "node_hessa_thanks"
+          },
+          {
+            "text": "Kel's posted on it. How do I get the gate open?",
+            "requires": {
+              "all": [
+                {
+                  "flag": "weir_heard"
+                },
+                {
+                  "not": {
+                    "flag": "weir_open"
+                  }
+                }
+              ]
+            },
+            "target": "node_hessa_how"
+          },
+          {
+            "text": "Maybe. I make no promises.",
+            "target": "node_bye"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node_hessa_how",
+      "lines": [
+        {
+          "text": "Kel you'll have to move yourself \u2014 talk or fists, that's your business. The gate takes a crank, and the baron's men stripped ours for scrap.",
+          "speaker": "hessa"
+        },
+        {
+          "text": "But the old mill downriver ran off the same fitting. Garrow squats there. He's a coward and a thief, but he'll tell you true if you don't crowd him.",
+          "speaker": "hessa",
+          "emotion": "neutral"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_hessa_thanks",
+      "lines": [
+        {
+          "text": "...I heard it from up here. Like a held breath let go.",
+          "speaker": "hessa",
+          "emotion": "surprised"
+        },
+        {
+          "text": "There'll be a reckoning for it. The baron won't wear this quiet. But that's the guild's weather to stand in now, not yours. You gave us a river to stand on. Go easy, stranger.",
+          "speaker": "hessa",
+          "emotion": "happy"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_perrin",
+      "lines": [
+        {
+          "text": "Don't drink from the well. I know it looks like water. It hasn't been water in a fortnight.",
+          "speaker": "perrin",
+          "emotion": "worried",
+          "effects": [
+            {
+              "set_flag": "rot_heard"
+            }
+          ]
+        },
+        {
+          "text": "Something died in the backwater and never washed off, on account of there's no wash left. It's laid up in the reeds, festering, and every drop that seeps to the well comes off it.",
+          "speaker": "perrin"
+        },
+        {
+          "text": "I'm too old and too slow to go poking it. But it wants killing, and burning, and soon \u2014 before the children start coughing.",
+          "speaker": "perrin",
+          "emotion": "sad"
+        }
+      ],
+      "end": {
+        "type": "menu",
+        "choices": [
+          {
+            "text": "The thing in the reeds is dead. Your water should clear.",
+            "requires": {
+              "flag": "rot_cleared"
+            },
+            "target": "node_perrin_reward"
+          },
+          {
+            "text": "Where in the reeds?",
+            "requires": {
+              "all": [
+                {
+                  "flag": "rot_heard"
+                },
+                {
+                  "not": {
+                    "flag": "rot_cleared"
+                  }
+                }
+              ]
+            },
+            "target": "node_perrin_where"
+          },
+          {
+            "text": "I'll keep off the well. Good day.",
+            "target": "node_bye"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node_perrin_where",
+      "lines": [
+        {
+          "text": "Downriver, where the ford peters into the dead willows. You'll smell it before you see it. Wet dog and something sweeter under it \u2014 that's the sweet you don't want.",
+          "speaker": "perrin"
+        },
+        {
+          "text": "Go armed. It's past being sick. It's gone to something else.",
+          "speaker": "perrin",
+          "emotion": "worried"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_perrin_reward",
+      "lines": [
+        {
+          "text": "Is it? ...It is. I can smell the difference from here \u2014 mud, honest mud.",
+          "speaker": "perrin",
+          "emotion": "surprised"
+        },
+        {
+          "text": "Here. Reed-salve, my own boiling. If the fen ever gets its teeth in you out there, it'll pull you back from the dark. Take it. I'll not need it, thanks to you.",
+          "speaker": "perrin",
+          "emotion": "happy",
+          "effects": [
+            {
+              "add_item": "antitoxin"
+            }
+          ]
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_tomas",
+      "lines": [
+        {
+          "text": "You've a sword, so you're either his or you're not. Which?",
+          "speaker": "tomas",
+          "emotion": "worried",
+          "effects": [
+            {
+              "set_flag": "debt_heard"
+            }
+          ]
+        },
+        {
+          "text": "...Sorry. Sorry. The collector comes tomorrow for the water-right, and I've the price of a loaf to my name. He takes the plot if I can't pay. Three generations, gone over a river we didn't dam.",
+          "speaker": "tomas",
+          "emotion": "sad"
+        }
+      ],
+      "end": {
+        "type": "menu",
+        "choices": [
+          {
+            "text": "Here. Silver, enough for the levy. Pay it and be done.",
+            "requires": {
+              "item": "coin_pouch"
+            },
+            "effects": [
+              {
+                "remove_item": "coin_pouch"
+              },
+              {
+                "set_flag": "debt_paid"
+              }
+            ],
+            "target": "node_tomas_paid"
+          },
+          {
+            "text": "Don't pay a copper. The weir's coming down \u2014 let the levy die with it.",
+            "requires": {
+              "all": [
+                {
+                  "not": {
+                    "flag": "debt_paid"
+                  }
+                },
+                {
+                  "not": {
+                    "flag": "debt_refused"
+                  }
+                }
+              ]
+            },
+            "effects": [
+              {
+                "set_flag": "debt_refused"
+              }
+            ],
+            "target": "node_tomas_refused"
+          },
+          {
+            "text": "How's it sitting with you?",
+            "requires": {
+              "flag": "debt_paid"
+            },
+            "target": "node_tomas_paid"
+          },
+          {
+            "text": "Holding to it?",
+            "requires": {
+              "flag": "debt_refused"
+            },
+            "target": "node_tomas_refused"
+          },
+          {
+            "text": "I can't help you yet.",
+            "target": "node_bye"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node_tomas_paid",
+      "lines": [
+        {
+          "text": "Silver \u2014 real silver. Where did you... no. No, I won't ask. I'll not look a gift in the teeth twice in one life.",
+          "speaker": "tomas",
+          "emotion": "surprised"
+        },
+        {
+          "text": "The plot stays Tomas land another year. Whatever you are, stranger, you're welcome at my fire.",
+          "speaker": "tomas",
+          "emotion": "happy"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_tomas_refused",
+      "lines": [
+        {
+          "text": "Refuse him. To his face.",
+          "speaker": "tomas",
+          "emotion": "worried"
+        },
+        {
+          "text": "...You know, when the smith says it I think it's guild talk. When a stranger with nothing to gain says it, it sounds like sense. If the river comes back, there's no levy owed on nothing. I'll stand. God help me, I'll stand.",
+          "speaker": "tomas"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_doryn",
+      "lines": [
+        {
+          "text": "State your business at the baron's gate, and be brief. His lordship does not receive, and I do not gossip.",
+          "speaker": "doryn",
+          "emotion": "neutral"
+        }
+      ],
+      "end": {
+        "type": "menu",
+        "choices": [
+          {
+            "text": "The weir's open. The river's Vessle's again.",
+            "requires": {
+              "flag": "weir_open"
+            },
+            "target": "node_doryn_open"
+          },
+          {
+            "text": "The levy's breaking the low farms. You know that.",
+            "requires": {
+              "flag": "debt_heard"
+            },
+            "target": "node_doryn_levy"
+          },
+          {
+            "text": "Nothing that keeps.",
+            "target": "node_bye"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node_doryn_open",
+      "lines": [
+        {
+          "text": "...I felt the cistern drop an hour past and prayed it was a cracked pipe.",
+          "speaker": "doryn",
+          "emotion": "worried"
+        },
+        {
+          "text": "You've cost his lordship his carp and made him a fool at every high table from here to the coast. He will answer that. But between us two, and the wall to keep it \u2014 the town will eat this winter. I did not say so.",
+          "speaker": "doryn"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_doryn_levy",
+      "lines": [
+        {
+          "text": "I know the ledgers to the bit, which is more than the guild does. I also know a steward who cannot count is soon a beggar who can.",
+          "speaker": "doryn",
+          "emotion": "neutral"
+        },
+        {
+          "text": "The levy is the baron's word, and my hands. Change the baron's mind or change the river. Do not waste breath changing mine.",
+          "speaker": "doryn"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_kel",
+      "lines": [
+        {
+          "text": "Far enough. The sluice is crown work now, and crown work has a guard, and the guard is me.",
+          "speaker": "kel",
+          "emotion": "neutral"
+        },
+        {
+          "text": "I know how it looks. I've a cousin in that town drinking mud same as the rest. But the baron feeds my children, and a man guards the hand that feeds his, even when he hates the hand. Turn around. I won't ask twice, and I won't ask kindly.",
+          "speaker": "kel",
+          "emotion": "angry"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_kel_win",
+      "lines": [
+        {
+          "text": "...All right. All right. You've got the beating of me \u2014 I'll not die propping up his carp pond.",
+          "speaker": "kel",
+          "emotion": "worried",
+          "effects": [
+            {
+              "set_flag": "kel_defeated"
+            }
+          ]
+        },
+        {
+          "text": "Do what you came for. I never saw who did it. That's the only mercy I've got to trade, and it's yours.",
+          "speaker": "kel"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_kel_lost",
+      "lines": [
+        {
+          "text": "Enough! Down the bank with you before I forget I've a cousin down there.",
+          "speaker": "kel",
+          "emotion": "angry"
+        },
+        {
+          "text": "You pick yourself up out of the mud and stagger back downriver, ears ringing. The gate still stands. Kel still holds it.",
+          "speaker": null
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_bog_win",
+      "lines": [
+        {
+          "text": "The thing comes apart under the last blow \u2014 not blood so much as a black, breaking-open of something that should have finished dying a week ago.",
+          "speaker": null,
+          "effects": [
+            {
+              "set_flag": "rot_cleared"
+            }
+          ]
+        },
+        {
+          "text": "You drag what's left up onto the mud to dry and burn. Already the backwater looks less like a wound.",
+          "speaker": null,
+          "emotion": "neutral"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_bog_lost",
+      "lines": [
+        {
+          "text": "It's stronger than a dead thing has any right to be. You break off, gasping, and put the reeds between you and it. It's still in there. It'll keep.",
+          "speaker": null,
+          "emotion": "worried"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_bly",
+      "lines": [
+        {
+          "text": "Ale's watered, and I'll thank you not to make the joke \u2014 I've heard it from every dry throat in the barony this month.",
+          "speaker": "bly",
+          "emotion": "neutral"
+        },
+        {
+          "text": "You want the truth of it? The smith's got iron in her spine and the farmers have got none, and the baron's got a wall. Nothing changes in Vessle. It just gets thirstier.",
+          "speaker": "bly"
+        },
+        {
+          "text": "Room's a copper if the walking wears you out. River water's free, if you fancy the runs.",
+          "speaker": "bly",
+          "emotion": "happy"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_mella",
+      "lines": [
+        {
+          "text": "Are you the one who's going to open the big gate? Perrin said a stranger might.",
+          "speaker": "mella",
+          "emotion": "happy"
+        },
+        {
+          "text": "My mam says don't get my hopes up. But I drew the river back on the wall with a coal, all the way blue, so it knows where to come.",
+          "speaker": "mella"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    },
+    {
+      "id": "node_garrow",
+      "lines": [
+        {
+          "text": "Whatever's gone missing, it wasn't me, and I'll swear it on your own mother.",
+          "speaker": "garrow",
+          "emotion": "worried"
+        },
+        {
+          "text": "...Oh. The smith sent you. For the crank. Take it, take it \u2014 it's off the dead gate, no use to me. Same square fitting as the weir's, I'd stake my teeth on it.",
+          "speaker": "garrow",
+          "emotion": "neutral"
+        },
+        {
+          "text": "And if you're the poking-about sort \u2014 the miller kept his silver under the boards before he ran the levy. I never touched it. Couldn't spend it here without a rope to follow.",
+          "speaker": "garrow"
+        }
+      ],
+      "end": {
+        "type": "return"
+      }
+    }
+  ]
+}

@@ -118,5 +118,3 @@ played for an hour wants the places its arc visits (5-8), an encounter or set pi
 dramatic escalation, and enough combatant variety that wild fights don't repeat one enemy.
 
 Return only the JSON object.
-</content>
-</invoke>

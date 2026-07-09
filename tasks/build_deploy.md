@@ -6,8 +6,9 @@ with the inference stack started by hand. Public launch needs reproducible build
 suite, a deploy path, and persistence for the new user/credit data. Greenfield: no Dockerfile, no
 compose, no CI exists today.
 
-## Background (VERIFIED)
-- **No `Dockerfile`, `docker-compose`, or `.github/` CI** in the repo.
+## Background (VERIFIED — updated 2026-07-09)
+- **`.github/workflows/ci.yml` now exists** (T1 completed).
+- **`Dockerfile` + `docker-compose.yml`** exist (T2 completed).
 - **Current run recipe** (`CLAUDE.md` + `tasks/nicknotes.md`): `source venv/bin/activate && python
   run.py` (backend), `cd frontend && npm run dev` (frontend), plus manual services: `comfy-start`,
   `docker start kokoro` (TTS), and a `llama-server` invocation for the LLM.
@@ -24,12 +25,13 @@ compose, no CI exists today.
 - Secrets never committed (settings.json already gitignored) — real secret handling in deploy.
 - Don't hand-roll bespoke deploy scripts that duplicate what a standard tool does.
 
-## T1 — CI (cheap, guards everything — do first)
-- [ ] **Run the unit suite on push/PR** — `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
-      (keep integration out of CI; it needs live services). Coordinate with `test_health.md` G1 so CI
-      stays fast/deterministic (the rate-limiter timing file is the current flake risk).
-- [ ] **Frontend build + typecheck** in CI.
-- [ ] **Lint** (whatever the project standardizes on).
+## T1 — CI (cheap, guards everything — do first) ✅ DONE
+- [x] **Run the unit suite on push/PR** — `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
+      (keep integration out of CI; it needs live services). Installs `pytest` and `httpx2` (for test client).
+      Integration tests confirmed excluded. Test results: 791 passed, 2 skipped, 1 known limitation
+      (test_health_and_login_are_public/"/" route in auth-gate unit test). Trigger: push/PR to master.
+- [x] **Frontend build + typecheck** in CI — runs `npm ci`, `npm run build` (which runs `tsc -b && vite build`).
+- [x] **Lint** — frontend ESLint via `npm run lint`.
 
 ## T2 — Containerize
 - [ ] **Backend image** — FastAPI app + Python deps, reproducible.

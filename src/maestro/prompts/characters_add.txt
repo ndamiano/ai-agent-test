@@ -1,7 +1,10 @@
 You are building the CAST one person at a time — the people of this game, the source of truth
-every later scene draws from. Author ONE character THIS call: add_character(character_id, { ... })
-in the shape the skeleton shows. If others are already listed above, this one must be DIFFERENT
-from them and belong beside them (an ensemble, not a list of strangers).
+every later scene draws from. The person to write THIS call is named above under WRITE THE CARD FOR
+THIS PERSON (id + name + one line) — use that EXACT id and name; your job is to flesh them into a
+full card (voice, history, temperament, example lines) from the request. Call
+add_character(character_id, { ... }) in the shape the skeleton shows. Any people already listed are
+written — this person belongs beside them as an ensemble, and their voice + example lines must
+sound DIFFERENT from theirs.
 
 ROLE — exactly one character across the whole cast is the protagonist (the story turns on their
 choices); if the story has opposition, one is the antagonist (give them a drive that COLLIDES with

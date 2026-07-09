@@ -63,27 +63,35 @@ def _ctx(spec, art):
     return Context(spec=spec, state=S(), artifact=art)
 
 
-def test_cast_errors_param_driven():
+def test_cast_roster_drives_creates():
     cast = MODULE_REGISTRY["cast"]
-    art = {"characters": {"characters": [{"id": "a", "name": "A"}]}}
-    # floor 1 -> satisfied; floor 2 -> a BUILD min_characters error
-    assert not any(e.code == "min_characters" for e in cast.get_errors(_ctx({"params": {}}, art)))
-    errs = cast.get_errors(_ctx({"params": {"min_characters": 2}}, art))
-    assert any(e.code == "min_characters" and e.type is ErrorType.BUILD for e in errs)
+    # ROSTER present: one create per rostered person not yet carded (the cast is DERIVED, not invented)
+    spec = {"characters": [{"id": "dele", "name": "Dele"}, {"id": "marcus", "name": "Marcus"}]}
+    art = {"characters": {"characters": [{"id": "dele", "name": "Dele"}]}}
+    errs = [e for e in cast.get_errors(_ctx(spec, art)) if e.code == "cast_roster"]
+    assert {e.ref for e in errs} == {"marcus"}   # dele carded, only marcus still owed
+    # FALLBACK (no roster, older specs): the min_characters count floor
+    art1 = {"characters": {"characters": [{"id": "a", "name": "A"}]}}
+    assert not any(e.code == "cast_roster" for e in cast.get_errors(_ctx({"params": {}}, art1)))
+    errs2 = cast.get_errors(_ctx({"params": {"min_characters": 2}}, art1))
+    assert any(e.code == "cast_roster" and e.type is ErrorType.BUILD for e in errs2)
 
 
 # ── decomposed authoring: cast / story / items grown one item per step ────────
-def test_cast_min_characters_fans_into_per_slot_creates():
+def test_cast_creates_fan_per_roster_id_or_per_slot():
     cast = MODULE_REGISTRY["cast"]
+    # fallback (no roster): the count fans into anonymous per-slot creates
     slots = [e for e in cast.get_errors(_ctx({"params": {"min_characters": 3}}, {}))
-             if e.code == "min_characters"]
+             if e.code == "cast_roster"]
     assert len(slots) == 3 and {e.path for e in slots} == {"#001", "#002", "#003"}
-    guard = cast._check_for("min_characters").guard
+    guard = cast._check_for("cast_roster").guard
     assert guard["count_tool"] == "add_character" and guard["id_list_key"] == "character_ids"
+    # roster: fans one create per uncarded rostered id (path IS the id, not an anonymous slot)
+    spec = {"characters": [{"id": "x"}, {"id": "y"}, {"id": "z"}]}
+    assert {e.path for e in cast.get_errors(_ctx(spec, {})) if e.code == "cast_roster"} == {"x", "y", "z"}
     # authoring one shrinks the owed set (visible progress, stable identity)
-    art = {"characters": {"characters": [{"id": "a", "name": "A"}]}}
-    assert len([e for e in cast.get_errors(_ctx({"params": {"min_characters": 3}}, art))
-                if e.code == "min_characters"]) == 2
+    art = {"characters": {"characters": [{"id": "x", "name": "X"}]}}
+    assert {e.path for e in cast.get_errors(_ctx(spec, art)) if e.code == "cast_roster"} == {"y", "z"}
 
 
 def test_story_central_question_blocks_then_beats_and_endings_fan():

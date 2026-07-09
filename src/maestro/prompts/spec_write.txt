@@ -17,7 +17,11 @@ on its last night open" or "a point-and-click escape from a lighthouse that floo
 ── STORY ──
 Expand the request into a concrete story — invent the SPECIFICS (names, places, the exact
 situation) the request leaves open, never a different premise than the one asked for:
-- 1-3 named characters, each with a specific backstory (who they were, what changed).
+- 1-3 named characters, each with a specific backstory (who they were, what changed). List them
+  in the `characters` roster (id + name + one line). Put ONLY the people who actually SPEAK or
+  APPEAR in the scenes — never someone dead, absent, or merely referenced (a dead brother, an ex
+  who never shows). If the story is confronting someone, the person confronted IS in the roster;
+  the person mourned is NOT.
 - A central tension the SITUATION ITSELF produces — what someone here stands to lose, admit,
   or become. Do NOT graft on a darker past (a crime, a death, a betrayal), a villain, or a
   deadline the request doesn't imply; a healthy relationship under a life change is already a
@@ -72,6 +76,9 @@ Output ONLY this JSON structure (fill it in; comments are for you, do not emit t
   "title": "short game title",
   "concept": "<the one-line hook from CONCEPT above>",
   "request": "<the full story paragraph you authored, per the requirements above>",
+  "characters": [                             // the people who SPEAK or APPEAR — exclude the dead/absent/only-mentioned
+    { "id": "snake_case_id", "name": "Display Name", "who": "one line: who they are and their part in THIS story" }
+  ],
   "presentation": "hd2d",                     // "hd2d" (walkable world in 3D — the default) or "2d" — see PRESENTATION above
   "modules": {                                // each module you pick -> ONE sentence: what IN THIS STORY it serves
     // "scenes": "the whole game is the scientist's branching descent told through his own dialogue"

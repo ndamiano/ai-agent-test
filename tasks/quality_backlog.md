@@ -142,6 +142,15 @@ Apply the same shape here.
   a scoped "recent beats" read against context bloat.
 - [ ] **`validate` exposed as an agent tool *and* auto-run each step.** Check whether the in-loop
   `validate` tool call is ever load-bearing or just burns a turn.
+- [ ] **[0-pt pickup] Code-fill ASSIGNED id/name, don't ask the model for them.** Where a create has
+  an assigned id/name (cast roster entry, a scene's slot id, an inventory item's ref), the prompt
+  currently re-asks the model to emit them — pure downside: it's the surface a mislabel/drift lives on
+  (the julian≠marcus cast desync), and it's wasted fields per the small-model strategy. Fix: inject
+  the assigned id/name via the create-guard's existing `prepare(view, assigned, args)` hook (scenes
+  already uses `prepare` to stamp the system-picked beat), so the model authors ONLY the fields it
+  must (voice/history/example_lines). Deletes the id-drift error class instead of narrowing it.
+  Wiring: `cast_view` exposes uncarded roster entries as slots + the guard's `assign`/`prepare` fill
+  id+name. Straightforward; the mechanism exists.
 
 ## 11. Small-model fix-phase efficiency
 

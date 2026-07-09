@@ -12,7 +12,7 @@ from typing import Dict, Optional
 
 from maestro import context_render as cr
 from maestro.modules import checks
-from maestro.modules.module import Check, Module, register_module
+from maestro.modules.module import Check, Error, Module, register_module
 
 def character_cards(artifact: Dict, only=None) -> list:
     """Full RP-style character cards — how the cast presents itself in OTHER modules' prompts
@@ -116,10 +116,26 @@ _CAST_GUARD = {"count_tool": "add_character", "id_key": "character_id",
                "id_list_key": "character_ids", "noun": "character"}
 
 
-def _d_min_characters(chk, m, ctx):
-    """A cast shortfall fans into one per-person create-error — the loop authors one character per
-    step (slot-guarded add_character), each seeing the ones already written."""
-    need = ctx.param("min_characters", 1) - checks.length(ctx.artifact, "characters.characters")
+def _roster(ctx) -> list:
+    """The proposer's structured cast roster — the single source for WHO exists (id + name + who).
+    Distinct from story_state_schema.entity_states, which is continuity state, not a roster."""
+    return [r for r in (ctx.spec.get("characters") or []) if isinstance(r, dict) and r.get("id")]
+
+
+def _d_cast(chk, m, ctx):
+    """Demand-driven off the spec's character roster: one create-error per rostered person not yet
+    carded — the cast is DERIVED from the proposer's roster, never invented from the request prose
+    (which is how a dead/absent entity slipped in as a character). Falls back to the min_characters
+    count for specs authored before the roster existed."""
+    have = {c.get("id") for c in (ctx.artifact.get("characters") or {}).get("characters", [])
+            if isinstance(c, dict) and c.get("id")}
+    roster = _roster(ctx)
+    if roster:
+        return [Error(type=chk.tier, code=chk.code, component="characters", path=r["id"], ref=r["id"],
+                      message=(f"'{r['id']}' ({r.get('name', '')}) is in the cast roster but has no "
+                               f"card — author it with add_character('{r['id']}', ...)."))
+                for r in roster if r["id"] not in have]
+    need = ctx.param("min_characters", 1) - len(have)
     return checks.slot_errors(need, type=chk.tier, code=chk.code,
                               component="characters", noun="character") if need > 0 else []
 
@@ -142,7 +158,7 @@ class Cast(Module):
     # post-authoring safety — a per-person add validates structure + the guard blocks dup ids, so they
     # rarely fire; when they do, the fix rewrites the whole list.
     checks = [
-        Check("min_characters", _d_min_characters, tools=_ADD_TOOLS, guard=_CAST_GUARD,
+        Check("cast_roster", _d_cast, tools=_ADD_TOOLS, guard=_CAST_GUARD,
               prompt="characters_add.txt", skeleton=SKEL_CHARACTER_ONE),
         Check("character_fields", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "characters.characters",
@@ -166,15 +182,24 @@ class Cast(Module):
         from maestro import context_render as cr
         spec = ctx.get("spec", {}) or {}
         art = ctx.get("artifact") or {}
+        target = ctx.get("target")
         out = [f"TITLE: {spec.get('title', '')}", "",
                f"CONCEPT: {spec.get('concept', '')}", "",
                f"REQUEST: {spec.get('request', '')}"]
+        # The specific rostered person THIS card is for — the id/name are assigned, not invented.
+        ref = getattr(target, "ref", None) if target is not None else None
+        roster = {r.get("id"): r for r in (spec.get("characters") or [])
+                  if isinstance(r, dict) and r.get("id")}
+        if ref and ref in roster:
+            r = roster[ref]
+            out += ["", f"WRITE THE CARD FOR THIS PERSON — use id EXACTLY '{ref}':",
+                    f"  {ref} — {r.get('name', '')}: {r.get('who', '')}"]
         existing = [c for c in (art.get("characters") or {}).get("characters", [])
                     if isinstance(c, dict) and c.get("id")]
         if existing:
             out += character_cards(art)
-            out += ["", "Those people are ALREADY written — do not repeat or rewrite them. Author a "
-                    "DIFFERENT character who belongs in this cast with them."]
+            out += ["", "Those people are ALREADY written — do not repeat or rewrite them; write the "
+                    "assigned person above, and make their voice + example lines sound DIFFERENT from these."]
         out += cr.target_block(ctx)
         return "\n".join(out)
 

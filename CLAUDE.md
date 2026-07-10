@@ -98,8 +98,8 @@ src/
                     blocks + the run-state frame (maestro/context_render.py holds ONLY that frame)
                     — the consumer knows what its call needs and owns the window budget that
                     implies (scene text never enters a prompt except the assigned slot's lead-in).
-                  cast/story/scenes/world/assets/inventory/state/combat/bible/human.py — the
-                    mechanic-modules, each a direct Module subclass; each owns its component's
+                  cast/story/scenes/world/assets/inventory/state/combat/bible/objectives/human.py
+                    — the mechanic-modules, each a direct Module subclass; each owns its component's
                     structural write-time validator + authoring skeleton INLINE (no shared
                     validators/skeletons file). state/human author no component (cross-cutting):
                     state is the always-on wiring invariant, human holds the HITL todo/waiver +
@@ -110,6 +110,20 @@ src/
                     See docs/hitl_architecture.md).
                     bible is the world-game root (setting/factions/tensions) — authoring-only like
                     story, NEVER lifted into the IR; cited by id downstream via bible_block.
+                    objectives is the goal state machine over the flag substrate: each bible
+                    tension demands one quest chain (archetype step templates in code —
+                    fetch/escort/investigate/broker/moral_fork — the model fills slots, never
+                    transition semantics; every step but the last carries `advance` as a CONDITION
+                    ({item} advances on holding it), the last carries `resolutions`; `main` derives
+                    from the main tension). Its path-aware wiring checks walk the gated
+                    nodes+places graph (views.reachable/shortest_path): every advance ref needs a
+                    producer the player can reach BEFORE its step (a producer behind its own gate
+                    is a deterministic error), every resolution reachable, journal text per state.
+                    UNLIKE bible it IS lifted into the IR (minus tension/archetype provenance) —
+                    the godot runtime renders journal (J / Esc menu), the main objective's HUD
+                    line, and named gated-verb feedback from it, deriving quest state from
+                    flags/items at read time (no runtime quest store). Godot-only projection
+                    (combat precedent — composing it auto-routes the engine).
                 agent_loop.py — AgentLoop, the non-LLM loop that DRIVES the modules (not itself a
                   module): collects each module's get_errors, subtracts the human's waivers,
                   prioritizes by error TYPE (human>build>fix) then Module.priority then the check's

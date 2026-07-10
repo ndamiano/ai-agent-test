@@ -104,6 +104,27 @@ Note two intentional divergences to keep straight:
 plot); use a **stat** for anything a `combat_effect` touches or an ability scales on. When in
 doubt, if it lives on a combatant and changes mid-fight, it's a stat.
 
+## Objectives (quests)
+
+- **Objectives ARE in the IR — unlike story and bible.** Story/bible are authoring plans the
+  runtime never needs; an objective's journal text and step chain are RENDERED at runtime (journal
+  panel, HUD objective line, named gate feedback), so the data must ship. What does NOT ship is
+  authoring provenance: the `tension` (a bible id — the bible layer never reaches the IR) and the
+  `archetype` (the authoring template) are stripped at assemble, same rule as a node's
+  beat/storyline stamps.
+- **A state-machine skin over the existing flag substrate, not a new state store.** A step's
+  `advance` and a resolution's `flag` are ordinary conditions/flags; the runtime derives the
+  current quest state from flags/items AT READ TIME (longest satisfied step prefix, resolution
+  flag wins). Saves, gates, and effects are untouched — a quest is legible to everything that
+  already reads flags.
+- **`advance` is a condition, not a flag id.** `{"item": "sluice_crank"}` advances on HOLDING the
+  item — the take-has-no-effects gap from the gold game (world_game_notes.md) closes without
+  minting a dead `has_crank` flag. The full condition grammar (`all`/`any`/`not`, var comparisons)
+  is allowed; the two-key sluice is `{"all": [...]}` or two chained steps.
+- **Code owns transition semantics.** The step shapes are two (`advance` step / final
+  `resolutions` step) and archetype-constrained at write time; the model fills titles, summaries,
+  conditions, and journal text. Same rule as storyline termini.
+
 ## Still open
 
 - **var min/max clamping** — advisory for now; if it becomes a problem, the compiler enforces it.

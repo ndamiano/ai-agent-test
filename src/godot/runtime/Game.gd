@@ -46,6 +46,7 @@ var encounter_by_id := {}
 var avatar_cell = null
 var _place_id = null
 var _title_open := false
+var _ended := false
 var _inv_last := []
 var _music_now = null
 
@@ -63,6 +64,7 @@ var _menu_pick := -1
 @onready var _menu := VBoxContainer.new()
 @onready var _inv := HBoxContainer.new()
 @onready var _hud := Label.new()
+@onready var _obj_hud := Label.new()
 @onready var _music := AudioStreamPlayer.new()
 
 
@@ -85,6 +87,7 @@ func _setup_input() -> void:
 		"move_right": [KEY_D, KEY_RIGHT],
 		"interact": [KEY_E, KEY_SPACE],
 		"ui_pause": [KEY_ESCAPE],
+		"ui_journal": [KEY_J],
 	}
 	for action in binds:
 		# InputMap survives reload_current_scene (Play Again) — skip an already-bound action
@@ -242,10 +245,18 @@ func pause_menu() -> void:
 	box.custom_minimum_size = Vector2(280, 0)
 	layer.add_child(box)
 	var done := {"v": false}
+	var open_journal := {"v": false}
 	var rb := Button.new()
 	rb.text = "Resume"
 	rb.pressed.connect(func(): done["v"] = true)
 	box.add_child(rb)
+	if not ir.get("objectives", []).is_empty():
+		var jb := Button.new()
+		jb.text = "Journal"
+		jb.pressed.connect(func():
+			open_journal["v"] = true
+			done["v"] = true)
+		box.add_child(jb)
 	var sb := Button.new()
 	sb.text = "Save"
 	sb.pressed.connect(func():
@@ -261,6 +272,8 @@ func pause_menu() -> void:
 		if Input.is_action_just_pressed("ui_pause"):
 			done["v"] = true
 	layer.queue_free()
+	if open_journal["v"]:
+		await journal_panel()
 
 
 # The place loop, presenter-agnostic. Picks the presenter for each place by kind (PRESENTERS),
@@ -309,7 +322,7 @@ func run_action(act) -> Variant:
 			return null
 		"move":
 			if act.has("requires") and not IRCore.eval_cond(state, act["requires"]):
-				await show_line(null, "You can't go that way yet.")
+				await show_line(null, gate_text("You can't go that way yet.", act["requires"]))
 				hide_dialogue()
 				return null
 			return {"move": act["target"], "spawn": act.get("spawn")}
@@ -328,13 +341,13 @@ func run_action(act) -> Variant:
 		"win":
 			var gate = act.get("requires", ir.get("goal"))
 			if gate != null and not IRCore.eval_cond(state, gate):
-				await show_line(null, "Not yet.")
+				await show_line(null, gate_text("Not yet.", gate))
 				hide_dialogue()
 				return null
 			return WIN
 		"start_combat":
 			if act.has("requires") and not IRCore.eval_cond(state, act["requires"]):
-				await show_line(null, "Not now.")
+				await show_line(null, gate_text("Not now.", act["requires"]))
 				hide_dialogue()
 				return null
 			var resolution = await Combat.new(self).run(act["encounter"])
@@ -363,6 +376,160 @@ func _flow(end) -> Variant:
 			return null
 
 
+# ── objectives (journal / HUD) — quest state DERIVED from flags/items at read time ──────────
+# An objective is a step chain over the ordinary flag substrate (ir.objectives); there is NO
+# runtime quest store. The current state = a set resolution flag, else the longest prefix of
+# steps whose advance conditions hold right now.
+func objective_stage(obj) -> Dictionary:
+	var steps: Array = obj.get("steps", [])
+	if steps.is_empty():
+		return {"key": "offered", "step": null, "resolved": false}
+	var last = steps[steps.size() - 1]
+	for r in last.get("resolutions", []):
+		if IRCore.eval_cond(state, {"flag": r.get("flag", "")}):
+			return {"key": "resolved.%s" % String(r.get("id", "")), "step": null, "resolved": true}
+	var done := 0
+	while done < steps.size() - 1 and IRCore.eval_cond(state, steps[done].get("advance", {})):
+		done += 1
+	if done == 0:
+		return {"key": "offered", "step": steps[0], "resolved": false}
+	if done == steps.size() - 1:
+		# every advance step holds — only the final act remains. Its own journal entry is the
+		# optional "throw the gate" beat; fall back to the last completed step's entry.
+		var jr: Dictionary = obj.get("journal", {})
+		var fkey := String(last.get("id", ""))
+		var key: String = fkey if jr.has(fkey) else String(steps[done - 1].get("id", ""))
+		return {"key": key, "step": last, "resolved": false}
+	return {"key": String(steps[done - 1].get("id", "")), "step": steps[done], "resolved": false}
+
+
+func journal_text(obj) -> String:
+	return String(obj.get("journal", {}).get(objective_stage(obj).get("key", ""), ""))
+
+
+func _update_objective_hud() -> void:
+	# _process re-runs this every frame — the _ended latch keeps the line off the ending overlay
+	# (a game_over ending leaves the main objective unresolved, so "resolved" alone won't hide it).
+	var main = null
+	if not _ended:
+		for o in ir.get("objectives", []):
+			if o.get("main", false):
+				main = o
+				break
+	if main == null:
+		_obj_hud.visible = false
+		return
+	var st := objective_stage(main)
+	if st["resolved"]:
+		_obj_hud.visible = false
+		return
+	var line := String(main.get("title", ""))
+	if st["step"] != null:
+		line += " — " + String(st["step"].get("summary", ""))
+	_obj_hud.text = line + "   [J] journal"
+	_obj_hud.visible = true
+
+
+# The journal overlay (J, or the pause menu's Journal entry): every objective's title + the
+# entry for its CURRENT state, main quest first. Modal like pause_menu; J/Esc/Close dismiss.
+func journal_panel() -> void:
+	var layer := Control.new()
+	layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(layer)
+	var dim := ColorRect.new()
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	layer.add_child(dim)
+	var box := VBoxContainer.new()
+	box.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.custom_minimum_size = Vector2(680, 0)
+	box.add_theme_constant_override("separation", 10)
+	layer.add_child(box)
+	var tl := Label.new()
+	tl.text = "Journal"
+	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tl.add_theme_font_size_override("font_size", 34)
+	box.add_child(tl)
+	var objs: Array = ir.get("objectives", [])
+	var ordered: Array = []
+	for o in objs:
+		if o.get("main", false):
+			ordered.append(o)
+	for o in objs:
+		if not o.get("main", false):
+			ordered.append(o)
+	if ordered.is_empty():
+		var none := Label.new()
+		none.text = "Nothing yet."
+		box.add_child(none)
+	for o in ordered:
+		var st := objective_stage(o)
+		var head := Label.new()
+		var suffix := ""
+		if o.get("main", false):
+			suffix += "  (main)"
+		if st["resolved"]:
+			suffix += "  — done"
+		head.text = String(o.get("title", o.get("id", ""))) + suffix
+		head.add_theme_font_size_override("font_size", 22)
+		box.add_child(head)
+		var tx := Label.new()
+		tx.text = journal_text(o)
+		tx.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tx.add_theme_font_size_override("font_size", 17)
+		tx.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85))
+		box.add_child(tx)
+	var cb := Button.new()
+	cb.text = "Close"
+	var done := {"v": false}
+	cb.pressed.connect(func(): done["v"] = true)
+	box.add_child(cb)
+	while not done["v"]:
+		await get_tree().process_frame
+		if Input.is_action_just_pressed("ui_journal") or Input.is_action_just_pressed("ui_pause"):
+			done["v"] = true
+	layer.queue_free()
+
+
+# Name the unmet requirement(s) of a failed gate in plain words — the data is already in
+# `requires`, so the player learns WHICH key is missing instead of a bare "Not yet." (the gold
+# game had to fake this with authored clause ladders; see world_game_notes.md).
+func gate_text(base: String, cond) -> String:
+	var names := _unmet_names(cond)
+	if names.is_empty():
+		return base
+	return base + " (needs: " + ", ".join(names) + ")"
+
+
+func _unmet_names(cond) -> Array:
+	if typeof(cond) != TYPE_DICTIONARY or IRCore.eval_cond(state, cond):
+		return []
+	if cond.has("item"):
+		var nm = item_by_id.get(cond["item"], {}).get("name")
+		return [String(nm) if nm != null else String(cond["item"]).replace("_", " ")]
+	if cond.has("flag"):
+		return [String(cond["flag"]).replace("_", " ")]
+	if cond.has("var"):
+		var v = cond.get("value")
+		var vs := String(v.get("var", "")) if typeof(v) == TYPE_DICTIONARY else str(v)
+		return ["%s %s %s" % [cond["var"], cond.get("op", ""), vs]]
+	if cond.has("all"):
+		var out: Array = []
+		for c in cond["all"]:
+			out += _unmet_names(c)
+		return out
+	if cond.has("any"):
+		var parts: Array = []
+		for c in cond["any"]:
+			parts += _unmet_names(c)
+		return ["one of: " + " / ".join(parts)] if not parts.is_empty() else []
+	return []   # a failed `not` means something must be UNdone — the base line stands
+
+
 # ── UI construction (built in code so Main.tscn stays trivial and correct) ──────────────────
 func _build_ui() -> void:
 	# Non-interactive layers must IGNORE the mouse, else a full-rect Control consumes the click as
@@ -389,6 +556,16 @@ func _build_ui() -> void:
 	_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud.visible = false
 	add_child(_hud)
+
+	# The current-objective line (the main quest's next step) — the persistent "what do I do
+	# next" thread the gold game's notes flagged as missing.
+	_obj_hud.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_obj_hud.position.y = 30
+	_obj_hud.add_theme_color_override("font_color", Color(1, 0.92, 0.6))
+	_obj_hud.add_theme_font_size_override("font_size", 15)
+	_obj_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_obj_hud.visible = false
+	add_child(_obj_hud)
 
 	_dialogue.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	_dialogue.position.y = -200
@@ -429,9 +606,11 @@ func _build_ui() -> void:
 func _process(_delta: float) -> void:
 	_inv.visible = not _title_open
 	if _title_open:
+		_obj_hud.visible = false
 		return
 	if state.has("vars"):
 		sync_levels()
+	_update_objective_hud()
 	var inv: Array = state.get("inv", [])
 	if inv == _inv_last:
 		return
@@ -503,9 +682,11 @@ func _on_menu_pick(i: int) -> void:
 
 
 func show_ending(label) -> void:
+	_ended = true
 	_dialogue.visible = false
 	_menu.visible = false
 	_hud.visible = false
+	_obj_hud.visible = false
 	var title := "The End"
 	var text := str(label) if label else ""
 	for e in ir.get("endings", []):

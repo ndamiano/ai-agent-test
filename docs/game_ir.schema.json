@@ -205,6 +205,13 @@
         "$ref": "#/$defs/encounter"
       }
     },
+    "objectives": {
+      "type": "array",
+      "description": "Quest chains over the flag substrate. Each is a strict step chain: every step but the last carries `advance` (the condition completing it); the last carries `resolutions`. The runtime derives the current state from flags/items AT READ TIME (no runtime quest store) and renders the journal/HUD from it. Authoring provenance (bible tension, archetype) is stripped before the IR.",
+      "items": {
+        "$ref": "#/$defs/objective"
+      }
+    },
     "progression": {
       "type": "object",
       "description": "Combat's projection of the growth loop (present only when combat is): who the player fights as, which LEVELED variable is the XP pool, and what a level-up does to combat stats. XP production is ordinary effects \u2014 victories add the loser's xp_yield to xp_var; any other action can feed it too. Player combat stats persist across fights.",
@@ -1664,6 +1671,114 @@
           }
         }
       ]
+    },
+    "objective": {
+      "type": "object",
+      "description": "One quest chain. `journal` maps state -> the entry the player reads: 'offered' (until the first step completes), an advance step's id (after it completes), the final step's id (optional: all prerequisites done, only the final act remains), 'resolved.<id>' per resolution. `main: true` marks the win path.",
+      "required": [
+        "id",
+        "title",
+        "steps",
+        "journal"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string"
+        },
+        "main": {
+          "type": "boolean"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/objective_step"
+          }
+        },
+        "journal": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "objective_step": {
+      "description": "A step either ADVANCES on a condition ({flag} / {item} — holding it advances, no dead flag — or any composite) or, as the chain's final step, RESOLVES into one of its resolutions. Exactly one of the two shapes; transition semantics live in the runtime, never in the data.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "summary",
+            "advance"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "advance": {
+              "$ref": "#/$defs/condition"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "summary",
+            "resolutions"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "resolutions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/resolution"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "resolution": {
+      "type": "object",
+      "description": "One way the chain ends. `flag` is what the world checks afterwards (gates, the win goal); `requires` prices the ending (e.g. the paid arm of a moral fork needs the coin).",
+      "required": [
+        "id",
+        "flag"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "flag": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "requires": {
+          "$ref": "#/$defs/condition"
+        }
+      }
     }
   },
   "examples": [

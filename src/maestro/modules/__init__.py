@@ -32,6 +32,7 @@ from maestro.modules import (  # noqa: F401
     cast,
     combat,
     inventory,
+    objectives,
     scenes,
     story,
     wild_encounters,

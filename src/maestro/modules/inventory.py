@@ -90,6 +90,16 @@ def _referenced_item_ids(artifact: Dict) -> set:
             _effs(views.action_effects(a))
             for cond in views.action_conditions(a):
                 refs |= views.cond_items(cond)
+
+    # An objective step advancing on holding an item (or a resolution priced in one) is demand
+    # like any gate — the item is born because the quest names it.
+    for o in (artifact.get("objectives") or {}).get("objectives", []) or []:
+        for s in o.get("steps", []) if isinstance(o, dict) else []:
+            if isinstance(s, dict):
+                refs |= views.cond_items(s.get("advance"))
+                for r in s.get("resolutions", []) or []:
+                    if isinstance(r, dict):
+                        refs |= views.cond_items(r.get("requires"))
     return refs
 
 
@@ -122,6 +132,16 @@ def _item_usage_block(artifact: Dict, item_id: str) -> list:
                 out.append(f"  place {pid}: the '{h.get('label') or h.get('id')}' hotspot REQUIRES it")
             elif any(item_id in views.cond_items(c) for c in views.action_conditions(a)):
                 out.append(f"  place {pid}: a use on '{h.get('label') or h.get('id')}' spends it")
+    for o in (artifact.get("objectives") or {}).get("objectives", []) or []:
+        for s in o.get("steps", []) if isinstance(o, dict) else []:
+            if not isinstance(s, dict):
+                continue
+            if item_id in views.cond_items(s.get("advance")):
+                out.append(f"  objective {o.get('id')} step {s.get('id')} advances on HOLDING it "
+                           f"— \"{s.get('summary', '')}\"")
+            for r in s.get("resolutions", []) or []:
+                if isinstance(r, dict) and item_id in views.cond_items(r.get("requires")):
+                    out.append(f"  objective {o.get('id')} resolution {r.get('id')} is PRICED in it")
     if not out:
         return []
     return ["", f"WHERE '{item_id}' IS USED (write the item so it fits these):", *out]

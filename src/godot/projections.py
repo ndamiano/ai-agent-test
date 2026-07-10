@@ -20,3 +20,6 @@ def register() -> None:
     register_projection("godot", "scenes", _RUNTIME)
     register_projection("godot", "world", _RUNTIME)
     register_projection("godot", "combat", _RUNTIME)
+    # objectives is godot-only like combat (journal panel + HUD objective + named gate feedback
+    # live in Game.gd) — a spec that picks it auto-routes here via Module.engine_for.
+    register_projection("godot", "objectives", _RUNTIME)

@@ -178,6 +178,36 @@ TOOL_SCHEMAS: List[Dict] = [
                 "conflict runs between]}"},
         }, "required": ["tension_id", "content"]}}},
     {"type": "function", "function": {
+        "name": "add_objective",
+        "description": "Author ONE objective into `objectives` — a quest chain answering one bible "
+                       "tension. Every step but the last carries `advance` (the condition that "
+                       "completes it); the last carries `resolutions`. The archetype's step shape "
+                       "is enforced; grow the quests one at a time.",
+        "parameters": {"type": "object", "properties": {
+            "objective_id": {"type": "string", "description": "e.g. 'obj_levy'"},
+            "content": {"type": "object", "description":
+                "{tension: <bible tension id>, archetype: fetch|escort|investigate|broker|"
+                "moral_fork, title, steps:[{id, summary, advance:<condition>} ... "
+                "{id, summary, resolutions:[{id, flag, requires?}]}], journal:{offered, "
+                "<step id>: ..., 'resolved.<id>': ...}}"},
+        }, "required": ["objective_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "edit_objective_step",
+        "description": "Patch ONE step of an existing objective (summary / advance / resolutions) "
+                       "and/or merge journal entries — without rewriting the objective.",
+        "parameters": {"type": "object", "properties": {
+            "objective_id": {"type": "string"},
+            "step_id": {"type": "string", "description": "the step to patch (omit for a "
+                        "journal-only edit)"},
+            "summary": {"type": "string", "description": "replacement step summary"},
+            "advance": {"type": "object", "description": "replacement advance condition "
+                        "(non-final steps only)"},
+            "resolutions": {"type": "array", "items": {"type": "object"},
+                            "description": "replacement resolutions list (final step only)"},
+            "journal": {"type": "object", "description": "journal entries to merge, "
+                        "{<state>: <text>}"},
+        }, "required": ["objective_id"]}}},
+    {"type": "function", "function": {
         "name": "add_item",
         "description": "Declare ONE item into `items` — a thing the player holds. Author it where a "
                        "reference already demands it (a take hotspot, a use/requires gate, an "
@@ -715,6 +745,88 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         bible.setdefault("factions", [])
         state.write_component("bible", bible)
         return {"ok": True, "tension_id": tension_id}
+
+    # ── objectives: the quest chains, grown ONE at a time (each answering a bible tension; the
+    #    archetype's step shape is enforced in code — the model fills slots, never transition
+    #    semantics). `main` is DERIVED from the cited tension's scale, never model-set. ──────────
+    def add_objective(objective_id: str, content) -> Dict:
+        """Author ONE objective (append-by-id, no overwrite) answering one still-open bible tension."""
+        _require_frozen()
+        if _locked("objectives"):
+            return _locked_error("objectives")
+        content = _coerce_json(content)
+        if not isinstance(content, dict):
+            return {"ok": False, "error": "content must be a JSON object (the objective's fields)"}
+        from maestro.modules.objectives import v_objective_one
+        bible = state.read_component("bible") or {}
+        tensions = {t.get("id"): t for t in bible.get("tensions") or [] if isinstance(t, dict)}
+        comp = state.read_component("objectives") or {"objectives": []}
+        objs = comp.setdefault("objectives", [])
+        if any(isinstance(o, dict) and o.get("id") == objective_id for o in objs):
+            return {"ok": False, "error": f"objective {objective_id!r} already exists — write a "
+                    f"NEW id; use edit_objective_step to repair one."}
+        tension = content.get("tension")
+        if tension not in tensions:
+            return {"ok": False, "error": f"tension {tension!r} is not declared in the bible — an "
+                    f"objective answers one of {sorted(tensions)}."}
+        # main is DERIVED, never model-set: the first objective on the main-scale tension is the
+        # win path (a tension web may carry several quests).
+        has_main = any(isinstance(o, dict) and o.get("main") for o in objs)
+        full = {**content, "id": objective_id,
+                "main": not has_main and tensions[tension].get("scale") == "main"}
+        err = v_objective_one(full)
+        if err:
+            return {"ok": False, "error": err}
+        objs.append(full)
+        state.write_component("objectives", comp)
+        return {"ok": True, "objective_id": objective_id, "main": full["main"]}
+
+    def edit_objective_step(objective_id: str, step_id: Optional[str] = None,
+                            summary: Optional[str] = None, advance: Optional[Dict] = None,
+                            resolutions: Optional[List] = None,
+                            journal: Optional[Dict] = None) -> Dict:
+        """Patch ONE step (summary/advance/resolutions) and/or merge journal entries — the whole
+        objective is revalidated after the patch, so the archetype's step shape still holds."""
+        _require_frozen()
+        if _locked("objectives"):
+            return _locked_error("objectives")
+        from maestro.modules.objectives import v_objective_one
+        comp = state.read_component("objectives") or {}
+        obj = next((o for o in comp.get("objectives") or []
+                    if isinstance(o, dict) and o.get("id") == objective_id), None)
+        if obj is None:
+            return {"ok": False, "error": f"no objective {objective_id!r} to edit"}
+        import copy
+        patched = copy.deepcopy(obj)
+        if step_id is not None:
+            step = next((s for s in patched.get("steps") or []
+                         if isinstance(s, dict) and s.get("id") == step_id), None)
+            if step is None:
+                return {"ok": False, "error": f"no step {step_id!r} in objective {objective_id!r} — "
+                        f"its steps are {[s.get('id') for s in patched.get('steps') or []]}"}
+            if summary is not None:
+                step["summary"] = summary
+            if advance is not None:
+                step["advance"] = _coerce_json(advance)
+            if resolutions is not None:
+                step["resolutions"] = _coerce_json(resolutions)
+        elif summary is not None or advance is not None or resolutions is not None:
+            return {"ok": False, "error": "step_id is required to patch a step's "
+                    "summary/advance/resolutions"}
+        if journal is not None:
+            journal = _coerce_json(journal)
+            if not isinstance(journal, dict) or not all(
+                    isinstance(v, str) and v.strip() for v in journal.values()):
+                return {"ok": False, "error": "journal must be an object of non-empty strings "
+                        "{<state>: <entry>}"}
+            patched.setdefault("journal", {}).update(journal)
+        err = v_objective_one(patched)
+        if err:
+            return {"ok": False, "error": err}
+        obj.clear()
+        obj.update(patched)
+        state.write_component("objectives", comp)
+        return {"ok": True, "objective_id": objective_id}
 
     def add_item(item_id: str, content) -> Dict:
         """Declare ONE item (append-by-id, no overwrite) — but ONLY where a reference already demands
@@ -1332,6 +1444,8 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "set_bible": set_bible,
         "add_faction": add_faction,
         "add_tension": add_tension,
+        "add_objective": add_objective,
+        "edit_objective_step": edit_objective_step,
         "add_item": add_item,
         "write_node": write_node,
         "write_scene": write_scene,

@@ -69,6 +69,8 @@ func _await_hotspot(place) -> Dictionary:
 		await g.get_tree().process_frame
 		if Input.is_action_just_pressed("ui_pause"):
 			await g.pause_menu()
+		if Input.is_action_just_pressed("ui_journal"):
+			await g.journal_panel()
 	for c in box.get_children():
 		c.queue_free()
 	return picked["v"]

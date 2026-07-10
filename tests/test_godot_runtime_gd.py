@@ -182,6 +182,48 @@ func _initialize():
 """
 
 
+# Quest state is DERIVED from flags/items at read time (no runtime quest store): the journal key
+# walks the longest satisfied step prefix (resolution flag wins, the final step's own entry is
+# preferred once every advance holds), and a failed gate names its unmet leaves in plain words.
+_OBJECTIVES_SELFTEST = """
+extends SceneTree
+
+func _fail(msg):
+\tprint("SELFTEST FAIL: ", msg)
+\tquit(1)
+
+func _initialize():
+\tvar g = load("res://Game.gd").new()
+\tg.ir = {"objectives": [{"id": "o1", "title": "T", "main": true,
+\t\t"steps": [
+\t\t\t{"id": "s1", "summary": "hear", "advance": {"flag": "heard"}},
+\t\t\t{"id": "s2", "summary": "crank", "advance": {"item": "crank"}},
+\t\t\t{"id": "s3", "summary": "throw", "resolutions": [{"id": "opened", "flag": "open"}]}],
+\t\t"journal": {"offered": "OFF", "s1": "A", "s2": "B", "s3": "FINAL",
+\t\t\t"resolved.opened": "R"}}],
+\t\t"items": [{"id": "crank", "name": "Crank"}]}
+\tg.state = {"flags": {}, "vars": {}, "inv": []}
+\tfor it in g.ir["items"]:
+\t\tg.item_by_id[it["id"]] = it
+\tvar o = g.ir["objectives"][0]
+\tif g.journal_text(o) != "OFF": _fail("offered state"); return
+\tg.state["flags"]["heard"] = true
+\tif g.journal_text(o) != "A": _fail("after s1"); return
+\tg.state["inv"].append("crank")
+\tif g.journal_text(o) != "FINAL": _fail("final step entry preferred"); return
+\tg.state["flags"]["open"] = true
+\tif g.journal_text(o) != "R": _fail("resolved"); return
+\tif not g.objective_stage(o)["resolved"]: _fail("resolved stage"); return
+\tg.state = {"flags": {}, "vars": {}, "inv": []}
+\tvar t = g.gate_text("Not yet.", {"all": [{"item": "crank"}, {"flag": "kel_defeated"}]})
+\tif t != "Not yet. (needs: Crank, kel defeated)": _fail("gate text: " + t); return
+\tif g.gate_text("Not yet.", null) != "Not yet.": _fail("null gate must stay bare"); return
+\tg.free()
+\tprint("SELFTEST OK")
+\tquit(0)
+"""
+
+
 def _run_selftest(tmp_path, script, extra=None):
     proj = tmp_path / "proj"
     shutil.copytree(_RUNTIME, proj)
@@ -209,6 +251,11 @@ def test_combat_resolution_and_menu_flow(tmp_path):
 @pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
 def test_overworld_snaps_spawn_to_open(tmp_path):
     _run_selftest(tmp_path, _OVERWORLD_SELFTEST)
+
+
+@pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
+def test_objective_stage_and_gate_text(tmp_path):
+    _run_selftest(tmp_path, _OBJECTIVES_SELFTEST)
 
 
 @pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")

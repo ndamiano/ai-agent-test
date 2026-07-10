@@ -87,6 +87,10 @@ func run_place(place_id, spawn):
 			await g.pause_menu()
 			continue
 
+		if Input.is_action_just_pressed("ui_journal"):
+			await g.journal_panel()
+			continue
+
 		if moving:
 			slide_t = min(1.0, slide_t + delta / _SLIDE_SECS)
 			var p: Vector3 = slide_from.lerp(slide_to, slide_t)

@@ -60,7 +60,7 @@ def test_write_place_walkable_emits_map_stubs(tmp_path, list_key, stub_id):
         "kind": "world_map",
         "layout": {"size": "small",
                    "terrain": {"open": "flagstone", "blocked": "wall"},
-                   "features": [{"id": "f_altar", "kind": "building",
+                   "features": [{"id": "f_altar", "size": "medium",
                                  "label": "Old Altar", "at": "north"}],
                    "exits": [], "connections": []},
         "interactables": [{"id": "h_altar", "label": "altar", "position": {"feature": "f_altar"},
@@ -87,7 +87,7 @@ def test_removing_a_feature_drops_its_stub(tmp_path):
     tools["write_place"]("zone_1", {
         "kind": "world_map",
         "layout": {"size": "small", "terrain": {"open": "grass", "blocked": "wall"},
-                   "features": [{"id": "f_altar", "kind": "building", "label": "Old Altar",
+                   "features": [{"id": "f_altar", "size": "medium", "label": "Old Altar",
                                  "at": "north"}], "exits": [], "connections": []},
         "interactables": [{"id": "h_a", "label": "a", "position": {"feature": "f_altar"},
                            "action": {"type": "examine", "text": "x"}}]})
@@ -97,7 +97,7 @@ def test_removing_a_feature_drops_its_stub(tmp_path):
     tools["write_place"]("zone_1", {
         "kind": "world_map",
         "layout": {"size": "small", "terrain": {"open": "grass", "blocked": "wall"},
-                   "features": [{"id": "f_well", "kind": "fountain", "label": "Stone Well",
+                   "features": [{"id": "f_well", "size": "small", "label": "Stone Well",
                                  "at": "center"}], "exits": [], "connections": []},
         "interactables": [{"id": "h_a", "label": "a", "position": {"feature": "f_well"},
                            "action": {"type": "examine", "text": "x"}}]})

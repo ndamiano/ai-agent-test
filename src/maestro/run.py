@@ -28,7 +28,7 @@ def create_run(user_id: str) -> str:
     return run_id
 
 
-def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
+def run_build(run_id: str, max_steps: int = 1000) -> LoopResult:
     # A spec that demands a real VN (many nodes + branching) needs more steps than a trivial one;
     # the loop is cheap (compile checks lint-only, steps run <15s), so budget for a 50-node game.
     from tools.spec_tools import _emit
@@ -66,6 +66,7 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
         from renpy.fns import generate_images, generate_voices, generate_music
         from maestro.asset_prompts import apply_styled_prompts
         from maestro.engines import compile_for
+        from tools.comfyui_tools import MeshBackendError
         # Styled prompt stage: read the game's identity ONCE (concept + story tone) and compose a
         # style-consistent image prompt per asset stub, SAVED on the manifest so generation, the
         # asset browser, and any HITL regen all read the same inspectable, climbable prompt.
@@ -78,6 +79,8 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
         try:
             generate_images(artifact, state.run_dir,
                             presentation=spec_data.get("presentation", "2d"))
+        except MeshBackendError:
+            raise  # a 3D build without its mesh backend is a broken deliverable — fail loudly
         except Exception:
             pass  # placeholders already cover the build; never fail delivery on art
         try:

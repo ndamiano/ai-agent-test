@@ -396,53 +396,22 @@ def _build_ideogram_tile_workflow(caption: str) -> dict:
     }
 
 
-_MESH_CKPT = "hunyuan_3d_v2.1.safetensors"
+class MeshBackendError(RuntimeError):
+    """The mesh backend a 3D build depends on is missing. Raised so an hd2d build FAILS LOUDLY
+    instead of shipping a hollow deliverable — there is deliberately no fallback generator."""
 
 
-def build_feature_mesh_workflow(image_name: str, octree: int = 256, steps: int = 30) -> dict:
-    """The local Hunyuan3D-2.1 image→mesh graph: a matted feature sprite (already isolated on
-    white) becomes a .glb. The single packaged checkpoint yields MODEL + CLIP_VISION + VAE; the
-    image conditions a DiT sample, the hunyuan VAE decodes a voxel field, and it's marched to a
-    mesh and saved as GLB. octree_resolution trades detail for time/VRAM (256 is a fast preview,
-    384 crisper)."""
-    return {
-        "ck": {"class_type": "ImageOnlyCheckpointLoader",
-               "inputs": {"ckpt_name": _MESH_CKPT}},
-        "im": {"class_type": "LoadImage", "inputs": {"image": image_name}},
-        "en": {"class_type": "CLIPVisionEncode",
-               "inputs": {"clip_vision": ["ck", 1], "image": ["im", 0], "crop": "center"}},
-        "co": {"class_type": "Hunyuan3Dv2Conditioning",
-               "inputs": {"clip_vision_output": ["en", 0]}},
-        "la": {"class_type": "EmptyLatentHunyuan3Dv2",
-               "inputs": {"resolution": 3072, "batch_size": 1}},
-        "ks": {"class_type": "KSampler", "inputs": {
-            "model": ["ck", 0], "seed": int(uuid.uuid4().int % (2**32)), "steps": steps,
-            "cfg": 5.0, "sampler_name": "euler", "scheduler": "simple",
-            "positive": ["co", 0], "negative": ["co", 1], "latent_image": ["la", 0],
-            "denoise": 1.0}},
-        "de": {"class_type": "VAEDecodeHunyuan3D", "inputs": {
-            "samples": ["ks", 0], "vae": ["ck", 2], "num_chunks": 8000,
-            "octree_resolution": octree}},
-        "me": {"class_type": "VoxelToMeshBasic",
-               "inputs": {"voxel": ["de", 0], "threshold": 0.6}},
-        "sv": {"class_type": "SaveGLB",
-               "inputs": {"mesh": ["me", 0], "filename_prefix": "maestro_mesh/feature"}},
-    }
-
-
-def mesh_enabled() -> bool:
-    """Feature-mesh generation is on when a working backend is present: the trellis backend
-    (venv+repo+weights on disk) or a hunyuan endpoint carrying the checkpoint. A missing/broken
-    backend degrades to billboards, never a hard failure mid-build."""
-    if mesh_backend() == "trellis":
-        return True
-    ep = _get_comfyui_endpoint()
-    try:
-        info = _http_get(f"{ep}/object_info/ImageOnlyCheckpointLoader")
-        ckpts = info["ImageOnlyCheckpointLoader"]["input"]["required"]["ckpt_name"][0]
-        return _MESH_CKPT in ckpts
-    except Exception:
-        return False
+def require_trellis() -> None:
+    """Gate a mesh pass on the TRELLIS server actually answering. TRELLIS is THE mesh backend —
+    a 3D game without it is a broken deliverable, so a dead server is a hard, actionable error,
+    never a silent downgrade."""
+    ep = _trellis_endpoint()
+    if not _trellis_healthy(ep):
+        raise MeshBackendError(
+            f"TRELLIS mesh server is not answering at {ep} — an hd2d (3D) build needs it. "
+            f"Launch it from its own venv:\n"
+            f"  <trellis_python> src/tools/trellis_server.py --repo <trellis2 repo> "
+            f"--weights <weights dir>")
 
 
 def _get_trellis_settings() -> dict:
@@ -461,16 +430,6 @@ def _trellis_healthy(endpoint: str) -> bool:
         return False
 
 
-def mesh_backend() -> str:
-    """Which feature-mesh generator to use: 'trellis' only when it's selected AND its standalone
-    HTTP server answers /health, else 'hunyuan'. An unreachable trellis silently downgrades —
-    the build must never hard-fail on an art backend."""
-    cfg = _get_comfyui_settings()
-    if cfg.get("mesh_backend") == "trellis" and _trellis_healthy(_trellis_endpoint()):
-        return "trellis"
-    return "hunyuan"
-
-
 def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir.
     POSTs each sprite to the standalone TRELLIS HTTP server (trellis_server.py — the 4B pipeline
@@ -486,8 +445,20 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     loaded = _llm_get_loaded_model()
     if loaded:
         _llm_unload(loaded)
+
+    def _unload() -> None:
+        try:
+            _http_post_raw(f"{ep}/unload", b"", "application/json", timeout=60)
+        except Exception:
+            pass
+
     done: set = set()
-    for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
+    for i, png in enumerate(sorted(glob.glob(os.path.join(sprite_dir, "*.png")))):
+        # The resident pipeline leaks VRAM across generates (observed live: 70s/mesh at batch
+        # start, 160s+ and CuMesh OOM 500s by mesh ~30 on a 32GB card). A periodic unload
+        # (lazy reload ~45s) resets it — far cheaper than the degradation.
+        if i and i % 10 == 0:
+            _unload()
         slug = os.path.splitext(os.path.basename(png))[0]
         try:
             with open(png, "rb") as f:
@@ -498,45 +469,8 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
             done.add(slug)
         except Exception as e:
             logger.error(f"trellis {slug} failed: {e}")
-    try:
-        _http_post_raw(f"{ep}/unload", b"", "application/json", timeout=60)
-    except Exception:
-        pass
+    _unload()
     return done
-
-
-def run_mesh_job(image_path: str, dest_glb, octree: int = 256) -> bool:
-    """Upload a feature sprite, run the image→mesh graph, and write the resulting .glb to
-    dest_glb. Returns True on success."""
-    import shutil
-    ep = _get_comfyui_endpoint()
-    try:
-        name = upload_image(image_path, endpoint=ep)
-        wf = build_feature_mesh_workflow(name, octree=octree)
-        client_id = str(uuid.uuid4())
-        resp = _http_post(f"{ep}/prompt", {"prompt": wf, "client_id": client_id})
-        pid = resp.get("prompt_id")
-        if not pid:
-            logger.error(f"mesh job not queued: {resp}")
-            return False
-        result = _poll_until_done(ep, pid, timeout=600)
-        for node_output in result.get("outputs", {}).values():
-            for glb in node_output.get("3d", []) or node_output.get("gltf", []) \
-                    or node_output.get("mesh", []):
-                fn = glb["filename"] if isinstance(glb, dict) else glb
-                sub = glb.get("subfolder", "") if isinstance(glb, dict) else ""
-                url = (f"{ep}/view?filename={urllib.parse.quote(fn)}"
-                       f"&subfolder={urllib.parse.quote(sub)}&type=output")
-                data = urllib.request.urlopen(url, timeout=120).read()
-                with open(dest_glb, "wb") as f:
-                    f.write(data)
-                return True
-        logger.error(f"mesh job {pid} produced no glb output: "
-                     f"{list(result.get('outputs', {}).keys())}")
-        return False
-    except Exception as e:
-        logger.error(f"mesh job failed for {image_path}: {e}")
-        return False
 
 
 def build_tile_job(theme: str, role: str = "open", ideogram: bool = True) -> dict:

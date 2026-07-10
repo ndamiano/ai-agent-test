@@ -266,10 +266,9 @@ def test_generate_single_asset_feature_chains_its_mesh_when_hd2d(tmp_path, monke
     monkeypatch.setattr(comfyui_tools, "vram_bracket", contextlib.nullcontext)
     monkeypatch.setattr(comfyui_tools, "run_jobs",
                         lambda jobs: [{"success": True, "saved_paths": [str(src)]} for _ in jobs])
-    monkeypatch.setattr(comfyui_tools, "mesh_enabled", lambda: True)
-    monkeypatch.setattr(comfyui_tools, "mesh_backend", lambda: "hunyuan")
+    monkeypatch.setattr(comfyui_tools, "require_trellis", lambda: None)
     monkeypatch.setattr(fns_mod, "_run_mesh_pass",
-                        lambda meshed, images_dir, backend: {"feature_old_altar"})
+                        lambda meshed, images_dir: {"feature_old_altar"})
 
     inputs = {"places": {"places": {"z1": {
         "kind": "world_map",

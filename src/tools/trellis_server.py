@@ -86,26 +86,53 @@ class TrellisEngine:
         print(f"[trellis] loaded in {time.time() - t0:.1f}s", flush=True)
 
     def generate(self, png_bytes: bytes, ptype: str, texture: int) -> bytes:
-        self._ensure()
-        import o_voxel
+        import torch
         from PIL import Image
+        self._ensure()
         img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-        mesh = self._pipe.run(img, pipeline_type=ptype)[0]
-        mesh.simplify(16777216)
-        glb = o_voxel.postprocess.to_glb(
-            vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
-            coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
-            aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], decimation_target=1000000,
-            texture_size=texture, remesh=True, remesh_band=1, remesh_project=0,
-            verbose=False)
-        with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
-            tmp = f.name
         try:
-            glb.export(tmp, extension_webp=True)
-            with open(tmp, "rb") as fh:
-                return fh.read()
+            return self._generate(img, ptype, texture, decimation=500000)
+        except Exception as e:
+            if "out of memory" not in str(e).lower():
+                raise
+            # The voxel RESOLUTION is the memory driver (1024_cascade OOM'd CuMesh even at
+            # texture 1024 on a fresh 32GB card). Degrade THAT image once — the 512 tier +
+            # small texture — instead of failing it outright.
+            print(f"[trellis] OOM at ptype={ptype} texture={texture}; retrying degraded",
+                  flush=True)
+            return self._generate(img, "512", min(texture, 512), decimation=250000)
+
+    def _generate(self, img, ptype: str, texture: int, decimation: int) -> bytes:
+        import gc
+        import torch
+        import o_voxel
+        mesh = glb = None
+        try:
+            with torch.inference_mode():
+                mesh = self._pipe.run(img, pipeline_type=ptype)[0]
+                mesh.simplify(16777216)
+                glb = o_voxel.postprocess.to_glb(
+                    vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
+                    coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
+                    aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], decimation_target=decimation,
+                    texture_size=texture, remesh=True, remesh_band=1, remesh_project=0,
+                    verbose=False)
+            with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
+                tmp = f.name
+            try:
+                glb.export(tmp, extension_webp=True)
+                with open(tmp, "rb") as fh:
+                    return fh.read()
+            finally:
+                os.unlink(tmp)
         finally:
-            os.unlink(tmp)
+            # Two allocators share this card: torch's caching allocator hoards freed blocks it
+            # never returns to CUDA, and CuMesh/o_voxel allocate RAW CUDA memory outside torch —
+            # across a resident batch torch's cache grew until CuMesh OOM'd (observed live at
+            # ~30 meshes, 70s->160s/mesh). Drop the per-generate refs and give the cache back.
+            del mesh, glb
+            gc.collect()
+            torch.cuda.empty_cache()
 
     def unload(self):
         if self._pipe is None:
@@ -155,8 +182,11 @@ def main():
     ap.add_argument("--weights", required=True)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8189)
-    ap.add_argument("--ptype", default="1024_cascade")
-    ap.add_argument("--texture", type=int, default=2048)
+    # Feature/prop objects render 1-3 world units tall under a low chibi camera: the 512 voxel
+    # tier + a 1K texture is visually indistinguishable there, ~3x faster, and fits CuMesh's
+    # post-processing beside the resident pipeline (1024_cascade + 2K OOM'd a 32GB card).
+    ap.add_argument("--ptype", default="512")
+    ap.add_argument("--texture", type=int, default=1024)
     args = ap.parse_args()
 
     import uvicorn

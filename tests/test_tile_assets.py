@@ -203,53 +203,16 @@ def test_make_seamless_tile_wraps_and_downscales(tmp_path):
         assert abs(t[0] - b[0]) < 30, f"vertical wrap seam at col {i}: {t} vs {b}"
 
 
-def test_build_feature_mesh_workflow_is_valid_graph():
-    from tools.comfyui_tools import build_feature_mesh_workflow, _MESH_CKPT
-    wf = build_feature_mesh_workflow("wagon.png", octree=256, steps=30)
-    kinds = {v["class_type"] for v in wf.values()}
-    assert {"ImageOnlyCheckpointLoader", "CLIPVisionEncode", "Hunyuan3Dv2Conditioning",
-            "KSampler", "VAEDecodeHunyuan3D", "VoxelToMeshBasic", "SaveGLB"} <= kinds
-    ck = next(v for v in wf.values() if v["class_type"] == "ImageOnlyCheckpointLoader")
-    assert ck["inputs"]["ckpt_name"] == _MESH_CKPT
-    im = next(v for v in wf.values() if v["class_type"] == "LoadImage")
-    assert im["inputs"]["image"] == "wagon.png"
-    dec = next(v for v in wf.values() if v["class_type"] == "VAEDecodeHunyuan3D")
-    assert dec["inputs"]["octree_resolution"] == 256
-    keys = set(wf)
-    for node in wf.values():
-        for v in node["inputs"].values():
-            if isinstance(v, list) and len(v) == 2 and isinstance(v[0], str):
-                assert v[0] in keys
-
-
-def test_mesh_enabled_gates_on_main_endpoint_checkpoint(monkeypatch):
+def test_require_trellis_raises_loudly_when_server_down(monkeypatch):
+    # There is deliberately NO fallback mesh generator: a dead trellis produced 34 silent
+    # gray shape-only meshes on a live build. The error must be actionable (launch command).
+    import pytest
     import tools.comfyui_tools as ct
-    monkeypatch.setattr(ct, "mesh_backend", lambda: "hunyuan")
-    monkeypatch.setattr(ct, "_get_comfyui_endpoint", lambda: "http://main:8188")
-    # checkpoint present on the single endpoint -> enabled
-    monkeypatch.setattr(ct, "_http_get", lambda url: {
-        "ImageOnlyCheckpointLoader": {"input": {"required": {
-            "ckpt_name": [[ct._MESH_CKPT], {}]}}}})
-    assert ct.mesh_enabled() is True
-    # endpoint unreachable / node absent -> degrades to billboards, never raises
-    def boom(url):
-        raise OSError("connection refused")
-    monkeypatch.setattr(ct, "_http_get", boom)
-    assert ct.mesh_enabled() is False
-
-
-def test_mesh_backend_selects_trellis_only_when_server_healthy(monkeypatch):
-    import tools.comfyui_tools as ct
-    # trellis requested but server unreachable -> falls back to hunyuan
-    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {"mesh_backend": "trellis"})
     monkeypatch.setattr(ct, "_trellis_healthy", lambda ep: False)
-    assert ct.mesh_backend() == "hunyuan"
-    # server answers /health -> trellis engages
+    with pytest.raises(ct.MeshBackendError, match="trellis_server"):
+        ct.require_trellis()
     monkeypatch.setattr(ct, "_trellis_healthy", lambda ep: True)
-    assert ct.mesh_backend() == "trellis"
-    # default (no backend key) is hunyuan even when a server is up
-    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {})
-    assert ct.mesh_backend() == "hunyuan"
+    ct.require_trellis()   # healthy -> no raise
 
 
 def test_run_trellis_batch_posts_sprites_and_writes_glbs(monkeypatch, tmp_path):

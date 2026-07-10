@@ -18,8 +18,7 @@
   },
   "comfyui": {
     "endpoint": "http://localhost:8188",
-    "vram_management": false,
-    "mesh_backend": "hunyuan"
+    "vram_management": false
   },
   "tts": {
     "endpoint": "http://localhost:8880",

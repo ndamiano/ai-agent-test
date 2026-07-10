@@ -269,40 +269,42 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
                     break
 
     # --- mesh pass (outside the vram bracket — the mesh model holds its own VRAM): turn each
-    # matted feature sprite into a .glb the hd2d presenter stands in the world as real geometry.
-    # ONLY for an hd2d (3D) game — a 2d build renders the sprites flat and never loads a mesh, so
-    # generating them would be wasted GPU. Runs last so a mesh failure never blocks the build. -----
+    # matted sprite into a .glb the hd2d presenter stands in the world as real geometry. ONLY for
+    # an hd2d (3D) game — a 2d build renders the sprites flat and never loads a mesh. TRELLIS is
+    # THE backend: it missing or a mesh failing is a HARD error (MeshBackendError), never a silent
+    # downgrade — a 3D game full of billboards is a broken deliverable shipped quietly. -----------
     mesh_total = mesh_done = 0
-    if presentation == "hd2d" and manifest.get("features"):
-        from tools.comfyui_tools import mesh_enabled, mesh_backend
-        meshed = [f for f in generated if f.startswith("feature_") and f.endswith(".png")]
+    if presentation == "hd2d":
+        from tools.comfyui_tools import MeshBackendError, require_trellis
+        # feature_* (layout set pieces) AND prop_* (examine-hotspot objects): both stand in the
+        # world as physical things — a 2D prop sprite next to real geometry reads as a bug.
+        # marker_* (signpost/banner) stay flat: they are signage, not objects.
+        meshed = [f for f in generated if f.startswith(("feature_", "prop_"))
+                  and f.endswith(".png")]
         mesh_total = len(meshed)
-        if not mesh_enabled():
-            # The user asked for 3D; without a backend every feature degrades to a flat billboard.
-            # That's a hollow 3D game, so say so loudly rather than fail silently.
-            print(f"    [images]  WARNING: hd2d (3D) requested but NO mesh backend configured — "
-                  f"{mesh_total} feature(s) will render as flat billboards, not 3D geometry")
-        elif meshed:
-            backend = mesh_backend()
-            print(f"    [images]  generating {mesh_total} feature mesh(es) via {backend}")
-            done = _run_mesh_pass(meshed, images_dir, backend)
-            # One retry for the stragglers: the mesh backends fail stochastically (VRAM
-            # contention, a bad seed), and an all-billboard 3D game is a broken deliverable.
+        if meshed:
+            require_trellis()
+            print(f"    [images]  generating {mesh_total} mesh(es) via trellis")
+            done = _run_mesh_pass(meshed, images_dir)
+            # One retry for the stragglers: mesh generation fails stochastically (VRAM
+            # contention, a bad seed).
             missing = [f for f in meshed if f[:-4] not in done]
             if missing:
                 print(f"    [images]  {len(missing)} mesh(es) failed; retrying once")
-                done |= _run_mesh_pass(missing, images_dir, backend)
+                done |= _run_mesh_pass(missing, images_dir)
             for fpng in meshed:
                 slug = fpng[:-4]
                 if slug in done:
                     generated.append(f"{slug}.glb")
                     print(f"    [images]  ok: {slug}.glb")
-                else:
-                    print(f"    [images]  mesh FAILED after retry, billboard fallback: {fpng}")
             mesh_done = len(done)
-            print(f"    [images]  mesh coverage {mesh_done}/{mesh_total}"
-                  + (f" — {mesh_total - mesh_done} fall back to billboards"
-                     if mesh_done < mesh_total else ""))
+            still = [f for f in meshed if f[:-4] not in done]
+            if still:
+                raise MeshBackendError(
+                    f"{len(still)} mesh(es) failed after retry: {still[:6]} — refusing to ship "
+                    f"a 3D game with billboard holes. Check the trellis server log and re-run "
+                    f"generation.")
+            print(f"    [images]  mesh coverage {mesh_done}/{mesh_total}")
 
     return {"status": "ok", "generated": generated, "failed": failed,
             "mesh_total": mesh_total, "mesh_done": mesh_done}
@@ -385,26 +387,36 @@ def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
     if title_card.get("image_file") == filename:
         return _run_one("title_card", build_title_card_job(_p(title_card)))
 
+    def _mesh_one(result: Dict) -> Dict:
+        """Chain the regenerated sprite's mesh (hd2d): trellis required, a failure is an error
+        result — the asset browser must show the miss, not quietly keep the stale/absent glb."""
+        from tools.comfyui_tools import require_trellis
+        require_trellis()
+        done = _run_mesh_pass([filename], images_dir)
+        result["mesh_total"] = 1
+        result["mesh_done"] = 1 if filename[:-4] in done else 0
+        if result["mesh_done"]:
+            result["generated"].append(f"{filename[:-4]}.glb")
+        else:
+            result["status"] = "error"
+            result["error"] = (f"mesh generation failed for {filename} — check the trellis "
+                               f"server log and retry")
+        return result
+
     for mk in manifest.get("markers", []):
         if mk["image_file"] == filename:
-            return _run_one("token", build_item_job(_p(mk)))
+            result = _run_one("token", build_item_job(_p(mk)))
+            if presentation == "hd2d" and filename.startswith("prop_") \
+                    and filename in result.get("generated", []):
+                result = _mesh_one(result)
+            return result
 
     for ft in manifest.get("features", []):
         if ft["image_file"] != filename:
             continue
         result = _run_one("token", build_feature_job(ft.get("kind", "building"), _p(ft)))
-        if presentation == "hd2d" and filename in generated:
-            from tools.comfyui_tools import mesh_enabled, mesh_backend
-            if mesh_enabled():
-                done = _run_mesh_pass([filename], images_dir, mesh_backend())
-                result["mesh_total"] = 1
-                if filename[:-4] in done:
-                    result["generated"].append(f"{filename[:-4]}.glb")
-                    result["mesh_done"] = 1
-                else:
-                    result["mesh_done"] = 0
-            else:
-                result["mesh_total"], result["mesh_done"] = 1, 0
+        if presentation == "hd2d" and filename in result.get("generated", []):
+            result = _mesh_one(result)
         return result
 
     for t in manifest.get("tiles", []):
@@ -428,29 +440,22 @@ def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
     return {"status": "error", "error": f"unknown asset filename {filename!r}"}
 
 
-def _run_mesh_pass(meshed: List[str], images_dir: Path, backend: str) -> set:
-    """Mesh each feature_<slug>.png in `meshed` → feature_<slug>.glb beside it; return the set of
-    slugs that produced a glb. TRELLIS posts each sprite to its resident HTTP server (its .glb
-    carries its own PBR texture); hunyuan runs one job per image."""
-    from tools.comfyui_tools import run_mesh_job, run_trellis_batch
+def _run_mesh_pass(meshed: List[str], images_dir: Path) -> set:
+    """Mesh each <slug>.png in `meshed` → <slug>.glb beside it via TRELLIS (each .glb carries its
+    own PBR texture); return the set of slugs that produced a glb."""
+    from tools.comfyui_tools import run_trellis_batch
     done: set = set()
-    if backend == "trellis":
-        stage = images_dir / "_mesh_in"
-        stage.mkdir(exist_ok=True)
-        for fpng in meshed:
-            shutil.copy2(images_dir / fpng, stage / fpng)
-        produced = run_trellis_batch(str(stage), str(stage))
-        for fpng in meshed:
-            slug = fpng[:-4]
-            if slug in produced and (stage / f"{slug}.glb").exists():
-                shutil.copy2(stage / f"{slug}.glb", images_dir / f"{slug}.glb")
-                done.add(slug)
-        shutil.rmtree(stage, ignore_errors=True)
-    else:
-        for fpng in meshed:
-            slug = fpng[:-4]
-            if run_mesh_job(str(images_dir / fpng), str(images_dir / f"{slug}.glb")):
-                done.add(slug)
+    stage = images_dir / "_mesh_in"
+    stage.mkdir(exist_ok=True)
+    for fpng in meshed:
+        shutil.copy2(images_dir / fpng, stage / fpng)
+    produced = run_trellis_batch(str(stage), str(stage))
+    for fpng in meshed:
+        slug = fpng[:-4]
+        if slug in produced and (stage / f"{slug}.glb").exists():
+            shutil.copy2(stage / f"{slug}.glb", images_dir / f"{slug}.glb")
+            done.add(slug)
+    shutil.rmtree(stage, ignore_errors=True)
     return done
 
 

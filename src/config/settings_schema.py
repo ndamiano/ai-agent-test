@@ -34,18 +34,13 @@ class ClineSettings(BaseModel):
 class ComfyUISettings(BaseModel):
     endpoint: str = Field("http://localhost:8188", min_length=1)
     vram_management: bool = Field(False)
-    # Feature-mesh backend: "hunyuan" (ComfyUI, fast, shape-only — the sprite is projected on
-    # for colour) or "trellis" (standalone TRELLIS.2-4B, slower, native PBR textures). Bake-off
-    # winner is trellis; hunyuan stays the fast fallback and the default. Requires `trellis`
-    # below when set to "trellis".
-    mesh_backend: str = Field("hunyuan")
 
 
 class TrellisSettings(BaseModel):
     """TRELLIS.2-4B runs as a standalone HTTP server (tools/trellis_server.py, launched by its own
-    cu128 venv + prebuilt Blackwell CUDA wheels); maestro POSTs sprites to it. The trellis mesh
-    backend engages only when this endpoint answers /health; otherwise the build silently falls
-    back to hunyuan/billboards. The repo/weights paths live on the server's launch args, not here."""
+    cu128 venv + prebuilt Blackwell CUDA wheels); maestro POSTs sprites to it. It is THE mesh
+    backend: an hd2d build FAILS LOUDLY (MeshBackendError) when this endpoint does not answer
+    /health — no silent downgrade. The repo/weights paths live on the server's launch args."""
     endpoint: str = Field("http://localhost:8189", min_length=1)
 
 

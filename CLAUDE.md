@@ -284,12 +284,18 @@ src/
                 time through tile_refused() and rerolls the seed (up to 3). `ideogram=False`
                 falls back to the lab's role-aware DreamShaper formulas (stylized-tileset open
                 ground, dense-growth organic blocked, FRONT-FACING masonry for wall-ish themes —
-                a top-down wall renders as ground). Everything runs on the single
-                comfyui.endpoint — the ideogram4 + Hunyuan3D stacks live on that one box. The presenter samples each cell's
+                a top-down wall renders as ground). 2D image gen runs on the single
+                comfyui.endpoint (the ideogram4 stack lives on that box); feature/prop MESHES run
+                on the standalone TRELLIS.2 HTTP server (tools/trellis_server.py, its own venv,
+                settings.trellis.endpoint) — TRELLIS is THE mesh backend: an hd2d build FAILS
+                LOUDLY (MeshBackendError) when it's down or a mesh fails after retry, never a
+                silent downgrade (a dead server once shipped 34 gray shape-only meshes
+                quietly). The presenter samples each cell's
                 REGION of the seamless texture (3×3-cell wrap) so terrain flows across cells,
                 draws the avatar and talk-NPCs as generated chibi TOKENS (<id>_token.png),
-                move/win/examine hotspots as generated marker assets (signpost/banner/prop),
-                take/use hotspots as item icons, keeps labels visible only near the avatar,
+                move/win/combat hotspots as generated marker assets (signpost/banner/standard),
+                examine/use hotspots as their prop MESH when its .glb exists (billboard icon
+                fallback), take hotspots as item icons, keeps labels visible only near the avatar,
                 and colour-fills when art is absent. Player chrome lives in the runtime:
                 title screen (title_card + New Game/Continue/Quit), Esc pause menu with
                 save-anywhere (user://save.json: state + place + avatar cell), ending overlay

@@ -50,9 +50,12 @@ file makes the art good; that file catches when it isn't.
       pipeline rewrite.
 
 ## T3 — Known bad spots (specific, high-value)
-- [ ] **Map generation redesign** — current map/tile output is garbage. Redesign around
-      zone-requirements + a biome palette (mechanical OR palette, never free-form) + global geography;
-      WFC scoped to fill, not backbone. (See the map-gen redesign direction — this is its home.)
+- [x] **Map generation redesign** — DONE (layout/rasterization): structure-first generators keyed
+      on place kind (town road+parcel, interior room-graph, world_map terrain-fill) + the two-tier
+      furniture-list model (a feature houses an interaction OR the LLM-derived per-place furniture
+      list fills to density — never free-form), footprints sized by declared size and
+      overlap-forbidden by construction, `map_builder.render_ascii` debug view. Global geography /
+      edge-matched cross-zone alignment stays parked; WFC rejected as backbone.
 - [ ] **Asset monotony → locations-with-states** — the same-place-every-scene problem is addressed by
       IR 0.2 first-class `locations` with img2img'd state variants (tracked in `docs/ROADMAP.md` Build
       quality; cross-ref, don't duplicate the work here).

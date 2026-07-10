@@ -10,7 +10,7 @@ first if you need to see the grid or its feature/exit ids. Match the defect the 
 - "is a point-and-click 'room', but this is a WALKABLE game": rewrite that place as a tile zone —
       write_place(place_id="<the room>", content={"kind": "world_map",
                   "layout": {...}, "interactables": [...]})
-  give it a `layout` (features / exits / connections) and give every interactable a
+  give it a `layout` (features / exits) and give every interactable a
   {"feature": "<id>"} or {"cell": {"x": .., "y": ..}} position — NEVER a {"rect": ...}.
 
 - interactable "outside the NxM grid" / "on a blocked tile" / two on the same tile: move it onto an

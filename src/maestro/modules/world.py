@@ -506,13 +506,11 @@ SKEL_RPG = (
     '        "terrain": {"open": "<walkable ground, e.g. mossy earth>",\n'
     '                    "blocked": "<impassable material, e.g. bone-pale cliff>"},\n'
     '        "features": [\n'
-    '          {"id": "f_<slug>", "kind": "building", "at": "northwest",\n'
-    '           "theme": "<what it looks like>", "label": "<display name>"},\n'
-    '          {"id": "f_<slug2>", "kind": "clearing", "at": "center", "label": "<name>"}\n'
+    '          {"id": "f_<slug>", "size": "large", "at": "northwest",\n'
+    '           "label": "<display name>", "theme": "<what it looks like>"},\n'
+    '          {"id": "f_<slug2>", "size": "area", "at": "center", "label": "<name>"}\n'
     '        ],\n'
-    '        "exits": [{"id": "x_south", "edge": "south"}],\n'
-    '        "connections": [{"from": "x_south", "to": "f_<slug2>"},\n'
-    '                        {"from": "f_<slug2>", "to": "f_<slug>"}]\n'
+    '        "exits": [{"id": "x_south", "edge": "south"}]\n'
     '      },\n'
     '      "interactables": [\n'
     '        {"id": "h_<enemy>", "label": "<short noun>",\n'
@@ -526,27 +524,45 @@ SKEL_RPG = (
     '    }\n'
     '  }\n'
     '}\n'
-    '// You PLAN the map; a deterministic builder places every tile and carves the roads —\n'
-    '//   connectivity is guaranteed, so think like a town plan: what exists, in which of the\n'
-    '//   nine regions (northwest..center..southeast), and what connects to what.\n'
-    '// feature kinds: building, fountain, camp, market_stall, rock_outcrop, tree_clump,\n'
-    '//   clearing, gate. 2-5 features per zone. Every exit connects to something.\n'
+    '// You PLAN the map; a deterministic builder lays the structure for the kind (town =\n'
+    '//   roads + building parcels, interior = rooms + doorways, world_map = wilds + a path\n'
+    '//   spine) and guarantees everything is reachable. You never paint tiles.\n'
+    '// Declare a feature ONLY where an interactable will stand — ambient scenery is furnished\n'
+    '//   later from a per-zone furniture list, never hand-placed here.\n'
+    '// feature size sets its footprint: spot (one tile: a gate, a signpost) | small (a well,\n'
+    '//   a stall) | medium (a hut, a wagon) | large (a real building — an inn, a keep) |\n'
+    '//   area (an open patch: a plaza, a glade).\n'
     '// terrain/theme strings each become ONE generated texture: make open vs blocked CONTRAST\n'
     '//   in material, and REUSE the same strings across zones for matching terrain.\n'
     '// interactable position = {"feature": "<id>"} (its doorstep); a move\'s spawn names the\n'
     '//   arrival feature/exit in the TARGET zone. Give each zone a move BACK the way the\n'
     '//   player came — no one-way strandings.\n'
-    '// Set the start ONCE with set_places_meta(start_spawn={"feature-free cell is fine"}) — or\n'
-    '//   any open tile; the start zone\'s gate anchor is the natural choice.\n'
+    '// Set the start ONCE with set_places_meta(start_spawn={"cell": {...}}) — any open tile;\n'
+    '//   the start zone\'s gate anchor is the natural choice.\n'
     '// TRIGGERING: walking ONTO a move/start_combat tile fires it; talk/examine/take/use/win\n'
     '//   fire on E while standing on the tile.\n'
     '// action.type: examine {text}; take {item,text?}; talk {node}; use {clauses/fallback};\n'
     '//   win {requires?}; move {target, spawn:{feature}}; start_combat {encounter}.\n'
 )
 
+SKEL_FURNITURE = (
+    '[\n'
+    '  {"object": "<a concrete thing that belongs in this zone>", "size": "small",\n'
+    '   "flavor": "<one physical fact — material, condition, what it is for>"},\n'
+    '  {"object": "<another>", "size": "medium"}\n'
+    ']\n'
+    '// 4-8 entries. size is relative to the avatar: small (a barrel, an anvil) |\n'
+    '//   medium (a cart, a stall) | large (a shed, a moored boat).\n'
+    '// flavor is OPTIONAL — give it to the 2-3 objects worth examining, omit the rest.\n'
+    '// Objects only — never a person, never a mood word.\n'
+    '// REUSE the same object name across zones for the same thing (each distinct name is\n'
+    '//   generated as one sprite, shared everywhere it appears).'
+)
+
 _PLACE_MODE_TOOLS = frozenset({"write_component", "write_place", "edit_place", "add_interactable",
                                "read_place", "set_places_meta", "read_component", "validate",
                                "request_review"})
+_T_FURNITURE = frozenset({"set_furniture", "read_place"})
 _T_MIN_PLACES = frozenset({"write_component", "write_place"})
 _T_INTERACT = frozenset({"read_place", "add_interactable", "edit_place"})
 _T_REACH = frozenset({"read_place", "add_interactable", "edit_place", "read_component"})
@@ -592,6 +608,48 @@ def _d_min_places(chk, m, ctx):
                               noun="place") if gap > 0 else []
 
 
+def _d_furniture(chk, m, ctx):
+    """A walkable layout zone with no furniture list reads as an empty stage — the model
+    DERIVES the ambient objects that make it read as itself (two-tier rule: a feature exists
+    for an interaction, furniture exists for verisimilitude; nothing is free-form)."""
+    pc = ctx.artifact.get("places") or {}
+    errs = []
+    for pid in pc.get("place_ids") or []:
+        place = (pc.get("places") or {}).get(pid)
+        if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS \
+                or not isinstance(place.get("layout"), dict):
+            continue
+        if place["layout"].get("furniture"):
+            continue
+        feats = [f.get("label") or f.get("id") for f in place["layout"].get("features") or []
+                 if isinstance(f, dict)]
+        errs.append(Error(type=chk.tier, code=chk.code, component="places", path=pid, message=(
+            f"walkable zone {pid!r} has no furniture list — derive the ambient objects a "
+            f"visitor would see standing there and call set_furniture(place_id={pid!r}, "
+            f"furniture=[...]). Its declared features (do NOT repeat them): {feats}.")))
+    return errs
+
+
+def _furniture_context(module, rd: Dict) -> str:
+    from maestro.modules import bible
+    art = rd.get("artifact") or {}
+    lines = cr.premise_block(rd) + bible.bible_block(art) + cr.target_block(rd)
+    target = rd.get("target")
+    pid = target.path if target is not None else None
+    place = ((art.get("places") or {}).get("places") or {}).get(pid) or {}
+    lay = place.get("layout") or {}
+    terrain = lay.get("terrain") or {}
+    lines += ["", f"THE ZONE — {pid}: a {place.get('kind')}, ground '{terrain.get('open')}', "
+                  f"blocked by '{terrain.get('blocked')}'"]
+    feats = [f"{f.get('label')} ({f.get('size')})" for f in lay.get("features") or []
+             if isinstance(f, dict)]
+    if feats:
+        lines += [f"  already placed (do NOT repeat): {', '.join(feats)}"]
+    lines += cr.tail_block(rd)
+    lines += ["", "Call set_furniture once with the full list."]
+    return "\n".join(lines)
+
+
 def _d_rpg_layout(chk, m, ctx):
     art = ctx.artifact
     errs = []
@@ -606,9 +664,9 @@ def _d_rpg_layout(chk, m, ctx):
                 type=chk.tier, code=chk.code, component="places", path=room,
                 message=(f"place {room!r} is a point-and-click 'room', but this is a WALKABLE game "
                          f"(the player moves an avatar with WASD). Rewrite it with write_place as "
-                         f"kind 'world_map'/'town'/'interior': add a \"tiles\":{{\"legend\":..,"
-                         f"\"rows\":[\"..\"]}} grid and give every interactable a "
-                         f"{{\"cell\":{{\"x\":..,\"y\":..}}}} tile position (not a rect).")))
+                         f"kind 'world_map'/'town'/'interior': give it a \"layout\" (size/terrain/"
+                         f"features/exits — the builder lays every tile) and give every "
+                         f"interactable a {{\"feature\": \"<layout id>\"}} position (not a rect).")))
     # Walkable-map spatial integrity (grid, no overlap, not-on-wall, spawn-reachable). Returns None
     # for PnC. v_places only runs on a whole-component write; the loop authors per-place, so this is
     # what actually GATES a tile map. Surface before crossref/compile.
@@ -695,7 +753,8 @@ class World(Module):
     projector = staticmethod(place_view)
     projected = True
     emits_compile = True   # a realization terminal: `places` stays writable to the end
-    tool_names = ("write_place", "edit_place", "add_interactable", "read_place", "set_places_meta")
+    tool_names = ("write_place", "edit_place", "add_interactable", "read_place",
+                  "set_places_meta", "set_furniture")
 
     # Every step's skeleton is style-dependent (tiles for a walkable/combat game, pixels for PnC);
     # author steps also swap the prompt. Collect the batch, then the crossref/compile terminal runs
@@ -705,6 +764,8 @@ class World(Module):
             ctx.artifact, "places.start_place")), prompt=_w_author_prompt, skeleton=_w_skeleton),
         Check("min_places", _d_min_places, prompt=_w_author_prompt, skeleton=_w_skeleton,
               tools=_T_MIN_PLACES, guard=_PLACE_GUARD),
+        Check("furniture", _d_furniture, prompt="place_furniture_add.txt",
+              skeleton=SKEL_FURNITURE, tools=_T_FURNITURE, context=_furniture_context),
         Check("start_authored", _d_start_authored, job="fix", prompt="world_start_fix.txt",
               skeleton=_w_skeleton, tools=_T_LAYOUT, context=cr.ctx_structural),
         Check("each_place_min_interactables", lambda chk, m, ctx: m.wrap(

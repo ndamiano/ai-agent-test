@@ -257,10 +257,24 @@ TOOL_SCHEMAS: List[Dict] = [
                 "interactables: [{id, label, position, action:{type, ...}}], "
                 "background: <asset id> (ROOM only), "
                 "layout: {size:'small'|'medium'|'large', terrain:{open, blocked}, features:[{id, "
-                "kind, at:<region>, theme?, label?}], exits:[{id, edge}], connections:[{from, to}]} "
-                "(RPG only). A position is {rect:{x,y,w,h}} for a room or {feature:'<layout id>'} "
+                "size:'spot'|'small'|'medium'|'large'|'area', at:<region>, label, theme?}], "
+                "exits:[{id, edge}]} (RPG only — one feature per spot an interactable stands "
+                "at). A position is {rect:{x,y,w,h}} for a room or {feature:'<layout id>'} "
                 "for an RPG zone."},
         }, "required": ["place_id", "content"]}}},
+    {"type": "function", "function": {
+        "name": "set_furniture",
+        "description": "Declare ONE walkable zone's ambient furniture — the concrete objects "
+                       "that make it read as what it is (a smithy gets an anvil, a quenching "
+                       "barrel...). Code places them on the map; an entry with `flavor` becomes "
+                       "an examine hotspot. Replaces the zone's existing list.",
+        "parameters": {"type": "object", "properties": {
+            "place_id": {"type": "string", "description": "the walkable zone to furnish"},
+            "furniture": {"type": "array", "items": {"type": "object"}, "description":
+                "4-8 entries of {object: '<a concrete thing>', size: 'small'|'medium'|'large', "
+                "flavor?: '<one physical fact shown on examine>'} — objects only, never a "
+                "person or a mood"},
+        }, "required": ["place_id", "furniture"]}}},
     {"type": "function", "function": {
         "name": "edit_place",
         "description": "Patch ONE interactable in a place without rewriting it: replace its "
@@ -944,6 +958,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         content = _coerce_json(content)
         if isinstance(content, dict) and isinstance(content.get("layout"), dict):
             from maestro.map_builder import build_tiles, v_layout
+            content["layout"]["kind"] = content.get("kind")   # picks the structure generator
             lerr = v_layout(content["layout"])
             if lerr:
                 return {"ok": False, "error": lerr}
@@ -988,6 +1003,65 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         _resolve_feature_spawns(places)
         state.write_component("places", places)
         return {"ok": True, "place_id": place_id}
+
+    def set_furniture(place_id: str, furniture) -> Dict:
+        """Declare ONE walkable zone's ambient furniture list and re-rasterize its map: code
+        places each object (density-controlled, never over a feature/road/anchor — features
+        and their anchors stay exactly where they were), and each entry with a `flavor` gains
+        an examine hotspot at its doorstep. Replaces the zone's existing list."""
+        _require_frozen()
+        if _locked("places"):
+            return _locked_error("places")
+        furniture = _coerce_json(furniture)
+        from maestro.map_builder import build_tiles, snap_to_open, v_furniture
+        err = v_furniture(furniture)
+        if err:
+            return {"ok": False, "error": err}
+        places = state.read_component("places") or {}
+        place = (places.get("places") or {}).get(place_id)
+        if place is None:
+            return {"ok": False, "error": f"no place {place_id!r}"}
+        if place.get("kind") not in ("world_map", "town", "interior") \
+                or not isinstance(place.get("layout"), dict):
+            return {"ok": False, "error":
+                    f"{place_id!r} is not a walkable layout zone — furniture applies only to "
+                    f"world_map/town/interior places authored as a layout"}
+        place["layout"]["furniture"] = furniture
+        built = build_tiles(place_id, place["layout"])
+        place["tiles"] = {"rows": built["rows"], "legend": built["legend"]}
+        place["anchors"] = built["anchors"]
+        place["footprints"] = built["footprints"]
+        # placements shifted the open set: re-snap any hotspot a new object now covers
+        inter = place.setdefault("interactables", [])
+        taken: set = set()
+        for h in inter:
+            cell = (h.get("position") or {}).get("cell") if isinstance(h, dict) else None
+            if isinstance(cell, dict) and isinstance(cell.get("x"), int) \
+                    and isinstance(cell.get("y"), int):
+                spot = snap_to_open(place["tiles"], cell["x"], cell["y"], taken) \
+                    or (cell["x"], cell["y"])
+                h["position"] = {"cell": {"x": spot[0], "y": spot[1]}}
+                taken.add(spot)
+        # cheap examine flavor: one hotspot at the object's first placement's doorstep
+        existing = {h.get("id") for h in inter if isinstance(h, dict)}
+        for f in furniture:
+            if not f.get("flavor"):
+                continue
+            fid = next((k for k in sorted(built["footprints"])
+                        if built["footprints"][k].get("label") == f["object"]), None)
+            hid = "h_" + "".join(c if c.isalnum() else "_" for c in f["object"].lower())
+            if fid is None or hid in existing:
+                continue
+            a = built["anchors"][fid]
+            spot = snap_to_open(place["tiles"], a["x"], a["y"], taken) or (a["x"], a["y"])
+            taken.add(spot)
+            inter.append({"id": hid, "label": f["object"],
+                          "position": {"cell": {"x": spot[0], "y": spot[1]}},
+                          "action": {"type": "examine", "text": f["flavor"]}})
+            existing.add(hid)
+        _resolve_feature_spawns(places)
+        state.write_component("places", places)
+        return {"ok": True, "place_id": place_id, "placed": sorted(built["footprints"])}
 
     def set_places_meta(goal=None, flags=None, variables=None, start_place=None,
                         start_spawn=None, **ignored) -> Dict:
@@ -1345,6 +1419,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "edit_place": edit_place,
         "add_interactable": add_interactable,
         "read_place": read_place,
+        "set_furniture": set_furniture,
         "set_places_meta": set_places_meta,
         "set_combat_meta": set_combat_meta,
         "write_ability": write_ability,

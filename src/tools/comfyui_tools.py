@@ -138,12 +138,11 @@ def build_token_job(char_data: dict) -> dict:
     """Return a job for a character's OVERWORLD TOKEN — the walkable-map avatar/NPC marker.
     A full-body VN portrait shrunk to one tile reads as a floating cutout; a token is drawn
     for that scale: chibi proportions, bold shapes, square frame. Rides the character workflow
-    (BiRefNet matting included) so it lands transparent like the sprites."""
+    (BiRefNet matting included) so it lands transparent like the sprites. The description is the
+    SAVED styled prompt (the chibi framing prose lives in asset_token.txt, the climbable
+    template); it leads the positive, the builder adds only the quality tags."""
     description = (char_data.get("description") or char_data.get("name") or "").strip()
-    positive = (f"{_QUALITY}. Chibi-style full-body game character token of {description} "
-                f"Small cute proportions with a large head, standing facing the viewer, "
-                f"simple bold shapes readable at a small size, clean thick lineart, flat "
-                f"cel shading, against a plain white background.")
+    positive = f"{description} — {_QUALITY}"
     wf = _build_character_workflow(
         _load_workflow(_TXT2IMG_CHARACTER_WORKFLOW_PATH), positive, _CHAR_NEGATIVE)
     wf["28"]["inputs"]["width"] = 832
@@ -240,12 +239,14 @@ _ITEM_NEGATIVE = (
 
 
 def build_item_job(description: str) -> dict:
-    """Return a {prompt, workflow_override} job dict for ONE inventory item icon: a single
-    centered object on a plain background (WAI Illustrious, square — icons render small in the
-    inventory bar, so the object must fill the frame, never sit in a scene)."""
-    positive = (f"{_BG_QUALITY}, game item icon, a single {description}, one object only, "
-                f"centered composition, plain simple background, no scenery, still life, "
-                f"clean detailed rendering")
+    """Return a {prompt, workflow_override} job dict for ONE inventory item icon (WAI
+    Illustrious, square — icons render small in the inventory bar, so the object must fill the
+    frame, never sit in a scene). `description` is the manifest's SAVED styled prompt and IS the
+    positive, verbatim: the flux workflow's T5 encoder reads prose as-is — danbooru quality tags
+    and negative prompts are tag-model (Illustrious) culture and off-distribution here. The
+    tag-model era taught the hard lesson: embedding the prose mid-phrase ("a single {X}, one
+    object only, ...") or salting it with tags drove subject drift."""
+    positive = description
     # txt2img_item = the background workflow + BiRefNet matting: these render ON maps and in
     # the inventory bar, so they must land transparent like sprites (observed: props shipping
     # with baked backgrounds).
@@ -260,13 +261,11 @@ def build_feature_job(kind: str, label: str) -> dict:
     """Return a job for ONE map-feature object sprite (a building, fountain, camp... drawn over
     its stamped footprint on the walkable map). High three-quarter view like a JRPG overworld
     object — a straight top-down feature reads as texture, a side view floats. Rides the item
-    workflow (BiRefNet matting) so it lands transparent over the terrain."""
+    workflow (flux schnell + BiRefNet matting) so it lands transparent over the terrain. `label`
+    is the SAVED styled prompt (framing/isolation prose lives in asset_feature.txt, the climbable
+    template) and IS the positive, verbatim — see build_item_job."""
     desc = (label or kind.replace("_", " ")).strip()
-    positive = (f"{_BG_QUALITY}, a single {desc} seen from a high three-quarter angle, "
-                f"stylized 2d game overworld object sprite, whole structure in frame, "
-                f"centered, bold readable silhouette, clean detailed rendering, isolated "
-                f"against a plain flat white background, no ground, no pedestal, no base "
-                f"platform, no scenery around it")
+    positive = desc
     wf = _build_background_workflow(
         _load_workflow(_TXT2IMG_ITEM_WORKFLOW_PATH), positive, _ITEM_NEGATIVE)
     wf["5"]["inputs"]["width"] = 1024

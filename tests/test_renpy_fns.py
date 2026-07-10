@@ -150,10 +150,11 @@ def test_generate_images_tokens_only_for_walkable_games(tmp_path, monkeypatch):
 
 def test_build_token_job_is_square_chibi():
     from tools.comfyui_tools import build_token_job
+    # the saved styled prompt (chibi framing rides in asset_token.txt) leads the positive
     job = build_token_job({"id": "kae", "description": "a tired knight in dented armor"})
     wf = job["workflow_override"]
     assert wf["28"]["inputs"]["width"] == wf["28"]["inputs"]["height"] == 832
-    assert "Chibi" in job["prompt"] and "dented armor" in job["prompt"]
+    assert job["prompt"].startswith("a tired knight in dented armor")
 
 
 def test_overworld_prefers_token_and_talk_markers_use_tokens():
@@ -178,14 +179,17 @@ def test_generate_images_queues_items_as_icon_jobs(tmp_path, monkeypatch):
     monkeypatch.setattr(comfyui_tools, "run_jobs", fake_run_jobs)
 
     # Items derive from the inventory component (reconcile mirrors the catalogue into icon stubs);
-    # generate_images consumes the reconciled manifest.
+    # generate_images consumes the reconciled manifest. The icon's subject is the AUTHORED visual
+    # description (describe_asset) — never the item's narrative `examine`.
     inputs = {"items": {"items": [{"id": "item_key", "name": "key",
-                                   "examine": "a rusty iron key"}]}}
+                                   "examine": "worn smooth by the hero's grip"}]},
+              "asset_manifest": {"items": [{"id": "item_key", "image_file": "item_key.png",
+                                            "description": "a rusty iron key"}]}}
     generate_images(inputs, tmp_path)
 
     assert len(queued) == 1
-    assert "game item icon" in queued[0]["prompt"]
-    assert "rusty iron key" in queued[0]["prompt"]
+    assert queued[0]["prompt"].startswith("a rusty iron key")
+    assert "worn smooth" not in queued[0]["prompt"]
 
 
 # ---------------------------------------------------------------------------

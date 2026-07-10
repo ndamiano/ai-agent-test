@@ -17,4 +17,8 @@ physically is; a background already used by a scene/place/encounter fits what ha
 nothing upstream names it yet (the common case for a background authored ahead of the story), draw
 the setting from the premise/request above.
 
+An item icon or map feature is the OBJECT ALONE: never mention the surface, floor, or
+surroundings it rests on — the image is cut out and placed in the game world, so "resting on a
+wooden deck" bakes a deck into the sprite.
+
 Call describe_asset(asset_id="<the exact id above>", description="...") now. Do not explain.

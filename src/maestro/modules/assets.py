@@ -64,17 +64,46 @@ def _background_usage_block(artifact: Dict, bg_id: str) -> list:
 
 
 def _d_missing_descriptions(chk, m, ctx):
-    """Demand-driven fan: one error per stub entry (a real manifest id — backgrounds, occasionally a
-    cg/title card) that has no prose description yet. A kind whose stub derives its description from
-    an upstream component (characters/items/tokens/features/tiles/markers) never appears here — it's
-    already filled by `reconcile_stubs`. Each fix is ONE `describe_asset` call, so a batch of N
-    backgrounds costs N small calls instead of one call that must fit all of them."""
+    """Demand-driven fan: one error per stub entry with no prose description yet — every kind lands
+    undescribed by construction (a character sprite, an overworld token, a map feature, an item
+    icon, a background, a cg) and gets one authored VISUAL description each. Each fix is ONE
+    `describe_asset` call, so a batch of N stubs costs N small calls instead of one call that must
+    fit all of them."""
     from maestro.asset_stubs import missing_asset_descriptions
     return [Error(type=chk.tier, code=chk.code, component="asset_manifest",
                   path=e["id"], ref=e["id"], kind=e["kind"],
                   message=f"{e['kind']} entry '{e['id']}' has no description yet — describe it with "
                           f"describe_asset('{e['id']}', ...).")
             for e in missing_asset_descriptions(ctx.artifact)]
+
+
+def _d_missing_style(chk, m, ctx):
+    """The one shared art-direction brief every asset prompt is composed with. Authored (not
+    template-filled from concept/theme — that produced unpaintable meta-prose like 'Art direction
+    for A turn-based RPG where...') via the same describe_asset path as every stub."""
+    manifest = ctx.artifact.get("asset_manifest") or {}
+    if ((manifest.get("style") or {}).get("description") or "").strip():
+        return []
+    return [Error(type=chk.tier, code=chk.code, component="asset_manifest",
+                  path="style", ref="style", kind="style",
+                  message="no shared art direction yet — write it with "
+                          "describe_asset('style', ...).")]
+
+
+def _ctx_style(module, rd: Dict) -> str:
+    """Grounding for the art-direction call: the premise plus the story spine's tone/theme — the
+    identity the brief must TRANSLATE into visual language, never restate."""
+    art = rd.get("artifact") or {}
+    spec = rd.get("spec") or {}
+    spine = (art.get("story") or {}).get("spine") or {}
+    lines = cr.premise_block(rd) + [""] + cr.target_block(rd)
+    if spine.get("tone") or spine.get("theme"):
+        lines += ["", f"STORY TONE: {spine.get('tone', '')}",
+                  f"STORY THEME: {spine.get('theme', '')}"]
+    lines += ["", f"PRESENTATION: {spec.get('presentation', '2d')}"]
+    lines += cr.tail_block(rd)
+    lines += ["", "Call describe_asset(\"style\", ...) now with the visual art direction."]
+    return "\n".join(lines)
 
 
 def _ctx_describe_asset(module, rd: Dict) -> str:
@@ -186,6 +215,11 @@ SKEL_DESCRIBE_ONE = (
     'describe_asset(asset_id="<that id>", description="<2-4 concrete sentences>")'
 )
 
+SKEL_DESCRIBE_STYLE = (
+    'describe_asset(asset_id="style", description="<1-3 sentences of concrete visual art direction:'
+    ' palette, lighting, materials, rendering style>")'
+)
+
 
 class Assets(Module):
     id = "assets"
@@ -208,6 +242,11 @@ class Assets(Module):
         Check("background_ids", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "asset_manifest.backgrounds", fields=["id"])), context=cr.ctx_structural,
             tools=_REPAIR_TOOLS, prompt="assets_background_field_patch.txt", skeleton=""),
+        # The shared art-direction brief — authored once, before the per-stub descriptions it will
+        # be composed with at the styled prompt stage.
+        Check("missing_style", _d_missing_style, context=_ctx_style,
+              tools=_DESCRIBE_TOOLS, when_clean=True,
+              prompt="assets_style.txt", skeleton=SKEL_DESCRIBE_STYLE),
         # Demand-driven fan, one describe_asset call per undescribed stub (mirrors inventory's
         # demanded_items): decomposes the prose-authoring load N ways instead of one call for all N.
         Check("missing_descriptions", _d_missing_descriptions, context=_ctx_describe_asset,

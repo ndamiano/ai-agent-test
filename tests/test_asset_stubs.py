@@ -118,7 +118,8 @@ def test_completeness_check_fires_then_clears():
     # render as nothing. The earlier assets checks pass, so the terminal completeness check fires.
     artifact = {
         "characters": {"characters": [{"id": "mara", "name": "Mara"}]},
-        "asset_manifest": {"backgrounds": [{"id": "bg_x", "image_file": "x.png",
+        "asset_manifest": {"style": {"description": "muted ink-wash"},
+                           "backgrounds": [{"id": "bg_x", "image_file": "x.png",
                                             "description": "a room"}], "characters": []},
     }
     assert "mara" in missing_stub_entities(artifact)
@@ -159,6 +160,7 @@ def test_missing_descriptions_fires_one_error_per_undescribed_stub():
     # Two backgrounds authored (ids only, per the new shape call) with no prose yet — the fan must
     # emit ONE error per id, each independently addressable (completing one shrinks the set).
     artifact = {"asset_manifest": {
+        "style": {"description": "muted ink-wash"},
         "backgrounds": [{"id": "bg_office", "image_file": "office.png"},
                         {"id": "bg_alley", "image_file": "alley.png"}],
         "characters": [], "cgs": []}}
@@ -169,14 +171,53 @@ def test_missing_descriptions_fires_one_error_per_undescribed_stub():
     assert {e.path for e in errs} == {"bg_office", "bg_alley"}
 
 
-def test_missing_descriptions_ignores_kinds_with_a_derived_description():
-    # Character/item/feature/tile/marker stubs derive a description from their upstream component
-    # (reconcile_stubs) — only a background (or a cg) ever needs describe_asset in practice.
-    artifact = {"asset_manifest": {
-        "backgrounds": [], "characters": [{"id": "mara", "image_file": "mara.png",
-                                           "description": "Mara"}],
-        "items": [{"id": "item_key", "image_file": "item_key.png", "description": "a key"}]}}
-    assert missing_asset_descriptions(artifact) == []
+def test_every_stub_kind_lands_undescribed_and_queues_for_describe_asset(tmp_path):
+    # Stubs derive NO description from upstream fields — the old fallbacks made garbage image
+    # prompts (a character's VOICE spec as their sprite prompt, an item's narrative `examine`, a
+    # feature's bare label). Each lands empty and queues one describe_asset call.
+    state, tools = _tools(tmp_path)
+    tools["add_character"]("elias", {"name": "Elias", "voice": "measured, low cadences"})
+    state.write_component("places", {"place_ids": [], "places": {}})
+    tools["write_place"]("z1", {
+        "kind": "town",
+        "layout": {"size": "small", "terrain": {"open": "dirt", "blocked": "wall"},
+                   "features": [{"id": "f_rope", "size": "medium",
+                                 "label": "Coil of Hemp Rope", "at": "north"}],
+                   "exits": [], "connections": []},
+        "interactables": [
+            {"id": "h_r", "label": "rope", "position": {"feature": "f_rope"},
+             "action": {"type": "examine", "text": "rope"}},
+            {"id": "h_oars", "action": {"type": "take", "item": "oars"}}]})
+    tools["add_item"]("oars", {"name": "Oars", "examine": "worn smooth by Elias's grip"})
+    artifact = state.load_artifact()
+    queued = {(e["kind"], e["id"]) for e in missing_asset_descriptions(artifact)}
+    assert ("characters", "elias") in queued
+    assert ("tokens", "elias_token") in queued
+    assert ("items", "oars") in queued
+    assert ("features", "feature_coil_of_hemp_rope") in queued
+    # the upstream junk never leaked into a description
+    manifest = artifact["asset_manifest"]
+    assert next(c for c in manifest["characters"] if c["id"] == "elias")["description"] == ""
+    # tiles + the fixed markers keep their code-derived descriptions — never queued
+    kinds = {k for k, _ in queued}
+    assert "tiles" not in kinds
+    assert not any(i == "marker_signpost" for _, i in queued)
+
+
+def test_token_inherits_the_sprite_description_once_authored():
+    # One person, one look: after the sprite is described, the next reconcile fills the token's
+    # empty description from it instead of queueing a second, driftable describe call.
+    artifact = {
+        "characters": {"characters": [{"id": "elias", "name": "Elias"}]},
+        "places": {"places": {"z1": {"kind": "town", "interactables": []}}},
+        "asset_manifest": {},
+    }
+    artifact["asset_manifest"] = reconcile_stubs(artifact)
+    sprite = next(c for c in artifact["asset_manifest"]["characters"] if c["id"] == "elias")
+    sprite["description"] = "A broad-shouldered ferryman in a patched oilskin coat."
+    artifact["asset_manifest"] = reconcile_stubs(artifact)
+    token = next(t for t in artifact["asset_manifest"]["tokens"] if t["id"] == "elias_token")
+    assert token["description"] == "A broad-shouldered ferryman in a patched oilskin coat."
 
 
 def _assets_errors_full(artifact):
@@ -236,7 +277,8 @@ def test_completing_one_description_shrinks_the_todo_but_not_the_others(tmp_path
 def test_missing_description_context_grounds_background_in_its_usage_or_the_premise():
     from maestro.modules import assets
     # No node/place references it yet (backgrounds are named ahead of scenes) — falls back to premise.
-    art_bare = {"asset_manifest": {"backgrounds": [{"id": "bg_office", "image_file": "o.png"}],
+    art_bare = {"asset_manifest": {"style": {"description": "muted ink-wash"},
+                                   "backgrounds": [{"id": "bg_office", "image_file": "o.png"}],
                                    "characters": [], "cgs": []}}
     spec = {"concept": "a noir two-hander in a cramped office", "params": {}}
     ctx = make_ctx(spec, art_bare)
@@ -263,16 +305,52 @@ def test_styled_stage_saves_prompts_on_every_stub():
             "lines": [{"speaker": None, "text": "dim"}], "end": {"type": "end"},
             "location": "bg_office"}}},
         "story": {"spine": {"theme": "loyalty under scarcity", "tone": "wry and bleak"}},
+        "asset_manifest": {"style": {"description": "muted amber lamplight, ink-wash shadows"}},
     }
     spec = {"concept": "a noir two-hander", "title": "Cold Office"}
     manifest = apply_styled_prompts(artifact, spec)
-    # A shared style brief + a per-stub prompt that carries the game's tone.
-    assert "loyalty under scarcity" in manifest["style"]["prompt"]
+    # The brief is the in-loop AUTHORED visual language — never the concept/theme meta-prose
+    # ("Art direction for A turn-based RPG where..." rendered as nothing).
+    assert "muted amber lamplight" in manifest["style"]["prompt"]
+    assert "noir two-hander" not in manifest["style"]["prompt"]
+    assert "loyalty under scarcity" not in manifest["style"]["prompt"]
+    assert manifest["style"]["description"] == "muted amber lamplight, ink-wash shadows"
     mara = next(c for c in manifest["characters"] if c["id"] == "mara")
     office = next(b for b in manifest["backgrounds"] if b["id"] == "bg_office")
-    assert "a wry informant" in mara["prompt"] and "wry and bleak" in mara["prompt"]
+    assert "a wry informant" in mara["prompt"] and "muted amber lamplight" in mara["prompt"]
     # background prompt is environmental-only (kills the named-creature bug at the source)
     assert "no people" in office["prompt"].lower() or "no characters" in office["prompt"].lower()
+
+
+def test_cg_prompt_allows_characters_in_frame():
+    # A cg IS a character moment — it must not ride the background template's "no people" suffix
+    # (a cg describing two characters plus "no characters in frame" is a self-contradiction).
+    from maestro.asset_prompts import apply_styled_prompts
+    artifact = {"asset_manifest": {
+        "style": {"description": "muted amber lamplight"},
+        "backgrounds": [], "characters": [],
+        "cgs": [{"id": "cg_final", "image_file": "cg_final.png",
+                 "description": "Elias and Mara stand at the helm of the repaired ferry."}]}}
+    manifest = apply_styled_prompts(artifact, {"title": "T"})
+    cg = next(c for c in manifest["cgs"] if c["id"] == "cg_final")
+    assert "no people" not in cg["prompt"].lower() and "no characters" not in cg["prompt"].lower()
+    assert "Elias and Mara" in cg["prompt"]
+
+
+def test_missing_style_fires_then_clears_via_describe_asset(tmp_path):
+    from maestro.modules import assets
+    state, tools = _tools(tmp_path)
+    state.write_component("asset_manifest", {
+        "backgrounds": [{"id": "bg_office", "image_file": "office.png", "description": "a room"}],
+        "characters": [], "cgs": []})
+    errs = {e.code for e in assets.MODULE.get_errors(make_ctx(make_spec(), state.load_artifact()))}
+    assert "missing_style" in errs
+    res = tools["describe_asset"]("style", "muted river greens, overcast light, painterly")
+    assert res["ok"], res
+    manifest = _manifest(state)
+    assert manifest["style"]["description"].startswith("muted river greens")
+    errs = {e.code for e in assets.MODULE.get_errors(make_ctx(make_spec(), state.load_artifact()))}
+    assert "missing_style" not in errs
 
 
 # ── 5. generation consumes ONLY the saved prompt (no at-gen re-derivation) ───────────────────────

@@ -128,13 +128,14 @@ def test_collect_feature_specs_dedupes_by_label():
 
 def test_build_feature_job_is_isolated_object():
     from tools.comfyui_tools import build_feature_job
-    job = build_feature_job("building", "smithy")
-    assert "a single smithy" in job["prompt"] and "three-quarter" in job["prompt"]
-    # the label IS the subject; kind is only the no-label fallback (a "Horse Tether" stamped
-    # as tree_clump must not prompt "Horse Tether tree clump")
-    assert "a single horse tether seen" in \
-        build_feature_job("tree_clump", "horse tether")["prompt"]
-    assert "a single market stall" in build_feature_job("market_stall", "")["prompt"]
+    # The saved styled prompt IS the subject and LEADS the positive (CLIP weights early tokens
+    # hardest); the builder adds only quality tags — never embeds it mid-phrase (grammar garble
+    # + CLIP-window overflow drove subject drift). Framing/isolation prose lives in
+    # asset_feature.txt, the climbable template.
+    job = build_feature_job("building", "A stone smithy with a smoking chimney.")
+    assert job["prompt"] == "A stone smithy with a smoking chimney."
+    # kind is only the no-label fallback
+    assert build_feature_job("market_stall", "")["prompt"] == "market stall"
     # rides the matting workflow so it lands transparent on the map
     kinds = {v["class_type"] for v in job["workflow_override"].values()}
     assert any("BiRefNet" in k for k in kinds)

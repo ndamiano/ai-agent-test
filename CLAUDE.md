@@ -190,12 +190,17 @@ src/
                   asset-less entity is impossible; the `assets` module's `assets_complete` check is
                   the done-condition (missing stub = Error, fix = reconcile — never a silent
                   placeholder). ONE derivation point: generation just walks the stubs
-                asset_prompts.py — the styled prompt stage: after content is done (run.run_build,
-                  before generation) read the game's identity ONCE (spec concept + story spine
-                  tone/theme) into one deterministic style brief, compose a style-consistent image
-                  prompt per stub from a per-kind climbable template (prompts/asset_*.txt), and SAVE
-                  it on the manifest entry. generate_images + the HITL per-asset regen consume ONLY
-                  the saved prompt (no at-gen re-derivation)
+                asset_prompts.py — the styled prompt stage: every stub lands UNDESCRIBED (no
+                  label/voice/examine fallback — those made garbage image prompts) and the assets
+                  module's missing_descriptions check fans one describe_asset call per stub (an
+                  authored VISUAL description); the shared art-direction brief is likewise authored
+                  in-loop (missing_style check → describe_asset("style") — concrete palette/
+                  lighting/material language, never the concept/theme meta-prose). After content is
+                  done (run.run_build, before generation) this stage deterministically composes a
+                  style-consistent image prompt per stub — authored description + authored brief
+                  through a per-kind climbable template (prompts/asset_*.txt; cgs get their own
+                  people-allowed template) — and SAVEs it on the manifest entry. generate_images +
+                  the HITL per-asset regen consume ONLY the saved prompt (no at-gen re-derivation)
                 music.py — derive the ambient/score track set (deterministic, no LLM): one bed per
                   place kind (world/PnC) or per scene location (VN) + a default, keyed to place/bg
                   ids; assemble_ir lifts it to ir.music, each engine projects playback

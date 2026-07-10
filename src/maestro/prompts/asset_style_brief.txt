@@ -1,1 +1,1 @@
-Art direction for {concept}. Mood and palette evoke {theme}, {tone}. Consistent {presentation} game art, cohesive colour palette and lighting across every asset.
+{style} Consistent {presentation} game art, cohesive colour palette and lighting across every asset.

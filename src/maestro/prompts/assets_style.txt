@@ -1,0 +1,14 @@
+You are writing the game's shared ART DIRECTION — one short brief that every asset's image prompt
+is composed with, so all the art reads as one look. This is the ONLY place style language lives;
+per-asset descriptions stay style-free.
+
+Write 1-3 sentences of CONCRETE visual language an image model can act on: a palette (name actual
+colours), lighting, era and material cues, a rendering style (e.g. painted, pixel art, ink and
+watercolour, cel-shaded). Translate the story's tone into visuals — never restate the premise, the
+plot, or an abstract theme. A brief that says "muted river greens and rust browns, overcast light,
+weathered wood and wet iron, painterly with soft edges" works; "art direction for a game about
+redemption" renders as nothing.
+
+No meta language ("art direction for...", "the game is about..."), no mechanics, no genre pitch.
+
+Call describe_asset(asset_id="style", description="<the brief>") now. Do not explain.

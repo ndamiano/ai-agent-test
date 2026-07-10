@@ -68,28 +68,33 @@ def _additive(rows: List[Dict], prev, id_key="id") -> List[Dict]:
 
 def _character_stubs(cast: List[Dict], prev) -> List[Dict]:
     """One sprite stub per cast member — the manifest character list mirrors the cast (replaces the
-    old gen-time _merge_cast_into_manifest backfill), additive so a hand-made stub survives."""
+    old gen-time _merge_cast_into_manifest backfill), additive so a hand-made stub survives. The
+    description starts EMPTY unless the cast card carries a real one — the voice/name fallback made
+    a speech spec the sprite's image prompt; an empty description queues a describe_asset call."""
     return _additive([{
         "id": c["id"], "image_file": f"{c['id']}.png",
-        "description": c.get("description") or c.get("voice") or c.get("name") or c["id"]}
+        "description": c.get("description") or ""}
         for c in cast], prev)
 
 
 def _token_stubs(char_stubs: List[Dict], prev) -> List[Dict]:
     """One overworld token per CHARACTER STUB (walkable games only) — the chibi avatar/NPC marker
-    the Godot overworld draws at ~1 tile, probed as <cid>_token.png."""
+    the Godot overworld draws at ~1 tile, probed as <cid>_token.png. Inherits the sprite's authored
+    description so both render the same person; empty until then (queued for describe_asset)."""
     have = _by_id(prev)
     return [_keep(have.get(f"{c['id']}_token"), {
         "id": f"{c['id']}_token", "image_file": f"{c['id']}_token.png", "char_id": c["id"],
-        "description": c.get("description") or c["id"]})
+        "description": c.get("description") or ""})
         for c in char_stubs if isinstance(c, dict) and c.get("id")]
 
 
 def _item_stubs(items: List[Dict], prev) -> List[Dict]:
-    """One icon stub per inventory item — the manifest item list mirrors the catalogue, additive."""
+    """One icon stub per inventory item — the manifest item list mirrors the catalogue, additive.
+    Description starts EMPTY: `examine` is player-facing narrative (story references an image model
+    can't paint), so the visual description is authored by describe_asset with the item entry as
+    grounding."""
     return _additive([{
-        "id": it["id"], "image_file": f"{it['id']}.png",
-        "description": it.get("examine") or it.get("name") or it["id"]}
+        "id": it["id"], "image_file": f"{it['id']}.png", "description": ""}
         for it in items if isinstance(it, dict) and it.get("id")], prev)
 
 
@@ -136,7 +141,7 @@ def _feature_stubs(places_comp: Dict, prev) -> List[Dict]:
     have = _by_id(prev)
     return [_keep(have.get(f"feature_{tile_slug(label)}"), {
         "id": f"feature_{tile_slug(label)}", "image_file": f"feature_{tile_slug(label)}.png",
-        "kind": kind, "label": label, "description": label})
+        "kind": kind, "label": label, "description": ""})
         for kind, label in _collect_feature_specs(places_comp)]
 
 
@@ -184,7 +189,7 @@ def _marker_stubs(places_comp: Dict, prev) -> List[Dict]:
             continue
         mid = f"prop_{tile_slug(label)}"
         out.append(_keep(have.get(mid), {
-            "id": mid, "image_file": f"{mid}.png", "description": label}))
+            "id": mid, "image_file": f"{mid}.png", "label": label, "description": ""}))
     return out
 
 
@@ -267,10 +272,10 @@ def missing_stub_entities(artifact: Dict, spec: Optional[Dict] = None) -> List[s
 def missing_asset_descriptions(artifact: Dict) -> List[Dict]:
     """Stub entries that EXIST (an id + image_file already stamped by `reconcile_stubs`) but carry no
     prose `description` yet — the demand-driven authoring queue `describe_asset` drains one at a
-    time. Reads the manifest AS WRITTEN, never a fresh reconcile: a kind whose stub derives its
-    description from an upstream component (characters/items/tokens/features/tiles/markers) already
-    carries one by construction, so in practice this only ever queues backgrounds (and an optional
-    cg) — the one prose surface nothing upstream can derive for it."""
+    time. Reads the manifest AS WRITTEN, never a fresh reconcile. Every kind queues: stubs land
+    undescribed by design (a derived label/voice/examine fallback made garbage image prompts), so
+    each gets one authored visual description; only tiles and the fixed markers carry a code-derived
+    description and never appear here."""
     manifest = artifact.get("asset_manifest") or {}
     out: List[Dict] = []
     for key in STUB_LISTS:

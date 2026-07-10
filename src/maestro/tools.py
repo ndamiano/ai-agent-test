@@ -502,15 +502,17 @@ TOOL_SCHEMAS: List[Dict] = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "describe_asset",
-        "description": "Fill ONE asset_manifest stub's description (a background, cg, or title "
-                       "card — most other kinds already carry one, derived from the cast/items/"
-                       "places). The stub already exists; author its prose here, one entry at a time.",
+        "description": "Fill ONE asset_manifest stub's description (a sprite, token, background, "
+                       "feature, item icon, cg, or title card — or 'style', the shared art-"
+                       "direction brief). The stub already exists; author its prose here, one "
+                       "entry at a time.",
         "parameters": {"type": "object", "properties": {
             "asset_id": {"type": "string", "description":
                 "the EXACT manifest id from your target, e.g. 'bg_office'"},
             "description": {"type": "string", "description":
                 "2-4 concrete sentences: what is physically there (furniture/objects/subject), "
-                "no art-style or lighting language — a later step adds that"},
+                "no art-style or lighting language — a later step adds that (except asset_id "
+                "'style', which IS the art-style language)"},
         }, "required": ["asset_id", "description"]}}},
     {"type": "function", "function": {
         "name": "validate",
@@ -1814,6 +1816,12 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if not isinstance(description, str) or not description.strip():
             return {"ok": False, "error": "description must be a non-empty string"}
         manifest = state.read_component("asset_manifest") or {}
+        if asset_id == "style":
+            style = manifest.get("style") if isinstance(manifest.get("style"), dict) else {}
+            style["description"] = description.strip()
+            manifest["style"] = style
+            state.write_component("asset_manifest", manifest)
+            return {"ok": True, "asset_id": asset_id}
         if asset_id == "title_card":
             entry = manifest.get("title_card")
             if not isinstance(entry, dict):

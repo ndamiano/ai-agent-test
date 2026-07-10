@@ -135,11 +135,22 @@ _STORY_DUP_STORYLINE = {"story": {"spine": {"theme": "T", "tone": "grim"},
     # assets missing_descriptions: demand-driven fan (one describe_asset call per undescribed stub)
     # — the tool scope is describe_asset, NEVER the whole-manifest write_component/add_character path
     dict(id="assets_missing_description", module="assets", spec={"params": {}},
-         art={"asset_manifest": {"backgrounds": [{"id": "bg_a", "image_file": "a.png"}],
+         art={"asset_manifest": {"style": {"description": "muted ink-wash"},
+                                 "backgrounds": [{"id": "bg_a", "image_file": "a.png"}],
                                  "characters": [], "cgs": []}},
          code="missing_descriptions",
          user_in=["bg_a"], sys_in=["describe_asset"],
          tools_in=["describe_asset"], tools_out=["write_component", "add_character"]),
+    # assets missing_style: the shared art-direction brief is AUTHORED (concrete visual language),
+    # never template-filled from the concept/theme; same describe_asset scope as the stub fan
+    dict(id="assets_missing_style", module="assets", spec={"params": {}},
+         art={"asset_manifest": {"backgrounds": [{"id": "bg_a", "image_file": "a.png",
+                                                  "description": "hall"}],
+                                 "characters": [], "cgs": []},
+              "story": {"spine": {"tone": "wry and bleak", "theme": "loyalty"}}},
+         code="missing_style",
+         user_in=["wry and bleak", 'describe_asset("style"'], sys_lower_in=["palette"],
+         tools_in=["describe_asset"], tools_out=["write_component"]),
     # inventory field patch: write-scoped, never add_item (old prose said add_item), no skeleton
     dict(id="inventory_field", module="inventory", spec={"params": {}},
          art={"items": {"items": [{"id": "item_key"}]}},  # missing name

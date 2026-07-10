@@ -1094,9 +1094,14 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": f"no place {place_id!r}"}
         inter = place.setdefault("interactables", [])
         if any(i.get("id") == interactable["id"] for i in inter):
-            return {"ok": False, "error":
-                    f"interactable {interactable['id']!r} already exists in {place_id!r} — "
-                    f"use edit_place to change it, or pick a new id"}
+            # auto-uniquify instead of refusing: a small model fixates on its own most-probable
+            # name and re-proposes it every retry (parked a live build) — and echoing taken ids
+            # back is copy-bait. Take the id out of the loop: the add always lands.
+            base = interactable["id"]
+            n = 2
+            while any(i.get("id") == f"{base}_{n}" for i in inter):
+                n += 1
+            interactable = {**interactable, "id": f"{base}_{n}"}
         if place.get("kind") in ("world_map", "town", "interior"):
             from maestro.map_builder import snap_to_open
             pos = interactable.get("position") or {}

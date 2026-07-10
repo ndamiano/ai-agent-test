@@ -45,11 +45,17 @@ def test_add_interactable_appends_preserving_siblings(tmp_path):
     assert ids == ["h_a", "h_to_r2"]                      # sibling preserved, new one appended
 
 
-def test_add_interactable_rejects_dupe_and_bad_shape(tmp_path):
+def test_add_interactable_uniquifies_dupe_and_rejects_bad_shape(tmp_path):
+    # WHY dupes auto-uniquify instead of refusing: a small model fixates on its own
+    # most-probable id and re-proposes it every retry (parked live build 14e77df63a84 at the
+    # interactable floor), and echoing taken ids back is copy-bait — so the id leaves the loop.
     state = RunState(tmp_path)
     _seed_place(state)
     tools = build_tools(_places_spec(), state)
-    assert tools["add_interactable"]("r1", {"id": "h_a", "action": {"type": "examine", "text": "y"}})["ok"] is False
+    r = tools["add_interactable"]("r1", {"id": "h_a", "action": {"type": "examine", "text": "y"}})
+    assert r["ok"] is True and r["interactable_id"] == "h_a_2"
+    r = tools["add_interactable"]("r1", {"id": "h_a", "action": {"type": "examine", "text": "z"}})
+    assert r["ok"] is True and r["interactable_id"] == "h_a_3"
     assert tools["add_interactable"]("nope", {"id": "h_x", "action": {"type": "examine", "text": "y"}})["ok"] is False
     assert tools["add_interactable"]("r1", {"id": "h_y"})["ok"] is False   # action missing
 

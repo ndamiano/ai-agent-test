@@ -168,6 +168,20 @@ src/
                 run.py — create_run / run_build orchestrator + `python -m maestro.run` CLI
                 tools/chat_tools.py — propose_game_spec / amend_game_spec (registered for chat)
                 ir_assemble.py — lift the decomposed components → one engine-neutral IR dict
+                asset_stubs.py — asset-manifest completeness by construction: reconcile_stubs
+                  DETERMINISTICALLY derives the COMPLETE stub set the content demands (character
+                  sprites + overworld tokens, scene/encounter backgrounds, map features/tiles/
+                  markers, item icons, title card) and merges it into the manifest, preserving any
+                  authored/styled field. The authoring tools call it after every visual write, so an
+                  asset-less entity is impossible; the `assets` module's `assets_complete` check is
+                  the done-condition (missing stub = Error, fix = reconcile — never a silent
+                  placeholder). ONE derivation point: generation just walks the stubs
+                asset_prompts.py — the styled prompt stage: after content is done (run.run_build,
+                  before generation) read the game's identity ONCE (spec concept + story spine
+                  tone/theme) into one deterministic style brief, compose a style-consistent image
+                  prompt per stub from a per-kind climbable template (prompts/asset_*.txt), and SAVE
+                  it on the manifest entry. generate_images + the HITL per-asset regen consume ONLY
+                  the saved prompt (no at-gen re-derivation)
                 music.py — derive the ambient/score track set (deterministic, no LLM): one bed per
                   place kind (world/PnC) or per scene location (VN) + a default, keyed to place/bg
                   ids; assemble_ir lifts it to ir.music, each engine projects playback
@@ -185,7 +199,9 @@ src/
                 lint.py (SDK lint runner + line→component attribution),
                 component_schemas.py (re-exports the modules' validators + IR skeletons),
                 fns.py (two-pass image gen —
-                neutral sprite + img2img expression variants — + manifest/expression
+                neutral sprite + img2img expression variants — driven ENTIRELY off the manifest
+                stubs + their SAVED styled prompts (maestro.asset_stubs/asset_prompts own the
+                derivation; fns just renders) + manifest/expression
                 placeholder backfills; generate_voices — best-effort per-line TTS for VN, silent
                 .wav placeholder backfill; generate_music — best-effort ambient/score, one track per
                 derived bed, fail-soft silent .wav fallback, local procedural `stub` backend by

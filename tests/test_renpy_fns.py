@@ -5,9 +5,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from renpy.fns import _merge_cast_into_manifest
-
-
 # ---------------------------------------------------------------------------
 # _copy_templates — seeds missing gitignored assets from the SDK
 # ---------------------------------------------------------------------------
@@ -133,9 +130,10 @@ def test_generate_images_tokens_only_for_walkable_games(tmp_path, monkeypatch):
     monkeypatch.setattr(comfyui_tools, "run_jobs",
                         lambda jobs: [{"success": False, "error": "no comfyui"} for _ in jobs])
 
+    # A walkable game reconciles a token stub per character (derived at write time; generate_images
+    # is a pure consumer of the reconciled manifest).
     inputs = {
-        "asset_manifest": {"backgrounds": [],
-                           "characters": [{"id": "kae", "name": "Kae", "image_file": "kae.png"}]},
+        "characters": {"characters": [{"id": "kae", "name": "Kae"}]},
         "places": {"places": {"z1": {"kind": "world_map", "tiles": {"rows": ["."]},
                                      "interactables": []}}},
     }
@@ -145,9 +143,7 @@ def test_generate_images_tokens_only_for_walkable_games(tmp_path, monkeypatch):
     # a failed token writes NO placeholder — the overworld's colour-dot fallback covers it
     assert not (tmp_path / "game_output" / "game" / "images" / "kae_token.png").exists()
 
-    inputs_vn = {"asset_manifest": {"backgrounds": [],
-                                    "characters": [{"id": "kae", "name": "Kae",
-                                                    "image_file": "kae.png"}]}}
+    inputs_vn = {"characters": {"characters": [{"id": "kae", "name": "Kae"}]}}
     result_vn = generate_images(inputs_vn, tmp_path)
     assert "kae_token.png" not in {f["file"] for f in result_vn["failed"]}
 
@@ -181,9 +177,10 @@ def test_generate_images_queues_items_as_icon_jobs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(comfyui_tools, "run_jobs", fake_run_jobs)
 
-    inputs = {"asset_manifest": {
-        "items": [{"id": "item_key", "description": "a rusty iron key"}],
-    }}
+    # Items derive from the inventory component (reconcile mirrors the catalogue into icon stubs);
+    # generate_images consumes the reconciled manifest.
+    inputs = {"items": {"items": [{"id": "item_key", "name": "key",
+                                   "examine": "a rusty iron key"}]}}
     generate_images(inputs, tmp_path)
 
     assert len(queued) == 1
@@ -315,34 +312,3 @@ def test_generate_single_asset_feature_skips_mesh_for_2d(tmp_path, monkeypatch):
     assert result["status"] == "ok"
     assert result["generated"] == ["feature_old_altar.png"]   # no .glb for a 2d build
     assert "mesh_total" not in result
-
-
-# ---------------------------------------------------------------------------
-# _merge_cast_into_manifest — premise is the source of truth for the cast
-# ---------------------------------------------------------------------------
-
-def test_merge_backfills_empty_manifest_from_premise():
-    premise = {"characters": [{"id": "jack", "name": "Jack", "voice": "gruff"},
-                              {"id": "mara", "name": "Mara", "description": "informant"}]}
-    merged = _merge_cast_into_manifest(premise, {"characters": []})
-    ids = {c["id"] for c in merged["characters"]}
-    assert ids == {"jack", "mara"}
-    by_id = {c["id"]: c for c in merged["characters"]}
-    assert by_id["jack"]["image_file"] == "jack.png"
-    assert by_id["mara"]["description"] == "informant"
-
-
-def test_merge_preserves_existing_manifest_entry_as_override():
-    premise = {"characters": [{"id": "jack", "name": "Jack"}]}
-    manifest = {"characters": [{"id": "jack", "image_file": "custom_jack.png", "description": "art note"}]}
-    merged = _merge_cast_into_manifest(premise, manifest)
-    assert len(merged["characters"]) == 1
-    assert merged["characters"][0]["image_file"] == "custom_jack.png"
-
-
-def test_merge_keeps_other_manifest_keys():
-    premise = {"characters": [{"id": "jack", "name": "Jack"}]}
-    manifest = {"backgrounds": [{"id": "bg_x"}], "characters": []}
-    merged = _merge_cast_into_manifest(premise, manifest)
-    assert merged["backgrounds"] == [{"id": "bg_x"}]
-    assert {c["id"] for c in merged["characters"]} == {"jack"}

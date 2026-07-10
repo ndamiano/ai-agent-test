@@ -64,7 +64,16 @@ def run_build(run_id: str, max_steps: int = 300) -> LoopResult:
         # Generate real art (ComfyUI when up, placeholder fallback) then package once. The loop's
         # compile checks are lint-only and the agent may never call generate_asset, so finalize here.
         from renpy.fns import generate_images, generate_voices, generate_music
+        from maestro.asset_prompts import apply_styled_prompts
         from maestro.engines import compile_for
+        # Styled prompt stage: read the game's identity ONCE (concept + story tone) and compose a
+        # style-consistent image prompt per asset stub, SAVED on the manifest so generation, the
+        # asset browser, and any HITL regen all read the same inspectable, climbable prompt.
+        try:
+            state.write_component(
+                "asset_manifest", apply_styled_prompts(state.load_artifact(), spec_data))
+        except Exception:
+            logger.exception("styled prompt stage failed for %s; stubs keep their descriptions", run_id)
         artifact = state.load_artifact()
         try:
             generate_images(artifact, state.run_dir,

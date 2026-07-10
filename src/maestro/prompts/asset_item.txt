@@ -1,0 +1,1 @@
+{subject}. {style} A single object, centered, plain background.

@@ -28,15 +28,28 @@ file makes the art good; that file catches when it isn't.
   native PBR) via `settings.comfyui.mesh_backend`. Known gaps: TRELLIS plinth slab + occasional black
   bakes (tracked in `docs/ROADMAP.md` "Godot/3D polish").
 - **Feature objects:** item workflow + BiRefNet matting → matted sprite.
-- **Prompts** are generated prose in the manifest; no styled/curated prompt stage yet.
+- **Prompts** are the styled prose SAVED on each stub by the styled prompt stage
+  (`maestro/asset_prompts.py`); the `build_*_job` builders wrap them with model-specific
+  scaffolding (quality tags, framing, negatives).
 
 ## T1 — Prompt quality (the cheap lever first)
-- [ ] **Styled prompt stage** — a stage that turns raw content into a good, style-consistent image
-      prompt and **saves it in the manifest** (per the asset-pipeline redesign) — so prompts are
-      inspectable, editable, climbable, and coherent across a game's assets.
-- [ ] **Per-asset-type prompt improvement** — backgrounds (environmental-only, kill the named-creature
-      bug — the lint in `quality_backlog.md` §7 is the guard, this is the source fix), character
-      sprites (identity/consistency descriptors), CGs, tiles (already structured — refine).
+- [x] **Completeness by construction** — every authoring tool that adds a visual thing emits an
+      asset STUB into the manifest at creation time (`maestro/asset_stubs.py::reconcile_stubs`,
+      called from the tool bodies), so an asset-less entity is impossible by construction, not a
+      silent placeholder discovered at gen time. The `assets` module carries the done-condition
+      (`assets_complete` — missing stub = Error, fix = reconcile); the compile-time placeholder
+      backfills stay as the net. `generate_images` is now a pure consumer of the manifest (the old
+      at-gen derivation of tokens/features/tiles/markers is deleted).
+- [x] **Styled prompt stage** — `maestro/asset_prompts.py::apply_styled_prompts` runs once when
+      content is done (before generation, sequenced in `run.run_build`): it reads the game's
+      identity ONCE (spec concept + story spine tone/theme) into one deterministic style brief, then
+      composes a style-consistent image prompt per stub and SAVES it on the manifest entry —
+      inspectable in the browser, editable, climbable (`maestro/prompts/asset_*.txt`), re-runnable
+      (`generate_images` + the HITL per-asset regen consume ONLY the saved prompt).
+- [ ] **Per-asset-type prompt improvement** — backgrounds (`asset_background.txt` now forces
+      environmental-only, the source fix for the named-creature bug; §7 lint is the guard), character
+      sprites (identity/consistency descriptors), CGs, tiles (already structured — refine). The
+      templates exist; climbing their wording is the remaining work.
 - [ ] **Climb the image prompts** — treat each as a hill-climbable `.txt`, run the genre battery,
       judge before/after (`quality_backlog.md` §2 discipline applied to art).
 

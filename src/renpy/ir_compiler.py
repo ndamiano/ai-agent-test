@@ -19,7 +19,7 @@ from maestro.ir_assemble import assemble_ir
 from renpy.compiler import compile_gate
 from renpy.ir_vn import compile_vn
 from renpy.lint import node_line_ranges, run_final_lint, pnc_line_ranges
-from renpy.fns import (_get_sdk_path, _merge_cast_into_manifest, _ensure_placeholder_images,
+from renpy.fns import (_get_sdk_path, _ensure_placeholder_images,
                        _ensure_expression_placeholders, _ensure_voice_placeholders,
                        _ensure_music_placeholders)
 from renpy.renpy_builder import _copy_templates, _distribute, write_options_rpy
@@ -118,9 +118,8 @@ def compile_ir(working_dir, distribute: bool = True) -> Dict:
     if ir["genre"] == "point_and_click":
         _write_pnc_placeholders(ir, game_dir)
     else:
-        manifest = _merge_cast_into_manifest(inputs.get("characters", {}),
-                                             inputs.get("asset_manifest", {}))
-        _ensure_placeholder_images(manifest, game_dir)
+        from maestro.asset_stubs import reconcile_stubs
+        _ensure_placeholder_images(reconcile_stubs(inputs), game_dir)
         _ensure_expression_placeholders(ir, game_dir)
         if voiced:
             _ensure_voice_placeholders(ir, game_dir)

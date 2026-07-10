@@ -255,3 +255,22 @@ def missing_stub_entities(artifact: Dict, spec: Optional[Dict] = None) -> List[s
     if complete.get("title_card") and not (manifest.get("title_card") or {}).get("image_file"):
         missing.append("title_card")
     return missing
+
+
+def missing_asset_descriptions(artifact: Dict) -> List[Dict]:
+    """Stub entries that EXIST (an id + image_file already stamped by `reconcile_stubs`) but carry no
+    prose `description` yet — the demand-driven authoring queue `describe_asset` drains one at a
+    time. Reads the manifest AS WRITTEN, never a fresh reconcile: a kind whose stub derives its
+    description from an upstream component (characters/items/tokens/features/tiles/markers) already
+    carries one by construction, so in practice this only ever queues backgrounds (and an optional
+    cg) — the one prose surface nothing upstream can derive for it."""
+    manifest = artifact.get("asset_manifest") or {}
+    out: List[Dict] = []
+    for key in STUB_LISTS:
+        for e in manifest.get(key) or []:
+            if isinstance(e, dict) and e.get("id") and not (e.get("description") or "").strip():
+                out.append({"kind": key, "id": e["id"]})
+    tc = manifest.get("title_card")
+    if isinstance(tc, dict) and tc.get("image_file") and not (tc.get("description") or "").strip():
+        out.append({"kind": "title_card", "id": "title_card"})
+    return out

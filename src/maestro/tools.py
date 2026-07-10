@@ -439,6 +439,18 @@ TOOL_SCHEMAS: List[Dict] = [
         "description": "Generate the image assets the asset_manifest declares.",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
+        "name": "describe_asset",
+        "description": "Fill ONE asset_manifest stub's description (a background, cg, or title "
+                       "card — most other kinds already carry one, derived from the cast/items/"
+                       "places). The stub already exists; author its prose here, one entry at a time.",
+        "parameters": {"type": "object", "properties": {
+            "asset_id": {"type": "string", "description":
+                "the EXACT manifest id from your target, e.g. 'bg_office'"},
+            "description": {"type": "string", "description":
+                "2-4 concrete sentences: what is physically there (furniture/objects/subject), "
+                "no art-style or lighting language — a later step adds that"},
+        }, "required": ["asset_id", "description"]}}},
+    {"type": "function", "function": {
         "name": "validate",
         "description": "Recompute the to-do: which done-conditions still fail.",
         "parameters": {"type": "object", "properties": {
@@ -1479,6 +1491,32 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         result = generate_images(state.load_artifact(), state.run_dir, presentation=presentation)
         return {"ok": result.get("status") == "ok", **result}
 
+    def describe_asset(asset_id: str, description: str) -> Dict:
+        """Fill ONE asset_manifest stub's `description` prose — the per-entry authoring step that
+        replaces a whole-manifest write. The stub (id + image_file) already exists — `reconcile_stubs`
+        stamped it from the cast/items/places/spec or a prior shape-only write; this call only sets
+        its description, never creates/renames/removes an entry. Bypasses the done-lock like
+        `_reconcile_stubs` — it only ever fills prose that was missing, never rewrites settled content."""
+        _require_frozen()
+        if not isinstance(description, str) or not description.strip():
+            return {"ok": False, "error": "description must be a non-empty string"}
+        manifest = state.read_component("asset_manifest") or {}
+        if asset_id == "title_card":
+            entry = manifest.get("title_card")
+            if not isinstance(entry, dict):
+                return {"ok": False, "error": f"no asset {asset_id!r}"}
+            entry["description"] = description.strip()
+            state.write_component("asset_manifest", manifest)
+            return {"ok": True, "asset_id": asset_id}
+        from maestro.asset_stubs import STUB_LISTS
+        for key in STUB_LISTS:
+            for e in manifest.get(key) or []:
+                if isinstance(e, dict) and e.get("id") == asset_id:
+                    e["description"] = description.strip()
+                    state.write_component("asset_manifest", manifest)
+                    return {"ok": True, "asset_id": asset_id}
+        return {"ok": False, "error": f"no asset {asset_id!r}"}
+
     # ── inspection (safe pre-freeze) ─────────────────────────────────────────
     def read_component(component_id: str) -> Dict:
         content = state.read_component(component_id)
@@ -1568,6 +1606,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "read_node": read_node,
         "read_story_state": read_story_state,
         "generate_asset": generate_asset,
+        "describe_asset": describe_asset,
         "validate": validate_tool,
         "request_review": request_review,
         "set_dirty": set_dirty,

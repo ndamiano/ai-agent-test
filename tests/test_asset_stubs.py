@@ -129,6 +129,130 @@ def test_completeness_check_fires_then_clears():
     assert "assets_complete" not in _assets_errors(artifact)
 
 
+# ── 3b. the whole-manifest one-shot write is GONE — replaced by a slim id-only shape call plus a
+#        demand-driven, one-call-per-entry description fan (the live truncation bug: a cast+location
+#        heavy game's full-prose write_component("asset_manifest", ...) blew the output token cap
+#        mid-JSON and the retry hit the same wall) ───────────────────────────────────────────────────
+
+from maestro.asset_stubs import missing_asset_descriptions
+
+
+def test_backgrounds_exist_fix_authors_ids_only_never_the_whole_manifest():
+    from maestro.modules import assets
+    from maestro.modules.module import load_prompt
+    chk = assets.MODULE._check_for("backgrounds_exist")
+    assert chk.prompt == "assets_backgrounds_shape.txt"
+    # the id-only shape skeleton — no per-entry `description`/`image_file` prose to overflow on
+    assert '"description"' not in chk.skeleton and '"image_file"' not in chk.skeleton
+    assert "bg_" in chk.skeleton
+    text = load_prompt(chk.prompt)
+    assert "do not write descriptions" in text.lower()
+    # the old one-shot repair check (a raw model-authored character id matching the cast) is gone —
+    # character sprite stubs are now ALWAYS code-derived from the cast, never model-authored here
+    assert assets.MODULE._check_for("character_ids") is None
+    prompts_dir = Path(__file__).parent.parent / "src" / "maestro" / "prompts"
+    assert not (prompts_dir / "assets_write.txt").exists()
+    assert not (prompts_dir / "assets_character_ids_fix.txt").exists()
+
+
+def test_missing_descriptions_fires_one_error_per_undescribed_stub():
+    # Two backgrounds authored (ids only, per the new shape call) with no prose yet — the fan must
+    # emit ONE error per id, each independently addressable (completing one shrinks the set).
+    artifact = {"asset_manifest": {
+        "backgrounds": [{"id": "bg_office", "image_file": "office.png"},
+                        {"id": "bg_alley", "image_file": "alley.png"}],
+        "characters": [], "cgs": []}}
+    missing = missing_asset_descriptions(artifact)
+    assert {(e["kind"], e["id"]) for e in missing} == {
+        ("backgrounds", "bg_office"), ("backgrounds", "bg_alley")}
+    errs = [e for e in _assets_errors_full(artifact) if e.code == "missing_descriptions"]
+    assert {e.path for e in errs} == {"bg_office", "bg_alley"}
+
+
+def test_missing_descriptions_ignores_kinds_with_a_derived_description():
+    # Character/item/feature/tile/marker stubs derive a description from their upstream component
+    # (reconcile_stubs) — only a background (or a cg) ever needs describe_asset in practice.
+    artifact = {"asset_manifest": {
+        "backgrounds": [], "characters": [{"id": "mara", "image_file": "mara.png",
+                                           "description": "Mara"}],
+        "items": [{"id": "item_key", "image_file": "item_key.png", "description": "a key"}]}}
+    assert missing_asset_descriptions(artifact) == []
+
+
+def _assets_errors_full(artifact):
+    from maestro.modules import assets
+    return assets.MODULE.get_errors(make_ctx(make_spec(), artifact))
+
+
+def test_describe_asset_round_trips_one_entry(tmp_path):
+    state, tools = _tools(tmp_path)
+    state.write_component("asset_manifest", {
+        "backgrounds": [{"id": "bg_office", "image_file": "office.png"}],
+        "characters": [], "cgs": []})
+    res = tools["describe_asset"]("bg_office", "A cluttered office with a metal desk and a broken "
+                                  "window blind; papers stacked on the floor.")
+    assert res["ok"], res
+    bg = next(b for b in _manifest(state)["backgrounds"] if b["id"] == "bg_office")
+    assert "metal desk" in bg["description"]
+    # the fan shrinks once the entry is described — visible progress, no false stall
+    assert missing_asset_descriptions(state.load_artifact()) == []
+
+
+def test_describe_asset_refuses_unknown_id_without_dumping_candidates(tmp_path):
+    state, tools = _tools(tmp_path)
+    state.write_component("asset_manifest", {
+        "backgrounds": [{"id": "bg_office", "image_file": "office.png"}],
+        "characters": [], "cgs": []})
+    res = tools["describe_asset"]("bg_ghost", "a room that doesn't exist")
+    assert res["ok"] is False
+    assert "bg_ghost" in res["error"]
+    # refuses plainly — no candidate-id dump for the model to copy-bait off of
+    assert "bg_office" not in res["error"]
+    # unaffected — the real entry stays undescribed, not silently matched
+    bg = next(b for b in _manifest(state)["backgrounds"] if b["id"] == "bg_office")
+    assert "description" not in bg
+
+
+def test_describe_asset_requires_a_non_empty_description(tmp_path):
+    state, tools = _tools(tmp_path)
+    state.write_component("asset_manifest", {
+        "backgrounds": [{"id": "bg_office", "image_file": "office.png"}], "characters": [], "cgs": []})
+    assert tools["describe_asset"]("bg_office", "   ")["ok"] is False
+
+
+def test_completing_one_description_shrinks_the_todo_but_not_the_others(tmp_path):
+    state, tools = _tools(tmp_path)
+    state.write_component("asset_manifest", {
+        "backgrounds": [{"id": "bg_office", "image_file": "office.png"},
+                        {"id": "bg_alley", "image_file": "alley.png"}],
+        "characters": [], "cgs": []})
+    before = {e["id"] for e in missing_asset_descriptions(state.load_artifact())}
+    assert before == {"bg_office", "bg_alley"}
+    tools["describe_asset"]("bg_office", "A cluttered office with a metal desk.")
+    after = {e["id"] for e in missing_asset_descriptions(state.load_artifact())}
+    assert after == {"bg_alley"}
+
+
+def test_missing_description_context_grounds_background_in_its_usage_or_the_premise():
+    from maestro.modules import assets
+    # No node/place references it yet (backgrounds are named ahead of scenes) — falls back to premise.
+    art_bare = {"asset_manifest": {"backgrounds": [{"id": "bg_office", "image_file": "o.png"}],
+                                   "characters": [], "cgs": []}}
+    spec = {"concept": "a noir two-hander in a cramped office", "params": {}}
+    ctx = make_ctx(spec, art_bare)
+    err = next(e for e in assets.MODULE.get_errors(ctx) if e.code == "missing_descriptions")
+    user = assets.MODULE.get_correction_prompt(ctx, err).user
+    assert "noir two-hander" in user
+
+    # Once a scene is set there, the context grounds the description in that concrete usage.
+    art_used = {**art_bare, "nodes": {"node_ids": ["s1"], "nodes": {
+        "s1": {"lines": [], "end": {"type": "end"}, "location": "bg_office"}}}}
+    ctx2 = make_ctx(spec, art_used)
+    err2 = next(e for e in assets.MODULE.get_errors(ctx2) if e.code == "missing_descriptions")
+    user2 = assets.MODULE.get_correction_prompt(ctx2, err2).user
+    assert "s1 is set here" in user2
+
+
 # ── 4. styled prompt stage saves an inspectable prompt per stub ──────────────────────────────────
 
 def test_styled_stage_saves_prompts_on_every_stub():

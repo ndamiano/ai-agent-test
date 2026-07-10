@@ -41,13 +41,75 @@ def location_index(artifact: Dict) -> list:
 # fix reads the manifest then rewrites it with ONE change. read_component is added explicitly because
 # the module's authoring mode_tools omit it. The prompts below forbid a clobber-rewrite.
 _REPAIR_TOOLS = frozenset({"read_component", "write_component", "request_review"})
+_DESCRIBE_TOOLS = frozenset({"describe_asset", "read_component", "request_review"})
 
 
-def _d_character_ids(chk, m, ctx):
-    chars = (ctx.artifact.get("asset_manifest") or {}).get("characters")
-    if not (isinstance(chars, list) and chars):
+def _background_usage_block(artifact: Dict, bg_id: str) -> list:
+    """Where the target background is already USED — a node/place/encounter that points at it. Empty
+    when nothing does yet (the normal case: backgrounds are named before scenes exist), in which case
+    the premise is the only grounding available."""
+    out = []
+    for nid, n in ((artifact.get("nodes") or {}).get("nodes") or {}).items():
+        if isinstance(n, dict) and n.get("location") == bg_id:
+            out.append(f"  scene {nid} is set here")
+    for pid, p in ((artifact.get("places") or {}).get("places") or {}).items():
+        if isinstance(p, dict) and p.get("background") == bg_id:
+            out.append(f"  place {pid} is set here")
+    for enc in (artifact.get("combat") or {}).get("encounters") or []:
+        if isinstance(enc, dict) and enc.get("background") == bg_id:
+            out.append(f"  encounter {enc.get('id')} is fought here")
+    if not out:
         return []
-    return m.wrap(chk, checks.each_has(ctx.artifact, "asset_manifest.characters", fields=["id"]))
+    return ["", f"'{bg_id}' IS ALREADY USED BY:", *out]
+
+
+def _d_missing_descriptions(chk, m, ctx):
+    """Demand-driven fan: one error per stub entry (a real manifest id — backgrounds, occasionally a
+    cg/title card) that has no prose description yet. A kind whose stub derives its description from
+    an upstream component (characters/items/tokens/features/tiles/markers) never appears here — it's
+    already filled by `reconcile_stubs`. Each fix is ONE `describe_asset` call, so a batch of N
+    backgrounds costs N small calls instead of one call that must fit all of them."""
+    from maestro.asset_stubs import missing_asset_descriptions
+    return [Error(type=chk.tier, code=chk.code, component="asset_manifest",
+                  path=e["id"], ref=e["id"], kind=e["kind"],
+                  message=f"{e['kind']} entry '{e['id']}' has no description yet — describe it with "
+                          f"describe_asset('{e['id']}', ...).")
+            for e in missing_asset_descriptions(ctx.artifact)]
+
+
+def _ctx_describe_asset(module, rd: Dict) -> str:
+    """The ONE entity this call describes: the premise + whatever grounds it concretely — the stub's
+    own hint fields (label/theme/role), the matching cast card for a sprite, the matching item entry
+    for an icon, or (backgrounds, the common case) any scene/place already set there. Never the whole
+    manifest — a description is authored from what this ONE thing IS, not from the rest of the game."""
+    from maestro.modules import cast, inventory
+    art = rd.get("artifact") or {}
+    target = rd.get("target")
+    kind = getattr(target, "kind", None) if target is not None else None
+    asset_id = getattr(target, "ref", None) if target is not None else None
+    manifest = art.get("asset_manifest") or {}
+    if kind == "title_card":
+        entry = manifest.get("title_card")
+    else:
+        entry = next((e for e in manifest.get(kind) or []
+                      if isinstance(e, dict) and e.get("id") == asset_id), None)
+    lines = cr.premise_block(rd) + [""] + cr.target_block(rd)
+    entry = entry or {}
+    hint = {k: entry[k] for k in ("label", "theme", "role") if entry.get(k)}
+    if hint:
+        lines += ["", f"STUB DATA for {asset_id!r}: {hint}"]
+    if kind in ("characters", "tokens"):
+        cid = entry.get("char_id", asset_id)
+        cards = cast.character_cards(art, only={cid})
+        if cards:
+            lines += cards
+    elif kind in ("items", "markers"):
+        lines += inventory.item_index(art)
+    elif kind == "backgrounds":
+        lines += _background_usage_block(art, asset_id)
+    lines += cr.tail_block(rd)
+    lines += ["", f"Call describe_asset({asset_id!r}, ...) now with a concrete description."]
+    return "\n".join(lines)
 
 
 def _d_assets_complete(chk, m, ctx):
@@ -68,17 +130,6 @@ def _run_reconcile(module, ctx, error, slot, services, dispatch):
     from maestro.asset_stubs import reconcile_stubs
     services.state.write_component(
         "asset_manifest", reconcile_stubs(services.state.load_artifact()))
-
-
-def _ctx_character_ids(module, rd: Dict) -> str:
-    """Repair context for a manifest sprite whose `id` must MATCH a cast id: the target + the EXACT
-    cast roster to pick from + the manifest self-view + run-state. Like cr.ctx_structural but it also
-    hands over the one catalogue the id must resolve into (the cast), the way crossref_character does."""
-    from maestro.modules import cast
-    art = rd.get("artifact") or {}
-    lines = cr.target_block(rd) + cast.character_index(art) + module.self_digest(art) + cr.tail_block(rd)
-    lines += ["", "Set the missing id to the cast id above that this sprite depicts."]
-    return "\n".join(lines)
 
 
 def v_asset_manifest(c: Dict) -> Optional[str]:
@@ -110,9 +161,29 @@ SKEL_ASSET_MANIFEST = (
     '  "cgs": [],\n'
     '  "title_card": {"image_file": "title_card.png", "description": "..."}\n'
     '}\n'
-    '// asset_manifest holds IMAGES, not speakers. character ids here MUST match\n'
-    '//   characters component ids exactly. items hold inventory ICONS; their ids MUST match\n'
-    '//   places items ids. Omit "items" (or use []) for a visual novel with no inventory.'
+    '// The FINAL shape once everything is authored (reference only — for a human editing the raw\n'
+    '//   component). No single call fills this: backgrounds/cgs ids are authored via\n'
+    '//   assets_backgrounds_shape.txt, characters/items/tokens/features/tiles/markers/title_card are\n'
+    '//   derived automatically from the cast/items/places/spec, and every entry\'s `description` is\n'
+    '//   filled one at a time by describe_asset.'
+)
+
+# The background/cg PLAN — ids only, no prose. Descriptions are a separate, per-entry call
+# (describe_asset) so a big cast/location count can never blow one call's output budget.
+SKEL_ASSET_SHAPE = (
+    '{\n'
+    '  "backgrounds": [ {"id": "bg_<place>"} ],\n'
+    '  "characters": [],\n'
+    '  "cgs": [ {"id": "cg_<beat>"} ]\n'
+    '}\n'
+    '// ids ONLY here — no description, no image_file. "characters" MUST stay [] (sprite entries are\n'
+    '//   derived automatically from the cast, never invented here). "cgs" is OPTIONAL — omit or [].\n'
+    '//   Each background/cg gets its prose description in a LATER, separate call.'
+)
+
+SKEL_DESCRIBE_ONE = (
+    '// asset_id (the tool arg) is the EXACT id named in YOUR TARGET above — never invent a new one.\n'
+    'describe_asset(asset_id="<that id>", description="<2-4 concrete sentences>")'
 )
 
 
@@ -121,21 +192,27 @@ class Assets(Module):
     selectable = False   # always-on: every engine keys art off the manifest's ids
     priority = 20
     component = "asset_manifest"
-    mode_prompt = "assets_write.txt"
+    mode_prompt = "assets_backgrounds_shape.txt"
     mode_tools = frozenset({"write_component", "request_review"})
     skeleton = SKEL_ASSET_MANIFEST
     schemas = {"asset_manifest": v_asset_manifest}
     skeletons = {"asset_manifest": SKEL_ASSET_MANIFEST}
 
     checks = [
-        # Backgrounds must exist before any id-check is meaningful — blocking.
+        # Backgrounds must exist before any id-check is meaningful — blocking. The fix authors ONLY
+        # the id shape (SKEL_ASSET_SHAPE) — never the whole-manifest prose write that used to blow
+        # the output token cap on a cast+location-heavy game (one giant JSON, unparseable mid-write).
         Check("backgrounds_exist", lambda chk, m, ctx: m.wrap(chk, checks.exists(
-            ctx.artifact, "asset_manifest.backgrounds")), blocking=True),
+            ctx.artifact, "asset_manifest.backgrounds")), blocking=True,
+            prompt="assets_backgrounds_shape.txt", skeleton=SKEL_ASSET_SHAPE),
         Check("background_ids", lambda chk, m, ctx: m.wrap(chk, checks.each_has(
             ctx.artifact, "asset_manifest.backgrounds", fields=["id"])), context=cr.ctx_structural,
             tools=_REPAIR_TOOLS, prompt="assets_background_field_patch.txt", skeleton=""),
-        Check("character_ids", _d_character_ids, context=_ctx_character_ids,
-              tools=_REPAIR_TOOLS, prompt="assets_character_ids_fix.txt", skeleton=""),
+        # Demand-driven fan, one describe_asset call per undescribed stub (mirrors inventory's
+        # demanded_items): decomposes the prose-authoring load N ways instead of one call for all N.
+        Check("missing_descriptions", _d_missing_descriptions, context=_ctx_describe_asset,
+              tools=_DESCRIBE_TOOLS, when_clean=True,
+              prompt="assets_describe.txt", skeleton=SKEL_DESCRIBE_ONE),
         # Terminal completeness sweep — every referenced visual entity has a stub. Runs only once
         # the cheaper checks pass; its fix is the deterministic stub reconcile, not an LLM step.
         Check("assets_complete", _d_assets_complete, when_clean=True, run=_run_reconcile),

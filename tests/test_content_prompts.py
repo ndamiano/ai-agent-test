@@ -34,8 +34,7 @@ _REPAIRS = {
              "distinct_characters": "cast_rename_duplicate.txt"},
     "story": {"beat_fields": "story_field_patch.txt",
               "distinct_storylines": "story_rename_duplicate.txt"},
-    "assets": {"background_ids": "assets_background_field_patch.txt",
-               "character_ids": "assets_character_ids_fix.txt"},
+    "assets": {"background_ids": "assets_background_field_patch.txt"},
     "inventory": {"item_fields": "inventory_field_patch.txt",
                   "distinct_items": "inventory_rename_duplicate.txt"},
 }
@@ -133,15 +132,14 @@ _STORY_DUP_STORYLINE = {"story": {"spine": {"theme": "T", "tone": "grim"},
          code="background_ids",
          user_in=["asset_manifest.backgrounds[1] missing 'id'"], sys_out=["JSON SHAPE"],
          tools_in=["read_component"]),
-    # assets character_ids fix is crossref-shaped: hands the cast roster to pick from + says match a
-    # cast id as a plain string
-    dict(id="assets_char_ids", module="assets", spec={"params": {}},
-         art={"characters": {"characters": [{"id": "mara", "name": "Mara", "role": "protagonist"}]},
-              "asset_manifest": {"backgrounds": [{"id": "bg_a", "description": "hall"}],
-                                 "characters": [{"image_file": "x.png", "description": "the woman"}],
-                                 "cgs": []}},
-         code="character_ids",
-         user_in=["mara"], sys_lower_in=["cast id", "plain string"], tools_in=["read_component"]),
+    # assets missing_descriptions: demand-driven fan (one describe_asset call per undescribed stub)
+    # — the tool scope is describe_asset, NEVER the whole-manifest write_component/add_character path
+    dict(id="assets_missing_description", module="assets", spec={"params": {}},
+         art={"asset_manifest": {"backgrounds": [{"id": "bg_a", "image_file": "a.png"}],
+                                 "characters": [], "cgs": []}},
+         code="missing_descriptions",
+         user_in=["bg_a"], sys_in=["describe_asset"],
+         tools_in=["describe_asset"], tools_out=["write_component", "add_character"]),
     # inventory field patch: write-scoped, never add_item (old prose said add_item), no skeleton
     dict(id="inventory_field", module="inventory", spec={"params": {}},
          art={"items": {"items": [{"id": "item_key"}]}},  # missing name

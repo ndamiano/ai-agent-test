@@ -4,15 +4,15 @@ gate can never open, so that branch is dead. The TARGET names the scene and the 
 
 Fix it ONE of two ways:
 
-  - RAISE the state earlier: in a scene that plays BEFORE this one (from SCENES), add an effect on a
-    line that raises it —
-        edit_node(node_id="<an earlier scene>", line_index=<N>, effects=[{"set_flag":"<the flag>"}])
-    (for a counter use effects=[{"add_var":{"var":"<name>","amount":1}}]). Pick a line that has no
-    effects yet, so you don't overwrite existing ones. Now the gate can open.
+  - RAISE the state earlier: in a scene that plays BEFORE this one (from SCENES), append an effect
+    that raises it —
+        add_effect(effect={"set_flag": "<the flag>"}, node_id="<an earlier scene>", line_index=<N>)
+    (for a counter use effect={"add_var": {"var": "<name>", "amount": 1}}; choice_index=<N> puts it
+    on a menu choice instead of a line). It APPENDS — the effects already at that site stay. Now
+    the gate can open.
 
-  - DROP the gate: rewrite this node's `end` so that choice carries no `requires` — an ending can be
-    earned by the story, not a variable:
-        edit_node(node_id="<the gated scene>", end={"type":"menu","choices":[{...no requires...}]})
+  - DROP the gate: delete that one choice's `requires` and nothing else — an ending can be earned
+    by the story, not a variable:
+        remove_gate(node_id="<the gated scene>", choice_index=<N>)
 
-Fix only the ONE named flag/variable. Do not invent unrelated state, and keep at least one ungated
-choice in the menu.
+Fix only the ONE named flag/variable. Do not invent unrelated state.

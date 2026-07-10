@@ -102,6 +102,11 @@ def crossref_records(ir: Dict) -> List[Dict]:
 
     def check_effect(e, path: str) -> None:
         """A narrative effect (flags / vars / items)."""
+        for key in ("set_flag", "clear_flag", "add_item", "remove_item"):
+            if key in e and not isinstance(e[key], str):
+                bad(f"{path}.{key}", e[key],
+                    f"{key} (must be a string id, not {type(e[key]).__name__})")
+                return
         if "set_flag" in e and e["set_flag"] not in flags:
             bad(path, e["set_flag"], "flag")
         elif "clear_flag" in e and e["clear_flag"] not in flags:

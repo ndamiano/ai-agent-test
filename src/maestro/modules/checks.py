@@ -138,7 +138,7 @@ def node_effects(node: Dict) -> List[Dict]:
 def effect_targets(eff: Dict) -> set:
     if not isinstance(eff, dict):
         return set()
-    out = {eff[k] for k in ("set_flag", "clear_flag") if eff.get(k)}
+    out = {eff[k] for k in ("set_flag", "clear_flag") if isinstance(eff.get(k), str)}
     for k in ("set_var", "add_var"):
         sv = eff.get(k)
         if isinstance(sv, dict) and sv.get("var"):

@@ -236,6 +236,25 @@ def test_ordering_catches_a_producer_sitting_behind_its_own_gate():
     assert "door_open" in errs[0].message   # names the offending gate via shortest_path
 
 
+def test_wiring_fix_prompt_names_the_real_place_and_node_ids():
+    # The wiring fixer edits OTHER components (edit_node / add_interactable), so its prompt must
+    # carry the id-level indexes of what exists — run cec82b74665a burned ~100 steps guessing
+    # 'place_inn'/'inn_talk_mara' because ctx_structural showed only the objectives digest.
+    art = _wired_world({"flag": "heard"})
+    art["objectives"]["objectives"][0]["steps"][1]["advance"] = {"flag": "ghost_flag"}
+    ctx = make_ctx(_SPEC, art)
+    err = [e for e in OBJ.get_errors(ctx) if e.code == "producer_order"][0]
+    cp = OBJ.get_correction_prompt(ctx, err)
+    assert "room_a" in cp.user and "room_b" in cp.user   # the places the fix can target
+    assert "n_giver" in cp.user                          # the nodes it can edit
+    # The produced-state catalog: repointing is only legal at state that exists — without the
+    # list the model plays a shell game, repointing each phantom flag at another phantom
+    # (run 8c19f94fed80: ledger_confronted -> ledger_read -> ...).
+    assert "STATE THAT EXISTS" in cp.user
+    assert "heard" in cp.user and "door_open" in cp.user  # flags with real producers, with sites
+    assert "NO producer" in cp.user                       # the phantom-repoint warning
+
+
 def test_ordering_catches_a_producer_behind_a_LATER_steps_gate():
     # the door is gated on 'finished' — a step-3 grant — so step 2's producer is order-inverted
     art = _wired_world({"flag": "finished"})

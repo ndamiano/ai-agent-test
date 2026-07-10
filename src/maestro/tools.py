@@ -337,6 +337,68 @@ TOOL_SCHEMAS: List[Dict] = [
         "parameters": {"type": "object", "properties": {
             "place_id": {"type": "string"}}, "required": ["place_id"]}}},
     {"type": "function", "function": {
+        "name": "add_effect",
+        "description": "APPEND one effect at one site without touching the effects already "
+                       "there: a node line (node_id + line_index), a menu choice (node_id + "
+                       "choice_index), or a use hotspot's fallback (place_id + interactable_id). "
+                       "THE way to add a producer (set_flag / add_item / set_var) — never "
+                       "rewrite a line or an action to add an effect.",
+        "parameters": {"type": "object", "properties": {
+            "effect": {"type": "object", "description":
+                '{"set_flag"|"clear_flag": "<flag>"} | {"add_item"|"remove_item": "<item id>"} '
+                '| {"set_var"|"add_var": {"var": "<name>", "value"|"amount": <n>}}'},
+            "node_id": {"type": "string"},
+            "line_index": {"type": "integer", "description":
+                           "index into the node's lines (0-based)"},
+            "choice_index": {"type": "integer", "description":
+                             "index into the node's menu choices (0-based)"},
+            "place_id": {"type": "string"},
+            "interactable_id": {"type": "string", "description":
+                                "a 'use' hotspot — its fallback gains the effect"},
+            "text": {"type": "string", "description": "player-visible fire text; only needed "
+                     "when the use hotspot has no fallback yet"},
+        }, "required": ["effect"]}}},
+    {"type": "function", "function": {
+        "name": "remove_effect",
+        "description": "Remove EXACTLY one effect (pass the exact effect object) from a node "
+                       "line, a menu choice, or a use hotspot — the surgical cut for a value "
+                       "produced but never used. Every other effect at the site stays.",
+        "parameters": {"type": "object", "properties": {
+            "effect": {"type": "object", "description": "the exact effect object to remove"},
+            "node_id": {"type": "string"},
+            "line_index": {"type": "integer"},
+            "choice_index": {"type": "integer"},
+            "place_id": {"type": "string"},
+            "interactable_id": {"type": "string"},
+        }, "required": ["effect"]}}},
+    {"type": "function", "function": {
+        "name": "add_gate",
+        "description": "Gate ONE ungated site with a `requires` condition: a menu choice "
+                       "(node_id + choice_index) or a move/win/start_combat hotspot (place_id + "
+                       "interactable_id). Refuses a site that already has a gate — an existing "
+                       "gate is another value's wiring; pick a different site.",
+        "parameters": {"type": "object", "properties": {
+            "requires": {"type": "object", "description":
+                '{"flag": "<name>"} | {"item": "<id>"} | {"var": "<name>", "op": ">=", '
+                '"value": <n>} | {"all"|"any": [..]} | {"not": {..}}'},
+            "node_id": {"type": "string"},
+            "choice_index": {"type": "integer", "description":
+                             "index into the node's menu choices (0-based)"},
+            "place_id": {"type": "string"},
+            "interactable_id": {"type": "string"},
+        }, "required": ["requires"]}}},
+    {"type": "function", "function": {
+        "name": "remove_gate",
+        "description": "Delete the `requires` from one menu choice (node_id + choice_index) or "
+                       "hotspot (place_id + interactable_id) — loosen a gate that can never "
+                       "open. Nothing else about the site changes.",
+        "parameters": {"type": "object", "properties": {
+            "node_id": {"type": "string"},
+            "choice_index": {"type": "integer"},
+            "place_id": {"type": "string"},
+            "interactable_id": {"type": "string"},
+        }}}},
+    {"type": "function", "function": {
         "name": "set_places_meta",
         "description": "Declare the game's global scaffold on `places`: the optional win `goal`, "
                        "puzzle `flags`, numeric `variables`, `start_place`, and (walkable RPG only) "
@@ -1350,6 +1412,257 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": f"no place {place_id!r}"}
         return {"ok": True, "place_id": place_id, "content": place}
 
+    # ── surgical wiring micro-tools: add/remove ONE effect or gate at one addressed site. The
+    #    wiring fixes (state / objectives / dead gates) run on these instead of edit_node/
+    #    edit_place: a replace-shaped edit invites the model to cannibalize an existing effect or
+    #    gate to satisfy the current error (fix-A-breaks-B churn); an append-or-refuse tool
+    #    cannot take anything away. ──────────────────────────────────────────────────────────
+    def _node_site(node_id: str, line_index, choice_index):
+        """Resolve a node-side effect site → (nodes_doc, effects_list) or (None, error_str)."""
+        if (line_index is None) == (choice_index is None):
+            return None, ("address exactly one site: line_index (a scene line) or "
+                          "choice_index (a menu choice)")
+        ns = state.read_component("nodes") or {}
+        node = (ns.get("nodes") or {}).get(node_id)
+        if node is None:
+            return None, f"no node {node_id!r}"
+        if line_index is not None:
+            lines = node.get("lines") or []
+            if not (0 <= line_index < len(lines)):
+                return None, (f"line_index {line_index} out of range "
+                              f"(node {node_id} has {len(lines)} lines)")
+            return ns, lines[line_index].setdefault("effects", [])
+        end = node.get("end") or {}
+        choices = end.get("choices") or []
+        if end.get("type") != "menu":
+            return None, (f"node {node_id} has no menu — its end is a "
+                          f"{end.get('type')!r}. Use line_index (0-"
+                          f"{len(node.get('lines') or []) - 1}) to put the effect on a line.")
+        if not (0 <= choice_index < len(choices)):
+            return None, (f"node {node_id} has no menu choice [{choice_index}] — its menu has "
+                          f"{len(choices)} choices (0-{len(choices) - 1})")
+        return ns, choices[choice_index].setdefault("effects", [])
+
+    def _place_hotspot(place_id: str, interactable_id: str):
+        """Resolve a hotspot → (places_doc, interactable) or (None, error_str)."""
+        places = state.read_component("places") or {}
+        place = (places.get("places") or {}).get(place_id)
+        if place is None:
+            return None, f"no place {place_id!r}"
+        h = next((i for i in place.get("interactables", [])
+                  if i.get("id") == interactable_id), None)
+        if h is None:
+            return None, f"no interactable {interactable_id!r} in place {place_id!r}"
+        return places, h
+
+    def add_effect(effect: Dict, node_id: Optional[str] = None,
+                   line_index: Optional[int] = None, choice_index: Optional[int] = None,
+                   place_id: Optional[str] = None, interactable_id: Optional[str] = None,
+                   text: Optional[str] = None) -> Dict:
+        """APPEND one effect at one site — a node line, a menu choice, or a use hotspot's
+        fallback — without touching the effects already there. The additive producer fix."""
+        _require_frozen()
+        effect = _coerce_json(effect)
+        from maestro.modules.scenes import effect_error
+        err = effect_error(effect)
+        if err:
+            return {"ok": False, "error": err}
+        if node_id is not None:
+            if _locked("nodes"):
+                return _locked_error("nodes")
+            ns, site = _node_site(node_id, line_index, choice_index)
+            if ns is None:
+                return {"ok": False, "error": site}
+            if effect in site:
+                return {"ok": False, "error": "that exact effect is already at this site — "
+                                              "nothing to add"}
+            site.append(effect)
+            state.write_component("nodes", ns)
+            _reconcile_stubs()
+            return {"ok": True, "node_id": node_id}
+        if place_id is not None and interactable_id is not None:
+            if _locked("places"):
+                return _locked_error("places")
+            places, h = _place_hotspot(place_id, interactable_id)
+            if places is None:
+                return {"ok": False, "error": h}
+            a = h.get("action") or {}
+            if a.get("type") != "use":
+                return {"ok": False, "error":
+                        f"a {a.get('type')!r} action carries no effects — only a 'use' hotspot "
+                        f"does. Add a new use/take hotspot with add_interactable instead."}
+            fb = a.get("fallback")
+            if not isinstance(fb, dict):
+                if not text:
+                    return {"ok": False, "error": "this use action has no fallback — pass `text` "
+                            "(what the player sees when it fires) to create one with the effect"}
+                a["fallback"] = {"text": text, "effects": [effect]}
+            else:
+                site = fb.setdefault("effects", [])
+                if effect in site:
+                    return {"ok": False, "error": "that exact effect is already on this "
+                                                  "hotspot's fallback — nothing to add"}
+                site.append(effect)
+            from maestro.modules.world import action_error
+            err = action_error(a)
+            if err:
+                return {"ok": False, "error": err}
+            h["action"] = a
+            state.write_component("places", places)
+            _reconcile_stubs()
+            return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
+        return {"ok": False, "error": "address a site: node_id + line_index/choice_index, or "
+                                      "place_id + interactable_id"}
+
+    def remove_effect(effect: Dict, node_id: Optional[str] = None,
+                      line_index: Optional[int] = None, choice_index: Optional[int] = None,
+                      place_id: Optional[str] = None,
+                      interactable_id: Optional[str] = None) -> Dict:
+        """Remove EXACTLY the one named effect from one site — the surgical cut for a
+        produced-but-never-consumed value. Every other effect at the site stays."""
+        _require_frozen()
+        effect = _coerce_json(effect)
+        if not isinstance(effect, dict) or not effect:
+            return {"ok": False, "error": "effect must be the exact effect object to remove"}
+        if node_id is not None:
+            if _locked("nodes"):
+                return _locked_error("nodes")
+            ns, site = _node_site(node_id, line_index, choice_index)
+            if ns is None:
+                return {"ok": False, "error": site}
+            if effect not in site:
+                return {"ok": False, "error": f"no effect {effect} at this site — its effects "
+                                              f"are {site}"}
+            site.remove(effect)
+            state.write_component("nodes", ns)
+            _reconcile_stubs()
+            return {"ok": True, "node_id": node_id}
+        if place_id is not None and interactable_id is not None:
+            if _locked("places"):
+                return _locked_error("places")
+            places, h = _place_hotspot(place_id, interactable_id)
+            if places is None:
+                return {"ok": False, "error": h}
+            from maestro.modules import views
+            a = h.get("action") or {}
+            sites = [fb.get("effects") for fb in [a.get("fallback")] if isinstance(fb, dict)]
+            sites += [cl["outcome"].get("effects") for cl in (a.get("clauses") or [])
+                      if isinstance(cl, dict) and isinstance(cl.get("outcome"), dict)]
+            for site in sites:
+                if isinstance(site, list) and effect in site:
+                    site.remove(effect)
+                    state.write_component("places", places)
+                    _reconcile_stubs()
+                    return {"ok": True, "place_id": place_id,
+                            "interactable_id": interactable_id}
+            return {"ok": False, "error": f"no effect {effect} on this hotspot — its effects "
+                                          f"are {list(views.action_effects(a))}"}
+        return {"ok": False, "error": "address a site: node_id + line_index/choice_index, or "
+                                      "place_id + interactable_id"}
+
+    def add_gate(requires: Dict, node_id: Optional[str] = None,
+                 choice_index: Optional[int] = None, place_id: Optional[str] = None,
+                 interactable_id: Optional[str] = None) -> Dict:
+        """Gate ONE ungated site — a menu choice or a move/win/start_combat hotspot — with a
+        `requires` condition. Refuses a site that already has a gate: that gate is another
+        value's wiring — pick a different site."""
+        _require_frozen()
+        requires = _coerce_json(requires)
+        from maestro.modules.world import action_error, condition_error
+        err = condition_error(requires)
+        if err:
+            return {"ok": False, "error": err}
+        if node_id is not None:
+            if _locked("nodes"):
+                return _locked_error("nodes")
+            ns = state.read_component("nodes") or {}
+            node = (ns.get("nodes") or {}).get(node_id)
+            if node is None:
+                return {"ok": False, "error": f"no node {node_id!r}"}
+            end = node.get("end") or {}
+            choices = end.get("choices") or []
+            if end.get("type") != "menu" or choice_index is None \
+                    or not (0 <= choice_index < len(choices)):
+                return {"ok": False, "error":
+                        f"node {node_id} has no menu choice [{choice_index}] — its end is a "
+                        f"{end.get('type')!r} with {len(choices)} choices. Gate a node that has "
+                        f"a menu, or a place hotspot."}
+            ch = choices[choice_index]
+            if ch.get("requires"):
+                return {"ok": False, "error":
+                        f"choice [{choice_index}] is already gated on {ch['requires']} — that "
+                        f"gate is another value's wiring. Gate a different choice or hotspot."}
+            if all(c.get("requires") for i, c in enumerate(choices) if i != choice_index):
+                return {"ok": False, "error": "gating this choice would leave the menu with no "
+                        "always-open choice — the player could dead-end. Gate a different "
+                        "site."}
+            ch["requires"] = requires
+            state.write_component("nodes", ns)
+            return {"ok": True, "node_id": node_id}
+        if place_id is not None and interactable_id is not None:
+            if _locked("places"):
+                return _locked_error("places")
+            places, h = _place_hotspot(place_id, interactable_id)
+            if places is None:
+                return {"ok": False, "error": h}
+            a = h.get("action") or {}
+            if a.get("requires"):
+                return {"ok": False, "error":
+                        f"{interactable_id!r} is already gated on {a['requires']} — that gate "
+                        f"is another value's wiring. Gate a different hotspot or choice."}
+            if a.get("type") == "use":
+                return {"ok": False, "error": "a use action's gates live in its clauses — gate "
+                                              "a move/win hotspot or a menu choice instead"}
+            a = {**a, "requires": requires}
+            err = action_error(a)
+            if err:
+                return {"ok": False, "error": err}
+            h["action"] = a
+            state.write_component("places", places)
+            return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
+        return {"ok": False, "error": "address a site: node_id + choice_index, or "
+                                      "place_id + interactable_id"}
+
+    def remove_gate(node_id: Optional[str] = None, choice_index: Optional[int] = None,
+                    place_id: Optional[str] = None,
+                    interactable_id: Optional[str] = None) -> Dict:
+        """Delete the `requires` from one menu choice / hotspot — the surgical 'loosen the
+        gate'. Nothing else about the site changes."""
+        _require_frozen()
+        if node_id is not None:
+            if _locked("nodes"):
+                return _locked_error("nodes")
+            ns = state.read_component("nodes") or {}
+            node = (ns.get("nodes") or {}).get(node_id)
+            if node is None:
+                return {"ok": False, "error": f"no node {node_id!r}"}
+            end = node.get("end") or {}
+            choices = end.get("choices") or []
+            if end.get("type") != "menu" or choice_index is None \
+                    or not (0 <= choice_index < len(choices)):
+                return {"ok": False, "error":
+                        f"node {node_id} has no menu choice [{choice_index}] — its end is a "
+                        f"{end.get('type')!r} with {len(choices)} choices"}
+            if not choices[choice_index].get("requires"):
+                return {"ok": False, "error": f"choice [{choice_index}] has no gate to remove"}
+            del choices[choice_index]["requires"]
+            state.write_component("nodes", ns)
+            return {"ok": True, "node_id": node_id}
+        if place_id is not None and interactable_id is not None:
+            if _locked("places"):
+                return _locked_error("places")
+            places, h = _place_hotspot(place_id, interactable_id)
+            if places is None:
+                return {"ok": False, "error": h}
+            a = h.get("action") or {}
+            if not a.get("requires"):
+                return {"ok": False, "error": f"{interactable_id!r} has no gate to remove"}
+            del a["requires"]
+            state.write_component("places", places)
+            return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
+        return {"ok": False, "error": "address a site: node_id + choice_index, or "
+                                      "place_id + interactable_id"}
+
     # ── combat: the doc is grown ONE slice at a time (dependency order), each validated against the
     #    already-declared upstream ids at write time. set_combat_meta lays stats/statuses; the write_*
     #    tools id-merge into the list slices (replace-by-id, else append). ──────────────────────────
@@ -1594,6 +1907,10 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "edit_place": edit_place,
         "add_interactable": add_interactable,
         "read_place": read_place,
+        "add_effect": add_effect,
+        "remove_effect": remove_effect,
+        "add_gate": add_gate,
+        "remove_gate": remove_gate,
         "set_furniture": set_furniture,
         "set_places_meta": set_places_meta,
         "set_combat_meta": set_combat_meta,

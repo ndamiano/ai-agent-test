@@ -67,7 +67,8 @@ def test_state_wiring_fix_offers_all_host_tools(tmp_path):
     err = Error(type=ErrorType.FIX, code="state_wiring", component="places",
                 message="flag 'x' read but never produced", ref="x")
     cp = STATE.get_correction_prompt(ctx, err)
-    assert "edit_node" in cp.allowed_tools and "edit_place" in cp.allowed_tools
+    assert "read_node" in cp.allowed_tools and "read_place" in cp.allowed_tools
+    assert "add_effect" in cp.allowed_tools and "add_gate" in cp.allowed_tools
 
 
 def test_state_wiring_fix_shows_full_wiring_report(tmp_path):

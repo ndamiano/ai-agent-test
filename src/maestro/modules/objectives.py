@@ -330,8 +330,11 @@ def _stamp_objective(view: Dict, assigned: Optional[Dict], args: Dict) -> Dict:
 
 _ADD_TOOLS = frozenset({"add_objective", "read_component", "request_review"})
 _EDIT_TOOLS = frozenset({"edit_objective_step", "read_component", "request_review"})
-_WIRE_TOOLS = frozenset({"edit_objective_step", "read_component", "read_node", "edit_node",
-                         "read_place", "edit_place", "add_interactable", "request_review"})
+# Additive micro-tools (add_effect/add_interactable) + the surgical remove_gate — never
+# edit_node/edit_place: a replace-shaped edit lets the wiring fixer cannibalize an existing
+# effect or gate to close this error (the fix-A-breaks-B churn observed live).
+_WIRE_TOOLS = frozenset({"edit_objective_step", "read_component", "read_node", "read_place",
+                         "add_effect", "remove_gate", "add_interactable", "request_review"})
 _OBJ_GUARD = {"count_tool": "add_objective", "id_key": "objective_id",
               "id_list_key": "objective_ids", "noun": "objective", "cap": _one,
               "assign": _pick_tension, "prepare": _stamp_objective}
@@ -701,6 +704,32 @@ def _d_journal(chk, m, ctx):
     return out
 
 
+def _ctx_wire(module, rd: Dict) -> str:
+    """The wiring fixer edits OTHER components (a set_flag effect via add_effect, a use hotspot
+    via add_interactable) — it needs the id-level indexes of what actually exists to target,
+    not just the objectives digest (ctx_structural), or it guesses ids blind and thrashes. It also
+    needs the PRODUCED-state catalog: without it, "repoint at state that exists" degenerates into a
+    shell game — every unproducible flag gets repointed at another unproducible flag."""
+    from maestro.modules import inventory, scenes, world
+    art = rd.get("artifact") or {}
+    lines = cr.target_block(rd) + objectives_block(art)
+    lines += world.places_index_block(art)
+    lines += scenes.nodes_index_block(art)
+    lines += inventory.item_index(art)
+    prods = _producers(art)
+    if prods:
+        lines += ["", "STATE THAT EXISTS (has a producer — the ONLY legal repoint targets):"]
+        for ref in sorted(prods):
+            sites = ", ".join(f"{s[0]} {s[1]}" if len(s) > 1 else s[0] for s in prods[ref][:3])
+            lines.append(f"  {ref} — produced at: {sites}")
+    lines += ["", "Any flag NOT listed above has NO producer — repointing at it moves the error, "
+              "it does not fix it. If the state the step needs is not listed, ADD its producer "
+              "instead (add_effect / add_interactable)."]
+    lines += cr.tail_block(rd)
+    lines += ["", "Make the one change that clears the target — use the EXACT ids above."]
+    return "\n".join(lines)
+
+
 def _d_crossref(chk, m, ctx):
     """The objectives IR slice's dangling references (a condition naming an undeclared var, a
     malformed ref). A dangling ITEM is demand — inventory authors it (same routing as world/scenes)."""
@@ -740,12 +769,12 @@ class Objectives(Module):
     checks = [
         Check("one_main_objective", _d_one_main, job="fix", run=_restamp_main,
               tools=frozenset({"write_component", "read_component"}), skeleton=""),
-        Check("producer_order", _d_producer_order, job="fix", context=cr.ctx_structural,
+        Check("producer_order", _d_producer_order, job="fix", context=_ctx_wire,
               tools=_WIRE_TOOLS, prompt="objectives_wire_fix.txt", skeleton=""),
         Check("journal_complete", _d_journal, job="fix", context=cr.ctx_structural,
               tools=_EDIT_TOOLS, prompt="objectives_journal_fix.txt", skeleton=""),
         Check("resolutions_reachable", _d_resolutions_reachable, job="fix",
-              context=cr.ctx_structural, tools=_WIRE_TOOLS,
+              context=_ctx_wire, tools=_WIRE_TOOLS,
               prompt="objectives_wire_fix.txt", skeleton=""),
         Check("demanded_objectives", _d_demanded, when_clean=True, tools=_ADD_TOOLS,
               guard=_OBJ_GUARD, prompt="objectives_add.txt", skeleton=SKEL_OBJECTIVE_ONE),

@@ -20,10 +20,15 @@ from maestro.modules.context import render_dict
 from maestro.modules.module import (Check, CorrectionPrompt, Error, Module, load_prompt,
                                      register_module)
 
-# The tools state uses to wire (or cut) a value, by the host component it lives in.
+# The tools state uses to wire (or cut) a value, by the host component it lives in. Additive
+# micro-tools only (add_effect/add_gate) plus the surgical cuts (remove_effect/remove_gate) —
+# never edit_node/edit_place: a replace-shaped edit lets the fixer cannibalize another value's
+# wiring to close this one (the fix-A-breaks-B churn observed live).
 _FIX_TOOLS = {
-    "nodes": ("read_node", "edit_node", "read_component"),
-    "places": ("read_place", "edit_place", "add_interactable", "set_places_meta", "read_component"),
+    "nodes": ("read_node", "add_effect", "add_gate", "remove_effect", "remove_gate",
+              "read_component"),
+    "places": ("read_place", "add_effect", "add_gate", "remove_effect", "remove_gate",
+               "add_interactable", "set_places_meta", "read_component"),
     "items": ("write_component", "read_component"),
 }
 # A value's PRODUCER and CONSUMER can live in different hosts — a flag consumed by a place gate is

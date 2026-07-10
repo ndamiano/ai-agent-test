@@ -170,6 +170,10 @@ def effect_error(e) -> Optional[str]:
                 f"{{\"add_item\"|\"remove_item\": \"<item>\"}}, "
                 f"{{\"set_var\"|\"add_var\": {{\"var\": .., \"value\"|\"amount\": ..}}}}. "
                 f"Prose belongs in the line's `text`, never in an effect.")
+    for k in ("set_flag", "clear_flag", "add_item", "remove_item"):
+        if k in e and not isinstance(e[k], str):
+            return (f"effect {{{k!r}: {str(e[k])[:80]!r}}} — {k}'s value must be a plain "
+                     f"string name, not an object.")
     return None
 
 
@@ -1081,7 +1085,10 @@ class Scenes(Module):
     description = ("A branching, choice-driven dialogue/scene graph — the playable script. With "
                    "`story` it IS the game (a visual novel); with `world` it supplies room "
                    "conversations.")
-    requires = ("cast",)
+    # inventory: node lines/choices carry add_item/remove_item effects (see _EFFECT_KEYS), so any
+    # scenes game can demand items — inventory (demand-driven, no floor) must be composed to claim
+    # a dangling item ref, else it falls to the crossref strip-fix.
+    requires = ("cast", "inventory")
     priority = 50
     component = "nodes"
     mode_prompt = "nodes_write.txt"
@@ -1111,7 +1118,8 @@ class Scenes(Module):
         Check("each_node_has_location", lambda chk, m, ctx: m.wrap(chk, each_node_has_location(ctx.artifact)),
               job="fix", prompt="nodes_location.txt", tools=_T_EDIT, context=cr.ctx_crossref),
         Check("no_dead_gates", lambda chk, m, ctx: m.wrap(chk, no_dead_gates(ctx.artifact)),
-              job="fix", prompt="nodes_dead_gate.txt", tools=_T_EDIT, context=cr.ctx_structural),
+              job="fix", prompt="nodes_dead_gate.txt", context=cr.ctx_structural,
+              tools=frozenset({"read_node", "add_effect", "remove_gate"})),
         Check("min_branches", _d_min_branches, prompt="nodes_min_branches.txt",
               tools=_T_EDIT_WRITE, context=cr.ctx_structural),
         Check("all_characters_speak", _d_all_characters_speak, prompt="nodes_speak.txt",

@@ -66,6 +66,16 @@ def test_world_and_scenes_compose():
     assert engine == "renpy"
 
 
+def test_realization_modules_pull_inventory():
+    # scenes lines carry add_item/remove_item effects and world places author take/use item verbs,
+    # so any realization can demand items — inventory must be composed to claim a dangling item ref
+    # (the a51a1193e818 build-killer: 'purified_water' had no author path and the crossref fix
+    # thrashed). Demand-driven, so composing it costs nothing when no item is named.
+    for picks in (["scenes"], ["world"], ["dialogue"], ["exploration"]):
+        modules, _ = M.resolve_modules(picks)
+        assert "inventory" in modules, picks
+
+
 def test_no_realization_falls_back_to_vn():
     modules, engine = M.resolve_modules(["inventory"])
     assert "scenes" in modules  # a buildable realization always exists
@@ -107,6 +117,14 @@ def test_combat_aspect_routes_to_godot():
     # the `turn_combat` aspect resolves through combat -> world/scenes/cast and forces the godot engine.
     modules, engine = M.resolve_modules(["turn_combat"])
     assert {"turn_combat", "combat", "world", "scenes", "cast"} <= set(modules)
+    assert engine == "godot"
+
+
+def test_quests_aspect_pulls_objectives_and_bible_and_routes_godot():
+    # the W3 catalog wiring: `quests` is how a generated spec ever composes objectives; objectives
+    # pulls bible (its tension source) and, being godot-only projected, routes the engine.
+    modules, engine = M.resolve_modules(["exploration", "quests"])
+    assert {"quests", "objectives", "bible", "world"} <= set(modules)
     assert engine == "godot"
 
 

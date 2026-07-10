@@ -86,10 +86,11 @@ def _tset(tools):
     (dict(code="compiles", message="compile failed: [scene_02] speaker 'ghost' undefined"),
      ["FAILED to compile", "BAD SPEAKER", "MALFORMED END"], ["COMMON FAILURES"],
      _T_EDIT_WRITE, ["CHARACTERS", "LOCATIONS", "scene_02"]),
-    # dead gates — set_flag/add_var to raise the state a choice gates on
+    # dead gates — add_effect to raise the state a choice gates on, remove_gate to loosen it
     (dict(code="no_dead_gates",
           message="choices gated on state that is never raised: scene_02 (gates on 'has_key')"),
-     ["GATED on state", "set_flag", "add_var"], [], _T_EDIT, ["SCENES"]),
+     ["GATED on state", "add_effect", "remove_gate"], [],
+     frozenset({"read_node", "add_effect", "remove_gate"}), ["SCENES"]),
     # orphan node — don't recreate it, wire it in
     (dict(code="reachable_from_start", message="nodes unreachable from 'scene_01': ['scene_02']"),
      ["ORPHAN", "recreate"], [], _T_EDIT, ["scene_01"]),

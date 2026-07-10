@@ -59,6 +59,16 @@ class Items(Module):
                    "fetch/use puzzles and gated interactions.")
 
 
+class Quests(Module):
+    id = "quests"
+    layer = "aspect"
+    requires = ("objectives",)
+    description = ("Goal-driven quest chains — journal objectives with steps the player advances "
+                   "by acting in the world (fetch, escort, investigate), each rooted in a tension "
+                   "of the setting. Pick when the player should always know what to do next. "
+                   "Runs on the Godot engine.")
+
+
 class RoamingEncounters(Module):
     id = "roaming_encounters"
     layer = "aspect"
@@ -68,5 +78,6 @@ class RoamingEncounters(Module):
                    "is an authored set piece.")
 
 
-for _m in (Dialogue(), Narrative(), Exploration(), TurnCombat(), Items(), RoamingEncounters()):
+for _m in (Dialogue(), Narrative(), Exploration(), TurnCombat(), Items(), Quests(),
+           RoamingEncounters()):
     register_module(_m)

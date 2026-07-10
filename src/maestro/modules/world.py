@@ -170,6 +170,24 @@ def _action_shapes() -> Dict:
 
 _ACTION_VALIDATOR = None
 _ACTION_SHAPES = None
+_CONDITION_VALIDATOR = None
+
+
+def condition_error(cond) -> Optional[str]:
+    """Reject a malformed `requires` condition at write time with an actionable message."""
+    if not isinstance(cond, dict) or not cond:
+        return ('requires must be a condition object — {"flag": "<name>"}, {"item": "<id>"}, '
+                '{"var": "<name>", "op": ">=", "value": <n>}, or all/any/not over those')
+    global _CONDITION_VALIDATOR
+    if _CONDITION_VALIDATOR is None:
+        import jsonschema
+        _CONDITION_VALIDATOR = jsonschema.Draft202012Validator(
+            {"$ref": "#/$defs/condition", "$defs": _ir_defs()})
+    errs = sorted(_CONDITION_VALIDATOR.iter_errors(cond), key=lambda e: len(list(e.path)))
+    if errs:
+        return ('requires is not a valid condition — use {"flag": "<name>"}, {"item": "<id>"}, '
+                '{"var": "<name>", "op": ">=", "value": <n>}, or all/any/not over those')
+    return None
 
 
 def action_error(action) -> Optional[str]:
@@ -745,6 +763,10 @@ class World(Module):
     description = ("Clickable rooms/screens you move between — a point-and-click world with "
                    "hotspots, items, and movement. Pair with `scenes` for talkable NPCs.")
     priority = 50
+    # The authoring surface teaches take/use item verbs, so any world game can demand items —
+    # inventory (demand-driven, no floor) must be composed to claim them, else the dangling ref
+    # falls to the crossref strip-fix and thrashes.
+    requires = ("inventory",)
     component = "places"
     mode_prompt = "places_write.txt"
     mode_tools = _PLACE_MODE_TOOLS

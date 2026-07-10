@@ -208,17 +208,29 @@ Per-place, error-driven build state (NOT spec-frozen), mirroring the furniture-l
 - DEFERRED to W3: the "every faction/tension consumed downstream" use-it-or-cut-it check —
   nothing consumes a tension until objectives/quests exist.
 
-### W2 — objectives engine module + IR
-- [ ] `src/maestro/modules/objectives.py`: archetype library (step templates), demand-from-
-      tensions check, per-step producer/ordering checks (reuse `views.shortest_path`),
-      journal-completeness, exactly-one-main.
-- [ ] Tools: `add_objective(archetype, ...)` + `edit_objective_step`; slot-guarded, code fills
-      ids. IR: `ir_assemble` lift + `ir_crossref` (flag refs) + `docs/game_ir.schema.json`
-      fragment + `game_ir_decisions.md` rationale.
-- [ ] Projections: godot journal panel + HUD objective line + named gated-verb feedback;
-      renpy journal screen (VN-side render optional if objectives never composes with renpy —
-      decide via engine_for; combat precedent says godot-only is fine and auto-routes).
-- [ ] Tests: state machine validation, ordering check catches producer-after-gate, IR round-trip.
+### W2 — objectives engine module + IR — DONE 2026-07-09
+- [x] `src/maestro/modules/objectives.py`: archetype library as step templates
+      (fetch/escort/investigate/broker/moral_fork — code owns transition semantics, the model
+      fills slots; `advance` is a CONDITION, so `{item: sluice_crank}` advances on holding it —
+      the notes' has_crank gap closed), demand-from-tensions fan (when_clean, keyed on tension
+      id, main first; guard `prepare` code-fills objective id + tension), exactly-one-main
+      (derived: FIRST objective on the main tension — several quests per tension is legal, the
+      gold game's shape — repaired by a deterministic no-LLM restamp), path-aware
+      producer-before-consumer ordering + resolutions-reachable (`views.reachable`/
+      `shortest_path` over the gated nodes+places+encounter graph; forbidden set = this step's +
+      later steps' grants, so a producer behind its own gate is a deterministic error),
+      journal-completeness (text per state incl. per-resolution; final-step entry optional),
+      objectives-slice crossref (world/scenes route it here).
+- [x] Tools: `add_objective` (write-time archetype validation, born-compliant journal, main
+      stamped from the bible) + `edit_objective_step` (step patch + journal merge, revalidated).
+      IR: lifted minus tension/archetype provenance + `ir_crossref` walks advance/resolutions +
+      schema `$defs` objective/objective_step/resolution + `game_ir_decisions.md` rationale.
+- [x] Projections: godot-only (combat precedent — `engine_for` auto-routes; NOT selectable=False:
+      always-on would reroute plain VNs). Runtime surface landed with W6's first bullet below.
+- [x] Tests: tests/test_objectives.py (57) — archetype validation, demand fan, ordering catches
+      producer-behind-own-gate + behind-a-later-step's-gate, journal, IR round-trip + godot
+      compile carries ir.objectives, the notes' sketch (adapted) validates against
+      world_game.json; GDScript selftest for the read-time state derivation + gate text.
 
 ### W3 — quests aspect (A3 proof)
 - [ ] `quests` aspect module: giver binding, variant checks, rewards. Catalog description.
@@ -236,8 +248,11 @@ Per-place, error-driven build state (NOT spec-frozen), mirroring the furniture-l
 - [ ] Tests: ambient node exempt from min_lines/beat stamps; still compiles + crossrefs.
 
 ### W6 — runtime quest surfacing
-- [ ] Godot: journal UI (Esc menu tab or J), HUD current-objective line, gated-verb feedback
-      names the missing requirement (data already in `requires`).
+- [x] Godot: journal UI (J + an Esc-menu Journal entry; state derived from flags/items at read
+      time, no runtime store), HUD current-objective line (main objective's current step),
+      gated-verb feedback names the missing requirement (`gate_text` renders `requires` in plain
+      words — item display names, humanized flags — at every "Not yet."/"Not now."/"can't go"
+      site in Game.run_action). Landed with W2.
 - [ ] Playable check: a world build where the player can always answer "what do I do next."
 
 ### W7 — gold game (runs FIRST, in parallel with W1)

@@ -203,6 +203,20 @@ def crossref_records(ir: Dict) -> List[Dict]:
             check_action(it.get("action", {}),
                          f"places[{pid}].interactables[{it.get('id', i)}].action")
 
+    for obj in ir.get("objectives", []):
+        oid = obj.get("id")
+        for s in obj.get("steps", []) or []:
+            sid = s.get("id")
+            if "advance" in s:
+                check_condition(s["advance"], f"objectives[{oid}].steps[{sid}].advance")
+            for i, r in enumerate(s.get("resolutions", []) or []):
+                if r.get("flag") not in flags:
+                    bad(f"objectives[{oid}].steps[{sid}].resolutions[{i}].flag",
+                        r.get("flag"), "flag")
+                if "requires" in r:
+                    check_condition(r["requires"],
+                                    f"objectives[{oid}].steps[{sid}].resolutions[{i}].requires")
+
     if "goal" in ir:
         check_condition(ir["goal"], "goal")
 

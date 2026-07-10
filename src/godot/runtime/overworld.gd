@@ -172,6 +172,9 @@ func run_place(place_id, spawn):
 		if Input.is_action_just_pressed("ui_pause"):
 			await g.pause_menu()
 
+		if Input.is_action_just_pressed("ui_journal"):
+			await g.journal_panel()
+
 
 # A wild fight from this zone's encounter_table: weighted draw, tier-scaled enemy, fought by
 # the persistent progression player. Returns true on DEFEAT — the caller respawns the avatar at

@@ -691,8 +691,9 @@ def _d_crossref(chk, m, ctx):
     has_inv = "inventory" in (ctx.spec.get("modules") or [])
     out = []
     for rec in checks.crossref_failures(ctx.artifact):
-        # combat owns its slices' refs (it can rewrite the combat doc; world cannot).
-        if slice_token(rec.get("path") or "") in _COMBAT_SLICES:
+        # combat owns its slices' refs (it can rewrite the combat doc; world cannot), and
+        # objectives owns its own (its crossref check fixes via edit_objective_step).
+        if slice_token(rec.get("path") or "") in _COMBAT_SLICES + ("objectives",):
             continue
         # A dangling item ref is DEMAND to author that item — inventory owns it (author, not
         # repoint). Without inventory composed, world still handles it (strip the reference).

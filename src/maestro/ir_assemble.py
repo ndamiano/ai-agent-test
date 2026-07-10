@@ -196,6 +196,15 @@ def assemble_ir(artifact: Dict) -> Dict:
     if combat_comp.get("progression"):
         ir["progression"] = combat_comp["progression"]
 
+    # objectives ARE lifted (unlike story/bible — the runtime renders the journal/HUD from them),
+    # minus the authoring provenance: `tension` is a bible id and the bible never reaches the IR;
+    # `archetype` is the authoring template, meaningless at runtime.
+    _OBJ_PROVENANCE = {"tension", "archetype"}
+    objs = (artifact.get("objectives", {}) or {}).get("objectives") or []
+    if objs:
+        ir["objectives"] = [{k: v for k, v in o.items() if k not in _OBJ_PROVENANCE}
+                            for o in objs if isinstance(o, dict)]
+
     if has_places:
         place_ids = places_comp.get("place_ids", []) or []
         places_map = places_comp.get("places", {}) or {}

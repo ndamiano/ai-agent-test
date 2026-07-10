@@ -595,12 +595,15 @@ def _d_crossref(chk, m, ctx):
     if not _owns_compile(ctx.artifact):
         return []
     # A dangling item ref is DEMAND to author that item — inventory owns it (author, not repoint).
-    # Without inventory composed, scenes still handles it (strip the reference).
+    # Without inventory composed, scenes still handles it (strip the reference). The objectives
+    # slice's refs belong to objectives (its crossref check fixes via edit_objective_step).
+    from maestro.ir_crossref import slice_token
     has_inv = "inventory" in (ctx.spec.get("modules") or [])
     return [Error(type=chk.tier, code=chk.code, component="nodes", message=rec["message"],
                   path=rec.get("path"), ref=rec.get("ref"), kind=rec.get("kind"))
             for rec in checks.crossref_failures(ctx.artifact)
-            if not (has_inv and rec.get("kind") == "item")]
+            if not (has_inv and rec.get("kind") == "item")
+            and slice_token(rec.get("path") or "") != "objectives"]
 
 
 def _d_compiles(chk, m, ctx):

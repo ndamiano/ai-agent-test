@@ -116,6 +116,19 @@ def _walk_state(artifact: Dict) -> Dict:
         if isinstance(it, dict):
             rec(it.get("id"), "item", "decl", "items")
 
+    # An objective's advance/requires conditions READ state (the journal/HUD derive the quest's
+    # position from them at runtime), and a resolution's flag is likewise consumed by that
+    # derivation — without these, a flag whose only reader is the quest chain gets "cut it".
+    for o in (artifact.get("objectives") or {}).get("objectives", []) or []:
+        for s in (o.get("steps") or []) if isinstance(o, dict) else []:
+            if not isinstance(s, dict):
+                continue
+            _scan_condition(s.get("advance"), "objectives", rec)
+            for r in s.get("resolutions") or []:
+                if isinstance(r, dict):
+                    rec(r.get("flag"), "flag", "cons", "objectives")
+                    _scan_condition(r.get("requires"), "objectives", rec)
+
     return info
 
 

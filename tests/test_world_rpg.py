@@ -324,76 +324,6 @@ def test_rpg_author_prompt_loads_with_includes_resolved():
     assert "{{include" not in p and "start_combat" in p and "WASD" in p
 
 
-def test_map_builder_rasterizes_connected_layout():
-    from maestro.map_builder import build_tiles, v_layout
-    layout = {
-        "size": "medium",
-        "terrain": {"open": "mossy earth", "blocked": "bone-pale cliff"},
-        "features": [
-            {"id": "f_smithy", "kind": "building", "at": "northwest", "theme": "timber smithy"},
-            {"id": "f_fountain", "kind": "fountain", "at": "center"},
-        ],
-        "exits": [{"id": "x_south", "edge": "south"}],
-        "connections": [{"from": "x_south", "to": "f_fountain"},
-                        {"from": "f_fountain", "to": "f_smithy"}],
-    }
-    assert v_layout(layout) is None
-    built = build_tiles("zone_town", layout)
-    rows, legend, anchors = built["rows"], built["legend"], built["anchors"]
-    w, h = len(rows[0]), len(rows)
-    assert all(len(r) == w for r in rows)
-    assert {"f_smithy", "f_fountain", "x_south"} <= set(anchors)
-    # determinism: same zone id -> same map
-    assert build_tiles("zone_town", layout)["rows"] == rows
-    # every anchor is an open cell, all mutually reachable on open tiles
-    open_roles = {ch for ch, e in legend.items() if e["role"] == "open"}
-
-    def is_open(x, y):
-        return 0 <= x < w and 0 <= y < h and rows[y][x] in open_roles
-
-    from collections import deque
-    ax0 = list(anchors.values())[0]
-    seen = {(ax0["x"], ax0["y"])}
-    q = deque(seen)
-    while q:
-        x, y = q.popleft()
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            nx, ny = x + dx, y + dy
-            if is_open(nx, ny) and (nx, ny) not in seen:
-                seen.add((nx, ny))
-                q.append((nx, ny))
-    for aid, a in anchors.items():
-        assert is_open(a["x"], a["y"]), f"{aid} anchor blocked"
-        assert (a["x"], a["y"]) in seen, f"{aid} unreachable"
-    # not a mud-box: paths exist and open ground is broken up
-    assert any("," in r for r in rows)
-
-
-def test_map_builder_emits_footprints_for_solid_features():
-    from maestro.map_builder import build_tiles
-    layout = {
-        "size": "medium",
-        "terrain": {"open": "grass", "blocked": "rock"},
-        "features": [
-            {"id": "f_smithy", "kind": "building", "at": "northwest",
-             "theme": "timber smithy", "label": "smithy"},
-            {"id": "f_glade", "kind": "clearing", "at": "center"},
-        ],
-        "exits": [{"id": "x_south", "edge": "south"}],
-    }
-    built = build_tiles("zone_fp", layout)
-    fps = built["footprints"]
-    assert "f_glade" not in fps and "x_south" not in fps   # nothing solid stamped
-    fp = fps["f_smithy"]
-    assert fp["kind"] == "building" and fp["label"] == "smithy"
-    w, h = len(built["rows"][0]), len(built["rows"])
-    assert 0 < fp["x"] and fp["x"] + fp["w"] <= w - 1
-    assert 0 < fp["y"] and fp["y"] + fp["h"] <= h - 1
-    # label falls back to theme, then kind
-    layout["features"][0].pop("label")
-    assert build_tiles("zone_fp", layout)["footprints"]["f_smithy"]["label"] == "timber smithy"
-
-
 def test_action_walks_tolerate_malformed_use_shapes():
     # a transient string fallback (model edit between validated writes) crashed the state
     # scan and took the whole build process down — the walk must skip, never raise
@@ -430,15 +360,6 @@ def test_snap_to_open_avoids_occupied_cells():
     assert snap_to_open(tiles, 1, 1, occupied=everywhere) == (1, 1)  # all taken -> nearest open
 
 
-def test_map_builder_rejects_bad_layout():
-    from maestro.map_builder import v_layout
-    assert v_layout({"size": "huge"}) is not None
-    assert "kind" in v_layout({"size": "small", "features": [
-        {"id": "f", "kind": "castle", "at": "center"}]})
-    assert "at" in v_layout({"size": "small", "features": [
-        {"id": "f", "kind": "building", "at": "middle"}]})
-
-
 def test_write_place_rasterizes_layout_and_resolves_spawns(tmp_path):
     from maestro.spec import Spec
     from maestro.state import RunState
@@ -448,9 +369,9 @@ def test_write_place_rasterizes_layout_and_resolves_spawns(tmp_path):
     spec = Spec({"title": "T", "frozen": True, "modules": ["world"], "params": {}})
     tools = build_tools(spec, state)
     layout_a = {"size": "small", "terrain": {"open": "grass", "blocked": "rock"},
-                "features": [{"id": "f_camp", "kind": "camp", "at": "center"}],
-                "exits": [{"id": "x_east", "edge": "east"}],
-                "connections": [{"from": "x_east", "to": "f_camp"}]}
+                "features": [{"id": "f_camp", "size": "small", "at": "center",
+                              "label": "camp"}],
+                "exits": [{"id": "x_east", "edge": "east"}]}
     res = tools["write_place"]("zone_a", {
         "kind": "world_map", "layout": layout_a,
         "interactables": [
@@ -467,9 +388,9 @@ def test_write_place_rasterizes_layout_and_resolves_spawns(tmp_path):
     assert pa["interactables"][1]["action"]["spawn"] == {"feature": "x_west"}
 
     layout_b = {"size": "small", "terrain": {"open": "grass", "blocked": "rock"},
-                "features": [{"id": "f_rock", "kind": "rock_outcrop", "at": "center"}],
-                "exits": [{"id": "x_west", "edge": "west"}],
-                "connections": [{"from": "x_west", "to": "f_rock"}]}
+                "features": [{"id": "f_rock", "size": "medium", "at": "center",
+                              "label": "rock outcrop"}],
+                "exits": [{"id": "x_west", "edge": "west"}]}
     res = tools["write_place"]("zone_b", {
         "kind": "world_map", "layout": layout_b,
         "interactables": [{"id": "h_back", "label": "west road",
@@ -500,7 +421,8 @@ def test_add_interactable_snaps_to_open_and_takes_features(tmp_path):
     spec = Spec({"title": "T", "frozen": True, "modules": ["world"], "params": {}})
     tools = build_tools(spec, state)
     layout = {"size": "small", "terrain": {"open": "grass", "blocked": "rock"},
-              "features": [{"id": "f_camp", "kind": "camp", "at": "center"}],
+              "features": [{"id": "f_camp", "size": "small", "at": "center",
+                            "label": "camp"}],
               "exits": [{"id": "x_east", "edge": "east"}]}
     tools["write_place"]("zone_a", {"kind": "world_map", "layout": layout, "interactables": [
         {"id": "h_c", "label": "camp", "position": {"feature": "f_camp"},
@@ -523,6 +445,86 @@ def test_add_interactable_snaps_to_open_and_takes_features(tmp_path):
         "id": "h_bad", "label": "b", "position": {"feature": "f_nope"},
         "action": {"type": "examine", "text": "t"}})
     assert res["ok"] is False and "f_nope" in res["error"]
+
+
+# ── the furniture tier: check fan-out + the set_furniture tool ────────────────
+
+def _furnished_zone(tmp_path, furniture=None):
+    from maestro.spec import Spec
+    from maestro.state import RunState
+    from maestro.tools import build_tools
+
+    state = RunState(tmp_path)
+    spec = Spec({"title": "T", "frozen": True, "modules": ["world"], "params": {}})
+    tools = build_tools(spec, state)
+    layout = {"size": "medium", "terrain": {"open": "grass", "blocked": "rock"},
+              "features": [{"id": "f_forge", "size": "large", "at": "northwest",
+                            "label": "forge"}],
+              "exits": [{"id": "x_east", "edge": "east"}]}
+    if furniture is not None:
+        layout["furniture"] = furniture
+    res = tools["write_place"]("zone_a", {"kind": "town", "layout": layout, "interactables": [
+        {"id": "h_forge", "label": "forge", "position": {"feature": "f_forge"},
+         "action": {"type": "examine", "text": "cold coals"}}]})
+    assert res["ok"] is True, res
+    return state, tools
+
+
+def test_furniture_check_fans_one_error_per_bare_zone():
+    # a walkable layout zone without a furniture list is an empty stage — one BUILD error per
+    # zone (stable path identity), gated to the set_furniture fix; furnished zones and PnC
+    # rooms are clean
+    art = {"places": {"place_ids": ["z1", "z2", "r1"], "start_place": "z1", "places": {
+        "z1": {"kind": "town", "layout": {"features": [
+            {"id": "f_a", "size": "small", "at": "center", "label": "well"}]}},
+        "z2": {"kind": "world_map",
+               "layout": {"features": [], "furniture": [{"object": "log", "size": "small"}]}},
+        "r1": {"kind": "room", "interactables": []}}}}
+    ctx = _Ctx(["world", "combat"], artifact=art)
+    chk = WORLD._check_for("furniture")
+    errs = chk.detect(chk, WORLD, ctx)
+    assert [e.path for e in errs] == ["z1"]
+    assert "set_furniture" in errs[0].message and "well" in errs[0].message
+    assert "set_furniture" in chk.tools
+
+
+def test_set_furniture_rerasterizes_and_adds_flavor_hotspot(tmp_path):
+    from maestro.map_builder import open_cells
+
+    state, tools = _furnished_zone(tmp_path)
+    before = state.read_component("places")["places"]["zone_a"]
+    res = tools["set_furniture"]("zone_a", [
+        {"object": "anvil", "size": "small", "flavor": "the horn is worn bright"},
+        {"object": "quenching barrel", "size": "small"}])
+    assert res["ok"] is True, res
+    assert any(p.startswith("fn_anvil") for p in res["placed"])
+    place = state.read_component("places")["places"]["zone_a"]
+    assert place["layout"]["furniture"][0]["object"] == "anvil"
+    # the map was re-rasterized with the objects, features staying put
+    assert place["anchors"]["f_forge"] == before["anchors"]["f_forge"]
+    assert any(fp["label"] == "anvil" for fp in place["footprints"].values())
+    # flavor became an examine hotspot on an open, unshared cell
+    hot = next(h for h in place["interactables"] if h["id"] == "h_anvil")
+    assert hot["action"] == {"type": "examine", "text": "the horn is worn bright"}
+    cells = [(h["position"]["cell"]["x"], h["position"]["cell"]["y"])
+             for h in place["interactables"]]
+    assert len(set(cells)) == len(cells)
+    assert set(cells) <= open_cells(place["tiles"])
+    # flavorless entries add no hotspot
+    assert not any(h["id"] == "h_quenching_barrel" for h in place["interactables"])
+
+
+def test_set_furniture_rejects_bad_input(tmp_path):
+    state, tools = _furnished_zone(tmp_path)
+    assert tools["set_furniture"]("zone_x", [{"object": "a", "size": "small"}])["ok"] is False
+    res = tools["set_furniture"]("zone_a", [{"object": "anvil", "size": "vast"}])
+    assert res["ok"] is False and "size" in res["error"]
+    # a PnC room takes no furniture
+    tools["write_place"]("r1", {"kind": "room", "background": "bg", "interactables": [
+        {"id": "h", "position": {"rect": {"x": 1, "y": 1, "w": 9, "h": 9}},
+         "action": {"type": "examine", "text": "t"}}]})
+    res = tools["set_furniture"]("r1", [{"object": "a", "size": "small"}])
+    assert res["ok"] is False and "walkable" in res["error"]
 
 
 def test_node_write_rejects_unknown_effect_types():

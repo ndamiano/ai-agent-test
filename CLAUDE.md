@@ -217,19 +217,32 @@ src/
                 interior` => overworld.gd (a WASD/arrow-key walkable tile grid — step ONTO a
                 move/start_combat cell to fire it, press E on a talk/examine/take/use/win cell). A
                 walkable place is authored as a LAYOUT PLAN, never a painted grid: the model
-                declares features on a coarse 3x3 region grid ("smithy northwest, fountain
-                center, gate south") + exits + connections, and maestro/map_builder.py
-                rasterizes deterministically — stamps footprint templates, carves roads,
-                emits the `tiles` char grid (`rows` + `legend` {role open/blocked, free
-                `theme`}) with connectivity guaranteed by construction, plus `anchors`
-                (feature id → doorstep cell) that resolve interactable positions
-                ({"feature": id}) and cross-zone move spawns ({"spawn": {"feature": id}},
-                resolved both directions as zones land; unknown arrival falls back to the
-                target's gate), plus `footprints` (feature id → stamped cell rect) that the
-                presenter covers with a generated object sprite (feature_<slug>.png, item
-                workflow + BiRefNet — a wagon reads as a wagon, not a mosaic of blocked
-                tiles; missing asset degrades to the mosaic). Hotspots snap to the nearest
-                open cell (never LLM-fixed).
+                declares MECHANICAL features only — one per spot an interactable stands at,
+                each with a size (spot/small/medium/large/area) on a coarse 3x3 region grid —
+                plus edge exits, and maestro/map_builder.py rasterizes with a structure-first
+                generator keyed on the place kind (town = roads to a plaza with buildings
+                facing the street; interior = BSP rooms behind real walls with doorways;
+                world_map = organic masses grown around a carved path spine, corner
+                bites/irregular borders as structure). A zone's ambient objects come from its
+                FURNITURE LIST (the two-tier rule: a feature exists for an interaction,
+                furniture for verisimilitude, nothing free-form): world's blocking-style
+                `furniture` check fans one error per bare zone, the LLM derives the list from
+                setting + place kind (`set_furniture`, mutable build state — never
+                spec-frozen), and code places the objects to density as real footprints —
+                placed LAST, so re-furnishing never moves a feature; a `flavor` entry becomes
+                an examine hotspot. Output: the `tiles` char grid (`rows` + `legend` {role
+                open/blocked, free `theme`}) with connectivity + non-overlap guaranteed by
+                construction (placement claims free cells and reverts if it would cut the walk
+                graph; unreachable pockets are sealed), plus `anchors` (feature/exit/furniture
+                id → open doorstep cell) that resolve interactable positions ({"feature": id})
+                and cross-zone move spawns ({"spawn": {"feature": id}}, resolved both
+                directions as zones land; unknown arrival falls back to the target's gate),
+                plus `footprints` (id → cell rect) that the presenter covers with a generated
+                object sprite (feature_<slug>.png keyed on label — every "quenching barrel"
+                shares one asset; item workflow + BiRefNet — a wagon reads as a wagon, not a
+                mosaic of blocked tiles; missing asset degrades to the mosaic). Hotspots snap
+                to the nearest open cell (never LLM-fixed); map_builder.render_ascii prints
+                any built map for debugging.
                 Each distinct theme gets one generated terrain texture
                 (renpy/fns.generate_images tile pass via comfyui build_tile_job(theme, role) —
                 then make_seamless_tile post: wrap cross-fade + downscale to 256² →

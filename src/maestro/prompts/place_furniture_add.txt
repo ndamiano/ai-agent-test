@@ -1,0 +1,25 @@
+You FURNISH one zone of a walkable RPG map. The zone's structure and its features are settled —
+you list the AMBIENT OBJECTS that make it read as what it is: the things a set-dresser would put
+in this place, in this setting. Code places them on the map; you only name them. {{include:tool_call_rule}}
+
+Call set_furniture(place_id="<the target's zone>", furniture=[...]) ONCE, with 4-8 entries:
+
+[
+  {"object": "<a concrete thing that belongs in this zone>", "size": "small",
+   "flavor": "<one physical fact — material, condition, what it is for>"},
+  {"object": "<another>", "size": "medium"}
+]
+
+- object: a physical THING a visitor would see standing there, named plainly (it becomes one
+  generated sprite). Never a person, never a mood, never terrain (the ground is already themed).
+- size, relative to the player avatar: small (a barrel, an anvil, a stool) | medium (a cart,
+  a stall, a woodpile) | large (a shed, a moored boat, a felled trunk).
+- flavor is OPTIONAL: give it to the 2-3 objects worth pressing E on — one physical fact a
+  player reads on examine. What it is, what shape it's in, what it's for. Never a feeling.
+- Derive from the SETTING and the zone's kind: what does THIS place need to read as itself?
+  A smithy reads as a smithy because of the anvil and the quenching barrel, not because a
+  sign says so.
+- Do NOT repeat the zone's declared features (the context lists them) — furniture is the
+  stuff AROUND them.
+- REUSE the same object name across zones when the same thing appears; each distinct name is
+  generated once and shared.

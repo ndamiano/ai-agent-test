@@ -131,11 +131,14 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
         build_title_card_job, build_character_emotion_job, build_tile_job, build_token_job,
         build_feature_job, make_seamless_tile, upload_image, vram_bracket, run_jobs,
     )
-    from maestro.modules.world import _RPG_KINDS
     from maestro.ir_assemble import used_emotions, expression_file
+    from maestro.asset_stubs import reconcile_stubs
 
     cast     = inputs.get("characters", {})
-    manifest = _merge_cast_into_manifest(cast, inputs.get("asset_manifest", {}))
+    # The manifest is the single source of truth: reconcile_stubs guarantees a stub for every
+    # visual entity the content references (an idempotent safety net over the write-time reconcile),
+    # then this pass renders each stub from its SAVED prompt — no more deriving art at generation.
+    manifest = reconcile_stubs(inputs)
 
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -148,83 +151,60 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
     def _place(meta: Dict, result: Dict) -> None:
         _place_result(meta, result, generated, failed)
 
-    # --- base pass: backgrounds, neutral character sprites, cgs, items, title card ----------
+    def _p(entry: Dict) -> str:
+        """The saved styled prompt, falling back to the stub's raw subject (a build before the
+        styled stage ran, or a hand-made test manifest) so a missing prompt never blocks art."""
+        return (entry.get("prompt") or entry.get("description")
+                or entry.get("label") or entry.get("id") or "")
+
+    # --- base pass: every from-scratch txt2img stub, each rendered from its saved prompt ---------
     base_meta: List[Dict] = []
     base_jobs: List[Dict] = []
     char_bases: List[Dict] = []  # for the img2img emotion pass
 
     for bg in manifest.get("backgrounds", []):
-        bg_file = bg["image_file"]
-        base_meta.append({"file": bg_file, "dest": images_dir / bg_file, "kind": "bg"})
-        base_jobs.append(build_background_job(bg.get("description", bg.get("name", bg["id"]))))
+        base_meta.append({"file": bg["image_file"], "dest": images_dir / bg["image_file"], "kind": "bg"})
+        base_jobs.append(build_background_job(_p(bg)))
 
-    walkable = any(isinstance(p, dict) and p.get("kind") in _RPG_KINDS
-                   for p in ((inputs.get("places") or {}).get("places") or {}).values())
     for char in manifest.get("characters", []):
-        cid = char["id"]
-        img_file = char.get("image_file", f"{cid}.png")
-        merged = {**cast_chars.get(cid, {}), **char}
+        cid, img_file = char["id"], char["image_file"]
+        merged = {**cast_chars.get(cid, {}), **char, "description": _p(char)}
         base_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "char"})
         base_jobs.append(build_character_job(merged))
         char_bases.append({"id": cid, "char": merged, "base_file": img_file,
                            "dest": images_dir / img_file})
-        if walkable:
-            # Walkable maps draw people at ~1 tile — a shrunken VN portrait floats; a chibi
-            # token reads. The overworld probes for <id>_token.png (avatar + talk markers).
-            tok_file = f"{cid}_token.png"
-            base_meta.append({"file": tok_file, "dest": images_dir / tok_file, "kind": "token"})
-            base_jobs.append(build_token_job(merged))
+
+    # Walkable maps draw people at ~1 tile — a shrunken VN portrait floats; a chibi token reads.
+    # The overworld probes for <id>_token.png (avatar + talk markers). A token has no placeholder
+    # (kind token: the overworld's colour-dot fallback beats a grey square).
+    for tok in manifest.get("tokens", []):
+        base_meta.append({"file": tok["image_file"], "dest": images_dir / tok["image_file"],
+                          "kind": "token"})
+        base_jobs.append(build_token_job({"id": tok.get("char_id"), "description": _p(tok)}))
 
     for cg in manifest.get("cgs", []):
         img_file = cg.get("image_file", f"{cg['id']}.png")
         base_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "cg"})
-        base_jobs.append(build_cg_job(cg.get("description", cg["id"])))
+        base_jobs.append(build_cg_job(_p(cg)))
 
     for it in manifest.get("items", []):
-        img_file = it.get("image_file", f"{it['id']}.png")
-        base_meta.append({"file": img_file, "dest": images_dir / img_file, "kind": "item"})
-        base_jobs.append(build_item_job(it.get("description", it.get("name", it["id"]))))
+        base_meta.append({"file": it["image_file"], "dest": images_dir / it["image_file"], "kind": "item"})
+        base_jobs.append(build_item_job(_p(it)))
 
     title_card = manifest.get("title_card", {})
-    if title_card.get("description"):
-        tc_file = title_card.get("image_file", "title_card.png")
+    if title_card.get("image_file"):
+        tc_file = title_card["image_file"]
         base_meta.append({"file": tc_file, "dest": images_dir / tc_file, "kind": "title_card"})
-        base_jobs.append(build_title_card_job(title_card["description"]))
+        base_jobs.append(build_title_card_job(_p(title_card)))
 
-    # Marker assets: overworld hotspots draw a THING, not a colored diamond. One signpost per
-    # game for exits, a small prop icon per examine hotspot (its label is the description), a
-    # banner for win. All ride the item-icon pipeline; misses fall back to diamonds (kind token
-    # semantics: no placeholder).
-    if walkable:
-        verbs = set()
-        examine_labels: List[str] = []
-        for p in ((inputs.get("places") or {}).get("places") or {}).values():
-            if not isinstance(p, dict) or p.get("kind") not in _RPG_KINDS:
-                continue
-            for hot in p.get("interactables") or []:
-                a = (hot or {}).get("action") or {}
-                verbs.add(a.get("type"))
-                if a.get("type") == "examine" and hot.get("label"):
-                    examine_labels.append(hot["label"])
-        if "move" in verbs:
-            base_meta.append({"file": "marker_signpost.png",
-                              "dest": images_dir / "marker_signpost.png", "kind": "token"})
-            base_jobs.append(build_item_job("weathered wooden trail signpost with a blank arrow board"))
-        if "win" in verbs:
-            base_meta.append({"file": "marker_banner.png",
-                              "dest": images_dir / "marker_banner.png", "kind": "token"})
-            base_jobs.append(build_item_job("small victory banner on a standing pole"))
-        for label in dict.fromkeys(examine_labels[:12]):
-            pf = f"prop_{tile_slug(label)}.png"
-            base_meta.append({"file": pf, "dest": images_dir / pf, "kind": "token"})
-            base_jobs.append(build_item_job(label))
-        # Feature sprites: one object sprite per distinct stamped footprint (kind+label),
-        # drawn by the overworld over the footprint rect instead of a tile mosaic. Miss ->
-        # the mosaic stays (kind token: no placeholder).
-        for kind, label in _collect_feature_specs(inputs.get("places", {}))[:10]:
-            ff = f"feature_{tile_slug(label)}.png"
-            base_meta.append({"file": ff, "dest": images_dir / ff, "kind": "token"})
-            base_jobs.append(build_feature_job(kind, label))
+    # Overworld markers (signpost/banner/props) + feature object sprites — both ride the item
+    # pipeline, both degrade to the colour/mosaic fallback (kind token: no placeholder).
+    for mk in manifest.get("markers", []):
+        base_meta.append({"file": mk["image_file"], "dest": images_dir / mk["image_file"], "kind": "token"})
+        base_jobs.append(build_item_job(_p(mk)))
+    for ft in manifest.get("features", []):
+        base_meta.append({"file": ft["image_file"], "dest": images_dir / ft["image_file"], "kind": "token"})
+        base_jobs.append(build_feature_job(ft.get("kind", "building"), _p(ft)))
 
     with vram_bracket():
         print(f"    [images]  generating {len(base_jobs)} base image(s)")
@@ -256,10 +236,11 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
             for meta, result in zip(emo_meta, run_jobs(emo_jobs)):
                 _place(meta, result)
 
-        # --- tile pass: one terrain texture per distinct walkable-map theme. On failure we skip
-        # (no placeholder) so the overworld falls back to its computed theme colour — a solid block
-        # is no better than the colour, and this keeps a no-ComfyUI build looking intentional. ----
-        tile_specs = _collect_tile_specs(inputs.get("places", {}))
+        # --- tile pass: one terrain texture per tile stub (theme+role in the manifest). On failure
+        # we skip (no placeholder) so the overworld falls back to its computed theme colour — a solid
+        # block is no better than the colour, and this keeps a no-ComfyUI build looking intentional. -
+        tile_specs = [(t["theme"], t.get("role", "open")) for t in manifest.get("tiles", [])
+                      if isinstance(t, dict) and t.get("theme")]
         if tile_specs:
             from tools.comfyui_tools import tile_refused
             print(f"    [images]  generating {len(tile_specs)} map tile(s)")
@@ -292,7 +273,7 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
     # ONLY for an hd2d (3D) game — a 2d build renders the sprites flat and never loads a mesh, so
     # generating them would be wasted GPU. Runs last so a mesh failure never blocks the build. -----
     mesh_total = mesh_done = 0
-    if presentation == "hd2d" and walkable:
+    if presentation == "hd2d" and manifest.get("features"):
         from tools.comfyui_tools import mesh_enabled, mesh_backend
         meshed = [f for f in generated if f.startswith("feature_") and f.endswith(".png")]
         mesh_total = len(meshed)
@@ -341,20 +322,22 @@ def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
         build_title_card_job, build_character_emotion_job, build_tile_job, build_token_job,
         build_feature_job, make_seamless_tile, upload_image, vram_bracket, run_jobs, tile_refused,
     )
-    from maestro.modules.world import _RPG_KINDS
     from maestro.ir_assemble import used_emotions, expression_file
+    from maestro.asset_stubs import reconcile_stubs
 
     cast     = inputs.get("characters", {})
-    manifest = _merge_cast_into_manifest(cast, inputs.get("asset_manifest", {}))
+    manifest = reconcile_stubs(inputs)
     images_dir = working_dir / "game_output" / "game" / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     cast_chars = {c["id"]: c for c in cast.get("characters", [])}
     nodes = _nodes_list(inputs)
-    walkable = any(isinstance(p, dict) and p.get("kind") in _RPG_KINDS
-                   for p in ((inputs.get("places") or {}).get("places") or {}).values())
 
     generated: List[str] = []
     failed:    List[Dict] = []
+
+    def _p(entry: Dict) -> str:
+        return (entry.get("prompt") or entry.get("description")
+                or entry.get("label") or entry.get("id") or "")
 
     def _run_one(kind: str, job: Dict, neutral_dest: Path = None) -> Dict:
         meta = {"file": filename, "dest": images_dir / filename, "kind": kind}
@@ -366,17 +349,14 @@ def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
         return {"status": "ok", "generated": generated, "failed": failed}
 
     for bg in manifest.get("backgrounds", []):
-        if bg.get("image_file", f"{bg['id']}.png") == filename:
-            return _run_one("bg", build_background_job(bg.get("description", bg.get("name", bg["id"]))))
+        if bg["image_file"] == filename:
+            return _run_one("bg", build_background_job(_p(bg)))
 
     for char in manifest.get("characters", []):
-        cid = char["id"]
-        img_file = char.get("image_file", f"{cid}.png")
-        merged = {**cast_chars.get(cid, {}), **char}
+        cid, img_file = char["id"], char["image_file"]
+        merged = {**cast_chars.get(cid, {}), **char, "description": _p(char)}
         if img_file == filename:
             return _run_one("char", build_character_job(merged))
-        if walkable and f"{cid}_token.png" == filename:
-            return _run_one("token", build_token_job(merged))
         for emotion in used_emotions(cid, nodes):
             if emotion == "neutral" or expression_file(img_file, emotion) != filename:
                 continue
@@ -388,70 +368,62 @@ def generate_single_asset(inputs: Dict, working_dir: Path, filename: str,
             return _run_one("emotion", build_character_emotion_job(merged, emotion, base_name),
                              neutral_dest=neutral_dest)
 
+    for tok in manifest.get("tokens", []):
+        if tok["image_file"] == filename:
+            return _run_one("token", build_token_job(
+                {"id": tok.get("char_id"), "description": _p(tok)}))
+
     for cg in manifest.get("cgs", []):
         if cg.get("image_file", f"{cg['id']}.png") == filename:
-            return _run_one("cg", build_cg_job(cg.get("description", cg["id"])))
+            return _run_one("cg", build_cg_job(_p(cg)))
 
     for it in manifest.get("items", []):
-        if it.get("image_file", f"{it['id']}.png") == filename:
-            return _run_one("item", build_item_job(it.get("description", it.get("name", it["id"]))))
+        if it["image_file"] == filename:
+            return _run_one("item", build_item_job(_p(it)))
 
     title_card = manifest.get("title_card", {})
-    if title_card.get("description") and title_card.get("image_file", "title_card.png") == filename:
-        return _run_one("title_card", build_title_card_job(title_card["description"]))
+    if title_card.get("image_file") == filename:
+        return _run_one("title_card", build_title_card_job(_p(title_card)))
 
-    if walkable:
-        if filename == "marker_signpost.png":
-            return _run_one("token", build_item_job(
-                "weathered wooden trail signpost with a blank arrow board"))
-        if filename == "marker_banner.png":
-            return _run_one("token", build_item_job("small victory banner on a standing pole"))
+    for mk in manifest.get("markers", []):
+        if mk["image_file"] == filename:
+            return _run_one("token", build_item_job(_p(mk)))
 
-        for p in ((inputs.get("places") or {}).get("places") or {}).values():
-            if not isinstance(p, dict) or p.get("kind") not in _RPG_KINDS:
-                continue
-            for hot in p.get("interactables") or []:
-                a = (hot or {}).get("action") or {}
-                label = hot.get("label")
-                if a.get("type") == "examine" and label and f"prop_{tile_slug(label)}.png" == filename:
-                    return _run_one("token", build_item_job(label))
-
-        for kind, label in _collect_feature_specs(inputs.get("places", {})):
-            ff = f"feature_{tile_slug(label)}.png"
-            if ff != filename:
-                continue
-            result = _run_one("token", build_feature_job(kind, label))
-            if presentation == "hd2d" and filename in generated:
-                from tools.comfyui_tools import mesh_enabled, mesh_backend
-                if mesh_enabled():
-                    done = _run_mesh_pass([filename], images_dir, mesh_backend())
-                    result["mesh_total"] = 1
-                    if filename[:-4] in done:
-                        result["generated"].append(f"{filename[:-4]}.glb")
-                        result["mesh_done"] = 1
-                    else:
-                        result["mesh_done"] = 0
+    for ft in manifest.get("features", []):
+        if ft["image_file"] != filename:
+            continue
+        result = _run_one("token", build_feature_job(ft.get("kind", "building"), _p(ft)))
+        if presentation == "hd2d" and filename in generated:
+            from tools.comfyui_tools import mesh_enabled, mesh_backend
+            if mesh_enabled():
+                done = _run_mesh_pass([filename], images_dir, mesh_backend())
+                result["mesh_total"] = 1
+                if filename[:-4] in done:
+                    result["generated"].append(f"{filename[:-4]}.glb")
+                    result["mesh_done"] = 1
                 else:
-                    result["mesh_total"], result["mesh_done"] = 1, 0
-            return result
+                    result["mesh_done"] = 0
+            else:
+                result["mesh_total"], result["mesh_done"] = 1, 0
+        return result
 
-        for theme, role in _collect_tile_specs(inputs.get("places", {})):
-            fname = f"tile_{tile_slug(theme)}.png"
-            if fname != filename:
+    for t in manifest.get("tiles", []):
+        if t["image_file"] != filename:
+            continue
+        theme, role = t["theme"], t.get("role", "open")
+        dest = images_dir / filename
+        for attempt in range(4):
+            job = build_tile_job(theme, role, ideogram=attempt < 3)
+            with vram_bracket():
+                result = run_jobs([job])[0]
+            if not (result.get("success") and result.get("saved_paths")):
+                return {"status": "error", "error": result.get("error", "unknown")}
+            if tile_refused(result["saved_paths"][0]):
                 continue
-            dest = images_dir / fname
-            for attempt in range(4):
-                job = build_tile_job(theme, role, ideogram=attempt < 3)
-                with vram_bracket():
-                    result = run_jobs([job])[0]
-                if not (result.get("success") and result.get("saved_paths")):
-                    return {"status": "error", "error": result.get("error", "unknown")}
-                if tile_refused(result["saved_paths"][0]):
-                    continue
-                shutil.copy2(result["saved_paths"][0], dest)
-                make_seamless_tile(dest)
-                return {"status": "ok", "generated": [fname], "failed": []}
-            return {"status": "error", "error": "tile refused after retries"}
+            shutil.copy2(result["saved_paths"][0], dest)
+            make_seamless_tile(dest)
+            return {"status": "ok", "generated": [filename], "failed": []}
+        return {"status": "error", "error": "tile refused after retries"}
 
     return {"status": "error", "error": f"unknown asset filename {filename!r}"}
 
@@ -640,21 +612,6 @@ def _ensure_voice_placeholders(ir: Dict, game_dir: str) -> None:
         path = audio_dir / voice_file(node_id, i)
         if not path.exists():
             write_silent_wav(path)
-
-
-def _merge_cast_into_manifest(cast: Dict, manifest: Dict) -> Dict:
-    """Backfill a manifest entry for every character so sprite defines, placeholder pngs, image
-    generation, and the lint's valid-speaker set (all keyed off asset_manifest.characters) cover
-    the whole cast even when asset_manifest.characters is left incomplete. Existing manifest
-    entries win as image overrides."""
-    chars = list(manifest.get("characters", []))
-    have = {c.get("id") for c in chars if isinstance(c, dict)}
-    for pc in cast.get("characters", []):
-        cid = pc.get("id")
-        if cid and cid not in have:
-            chars.append({"id": cid, "image_file": f"{cid}.png",
-                          "description": pc.get("description") or pc.get("voice") or cid})
-    return {**manifest, "characters": chars}
 
 
 def _ensure_placeholder_images(manifest: Dict, game_dir: str) -> None:

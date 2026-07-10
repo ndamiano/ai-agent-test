@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://maestro/asset_manifest.schema.json",
   "title": "Maestro Asset Manifest",
-  "description": "The generation spec for every visual asset the Game IR references by id. The IR carries only ids (background, sprite, icon, map); this manifest owns everything needed to PRODUCE the image: prompts, dimensions, animations, style anchors. One id space shared with the IR — every asset id the IR references must exist here. Design rationale lives in game_ir_decisions.md.",
+  "description": "The generation spec for every visual asset the Game IR references by id. The IR carries only ids (background, sprite, icon, map); this manifest owns everything needed to PRODUCE the image: prompts, dimensions, animations, style anchors. One id space shared with the IR — every asset id the IR references must exist here. NOTE: the on-disk manifest is NOT authored freehand — it is DERIVED, complete by construction, by maestro.asset_stubs.reconcile_stubs, which the authoring tools call after every visual write. Its real shape is typed stub lists (backgrounds/characters/tokens/items/cgs/features/tiles/markers + title_card), each entry an {id, image_file, description, prompt} stub; the styled prompt stage (maestro.asset_prompts) saves the final `prompt` per entry and a shared `style.prompt` brief. This `assets`-array schema is the older aspirational contract; asset_stubs.py is the source of truth for the shipped shape. Design rationale lives in game_ir_decisions.md.",
 
   "type": "object",
   "required": ["assets"],

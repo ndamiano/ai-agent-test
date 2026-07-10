@@ -433,6 +433,14 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         return [b["id"] for b in (man.get("backgrounds") or [])
                 if isinstance(b, dict) and b.get("id")]
 
+    def _reconcile_stubs() -> None:
+        # Stub-at-creation: after any tool adds/edits/removes a visual thing, recompute the manifest
+        # so every entity the content references has an asset entry (completeness by construction).
+        # Deterministic + idempotent, and it bypasses the done-lock (like set_progression's variable
+        # declaration) since it only ever ADDS the coverage the content already demands.
+        from maestro.asset_stubs import reconcile_stubs
+        state.write_component("asset_manifest", reconcile_stubs(state.load_artifact(), spec))
+
     # A component LOCKS once no module reports an error ON it: a full rewrite would otherwise drop
     # ids other components already reference. The sweep covers every module that AFFECTS the
     # component (owner + cross-cutting like `state` — a state_wiring error saying "cut the
@@ -524,6 +532,11 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             if "synopses" not in content and prior.get("synopses"):
                 content["synopses"] = prior["synopses"]
         state.write_component(component_id, content)
+        # A whole-component write of anything a visual entity derives from (or the manifest itself,
+        # where the assets module authors background prose) re-runs stub reconciliation so the
+        # manifest stays complete by construction.
+        if component_id in ("characters", "nodes", "places", "items", "combat", "asset_manifest"):
+            _reconcile_stubs()
         return {"ok": True, "component_id": component_id}
 
     def add_character(character_id: str, content) -> Dict:
@@ -548,6 +561,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": err}
         chars.setdefault("characters", []).append(full)
         state.write_component("characters", chars)
+        _reconcile_stubs()
         return {"ok": True, "character_id": character_id}
 
     # ── story: the dramatic plan, authored piece by piece (spine, then storylines, then
@@ -744,6 +758,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             return {"ok": False, "error": err}
         items.setdefault("items", []).append(full)
         state.write_component("items", items)
+        _reconcile_stubs()
         return {"ok": True, "item_id": item_id}
 
     def write_node(node_id: str, content, story_state_delta: Optional[Dict] = None,
@@ -804,6 +819,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             apply_delta(ss, delta)
             state.write_story_state(ss)
 
+        _reconcile_stubs()
         return {"ok": True, "node_id": node_id}
 
     def write_scene(node_id: str, script: str, end, location: Optional[str] = None,
@@ -857,6 +873,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 content["storyline"] = nodes[node_id]["storyline"]
             nodes[node_id] = normalize_narration(content)
             state.write_component("nodes", ns)
+            _reconcile_stubs()
             return {"ok": True, "node_id": node_id}
         node = nodes[node_id]
         if location is not None:
@@ -900,6 +917,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             if effects is not None:
                 lines[line_index]["effects"] = effects
         state.write_component("nodes", ns)
+        _reconcile_stubs()
         return {"ok": True, "node_id": node_id}
 
     def _resolve_feature_spawns(places: Dict) -> None:
@@ -987,6 +1005,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             places["start_place"] = place_id
         _resolve_feature_spawns(places)
         state.write_component("places", places)
+        _reconcile_stubs()
         return {"ok": True, "place_id": place_id}
 
     def set_places_meta(goal=None, flags=None, variables=None, start_place=None,
@@ -1025,6 +1044,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if start_spawn is not None:
             places["start_spawn"] = start_spawn
         state.write_component("places", places)
+        _reconcile_stubs()
         return {"ok": True, "goal": places.get("goal"),
                 "flags": places.get("flags"), "start_place": places.get("start_place"),
                 "start_spawn": places.get("start_spawn")}
@@ -1072,6 +1092,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             h["label"] = label
         _resolve_feature_spawns(places)
         state.write_component("places", places)
+        _reconcile_stubs()
         return {"ok": True, "place_id": place_id, "interactable_id": interactable_id}
 
     def add_interactable(place_id: str, interactable: Dict) -> Dict:
@@ -1117,6 +1138,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                     interactable["position"] = {"cell": {"x": snapped[0], "y": snapped[1]}}
         inter.append(interactable)
         state.write_component("places", places)
+        _reconcile_stubs()
         return {"ok": True, "place_id": place_id, "interactable_id": interactable["id"]}
 
     def read_place(place_id: str) -> Dict:
@@ -1151,6 +1173,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         else:
             rows.append(full)
         state.write_component("combat", combat)
+        _reconcile_stubs()
         return {"ok": True, "id": item_id}
 
     def set_combat_meta(combat_model=None, stats=None, statuses=None, **ignored) -> Dict:

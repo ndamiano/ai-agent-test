@@ -13,7 +13,7 @@ from typing import Dict, Optional, Tuple
 
 from maestro import context_render as cr
 from maestro.modules import checks
-from maestro.modules.module import Check, Module, register_module
+from maestro.modules.module import Check, Error, Module, register_module
 
 
 def locations_block(artifact: Dict) -> list:
@@ -48,6 +48,26 @@ def _d_character_ids(chk, m, ctx):
     if not (isinstance(chars, list) and chars):
         return []
     return m.wrap(chk, checks.each_has(ctx.artifact, "asset_manifest.characters", fields=["id"]))
+
+
+def _d_assets_complete(chk, m, ctx):
+    """Completeness by construction: every visual entity the content references must have an asset
+    stub. `_reconcile_stubs` (called by the authoring tools) keeps this satisfied; this is the
+    done-condition that PROVES it, so a missing asset is a hard error, never a silent placeholder.
+    Its fix re-runs the deterministic reconcile (a code step, no LLM)."""
+    from maestro.asset_stubs import missing_stub_entities
+    missing = missing_stub_entities(ctx.artifact)
+    if not missing:
+        return []
+    return [Error(type=chk.tier, code=chk.code, component="asset_manifest",
+                  message=f"missing asset stubs for {missing} — every visual entity needs a "
+                          f"manifest entry (regenerate the stubs)")]
+
+
+def _run_reconcile(module, ctx, error, slot, services, dispatch):
+    from maestro.asset_stubs import reconcile_stubs
+    services.state.write_component(
+        "asset_manifest", reconcile_stubs(services.state.load_artifact()))
 
 
 def _ctx_character_ids(module, rd: Dict) -> str:
@@ -116,6 +136,9 @@ class Assets(Module):
             tools=_REPAIR_TOOLS, prompt="assets_background_field_patch.txt", skeleton=""),
         Check("character_ids", _d_character_ids, context=_ctx_character_ids,
               tools=_REPAIR_TOOLS, prompt="assets_character_ids_fix.txt", skeleton=""),
+        # Terminal completeness sweep — every referenced visual entity has a stub. Runs only once
+        # the cheaper checks pass; its fix is the deterministic stub reconcile, not an LLM step.
+        Check("assets_complete", _d_assets_complete, when_clean=True, run=_run_reconcile),
     ]
 
     def affected_components(self) -> Tuple[str, ...]:

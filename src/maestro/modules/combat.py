@@ -82,6 +82,16 @@ def _combat_effect_refs_ok(eff: Dict, stats: set, statuses: set) -> Optional[str
         if formula is not None and not isinstance(formula, dict):
             return (f"effect \"formula\" must be an object {{\"base\": <n>, \"scales_with\"?: "
                     f"<stat id>, \"scale\"?: <n>}}, not {type(formula).__name__} {formula!r}")
+        # the compile schema is additionalProperties:false — an off-key formula (observed live:
+        # "scale_factor") must die at write time, not park the build at the compile gate
+        bad = set(formula or {}) - {"base", "scales_with", "scale"}
+        if bad:
+            return (f"formula has unknown key(s) {sorted(bad)} — allowed keys are exactly "
+                    f"\"base\", \"scales_with\", \"scale\" (the multiplier is named \"scale\")")
+        for k in ("base", "scale"):
+            v = (formula or {}).get(k)
+            if v is not None and not isinstance(v, (int, float)):
+                return f"formula.{k} must be a number, not {type(v).__name__} {v!r}"
         sw = (formula or {}).get("scales_with")
         if sw is not None and (not isinstance(sw, str) or sw not in stats):
             return f"formula.scales_with must be a declared stat id string; {sw!r} is not"

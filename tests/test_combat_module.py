@@ -267,6 +267,25 @@ def test_slice_tool_validates_against_declared_ids(tmp_path):
     assert not bad2["ok"] and "nope" in bad2["error"]
 
 
+def test_write_ability_rejects_off_key_formula(tmp_path):
+    # observed live (run 14e77df63a84): the model wrote formula.scale_factor; the write gate
+    # accepted it and the additionalProperties:false compile schema parked the build 20 steps
+    # later. Write-time validation must match the compile schema — reject with the right key named.
+    tools, _ = _combat_tools(tmp_path)
+    tools["set_combat_meta"](stats=[{"id": "hp", "default": 9, "role": "resource_depletable"},
+                                    {"id": "atk", "default": 3, "role": "modifier"}])
+    bad = tools["write_ability"]("slash", {
+        "targeting": {"shape": "single", "faction": "enemy"},
+        "effects": [{"stat": "hp", "op": "damage",
+                     "formula": {"base": 5, "scales_with": "atk", "scale_factor": 0.8}}]})
+    assert not bad["ok"] and "scale_factor" in bad["error"] and '"scale"' in bad["error"]
+    ok = tools["write_ability"]("slash", {
+        "targeting": {"shape": "single", "faction": "enemy"},
+        "effects": [{"stat": "hp", "op": "damage",
+                     "formula": {"base": 5, "scales_with": "atk", "scale": 0.8}}]})
+    assert ok["ok"], ok.get("error")
+
+
 def test_write_ability_rejects_non_string_requires_ids(tmp_path):
     # observed: a model wrote a whole dict as requires.var (stat-as-condition proxy), which
     # crashed the crossref walk downstream — the write gate must catch it with a message

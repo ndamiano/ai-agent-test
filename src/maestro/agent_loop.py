@@ -82,7 +82,7 @@ class AgentLoop:
     """
 
     def __init__(self, spec: dict, state, modules: List[Module], tools: dict, *, connector=None,
-                 max_steps: int = 300, on_event=None, on_milestone=None, control=None,
+                 max_steps: int = 1000, on_event=None, on_milestone=None, control=None,
                  parallel: int = 1):
         from llm_clients.connector_selector import get_connector
         self.spec = spec

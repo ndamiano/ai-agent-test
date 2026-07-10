@@ -420,6 +420,8 @@ func _interactable_icon(it):
 		return g._texture_file("marker_signpost.png")
 	if atype == "win":
 		return g._texture_file("marker_banner.png")
+	if atype == "start_combat":
+		return g._texture_file("marker_combat.png")
 	if atype == "examine":
 		var lbl := String(it.get("label", ""))
 		if lbl != "":
@@ -434,9 +436,16 @@ func _interactable_icon(it):
 			if req is Dictionary and req.has("item"):
 				item = String(req["item"])
 				break
-	if item == "":
-		return null
-	return g._texture_file("%s.png" % item)
+	if item != "":
+		var it_tex = g._texture_file("%s.png" % item)
+		if it_tex != null:
+			return it_tex
+	if atype == "use":
+		# a use hotspot is a physical mechanism — its label prop is the marker
+		var ulbl := String(it.get("label", ""))
+		if ulbl != "":
+			return g._texture_file("prop_%s.png" % _slug(ulbl))
+	return null
 
 
 # Labels only near the avatar: on or adjacent (chebyshev <= 1) — otherwise a dense map is soup.

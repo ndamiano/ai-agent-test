@@ -42,8 +42,22 @@ def _schema_errors(ir: Dict) -> List[str]:
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     validator = jsonschema.Draft202012Validator(
         {k: v for k, v in schema.items() if k != "examples"})
-    return [f"{'/'.join(str(p) for p in e.path) or '<root>'}: {e.message}"
-            for e in validator.iter_errors(ir)]
+    out = []
+    for e in validator.iter_errors(ir):
+        # Address list elements by their id, never their index — the fixer LLM can only target
+        # components by id ('nodes/17/end' reads as node id "17" and it thrashes on edit_node).
+        parts, cur = [], ir
+        for p in e.path:
+            label = str(p)
+            if isinstance(cur, list) and isinstance(p, int) and 0 <= p < len(cur):
+                cur = cur[p]
+                if isinstance(cur, dict) and isinstance(cur.get("id"), str):
+                    label = cur["id"]
+            else:
+                cur = cur.get(p) if isinstance(cur, dict) else None
+            parts.append(label)
+        out.append(f"{'/'.join(parts) or '<root>'}: {e.message}")
+    return out
 
 
 def compile_ir(working_dir, distribute: bool = True) -> Dict:

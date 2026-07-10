@@ -225,6 +225,12 @@ def _encounter_error(e: Dict, combatant_ids: set) -> Optional[str]:
     if "player" not in seen_factions or not (seen_factions & {"enemy", "neutral"}):
         issues.append(f"encounter['{eid}'] needs at least one 'player' combatant and one opponent "
                       f"('enemy') — otherwise there is no fight")
+    bg = e.get("background")
+    if bg is not None and (not isinstance(bg, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", bg)):
+        issues.append(
+            f"encounter['{eid}'].background {bg!r} is not a real background id — write the actual "
+            f"id for the place this fight happens (e.g. a zone's bg like bg_oakhaven_town), never "
+            f"a template placeholder copied from the example.")
     if not isinstance(e.get("victory"), dict):
         issues.append(f"encounter['{eid}'] needs a 'victory' condition, e.g. {{\"all_defeated\": \"enemy\"}}")
     for key in ("on_victory", "on_defeat"):

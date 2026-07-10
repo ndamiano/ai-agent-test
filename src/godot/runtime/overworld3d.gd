@@ -54,7 +54,7 @@ func run_place(place_id, spawn):
 		if cpos != null:
 			inter[_helper._key(cpos["x"], cpos["y"])] = it
 
-	_root = _build_scene(rows, legend, gw, gh, inter)
+	_root = _build_scene(rows, legend, gw, gh, inter, _covered_cells(place.get("footprints", {})))
 	_draw_features(place.get("footprints", {}))
 
 	var sx := 0
@@ -164,7 +164,46 @@ func _teardown() -> void:
 
 
 # ── rendering ────────────────────────────────────────────────────────────────────────────────
-func _build_scene(rows, legend, gw, gh, inter) -> Node3D:
+# Footprint cells whose object actually renders (a .glb or its sprite) get NO wall box: the box
+# wraps the mesh's lower half (a spot object drowns in it entirely) and reads as a grey cube
+# under every set piece. A footprint with no art keeps its boxes — the blocked mosaic is the
+# degrade path, an invisible obstacle is not.
+func _dominant_open_theme(rows, legend, gw: int, gh: int) -> String:
+	var counts := {}
+	for cy in gh:
+		var row := String(rows[cy]) if cy < rows.size() else ""
+		for cx in gw:
+			var ch := row.substr(cx, 1) if cx < row.length() else "."
+			var spec = _helper._spec_of(ch, legend)
+			if String(spec.get("role", "open")) == "open":
+				var th := String(spec.get("theme", ""))
+				counts[th] = int(counts.get(th, 0)) + 1
+	var best := ""
+	var best_n := -1
+	for th in counts:
+		if counts[th] > best_n:
+			best_n = counts[th]
+			best = th
+	return best
+
+
+func _covered_cells(footprints) -> Dictionary:
+	var out := {}
+	if typeof(footprints) != TYPE_DICTIONARY:
+		return out
+	for fid in footprints:
+		var fp = footprints[fid]
+		var slug: String = _helper._slug(String(fp.get("label", "")))
+		if not (FileAccess.file_exists("res://images/feature_%s.glb" % slug)
+				or g._texture_file("feature_%s.png" % slug) != null):
+			continue
+		for dy in int(fp.get("h", 1)):
+			for dx in int(fp.get("w", 1)):
+				out[_helper._key(int(fp.get("x", 0)) + dx, int(fp.get("y", 0)) + dy)] = true
+	return out
+
+
+func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 	# Game's flat ColorRect scene backdrop is opaque and full-rect, drawn as a 2D CanvasItem ON
 	# TOP of the Viewport's 3D pass — it must be hidden or it mattes out the whole 3D world.
 	g.set_scene(null)
@@ -191,6 +230,7 @@ func _build_scene(rows, legend, gw, gh, inter) -> Node3D:
 	sun.shadow_enabled = true
 	root.add_child(sun)
 
+	var open_theme := _dominant_open_theme(rows, legend, gw, gh)
 	for cy in gh:
 		var row := String(rows[cy]) if cy < rows.size() else ""
 		for cx in gw:
@@ -198,6 +238,11 @@ func _build_scene(rows, legend, gw, gh, inter) -> Node3D:
 			var spec = _helper._spec_of(ch, legend)
 			var role := String(spec.get("role", "open"))
 			var theme := String(spec.get("theme", ""))
+			if role == "blocked" and covered.has(_helper._key(cx, cy)):
+				# the mesh IS the object: its floor is the surrounding ground, not the object's
+				# own blocked theme grey-tinted under it (reads as a mismatched plinth)
+				role = "open"
+				theme = open_theme
 			var tex = _helper._tile_texture(theme)
 
 			var mat := StandardMaterial3D.new()
@@ -232,23 +277,37 @@ func _build_scene(rows, legend, gw, gh, inter) -> Node3D:
 		var cx := int(cell["x"])
 		var cy := int(cell["y"])
 		var atype := String(it["action"].get("type", ""))
-		var icon = _helper._interactable_icon(it)
 		var m := _CELL * 0.85
 
-		var spr := Sprite3D.new()
-		spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-		spr.shaded = false
-		if icon != null:
-			spr.texture = icon
-			spr.pixel_size = m / icon.get_height()
-		else:
-			# no art: a small full-billboard chip, not a ground-skewed square
-			var col: Color = Overworld._MARKERS.get(atype, Color(0.85, 0.85, 0.85))
-			spr.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-			spr.texture = _solid_texture(col)
-			spr.pixel_size = (m * 0.35) / 8.0
-		spr.position = Vector3(cx * _CELL, m / 2.0, cy * _CELL)
-		root.add_child(spr)
+		# An examine/use hotspot is a physical object standing in the world — its generated
+		# prop MESH is the marker when one exists (a flat sprite next to real geometry reads
+		# as a bug); anything flat falls through to the billboard icon.
+		var drew := false
+		if atype == "examine" or atype == "use":
+			var pslug: String = _helper._slug(String(it.get("label", "")))
+			var ppath := "images/prop_%s.glb" % pslug
+			if pslug != "" and FileAccess.file_exists("res://" + ppath):
+				var pnode := _load_glb(ppath, _CELL, g._texture_file("prop_%s.png" % pslug))
+				if pnode != null:
+					pnode.position = Vector3(cx * _CELL, 0.0, cy * _CELL)
+					root.add_child(pnode)
+					drew = true
+		if not drew:
+			var icon = _helper._interactable_icon(it)
+			var spr := Sprite3D.new()
+			spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+			spr.shaded = false
+			if icon != null:
+				spr.texture = icon
+				spr.pixel_size = m / icon.get_height()
+			else:
+				# no art: a small full-billboard chip, not a ground-skewed square
+				var col: Color = Overworld._MARKERS.get(atype, Color(0.85, 0.85, 0.85))
+				spr.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+				spr.texture = _solid_texture(col)
+				spr.pixel_size = (m * 0.35) / 8.0
+			spr.position = Vector3(cx * _CELL, m / 2.0, cy * _CELL)
+			root.add_child(spr)
 
 		var lbl := Label3D.new()
 		lbl.text = it.get("label", "")

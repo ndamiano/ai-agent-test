@@ -159,6 +159,20 @@ def test_encounter_reports_all_issues_at_once():
     assert "cb_ghost" in msg and "on_victory" in msg   # both, not one-at-a-time
 
 
+def test_encounter_rejects_placeholder_background():
+    # 'bg_<place>' copied verbatim from the skeleton (the examples-copied failure law) poisoned a
+    # live run: reconcile_stubs dutifully derived a bg_<place> manifest stub, crossref then PASSED
+    # on it, and only the IR schema caught it — unattributable. Reject at write time instead.
+    e = {"id": "enc1", "background": "bg_<place>",
+         "combatants": [{"ref": "cb_hero", "faction": "player"},
+                        {"ref": "cb_foe", "faction": "enemy"}],
+         "victory": {"all_defeated": "enemy"}}
+    msg = _encounter_error(e, {"cb_hero", "cb_foe"})
+    assert msg and "background" in msg and "placeholder" in msg
+    assert _encounter_error({**e, "background": "bg_oakhaven_town"},
+                            {"cb_hero", "cb_foe"}) is None
+
+
 def test_encounter_undeclared_ref_offers_authoring_path():
     # The fix for a missing enemy is to author it — the message must say write_combatant, and the
     # encounter phase must actually scope that tool, or the loop deadlocks.

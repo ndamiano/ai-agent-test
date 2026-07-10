@@ -294,6 +294,40 @@ def test_overworld_spawn_never_lands_on_wall():
     assert "_helper._nearest_open(sx, sy, blocked, gw, gh)" in ov3d
 
 
+def test_overworld3d_renders_covered_footprint_cells_as_ground():
+    # A footprint's cells are blocked by construction, so the tile pass raised a wall box around
+    # every set piece — a spot-size mesh drowned in it entirely (played as "missing"), a tall one
+    # stood in a grey cube on a wall-textured plinth. Cells whose feature actually renders become
+    # OPEN GROUND (dominant open theme, no box, no blocked tint); a footprint with no art keeps
+    # the blocked mosaic (an invisible obstacle is worse).
+    src = (_RUNTIME / "overworld3d.gd").read_text()
+    assert "func _covered_cells" in src
+    assert "_covered_cells(place.get(\"footprints\", {}))" in src
+    assert 'if role == "blocked" and covered.has(_helper._key(cx, cy)):' in src
+    assert "func _dominant_open_theme" in src
+    body = src.split("func _covered_cells(")[1].split("\nfunc ")[0]
+    assert "feature_%s.glb" in body and "feature_%s.png" in body
+
+
+def test_overworld3d_prefers_prop_mesh_over_billboard():
+    # An examine/use hotspot is a physical object; when its prop mesh exists it stands in the
+    # world as geometry — the flat billboard icon is only the no-mesh fallback.
+    src = (_RUNTIME / "overworld3d.gd").read_text()
+    assert 'prop_%s.glb' in src
+    idx_mesh = src.index("prop_%s.glb")
+    idx_icon = src.index("_interactable_icon(it)")
+    assert idx_mesh < idx_icon   # mesh probe gates the billboard path
+
+
+def test_interactable_icon_covers_combat_and_bare_use():
+    # start_combat had NO icon branch and a use hotspot with no item clause probed nothing —
+    # both rendered as bare colour chips in the world.
+    src = (Path(__file__).parent.parent / "src/godot/runtime/overworld.gd").read_text()
+    body = src.split("func _interactable_icon(")[1].split("\nfunc ")[0]
+    assert "marker_combat.png" in body
+    assert body.count('prop_%s.png') == 2   # examine label prop AND the use-label fallback
+
+
 def test_combat_checks_end_after_status_tick():
     body = (_RUNTIME / "combat.gd").read_text().split("func _run_enc(")[1].split("\nfunc ")[0]
     assert body.index("_any_alive") < body.index("_tick_statuses(u)")

@@ -150,19 +150,22 @@ def _tile_stubs(places_comp: Dict, prev) -> List[Dict]:
 
 
 def _marker_stubs(places_comp: Dict, prev) -> List[Dict]:
-    """Overworld hotspot markers: one signpost for move exits, one banner for a win tile, one small
-    prop per distinct examine hotspot (its label is the subject). All ride the item-icon pipeline."""
+    """Overworld hotspot markers: one signpost for move exits, one banner for a win tile, one
+    battle standard for combat tiles, one small prop per distinct examine/use hotspot (its label
+    is the subject — a use hotspot is a physical mechanism standing in the world). All ride the
+    item-icon pipeline. NO cap: every hotspot the game authored gets its marker — a capped list
+    silently rendered the overflow as bare colour chips."""
     from renpy.fns import tile_slug
     have = _by_id(prev)
-    verbs, examine_labels = set(), []
+    verbs, prop_labels = set(), []
     for p in (places_comp.get("places") or {}).values():
         if not isinstance(p, dict) or p.get("kind") not in _RPG_KINDS:
             continue
         for hot in p.get("interactables") or []:
             a = (hot or {}).get("action") or {}
             verbs.add(a.get("type"))
-            if a.get("type") == "examine" and hot.get("label"):
-                examine_labels.append(hot["label"])
+            if a.get("type") in ("examine", "use") and hot.get("label"):
+                prop_labels.append(hot["label"])
     out = []
     if "move" in verbs:
         out.append(_keep(have.get("marker_signpost"), {
@@ -172,7 +175,11 @@ def _marker_stubs(places_comp: Dict, prev) -> List[Dict]:
         out.append(_keep(have.get("marker_banner"), {
             "id": "marker_banner", "image_file": "marker_banner.png",
             "description": "small victory banner on a standing pole"}))
-    for label in list(dict.fromkeys(examine_labels))[:12]:
+    if "start_combat" in verbs:
+        out.append(_keep(have.get("marker_combat"), {
+            "id": "marker_combat", "image_file": "marker_combat.png",
+            "description": "crossed swords over a small battle standard"}))
+    for label in dict.fromkeys(prop_labels):
         if not tile_slug(label):
             continue
         mid = f"prop_{tile_slug(label)}"

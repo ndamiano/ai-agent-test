@@ -301,3 +301,23 @@ def test_generate_images_consumes_saved_prompt(tmp_path, monkeypatch):
     mara_job = next(j for j in queued if "mara" in j["prompt"].lower())
     assert "STYLED PORTRAIT" in mara_job["prompt"]              # the saved prompt drove the job
     assert "must NOT be used" not in mara_job["prompt"]         # not the raw description
+
+
+def test_marker_stubs_cover_every_hotspot_verb_uncapped():
+    # start_combat had no marker (rendered as a bare colour chip), use hotspots had no prop, and
+    # a [:12] cap silently dropped the overflow examine props — every hotspot the game authors
+    # must land its marker/prop stub.
+    from maestro.asset_stubs import _marker_stubs
+    inter = [{"id": f"h_{i}", "label": f"thing {i}",
+              "action": {"type": "examine", "text": "x"}} for i in range(15)]
+    inter += [{"id": "h_fight", "label": "Ambush", "action": {"type": "start_combat",
+                                                              "encounter": "e1"}},
+              {"id": "h_lever", "label": "Rusty Lever",
+               "action": {"type": "use", "fallback": {"text": "t"}}},
+              {"id": "h_out", "label": "North", "action": {"type": "move", "target": "z2"}}]
+    places = {"places": {"z1": {"kind": "town", "interactables": inter}}}
+    out = _marker_stubs(places, None)
+    ids = {e["id"] for e in out}
+    assert "marker_combat" in ids and "marker_signpost" in ids
+    assert "prop_rusty_lever" in ids                       # use hotspots get their prop
+    assert sum(1 for i in ids if i.startswith("prop_thing_")) == 15   # no silent cap

@@ -21,8 +21,9 @@ _WOBBLE_OCTAVES = 3
 _COAST_WOBBLE = 1.8        # +- macro cells on the coast band edge
 _DEPTH_WOBBLE = 2.5        # +- macro cells on each water depth break
 _MOIST_AMP = 0.35
-_FINE_ELEV_SCALE = 5.0     # fine cells per elevation-detail feature
-_FINE_ELEV_AMP = 0.045
+_FINE_ELEV_SCALE = 3.5     # fine cells per elevation-detail feature
+_FINE_ELEV_AMP = 0.09      # bilinear macro alone reads glass-smooth in 3D; the detail
+                           # octaves carry the visible roughness
 _SEED_OFFSET = 424242
 
 

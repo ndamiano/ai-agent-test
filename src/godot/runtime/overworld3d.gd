@@ -23,9 +23,13 @@ const _LABEL_RANGE := 2
 const _HINT := "WASD / Arrows: move    E: interact"
 const _AVATAR_Y := _CELL * 0.45
 
-# Full 0..1 elevation range spans this many cell-widths of relief — enough to read as real hills
-# from the low chase camera without a slope ever swallowing a whole storey of gameplay geometry.
-const _HEIGHT_SCALE := 3.0
+# Heights are SEA-RELATIVE (see _effective_elev): land renders as (elevation - sea_level) *
+# this scale, so relief is spent on the range the player actually sees — absolute scaling
+# wasted most of it below the waterline and land barely rose above the sea plane.
+const _HEIGHT_SCALE := 8.0
+# Seafloor depth floor (pre-scale): water keeps a little visible depth under the translucent
+# plane without opening scaled-up pits at the coast.
+const _SEA_FLOOR := -0.06
 
 # Fixed neighbour scan order for the border-fringe theme lookup (mirrors overworld._TRANS_DIRS).
 const _FRINGE_DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
@@ -236,8 +240,7 @@ func _is_water(cx: int, cy: int) -> bool:
 # Raw 0..1 elevation a cell contributes to its corners: a water cell is clamped UP to sea_level so
 # the dry floor never dips into a pit under the translucent water plane.
 func _effective_elev(cx: int, cy: int) -> float:
-	var v := float(_elev[cy][cx])
-	return _sea_level if v < _sea_level else v
+	return maxf(float(_elev[cy][cx]) - _sea_level, _SEA_FLOOR)
 
 
 # Corner (lattice point) elevation at (ix, iy), ix in [0, gw], iy in [0, gh]: the average of the
@@ -501,7 +504,7 @@ func _build_water_plane(root: Node3D, cells: Array) -> void:
 	mat.albedo_color = _WATER_COLOR
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	inst.material_override = mat
-	inst.position = Vector3((min_x + max_x) / 2.0, _sea_level * _HEIGHT_SCALE, (min_z + max_z) / 2.0)
+	inst.position = Vector3((min_x + max_x) / 2.0, 0.0, (min_z + max_z) / 2.0)
 	root.add_child(inst)
 
 
@@ -587,10 +590,10 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 				root.add_child(floor_inst)
 
 			if role == "blocked":
-				# On a heightfield, water is already communicated by the terrain dipping under
-				# the translucent sea plane, and a river by its water-textured band — a grey box
-				# per cell turns every coastline and river into a wall of cubes.
-				if _has_elev and (_is_water(cx, cy) or theme.contains("river")):
+				# On a heightfield the TERRAIN communicates blocked: water dips under the sea
+				# plane, land rises. Boxes are for flat maps (towns/interiors), where a wall
+				# needs volume — on terrain they turn every coastline into a wall of cubes.
+				if _has_elev:
 					continue
 				var wall_mat := StandardMaterial3D.new()
 				var wtex = _helper._tile_texture(theme)

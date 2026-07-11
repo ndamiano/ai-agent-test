@@ -567,7 +567,21 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 				var fringe_st = null
 				if role == "open":
 					for d in _FRINGE_DIRS:
-						var ntheme: String = _helper._theme_at(cx + d.x, cy + d.y, rows, legend, gw, gh, covered)
+						# fringe only against OPEN neighbors of another theme — blending a
+						# water/blocked neighbor's texture onto land paints cyan triangles
+						# up the coastline
+						var nx: int = cx + d.x
+						var ny: int = cy + d.y
+						if nx < 0 or ny < 0 or nx >= gw or ny >= gh:
+							continue
+						var nrow := String(rows[ny]) if ny < rows.size() else ""
+						var nch := nrow.substr(nx, 1) if nx < nrow.length() else "."
+						var nspec = _helper._spec_of(nch, legend)
+						if String(nspec.get("role", "open")) != "open":
+							continue
+						if covered.has(_helper._key(nx, ny)):
+							continue
+						var ntheme := String(nspec.get("theme", ""))
 						if ntheme != "" and ntheme != theme:
 							fringe_st = _terrain_group(groups, mats, "open", ntheme)
 							break

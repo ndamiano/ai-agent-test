@@ -78,6 +78,13 @@ DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
 }
 
 
+class AssetSettings(BaseModel):
+    """tile_source "library" ships terrain from the curated pack in src/assets/tiles (per-run
+    generated tiles only fill classes the library lacks); "generated" prefers the run's own
+    tiles — flip it when generation clears the quality bar."""
+    tile_source: Literal["library", "generated"] = "library"
+
+
 class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline", "openrouter"]
     working_directory: Optional[str] = "outputs"
@@ -91,5 +98,6 @@ class AppSettings(BaseModel):
     cline: Optional[ClineSettings] = None
     comfyui: Optional[ComfyUISettings] = None
     trellis: Optional[TrellisSettings] = None
+    assets: Optional[AssetSettings] = None
     tts: Optional[TTSSettings] = None
     music: Optional[MusicSettings] = None

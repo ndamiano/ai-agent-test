@@ -4,6 +4,14 @@
 # renderer wired in by Game._run_world when meta.presentation == "hd2d". Reuses overworld.gd's
 # pure tile/texture/avatar helpers via composition (an Overworld instance built only for its
 # helper methods — _init has no side effects beyond storing `g`) instead of duplicating them.
+#
+# Terrain: place.elevation (rows of 0..1 floats, same dims as tiles.rows) + place.sea_level are an
+# OPTIONAL data-presence contract — absent (old/2d places) renders the ground exactly as flat
+# PlaneMesh-per-cell, unchanged. Present, it drives a single heightfield ArrayMesh instead: corner
+# height = average of the up to 4 adjacent cells' elevation (a water cell's contribution clamped
+# up to sea_level so the dry-land floor under the water plane never pits), scaled by
+# _HEIGHT_SCALE. Every entity Y (avatar/tokens/markers/meshes/icons) reads off the SAME terrain
+# sampler so nothing floats or sinks into the new relief.
 extends RefCounted
 
 const Overworld = preload("res://overworld.gd")
@@ -13,13 +21,40 @@ const _WALL_H := 0.6
 const _SLIDE_SECS := 0.12
 const _LABEL_RANGE := 2
 const _HINT := "WASD / Arrows: move    E: interact"
+const _AVATAR_Y := _CELL * 0.45
+
+# Full 0..1 elevation range spans this many cell-widths of relief — enough to read as real hills
+# from the low chase camera without a slope ever swallowing a whole storey of gameplay geometry.
+const _HEIGHT_SCALE := 3.0
+
+# Fixed neighbour scan order for the border-fringe theme lookup (mirrors overworld._TRANS_DIRS).
+const _FRINGE_DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
+
+const _SHORE_TINT := Color(0.78, 0.80, 0.86)
+const _WATER_COLOR := Color(0.28, 0.50, 0.78, 0.62)
 
 var g  # Game driver
 var _helper  # Overworld instance, used only for its pure tile/texture helper methods
 var _labels := []  # {x, y, node} per interactable Label3D — visibility follows the avatar
 var _root: Node3D
 var _cam: Camera3D
+# Camera pull-back scaled from the place's declared m_per_cell (2 = town scale, 20+ = world
+# map): a fixed chase offset that reads right in a 2 m/cell town feels zoomed-in and HUGE on a
+# 20 m/cell overworld.
+var _cam_zoom := 1.0
+# TRELLIS meshes face +Z when the source sprite's front faces the viewer; flip to PI if a
+# batch lands back-to-front.
+const _MESH_FRONT_YAW := 0.0
 var _avatar: Sprite3D
+
+# Per-place terrain state, set by _load_elevation each run_place. _has_elev false = every
+# _terrain_y query returns 0.0, so the flat contract holds by construction, not by branching.
+var _elev := []
+var _has_elev := false
+var _sea_level := 0.0
+var _gw := 0
+var _gh := 0
+var _corner_cache := {}
 
 
 func _init(game) -> void:
@@ -40,6 +75,10 @@ func run_place(place_id, spawn):
 	if gw == 0 or gh == 0:
 		gw = 8
 		gh = 6
+
+	_load_elevation(place, gw, gh)
+	var mpc := float(place.get("m_per_cell", 2.0))
+	_cam_zoom = clampf(sqrt(mpc / 2.0), 1.25, 3.2)
 
 	var blocked := {}
 	for y in rows.size():
@@ -68,7 +107,7 @@ func run_place(place_id, spawn):
 
 	_avatar = _make_avatar()
 	_root.add_child(_avatar)
-	_avatar.position = Vector3(ax * _CELL, _CELL * 0.45, ay * _CELL)
+	_avatar.position = Vector3(ax * _CELL, _terrain_y(ax * _CELL, ay * _CELL) + _AVATAR_Y, ay * _CELL)
 	_cam.position = _avatar.position + Vector3(0, 5.0, 4.0)
 	_cam.look_at(_avatar.position, Vector3.UP)
 	_refresh_labels(ax, ay)
@@ -93,8 +132,7 @@ func run_place(place_id, spawn):
 
 		if moving:
 			slide_t = min(1.0, slide_t + delta / _SLIDE_SECS)
-			var p: Vector3 = slide_from.lerp(slide_to, slide_t)
-			_avatar.position = Vector3(p.x, _avatar.position.y, p.z)
+			_avatar.position = slide_from.lerp(slide_to, slide_t)
 			if slide_t >= 1.0:
 				moving = false
 		else:
@@ -113,10 +151,10 @@ func run_place(place_id, spawn):
 				var nx := ax + dx
 				var ny := ay + dy
 				if nx >= 0 and nx < gw and ny >= 0 and ny < gh and not blocked.has(_helper._key(nx, ny)):
-					slide_from = Vector3(ax * _CELL, 0, ay * _CELL)
+					slide_from = Vector3(ax * _CELL, _terrain_y(ax * _CELL, ay * _CELL) + _AVATAR_Y, ay * _CELL)
 					ax = nx
 					ay = ny
-					slide_to = Vector3(ax * _CELL, 0, ay * _CELL)
+					slide_to = Vector3(ax * _CELL, _terrain_y(ax * _CELL, ay * _CELL) + _AVATAR_Y, ay * _CELL)
 					slide_t = 0.0
 					moving = true
 					_refresh_labels(ax, ay)
@@ -163,6 +201,97 @@ func _teardown() -> void:
 		_root = null
 
 
+# ── terrain sampling ─────────────────────────────────────────────────────────────────────────
+# Validates place.elevation is present, well-formed (same dims as the tile grid) and paired with
+# a numeric sea_level; anything short of that leaves _has_elev false so every _terrain_y query
+# below returns 0.0 — the flat contract is enforced by this one gate, not scattered branches.
+func _load_elevation(place, gw: int, gh: int) -> void:
+	_has_elev = false
+	_elev = []
+	_sea_level = 0.0
+	_gw = gw
+	_gh = gh
+	_corner_cache = {}
+
+	var elev = place.get("elevation")
+	var sea = place.get("sea_level")
+	var sea_ok := typeof(sea) == TYPE_FLOAT or typeof(sea) == TYPE_INT
+	if not sea_ok or typeof(elev) != TYPE_ARRAY or elev.size() != gh:
+		return
+	for r in elev:
+		if typeof(r) != TYPE_ARRAY or r.size() != gw:
+			return
+
+	_elev = elev
+	_sea_level = float(sea)
+	_has_elev = true
+
+
+func _is_water(cx: int, cy: int) -> bool:
+	if not _has_elev or cx < 0 or cx >= _gw or cy < 0 or cy >= _gh:
+		return false
+	return float(_elev[cy][cx]) < _sea_level
+
+
+# Raw 0..1 elevation a cell contributes to its corners: a water cell is clamped UP to sea_level so
+# the dry floor never dips into a pit under the translucent water plane.
+func _effective_elev(cx: int, cy: int) -> float:
+	var v := float(_elev[cy][cx])
+	return _sea_level if v < _sea_level else v
+
+
+# Corner (lattice point) elevation at (ix, iy), ix in [0, gw], iy in [0, gh]: the average of the
+# up to 4 adjacent cells that exist. Memoized — up to 4 cells share each corner.
+func _corner_elev(ix: int, iy: int) -> float:
+	var key := "%d,%d" % [ix, iy]
+	if _corner_cache.has(key):
+		return _corner_cache[key]
+	var total := 0.0
+	var n := 0
+	for cy in [iy - 1, iy]:
+		for cx in [ix - 1, ix]:
+			if cx >= 0 and cx < _gw and cy >= 0 and cy < _gh:
+				total += _effective_elev(cx, cy)
+				n += 1
+	var v := total / n if n > 0 else 0.0
+	_corner_cache[key] = v
+	return v
+
+
+# Bilinear elevation sample at continuous lattice coords (fx, fy) — fx/fy integer hits an exact
+# corner (used for mesh vertices), fractional interpolates (used for entity placement). Returns
+# world-scale height (already * _HEIGHT_SCALE).
+func _lattice_y(fx: float, fy: float) -> float:
+	if not _has_elev:
+		return 0.0
+	var ix := clampi(int(floor(fx)), 0, _gw)
+	var iy := clampi(int(floor(fy)), 0, _gh)
+	var tx := clampf(fx - floor(fx), 0.0, 1.0)
+	var ty := clampf(fy - floor(fy), 0.0, 1.0)
+	var ix1 := clampi(ix + 1, 0, _gw)
+	var iy1 := clampi(iy + 1, 0, _gh)
+	var h00 := _corner_elev(ix, iy)
+	var h10 := _corner_elev(ix1, iy)
+	var h01 := _corner_elev(ix, iy1)
+	var h11 := _corner_elev(ix1, iy1)
+	var h := lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), ty)
+	return h * _HEIGHT_SCALE
+
+
+# World-space terrain Y at world (wx, wz) — the ONE call site every entity/mesh placement below
+# uses, so a place with no elevation data places everything at y=0 exactly as before.
+func _terrain_y(wx: float, wz: float) -> float:
+	return _lattice_y(wx / _CELL + 0.5, wz / _CELL + 0.5)
+
+
+func _near_water(cx: int, cy: int) -> bool:
+	for dy in [-1, 0, 1]:
+		for dx in [-1, 0, 1]:
+			if (dx != 0 or dy != 0) and _is_water(cx + dx, cy + dy):
+				return true
+	return false
+
+
 # ── rendering ────────────────────────────────────────────────────────────────────────────────
 # Footprint cells whose object actually renders (a .glb or its sprite) get NO wall box: the box
 # wraps the mesh's lower half (a spot object drowns in it entirely) and reads as a grey cube
@@ -187,6 +316,29 @@ func _dominant_open_theme(rows, legend, gw: int, gh: int) -> String:
 	return best
 
 
+# Nearest open, non-covered theme within a small ring — the local ground an object sits on.
+func _nearby_open_theme(cx: int, cy: int, rows, legend, gw: int, gh: int, covered,
+		fallback: String) -> String:
+	for radius in [1, 2, 3]:
+		for dy in range(-radius, radius + 1):
+			for dx in range(-radius, radius + 1):
+				if maxi(absi(dx), absi(dy)) != radius:
+					continue
+				var nx := cx + dx
+				var ny := cy + dy
+				if nx < 0 or ny < 0 or nx >= gw or ny >= gh:
+					continue
+				if covered.has(_helper._key(nx, ny)):
+					continue
+				var row := String(rows[ny]) if ny < rows.size() else ""
+				if nx >= row.length():
+					continue
+				var spec = _helper._spec_of(row[nx], legend)
+				if String(spec.get("role", "open")) == "open":
+					return String(spec.get("theme", fallback))
+	return fallback
+
+
 func _covered_cells(footprints) -> Dictionary:
 	var out := {}
 	if typeof(footprints) != TYPE_DICTIONARY:
@@ -194,13 +346,163 @@ func _covered_cells(footprints) -> Dictionary:
 	for fid in footprints:
 		var fp = footprints[fid]
 		var slug: String = _helper._slug(String(fp.get("label", "")))
-		if not (FileAccess.file_exists("res://images/feature_%s.glb" % slug)
+		if not (fp.get("door") != null
+				or FileAccess.file_exists("res://images/feature_%s.glb" % slug)
 				or g._texture_file("feature_%s.png" % slug) != null):
 			continue
 		for dy in int(fp.get("h", 1)):
 			for dx in int(fp.get("w", 1)):
 				out[_helper._key(int(fp.get("x", 0)) + dx, int(fp.get("y", 0)) + dy)] = true
 	return out
+
+
+# Lazily creates (or fetches) the SurfaceTool a (role, theme) group accumulates triangles into,
+# plus its StandardMaterial3D (texture-matched to the flat renderer's _tile_texture/_tile_color,
+# vertex_color_use_as_albedo on so the shoreline tint below multiplies cleanly over the texture).
+func _terrain_group(groups: Dictionary, mats: Dictionary, role: String, theme: String) -> SurfaceTool:
+	var key := "%s|%s" % [role, theme]
+	if groups.has(key):
+		return groups[key]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	groups[key] = st
+	var tex = _helper._tile_texture(theme)
+	var mat := StandardMaterial3D.new()
+	if tex != null:
+		mat.albedo_texture = tex
+		if role == "blocked":
+			mat.albedo_color = Color(0.62, 0.62, 0.70)
+	else:
+		mat.albedo_color = _helper._tile_color(role, theme)
+	mat.vertex_color_use_as_albedo = true
+	mats[key] = mat
+	return st
+
+
+# One cell's floor quad, height-sampled at its 4 corners and split into 2 triangles. When a
+# differently-themed OPEN neighbour exists (fringe_st != null), the second triangle goes to the
+# NEIGHBOUR's group instead of this cell's own — a hard grid-aligned seam between two textures
+# reads as checkerboard; splitting the quad along its diagonal turns every border into a jagged
+# dithered edge instead. Chosen over a shader-based per-vertex blend because the ground is built
+# from many pre-existing StandardMaterial3D texture groups (one per theme, texture assigned per
+# surface) — blending two arbitrary textures within one triangle needs a custom shader neither
+# this file nor the rest of the runtime uses; splitting the ALREADY-two triangles of the quad
+# needs none and is fully authored in this function.
+# Analytic smooth normal at lattice corner (ix, iy) from the height field's central
+# difference — indexing can't merge the per-cell-UV vertices, so generate_normals() would
+# shade each triangle flat (a faceted, "disconnected blocks" look on rolling terrain).
+func _corner_normal(ix: int, iy: int) -> Vector3:
+	var hl := _lattice_y(ix - 1, iy)
+	var hr := _lattice_y(ix + 1, iy)
+	var hu := _lattice_y(ix, iy - 1)
+	var hd := _lattice_y(ix, iy + 1)
+	return Vector3(-(hr - hl) / (2.0 * _CELL), 1.0, -(hd - hu) / (2.0 * _CELL)).normalized()
+
+
+func _add_terrain_quad(st_own: SurfaceTool, fringe_st, cx: int, cy: int, shade: Color) -> void:
+	var x0 := (cx - 0.5) * _CELL
+	var x1 := (cx + 0.5) * _CELL
+	var z0 := (cy - 0.5) * _CELL
+	var z1 := (cy + 0.5) * _CELL
+
+	var tl := Vector3(x0, _lattice_y(cx, cy), z0)
+	var tr := Vector3(x1, _lattice_y(cx + 1, cy), z0)
+	var bl := Vector3(x0, _lattice_y(cx, cy + 1), z1)
+	var br := Vector3(x1, _lattice_y(cx + 1, cy + 1), z1)
+
+	var n_tl := _corner_normal(cx, cy)
+	var n_tr := _corner_normal(cx + 1, cy)
+	var n_bl := _corner_normal(cx, cy + 1)
+	var n_br := _corner_normal(cx + 1, cy + 1)
+
+	var u0 := float(cx % 3) / 3.0
+	var v0 := float(cy % 3) / 3.0
+	var u1 := u0 + 1.0 / 3.0
+	var v1 := v0 + 1.0 / 3.0
+	var uv_tl := Vector2(u0, v0)
+	var uv_tr := Vector2(u1, v0)
+	var uv_bl := Vector2(u0, v1)
+	var uv_br := Vector2(u1, v1)
+
+	st_own.set_color(shade)
+	st_own.set_uv(uv_tl)
+	st_own.set_normal(n_tl)
+	st_own.add_vertex(tl)
+	st_own.set_uv(uv_bl)
+	st_own.set_normal(n_bl)
+	st_own.add_vertex(bl)
+	st_own.set_uv(uv_tr)
+	st_own.set_normal(n_tr)
+	st_own.add_vertex(tr)
+
+	var st2: SurfaceTool = fringe_st if fringe_st != null else st_own
+	st2.set_color(shade)
+	st2.set_uv(uv_tr)
+	st2.set_normal(n_tr)
+	st2.add_vertex(tr)
+	st2.set_uv(uv_bl)
+	st2.set_normal(n_bl)
+	st2.add_vertex(bl)
+	st2.set_uv(uv_br)
+	st2.set_normal(n_br)
+	st2.add_vertex(br)
+
+
+func _commit_terrain(groups: Dictionary, mats: Dictionary) -> MeshInstance3D:
+	var mesh := ArrayMesh.new()
+	var order: Array = groups.keys()
+	for key in order:
+		var st: SurfaceTool = groups[key]
+		st.index()
+		st.commit(mesh)
+	var inst := MeshInstance3D.new()
+	inst.mesh = mesh
+	for i in order.size():
+		inst.set_surface_override_material(i, mats[order[i]])
+	return inst
+
+
+# A single translucent QuadMesh spanning every elevation-driven water cell's bounding box, sat
+# flat at sea_level. Tinted blue-ish; if the water cells' dominant legend theme has generated
+# tile art it's layered under the tint (StandardMaterial3D multiplies albedo_color over
+# albedo_texture, so this is a trivial compose — no shader needed), otherwise the tint alone.
+func _build_water_plane(root: Node3D, cells: Array) -> void:
+	if cells.is_empty():
+		return
+	var min_x := INF
+	var max_x := -INF
+	var min_z := INF
+	var max_z := -INF
+	var theme_counts := {}
+	for c in cells:
+		var cx: int = c["x"]
+		var cy: int = c["y"]
+		min_x = minf(min_x, (cx - 0.5) * _CELL)
+		max_x = maxf(max_x, (cx + 0.5) * _CELL)
+		min_z = minf(min_z, (cy - 0.5) * _CELL)
+		max_z = maxf(max_z, (cy + 0.5) * _CELL)
+		var th := String(c["theme"])
+		theme_counts[th] = int(theme_counts.get(th, 0)) + 1
+	var best := ""
+	var best_n := -1
+	for th in theme_counts:
+		if theme_counts[th] > best_n:
+			best_n = theme_counts[th]
+			best = th
+
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2(max_x - min_x, max_z - min_z)
+	var inst := MeshInstance3D.new()
+	inst.mesh = mesh
+	var mat := StandardMaterial3D.new()
+	var tex = _helper._tile_texture(best)
+	if tex != null:
+		mat.albedo_texture = tex
+	mat.albedo_color = _WATER_COLOR
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	inst.material_override = mat
+	inst.position = Vector3((min_x + max_x) / 2.0, _sea_level * _HEIGHT_SCALE, (min_z + max_z) / 2.0)
+	root.add_child(inst)
 
 
 func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
@@ -231,6 +533,10 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 	root.add_child(sun)
 
 	var open_theme := _dominant_open_theme(rows, legend, gw, gh)
+	var groups := {}
+	var mats := {}
+	var water_cells := []
+
 	for cy in gh:
 		var row := String(rows[cy]) if cy < rows.size() else ""
 		for cx in gw:
@@ -240,35 +546,71 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 			var theme := String(spec.get("theme", ""))
 			if role == "blocked" and covered.has(_helper._key(cx, cy)):
 				# the mesh IS the object: its floor is the surrounding ground, not the object's
-				# own blocked theme grey-tinted under it (reads as a mismatched plinth)
+				# own blocked theme grey-tinted under it (reads as a mismatched plinth). Use the
+				# NEAREST adjacent open theme — a well on a plaza sits on plaza stone, not on
+				# the map's dominant sand.
 				role = "open"
-				theme = open_theme
-			var tex = _helper._tile_texture(theme)
+				theme = _nearby_open_theme(cx, cy, rows, legend, gw, gh, covered, open_theme)
 
-			var mat := StandardMaterial3D.new()
-			if tex != null:
-				mat.albedo_texture = tex
-				if role == "blocked":
-					mat.albedo_color = Color(0.62, 0.62, 0.70)
+			if _has_elev and role == "open" and _is_water(cx, cy):
+				water_cells.append({"x": cx, "y": cy, "theme": theme})
+
+			if _has_elev:
+				var shade := Color(1, 1, 1)
+				if role == "open" and not _is_water(cx, cy) and _near_water(cx, cy):
+					shade = _SHORE_TINT
+				var fringe_st = null
+				if role == "open":
+					for d in _FRINGE_DIRS:
+						var ntheme: String = _helper._theme_at(cx + d.x, cy + d.y, rows, legend, gw, gh, covered)
+						if ntheme != "" and ntheme != theme:
+							fringe_st = _terrain_group(groups, mats, "open", ntheme)
+							break
+				var own_st := _terrain_group(groups, mats, role, theme)
+				_add_terrain_quad(own_st, fringe_st, cx, cy, shade)
 			else:
-				mat.albedo_color = _helper._tile_color(role, theme)
+				var tex = _helper._tile_texture(theme)
+				var mat := StandardMaterial3D.new()
+				if tex != null:
+					mat.albedo_texture = tex
+					if role == "blocked":
+						mat.albedo_color = Color(0.62, 0.62, 0.70)
+				else:
+					mat.albedo_color = _helper._tile_color(role, theme)
 
-			var floor_mesh := PlaneMesh.new()
-			floor_mesh.size = Vector2(_CELL, _CELL)
-			var floor_inst := MeshInstance3D.new()
-			floor_inst.mesh = floor_mesh
-			floor_inst.material_override = mat
-			floor_inst.position = Vector3(cx * _CELL, 0, cy * _CELL)
-			root.add_child(floor_inst)
+				var floor_mesh := PlaneMesh.new()
+				floor_mesh.size = Vector2(_CELL, _CELL)
+				var floor_inst := MeshInstance3D.new()
+				floor_inst.mesh = floor_mesh
+				floor_inst.material_override = mat
+				floor_inst.position = Vector3(cx * _CELL, 0, cy * _CELL)
+				root.add_child(floor_inst)
 
 			if role == "blocked":
+				# On a heightfield, water is already communicated by the terrain dipping under
+				# the translucent sea plane, and a river by its water-textured band — a grey box
+				# per cell turns every coastline and river into a wall of cubes.
+				if _has_elev and (_is_water(cx, cy) or theme.contains("river")):
+					continue
+				var wall_mat := StandardMaterial3D.new()
+				var wtex = _helper._tile_texture(theme)
+				if wtex != null:
+					wall_mat.albedo_texture = wtex
+					wall_mat.albedo_color = Color(0.62, 0.62, 0.70)
+				else:
+					wall_mat.albedo_color = _helper._tile_color(role, theme)
 				var wall_mesh := BoxMesh.new()
 				wall_mesh.size = Vector3(_CELL * 0.92, _WALL_H, _CELL * 0.92)
 				var wall_inst := MeshInstance3D.new()
 				wall_inst.mesh = wall_mesh
-				wall_inst.material_override = mat
-				wall_inst.position = Vector3(cx * _CELL, _WALL_H / 2.0, cy * _CELL)
+				wall_inst.material_override = wall_mat
+				var base_y := _terrain_y(cx * _CELL, cy * _CELL)
+				wall_inst.position = Vector3(cx * _CELL, base_y + _WALL_H / 2.0, cy * _CELL)
 				root.add_child(wall_inst)
+
+	if _has_elev:
+		root.add_child(_commit_terrain(groups, mats))
+		_build_water_plane(root, water_cells)
 
 	_labels.clear()
 	for k in inter:
@@ -278,6 +620,7 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 		var cy := int(cell["y"])
 		var atype := String(it["action"].get("type", ""))
 		var m := _CELL * 0.85
+		var gy := _terrain_y(cx * _CELL, cy * _CELL)
 
 		# An examine/use hotspot is a physical object standing in the world — its generated
 		# prop MESH is the marker when one exists (a flat sprite next to real geometry reads
@@ -289,7 +632,7 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 			if pslug != "" and FileAccess.file_exists("res://" + ppath):
 				var pnode := _load_glb(ppath, _CELL, g._texture_file("prop_%s.png" % pslug))
 				if pnode != null:
-					pnode.position = Vector3(cx * _CELL, 0.0, cy * _CELL)
+					pnode.position = Vector3(cx * _CELL, gy, cy * _CELL)
 					root.add_child(pnode)
 					drew = true
 		if not drew:
@@ -306,7 +649,7 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 				spr.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 				spr.texture = _solid_texture(col)
 				spr.pixel_size = (m * 0.35) / 8.0
-			spr.position = Vector3(cx * _CELL, m / 2.0, cy * _CELL)
+			spr.position = Vector3(cx * _CELL, gy + m / 2.0, cy * _CELL)
 			root.add_child(spr)
 
 		var lbl := Label3D.new()
@@ -315,7 +658,7 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 		lbl.font_size = 28
 		lbl.outline_size = 8
 		lbl.pixel_size = 0.003
-		lbl.position = Vector3(cx * _CELL, m + 0.35, cy * _CELL)
+		lbl.position = Vector3(cx * _CELL, gy + m + 0.35, cy * _CELL)
 		lbl.visible = false  # shown only when the avatar is near (see _refresh_labels)
 		root.add_child(lbl)
 		_labels.append({"x": cx, "y": cy, "node": lbl})
@@ -333,7 +676,7 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 # payoff — a building you walk around, not a cardboard cutout); when only the sprite exists it
 # falls back to a fixed-Y billboard (still 3D-placed, just flat). The glb is loaded from
 # res://images/feature_<slug>.glb, centered on the footprint rect and scaled to span it, sitting
-# on the ground plane.
+# on the ground plane (terrain-sampled — a building on a slope sits at its footprint's height).
 func _draw_features(footprints) -> void:
 	if typeof(footprints) != TYPE_DICTIONARY:
 		return
@@ -343,12 +686,33 @@ func _draw_features(footprints) -> void:
 		var fx := (float(fp.get("x", 0)) + float(fp.get("w", 1)) / 2.0 - 0.5) * _CELL
 		var fz := (float(fp.get("y", 0)) + float(fp.get("h", 1)) / 2.0 - 0.5) * _CELL
 		var span: float = max(float(fp.get("w", 1)), float(fp.get("h", 1))) * _CELL
+		var gy := _terrain_y(fx, fz)
+		# Tier 1: the registry-resolved hand-made shell — the compile annotated the footprint
+		# with the chosen file (see godot/building_registry.py). Same door-facing yaw as any mesh.
+		var shell_file = fp.get("shell_file")
+		if shell_file != null and FileAccess.file_exists("res://images/" + String(shell_file)):
+			var shell := _load_glb("images/" + String(shell_file), span, null)
+			if shell != null:
+				shell.position = Vector3(fx, gy, fz)
+				_face_door(shell, fp, fx, fz)
+				_root.add_child(shell)
+				continue
 		var glb_path := "images/feature_%s.glb" % slug
 		if FileAccess.file_exists("res://" + glb_path):
 			var node := _load_glb(glb_path, span, g._texture_file("feature_%s.png" % slug))
 			if node != null:
-				node.position = Vector3(fx, 0.0, fz)
+				node.position = Vector3(fx, gy, fz)
+				_face_door(node, fp, fx, fz)
 				_root.add_child(node)
+				continue
+		# Tier 3: a doored footprint with no mesh gets a parametric BLOCKOUT building — box
+		# walls + pitched roof + door slab on the doorstep face, textured from the shipped
+		# library classes. Reads as "a 2x3 building with a door" by construction.
+		if fp.get("door") != null:
+			var blk := _blockout_building(fp)
+			if blk != null:
+				blk.position = Vector3(fx, gy, fz)
+				_root.add_child(blk)
 				continue
 		var tex = g._texture_file("feature_%s.png" % slug)
 		if tex != null:
@@ -357,8 +721,91 @@ func _draw_features(footprints) -> void:
 			spr.shaded = false
 			spr.texture = tex
 			spr.pixel_size = (span * 1.1) / tex.get_height()
-			spr.position = Vector3(fx, span * 0.55, fz)
+			spr.position = Vector3(fx, gy + span * 0.55, fz)
 			_root.add_child(spr)
+
+
+# A TRELLIS mesh's front is the source sprite's view direction, and the sprite is authored
+# with the entrance on its front (hand-made shells follow the same convention) — yaw the front
+# toward the doorstep cell so the door visually sits where the enter-hotspot actually is.
+func _face_door(node: Node3D, fp, fx: float, fz: float) -> void:
+	var door = fp.get("door")
+	if door == null or door.size() != 2:
+		return
+	var dx := float(door[0]) * _CELL - fx
+	var dz := float(door[1]) * _CELL - fz
+	if absf(dx) > 0.001 or absf(dz) > 0.001:
+		node.rotation.y = atan2(dx, dz) + _MESH_FRONT_YAW
+
+
+func _lib_material(cls: String, fallback: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	var tex = g._texture_file("lib_%s.png" % cls)
+	if tex != null:
+		mat.albedo_texture = tex
+		mat.uv1_triplanar = true
+		mat.uv1_scale = Vector3(0.6, 0.6, 0.6)
+	else:
+		mat.albedo_color = fallback
+	mat.roughness = 0.9
+	return mat
+
+
+# Parametric blockout: box walls sized to the footprint, a pitched PrismMesh roof with its
+# ridge along the long axis, and a dark door slab centered on the face toward the doorstep
+# cell. No per-label art needed — geometry IS the semantics ("a 2x3 building, door south").
+func _blockout_building(fp) -> Node3D:
+	var w := float(fp.get("w", 1)) * _CELL
+	var d := float(fp.get("h", 1)) * _CELL
+	var wall_h: float = clampf(minf(w, d) * 0.8, 0.8, 2.2)
+	var roof_h: float = clampf(minf(w, d) * 0.45, 0.5, 1.4)
+
+	var root := Node3D.new()
+
+	var walls := MeshInstance3D.new()
+	var wall_mesh := BoxMesh.new()
+	wall_mesh.size = Vector3(w * 0.96, wall_h, d * 0.96)
+	walls.mesh = wall_mesh
+	walls.material_override = _lib_material("wall", Color(0.72, 0.68, 0.62))
+	walls.position = Vector3(0, wall_h / 2.0, 0)
+	root.add_child(walls)
+
+	var roof := MeshInstance3D.new()
+	var roof_mesh := PrismMesh.new()
+	# PrismMesh ridge runs along X; size.z is the roof depth. Put the ridge on the long axis.
+	var along_x := w >= d
+	roof_mesh.size = Vector3(maxf(w, d) * 1.06, roof_h, minf(w, d) * 1.06)
+	roof.mesh = roof_mesh
+	roof.material_override = _lib_material("roof", Color(0.62, 0.36, 0.28))
+	roof.position = Vector3(0, wall_h + roof_h / 2.0, 0)
+	if not along_x:
+		roof.rotation.y = PI / 2.0
+	root.add_child(roof)
+
+	var door = fp.get("door")
+	if door != null and door.size() == 2:
+		var fx := (float(fp.get("x", 0)) + float(fp.get("w", 1)) / 2.0 - 0.5) * _CELL
+		var fz := (float(fp.get("y", 0)) + float(fp.get("h", 1)) / 2.0 - 0.5) * _CELL
+		var dx := float(door[0]) * _CELL - fx
+		var dz := float(door[1]) * _CELL - fz
+		var slab := MeshInstance3D.new()
+		var slab_mesh := BoxMesh.new()
+		var door_w: float = clampf(_CELL * 0.6, 0.3, 0.9)
+		var door_h: float = minf(wall_h * 0.8, 1.1)
+		slab_mesh.size = Vector3(door_w, door_h, 0.06)
+		slab.mesh = slab_mesh
+		var dmat := StandardMaterial3D.new()
+		dmat.albedo_color = Color(0.28, 0.20, 0.14)
+		slab.material_override = dmat
+		# stick the slab just proud of whichever wall faces the doorstep
+		if absf(dx) > absf(dz):
+			slab.position = Vector3(signf(dx) * (w * 0.48 + 0.04), door_h / 2.0, 0)
+			slab.rotation.y = PI / 2.0
+		else:
+			slab.position = Vector3(0, door_h / 2.0, signf(dz) * (d * 0.48 + 0.04))
+		root.add_child(slab)
+
+	return root
 
 
 # Load a .glb, drop it on the ground, scale its longest horizontal side to `span`, and give the
@@ -492,7 +939,7 @@ func _solid_texture(color: Color) -> ImageTexture:
 
 
 func _update_camera(delta: float) -> void:
-	var target: Vector3 = _avatar.position + Vector3(0, 5.0, 4.0)
+	var target: Vector3 = _avatar.position + Vector3(0, 6.0, 4.8) * _cam_zoom
 	var w: float = clamp(delta * 6.0, 0.0, 1.0)
 	_cam.position = _cam.position.lerp(target, w)
 	_cam.look_at(_avatar.position, Vector3.UP)

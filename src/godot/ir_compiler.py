@@ -117,6 +117,9 @@ def write_godot_project(ir: Dict, output_dir, src_images=None) -> None:
     images_dir = output_dir / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 
+    from godot.building_registry import annotate_shells
+    annotate_shells(ir, images_dir)
+
     (output_dir / "game.json").write_text(json.dumps(ir, ensure_ascii=False, indent=2),
                                           encoding="utf-8")
 
@@ -127,6 +130,15 @@ def write_godot_project(ir: Dict, output_dir, src_images=None) -> None:
         for img in Path(src_images).iterdir():
             if img.is_file():
                 shutil.copy2(img, images_dir / img.name)
+
+    from config.settings_manager import settings_manager
+    from godot.tile_library import overlay_library_tiles
+    tile_source = (settings_manager.get_settings().get("assets") or {}).get(
+        "tile_source", "library")
+    n = overlay_library_tiles(ir, images_dir, tile_source)
+    if n:
+        print(f"    [godot]  {n} terrain tile(s) from the curated library (assets.tile_source="
+              f"{tile_source!r})")
 
     # Audio (voice + music): the runtime loads it as raw bytes too, so it ships beside the images.
     # Copy the generated tree, then backfill a silent placeholder for any referenced-but-missing

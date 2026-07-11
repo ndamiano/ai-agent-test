@@ -87,6 +87,112 @@ def _collect_tile_specs(places_comp: Dict) -> List[tuple]:
     return list(specs.items())
 
 
+def _collect_tile_pairs(places_comp: Dict) -> List[tuple]:
+    """Unordered pairs of DIFFERING tile themes that sit 4-adjacent anywhere on a walkable map —
+    the transition-sheet target set: ONE sheet covers all 8 directional variants for a pair, so
+    only pairs that actually occur need one (never the full cross product of every theme).
+    Footprint-covered cells are excluded, matching `_collect_tile_specs` (a feature sprite covers
+    them, so they carry no terrain seam of their own)."""
+    from maestro.modules.world import DEFAULT_LEGEND, _RPG_KINDS
+
+    pairs = set()
+    for place in ((places_comp or {}).get("places") or {}).values():
+        if not isinstance(place, dict) or place.get("kind") not in _RPG_KINDS:
+            continue
+        tiles = place.get("tiles") or {}
+        merged = {**DEFAULT_LEGEND, **(tiles.get("legend") or {})}
+        rows = tiles.get("rows") or []
+        covered = set()
+        for fp in (place.get("footprints") or {}).values():
+            if isinstance(fp, dict):
+                for dy in range(int(fp.get("h", 0))):
+                    for dx in range(int(fp.get("w", 0))):
+                        covered.add((int(fp["x"]) + dx, int(fp["y"]) + dy))
+
+        def theme_at(x: int, y: int) -> Optional[str]:
+            if (x, y) in covered or y < 0 or y >= len(rows) or x < 0 or x >= len(rows[y]):
+                return None
+            spec = merged.get(rows[y][x])
+            return spec.get("theme") if isinstance(spec, dict) else None
+
+        for y, row in enumerate(rows):
+            for x, _ in enumerate(row):
+                t = theme_at(x, y)
+                if not t:
+                    continue
+                for nx, ny in ((x + 1, y), (x, y + 1)):
+                    nt = theme_at(nx, ny)
+                    if nt and nt != t:
+                        pairs.add(frozenset((t, nt)))
+    return sorted(tuple(sorted(p)) for p in pairs)
+
+
+_TRANSITION_EDGES = ("e", "w", "n", "s")
+# The gradient a transition sheet draws runs along ONE axis; the axis PARALLEL to the boundary
+# (the other one) is safe to wrap-blend for seamless repetition, the gradient axis is not (a wrap
+# there would smear A into B into A). e/w slices carry the gradient on x (their fade sits at the
+# left/right edge) so y is safe; n/s variants are the same slice rotated 90 degrees, which swaps
+# the two axes.
+_TRANSITION_BOUNDARY_AXIS = {"e": "y", "w": "y", "n": "x", "s": "x"}
+
+
+def _oriented_variant(canonical, edge: str):
+    """`canonical` carries the model's drawn fade at its EAST edge; reorient so that fade lands
+    at `edge` instead. `e` is a no-op, `w` mirrors, `n`/`s` rotate +/-90 degrees — legal because
+    the sheet's caption demands uniform lighting, so there is no light-direction tell a rotation
+    would break."""
+    from PIL import Image
+    if edge == "e":
+        return canonical
+    if edge == "w":
+        return canonical.transpose(Image.FLIP_LEFT_RIGHT)
+    if edge == "n":
+        return canonical.transpose(Image.ROTATE_90)   # CCW: east edge -> north edge
+    if edge == "s":
+        return canonical.transpose(Image.ROTATE_270)  # CW: east edge -> south edge
+    raise ValueError(f"unknown edge {edge!r}")
+
+
+def slice_transition_sheet(path, slug_a: str, slug_b: str, out_dir: Path,
+                            out_size: int = 256) -> List[str]:
+    """Cut a generated A-to-B transition sheet (left half theme A blending across the middle
+    into right half theme B) into the 8 directional tile variants for the unordered
+    {slug_a, slug_b} pair: 4 per theme (n/s/e/w), each named
+    `tile_<self>__<other>_<dir>.png` = "a `self`-theme cell whose `dir` neighbor is `other`".
+    The sheet only draws TWO edges directly (A's east / B's west, either side of the sheet's
+    center seam); the other six are the SAME drawn pixels reoriented — a mirror for the opposite
+    edge, a rotation for the perpendicular pair — never re-blended in code. Each variant is then
+    made seamless along its boundary-parallel axis only (`make_seamless_strip` — a full 2D wrap
+    would smear the gradient) and downscaled to `out_size`. Returns the written basenames."""
+    from PIL import Image
+    from tools.comfyui_tools import make_seamless_strip
+
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    cx, cy = w // 2, h // 2
+    half = out_size // 2
+    top, bottom = cy - half, cy - half + out_size
+    # left of center: mostly A, B bleeding in toward the right (east) edge
+    left = img.crop((cx - out_size, top, cx, bottom))
+    # right of center: mostly B, A bleeding in toward the left (west) edge
+    right = img.crop((cx, top, cx + out_size, bottom))
+
+    written: List[str] = []
+    for base, self_slug, other_slug, mirror_to_east in (
+        (left, slug_a, slug_b, False),
+        (right, slug_b, slug_a, True),
+    ):
+        canonical = base.transpose(Image.FLIP_LEFT_RIGHT) if mirror_to_east else base
+        for edge in _TRANSITION_EDGES:
+            variant = _oriented_variant(canonical, edge)
+            fname = f"tile_{self_slug}__{other_slug}_{edge}.png"
+            dest = out_dir / fname
+            variant.save(dest)
+            make_seamless_strip(dest, _TRANSITION_BOUNDARY_AXIS[edge], out_size)
+            written.append(fname)
+    return written
+
+
 def _collect_feature_specs(places_comp: Dict) -> List[tuple]:
     """(kind, label) per distinct solid footprint across walkable places — one object sprite
     each (feature_<slug>.png keyed on the label, so a 'smithy' in two zones shares art)."""
@@ -267,6 +373,43 @@ def generate_images(inputs: Dict, working_dir: Path, presentation: str = "2d") -
                     generated.append(fname)
                     print(f"    [images]  ok: {fname}")
                     break
+
+        # --- transition pass: one sheet per DIFFERING-theme adjacent pair, sliced into the 8
+        # directional variants (n/s/e/w x 2 themes). Butt-joining two unrelated seamless
+        # textures at a theme boundary is an ugly hard seam; the transition is drawn as ART
+        # (one image blending A into B), never blended in code. A pair that never resolves after
+        # rerolls just logs + skips — the presenter falls back to the two themes' base tiles at
+        # that boundary, which is no worse than before this pass existed. ---------------------
+        from tools.comfyui_tools import build_transition_sheet_job, tile_refused
+        tile_pairs = _collect_tile_pairs(inputs.get("places") or {})
+        if tile_pairs:
+            print(f"    [images]  generating {len(tile_pairs)} tile transition sheet(s)")
+            for theme_a, theme_b in tile_pairs:
+                slug_a, slug_b = tile_slug(theme_a), tile_slug(theme_b)
+                sheet_path = images_dir / f"_sheet_{slug_a}__{slug_b}.png"
+                ok = False
+                for attempt in range(3):
+                    result = run_jobs([build_transition_sheet_job(theme_a, theme_b)])[0]
+                    if not (result.get("success") and result.get("saved_paths")):
+                        print(f"    [images]  transition sheet failed "
+                              f"({result.get('error', 'unknown')}): {slug_a}/{slug_b}")
+                        break
+                    if tile_refused(result["saved_paths"][0]):
+                        print(f"    [images]  transition sheet refused (seed roll "
+                              f"{attempt + 1}): {slug_a}/{slug_b}")
+                        continue
+                    shutil.copy2(result["saved_paths"][0], sheet_path)
+                    ok = True
+                    break
+                if not ok:
+                    print(f"    [images]  skipping transition tiles for {slug_a}/{slug_b} "
+                          f"(base tiles cover the boundary)")
+                    continue
+                written = slice_transition_sheet(sheet_path, slug_a, slug_b, images_dir)
+                generated.extend(written)
+                sheet_path.unlink(missing_ok=True)
+                print(f"    [images]  ok: {len(written)} transition tile(s) for "
+                      f"{slug_a}/{slug_b}")
 
     # --- mesh pass (outside the vram bracket — the mesh model holds its own VRAM): turn each
     # matted sprite into a .glb the hd2d presenter stands in the world as real geometry. ONLY for

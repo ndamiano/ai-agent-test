@@ -286,6 +286,11 @@ _TILE_NEGATIVE = (
 # banned from tiles (hallucinates scenes on texture prompts); tiles stay on DreamShaper.
 _TILE_WALLISH = ("wall", "cliff", "palisade", "brick", "masonry", "barricade", "fence",
                  "gate", "rampart", "barrier")
+# Water is a THEME class, not a role: a sea tile is blocked on land maps and open on ocean
+# maps, but it must render as liquid either way — the role bodies (ground / dense growth)
+# turn it into moss.
+_TILE_WATERY = ("sea", "ocean", "water", "reef", "shallow", "lagoon", "tide", "lake",
+                "river", "stream", "pond", "pool", "brook")
 _TILE_FORMULAS = {
     "open": ("top-down 2d game tileset texture of {t}, crisp stylized detail, bold "
              "silhouettes, saturated colors, uniform lighting, orthographic, flat walkable "
@@ -297,6 +302,10 @@ _TILE_FORMULAS = {
     "blocked_wall": ("flat front-facing pattern of {t}, dense repeating structural detail, "
                      "masonry-like arrangement, strong shadows between elements, reads as an "
                      "impassable barrier, game texture asset, tileable"),
+    "water": ("top-down 2d game tileset texture of {t}, calm liquid water surface, gentle "
+              "stylized ripples and wave highlights, saturated color, uniform lighting, "
+              "orthographic, no land, no objects, no boats, texture fills frame, tileable "
+              "game asset"),
 }
 
 
@@ -313,9 +322,13 @@ _IDEO_PALETTES = (
      ["#7A7A82", "#8E8E96", "#5E5E66", "#3A3A42"]),
     (("wood", "timber", "palisade", "plank", "log"),
      ["#6B4A2F", "#553A24", "#7C5A3A", "#3E2B1A"]),
-    (("sand", "dune", "desert"), ["#C9A96A", "#D9BC80", "#B08F55", "#8F7040"]),
+    (("sand", "dune", "desert", "beach", "shore"), ["#C9A96A", "#D9BC80", "#B08F55", "#8F7040"]),
     (("snow", "ice", "frozen", "frost"), ["#DCE4EC", "#C2CEDA", "#A8B8C8", "#8FA2B5"]),
-    (("water", "stream", "river", "lake"), ["#2E5A7A", "#3E7094", "#24485F", "#182F40"]),
+    (("shallow", "lagoon"), ["#4FC3C7", "#6FD8D4", "#37A8B0", "#2A8F9C"]),
+    (("reef",), ["#3E8FA8", "#52A8B8", "#2E7490", "#245C74"]),
+    (("sea", "ocean", "deep"), ["#1E4A6B", "#2A5C80", "#16374F", "#0F2638"]),
+    (("water", "stream", "river", "lake", "pond", "pool", "brook"),
+     ["#2E5A7A", "#3E7094", "#24485F", "#182F40"]),
     (("ash", "char", "burnt", "cinder"), ["#4A4A4E", "#5E5A58", "#38363A", "#262428"]),
 )
 
@@ -334,7 +347,22 @@ _IDEO_TILE_BODIES = {
                      "Tightly packed {t} with deep dark shadow seams between elements, a "
                      "dense masonry-like pattern that reads as an impassable barrier, "
                      "covering the whole canvas with no perspective and no horizon."),
+    "water": ("A seamless repeating game texture of {t} water filling the entire square "
+              "frame edge to edge.",
+              "Calm {t} water viewed straight down, a pure liquid surface with gentle "
+              "stylized ripples and soft wave highlights covering the whole canvas, no land, "
+              "no objects, no boats, no people and no horizon."),
 }
+
+
+def _ideo_palette_for(theme: str) -> Optional[List[str]]:
+    """The keyword-matched hex palette for a theme phrase, or None on no match (omit rather than
+    guess)."""
+    tl = theme.lower()
+    for words, palette in _IDEO_PALETTES:
+        if any(w in tl for w in words):
+            return palette
+    return None
 
 
 def _ideogram_tile_caption(theme: str, key: str) -> str:
@@ -347,10 +375,44 @@ def _ideogram_tile_caption(theme: str, key: str) -> str:
                     "vignette.",
         "medium": "Digital game asset painting",
     }
-    for words, palette in _IDEO_PALETTES:
-        if any(w in theme.lower() for w in words):
-            style["color_palette"] = palette
-            break
+    palette = _ideo_palette_for(theme)
+    if palette:
+        style["color_palette"] = palette
+    return json.dumps({
+        "aspect_ratio": "1:1",
+        "high_level_description": hld,
+        "style_description": style,
+        "compositional_deconstruction": {"background": bg, "elements": []},
+    })
+
+
+_TRANSITION_BODY = (
+    "A seamless top-down game texture filling the entire square frame edge to edge: the left "
+    "half is a uniform {a} surface, blending smoothly and organically across the middle into a "
+    "uniform {b} surface on the right half, with no hard line or border at the transition.",
+    "A single continuous ground material viewed straight down, {a} gradually and organically "
+    "dissolving into {b} through the center band, uniform lighting throughout, no objects, no "
+    "horizon, no perspective, covering the whole canvas with no border.",
+)
+
+
+def _ideogram_transition_caption(theme_a: str, theme_b: str) -> str:
+    """Structured JSON caption for a transition SHEET: theme_a on the left blending into theme_b
+    on the right, sliced (renpy.fns.slice_transition_sheet) into the 8 directional tile variants
+    for the unordered pair. Mirrors `_ideogram_tile_caption`'s schema/style block."""
+    hld, bg = (s.format(a=theme_a, b=theme_b) for s in _TRANSITION_BODY)
+    style = {
+        "aesthetics": ("Stylized 2d video game tileset texture, crisp hand-painted detail, "
+                       "bold readable shapes, flat orthographic view with no perspective and "
+                       "no horizon."),
+        "lighting": "Perfectly uniform diffuse lighting with no directional shadows and no "
+                    "vignette.",
+        "medium": "Digital game asset painting",
+    }
+    pal_a, pal_b = _ideo_palette_for(theme_a), _ideo_palette_for(theme_b)
+    palette = list(pal_a or []) + [h for h in (pal_b or []) if h not in (pal_a or [])]
+    if palette:
+        style["color_palette"] = palette[:8]
     return json.dumps({
         "aspect_ratio": "1:1",
         "high_level_description": hld,
@@ -480,7 +542,9 @@ def build_tile_job(theme: str, role: str = "open", ideogram: bool = True) -> dic
     ideogram4 stack (structured JSON captions, the tile-lab quality winner) by default;
     `ideogram=False` forces the DreamShaper path (the caller's last resort when a theme phrase
     keeps tripping ideogram's refusal filter on every seed)."""
-    if role == "blocked":
+    if any(w in theme.lower() for w in _TILE_WATERY):
+        key = "water"
+    elif role == "blocked":
         key = "blocked_wall" if any(w in theme.lower() for w in _TILE_WALLISH) \
             else "blocked_organic"
     else:
@@ -496,6 +560,23 @@ def build_tile_job(theme: str, role: str = "open", ideogram: bool = True) -> dic
         "prompt": positive,
         "workflow_override": _build_background_workflow(
             _load_workflow(_TXT2IMG_TILE_WORKFLOW_PATH), positive, _TILE_NEGATIVE),
+    }
+
+
+def build_transition_sheet_job(theme_a: str, theme_b: str) -> dict:
+    """Return a job for ONE 1024x1024 ideogram4 transition SHEET between two walkable-map terrain
+    themes: the left half renders `theme_a`, blending smoothly and organically across the middle
+    into `theme_b` on the right half. `renpy.fns.slice_transition_sheet` cuts it into the 8
+    directional tile variants (4 per theme: n/s/e/w) for the unordered {theme_a, theme_b} pair —
+    so two adjacent map cells of differing themes get a texture that reads as one continuous
+    surface instead of a hard butt-joint seam. The seam is drawn by the image model, never
+    blended in code. Mirrors `build_tile_job`'s ideogram4 stack (same structured-JSON caption
+    schema, same `_build_ideogram_tile_workflow` graph); there is no DreamShaper fallback tier —
+    a refused sheet just rerolls its seed."""
+    caption = _ideogram_transition_caption(theme_a, theme_b)
+    return {
+        "prompt": caption,
+        "workflow_override": _build_ideogram_tile_workflow(caption),
     }
 
 
@@ -526,42 +607,60 @@ def tile_refused(path) -> bool:
     return band > 0.01 and rest < band / 4
 
 
+def _wrap_blend(im, axis: str, s: int):
+    """One pass of the cross-fade wrap: blend a square image with its own half-roll along `axis`,
+    weighting the ORIGINAL by a triangle (1 at center, 0 at edges). The result's opposite edges
+    along `axis` are adjacent columns/rows of the roll — continuous by construction — and the
+    roll's own hard seam sits under weight 1 of the original. Shared by `make_seamless_tile`
+    (both axes) and `make_seamless_strip` (one axis only, for a transition slice whose other axis
+    carries a deliberate gradient a wrap would smear)."""
+    from PIL import Image, ImageChops
+
+    half = s // 2
+    rolled = Image.new("RGB", (s, s))
+    if axis == "x":
+        rolled.paste(im.crop((half, 0, s, s)), (0, 0))
+        rolled.paste(im.crop((0, 0, half, s)), (s - half, 0))
+    else:
+        rolled.paste(im.crop((0, half, s, s)), (0, 0))
+        rolled.paste(im.crop((0, 0, s, half)), (0, s - half))
+    # Trapezoid mask: original at full weight everywhere except a thin fade band at the two
+    # edges (~s/12) — the blend ghosting stays confined to the border instead of doubling
+    # features across the whole tile.
+    grad = Image.linear_gradient("L").resize((s, s))   # 0 at top -> 255 at bottom
+    tent = ImageChops.darker(grad, grad.transpose(Image.FLIP_TOP_BOTTOM)) \
+        .point(lambda v: min(255, v * 12))
+    mask = tent if axis == "y" else tent.transpose(Image.ROTATE_90)
+    return Image.composite(im, rolled, mask)
+
+
 def make_seamless_tile(path, out_size: int = 256) -> None:
     """Make a generated texture tile-safe in place: center-square crop, wrap-shift by half so the
     hard edges land in the middle, crossfade that seam cross back to the original (which is
     continuous there), then LANCZOS-downscale to `out_size` (cells render at <=88px; 256 keeps
     headroom without shipping megapixel PNGs). Pure PIL."""
-    from PIL import Image, ImageChops
+    from PIL import Image
 
     img = Image.open(path).convert("RGB")
     w, h = img.size
     s = min(w, h)
     img = img.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+    out = _wrap_blend(_wrap_blend(img, "x", s), "y", s)
+    out.resize((out_size, out_size), Image.LANCZOS).save(path)
 
-    # Two-pass cross-fade: blend the image with its own half-roll along one axis, weighting the
-    # ORIGINAL by a triangle (1 at center, 0 at edges). The result's opposite edges are adjacent
-    # columns/rows of the roll — continuous by construction — and the roll's own hard seam sits
-    # under weight 1 of the original. Repeat for the other axis; the second pass's mask is
-    # constant along the first axis, so it preserves the first wrap.
-    def wrap_blend(im: Image.Image, axis: str) -> Image.Image:
-        half = s // 2
-        rolled = Image.new("RGB", (s, s))
-        if axis == "x":
-            rolled.paste(im.crop((half, 0, s, s)), (0, 0))
-            rolled.paste(im.crop((0, 0, half, s)), (s - half, 0))
-        else:
-            rolled.paste(im.crop((0, half, s, s)), (0, 0))
-            rolled.paste(im.crop((0, 0, s, half)), (0, s - half))
-        # Trapezoid mask: original at full weight everywhere except a thin fade band at the two
-        # edges (~s/12) — the blend ghosting stays confined to the border instead of doubling
-        # features across the whole tile.
-        grad = Image.linear_gradient("L").resize((s, s))   # 0 at top -> 255 at bottom
-        tent = ImageChops.darker(grad, grad.transpose(Image.FLIP_TOP_BOTTOM)) \
-            .point(lambda v: min(255, v * 12))
-        mask = tent if axis == "y" else tent.transpose(Image.ROTATE_90)
-        return Image.composite(im, rolled, mask)
 
-    out = wrap_blend(wrap_blend(img, "x"), "y")
+def make_seamless_strip(path, axis: str, out_size: int = 256) -> None:
+    """Like `make_seamless_tile` but wrap-blends ONLY `axis` ('x' or 'y') — for a sliced
+    transition tile, whose OTHER axis carries the deliberate A->B gradient a full 2D wrap would
+    smear into mush. Center-square crop, wrap-blend the one axis, LANCZOS-downscale to
+    `out_size`."""
+    from PIL import Image
+
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    s = min(w, h)
+    img = img.crop(((w - s) // 2, (h - s) // 2, (w + s) // 2, (h + s) // 2))
+    out = _wrap_blend(img, axis, s)
     out.resize((out_size, out_size), Image.LANCZOS).save(path)
 
 

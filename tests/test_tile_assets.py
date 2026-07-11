@@ -250,3 +250,170 @@ def test_trellis_backend_leaves_texture_to_presenter():
     assert "_has_baked_texture" in gd
     load = gd.split("func _load_glb(")[1].split("\nfunc ")[0]
     assert "_has_baked_texture" in load and load.index("_has_baked_texture") < load.index("triplanar")
+
+
+def test_build_tile_job_water_theme_overrides_role():
+    from tools.comfyui_tools import build_tile_job
+
+    for role in ("open", "blocked"):
+        for theme in ("open sea", "tropical shallows", "reef", "glimmerpond"):
+            cap = build_tile_job(theme, role=role)["prompt"]
+            assert "water" in cap.lower(), (theme, role)
+            assert "vegetation" not in cap.lower(), (theme, role)
+            assert "walkable" not in cap.lower(), (theme, role)
+
+
+def test_build_tile_job_water_dreamshaper_fallback():
+    from tools.comfyui_tools import build_tile_job
+
+    cap = build_tile_job("open sea", role="blocked", ideogram=False)["prompt"]
+    assert "water surface" in cap
+    assert "growth" not in cap
+
+
+def test_ideogram_beach_gets_sand_palette():
+    import json
+    from tools.comfyui_tools import build_tile_job
+
+    cap = json.loads(build_tile_job("beach", role="open")["prompt"])
+    assert cap["style_description"]["color_palette"][0].startswith("#C9")
+
+
+def test_ideogram_water_depth_palettes_differ():
+    import json
+    from tools.comfyui_tools import build_tile_job
+
+    def pal(theme):
+        return json.loads(build_tile_job(theme, role="blocked")["prompt"])[
+            "style_description"]["color_palette"]
+
+    assert pal("tropical shallows") != pal("open sea") != pal("reef")
+
+
+# --- transition sheets: two adjacent map cells of DIFFERING themes get a texture the model
+# draws AS ONE continuous surface (never blended in code) ------------------------------------
+
+def test_build_transition_sheet_job_uses_ideogram_workflow():
+    import json
+    from tools.comfyui_tools import build_transition_sheet_job
+
+    job = build_transition_sheet_job("beach", "tropical shallows")
+    assert "endpoint" not in job                # single endpoint, no per-job routing
+    cap = json.loads(job["prompt"])              # structured JSON caption, ideogram4's diet
+    assert cap["aspect_ratio"] == "1:1"
+    wf = job["workflow_override"]
+    kinds = {v["class_type"] for v in wf.values()}
+    assert {"DualModelGuider", "Ideogram4Scheduler", "CFGOverride"} <= kinds
+    sc = next(v["inputs"] for v in wf.values() if v["class_type"] == "Ideogram4Scheduler")
+    assert sc["width"] == sc["height"] == 1024
+
+
+def test_ideogram_transition_caption_carries_both_themes_and_transition_language():
+    import json
+    from tools.comfyui_tools import _ideogram_transition_caption
+
+    cap = json.loads(_ideogram_transition_caption("beach", "tropical shallows"))
+    hld = cap["high_level_description"]
+    bg = cap["compositional_deconstruction"]["background"]
+    assert "beach" in hld and "tropical shallows" in hld
+    assert "blending" in hld and "organically" in hld
+    assert "beach" in bg and "tropical shallows" in bg
+    assert "gradually" in bg or "organically" in bg
+
+
+def test_ideogram_transition_caption_combines_palettes_when_both_match():
+    import json
+    from tools.comfyui_tools import _ideogram_transition_caption, _ideo_palette_for
+
+    pal_a = _ideo_palette_for("beach")
+    pal_b = _ideo_palette_for("tropical shallows")
+    assert pal_a and pal_b and pal_a != pal_b   # both themes match a known palette
+
+    cap = json.loads(_ideogram_transition_caption("beach", "tropical shallows"))
+    palette = cap["style_description"]["color_palette"]
+    assert palette[:len(pal_a)] == pal_a         # theme_a's hexes lead
+    assert all(h in palette for h in pal_b)      # theme_b's hexes are folded in
+    assert len(palette) <= 8
+
+    # one theme with no keyword match -> no guess, just the matched side's palette
+    solo = json.loads(_ideogram_transition_caption("beach", "chromatic void"))
+    assert solo["style_description"]["color_palette"] == pal_a
+
+
+def test_collect_tile_pairs_finds_adjacent_differing_themes():
+    from renpy.fns import _collect_tile_pairs
+
+    comp = {"places": {"z": {"kind": "world_map", "tiles": {
+        "legend": {"@": {"role": "open", "theme": "beach"},
+                   "^": {"role": "open", "theme": "tropical shallows"}},
+        "rows": ["@@^", "@@^"]}}}}
+    assert _collect_tile_pairs(comp) == [("beach", "tropical shallows")]
+
+
+def test_collect_tile_pairs_skips_same_theme_adjacency():
+    from renpy.fns import _collect_tile_pairs
+
+    comp = {"places": {"z": {"kind": "world_map", "tiles": {
+        "legend": {"@": {"role": "open", "theme": "beach"}},
+        "rows": ["@@", "@@"]}}}}
+    assert _collect_tile_pairs(comp) == []
+
+
+def test_collect_tile_pairs_ignores_pnc_and_vn_and_dedupes_across_places():
+    from renpy.fns import _collect_tile_pairs
+
+    comp = {"places": {
+        "z1": {"kind": "world_map", "tiles": {
+            "legend": {"@": {"role": "open", "theme": "beach"},
+                       "^": {"role": "open", "theme": "tropical shallows"}},
+            "rows": ["@^"]}},
+        "z2": {"kind": "town", "tiles": {
+            "legend": {"@": {"role": "open", "theme": "beach"},
+                       "^": {"role": "open", "theme": "tropical shallows"}},
+            "rows": ["@^"]}},
+        "r": {"kind": "room", "interactables": []},
+    }}
+    assert _collect_tile_pairs(comp) == [("beach", "tropical shallows")]
+
+
+def test_slice_transition_sheet_produces_eight_named_variants(tmp_path):
+    from PIL import Image
+    from renpy.fns import slice_transition_sheet
+
+    # A synthetic sheet with the same shape a real one has: a smooth left(red)->right(blue)
+    # gradient across the full width, uniform down every column (no vertical variation) —
+    # exactly what the boundary-parallel (y) wrap-blend is designed to leave untouched.
+    size = 1024
+    sheet = Image.new("RGB", (size, size))
+    px = sheet.load()
+    for x in range(size):
+        r, b = round(255 * (1 - x / (size - 1))), round(255 * (x / (size - 1)))
+        for y in range(size):
+            px[x, y] = (r, 0, b)
+    sheet_path = tmp_path / "sheet.png"
+    sheet.save(sheet_path)
+
+    written = slice_transition_sheet(sheet_path, "red", "blue", tmp_path)
+    expected = {f"tile_red__blue_{d}.png" for d in "enws"} | \
+               {f"tile_blue__red_{d}.png" for d in "enws"}
+    assert set(written) == expected
+    assert len(written) == 8
+    for fname in written:
+        assert Image.open(tmp_path / fname).size == (256, 256)
+
+    def half_means(img):
+        w, h = img.size
+        def mean(box):
+            data = list(img.crop(box).getdata())
+            return tuple(sum(p[i] for p in data) / len(data) for i in range(3))
+        return mean((0, 0, w // 2, h)), mean((w // 2, 0, w, h))
+
+    # tile_red__blue_e: mostly A(red), B(blue) bleeding in toward its right/east edge
+    left, right = half_means(Image.open(tmp_path / "tile_red__blue_e.png").convert("RGB"))
+    assert left[0] > right[0]     # red fades out left->right
+    assert left[2] < right[2]     # blue bleeds in toward the east edge
+
+    # tile_blue__red_w: mostly B(blue), A(red) bleeding in toward its left/west edge
+    left, right = half_means(Image.open(tmp_path / "tile_blue__red_w.png").convert("RGB"))
+    assert left[0] > right[0]     # the red fade sits at this tile's west (left) edge
+    assert left[2] < right[2]

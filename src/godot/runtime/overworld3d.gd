@@ -427,28 +427,30 @@ func _add_terrain_quad(st_own: SurfaceTool, fringe_st, cx: int, cy: int, shade: 
 	var uv_bl := Vector2(u0, v1)
 	var uv_br := Vector2(u1, v1)
 
+	# Godot front faces wind CLOCKWISE seen from the camera side — tl->tr->bl / tr->br->bl
+	# reads clockwise from above (+Y). Counterclockwise here = terrain culled from above.
 	st_own.set_color(shade)
 	st_own.set_uv(uv_tl)
 	st_own.set_normal(n_tl)
 	st_own.add_vertex(tl)
-	st_own.set_uv(uv_bl)
-	st_own.set_normal(n_bl)
-	st_own.add_vertex(bl)
 	st_own.set_uv(uv_tr)
 	st_own.set_normal(n_tr)
 	st_own.add_vertex(tr)
+	st_own.set_uv(uv_bl)
+	st_own.set_normal(n_bl)
+	st_own.add_vertex(bl)
 
 	var st2: SurfaceTool = fringe_st if fringe_st != null else st_own
 	st2.set_color(shade)
 	st2.set_uv(uv_tr)
 	st2.set_normal(n_tr)
 	st2.add_vertex(tr)
-	st2.set_uv(uv_bl)
-	st2.set_normal(n_bl)
-	st2.add_vertex(bl)
 	st2.set_uv(uv_br)
 	st2.set_normal(n_br)
 	st2.add_vertex(br)
+	st2.set_uv(uv_bl)
+	st2.set_normal(n_bl)
+	st2.add_vertex(bl)
 
 
 func _commit_terrain(groups: Dictionary, mats: Dictionary) -> MeshInstance3D:

@@ -1,1 +1,1 @@
-{subject}. {style} A single stylized game object sprite seen from a high three-quarter angle, whole object in frame, bold readable silhouette, isolated on a plain flat white background, no ground, no pedestal, no scenery around it.
+{subject}. {style} A single stylized game object sprite seen from a high three-quarter angle, whole object in frame, bold readable silhouette, isolated on a plain flat white background, no ground, no pedestal, no scenery, no trees, no water, no sky, nothing else in frame.

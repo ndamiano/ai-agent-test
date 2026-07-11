@@ -208,6 +208,27 @@ def _collect_feature_specs(places_comp: Dict) -> List[tuple]:
     return [(kind, label) for label, kind in specs.items()]
 
 
+def _autocrop_alpha(path, pad_frac: float = 0.02) -> None:
+    """Trim a matted sprite to its alpha bounding box (small pad). The presenter scales the
+    sprite to cover its blocked footprint rect — transparent padding around the object makes
+    the visible art smaller than the walls, an invisible-obstacle margin the player bumps into."""
+    from PIL import Image
+
+    img = Image.open(path)
+    if img.mode != "RGBA":
+        return
+    bbox = img.getchannel("A").getbbox()
+    if bbox is None:
+        return
+    pad = int(max(img.size) * pad_frac)
+    left = max(0, bbox[0] - pad)
+    top = max(0, bbox[1] - pad)
+    right = min(img.width, bbox[2] + pad)
+    bottom = min(img.height, bbox[3] + pad)
+    if (left, top, right, bottom) != (0, 0, img.width, img.height):
+        img.crop((left, top, right, bottom)).save(path)
+
+
 def _place_result(meta: Dict, result: Dict, generated: List[str], failed: List[Dict]) -> None:
     """Land one generation job's result at its declared destination, or degrade gracefully:
     emotion variants fall back to the neutral face, everything else but a token/mesh source gets
@@ -217,6 +238,8 @@ def _place_result(meta: Dict, result: Dict, generated: List[str], failed: List[D
     filepath, img_file, kind = meta["dest"], meta["file"], meta["kind"]
     if result.get("success") and result.get("saved_paths"):
         shutil.copy2(result["saved_paths"][0], filepath)
+        if img_file.startswith(("feature_", "prop_")):
+            _autocrop_alpha(filepath)
         generated.append(img_file)
         print(f"    [images]  ok: {img_file}")
         return

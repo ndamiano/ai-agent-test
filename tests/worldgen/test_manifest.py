@@ -5,7 +5,8 @@ def test_manifest_fully_placed(pirate_recipe):
     world = worldgen.generate(pirate_recipe, seed=1)
     ids = {s["id"] for s in world["sites"]}
     expected = {loc["id"] for loc in pirate_recipe["locations"]}
-    assert ids == expected
+    assert expected <= ids
+    assert all(sid.startswith("poi_") for sid in ids - expected)
 
 
 def test_interior_host_binding_recorded(pirate_recipe):

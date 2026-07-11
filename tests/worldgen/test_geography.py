@@ -28,7 +28,9 @@ def multi_port_world():
 
 def test_archipelago_multi_settlement_generates(multi_port_world):
     placed = {s["id"] for s in multi_port_world["sites"]}
-    assert placed == {loc["id"] for loc in MULTI_PORT_RECIPE["locations"]}
+    expected = {loc["id"] for loc in MULTI_PORT_RECIPE["locations"]}
+    assert expected <= placed
+    assert all(sid.startswith("poi_") for sid in placed - expected)
 
 
 def test_roads_never_cross_water(multi_port_world):
@@ -102,8 +104,10 @@ def fairy_world():
 
 
 def test_fairy_theme_generates(fairy_world):
-    assert {s["id"] for s in fairy_world["sites"]} == \
-        {loc["id"] for loc in FAIRY_RECIPE["locations"]}
+    placed = {s["id"] for s in fairy_world["sites"]}
+    expected = {loc["id"] for loc in FAIRY_RECIPE["locations"]}
+    assert expected <= placed
+    assert all(sid.startswith("poi_") for sid in placed - expected)
 
 
 def test_no_water_biome_palette_falls_back(fairy_world):

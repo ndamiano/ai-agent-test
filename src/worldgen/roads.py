@@ -5,14 +5,19 @@ from .errors import PlacementError
 _DIRS = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
          (1, 1, 2 ** 0.5), (1, -1, 2 ** 0.5), (-1, 1, 2 ** 0.5), (-1, -1, 2 ** 0.5)]
 
+_RIVER_CROSSING_COST = 8.0
 
-def _cell_cost(x, y, elevation, water):
+
+def _cell_cost(x, y, elevation, water, river_cells):
     if water[y][x]:
         return None
-    return 1.0 + elevation[y][x] * 4.0
+    cost = 1.0 + elevation[y][x] * 4.0
+    if (x, y) in river_cells:
+        cost += _RIVER_CROSSING_COST
+    return cost
 
 
-def _astar(start, goal, ctx):
+def _astar(start, goal, ctx, river_cells):
     w, h = ctx.w, ctx.h
     sx, sy = start
     gx, gy = goal
@@ -45,7 +50,7 @@ def _astar(start, goal, ctx):
             nx, ny = x + dx, y + dy
             if not (0 <= nx < w and 0 <= ny < h):
                 continue
-            cell_cost = _cell_cost(nx, ny, ctx.elevation, ctx.water)
+            cell_cost = _cell_cost(nx, ny, ctx.elevation, ctx.water, river_cells)
             if cell_cost is None:
                 continue
             tentative = g + step_cost * cell_cost
@@ -80,22 +85,26 @@ def _mst_edges(points):
     return edges
 
 
-def connect(settlements, ctx):
+def connect(settlements, ctx, river_cells=frozenset()):
     """Roads link settlements that share a landmass; settlements on different islands
-    connect by water, which is open by construction."""
+    connect by water, which is open by construction. A road may cross a river
+    (surcharged, not forbidden, so crossings are narrow) — each such cell is
+    reported as a bridge."""
     by_island = {}
     for s in settlements:
         by_island.setdefault(ctx.component_id[s["y"]][s["x"]], []).append(s)
 
     roads = []
+    bridges = set()
     for group in by_island.values():
         if len(group) < 2:
             continue
         points = [(s["x"], s["y"]) for s in group]
         for i, j in _mst_edges(points):
-            path = _astar(points[i], points[j], ctx)
+            path = _astar(points[i], points[j], ctx, river_cells)
             if path is None:
                 raise PlacementError(
                     f"no road between {group[i]['id']!r} and {group[j]['id']!r}")
             roads.append([list(c) for c in path])
-    return roads
+            bridges.update(c for c in path if c in river_cells)
+    return roads, [list(c) for c in sorted(bridges)]

@@ -25,6 +25,13 @@ def render_ascii(world: dict) -> str:
         for x, y in path:
             road_cells.add((x, y))
 
+    river_cells = set()
+    for path in world.get("rivers", []):
+        for x, y in path:
+            river_cells.add((x, y))
+
+    bridge_cells = {(x, y) for x, y in world.get("bridges", [])}
+
     markers = {site["id"]: _marker_for(i) for i, site in enumerate(world["sites"])}
 
     site_cell_marker = {}
@@ -43,6 +50,10 @@ def render_ascii(world: dict) -> str:
         for x in range(w):
             if (x, y) in site_cell_marker:
                 chars.append(site_cell_marker[(x, y)])
+            elif (x, y) in bridge_cells:
+                chars.append("=")
+            elif (x, y) in river_cells:
+                chars.append("~")
             elif (x, y) in road_cells:
                 chars.append(".")
             else:
@@ -66,5 +77,7 @@ def render_ascii(world: dict) -> str:
         out.append(f"  {biome_char[name]} = {name}")
     out.append("")
     out.append("Roads: '.'")
+    out.append("Rivers: '~'")
+    out.append("Bridges: '='")
 
     return "\n".join(out)

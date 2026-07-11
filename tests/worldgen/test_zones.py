@@ -190,8 +190,9 @@ def test_interior_place_links_back_to_host(pirate_zones):
 
 
 def test_located_site_markers_on_landmass_or_ocean_place(pirate_zones):
-    """No arbitrary per-site crops: every located site's marker lives on the ONE place for its
-    landmass (or the ocean place, if it sits on water), never a bespoke window of its own."""
+    """No arbitrary per-site crops: every located site's marker (a settlement's enter hotspot,
+    any other site's examine marker) lives on the ONE place for its landmass (or the ocean
+    place, if it sits on water), never a bespoke window of its own."""
     world, places = pirate_zones
     water = world["water"]
     land_comp = _land_component_ids(world)
@@ -199,7 +200,14 @@ def test_located_site_markers_on_landmass_or_ocean_place(pirate_zones):
     for site in world["sites"]:
         if site.get("host"):
             continue
-        pid = _marker_place(places, site["id"])
+        if site["type"] == "settlement":
+            hotspot_id = f"h_enter_{site['id']}"
+            found = [pid for pid, place in places["places"].items()
+                     if any(h["id"] == hotspot_id for h in place["interactables"])]
+            assert len(found) == 1, (site["id"], found)
+            pid = found[0]
+        else:
+            pid = _marker_place(places, site["id"])
         if water[site["y"]][site["x"]]:
             continue
         cid = land_comp[site["y"]][site["x"]]
@@ -210,7 +218,7 @@ def test_located_site_markers_on_landmass_or_ocean_place(pirate_zones):
             assert prev == pid, (site["id"], cid, prev, pid)
 
 
-def test_zone_count_matches_landmasses_plus_ocean_plus_interiors(pirate_zones):
+def test_zone_count_matches_landmasses_plus_towns_plus_ocean_plus_interiors(pirate_zones):
     world, places = pirate_zones
     water = world["water"]
     land_comp = _land_component_ids(world)
@@ -224,8 +232,9 @@ def test_zone_count_matches_landmasses_plus_ocean_plus_interiors(pirate_zones):
         else:
             landmass_ids.add(land_comp[site["y"]][site["x"]])
     n_interiors = sum(1 for s in world["sites"] if s.get("host"))
+    n_towns = sum(1 for s in world["sites"] if s["type"] == "settlement")
     n_ocean = 1 if (has_open_water_site or len(landmass_ids) > 1) else 0
-    expected = len(landmass_ids) + n_ocean + n_interiors
+    expected = len(landmass_ids) + n_towns + n_ocean + n_interiors
     assert len(places["places"]) == expected
 
 
@@ -252,13 +261,13 @@ def test_ocean_roundtrip(pirate_zones):
 def test_elevation_layout_matches_tiles_dims(pirate_zones):
     _world, places = pirate_zones
     for pid, place in places["places"].items():
-        if place["kind"] == "interior":
+        if place["kind"] in ("interior", "town"):
             assert "layout" not in place, pid
             continue
-        layout = place["layout"]
         rows = place["tiles"]["rows"]
-        elevation = layout["elevation"]
-        assert len(layout["window"]) == 4
+        elevation = place["elevation"]
+        assert len(place["layout"]["window"]) == 4
+        assert isinstance(place["sea_level"], float), pid
         assert len(elevation) == len(rows), pid
         assert all(len(erow) == len(rows[0]) for erow in elevation), pid
 
@@ -276,6 +285,60 @@ def _dual_role_themes(places):
 def test_no_theme_is_both_open_and_blocked(pirate_zones):
     _world, places = pirate_zones
     assert _dual_role_themes(places) == []
+
+
+def test_no_adjacent_hotspots(pirate_zones):
+    """The flag-pile bug: two portals side by side. Hotspots reserve with a spacing pass, so
+    no two interactables in a place may sit 4-adjacent."""
+    _world, places = pirate_zones
+    for pid, place in places["places"].items():
+        cells = [(h["position"]["cell"]["x"], h["position"]["cell"]["y"])
+                 for h in place["interactables"]]
+        for i, (x, y) in enumerate(cells):
+            for ox, oy in cells[i + 1:]:
+                assert abs(x - ox) + abs(y - oy) > 1, (pid, (x, y), (ox, oy))
+
+
+def test_settlement_hosted_interior_enters_through_town_building(pirate_zones):
+    """The tavern is entered from INSIDE the home_port town, at its own building's doorstep —
+    never from the world map."""
+    world, places = pirate_zones
+    town = places["places"]["home_port"]
+    assert town["kind"] == "town"
+    enter = next(h for h in town["interactables"] if h["id"] == "h_enter_tavern")
+    cell = (enter["position"]["cell"]["x"], enter["position"]["cell"]["y"])
+    bld = town["footprints"]["bld_tavern"]
+    door_zone = (bld["x"] - 1, bld["y"] - 1, bld["x"] + bld["w"], bld["y"] + bld["h"])
+    assert door_zone[0] <= cell[0] <= door_zone[2] and door_zone[1] <= cell[1] <= door_zone[3]
+    region = places["places"]["home_port_region"]
+    assert not any(h["action"].get("target") == "tavern" for h in region["interactables"])
+
+
+def test_settlement_renders_on_landmass(pirate_zones):
+    """A settlement is visible on its landmass map: a footprint entry (the town sprite) and,
+    unless blocking would sever the walk graph, blocked rooftop cells under it."""
+    _world, places = pirate_zones
+    region = places["places"]["home_port_region"]
+    fp = region["footprints"]["home_port"]
+    rows = region["tiles"]["rows"]
+    assert 0 <= fp["x"] and fp["x"] + fp["w"] <= len(rows[0])
+    assert 0 <= fp["y"] and fp["y"] + fp["h"] <= len(rows)
+    assert fp["label"]
+
+
+def test_town_gate_roundtrip(pirate_zones):
+    _world, places = pirate_zones
+    town = places["places"]["home_port"]
+    region = places["places"]["home_port_region"]
+    leaves = [h for h in town["interactables"] if h["id"].startswith("h_leave_")]
+    assert leaves
+    for leave in leaves:
+        assert leave["action"]["target"] == "home_port_region"
+        spawn = leave["action"]["spawn"]["cell"]
+        assert (spawn["x"], spawn["y"]) in _open_cells(region)
+    enter = next(h for h in region["interactables"] if h["id"] == "h_enter_home_port")
+    spawn = enter["action"]["spawn"]["cell"]
+    assert (spawn["x"], spawn["y"]) in _open_cells(town)
 
 
 _FAIRY_RECIPE = {
@@ -296,29 +359,36 @@ _FAIRY_RECIPE = {
 
 
 def test_fairy_recipe_builds_valid_zones():
-    """Single-landmass continent, no open_water site: ONE outdoor place carries every site's
-    marker plus the interior — no ocean, and no zone-to-zone move hotspot at all (the old bug
-    was two adjacent move-markers to different beaches on the SAME island). Seed 3 is pinned
+    """Single-landmass continent, no open_water site: ONE world_map place carries every
+    non-settlement site's marker, the settlement is its own town place entered from it, and
+    the interior is entered through its building inside the town — no ocean. Seed 4 is pinned
     (rather than generate_best over _SEEDS) because this scenario needs a single landmass and
     generate_best's score-driven seed choice for this recipe lands on a two-landmass world.
     """
     recipe = copy.deepcopy(_FAIRY_RECIPE)
-    world = worldgen.generate(recipe, seed=3)
+    world = worldgen.generate(recipe, seed=4)
     places = build_zones(world, recipe)
     assert v_places(places) is None
     assert _dual_role_themes(places) == []
 
     interior_ids = {s["id"] for s in world["sites"] if s.get("host")}
-    assert set(places["places"]) == interior_ids | {"fairy_village"}
-    outdoor_ids = set(places["places"]) - interior_ids
-    assert len(outdoor_ids) == 1, outdoor_ids
-    outdoor_place = places["places"][next(iter(outdoor_ids))]
+    assert set(places["places"]) == interior_ids | {"fairy_village", "fairy_village_region"}
+    region = places["places"]["fairy_village_region"]
+    town = places["places"]["fairy_village"]
+    assert region["kind"] == "world_map"
+    assert town["kind"] == "town"
+    assert places["start_place"] == "fairy_village"
 
     located = [s for s in world["sites"] if not s.get("host")]
     for site in located:
+        if site["type"] == "settlement":
+            continue
         marker_id = f"h_{site['id']}_marker"
-        assert any(h["id"] == marker_id for h in outdoor_place["interactables"]), site["id"]
+        assert any(h["id"] == marker_id for h in region["interactables"]), site["id"]
 
-    move_targets = {h["action"]["target"] for h in outdoor_place["interactables"]
-                     if h["action"]["type"] == "move"}
-    assert move_targets == interior_ids
+    region_targets = {h["action"]["target"] for h in region["interactables"]
+                      if h["action"]["type"] == "move"}
+    assert region_targets == {"fairy_village"}
+    town_targets = {h["action"]["target"] for h in town["interactables"]
+                    if h["action"]["type"] == "move"}
+    assert town_targets == interior_ids | {"fairy_village_region"}

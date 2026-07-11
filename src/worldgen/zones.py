@@ -1,25 +1,41 @@
 """Carve the macro world into playable `places` zones (see docs/game_ir.schema.json).
 
 One walkable map per real discontinuity: a landmass with at least one located site becomes ONE
-place spanning its whole bounding box (padded, capped, re-detailed with WFC for local theme
-variety), so a continuous island is walked, never diced into arbitrary per-site crops. Sites on
-that landmass are in-map examine markers, not exits — two beaches on the same island are a walk,
-not a load screen. A single ocean place (the whole world, water/land inverted) is the only thing
-that crosses a real discontinuity (open water between landmasses); it exists only when the graph
-actually needs it (an authored open_water site, or more than one landmass zone). Role (open/
-blocked) always comes from the macro water mask, never from WFC — WFC only ever picks cosmetic
-themes, so a contradiction (falling back to the raw crop) can never break walkability. Interior
-sites get a small fixed room instead of a world sample. Connectivity (`move` interactables) is
-derived from geometry, never authored.
+place spanning its whole bounding box (padded, UPSAMPLED k x from the continuous macro fields
+via detail.sample — fractional-coordinate fBm resampling, so the coastline gains real fractal
+detail at zone scale), so a continuous island is walked, never diced into arbitrary per-site
+crops. Sites on that landmass are in-map examine markers, not exits — two beaches on the same
+island are a walk, not a load screen. A single ocean place (the whole world, water/land
+inverted) is the only thing that crosses a real discontinuity (open water between landmasses);
+it exists only when the graph actually needs it (an authored open_water site, or more than one
+landmass zone). Role (open/blocked) comes from the resampled water line, which detail.sample
+re-thresholds ONLY inside the macro coast band — interior land can never turn to water, and
+site anchors/roads are force-landed, with a carve-repair pass guaranteeing every anchor stays
+reachable from the primary site. Each place declares its scale (`m_per_cell`) so the tiers
+read consistently. Interior sites get a small fixed room instead of a world sample.
+Connectivity (`move` interactables) is derived from geometry, never authored.
+
+A settlement is a real tier, not a flag: its macro footprint renders as blocked rooftops on the
+landmass map (a town you walk up to, entered at a gate hotspot beside it), and the settlement id
+names a dedicated fine-resolution town place (towns.build_town: streets, plaza, buildings).
+Interiors hosted at a settlement wire through their own building's doorstep inside the town —
+never a pile of markers on the world map. The landmass place takes a derived `<primary>_region`
+id so the settlement id stays the story-facing town.
 """
 
 from collections import deque
 
-from . import wfc
+from . import detail, towns
 
-_MAX_ZONE_W, _MAX_ZONE_H = 64, 48
+_MAX_FINE = 256
+_MAX_OCEAN_W, _MAX_OCEAN_H = 64, 48
 _ZONE_PAD = 2
+_MACRO_CELL_M = 60.0
+_TOWN_CELL_M = 2.0
+_RIVER_THEME = "river water"
 _ROAD_THEME = "worn path"
+_TOWN_THEME = "town rooftops"
+_TOWN_LABEL = "walled town"
 _CHAR_POOL = list("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 _IROOM_W, _IROOM_H = 12, 9
 _IROOM_LEGEND = {"#": {"role": "blocked", "theme": "stone wall"},
@@ -35,8 +51,6 @@ def build_zones(world: dict, recipe: dict) -> dict:
     W, H = world["size"]["w"], world["size"]["h"]
     water = world["water"]
 
-    all_site_cells = _collect_site_cells(located)
-    all_road_cells = {tuple(c) for path in world["roads"] for c in path}
 
     comp = _components(world)
     bboxes = _all_bboxes(comp, W, H)
@@ -47,27 +61,63 @@ def build_zones(world: dict, recipe: dict) -> dict:
     landmass_groups = {}
     for s in land_sites:
         landmass_groups.setdefault(comp[s["y"]][s["x"]], []).append(s)
+    # A derived POI never justifies a zone by itself — a landmass earns a walkable map
+    # only when the recipe put something there.
+    landmass_groups = {cid: group for cid, group in landmass_groups.items()
+                       if not all(s.get("derived") for s in group)}
+
+    settlement_sites = {s["id"]: s for s in located if s["type"] == "settlement"}
+    hosted = {sid: [] for sid in settlement_sites}
+    for s in interiors:
+        if s["host"] in hosted:
+            hosted[s["host"]].append(s["id"])
+    towns_by_site = {sid: towns.build_town(site, hosted[sid], world, seed_base)
+                     for sid, site in settlement_sites.items()}
 
     places = {}
     zone_meta = {}
     site_place_id = {}
+    town_region = {}
+    landmass_pid = {}
 
     for cid, group in landmass_groups.items():
         primary = next((s for s in group if s["type"] == "settlement"), group[0])
-        pid = primary["id"]
-        kind = "town" if any(s["type"] == "settlement" for s in group) else "world_map"
+        pid = f"{primary['id']}_region" if primary["type"] == "settlement" else primary["id"]
 
         x0, x1, y0, y1 = bboxes[cid]
         wx0, wy0, ww0, wh0 = _pad_bbox((x0, x1, y0, y1), W, H, _ZONE_PAD)
-        scale = 2 if (ww0 > _MAX_ZONE_W or wh0 > _MAX_ZONE_H) else 1
+        k = max(1, min(3, _MAX_FINE // ww0, _MAX_FINE // wh0))
 
-        rows, legend, role_grid, elev_rows, ww, wh = _sample_window(
-            world, wx0, wy0, ww0, wh0, scale, pid, seed_base, all_site_cells, all_road_cells,
-            invert=False)
+        theme_g, role_grid, elev_rows, ww, wh = _sample_landmass(
+            world, recipe, seed_base, wx0, wy0, ww0, wh0, k, _collect_site_cells(group))
 
-        meta = {"wx0": wx0, "wy0": wy0, "scale": scale, "ww": ww, "wh": wh,
+        meta = {"wx0": wx0, "wy0": wy0, "f": float(k), "ww": ww, "wh": wh,
                 "role_grid": role_grid, "used": set(), "site_local": {}, "primary": primary}
         zone_meta[pid] = meta
+        landmass_pid[cid] = pid
+
+        footprints = {}
+        for s in group:
+            if s["type"] != "settlement":
+                continue
+            local_cells = set()
+            for gx, gy in (s.get("cells") or [[s["x"], s["y"]]]):
+                if wx0 <= gx < wx0 + ww0 and wy0 <= gy < wy0 + wh0:
+                    bx, by = (gx - wx0) * k, (gy - wy0) * k
+                    local_cells.update((bx + dx, by + dy) for dy in range(k) for dx in range(k))
+            blob = _block_footprint(role_grid, theme_g, local_cells, ww, wh)
+            box_cells = blob or local_cells
+            if box_cells:
+                bx0 = min(c[0] for c in box_cells)
+                by0 = min(c[1] for c in box_cells)
+                footprints[s["id"]] = {
+                    "x": bx0, "y": by0,
+                    "w": max(c[0] for c in box_cells) - bx0 + 1,
+                    "h": max(c[1] for c in box_cells) - by0 + 1,
+                    "label": _TOWN_LABEL,
+                }
+
+        rows, legend = _paint(theme_g, role_grid, ww, wh)
 
         interactables = []
         for s in group:
@@ -75,14 +125,64 @@ def build_zones(world: dict, recipe: dict) -> dict:
             meta["site_local"][s["id"]] = local
             reach = _reach_from(meta, local)
             cell = _reserve_near(local, reach, meta["used"], ww, wh)
-            interactables.append(_examine_hotspot(s, cell))
-            site_place_id[s["id"]] = pid
+            if s["type"] == "settlement":
+                town = towns_by_site[s["id"]]
+                inward = town["gates"][0]["inward"]
+                if s["id"] in footprints:
+                    footprints[s["id"]]["door"] = [cell[0], cell[1]]
+                interactables.append({
+                    "id": f"h_enter_{s['id']}",
+                    "label": f"enter {s['id'].replace('_', ' ')}",
+                    "position": {"cell": {"x": cell[0], "y": cell[1]}},
+                    "action": {"type": "move", "target": s["id"],
+                               "spawn": {"cell": {"x": inward[0], "y": inward[1]}}},
+                })
+                site_place_id[s["id"]] = s["id"]
+                town_region[s["id"]] = (pid, cell)
+            else:
+                interactables.append(_examine_hotspot(s, cell))
+                site_place_id[s["id"]] = pid
 
         places[pid] = {
-            "kind": kind,
+            "kind": "world_map",
             "tiles": {"rows": rows, "legend": legend},
             "interactables": interactables,
-            "layout": {"window": [wx0, wy0, ww0, wh0], "elevation": elev_rows},
+            "m_per_cell": _MACRO_CELL_M / k,
+            "elevation": elev_rows,
+            "sea_level": detail.sea_level(world, recipe),
+            "layout": {"window": [wx0, wy0, ww0, wh0]},
+        }
+        if footprints:
+            places[pid]["footprints"] = footprints
+
+    for sid, town in towns_by_site.items():
+        region_pid, enter_cell = town_region[sid]
+        rmeta = zone_meta[region_pid]
+        tmeta = {"ww": town["ww"], "wh": town["wh"], "role_grid": town["role_grid"],
+                 "used": set(town["doors"].values()) | {g["cell"] for g in town["gates"]},
+                 "doors": town["doors"], "plaza": town["plaza"]}
+        zone_meta[sid] = tmeta
+
+        reach_r = _reach_from(rmeta, enter_cell)
+        spawn_r = _reserve_near(enter_cell, reach_r, set(rmeta["used"]), rmeta["ww"],
+                                rmeta["wh"])
+        interactables = []
+        for gate in town["gates"]:
+            gx, gy = gate["cell"]
+            interactables.append({
+                "id": f"h_leave_{sid}_{gate['edge']}",
+                "label": f"leave {sid.replace('_', ' ')}",
+                "position": {"cell": {"x": gx, "y": gy}},
+                "action": {"type": "move", "target": region_pid,
+                           "spawn": {"cell": {"x": spawn_r[0], "y": spawn_r[1]}}},
+            })
+
+        places[sid] = {
+            "kind": "town",
+            "tiles": town["tiles"],
+            "interactables": interactables,
+            "footprints": town["footprints"],
+            "m_per_cell": _TOWN_CELL_M,
         }
 
     open_water_sites = [s for s in water_sites if s["type"] == "open_water"]
@@ -90,13 +190,12 @@ def build_zones(world: dict, recipe: dict) -> dict:
     if need_ocean:
         ocean_id = open_water_sites[0]["id"] if open_water_sites else (
             water_sites[0]["id"] if water_sites else "open_sea")
-        scale_o = 2 if W > _MAX_ZONE_W else 1
+        scale_o = 2 if (W > _MAX_OCEAN_W or H > _MAX_OCEAN_H) else 1
 
-        rows_o, legend_o, role_o, elev_o, oww, owh = _sample_window(
-            world, 0, 0, W, H, scale_o, ocean_id, seed_base, all_site_cells, all_road_cells,
-            invert=True)
+        theme_o, role_o, elev_o, oww, owh = _sample_ocean(world, scale_o)
+        rows_o, legend_o = _paint(theme_o, role_o, oww, owh)
 
-        ometa = {"wx0": 0, "wy0": 0, "scale": scale_o, "ww": oww, "wh": owh,
+        ometa = {"wx0": 0, "wy0": 0, "f": 1.0 / scale_o, "ww": oww, "wh": owh,
                  "role_grid": role_o, "used": set(), "site_local": {}}
         zone_meta[ocean_id] = ometa
 
@@ -113,12 +212,14 @@ def build_zones(world: dict, recipe: dict) -> dict:
             "kind": "world_map",
             "tiles": {"rows": rows_o, "legend": legend_o},
             "interactables": interactables_o,
-            "layout": {"window": [0, 0, W, H], "elevation": elev_o},
+            "m_per_cell": _MACRO_CELL_M * scale_o,
+            "elevation": elev_o,
+            "sea_level": detail.sea_level(world, recipe),
+            "layout": {"window": [0, 0, W, H]},
         }
 
-        for cid, group in landmass_groups.items():
-            island_id = next((s for s in group if s["type"] == "settlement"), group[0])["id"]
-            _wire_sea_link(world, places, zone_meta, island_id, ocean_id)
+        for cid in landmass_groups:
+            _wire_sea_link(world, places, zone_meta, landmass_pid[cid], ocean_id)
 
     for site in interiors:
         rows, legend = _interior_room()
@@ -129,20 +230,24 @@ def build_zones(world: dict, recipe: dict) -> dict:
             "kind": "interior",
             "tiles": {"rows": rows, "legend": legend},
             "interactables": [_examine_hotspot(site, center)],
+            "m_per_cell": _TOWN_CELL_M,
         }
         zone_meta[site["id"]] = {"ww": _IROOM_W, "wh": _IROOM_H, "role_grid": role_grid,
                                   "used": {center}, "door": door}
 
     for site in interiors:
-        host_place = site_place_id[site["host"]]
-        _wire_interior(places, zone_meta, host_place, site["host"], site["id"])
+        if site["host"] in towns_by_site:
+            _wire_town_interior(places, zone_meta, site["host"], site["id"])
+        else:
+            host_place = site_place_id[site["host"]]
+            _wire_interior(places, zone_meta, host_place, site["host"], site["id"])
 
     settlement = next(s for s in sites if s["type"] == "settlement")
-    start_place = site_place_id[settlement["id"]]
+    start_place = settlement["id"]
     smeta = zone_meta[start_place]
-    anchor = smeta["site_local"][settlement["id"]]
-    reach = _reach_from(smeta, anchor)
-    start_spawn = _reserve_near(anchor, reach, {anchor}, smeta["ww"], smeta["wh"])
+    reach = _reach_from(smeta, smeta["plaza"])
+    start_spawn = _reserve_near(smeta["plaza"], reach, set(smeta["used"]), smeta["ww"],
+                                smeta["wh"])
 
     return {
         "place_ids": list(places.keys()),
@@ -227,7 +332,7 @@ def _pad_bbox(bounds, W, H, pad):
     return x0, y0, x1 - x0 + 1, y1 - y0 + 1
 
 
-# ── zone sampling (macro crop + optional 2x downsample + WFC re-detail) ───────
+# ── zone sampling: landmass = k x fBm upsample; ocean = crop + 2x downsample ──
 def _downsample_blocks(w, h):
     nw, nh = (w + 1) // 2, (h + 1) // 2
     for oy in range(nh):
@@ -243,14 +348,6 @@ def _downsample_majority(grid, w, h):
     for oy, ox, cells in _downsample_blocks(w, h):
         vals = [grid[y][x] for x, y in cells]
         out[oy][ox] = sum(1 for v in vals if v) * 2 > len(vals)
-    return out
-
-
-def _downsample_any(grid, w, h):
-    nw, nh = (w + 1) // 2, (h + 1) // 2
-    out = [[False] * nw for _ in range(nh)]
-    for oy, ox, cells in _downsample_blocks(w, h):
-        out[oy][ox] = any(grid[y][x] for x, y in cells)
     return out
 
 
@@ -283,96 +380,145 @@ def _downsample_average(grid, w, h):
     return out
 
 
-def _sample_window(world, wx0, wy0, ww0, wh0, scale, seed_key, seed_base, all_site_cells,
-                    all_road_cells, invert):
-    """Crop [wx0, wy0, ww0, wh0] of the world, optionally halved (majority-vote per 2x2 block),
-    and re-detail its themes with WFC. `invert` flips role open<->blocked for the ocean map
-    (water walkable, land blocked) vs a landmass map (land walkable, water blocked)."""
-    biome, water, elevation = world["biome"], world["water"], world["elevation"]
+def _sample_landmass(world, recipe, seed_base, wx0, wy0, ww0, wh0, k, group_site_cells):
+    """Resample the window at k x resolution from the continuous fields, then stamp the
+    macro linework back on as fine polylines: rivers (blocked overlay), roads (open — a
+    road crossing a river IS the bridge), and site anchors (forced open land). A final
+    carve pass guarantees every anchor is reachable from the first one, so coastline/river
+    detail can never sever the zone graph."""
+    theme, water_f, elev_f = detail.sample(world, recipe, seed_base, wx0, wy0, ww0, wh0, k)
+    fw, fh = ww0 * k, wh0 * k
+    sea = detail.sea_level(world, recipe)
 
-    full_water = [[bool(water[wy0 + y][wx0 + x]) for x in range(ww0)] for y in range(wh0)]
-    full_theme = [[biome[wy0 + y][wx0 + x] for x in range(ww0)] for y in range(wh0)]
-    full_elev = [[float(elevation[wy0 + y][wx0 + x]) for x in range(ww0)] for y in range(wh0)]
-    full_road = [[(wx0 + x, wy0 + y) in all_road_cells for x in range(ww0)] for y in range(wh0)]
+    role = [["blocked" if water_f[y][x] else "open" for x in range(fw)] for y in range(fh)]
+
+    def force_land(x, y):
+        role[y][x] = "open"
+        if water_f[y][x] or theme[y][x] == _RIVER_THEME:
+            theme[y][x] = _land_theme_near(theme, water_f, fw, fh, x, y)
+        water_f[y][x] = False
+        if elev_f[y][x] < sea:
+            elev_f[y][x] = sea + 0.01
+
+    for path in world.get("rivers", []):
+        for x, y in _fine_polyline(path, wx0, wy0, k, fw, fh):
+            if not water_f[y][x]:
+                theme[y][x] = _RIVER_THEME
+                role[y][x] = "blocked"
+
+    for path in world["roads"]:
+        for x, y in _fine_polyline(path, wx0, wy0, k, fw, fh):
+            water_f[y][x] = False
+            theme[y][x] = _ROAD_THEME
+            role[y][x] = "open"
+            if elev_f[y][x] < sea:
+                elev_f[y][x] = sea + 0.01
+
+    anchors = []
+    for gx, gy in sorted(group_site_cells):
+        if wx0 <= gx < wx0 + ww0 and wy0 <= gy < wy0 + wh0 and not world["water"][gy][gx]:
+            x, y = (gx - wx0) * k + k // 2, (gy - wy0) * k + k // 2
+            force_land(x, y)
+            anchors.append((x, y))
+
+    _carve_connected(theme, role, water_f, elev_f, anchors, fw, fh, sea)
+    return theme, role, elev_f, fw, fh
+
+
+def _sample_ocean(world, scale):
+    """The whole world, water walkable and land blocked, halved when the world is large.
+    Sea travel is symbolic: raw macro themes, no re-detail."""
+    W, H = world["size"]["w"], world["size"]["h"]
+    water = [[bool(world["water"][y][x]) for x in range(W)] for y in range(H)]
+    theme = [[world["biome"][y][x] for x in range(W)] for y in range(H)]
+    elev = [[float(world["elevation"][y][x]) for x in range(W)] for y in range(H)]
 
     if scale == 2:
-        water_g = _downsample_majority(full_water, ww0, wh0)
-        theme_g = _downsample_categorical_matching(full_theme, full_water, water_g, ww0, wh0)
-        elev_g = _downsample_average(full_elev, ww0, wh0)
-        road_g = _downsample_any(full_road, ww0, wh0)
+        water_g = _downsample_majority(water, W, H)
+        theme_g = _downsample_categorical_matching(theme, water, water_g, W, H)
+        elev_g = _downsample_average(elev, W, H)
     else:
-        water_g, theme_g, elev_g, road_g = full_water, full_theme, full_elev, full_road
-    ww, wh = len(water_g[0]), len(water_g)
+        water_g, theme_g, elev_g = water, theme, elev
+    ow, oh = len(water_g[0]), len(water_g)
 
-    if not invert:
-        for y in range(wh):
-            for x in range(ww):
-                if road_g[y][x]:
-                    theme_g[y][x] = _ROAD_THEME
+    role = [["open" if water_g[y][x] else "blocked" for x in range(ow)] for y in range(oh)]
+    return theme_g, role, elev_g, ow, oh
 
-    role_grid = [[None] * ww for _ in range(wh)]
-    for y in range(wh):
-        for x in range(ww):
-            if road_g[y][x] and not invert:
-                role_grid[y][x] = "open"
-            else:
-                open_role = water_g[y][x] if invert else (not water_g[y][x])
-                role_grid[y][x] = "open" if open_role else "blocked"
 
-    site_cells_local = set()
-    for gx, gy in all_site_cells:
-        if wx0 <= gx < wx0 + ww0 and wy0 <= gy < wy0 + wh0:
-            site_cells_local.add(((gx - wx0) // scale, (gy - wy0) // scale))
+def _bresenham(x0, y0, x1, y1):
+    cells = []
+    dx, dy = abs(x1 - x0), -abs(y1 - y0)
+    sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
+    err = dx + dy
+    while True:
+        cells.append((x0, y0))
+        if x0 == x1 and y0 == y1:
+            return cells
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x0 += sx
+        if e2 <= dx:
+            err += dx
+            y0 += sy
 
-    pins = {}
-    for y in range(wh):
-        for x in range(ww):
-            is_road = road_g[y][x] and not invert
-            is_boundary = any(0 <= x + dx < ww and 0 <= y + dy < wh
-                               and water_g[y + dy][x + dx] != water_g[y][x]
-                               for dx, dy in _NEIGHBORS)
-            if is_road or is_boundary or (x, y) in site_cells_local:
-                pins[(x, y)] = theme_g[y][x]
 
-    tiles = sorted({t for row in theme_g for t in row})
-    if _ROAD_THEME not in tiles:
-        tiles.append(_ROAD_THEME)
+def _fine_polyline(path, wx0, wy0, k, fw, fh):
+    pts = [((x - wx0) * k + k // 2, (y - wy0) * k + k // 2) for x, y in path]
+    cells = list(pts[:1])
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        cells.extend(_bresenham(ax, ay, bx, by))
+    return [(x, y) for x, y in cells if 0 <= x < fw and 0 <= y < fh]
 
-    # A theme never crosses the land/water line: same texture walkable AND blocked
-    # would render as invisible walls.
-    water_themes = {theme_g[y][x] for y in range(wh) for x in range(ww) if water_g[y][x]}
-    land_themes = set(tiles) - water_themes
-    domains = {}
-    for y in range(wh):
-        for x in range(ww):
-            allowed = water_themes if water_g[y][x] else land_themes
-            if allowed:
-                domains[(x, y)] = allowed
 
-    adjacency_set = set()
-    for y in range(wh):
-        for x in range(ww):
-            t = theme_g[y][x]
-            if x + 1 < ww and theme_g[y][x + 1] != t:
-                adjacency_set.add(tuple(sorted((t, theme_g[y][x + 1]))))
-            if y + 1 < wh and theme_g[y + 1][x] != t:
-                adjacency_set.add(tuple(sorted((t, theme_g[y + 1][x]))))
+def _land_theme_near(theme, water_f, fw, fh, sx, sy):
+    seen = {(sx, sy)}
+    dq = deque(seen)
+    while dq:
+        x, y = dq.popleft()
+        if not water_f[y][x] and theme[y][x] not in (_RIVER_THEME, _ROAD_THEME):
+            return theme[y][x]
+        for dx, dy in _NEIGHBORS:
+            nxt = (x + dx, y + dy)
+            if 0 <= nxt[0] < fw and 0 <= nxt[1] < fh and nxt not in seen:
+                seen.add(nxt)
+                dq.append(nxt)
+    return "beach"
 
-    counts = {}
-    for row in theme_g:
-        for t in row:
-            counts[t] = counts.get(t, 0) + 1
-    weights = {t: float(counts.get(t, 1)) for t in tiles}
 
-    try:
-        detailed = wfc.collapse(ww, wh, tiles, [list(p) for p in adjacency_set],
-                                 weights=weights, pins=pins, domains=domains,
-                                 seed=f"{seed_base}:{seed_key}", max_restarts=20)
-    except wfc.ContradictionError:
-        detailed = theme_g
-
-    rows, legend = _paint(detailed, role_grid, ww, wh)
-    return rows, legend, role_grid, elev_g, ww, wh
+def _carve_connected(theme, role, water_f, elev_f, anchors, fw, fh, sea):
+    """Every anchor must reach the first one over open cells; an unreachable anchor gets a
+    1-wide land path carved to the reachable component (shortest BFS line over any cells)."""
+    if len(anchors) < 2:
+        return
+    for a in anchors[1:]:
+        flood = _flood(role, fw, fh, anchors[0])
+        if a in flood:
+            continue
+        prev = {a: None}
+        dq = deque([a])
+        hit = None
+        while dq and hit is None:
+            x, y = dq.popleft()
+            for dx, dy in _NEIGHBORS:
+                nxt = (x + dx, y + dy)
+                if 0 <= nxt[0] < fw and 0 <= nxt[1] < fh and nxt not in prev:
+                    prev[nxt] = (x, y)
+                    if nxt in flood:
+                        hit = nxt
+                        break
+                    dq.append(nxt)
+        cell = hit
+        while cell is not None:
+            x, y = cell
+            if role[y][x] != "open":
+                role[y][x] = "open"
+                if water_f[y][x] or theme[y][x] == _RIVER_THEME:
+                    theme[y][x] = _land_theme_near(theme, water_f, fw, fh, x, y)
+                water_f[y][x] = False
+                if elev_f[y][x] < sea:
+                    elev_f[y][x] = sea + 0.01
+            cell = prev[cell]
 
 
 def _paint(theme_grid, role_grid, w, h):
@@ -390,6 +536,32 @@ def _paint(theme_grid, role_grid, w, h):
         rows.append("".join(chars))
     legend = {ch: {"role": role, "theme": theme} for (theme, role), ch in combo.items()}
     return rows, legend
+
+
+def _block_footprint(role_grid, theme_grid, cells, ww, wh):
+    """Turn a settlement's macro footprint into blocked rooftop cells on the landmass map — a
+    town is an obstacle you walk up to, entered at its gate hotspot. Road cells stay open (the
+    road runs to the gate) and the whole block is reverted if it would sever the open walk
+    graph around it (theme untouched then, so no theme ever carries both roles)."""
+    blob = {(x, y) for x, y in cells
+            if 0 <= x < ww and 0 <= y < wh
+            and role_grid[y][x] == "open" and theme_grid[y][x] != _ROAD_THEME}
+    if not blob:
+        return set()
+    for x, y in blob:
+        role_grid[y][x] = "blocked"
+    perimeter = {(x + dx, y + dy) for x, y in blob for dx, dy in _NEIGHBORS
+                 if 0 <= x + dx < ww and 0 <= y + dy < wh
+                 and role_grid[y + dy][x + dx] == "open"}
+    if perimeter:
+        seen = _flood(role_grid, ww, wh, next(iter(perimeter)))
+        if not perimeter <= seen:
+            for x, y in blob:
+                role_grid[y][x] = "open"
+            return set()
+    for x, y in blob:
+        theme_grid[y][x] = _TOWN_THEME
+    return blob
 
 
 def _interior_room():
@@ -411,8 +583,10 @@ def _collect_site_cells(located):
 
 # ── window <-> local coordinate mapping ─────────────────────────────────────────
 def _to_local(meta, gx, gy):
-    lx = (gx - meta["wx0"]) // meta["scale"]
-    ly = (gy - meta["wy0"]) // meta["scale"]
+    f = meta["f"]
+    off = int(f) // 2
+    lx = int((gx - meta["wx0"]) * f) + off
+    ly = int((gy - meta["wy0"]) * f) + off
     lx = min(max(lx, 0), meta["ww"] - 1)
     ly = min(max(ly, 0), meta["wh"] - 1)
     return (lx, ly)
@@ -420,7 +594,8 @@ def _to_local(meta, gx, gy):
 
 def _to_global(meta, cell):
     lx, ly = cell
-    return (meta["wx0"] + lx * meta["scale"], meta["wy0"] + ly * meta["scale"])
+    f = meta["f"]
+    return (meta["wx0"] + int(lx / f), meta["wy0"] + int(ly / f))
 
 
 # ── flood fill + cell reservation (placement is confined to one connected blob,
@@ -466,23 +641,40 @@ def _reach_from(meta, target):
 
 
 def _reserve_near(target, allowed, used, w, h):
+    """Nearest free cell to `target` within `allowed`, preferring cells not 4-adjacent to an
+    already-used one — two hotspots never end up side by side unless the blob is too tight to
+    avoid it."""
+    for spaced in (True, False):
+        cell = _free_near(target, allowed, used, w, h, spaced)
+        if cell is not None:
+            used.add(cell)
+            return cell
+    raise ValueError("no free reachable cell to place an interactable")
+
+
+def _free_near(target, allowed, used, w, h, spaced):
+    def ok(cell):
+        if cell not in allowed or cell in used:
+            return False
+        if spaced and any((cell[0] + dx, cell[1] + dy) in used for dx, dy in _NEIGHBORS):
+            return False
+        return True
+
     tx, ty = target
-    if 0 <= tx < w and 0 <= ty < h and (tx, ty) in allowed and (tx, ty) not in used:
-        used.add((tx, ty))
+    if 0 <= tx < w and 0 <= ty < h and ok((tx, ty)):
         return (tx, ty)
     seen = {(tx, ty)}
     dq = deque(seen)
     while dq:
         x, y = dq.popleft()
         for dx, dy in _NEIGHBORS:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in seen:
-                seen.add((nx, ny))
-                if (nx, ny) in allowed and (nx, ny) not in used:
-                    used.add((nx, ny))
-                    return (nx, ny)
-                dq.append((nx, ny))
-    raise ValueError("no free reachable cell to place an interactable")
+            nxt = (x + dx, y + dy)
+            if 0 <= nxt[0] < w and 0 <= nxt[1] < h and nxt not in seen:
+                seen.add(nxt)
+                if ok(nxt):
+                    return nxt
+                dq.append(nxt)
+    return None
 
 
 def _examine_hotspot(site, cell):
@@ -552,6 +744,20 @@ def _nearest_global_water(world, gx, gy, radius=8):
     return None
 
 
+def _largest_open_component(meta):
+    role, w, h = meta["role_grid"], meta["ww"], meta["wh"]
+    seen_all = set()
+    best = set()
+    for y in range(h):
+        for x in range(w):
+            if role[y][x] == "open" and (x, y) not in seen_all:
+                comp = _flood(role, w, h, (x, y))
+                seen_all |= comp
+                if len(comp) > len(best):
+                    best = comp
+    return best
+
+
 def _wire_sea_link(world, places, zone_meta, island_id, ocean_id):
     mi = zone_meta[island_id]
     mo = zone_meta[ocean_id]
@@ -564,11 +770,13 @@ def _wire_sea_link(world, places, zone_meta, island_id, ocean_id):
     gx, gy = _to_global(mi, pos_i)
     water_pt = _nearest_global_water(world, gx, gy) or (gx, gy)
     approx_o = _to_local(mo, water_pt[0], water_pt[1])
-    reach_o = _reach_from(mo, approx_o)
+    # Landfall always lands on the open sea — the nearest water blob may be a lake
+    # (lakes are in the water mask) far too small to hold a hotspot + spawn.
+    reach_o = _largest_open_component(mo)
     pos_o = _reserve_near(approx_o, reach_o, mo["used"], mo["ww"], mo["wh"])
 
-    spawn_in_o = _reserve_near(pos_o, reach_o, {pos_o}, mo["ww"], mo["wh"])
-    spawn_in_i = _reserve_near(pos_i, reach_i, {pos_i}, mi["ww"], mi["wh"])
+    spawn_in_o = _reserve_near(pos_o, reach_o, set(mo["used"]), mo["ww"], mo["wh"])
+    spawn_in_i = _reserve_near(pos_i, reach_i, set(mi["used"]), mi["ww"], mi["wh"])
 
     places[island_id]["interactables"].append({
         "id": f"h_sail_{island_id}", "label": "set sail",
@@ -584,6 +792,36 @@ def _wire_sea_link(world, places, zone_meta, island_id, ocean_id):
     })
 
 
+def _wire_town_interior(places, zone_meta, town_id, interior_id):
+    """The interior's building doorstep IS the enter hotspot — stepping onto the door of the
+    tavern building enters the tavern. Doorsteps are pre-reserved by the town generator, so
+    two interiors can never share or crowd a cell."""
+    mt = zone_meta[town_id]
+    mi = zone_meta[interior_id]
+    door = mt["doors"].get(interior_id)
+    if door is None:
+        reach = _reach_from(mt, mt["plaza"])
+        door = _reserve_near(mt["plaza"], reach, mt["used"], mt["ww"], mt["wh"])
+    reach_t = _reach_from(mt, door)
+    spawn_in_t = _reserve_near(door, reach_t, set(mt["used"]), mt["ww"], mt["wh"])
+    reach_i = _reach_from(mi, mi["door"])
+    pos_i = _reserve_near(mi["door"], reach_i, mi["used"], mi["ww"], mi["wh"])
+    spawn_in_i = _reserve_near(pos_i, reach_i, set(mi["used"]), mi["ww"], mi["wh"])
+
+    places[town_id]["interactables"].append({
+        "id": f"h_enter_{interior_id}", "label": f"enter {interior_id.replace('_', ' ')}",
+        "position": {"cell": {"x": door[0], "y": door[1]}},
+        "action": {"type": "move", "target": interior_id,
+                   "spawn": {"cell": {"x": spawn_in_i[0], "y": spawn_in_i[1]}}},
+    })
+    places[interior_id]["interactables"].append({
+        "id": f"h_exit_to_{town_id}", "label": f"leave to {town_id.replace('_', ' ')}",
+        "position": {"cell": {"x": pos_i[0], "y": pos_i[1]}},
+        "action": {"type": "move", "target": town_id,
+                   "spawn": {"cell": {"x": spawn_in_t[0], "y": spawn_in_t[1]}}},
+    })
+
+
 def _wire_interior(places, zone_meta, host_place_id, host_site_id, interior_id):
     mh = zone_meta[host_place_id]
     mi = zone_meta[interior_id]
@@ -592,8 +830,8 @@ def _wire_interior(places, zone_meta, host_place_id, host_site_id, interior_id):
     pos_h = _reserve_near(host_local, reach_h, mh["used"], mh["ww"], mh["wh"])
     reach_i = _reach_from(mi, mi["door"])
     pos_i = _reserve_near(mi["door"], reach_i, mi["used"], mi["ww"], mi["wh"])
-    spawn_in_i = _reserve_near(pos_i, reach_i, {pos_i}, mi["ww"], mi["wh"])
-    spawn_in_h = _reserve_near(pos_h, reach_h, {pos_h}, mh["ww"], mh["wh"])
+    spawn_in_i = _reserve_near(pos_i, reach_i, set(mi["used"]), mi["ww"], mi["wh"])
+    spawn_in_h = _reserve_near(pos_h, reach_h, set(mh["used"]), mh["ww"], mh["wh"])
 
     places[host_place_id]["interactables"].append({
         "id": f"h_enter_{interior_id}", "label": f"enter {interior_id}",

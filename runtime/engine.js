@@ -108,6 +108,33 @@ export function physics(e, dt, solids = [], gravity = 2000) {
   }
 }
 
+// ── steering (px/SECOND; sets velocity toward/away a target — chase AI, creeps, patrols) ──
+// A `target` is anything with x,y (an entity or a bare point). center() uses w,h when present so a
+// sized chaser aims at a sized quarry's middle, not its corner. Set velocity here, then integrate.
+function center(e) { return { x: e.x + (e.w || 0) / 2, y: e.y + (e.h || 0) / 2 }; }
+export function seek(e, target, speed) {                 // steer straight at the target
+  const d = V.sub(center(target), center(e)); const n = V.norm(d);
+  e.vx = n.x * speed; e.vy = n.y * speed; return V.len(d);
+}
+export function flee(e, target, speed) {                 // steer directly away
+  const n = V.norm(V.sub(center(e), center(target)));
+  e.vx = n.x * speed; e.vy = n.y * speed;
+}
+export function arrive(e, target, speed, slow = 80) {    // seek, but ease to a stop within `slow` px
+  const d = V.sub(center(target), center(e)); const dist = V.len(d); const n = V.norm(d);
+  const s = dist < slow ? speed * (dist / slow) : speed;
+  e.vx = n.x * s; e.vy = n.y * s; return dist;
+}
+export function pursue(e, target, speed, lead = 0.3) {   // seek where a moving target is headed
+  const aim = { x: target.x + (target.vx || 0) * lead, y: target.y + (target.vy || 0) * lead,
+                w: target.w, h: target.h };
+  return seek(e, aim, speed);
+}
+export function wander(e, speed, rng, turn = 3) {        // drift, turning by up to `turn` rad/step
+  e._heading = (e._heading ?? (rng ? rng.next() * 6.283 : 0)) + (rng ? (rng.next() - 0.5) * turn : 0);
+  e.vx = Math.cos(e._heading) * speed; e.vy = Math.sin(e._heading) * speed;
+}
+
 // ── camera (scroll a world larger than the screen) ───────────────────────────
 export function makeCamera(config) {
   return {
@@ -187,7 +214,7 @@ export function makeKit(config, rng) {
     rng,
     V,
     spawn, cull, integrate, integrate3, aabb, resolveAabb, makeTilemap,
-    physics, walk, jump, makeCamera: () => makeCamera(config),
+    physics, walk, jump, seek, flee, arrive, pursue, wander, makeCamera: () => makeCamera(config),
     audio: { play: () => {} }, // stub; real backend wired later
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
     lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },

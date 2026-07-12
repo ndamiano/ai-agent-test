@@ -50,6 +50,22 @@ it makes things effectively motionless.)
   kit.physics(player, dt, this.state.platforms, 2000);   // platforms: [{x,y,w,h}, ...]
   ```
 
+## Steering  (enemy/NPC movement — chase, flee, patrol; velocities in px/SECOND)
+Set an entity's velocity toward or away from a target, then `kit.integrate` it. A `target` is any
+`{x,y}` (an entity or a point); sized entities aim at each other's centres automatically.
+- `kit.seek(e, target, speed)` — steer straight at the target. Returns the distance to it.
+- `kit.flee(e, target, speed)` — steer directly away.
+- `kit.arrive(e, target, speed, slow=80)` — seek but ease to a stop within `slow` px (no jitter).
+- `kit.pursue(e, target, speed, lead=0.3)` — aim where a moving target is heading (intercept).
+- `kit.wander(e, speed, rng, turn=3)` — random drift (idle patrol); pass `kit.rng`.
+```js
+for (const ghost of this.state.enemies) {
+  const dist = kit.seek(ghost, this.state.player, 90);   // chase the player at 90 px/s
+  kit.integrate(ghost, dt);                               // apply the velocity (dt handled inside)
+  if (dist < 16) kit.lose("caught");
+}
+```
+
 ## Camera  (world larger than the screen)
 - `kit.makeCamera()` → `{ x, y, follow(target, worldW?, worldH?) }`. Call `cam.follow(player,
   levelWidth, levelHeight)` in update; it centers on the target and clamps to the world bounds.

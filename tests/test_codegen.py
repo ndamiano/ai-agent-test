@@ -57,6 +57,21 @@ def _run_dir(tmp_path) -> RunState:
 
 
 # ── gates ─────────────────────────────────────────────────────────────────────
+# A steering game: the enemy kit.seek()s the player and catches it — proves the steering primitive
+# is wired into the kit and numerically sound (reaches the target, no NaN) under a headless run.
+SEEK_GAME = """export function createGame(kit){ return {
+  config:{width:300,height:300}, state:{world:[]},
+  init(kit){ this.state.player={x:250,y:250,w:8,h:8}; this.e=kit.spawn(this.state.world,{x:0,y:0,w:8,h:8}); },
+  update(dt,input,kit){ const d=kit.seek(this.e,this.state.player,120); kit.integrate(this.e,dt); if(d<10) kit.win("caught"); },
+  draw(g){ g.rect(this.state.player.x,this.state.player.y,8,8,'#0f0'); g.rect(this.e.x,this.e.y,8,8,'#f00'); } }; }"""
+
+
+def test_steering_seek_reaches_target(tmp_path):
+    (tmp_path / "game.js").write_text(SEEK_GAME)
+    hl = run_headless(tmp_path)
+    assert hl["ok"] is True and hl.get("resolved") == "win"
+
+
 def test_run_headless_green_on_pong(tmp_path):
     (tmp_path / "game.js").write_text(PONG)
     assert run_headless(_run_dir(tmp_path).run_dir).get("ok") is True

@@ -8,6 +8,7 @@ Example games:
   - "escape a flooding lighthouse, talking past its keeper"        — cast + world + scenes + inventory
 """
 
+import re
 from typing import Dict, Optional
 
 from maestro import context_render as cr
@@ -56,6 +57,11 @@ def v_character_one(ch: Dict) -> Optional[str]:
         return "a character must be a JSON object"
     if not ch.get("id"):
         return "a character needs an 'id' (snake_case, e.g. 'evelyn')"
+    if not re.fullmatch(r"[a-z0-9_]+", ch["id"]):
+        # observed: llama.cpp's XML tool-call parse mashed template residue into the id
+        # ('elara</parameter>\n<parameter=content>...'), poisoning the turn rotation downstream
+        return (f"character id {ch['id'][:40]!r} is not a snake_case slug — "
+                f"use lowercase letters/digits/underscores only (e.g. 'evelyn').")
     if not ch.get("name"):
         return "a character needs a 'name'"
     sex = ch.get("sex")

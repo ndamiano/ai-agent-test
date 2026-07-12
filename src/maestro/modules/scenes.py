@@ -116,6 +116,12 @@ def parse_screenplay(script: str, characters: List[Dict]):
     import re
     if not isinstance(script, str) or not script.strip():
         return None, "script must be non-empty screenplay text (`NAME: line` per line)"
+    # observed: llama.cpp's XML tool-call parse leaks template residue into the script arg
+    # ('elara</parameter>\n<parameter=script>\nKAEL: ...') — strip the markup and, when it was
+    # present, skip leading fragments until the first real `NAME:` line
+    mangled = re.search(r"</?parameter[=>]", script) is not None
+    if mangled:
+        script = re.sub(r"</?parameter[^>\n]*>?", "", script)
     by_name = {}
     for c in characters or []:
         if c.get("id"):
@@ -131,6 +137,8 @@ def parse_screenplay(script: str, characters: List[Dict]):
         if not m:
             if lines:
                 lines[-1]["text"] = (lines[-1]["text"] + " " + raw.strip()).strip()
+                continue
+            if mangled:
                 continue
             return None, (f"the script must start with a `NAME:` line — got {raw.strip()[:60]!r}. "
                           f"Every line is `NAME: text` (or `NARR:` for narration).")

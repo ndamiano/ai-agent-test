@@ -771,6 +771,28 @@ def test_parse_screenplay():
     assert "NAME:" in err
 
 
+def test_parse_screenplay_strips_tool_template_residue():
+    from maestro.modules.scenes import parse_screenplay
+    chars = [{"id": "elara", "name": "Elara"}, {"id": "kael", "name": "Kael"}]
+    script = ("elara</parameter>\n"
+              "<parameter=script>\n"
+              "ELARA: Six marks. I need twelve to cross.\n"
+              "KAEL: Then trade.\n")
+    lines, err = parse_screenplay(script, chars)
+    assert err is None
+    assert [l["speaker"] for l in lines] == ["elara", "kael"]
+    assert lines[0]["text"] == "Six marks. I need twelve to cross."
+
+
+def test_character_id_must_be_slug():
+    from maestro.modules.cast import v_character_one
+    good = {"id": "elara", "name": "Elara"}
+    assert v_character_one(good) is None
+    bad = {"id": 'elara</parameter>\n<parameter=content>', "name": "Elara"}
+    err = v_character_one(bad)
+    assert err is not None and "snake_case" in err
+
+
 def test_write_scene_stores_parsed_node(tmp_path):
     state = RunState(tmp_path)
     state.write_component("characters", {"characters": [{"id": "mara", "name": "Mara"},

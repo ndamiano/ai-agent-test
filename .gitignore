@@ -65,3 +65,4 @@ runtime/games/*.js
 !runtime/games/asteroids.js
 !runtime/games/platformer.js
 !runtime/games/collect3d.js
+runtime/games/*/

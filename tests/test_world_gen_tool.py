@@ -103,3 +103,22 @@ def test_add_interactable_auto_places_on_generated_zone(tmp_path):
     rows = places["places"][pid]["tiles"]["rows"]
     legend = places["places"][pid]["tiles"]["legend"]
     assert legend[rows[cell["y"]][cell["x"]]]["role"] == "open"
+
+
+def test_add_interactable_named_feature_falls_through_when_no_anchors(tmp_path):
+    state, _ = _gen(tmp_path)
+    places = state.read_component("places")
+    pid = next(p for p in places["place_ids"]
+               if not (places["places"][p].get("anchors") or {}))
+    tools = build_tools(make_spec(), state)
+    res = tools["add_interactable"](pid, {
+        "id": "h_stack", "label": "salt stack",
+        "position": {"feature": "f_center"},
+        "action": {"type": "examine", "text": "Bricks of grey salt."}})
+    assert res.get("ok"), res
+    places = state.read_component("places")
+    hot = next(h for h in places["places"][pid]["interactables"] if h["id"] == "h_stack")
+    cell = hot["position"]["cell"]
+    rows = places["places"][pid]["tiles"]["rows"]
+    legend = places["places"][pid]["tiles"]["legend"]
+    assert legend[rows[cell["y"]][cell["x"]]]["role"] == "open"

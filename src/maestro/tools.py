@@ -1466,10 +1466,14 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
             anchors = place.get("anchors") or {}
             if feat is not None:
                 a = anchors.get(feat)
-                if a is None:
+                if a is None and anchors:
                     return {"ok": False, "error":
                             f"no feature {feat!r} in {place_id!r} — use one of {sorted(anchors)}"}
-                interactable["position"] = {"cell": {"x": a["x"], "y": a["y"]}}
+                if a is not None:
+                    interactable["position"] = {"cell": {"x": a["x"], "y": a["y"]}}
+                else:
+                    # a generated place has no anchors to name — fall through to the center snap
+                    interactable["position"] = {}
             cell = (interactable.get("position") or {}).get("cell") or {}
             if not (isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int)):
                 # no position given: aim at the map center — a generated world has no feature

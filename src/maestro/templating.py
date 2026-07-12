@@ -1,3 +1,10 @@
+"""Prompt templating: {{include:NAME}} partials + {key} substitution.
+
+Relocated out of the deleted renpy backend so the Module ABC's prompt loading stays engine-neutral.
+The codegen prompts are static (read verbatim), but the ABC keeps this for any future module that
+wants a templated correction prompt.
+"""
+
 import json
 import logging
 import re
@@ -6,13 +13,10 @@ from typing import Dict
 
 logger = logging.getLogger(__name__)
 
-
 _INCLUDE_RE = re.compile(r"\{\{include:\s*([A-Za-z0-9_]+)\s*\}\}")
 
 
 def _resolve_includes(text: str, partials_dir: Path, _seen=None) -> str:
-    """Inline {{include:NAME}} from <partials_dir>/NAME.txt, recursively, before key substitution.
-    Double-brace syntax can't collide with the single-brace {key} pass."""
     _seen = _seen or set()
 
     def replace(match):

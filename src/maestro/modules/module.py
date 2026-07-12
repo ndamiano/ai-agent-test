@@ -26,7 +26,7 @@ _PROMPT_CACHE: Dict[str, str] = {}
 def load_prompt(name: str) -> str:
     """A cached prompt-file load."""
     if name not in _PROMPT_CACHE:
-        from renpy.templating import render_template
+        from maestro.templating import render_template
         _PROMPT_CACHE[name] = render_template(_PROMPTS_DIR / name, {})
     return _PROMPT_CACHE[name]
 
@@ -224,15 +224,17 @@ class Module(ABC):
 
     # ── overridable hooks (sensible defaults) ────────────────────────────────
     def render_context(self, ctx: Dict) -> str:
-        """The per-step user message for an AUTHORING check. There is no generic component dump —
-        an authoring module overrides this and CRAFTS exactly the upstream its call needs from
-        `ctx['artifact']` (the cr.*_block helpers are the shared formats). Repair checks skip this
-        entirely by pointing `Check.context` at a lean archetype. This default carries only the
-        target + run-state frame — no spec dump, no story-state dump."""
-        from maestro import context_render as cr
-        lines = cr.target_block(ctx) + cr.self_digest_block(self, ctx) + cr.tail_block(ctx)
-        lines += ["", "Call one tool to address the first to-do item."]
-        return "\n".join(lines)
+        """The per-step user message for an AUTHORING check. A content module overrides this and
+        CRAFTS exactly the upstream its call needs from `ctx['artifact']`; the base default is a
+        minimal target line (a module that owns a multi-call fix body via `Check.run` — the codegen
+        path — never reaches this)."""
+        import json
+        target = ctx.get("target")
+        head = f"Address this to-do: {target.message}" if getattr(target, "message", None) else \
+            "Address the first to-do item."
+        view = ctx.get("active_view")
+        tail = f"\n\nCurrent state:\n{json.dumps(view, ensure_ascii=False)}" if view else ""
+        return head + tail
 
     def self_digest(self, artifact: Dict) -> List[str]:
         """A COMPACT view of this module's OWN component, for a structural repair on it (dedup a
@@ -288,123 +290,3 @@ class Module(ABC):
             return
         services.run(self.get_correction_prompt(context, error, slot=slot), dispatch=dispatch)
 
-
-# ── Registry ──────────────────────────────────────────────────────────────────
-MODULE_REGISTRY: Dict[str, Module] = {}
-
-
-def register_module(m: Module) -> None:
-    """Register a module. An `aspect` module is LLM-facing sugar over engine machinery — it MUST
-    require at least one already-registered `engine` module (an aspect with no owning engine module
-    is illegal; the guardrail is enforced here at import time, not at build). Engine modules are
-    imported before the aspects that require them, so the lookup resolves."""
-    if m.layer == "aspect":
-        engine_deps = [r for r in m.requires
-                       if (dep := MODULE_REGISTRY.get(r)) is not None and dep.layer == "engine"]
-        if not engine_deps:
-            raise ValueError(
-                f"aspect module {m.id!r} must require ≥1 engine module (requires={m.requires!r})")
-    MODULE_REGISTRY[m.id] = m
-
-
-def compose(module_ids: Tuple[str, ...]) -> List[Module]:
-    """Resolve ids -> live module instances, validating each is known. The human module is always
-    included (no composition can opt out of the human in the loop). Order is informational — the
-    loop sorts by error type + priority."""
-    ids = ("human",) + tuple(mid for mid in module_ids if mid != "human")
-    out: List[Module] = []
-    for mid in ids:
-        m = MODULE_REGISTRY.get(mid)
-        if m is None:
-            raise KeyError(f"unknown module {mid!r} (registered: {sorted(MODULE_REGISTRY)})")
-        out.append(m)
-    return out
-
-
-# ── Spec composition — the proposer picks modules from the catalog ──────────────
-# There is no genre/preset box, and no ownership/terminal/exclusion: the proposer is shown the
-# selectable modules and chooses any subset. Code force-includes the always-on foundation, pulls
-# each pick's `requires` deps, and derives the engine from what can project the resulting set. A set
-# is buildable if it has a realization module (one that produces a compile entry) and an engine.
-_DEFAULT_MODULES: Tuple[str, ...] = ("cast", "story", "scenes")  # the safe fallback
-_REALIZATION: Tuple[str, ...] = ("scenes", "world")  # modules that produce a playable compile entry
-
-
-def selectable_catalog() -> List[Tuple[str, str]]:
-    """(id, description) for every ASPECT the proposer may choose. The catalog is nouns-primary:
-    only `layer == "aspect"` modules are LLM-facing — the engine modules they resolve to are
-    internal machinery, and the always-on foundation (human/assets/state) is force-included
-    regardless, so both are hidden."""
-    return [(m.id, m.description) for m in MODULE_REGISTRY.values()
-            if m.selectable and m.layer == "aspect"]
-
-
-def _forced_ids() -> List[str]:
-    return [m.id for m in MODULE_REGISTRY.values() if not m.selectable]
-
-
-def expand_modules(ids) -> List[str]:
-    """Force the always-on foundation in, then pull every chosen module's `requires` deps
-    (transitively). Unknown ids are dropped. Order is informational — `compose` re-sorts."""
-    want = _forced_ids()
-    for i in list(ids):
-        if i in MODULE_REGISTRY and i not in want:
-            want.append(i)
-    cursor = 0
-    while cursor < len(want):
-        m = MODULE_REGISTRY.get(want[cursor])
-        for r in (m.requires if m else ()):
-            if r not in want:
-                want.append(r)
-        cursor += 1
-    return want
-
-
-def engine_for(ids) -> Optional[str]:
-    """The engine that can project every module in the set (Ren'Py preferred; web is the
-    fallback for web-only mechanics like cards). None means no engine can build it."""
-    from maestro.engines import ENGINE_TAGS, ensure_projections_registered
-    ensure_projections_registered()
-    for engine in ENGINE_TAGS:
-        if not unprojectable(engine, ids):
-            return engine
-    return None
-
-
-def resolve_modules(ids) -> Tuple[List[str], str]:
-    """Turn the proposer's raw module picks into a buildable (modules, engine) pair: force the
-    foundation, expand deps, then validate (a realization module present + projectable). On any
-    inconsistency, fall back to the default visual-novel bundle so a build always exists."""
-    modules = expand_modules(ids)
-    has_realization = set(_REALIZATION) & set(modules)
-    engine = engine_for(modules)
-    if has_realization and engine is not None:
-        return modules, engine
-    fallback = expand_modules(_DEFAULT_MODULES)
-    return fallback, engine_for(fallback) or "renpy"
-
-
-# ── Engine projection registry, keyed (engine, module_id) ─────────────────────
-# A module's checks are substrate-agnostic; its render is per-engine. Adding an engine registers
-# projections here. A `projected` module with no projection for the chosen engine fails the compile
-# fast (see `unprojectable`), never silently dropping content.
-_PROJECTIONS: Dict[Tuple[str, str], Callable] = {}
-
-
-def register_projection(engine: str, module_id: str, fn: Callable) -> None:
-    _PROJECTIONS[(engine, module_id)] = fn
-
-
-def projection_for(engine: str, module_id: str) -> Optional[Callable]:
-    return _PROJECTIONS.get((engine, module_id))
-
-
-def unprojectable(engine: str, module_ids) -> List[str]:
-    """The composed modules that need an engine-specific renderer but have none for this engine. A
-    non-empty result means the engine cannot build this game — fail fast, don't drop content."""
-    missing = []
-    for mid in module_ids:
-        m = MODULE_REGISTRY.get(mid)
-        if m is not None and m.projected and projection_for(engine, mid) is None:
-            missing.append(mid)
-    return missing

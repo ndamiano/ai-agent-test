@@ -16,7 +16,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from maestro.modules import human as human_mod
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType, Module, idkey
 from maestro.services import BudgetExhausted, Services
@@ -51,8 +50,14 @@ def collect_errors(modules: List[Module], context) -> List[Tuple[Module, Error]]
     return out
 
 
+def _waived_idkeys(state) -> set:
+    """Idkeys a human has waived (accepted as-is) — read straight from the durable waivers file. No
+    module owns this in the codegen world; the loop reads it directly."""
+    return {w.get("idkey") for w in (state.read_waivers() or []) if w.get("idkey")}
+
+
 def effective_pairs(modules: List[Module], context) -> List[Tuple[Module, Error]]:
-    waived = human_mod.waived_idkeys(context.state)
+    waived = _waived_idkeys(context.state)
     return [(m, e) for m, e in collect_errors(modules, context) if idkey(e) not in waived]
 
 

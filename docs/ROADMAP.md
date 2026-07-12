@@ -4,9 +4,27 @@ Goal: user says "make me a game" → an hour later, a good game exists. AI quali
 everything else is scaffolding. North star: magical output — a game worth sharing, not "technically
 complete."
 
-This file holds the **milestone targets** — what each stage means and its bar to clear. The detailed
-work lives in **`tasks/`** (see `tasks/README.md` for the index; `tasks/launch_plan.md` sequences the
-execution across those files). For current architecture + how it works, see `CLAUDE.md`.
+This file holds the **milestone targets** — what each stage means and its bar to clear. For current
+architecture + how it works, see `CLAUDE.md`.
+
+---
+
+## Current architecture — the codegen rebuild (branch `codegen-rebuild`)
+
+The universal Game IR was retired: it was a {VN, point-click, walking-RPG} engine faking
+universality, topped out at "valid" not "good", and couldn't express most games. The model now
+writes **real JS game code against a fat primitive kit**, gated by a pure-Node local gradient
+(headless + probe). This buys **any game + local** (bending "good" for now). Full plan +
+task breakdown: **`docs/codegen_rebuild_plan.md`**.
+
+- **Phase 1 (DONE):** productized the codegen loop (`src/maestro/codegen/`) on the surviving
+  `AgentLoop`; live parity on asteroids/pacman/platformer/collect3d(3D).
+- **Phase 2 (DONE):** demolished the IR — deleted `renpy/`, `godot/`, the IR (`ir_assemble`/
+  `ir_crossref`/schema), every mechanic module, and their tests; kept the `Module`/`Check`/`Error`
+  ABC + `AgentLoop` + `Services`. The `api/` build endpoints still call the old entry points lazily
+  (retargeted in Phase 5).
+- **Next:** Phase 3 harden the probe → Phase 4 widen the kit → Phase 5 frontend (retarget `api/` to
+  codegen) → Phase 6 assets → Phase 7 the "good" tier (deferred cloud play-critic).
 
 ---
 
@@ -29,8 +47,10 @@ good with refund-on-fail. Measure real cost/time/failure per game.
   Funnel. Pre-open hardening landed: prod launch (no dev reload), pinned/same-origin CORS,
   per-handle login throttle.
 - **Deferred risks (fix before public beta):** single-GPU DoS (unbounded build queue, no per-user
-  in-flight cap), `.rpy` Python injection via unescaped effect var names in `renpy/ir_vn.py`, 30-day
-  session TTL, public `/docs`. Detail in `DEPLOY.md` § Known deferred risks.
+  in-flight cap), 30-day session TTL, public `/docs`, and the new codegen surface: the generated
+  `game.js` runs in the player's browser — sandbox it (served from a null-origin/sandboxed iframe,
+  no same-origin API access) so a malicious/broken generation can't touch the app. Detail in
+  `DEPLOY.md` § Known deferred risks.
 
 ### Public beta (paid) — *first dollar*
 Real payments + pricing, safety filter proper, legal set, concurrency for N users.

@@ -28,8 +28,9 @@ class BudgetExhausted(BaseException):
 
 # ── tool-call plumbing ───────────────────────────────────────────────────────
 def _tool_schemas():
-    from maestro.tools import TOOL_SCHEMAS
-    return TOOL_SCHEMAS
+    # No global tool-schema registry in the codegen world — each fix scopes its own tools (the
+    # codegen fix uses a raw completion + a single write tool), so the default offer is empty.
+    return []
 
 
 def filter_schemas(allowed, schemas=None):

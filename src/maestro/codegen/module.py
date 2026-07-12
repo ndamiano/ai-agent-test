@@ -104,24 +104,40 @@ def _violations(result):
     return "; ".join(f"[{v.get('kind')}] {v.get('detail')}" for v in result.get("violations", []))
 
 
+_STACK_RE = re.compile(r"/game/([A-Za-z0-9_.-]+\.js):\d+")
+
+
+def _throw_site(text: str, files) -> str:
+    """The file where a crash actually threw = the FIRST game file named in the stack (the deepest
+    frame). A multi-file stack also names the callers, so a plain 'which files appear' guess routes
+    to the wrong one; the throw site is unambiguous."""
+    for m in _STACK_RE.finditer(text or ""):
+        if m.group(1) in files:
+            return m.group(1)
+    return None
+
+
+def _gate_error(code: str, label: str, detail: str, run_dir) -> Error:
+    return Error(type=ErrorType.FIX, code=code, component="game",
+                 path=_throw_site(detail, game_files(run_dir)),
+                 message=f"{label}: {detail}")
+
+
 def _detect_runs(check, module, context):
     hl = run_headless(context.state.run_dir)
     if hl.get("ok"):
         return []
-    return [Error(type=ErrorType.FIX, code="runs", component="game",
-                  message="HEADLESS FAILED: " + json.dumps(hl))]
+    return [_gate_error("runs", "HEADLESS FAILED", json.dumps(hl), context.state.run_dir)]
 
 
 def _detect_plays(check, module, context):
     pr = run_probe(context.state.run_dir)
-    return [] if pr.get("ok") else [Error(type=ErrorType.FIX, code="plays", component="game",
-                                          message="PROBE FAILED: " + _violations(pr))]
+    return [] if pr.get("ok") else [_gate_error("plays", "PROBE FAILED", _violations(pr), context.state.run_dir)]
 
 
 def _detect_renders(check, module, context):
     rr = run_render(context.state.run_dir)
-    return [] if rr.get("ok") else [Error(type=ErrorType.FIX, code="renders", component="game",
-                                          message="RENDER FAILED: " + _violations(rr))]
+    return [] if rr.get("ok") else [_gate_error("renders", "RENDER FAILED", _violations(rr), context.state.run_dir)]
 
 
 def _detect_scrolls(check, module, context):

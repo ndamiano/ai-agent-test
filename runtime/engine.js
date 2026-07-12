@@ -69,6 +69,35 @@ export function integrate3(e, dt, gravity = 0) {
   e.y += (e.vy || 0) * dt;
   e.z += (e.vz || 0) * dt;
 }
+// 3D ground physics: integrate + land on the y=ground plane (sets e.grounded). For a 3D
+// platformer/collectathon where things fall and stand on the floor.
+export function physics3(e, dt, gravity = 20, ground = 0) {
+  e.vy = (e.vy || 0) - gravity * dt;
+  e.x += (e.vx || 0) * dt; e.y += (e.vy || 0) * dt; e.z += (e.vz || 0) * dt;
+  if (e.y <= ground) { e.y = ground; e.vy = 0; e.grounded = true; } else e.grounded = false;
+}
+// Unit facing vector from yaw (around +y) and pitch (up/down). +z is "forward" at yaw 0.
+export function heading3(yaw = 0, pitch = 0) {
+  const cp = Math.cos(pitch);
+  return { x: Math.sin(yaw) * cp, y: Math.sin(pitch), z: Math.cos(yaw) * cp };
+}
+// Flyer: the whole 3D flight step a small model keeps getting wrong (orientation + thrust along
+// facing + drag). Reads input, steers e.yaw/e.pitch, thrusts along its facing, integrates. Keys
+// override defaults. Sets e.ry = yaw so a box entity renders turned. Speeds in units/SECOND.
+export function flyer(e, input, dt, opts = {}) {
+  const { thrust = 30, turn = 1.5, climb = 1.2, drag = 0.4 } = opts;
+  const k = { yawL: "ArrowLeft", yawR: "ArrowRight", up: "ArrowUp", down: "ArrowDown", go: " ", ...(opts.keys || {}) };
+  e.yaw = (e.yaw || 0) + ((input.down(k.yawL) ? 1 : 0) - (input.down(k.yawR) ? 1 : 0)) * turn * dt;
+  e.pitch = Math.max(-1.2, Math.min(1.2,
+    (e.pitch || 0) + ((input.down(k.up) ? 1 : 0) - (input.down(k.down) ? 1 : 0)) * climb * dt));
+  const f = heading3(e.yaw, e.pitch);
+  if (input.down(k.go)) { e.vx = (e.vx || 0) + f.x * thrust * dt; e.vy = (e.vy || 0) + f.y * thrust * dt; e.vz = (e.vz || 0) + f.z * thrust * dt; }
+  const d = Math.max(0, 1 - drag * dt);
+  e.vx = (e.vx || 0) * d; e.vy = (e.vy || 0) * d; e.vz = (e.vz || 0) * d;
+  e.x += e.vx * dt; e.y += e.vy * dt; e.z += e.vz * dt;
+  e.ry = e.yaw;
+  return e;
+}
 // Axis-aligned bounding-box overlap (x,y is top-left).
 export function aabb(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -213,7 +242,7 @@ export function makeKit(config, rng) {
     config,
     rng,
     V,
-    spawn, cull, integrate, integrate3, aabb, resolveAabb, makeTilemap,
+    spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, makeCamera: () => makeCamera(config),
     audio: { play: () => {} }, // stub; real backend wired later
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },

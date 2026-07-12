@@ -4,6 +4,7 @@ The kit + node runners are real (the gates shell out to runtime/*.mjs); the LLM 
 loop test is deterministic and needs no live model.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,16 @@ def _run_dir(tmp_path) -> RunState:
     return RunState(tmp_path)
 
 
+def _node_eval(js: str) -> dict:
+    """Run an inline ES-module snippet against the kit and parse its JSON stdout. Used to unit-test
+    kit primitives that need driven input a self-contained headless game can't produce."""
+    import subprocess
+    p = subprocess.run(["node", "--input-type=module", "-e", js],
+                       cwd=RUNTIME_DIR, capture_output=True, text=True, timeout=30)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout.strip().splitlines()[-1])
+
+
 # ── gates ─────────────────────────────────────────────────────────────────────
 # A steering game: the enemy kit.seek()s the player and catches it — proves the steering primitive
 # is wired into the kit and numerically sound (reaches the target, no NaN) under a headless run.
@@ -70,6 +81,29 @@ def test_steering_seek_reaches_target(tmp_path):
     (tmp_path / "game.js").write_text(SEEK_GAME)
     hl = run_headless(tmp_path)
     assert hl["ok"] is True and hl.get("resolved") == "win"
+
+
+def test_flyer_thrusts_forward_and_stays_finite():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const input = { down:(k)=>k===" ", pressed:()=>false };
+      const e = {x:0,y:5,z:0,yaw:0,pitch:0};
+      for (let i=0;i<120;i++) kit.flyer(e, input, 1/60, {thrust:40});
+      console.log(JSON.stringify({z:e.z, finite: [e.x,e.y,e.z].every(Number.isFinite)}));
+    """)
+    assert r["finite"] is True and r["z"] > 5   # +z is forward at yaw 0
+
+
+def test_physics3_falls_and_lands_on_ground():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const b = {x:0,y:50,z:0,vy:0};
+      for (let i=0;i<600;i++) kit.physics3(b, 1/60, 20, 0);
+      console.log(JSON.stringify({y:b.y, grounded:b.grounded}));
+    """)
+    assert abs(r["y"]) < 0.001 and r["grounded"] is True
 
 
 def test_run_headless_green_on_pong(tmp_path):

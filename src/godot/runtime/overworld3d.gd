@@ -32,9 +32,7 @@ const _HEIGHT_SCALE := 8.0
 const _SEA_FLOOR := -0.06
 
 # Fixed neighbour scan order for the border-fringe theme lookup (mirrors overworld._TRANS_DIRS).
-const _FRINGE_DIRS := [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
 
-const _SHORE_TINT := Color(0.78, 0.80, 0.86)
 const _WATER_COLOR := Color(0.28, 0.50, 0.78, 0.62)
 
 var g  # Game driver
@@ -287,19 +285,6 @@ func _terrain_y(wx: float, wz: float) -> float:
 	return _lattice_y(wx / _CELL + 0.5, wz / _CELL + 0.5)
 
 
-func _near_water(cx: int, cy: int) -> bool:
-	for dy in [-1, 0, 1]:
-		for dx in [-1, 0, 1]:
-			if (dx != 0 or dy != 0) and _is_water(cx + dx, cy + dy):
-				return true
-	return false
-
-
-# ── rendering ────────────────────────────────────────────────────────────────────────────────
-# Footprint cells whose object actually renders (a .glb or its sprite) get NO wall box: the box
-# wraps the mesh's lower half (a spot object drowns in it entirely) and reads as a grey cube
-# under every set piece. A footprint with no art keeps its boxes — the blocked mosaic is the
-# degrade path, an invisible obstacle is not.
 func _dominant_open_theme(rows, legend, gw: int, gh: int) -> String:
 	var counts := {}
 	for cy in gh:
@@ -359,41 +344,81 @@ func _covered_cells(footprints) -> Dictionary:
 	return out
 
 
-# Lazily creates (or fetches) the SurfaceTool a (role, theme) group accumulates triangles into,
-# plus its StandardMaterial3D (texture-matched to the flat renderer's _tile_texture/_tile_color,
-# vertex_color_use_as_albedo on so the shoreline tint below multiplies cleanly over the texture).
-func _terrain_group(groups: Dictionary, mats: Dictionary, role: String, theme: String) -> SurfaceTool:
-	var key := "%s|%s" % [role, theme]
-	if groups.has(key):
-		return groups[key]
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	groups[key] = st
-	var tex = _helper._tile_texture(theme)
-	var mat := StandardMaterial3D.new()
-	if tex != null:
-		mat.albedo_texture = tex
-		if role == "blocked":
-			mat.albedo_color = Color(0.62, 0.62, 0.70)
-	else:
-		mat.albedo_color = _helper._tile_color(role, theme)
-	mat.vertex_color_use_as_albedo = true
-	mats[key] = mat
-	return st
+# Splat terrain: ONE heightfield surface whose fragment shader blends the per-cell theme
+# textures with noise-perturbed borders and draws the water line where INTERPOLATED elevation
+# crosses sea level — sub-cell coastlines, no per-cell texture seams, no tile-shaped ground.
+# The walk grid is untouched; only projection changed. Wobble is kept under half a cell so the
+# visual border never strays far from the walkable one.
+const _SPLAT_MAX_THEMES := 8
+const _SPLAT_SHADER := """
+shader_type spatial;
+uniform sampler2D control : filter_nearest;
+uniform sampler2D elev_tex : filter_linear;
+uniform sampler2D tex0 : filter_linear, repeat_enable;
+uniform sampler2D tex1 : filter_linear, repeat_enable;
+uniform sampler2D tex2 : filter_linear, repeat_enable;
+uniform sampler2D tex3 : filter_linear, repeat_enable;
+uniform sampler2D tex4 : filter_linear, repeat_enable;
+uniform sampler2D tex5 : filter_linear, repeat_enable;
+uniform sampler2D tex6 : filter_linear, repeat_enable;
+uniform sampler2D tex7 : filter_linear, repeat_enable;
+uniform sampler2D water_tex : filter_linear, repeat_enable;
+uniform float sea_level;
+uniform vec2 grid_size;
+uniform float cell_size;
+uniform float wobble = 0.3;
+
+float hash2(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash2(i), hash2(i + vec2(1, 0)), u.x),
+	           mix(hash2(i + vec2(0, 1)), hash2(i + vec2(1, 1)), u.x), u.y);
+}
+
+varying vec2 wpos;
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz / cell_size;
+}
+
+vec3 theme_color(float idx, vec2 uv) {
+	if (idx < 0.5) { return texture(tex0, uv).rgb; }
+	else if (idx < 1.5) { return texture(tex1, uv).rgb; }
+	else if (idx < 2.5) { return texture(tex2, uv).rgb; }
+	else if (idx < 3.5) { return texture(tex3, uv).rgb; }
+	else if (idx < 4.5) { return texture(tex4, uv).rgb; }
+	else if (idx < 5.5) { return texture(tex5, uv).rgb; }
+	else if (idx < 6.5) { return texture(tex6, uv).rgb; }
+	return texture(tex7, uv).rgb;
+}
+
+void fragment() {
+	vec2 cell_uv = wpos + vec2(0.5);
+	vec2 wob = vec2(vnoise(wpos * 2.3), vnoise(wpos * 2.3 + 17.0)) - 0.5;
+	vec2 look = (cell_uv + wob * wobble * 2.0) / grid_size;
+	float idx = texture(control, clamp(look, vec2(0.001), vec2(0.999))).r * 255.0;
+	vec2 tuv = wpos * 0.33;
+	vec3 col = theme_color(idx, tuv);
+
+	float e = texture(elev_tex, clamp(cell_uv / grid_size, vec2(0.001), vec2(0.999))).r;
+	float shore = e - sea_level;
+	if (shore < 0.0) {
+		float depth = clamp(-shore * 14.0, 0.0, 1.0);
+		vec3 wcol = texture(water_tex, tuv).rgb;
+		col = mix(col * 0.85, wcol * mix(1.0, 0.55, depth), clamp(-shore * 40.0, 0.25, 1.0));
+	} else if (shore < 0.012) {
+		col *= 0.88;
+	}
+	ALBEDO = col;
+}
+"""
 
 
-# One cell's floor quad, height-sampled at its 4 corners and split into 2 triangles. When a
-# differently-themed OPEN neighbour exists (fringe_st != null), the second triangle goes to the
-# NEIGHBOUR's group instead of this cell's own — a hard grid-aligned seam between two textures
-# reads as checkerboard; splitting the quad along its diagonal turns every border into a jagged
-# dithered edge instead. Chosen over a shader-based per-vertex blend because the ground is built
-# from many pre-existing StandardMaterial3D texture groups (one per theme, texture assigned per
-# surface) — blending two arbitrary textures within one triangle needs a custom shader neither
-# this file nor the rest of the runtime uses; splitting the ALREADY-two triangles of the quad
-# needs none and is fully authored in this function.
 # Analytic smooth normal at lattice corner (ix, iy) from the height field's central
-# difference — indexing can't merge the per-cell-UV vertices, so generate_normals() would
-# shade each triangle flat (a faceted, "disconnected blocks" look on rolling terrain).
+# difference — generate_normals() would shade each triangle flat.
 func _corner_normal(ix: int, iy: int) -> Vector3:
 	var hl := _lattice_y(ix - 1, iy)
 	var hr := _lattice_y(ix + 1, iy)
@@ -402,112 +427,88 @@ func _corner_normal(ix: int, iy: int) -> Vector3:
 	return Vector3(-(hr - hl) / (2.0 * _CELL), 1.0, -(hd - hu) / (2.0 * _CELL)).normalized()
 
 
-func _add_terrain_quad(st_own: SurfaceTool, fringe_st, cx: int, cy: int, shade: Color) -> void:
-	var x0 := (cx - 0.5) * _CELL
-	var x1 := (cx + 0.5) * _CELL
-	var z0 := (cy - 0.5) * _CELL
-	var z1 := (cy + 0.5) * _CELL
-
-	var tl := Vector3(x0, _lattice_y(cx, cy), z0)
-	var tr := Vector3(x1, _lattice_y(cx + 1, cy), z0)
-	var bl := Vector3(x0, _lattice_y(cx, cy + 1), z1)
-	var br := Vector3(x1, _lattice_y(cx + 1, cy + 1), z1)
-
-	var n_tl := _corner_normal(cx, cy)
-	var n_tr := _corner_normal(cx + 1, cy)
-	var n_bl := _corner_normal(cx, cy + 1)
-	var n_br := _corner_normal(cx + 1, cy + 1)
-
-	var u0 := float(cx % 3) / 3.0
-	var v0 := float(cy % 3) / 3.0
-	var u1 := u0 + 1.0 / 3.0
-	var v1 := v0 + 1.0 / 3.0
-	var uv_tl := Vector2(u0, v0)
-	var uv_tr := Vector2(u1, v0)
-	var uv_bl := Vector2(u0, v1)
-	var uv_br := Vector2(u1, v1)
-
-	# Godot front faces wind CLOCKWISE seen from the camera side — tl->tr->bl / tr->br->bl
-	# reads clockwise from above (+Y). Counterclockwise here = terrain culled from above.
-	st_own.set_color(shade)
-	st_own.set_uv(uv_tl)
-	st_own.set_normal(n_tl)
-	st_own.add_vertex(tl)
-	st_own.set_uv(uv_tr)
-	st_own.set_normal(n_tr)
-	st_own.add_vertex(tr)
-	st_own.set_uv(uv_bl)
-	st_own.set_normal(n_bl)
-	st_own.add_vertex(bl)
-
-	var st2: SurfaceTool = fringe_st if fringe_st != null else st_own
-	st2.set_color(shade)
-	st2.set_uv(uv_tr)
-	st2.set_normal(n_tr)
-	st2.add_vertex(tr)
-	st2.set_uv(uv_br)
-	st2.set_normal(n_br)
-	st2.add_vertex(br)
-	st2.set_uv(uv_bl)
-	st2.set_normal(n_bl)
-	st2.add_vertex(bl)
-
-
-func _commit_terrain(groups: Dictionary, mats: Dictionary) -> MeshInstance3D:
-	var mesh := ArrayMesh.new()
-	var order: Array = groups.keys()
-	for key in order:
-		var st: SurfaceTool = groups[key]
-		st.index()
-		st.commit(mesh)
-	var inst := MeshInstance3D.new()
-	inst.mesh = mesh
-	for i in order.size():
-		inst.set_surface_override_material(i, mats[order[i]])
-	return inst
-
-
-# A single translucent QuadMesh spanning every elevation-driven water cell's bounding box, sat
-# flat at sea_level. Tinted blue-ish; if the water cells' dominant legend theme has generated
-# tile art it's layered under the tint (StandardMaterial3D multiplies albedo_color over
-# albedo_texture, so this is a trivial compose — no shader needed), otherwise the tint alone.
-func _build_water_plane(root: Node3D, cells: Array) -> void:
-	if cells.is_empty():
-		return
-	var min_x := INF
-	var max_x := -INF
-	var min_z := INF
-	var max_z := -INF
-	var theme_counts := {}
-	for c in cells:
-		var cx: int = c["x"]
-		var cy: int = c["y"]
-		min_x = minf(min_x, (cx - 0.5) * _CELL)
-		max_x = maxf(max_x, (cx + 0.5) * _CELL)
-		min_z = minf(min_z, (cy - 0.5) * _CELL)
-		max_z = maxf(max_z, (cy + 0.5) * _CELL)
-		var th := String(c["theme"])
-		theme_counts[th] = int(theme_counts.get(th, 0)) + 1
-	var best := ""
-	var best_n := -1
-	for th in theme_counts:
-		if theme_counts[th] > best_n:
-			best_n = theme_counts[th]
-			best = th
-
-	var mesh := PlaneMesh.new()
-	mesh.size = Vector2(max_x - min_x, max_z - min_z)
-	var inst := MeshInstance3D.new()
-	inst.mesh = mesh
-	var mat := StandardMaterial3D.new()
-	var tex = _helper._tile_texture(best)
+func _theme_texture_or_solid(theme: String) -> Texture2D:
+	var tex = _helper._tile_texture(theme)
 	if tex != null:
-		mat.albedo_texture = tex
-	mat.albedo_color = _WATER_COLOR
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	inst.material_override = mat
-	inst.position = Vector3((min_x + max_x) / 2.0, 0.0, (min_z + max_z) / 2.0)
-	root.add_child(inst)
+		return tex
+	return _solid_texture(_helper._tile_color("open", theme))
+
+
+func _build_splat_terrain(cell_theme: Array, gw: int, gh: int) -> MeshInstance3D:
+	# index the themes by cell count; a place with more than _SPLAT_MAX_THEMES themes maps the
+	# long tail onto the most common one (never happens with worldgen's palettes)
+	var counts := {}
+	for cy in gh:
+		for cx in gw:
+			var t := String(cell_theme[cy][cx])
+			counts[t] = int(counts.get(t, 0)) + 1
+	var order := counts.keys()
+	order.sort_custom(func(a, b): return counts[a] > counts[b])
+	var index := {}
+	for i in order.size():
+		index[order[i]] = mini(i, _SPLAT_MAX_THEMES - 1)
+
+	var ctl := Image.create(gw, gh, false, Image.FORMAT_R8)
+	var ele := Image.create(gw, gh, false, Image.FORMAT_RF)
+	var water_counts := {}
+	for cy in gh:
+		for cx in gw:
+			ctl.set_pixel(cx, cy, Color(float(index[String(cell_theme[cy][cx])]) / 255.0, 0, 0))
+			ele.set_pixel(cx, cy, Color(float(_elev[cy][cx]), 0, 0))
+			if _is_water(cx, cy):
+				var t := String(cell_theme[cy][cx])
+				water_counts[t] = int(water_counts.get(t, 0)) + 1
+	var water_theme := ""
+	var best_n := -1
+	for t in water_counts:
+		if water_counts[t] > best_n:
+			best_n = water_counts[t]
+			water_theme = t
+
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for cy in gh:
+		for cx in gw:
+			var x0 := (cx - 0.5) * _CELL
+			var x1 := (cx + 0.5) * _CELL
+			var z0 := (cy - 0.5) * _CELL
+			var z1 := (cy + 0.5) * _CELL
+			var tl := Vector3(x0, _lattice_y(cx, cy), z0)
+			var tr := Vector3(x1, _lattice_y(cx + 1, cy), z0)
+			var bl := Vector3(x0, _lattice_y(cx, cy + 1), z1)
+			var br := Vector3(x1, _lattice_y(cx + 1, cy + 1), z1)
+			# Godot front faces wind CLOCKWISE from above; counterclockwise = culled.
+			st.set_normal(_corner_normal(cx, cy)); st.add_vertex(tl)
+			st.set_normal(_corner_normal(cx + 1, cy)); st.add_vertex(tr)
+			st.set_normal(_corner_normal(cx, cy + 1)); st.add_vertex(bl)
+			st.set_normal(_corner_normal(cx + 1, cy)); st.add_vertex(tr)
+			st.set_normal(_corner_normal(cx + 1, cy + 1)); st.add_vertex(br)
+			st.set_normal(_corner_normal(cx, cy + 1)); st.add_vertex(bl)
+	st.index()
+	var mesh := ArrayMesh.new()
+	st.commit(mesh)
+
+	var sh := Shader.new()
+	sh.code = _SPLAT_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	mat.set_shader_parameter("control", ImageTexture.create_from_image(ctl))
+	mat.set_shader_parameter("elev_tex", ImageTexture.create_from_image(ele))
+	for i in _SPLAT_MAX_THEMES:
+		var theme: String = order[i] if i < order.size() else (order[0] if order.size() > 0 else "")
+		mat.set_shader_parameter("tex%d" % i, _theme_texture_or_solid(theme))
+	if water_theme == "":
+		mat.set_shader_parameter("water_tex", _solid_texture(_WATER_COLOR))
+	else:
+		mat.set_shader_parameter("water_tex", _theme_texture_or_solid(water_theme))
+	mat.set_shader_parameter("sea_level", _sea_level)
+	mat.set_shader_parameter("grid_size", Vector2(gw, gh))
+	mat.set_shader_parameter("cell_size", _CELL)
+
+	var inst := MeshInstance3D.new()
+	inst.mesh = mesh
+	inst.set_surface_override_material(0, mat)
+	return inst
 
 
 func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
@@ -538,9 +539,11 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 	root.add_child(sun)
 
 	var open_theme := _dominant_open_theme(rows, legend, gw, gh)
-	var groups := {}
-	var mats := {}
-	var water_cells := []
+	var cell_theme := []
+	for _cy in gh:
+		var line := []
+		line.resize(gw)
+		cell_theme.append(line)
 
 	for cy in gh:
 		var row := String(rows[cy]) if cy < rows.size() else ""
@@ -556,37 +559,10 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 				# the map's dominant sand.
 				role = "open"
 				theme = _nearby_open_theme(cx, cy, rows, legend, gw, gh, covered, open_theme)
-
-			if _has_elev and role == "open" and _is_water(cx, cy):
-				water_cells.append({"x": cx, "y": cy, "theme": theme})
+			cell_theme[cy][cx] = theme
 
 			if _has_elev:
-				var shade := Color(1, 1, 1)
-				if role == "open" and not _is_water(cx, cy) and _near_water(cx, cy):
-					shade = _SHORE_TINT
-				var fringe_st = null
-				if role == "open":
-					for d in _FRINGE_DIRS:
-						# fringe only against OPEN neighbors of another theme — blending a
-						# water/blocked neighbor's texture onto land paints cyan triangles
-						# up the coastline
-						var nx: int = cx + d.x
-						var ny: int = cy + d.y
-						if nx < 0 or ny < 0 or nx >= gw or ny >= gh:
-							continue
-						var nrow := String(rows[ny]) if ny < rows.size() else ""
-						var nch := nrow.substr(nx, 1) if nx < nrow.length() else "."
-						var nspec = _helper._spec_of(nch, legend)
-						if String(nspec.get("role", "open")) != "open":
-							continue
-						if covered.has(_helper._key(nx, ny)):
-							continue
-						var ntheme := String(nspec.get("theme", ""))
-						if ntheme != "" and ntheme != theme:
-							fringe_st = _terrain_group(groups, mats, "open", ntheme)
-							break
-				var own_st := _terrain_group(groups, mats, role, theme)
-				_add_terrain_quad(own_st, fringe_st, cx, cy, shade)
+				pass  # the splat terrain below is the whole ground; no per-cell geometry
 			else:
 				var tex = _helper._tile_texture(theme)
 				var mat := StandardMaterial3D.new()
@@ -628,8 +604,7 @@ func _build_scene(rows, legend, gw, gh, inter, covered = {}) -> Node3D:
 				root.add_child(wall_inst)
 
 	if _has_elev:
-		root.add_child(_commit_terrain(groups, mats))
-		_build_water_plane(root, water_cells)
+		root.add_child(_build_splat_terrain(cell_theme, gw, gh))
 
 	_labels.clear()
 	for k in inter:

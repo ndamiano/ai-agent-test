@@ -347,3 +347,39 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {})
   }
   return { ok: violations.length === 0, violations };
 }
+
+// ── render smoke: exercise the draw() path headless can't otherwise see ───────
+// simulate() steps update() ONLY; a game can pass it yet crash or paint nothing in draw() — a
+// blank/broken browser screen. Call draw() against a recording mock each frame: catch throws
+// (draw_crash) and require ≥1 visible primitive over the run (draw_blank). 3D games have no
+// draw() (the runtime syncs meshes from shape tags), so they pass through.
+export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
+  const g = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
+  const config = { width: 640, height: 480, gravity: 0, ...(g.config || {}) };
+  if (config.mode === "3d" || typeof g.draw !== "function") return { ok: true, skipped: true };
+  const input = makeInput();
+  const kit = makeKit(config, makeRng(config.seed || seed));
+  let content = 0;
+  const bump = () => { content++; };
+  const rec = { ctx: {}, clear: () => {}, push: () => {}, pop: () => {},
+                rect: bump, circle: bump, line: bump, text: bump, sprite: bump };
+  try {
+    if (g.init) g.init(kit);
+    for (let f = 0; f < frames; f++) {
+      if (!kit.over) g.update(dt, input, kit);
+      input._endFrame();
+      g.draw(rec, kit);
+    }
+  } catch (e) {
+    return { ok: false, violations: [{ kind: "draw_crash",
+      detail: `draw() threw during render: ${String(e && e.stack || e)}. draw(g,kit) must only READ `
+        + `state and call g.rect/circle/line/text/sprite; never mutate state or read undefined fields.` }] };
+  }
+  if (content === 0) {
+    return { ok: false, violations: [{ kind: "draw_blank",
+      detail: `draw() ran ${frames} frames without drawing anything visible (no rect/circle/line/text/`
+        + `sprite calls) — the screen would be blank. Render every entity in state.world from `
+        + `draw(g,kit) at its position with a color.` }] };
+  }
+  return { ok: true, content };
+}

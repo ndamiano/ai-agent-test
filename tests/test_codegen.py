@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from maestro.agent_loop import AgentLoop
-from maestro.codegen.gates import RUNTIME_DIR, extract_code, run_headless, run_probe
+from maestro.codegen.gates import RUNTIME_DIR, extract_code, run_headless, run_probe, run_render
 from maestro.codegen.module import CodegenModule
 from maestro.codegen.tools import build_codegen_tools
 from maestro.modules.module import ErrorType
@@ -17,6 +17,24 @@ from maestro.state import RunState
 
 PONG = (RUNTIME_DIR / "games" / "pong.js").read_text(encoding="utf-8")
 BROKEN = "export function createGame(kit){ return { init(){ throw new Error('boom'); }, update(){}, config:{} }; }"
+# Passes headless + probe (moves on 'd'), but draw() calls a raw-canvas method the kit's draw api
+# lacks — a browser crash the sim gates can't see.
+DRAW_CRASH = """export function createGame(kit){ return {
+  config:{width:200,height:200}, state:{world:[]},
+  init(kit){ this.state.p = kit.spawn(this.state.world,{x:50,y:50,w:10,h:10}); },
+  update(dt,input,kit){ if(input.down('d')) this.state.p.x += 150*dt; },
+  draw(g){ g.save(); } }; }"""
+# Passes headless + probe, but draw() paints nothing — a blank screen.
+DRAW_BLANK = """export function createGame(kit){ return {
+  config:{width:200,height:200}, state:{world:[]},
+  init(kit){ this.state.p = kit.spawn(this.state.world,{x:50,y:50,w:10,h:10}); },
+  update(dt,input,kit){ if(input.down('d')) this.state.p.x += 150*dt; },
+  draw(g){} }; }"""
+# A 3D game has no draw() — render smoke skips it (render is mesh-sync from shape tags).
+GAME_3D = """export function createGame(kit){ return {
+  config:{mode:"3d",width:200,height:200}, state:{world:[]},
+  init(kit){ this.state.world.push({shape:"box",x:0,y:0,z:0,w:1,h:1,d:1,color:"#f00"}); },
+  update(dt,input,kit){} }; }"""
 
 
 def _run_dir(tmp_path) -> RunState:
@@ -43,6 +61,37 @@ def test_run_headless_catches_crash(tmp_path):
 def test_run_probe_green_on_pong(tmp_path):
     (tmp_path / "game.js").write_text(PONG)
     assert run_probe(tmp_path).get("ok") is True
+
+
+def test_run_render_green_on_pong(tmp_path):
+    (tmp_path / "game.js").write_text(PONG)
+    assert run_render(tmp_path).get("ok") is True
+
+
+def test_run_render_catches_draw_crash(tmp_path):
+    (tmp_path / "game.js").write_text(DRAW_CRASH)
+    rr = run_render(tmp_path)
+    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_crash"
+
+
+def test_run_render_catches_blank_screen(tmp_path):
+    (tmp_path / "game.js").write_text(DRAW_BLANK)
+    rr = run_render(tmp_path)
+    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_blank"
+
+
+def test_run_render_skips_3d(tmp_path):
+    (tmp_path / "game.js").write_text(GAME_3D)
+    rr = run_render(tmp_path)
+    assert rr["ok"] is True and rr.get("skipped") is True
+
+
+def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
+    # the whole point of the render gate: the sim gates alone give a false green here.
+    (tmp_path / "game.js").write_text(DRAW_CRASH)
+    assert run_headless(tmp_path).get("ok") is True
+    assert run_probe(tmp_path).get("ok") is True
+    assert run_render(tmp_path).get("ok") is False
 
 
 def test_extract_code_pulls_fenced_block():
@@ -89,6 +138,14 @@ def test_runs_error_on_crash(tmp_path):
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["runs"]
     assert errs[0].type is ErrorType.FIX
+
+
+def test_renders_error_when_draw_crashes(tmp_path):
+    # authored + runs + plays are clean; only the render gate fires.
+    (tmp_path / "game.js").write_text(DRAW_CRASH)
+    errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
+    assert [e.code for e in errs] == ["renders"]
+    assert "draw_crash" in errs[0].message
 
 
 # ── the loop drives a game to passing ─────────────────────────────────────────

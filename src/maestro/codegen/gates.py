@@ -19,6 +19,15 @@ def game_path(run_dir) -> Path:
     return Path(run_dir) / GAME_FILE
 
 
+def stage_for_play(run_dir, slug: str) -> str:
+    """Copy a built game.js into the runtime's games/ dir so the browser harness can load it (a game
+    file imports nothing, so a copy is self-contained). Returns the play URL query for index.html.
+    A dev convenience until the frontend serves the run dir directly (Phase 5)."""
+    src = game_path(run_dir)
+    (RUNTIME_DIR / "games" / f"{slug}.js").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    return f"index.html?game={slug}"
+
+
 def extract_code(text: str) -> str:
     """Pull the ```js block out of a model reply (the proven authoring shape — a fenced block, not a
     tool-call argument). Falls back to the whole reply when unfenced."""
@@ -48,18 +57,30 @@ def run_headless(run_dir, frames: int = 900) -> dict:
         return {"ok": False, "phase": "runner", "error": (p.stdout + p.stderr)[-800:]}
 
 
-def run_probe(run_dir) -> dict:
-    """Run the generic correctness invariants. `{"ok": True}` = clean; else `violations` each carry
-    a `kind` + an actionable `detail` the fix feeds back."""
+def _run_violation_gate(run_dir, runner: str, hint: str) -> dict:
+    """Shared body for the probe/render gates: run a `.mjs` that prints `{ok, violations}`."""
     game = game_path(run_dir)
     if not game.exists():
         return {"ok": False, "violations": [{"kind": "missing", "detail": f"{GAME_FILE} not written yet"}]}
     try:
-        p = _run("probe.mjs", [str(game)])
+        p = _run(runner, [str(game)])
     except subprocess.TimeoutExpired:
-        return {"ok": False, "violations": [{"kind": "timeout",
-                "detail": "probe did not finish (likely an infinite loop in update)"}]}
+        return {"ok": False, "violations": [{"kind": "timeout", "detail": hint}]}
     try:
         return json.loads(p.stdout)
     except Exception:
         return {"ok": False, "violations": [{"kind": "runner", "detail": (p.stdout + p.stderr)[-400:]}]}
+
+
+def run_probe(run_dir) -> dict:
+    """Run the generic correctness invariants (controls live, no wall-clip). `{"ok": True}` = clean;
+    else `violations` each carry a `kind` + an actionable `detail` the fix feeds back."""
+    return _run_violation_gate(run_dir, "probe.mjs",
+                               "probe did not finish (likely an infinite loop in update)")
+
+
+def run_render(run_dir) -> dict:
+    """Render smoke — exercise the draw() path (2D) headless can't see: draw-time crashes + blank
+    screens. 3D games pass through (their render is mesh-sync from shape tags, not draw())."""
+    return _run_violation_gate(run_dir, "render.mjs",
+                               "render did not finish (likely an infinite loop in draw)")

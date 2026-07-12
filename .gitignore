@@ -57,3 +57,11 @@ build/
 
 # dialogue probe experiment outputs (research logs, not source)
 eval/probe_runs/
+
+# Staged build copies for browser play (run-id named); the sample games stay tracked.
+runtime/games/*.js
+!runtime/games/pong.js
+!runtime/games/pacman.js
+!runtime/games/asteroids.js
+!runtime/games/platformer.js
+!runtime/games/collect3d.js

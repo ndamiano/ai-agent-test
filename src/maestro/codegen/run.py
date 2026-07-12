@@ -112,7 +112,11 @@ def _cli(request: str, *, yes: bool = False) -> int:
     if not result.ok:
         for e in result.failures:
             print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
-    print(f"game: {(RunState.for_run(run_id).run_dir / 'game.js').resolve()}")
+    state = RunState.for_run(run_id)
+    print(f"game: {(state.run_dir / 'game.js').resolve()}")
+    if result.ok:
+        from maestro.codegen.gates import stage_for_play
+        print(f"play: runtime/{stage_for_play(state.run_dir, run_id)}")
     return 0 if result.ok else 1
 
 

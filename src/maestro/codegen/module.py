@@ -1,9 +1,10 @@
 """CodegenModule — the one module the codegen build loop runs.
 
-It IS three checks over a single `game.js`, swept in order by the base `Module`:
+It IS four checks over a single `game.js`, swept in order by the base `Module`:
   - `authored` (blocking): the file exists + is non-empty. Fix = author it from the frozen spec.
   - `runs`: the sim survives a headless smoke run. Fix = patch it from the crash detail.
   - `plays` (when_clean): the generic probe invariants hold. Fix = patch it from the violations.
+  - `renders` (when_clean): the draw() path (2D) neither crashes nor paints a blank screen.
 
 Each fix is a whole-body `Check.run`: one raw completion (a fenced ```js block, not a tool-call
 arg), then `write_game_file`. The loop rebuilds context from durable state each step, so a patch
@@ -13,7 +14,9 @@ reads the CURRENT code + the failure the check emitted — no transcript memory.
 import json
 from pathlib import Path
 
-from maestro.codegen.gates import RUNTIME_DIR, extract_code, game_path, run_headless, run_probe
+from maestro.codegen.gates import (
+    RUNTIME_DIR, extract_code, game_path, run_headless, run_probe, run_render,
+)
 from maestro.modules.module import Check, Error, ErrorType, Module
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -41,13 +44,24 @@ def _detect_runs(check, module, context):
                   message="HEADLESS FAILED: " + json.dumps(hl))]
 
 
+def _violations(result):
+    return "; ".join(f"[{v.get('kind')}] {v.get('detail')}" for v in result.get("violations", []))
+
+
 def _detect_plays(check, module, context):
     pr = run_probe(context.state.run_dir)
     if pr.get("ok"):
         return []
-    detail = "; ".join(f"[{v.get('kind')}] {v.get('detail')}" for v in pr.get("violations", []))
     return [Error(type=ErrorType.FIX, code="plays", component="game",
-                  message="PROBE FAILED: " + detail)]
+                  message="PROBE FAILED: " + _violations(pr))]
+
+
+def _detect_renders(check, module, context):
+    rr = run_render(context.state.run_dir)
+    if rr.get("ok"):
+        return []
+    return [Error(type=ErrorType.FIX, code="renders", component="game",
+                  message="RENDER FAILED: " + _violations(rr))]
 
 
 def _codegen_fix(module, context, error, slot, services, dispatch):
@@ -86,6 +100,7 @@ class CodegenModule(Module):
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_codegen_fix),
         Check(code="runs", detect=_detect_runs, job="fix", run=_codegen_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_codegen_fix),
+        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_codegen_fix),
     ]
 
     def affected_components(self):

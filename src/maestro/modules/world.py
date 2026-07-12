@@ -592,6 +592,28 @@ _T_TERMINAL = frozenset({"read_place", "edit_place", "add_interactable", "set_pl
                          "write_place", "read_component", "write_node", "edit_node", "read_node"})
 _PLACE_GUARD = {"count_tool": "write_place", "id_key": "place_id", "id_list_key": "place_ids",
                 "noun": "place"}
+_T_WORLD_GEN = frozenset({"generate_world"})
+
+SKEL_RECIPE = (
+    'generate_world(\n'
+    '  archetype="continent",         // or "archipelago" (islands + sailing)\n'
+    '  size="small",                  // small | medium | large\n'
+    '  palette={"biomes": [           // 4-6 biome names IN THIS setting\'s voice\n'
+    '    "<water biome>", "<coast biome>", "<lowland biome>", "<forest biome>", "<peak biome>"\n'
+    '  ]},\n'
+    '  locations=[                    // 4-8 story sites; WHAT exists, never where\n'
+    '    {"id": "<town id>", "type": "settlement", "want": "<placement hint>"},\n'
+    '    {"id": "<room id>", "type": "interior", "host": "<town id>"},\n'
+    '    {"id": "<wild id>", "type": "wilderness", "want": "<biome>, remote from <town id>"},\n'
+    '    {"id": "<mark id>", "type": "landmark", "want": "near <town id>"}\n'
+    '  ]\n'
+    ')\n'
+    '// ONE settlement (the start town). Interiors are rooms INSIDE it (a tavern, a shop) —\n'
+    '//   each becomes an enterable building. wilderness/coastal_strip/landmark/open_water\n'
+    '//   are destinations on the world map.\n'
+    '// Biome NAMES steer geography: water-sounding names become the sea, coast-sounding\n'
+    '//   the shoreline, high/rocky-sounding the peaks, the rest fill the land.'
+)
 # A `combat` game is walkable (tile map + WASD); anything else is point-and-click. The nav style
 # picks the authoring skeleton + prompt (tiles XOR pixels, never mixed — no second module needed).
 _COMBAT_SLICES = ("stats", "statuses", "abilities", "combatants", "encounters")
@@ -599,6 +621,39 @@ _COMBAT_SLICES = ("stats", "statuses", "abilities", "combatants", "encounters")
 
 def _is_rpg(ctx) -> bool:
     return "combat" in (ctx.spec.get("modules") or [])
+
+
+def _is_walkable(ctx) -> bool:
+    return _is_rpg(ctx) or ctx.spec.get("presentation") == "hd2d"
+
+
+def _generated(art: Dict) -> bool:
+    return bool((art.get("places") or {}).get("generated"))
+
+
+def _d_world_gen(chk, m, ctx):
+    """A walkable game's world comes from procgen, not per-place authoring: ONE recipe call
+    generates terrain, towns, interiors and connectivity. Blocking — nothing downstream is
+    meaningful before the world exists."""
+    if not _is_walkable(ctx):
+        return []
+    pc = ctx.artifact.get("places") or {}
+    if pc.get("place_ids"):
+        return []
+    return [Error(type=chk.tier, code=chk.code, component="places", message=(
+        "no world yet — author the world RECIPE and call generate_world once: 4-6 biome names "
+        "in this story's voice, one settlement (the start town), interiors for the rooms the "
+        "story needs, and the wild destinations. Placement is derived; never reason spatially."))]
+
+
+def _recipe_context(module, rd: Dict) -> str:
+    from maestro.modules import bible, story
+    art = rd.get("artifact") or {}
+    lines = cr.premise_block(rd) + bible.bible_block(art) + story.story_block(art)
+    lines += cr.target_block(rd)
+    lines += cr.tail_block(rd)
+    lines += ["", "Call generate_world exactly once."]
+    return "\n".join(lines)
 
 
 def _w_author_prompt(ctx) -> str:
@@ -621,6 +676,8 @@ def _d_start_authored(chk, m, ctx):
 
 
 def _d_min_places(chk, m, ctx):
+    if _generated(ctx.artifact):
+        return []  # world size is recipe-driven; procgen already made every place
     gap = ctx.param("min_places", 3) - checks.length(ctx.artifact, "places.place_ids")
     return checks.slot_errors(gap, type=chk.tier, code=chk.code, component="places",
                               noun="place") if gap > 0 else []
@@ -630,6 +687,8 @@ def _d_furniture(chk, m, ctx):
     """A walkable layout zone with no furniture list reads as an empty stage — the model
     DERIVES the ambient objects that make it read as itself (two-tier rule: a feature exists
     for an interaction, furniture exists for verisimilitude; nothing is free-form)."""
+    if _generated(ctx.artifact):
+        return []  # procgen zones carry their own scatter (POIs, towns); no furniture pass
     pc = ctx.artifact.get("places") or {}
     errs = []
     for pid in pc.get("place_ids") or []:
@@ -776,13 +835,15 @@ class World(Module):
     projector = staticmethod(place_view)
     projected = True
     emits_compile = True   # a realization terminal: `places` stays writable to the end
-    tool_names = ("write_place", "edit_place", "add_interactable", "read_place",
-                  "set_places_meta", "set_furniture")
+    tool_names = ("generate_world", "write_place", "edit_place", "add_interactable",
+                  "read_place", "set_places_meta", "set_furniture")
 
     # Every step's skeleton is style-dependent (tiles for a walkable/combat game, pixels for PnC);
     # author steps also swap the prompt. Collect the batch, then the crossref/compile terminal runs
     # `when_clean`. Adding a room is slot-guarded; everything else edits.
     checks = [
+        Check("world_gen", _d_world_gen, blocking=True, prompt="world_recipe_write.txt",
+              skeleton=SKEL_RECIPE, tools=_T_WORLD_GEN, context=_recipe_context),
         Check("start_place", lambda chk, m, ctx: m.wrap(chk, checks.exists(
             ctx.artifact, "places.start_place")), prompt=_w_author_prompt, skeleton=_w_skeleton),
         Check("min_places", _d_min_places, prompt=_w_author_prompt, skeleton=_w_skeleton,

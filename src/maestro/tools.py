@@ -273,6 +273,38 @@ TOOL_SCHEMAS: List[Dict] = [
                          "background id from asset_manifest, e.g. 'bg_office')"},
         }, "required": ["node_id"]}}},
     {"type": "function", "function": {
+        "name": "generate_world",
+        "description": "Build the ENTIRE walkable world from a recipe in ONE call: procgen makes "
+                       "terrain, biomes, rivers, roads, settlements (with full town maps), "
+                       "interiors and all connectivity deterministically. The recipe is a SHOPPING "
+                       "LIST — say WHAT exists, never where; placement is derived. Call once.",
+        "parameters": {"type": "object", "properties": {
+            "archetype": {"type": "string", "enum": ["archipelago", "continent"],
+                          "description": "world shape: scattered islands, or one landmass"},
+            "size": {"type": "string", "enum": ["small", "medium", "large"]},
+            "palette": {"type": "object", "properties": {"biomes": {
+                "type": "array", "items": {"type": "string"},
+                "description": "4-6 evocative biome names FOR THIS setting (e.g. 'tropical "
+                               "shallows', 'gloomwood'); water-sounding names become the sea, "
+                               "coast-sounding the shore, high-sounding the peaks"}},
+                "required": ["biomes"]},
+            "locations": {"type": "array", "description":
+                "every story-relevant site: EXACTLY ONE type 'settlement' (the start town), "
+                "'interior' rooms hosted at it (host: <settlement id>), plus wilderness/"
+                "coastal_strip/landmark/open_water destinations. 4-8 total.",
+                "items": {"type": "object", "properties": {
+                    "id": {"type": "string"},
+                    "type": {"type": "string", "enum": [
+                        "settlement", "interior", "coastal_strip", "wilderness",
+                        "open_water", "landmark"]},
+                    "want": {"type": "string", "description":
+                             "placement hint, e.g. 'coastal harbor', 'jungle inland', "
+                             "'remote from <id>'"},
+                    "host": {"type": "string", "description":
+                             "interiors only: the settlement this room is inside"},
+                }, "required": ["id", "type"]}},
+        }, "required": ["archetype", "size", "palette", "locations"]}}},
+    {"type": "function", "function": {
         "name": "write_place",
         "description": "Write one place into `places`: its interactables (each a position + a "
                        "structured `action`), plus a backdrop (room) or a layout PLAN (walkable). "
@@ -1148,6 +1180,46 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                 if anchor:
                     a["spawn"] = {"cell": {"x": anchor["x"], "y": anchor["y"]}}
 
+    def generate_world(archetype=None, size=None, palette=None, locations=None,
+                       **ignored) -> Dict:
+        """Build the ENTIRE walkable world from a recipe in ONE call: deterministic procgen
+        makes the terrain (heightfield, rivers, roads, biomes), the settlements with full town
+        maps, interiors, and every walkable place with its connectivity — the recipe is a
+        shopping list, never spatial reasoning. Writes the whole `places` component."""
+        if ignored:
+            return {"ok": False, "error":
+                    f"generate_world does not take {sorted(ignored)} — only archetype/size/"
+                    f"palette/locations."}
+        _require_frozen()
+        if _locked("places"):
+            return _locked_error("places")
+        recipe = {"archetype": archetype, "size": size, "palette": _coerce_json(palette),
+                  "locations": _coerce_json(locations)}
+        import worldgen
+        from worldgen.errors import PlacementError
+        from worldgen import recipe as wrecipe
+        from worldgen.zones import build_zones
+        try:
+            wrecipe.validate(recipe)
+        except (ValueError, TypeError, KeyError) as exc:
+            return {"ok": False, "error": f"bad recipe: {exc}"}
+        try:
+            world, seed = worldgen.generate_best(recipe, range(1, 31))
+        except PlacementError as exc:
+            return {"ok": False, "error":
+                    f"no seed could place this manifest ({exc}) — loosen a 'want' (e.g. drop "
+                    f"'remote from ...'), reduce locations, or use a bigger size."}
+        zones = build_zones(world, recipe)
+        zones["generated"] = {"seed": seed, "recipe": recipe}
+        state.write_component("places", zones)
+        _reconcile_stubs()
+        kinds = {pid: zones["places"][pid]["kind"] for pid in zones["place_ids"]}
+        return {"ok": True, "seed": seed, "start_place": zones["start_place"],
+                "places": kinds,
+                "note": ("world written. Now add the GAMEPLAY: talk/take/use/examine "
+                         "interactables on these places (add_interactable) — movement, towns "
+                         "and markers already exist.")}
+
     def write_place(place_id: str, content, force: bool = False) -> Dict:
         """Write one place (background + interactables) into `places`, mirroring write_node.
         The scaffold (goal/items/flags/start_place) is laid by set_places_meta.
@@ -1229,10 +1301,12 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         if place is None:
             return {"ok": False, "error": f"no place {place_id!r}"}
         if place.get("kind") not in ("world_map", "town", "interior") \
-                or not isinstance(place.get("layout"), dict):
+                or not isinstance(place.get("layout"), dict) \
+                or "terrain" not in place["layout"]:
             return {"ok": False, "error":
                     f"{place_id!r} is not a walkable layout zone — furniture applies only to "
-                    f"world_map/town/interior places authored as a layout"}
+                    f"world_map/town/interior places authored as a layout (a procgen-generated "
+                    f"zone keeps its own scatter)"}
         place["layout"]["furniture"] = furniture
         built = build_tiles(place_id, place["layout"])
         place["tiles"] = {"rows": built["rows"], "legend": built["legend"]}
@@ -1397,12 +1471,16 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
                             f"no feature {feat!r} in {place_id!r} — use one of {sorted(anchors)}"}
                 interactable["position"] = {"cell": {"x": a["x"], "y": a["y"]}}
             cell = (interactable.get("position") or {}).get("cell") or {}
-            if isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int):
-                taken = {(i["position"]["cell"]["x"], i["position"]["cell"]["y"])
-                         for i in inter if (i.get("position") or {}).get("cell")}
-                snapped = snap_to_open(place.get("tiles") or {}, cell["x"], cell["y"], taken)
-                if snapped:
-                    interactable["position"] = {"cell": {"x": snapped[0], "y": snapped[1]}}
+            if not (isinstance(cell.get("x"), int) and isinstance(cell.get("y"), int)):
+                # no position given: aim at the map center — a generated world has no feature
+                # anchors to name, and any open cell beats a refusal the model retries blind
+                rows = (place.get("tiles") or {}).get("rows") or [""]
+                cell = {"x": len(rows[0]) // 2, "y": len(rows) // 2}
+            taken = {(i["position"]["cell"]["x"], i["position"]["cell"]["y"])
+                     for i in inter if (i.get("position") or {}).get("cell")}
+            snapped = snap_to_open(place.get("tiles") or {}, cell["x"], cell["y"], taken)
+            if snapped:
+                interactable["position"] = {"cell": {"x": snapped[0], "y": snapped[1]}}
         inter.append(interactable)
         state.write_component("places", places)
         _reconcile_stubs()
@@ -1911,6 +1989,7 @@ def build_tools(spec, state, modules=None) -> Dict[str, Callable]:
         "write_node": write_node,
         "write_scene": write_scene,
         "edit_node": edit_node,
+        "generate_world": generate_world,
         "write_place": write_place,
         "edit_place": edit_place,
         "add_interactable": add_interactable,

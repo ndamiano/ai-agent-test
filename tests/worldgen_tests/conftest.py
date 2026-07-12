@@ -4,13 +4,9 @@ from pathlib import Path
 
 import pytest
 
-# tests/ is also on sys.path (see tests/conftest.py), and this directory's own
-# name collides with the top-level `worldgen` package under src/ as a namespace
-# package. Force src/ ahead of it so `import worldgen` resolves to the real package.
 _SRC = str(Path(__file__).resolve().parent.parent.parent / "src")
-if _SRC in sys.path:
-    sys.path.remove(_SRC)
-sys.path.insert(0, _SRC)
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
 _PIRATE_RECIPE = {
     "archetype": "archipelago",

@@ -122,6 +122,34 @@ def test_astar_returns_empty_when_unreachable():
     assert r["len"] == 0
 
 
+def test_gridmove_steps_into_open_and_blocks_on_walls():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const cell = 32;
+      const pass = (x,y) => !(x===1 && y===0);         // a wall one cell to the right
+      const e = {x:0, y:0};
+      const movedUp = kit.gridMove(e, 0, 1, cell, pass);   // open -> moves
+      const blocked = kit.gridMove(e, 1, -1, cell, pass);  // into the wall at (1,0) -> blocked
+      console.log(JSON.stringify({movedUp, blocked, x:e.x, y:e.y}));
+    """)
+    assert r["movedUp"] is True and r["blocked"] is False
+    assert r["x"] == 0 and r["y"] == 32   # stepped down one cell, never into the wall
+
+
+def test_particles_burst_then_expire_and_cull():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const world = [];
+      kit.burst(world, 100, 100, 10, {life:0.2, rng:kit.rng});
+      const spawned = world.length;
+      for (let i=0;i<30;i++) kit.stepParticles(world, 1/60);   // 0.5s > life -> all expire
+      console.log(JSON.stringify({spawned, remaining: world.length}));
+    """)
+    assert r["spawned"] == 10 and r["remaining"] == 0
+
+
 def test_physics3_falls_and_lands_on_ground():
     r = _node_eval("""
       import {makeKit, makeRng} from "./engine.js";

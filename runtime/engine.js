@@ -199,6 +199,31 @@ export function astar(start, goal, passable, { cols = 1e4, rows = 1e4, diagonal 
 // px point at the centre of cell (cx,cy) — move an actor toward path[0] with kit.seek + this.
 export function cellCenter(cx, cy, cell) { return { x: (cx + 0.5) * cell, y: (cy + 0.5) * cell }; }
 
+// ── grid / turn movement (roguelike, sokoban, tactics — discrete, one step per input) ──
+// Snap-move an entity ONE cell in (dx,dy) if the destination is passable; returns whether it moved.
+// A turn game reads input.pressed (one move per key press) and positions entities on cell*cell px.
+export function gridMove(e, dx, dy, cell, passable = () => true) {
+  const cx = Math.round(e.x / cell) + dx, cy = Math.round(e.y / cell) + dy;
+  if (!passable(cx, cy)) return false;
+  e.x = cx * cell; e.y = cy * cell; return true;
+}
+
+// ── particles / juice (feel — cheap quality; the game draws them as small rects) ──
+// Spawn a radial burst of short-lived particles into `world`. Pass kit.rng for varied spread.
+export function burst(world, x, y, n = 12, { speed = 120, life = 0.5, color = "#fd0", size = 3, rng } = {}) {
+  for (let i = 0; i < n; i++) {
+    const a = (rng ? rng.next() : i / n) * 6.283, s = speed * (rng ? 0.4 + rng.next() * 0.6 : 1);
+    spawn(world, { x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, w: size, h: size,
+                   life, maxLife: life, color, particle: true });
+  }
+}
+// Advance every particle and cull the expired ones. Call once per update; draw the survivors
+// (e.particle) as size×size rects, optionally fading with e.life / e.maxLife.
+export function stepParticles(world, dt) {
+  for (const e of world) if (e.particle) { e.x += e.vx * dt; e.y += e.vy * dt; e.life -= dt; if (e.life <= 0) e.dead = true; }
+  cull(world);
+}
+
 // ── camera (scroll a world larger than the screen) ───────────────────────────
 export function makeCamera(config) {
   return {
@@ -279,7 +304,7 @@ export function makeKit(config, rng) {
     V,
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
-    makeCamera: () => makeCamera(config),
+    gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     audio: { play: () => {} }, // stub; real backend wired later
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
     lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },

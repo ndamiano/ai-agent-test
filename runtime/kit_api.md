@@ -82,6 +82,29 @@ const path = kit.astar(from, goal, passable, { cols, rows });
 if (path.length) { kit.seek(creep, kit.cellCenter(path[0].x, path[0].y, cell), 60); kit.integrate(creep, dt); }
 ```
 
+## Grid / turn games  (roguelike, sokoban, tactics — discrete, one step per key press)
+Position entities on a cell grid (`e.x = cx*cell`), and move ONE cell per `input.pressed(key)` (not
+per frame). Keep the whole board in state; act on a keypress, then let enemies take their turn.
+- `kit.gridMove(e, dx, dy, cell, passable)` — snap `e` one cell in (dx,dy) if `passable(cx,cy)`;
+  returns whether it moved. `dx,dy` ∈ {-1,0,1}. Pair with `kit.astar` for enemy turns.
+```js
+update(dt, input, kit) {
+  const cell = 32, pass = (x,y) => !this.state.walls.has(x+","+y);
+  if (input.pressed("ArrowRight") && kit.gridMove(this.state.player, 1, 0, cell, pass)) this.enemyTurn(kit, cell, pass);
+  // ...one branch per direction; enemyTurn moves each foe one astar step toward the player
+}
+```
+
+## Particles / juice  (feel — cheap quality)
+- `kit.burst(world, x, y, n=12, {speed,life,color,size,rng})` — spawn a radial burst of short-lived
+  particles (pass `kit.rng` for varied spread).
+- `kit.stepParticles(world, dt)` — advance + cull them each update. Draw survivors (`e.particle`)
+  as `e.w`×`e.h` rects; fade with `e.life / e.maxLife`. Great for hits, pickups, explosions.
+```js
+if (hit) kit.burst(this.state.world, enemy.x, enemy.y, 16, { rng: kit.rng, color: "#f80" });
+kit.stepParticles(this.state.world, dt);
+```
+
 ## Camera  (world larger than the screen)
 - `kit.makeCamera()` → `{ x, y, follow(target, worldW?, worldH?) }`. Call `cam.follow(player,
   levelWidth, levelHeight)` in update; it centers on the target and clamps to the world bounds.

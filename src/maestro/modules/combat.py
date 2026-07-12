@@ -468,6 +468,14 @@ _F_COMBATANTS = ("combatants", lambda a: sorted(_ids(a.get("combat") or {}, "com
 _F_CAST = ("cast character ids (for `character`)", _cast_ids)
 _F_NODES = ("node ids (for on_victory/on_defeat jump targets)", _node_ids)
 
+
+def _background_ids(art: Dict) -> list:
+    return sorted(b["id"] for b in (art.get("asset_manifest") or {}).get("backgrounds", [])
+                  if isinstance(b, dict) and isinstance(b.get("id"), str))
+
+
+_F_BACKGROUNDS = ("background ids (for `background`)", _background_ids)
+
 _META_TOOLS = frozenset({"set_combat_meta", "read_component", "request_review"})
 _ABILITY_TOOLS = frozenset({"write_ability", "read_component", "request_review"})
 _COMBATANT_TOOLS = frozenset({"write_combatant", "read_component", "request_review"})
@@ -525,10 +533,10 @@ _SLICE_FIX = {
     "statuses":     ("set_combat_meta", SKEL_META, []),
     "abilities":    ("write_ability",   SKEL_ABILITY,     [_F_STATS, _F_STATUSES]),
     "combatants":   ("write_combatant", SKEL_COMBATANT,   [_F_STATS, _F_ABILITIES, _F_CAST]),
-    "encounters":   ("write_encounter", SKEL_ENCOUNTER,   [_F_COMBATANTS, _F_NODES]),
+    "encounters":   ("write_encounter", SKEL_ENCOUNTER,   [_F_COMBATANTS, _F_NODES, _F_BACKGROUNDS]),
     "progression":  ("set_progression", SKEL_PROGRESSION, [_F_COMBATANTS, _F_STATS]),
 }
-_SLICE_FIX_DEFAULT = ("write_encounter", SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES])
+_SLICE_FIX_DEFAULT = ("write_encounter", SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES, _F_BACKGROUNDS])
 
 # A crossref kind → the ONE catalogue the dangling ref must resolve into (ids only) + its kind-specific
 # fix prompt. Kinds not listed (stat/status/ability/combatant/background) are combat-internal repoints
@@ -745,7 +753,7 @@ class Combat(Module):
               skeleton=_skel_with_ids(SKEL_COMBATANT, [_F_STATS, _F_ABILITIES, _F_CAST])),
         Check("min_encounters", _floor_detector("combat.encounters", "encounter"), blocking=True,
               tools=_ENCOUNTER_TOOLS, guard=_GUARDS["min_encounters"],
-              skeleton=_skel_with_ids(SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES])),
+              skeleton=_skel_with_ids(SKEL_ENCOUNTER, [_F_COMBATANTS, _F_NODES, _F_BACKGROUNDS])),
         Check("build_progression", _d_progression, blocking=True, tools=_PROGRESSION_TOOLS,
               skeleton=_skel_with_ids(SKEL_PROGRESSION, [_F_COMBATANTS, _F_STATS])),
         Check("combat_structural", _d_structural, job="fix", blocking=True, tools=_CROSSREF_TOOLS,

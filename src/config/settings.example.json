@@ -27,7 +27,7 @@
     "format": "wav"
   },
   "music": {
-    "backend": "stub",
+    "backend": "",
     "endpoint": "",
     "seconds": 30
   },

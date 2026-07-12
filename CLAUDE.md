@@ -223,8 +223,9 @@ src/
                 derivation; fns just renders) + manifest/expression
                 placeholder backfills; generate_voices — best-effort per-line TTS for VN, silent
                 .wav placeholder backfill; generate_music — best-effort ambient/score, one track per
-                derived bed, fail-soft silent .wav fallback, local procedural `stub` backend by
-                default behind a music.backend/endpoint seam), renpy_builder.py, templating.py,
+                derived bed, fail-soft silent .wav fallback; runs ONLY when a real backend is
+                configured behind the music.backend/endpoint seam — unconfigured skips, tracks
+                ship silent), renpy_builder.py, templating.py,
                 renpy_templates/
   godot/        Godot 4 backend (second engine). Same assemble_ir + crossref pivot;
                 compiler.py/ir_compiler.py write game.json (the IR) + a static, pre-tested

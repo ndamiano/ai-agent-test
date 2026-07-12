@@ -683,16 +683,12 @@ def _music_settings() -> Dict:
 
 
 def _music_backend() -> str:
-    return (_music_settings().get("backend") or "stub").strip() or "stub"
+    return (_music_settings().get("backend") or "").strip()
 
 
 def _synthesize_music(prompt: str, track_id: str, backend: str) -> bytes:
-    """Produce one track's audio bytes. The local `stub` backend synthesizes a procedural ambient
-    pad (no server); any other backend POSTs the prompt to the configured endpoint. Raises on
-    failure — the caller degrades to a silent placeholder (fail-soft)."""
-    from utils.audio import ambient_pad_bytes
-    if backend == "stub":
-        return ambient_pad_bytes(track_id)
+    """Produce one track's audio bytes by POSTing the prompt to the configured backend endpoint.
+    Raises on failure — the caller degrades to a silent placeholder (fail-soft)."""
     endpoint = (_music_settings().get("endpoint") or "").rstrip("/")
     if not endpoint:
         raise RuntimeError(f"music backend {backend!r} has no endpoint configured")
@@ -710,10 +706,11 @@ def _synthesize_music(prompt: str, track_id: str, backend: str) -> bytes:
 
 def generate_music(inputs: Dict, working_dir: Path) -> Dict:
     """Best-effort music pass: one ambient/score track per DERIVED music entry, written to
-    game/audio/music/ where both engines' playback references it. Fail-soft like generate_voices —
-    a track that fails to generate degrades to a silent placeholder, and the whole pass never blocks
-    delivery. The default `stub` backend needs no server (a local procedural pad), so unlike voice
-    this runs for every game; a real model drops in behind `music.backend`/`endpoint` in settings."""
+    game/audio/music/ where both engines' playback references it. Runs ONLY when a real backend
+    is configured (`music.backend`/`endpoint` in settings) — with none, the pass skips and every
+    track ships as a silent placeholder (no music beats a procedural tone). Fail-soft like
+    generate_voices — a track that fails to generate degrades to a silent placeholder, and the
+    whole pass never blocks delivery."""
     from maestro.ir_assemble import assemble_ir
     from tools.comfyui_tools import vram_bracket
     from utils.audio import write_silent_wav
@@ -723,6 +720,8 @@ def generate_music(inputs: Dict, working_dir: Path) -> Dict:
         return {"status": "skipped", "reason": "no music tracks"}
 
     backend = _music_backend()
+    if not backend:
+        return {"status": "skipped", "reason": "no music backend configured"}
     audio_dir = working_dir / "game_output" / "game" / "audio" / "music"
     audio_dir.mkdir(parents=True, exist_ok=True)
 

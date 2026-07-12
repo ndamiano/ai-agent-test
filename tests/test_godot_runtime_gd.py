@@ -261,11 +261,28 @@ def test_objective_stage_and_gate_text(tmp_path):
 @pytest.mark.skipif(_GODOT is None, reason="no godot binary on PATH")
 def test_runtime_parses_music_wavs(tmp_path):
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-    from utils.audio import ambient_pad_bytes, write_silent_wav
+    import io
+    import math
+    import struct
+    import wave
+
+    from utils.audio import write_silent_wav
+
+    def tone_wav(rate=22050, seconds=0.5):
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(b"".join(
+                struct.pack("<h", int(math.sin(2 * math.pi * 220 * i / rate) * 16000))
+                for i in range(int(seconds * rate))))
+        return buf.getvalue()
+
     silent = tmp_path / "s.wav"
     write_silent_wav(silent, seconds=1.0)
     _run_selftest(tmp_path, _MUSIC_SELFTEST, extra={
-        "audio/music/music_main.wav": ambient_pad_bytes("music_main"),
+        "audio/music/music_main.wav": tone_wav(),
         "audio/music/silent.wav": silent.read_bytes(),
     })
 

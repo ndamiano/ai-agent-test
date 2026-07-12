@@ -135,28 +135,12 @@ def _valid_wav(path: Path) -> int:
         return w.getnframes()
 
 
-def test_ambient_pad_is_deterministic_valid_audible_wav(tmp_path):
-    from utils.audio import ambient_pad_bytes
-    a = ambient_pad_bytes("music_main")
-    b = ambient_pad_bytes("music_main")
-    assert a == b                                   # deterministic
-    assert a != ambient_pad_bytes("music_town")     # seed varies the pad
-    p = tmp_path / "t.wav"
-    p.write_bytes(a)
-    assert _valid_wav(p) > 0                         # parses as a real wav
-    assert any(byte != 0 for byte in a[44:])         # not silent
-
-
-def test_generate_music_stub_writes_real_tracks(tmp_path, monkeypatch):
+def test_generate_music_skips_without_backend(tmp_path, monkeypatch):
     import renpy.fns as fns
-    monkeypatch.setattr(fns, "_music_settings", lambda: {"backend": "stub"})
+    monkeypatch.setattr(fns, "_music_settings", lambda: {})
     res = fns.generate_music(_vn_artifact(), tmp_path)
-    assert res["status"] == "ok" and res["backend"] == "stub"
-    d = tmp_path / "game_output" / "game" / "audio" / "music"
-    for t in assemble_ir(_vn_artifact())["music"]["tracks"]:
-        f = d / t["file"]
-        assert f.exists() and _valid_wav(f) > 0
-        assert f.read_bytes()[44:].strip(b"\x00")   # audible, not the silent fallback
+    assert res["status"] == "skipped" and "backend" in res["reason"]
+    assert not (tmp_path / "game_output" / "game" / "audio" / "music").exists()
 
 
 def test_generate_music_degrades_to_silence_on_backend_failure(tmp_path, monkeypatch):

@@ -54,13 +54,12 @@ class TTSSettings(BaseModel):
 
 
 class MusicSettings(BaseModel):
-    """Ambient/score generation. `backend` selects HOW a track's audio is produced: "stub" is the
-    local procedural ambient pad (no server, license-free — the default, so the wiring always runs)
-    and anything else (e.g. "musicgen") POSTs the prompt to `endpoint` for a real model. An
-    unconfigured/unreachable real backend degrades to silent placeholders — music never blocks a
-    build (mirrors the voice pass)."""
-    backend: str = Field("stub")
-    endpoint: str = Field("", description="HTTP endpoint for a non-stub music model.")
+    """Ambient/score generation. `backend` names a real model server (e.g. "musicgen") whose
+    `endpoint` gets POSTed each track's prompt; empty (the default) skips the pass entirely and
+    tracks ship as silent placeholders — no music beats a procedural tone. An unreachable backend
+    degrades to silent placeholders too — music never blocks a build (mirrors the voice pass)."""
+    backend: str = Field("", description="Real music model backend; empty = no music.")
+    endpoint: str = Field("", description="HTTP endpoint for the music model.")
     seconds: int = Field(30, ge=1, description="Requested track length for a real backend.")
 
 

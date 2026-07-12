@@ -83,6 +83,31 @@ def run_build(run_id: str, max_steps: int = 60):
     return result
 
 
+def fix_from_note(run_id: str, note: str, max_steps: int = 40):
+    """Patch a built game from a HUMAN playtest note (the local play-critic: the human is the eye the
+    headless gates aren't). One targeted patch from the note, then re-run the loop so any gate the
+    patch regresses is re-fixed before shipping."""
+    from maestro.codegen.gates import extract_code, game_path, stage_for_play
+    from maestro.codegen.module import build_author_messages, _CODE_MAX_TOKENS
+    from llm_clients.connector_selector import get_connector
+
+    state = RunState.for_run(run_id)
+    spec = state.read_spec()
+    if spec is None:
+        raise ValueError(f"no run {run_id!r}")
+    current = game_path(state.run_dir).read_text(encoding="utf-8")
+    failure = ("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is WRONG when a "
+               f"person plays it. Fix exactly this, keep everything else working:\n{note}")
+    msgs = build_author_messages(spec, current, failure)
+    game_path(state.run_dir).write_text(
+        extract_code(_content(get_connector().generate_with_tools(msgs, [], max_tokens=_CODE_MAX_TOKENS))),
+        encoding="utf-8")
+    result = run_build(run_id, max_steps=max_steps)   # re-gate + auto-fix any regression the patch caused
+    if result.ok:
+        stage_for_play(state.run_dir, run_id)
+    return result
+
+
 def _cli(request: str, *, yes: bool = False) -> int:
     from auth import store
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -120,8 +145,25 @@ def _cli(request: str, *, yes: bool = False) -> int:
     return 0 if result.ok else 1
 
 
+def _cli_fix(run_id: str, note: str) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    print(f"fixing {run_id} from note: {note!r}\n")
+    result = fix_from_note(run_id, note)
+    print(f"\nok={result.ok}  steps={result.steps}")
+    if result.ok:
+        print(f"play: runtime/index.html?game={run_id}")
+    else:
+        for e in result.failures:
+            print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
+    return 0 if result.ok else 1
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--fix":
+        if len(sys.argv) < 4:
+            sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')
+        sys.exit(_cli_fix(sys.argv[2], " ".join(sys.argv[3:])))
     args = [a for a in sys.argv[1:] if a != "--yes"]
     if not args:
-        sys.exit('usage: python -m maestro.codegen.run [--yes] "<request>"')
+        sys.exit('usage: python -m maestro.codegen.run [--yes] "<request>"   |   --fix <run_id> "<note>"')
     sys.exit(_cli(" ".join(args), yes="--yes" in sys.argv[1:]))

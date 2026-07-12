@@ -73,24 +73,28 @@ def _detect_scrolls(check, module, context):
                   message="CAMERA FAILED: " + _violations(sr))]
 
 
-def _codegen_fix(module, context, error, slot, services, dispatch):
-    """One authoring/patch step: infer a complete module (raw fenced block), persist it. The prompt
-    is rebuilt from durable state — for a patch it carries the current code + the failing check's
-    message, so the loop's minimal-context rule holds (no message history needed)."""
+def build_author_messages(spec: dict, current_code, failure: str = ""):
+    """Messages for authoring (current_code None) or patching (current_code + failure given). Shared
+    by the loop's fix and the human-note fix path so both craft the identical kit+spec context."""
     from llm_clients.message_builder import MessageBuilder
-
-    spec = context.spec
-    authoring = error.code == "authored"
+    authoring = current_code is None
     system = (_PROMPTS / ("author_game.txt" if authoring else "fix_game.txt")).read_text(encoding="utf-8")
     parts = [f"# KIT API\n{_kit_doc(spec)}",
              f"# DESIGN SPEC\n```json\n{json.dumps(spec.get('design', spec), indent=1)}\n```"]
     if not authoring:
-        current = game_path(context.state.run_dir).read_text(encoding="utf-8")
-        parts += [f"# CURRENT game.js\n```js\n{current}\n```",
-                  f"# FAILURE (fix this; keep what works)\n{error.message}"]
+        parts += [f"# CURRENT game.js\n```js\n{current_code}\n```",
+                  f"# FAILURE (fix this; keep what works)\n{failure}"]
     parts.append("Author the complete module now. Output ONLY one ```js block.")
-    msgs = MessageBuilder(system).add_user("\n\n".join(parts)).build()
+    return MessageBuilder(system).add_user("\n\n".join(parts)).build()
 
+
+def _codegen_fix(module, context, error, slot, services, dispatch):
+    """One authoring/patch step: infer a complete module (raw fenced block), persist it. The prompt
+    is rebuilt from durable state — for a patch it carries the current code + the failing check's
+    message, so the loop's minimal-context rule holds (no message history needed)."""
+    authoring = error.code == "authored"
+    current = None if authoring else game_path(context.state.run_dir).read_text(encoding="utf-8")
+    msgs = build_author_messages(context.spec, current, error.message)
     resp = services.infer(msgs, [], max_tokens=_CODE_MAX_TOKENS)
     content = ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
     result = dispatch("write_game_file", {"code": extract_code(content)})

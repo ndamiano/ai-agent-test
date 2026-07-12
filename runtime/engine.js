@@ -434,7 +434,10 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {})
     try { g = snap([{ frame: 0, key, down: true }]); }
     catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
     const w = worldOf(g);
-    if (w.length !== baseW.length) { best = { key, disp: Infinity, spawned: true }; drivenForClip = g; break; }
+    // Only a NET SPAWN counts as "input did something" (a bullet/particle appears). A DECREASE
+    // (a brick smashed, a pellet eaten) happens under gameplay regardless of input, so it must NOT
+    // read as a live control — that false-green let a breakout with a dead paddle pass.
+    if (w.length > baseW.length) { best = { key, disp: Infinity, spawned: true }; drivenForClip = g; break; }
     let m = 0;
     for (let i = 0; i < w.length; i++)
       m = Math.max(m, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),

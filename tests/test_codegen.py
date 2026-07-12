@@ -318,6 +318,18 @@ def test_loop_authors_until_gates_pass(tmp_path):
     assert (tmp_path / "game.js").read_text().strip() == PONG.strip()
 
 
+def test_build_author_messages_shapes():
+    from maestro.codegen.module import build_author_messages
+    spec = {"mode": "2d", "design": {"title": "T"}}
+    author = build_author_messages(spec, None)
+    user = author[-1]["content"]
+    assert "# KIT API" in user and "# DESIGN SPEC" in user and "CURRENT game.js" not in user
+
+    patch = build_author_messages(spec, "const x=1;", "paddle does not move")
+    puser = patch[-1]["content"]
+    assert "CURRENT game.js" in puser and "const x=1;" in puser and "paddle does not move" in puser
+
+
 def test_loop_refuses_unfrozen_spec(tmp_path):
     state = _run_dir(tmp_path)
     spec = {"frozen": False, "mode": "2d", "design": {}}

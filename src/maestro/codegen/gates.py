@@ -63,6 +63,56 @@ def _run(runner: str, args, timeout: int = 90) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=timeout)
 
 
+def attribute_load(run_dir) -> list:
+    """Pin a module-load failure to the culprit file(s). Node's graph-load error names no game file,
+    so import each file on its own: return [(file, one-line error)] for the throwers, dropping
+    main.js when a SYSTEM file also throws (main's error is usually just the sibling's, propagated)."""
+    try:
+        p = _run("attribute.mjs", [str(game_dir(run_dir))], timeout=60)
+        data = json.loads(p.stdout.strip().splitlines()[-1])
+    except Exception:
+        return []
+    throwing = [(f, e) for f, e in data.items() if e]
+    non_main = [(f, e) for f, e in throwing if f != "main.js"]
+    return non_main or throwing
+
+
+def contract_errors(run_dir) -> list:
+    """[(file, msg)] where the code disagrees with the manifest contract: a manifest export the file
+    doesn't actually export, or an import of a name no sibling exports (the isWall vs isWallCell trap
+    — the manifest promised isWall, the code shipped isWallCell). Cheap static text checks."""
+    import re
+    files = game_files(run_dir)
+    manifest = {f["name"]: f for f in read_manifest(run_dir).get("files") or [] if f.get("name")}
+
+    def exports_of(src):
+        names = set(re.findall(r"export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)", src))
+        names |= set(re.findall(r"export\s+(?:const|let|var)\s+([A-Za-z0-9_]+)", src))
+        for block in re.findall(r"export\s*\{([^}]*)\}", src):
+            names |= set(re.findall(r"[A-Za-z0-9_]+", block))
+        return names
+
+    all_exports = set().union(*(exports_of(s) for s in files.values())) if files else set()
+    # A name the manifest PROMISES a file exports but the code doesn't — fix the exporter ONCE
+    # (small, one change) and every importer resolves; so suppress the downstream importer errors.
+    promised = {}  # export name -> the file that should provide it
+    out = []
+    for name, src in files.items():
+        for exp in (manifest.get(name, {}).get("exports") or []):
+            if exp not in exports_of(src):
+                promised[exp] = name
+                out.append((name, f"the manifest says {name} exports {exp!r} but the code exports a "
+                                  f"different name — add `export function {exp}(...)` (or export an alias) "
+                                  f"so the files importing {exp} link. Every importer depends on this."))
+    for name, src in files.items():
+        for block in re.findall(r"import\s*\{([^}]*)\}\s*from", src):
+            for nm in re.findall(r"[A-Za-z0-9_]+", block):
+                if nm not in all_exports and nm not in promised:
+                    out.append((name, f"{name} imports {nm!r} but NO file exports it — import a real "
+                                      f"exported name, or add the export to the file that should own it."))
+    return out
+
+
 def run_headless(run_dir, frames: int = 900) -> dict:
     """Step the sim `frames` frames in pure Node. `{"ok": True}` = ran/resolved clean;
     `{"ok": False, ...}` carries the crash/divergence the fix feeds back."""

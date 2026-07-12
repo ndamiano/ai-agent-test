@@ -23,8 +23,8 @@ import re
 from pathlib import Path
 
 from maestro.codegen.gates import (
-    RUNTIME_DIR, entry_path, extract_code, game_files, manifest_path, read_manifest,
-    run_headless, run_probe, run_render, run_scroll,
+    RUNTIME_DIR, attribute_load, contract_errors, entry_path, extract_code, game_files,
+    manifest_path, read_manifest, run_headless, run_probe, run_render, run_scroll,
 )
 from maestro.modules.module import Check, Error, ErrorType, Module
 
@@ -84,6 +84,20 @@ def _detect_authored(check, module, context):
             errs.append(Error(type=ErrorType.BUILD, code="authored", component="game",
                               path=name, message=f"{name} not written yet — author it ({f.get('purpose','')})"))
     return errs
+
+
+def _detect_linked(check, module, context):
+    """Cross-file wiring: the manifest contract holds and every file loads as a module. Emits errors
+    TAGGED with the culprit file (path=), so a duplicate import in player.js routes the fix to
+    player.js — not to main.js because Node's graph-load stack named no game file. Contract mismatches
+    (static, cheap) first; then per-file load attribution."""
+    rd = context.state.run_dir
+    contract = [Error(type=ErrorType.FIX, code="linked", component="game", path=f, message=f"{f}: {msg}")
+                for f, msg in contract_errors(rd)]
+    if contract:
+        return contract
+    return [Error(type=ErrorType.FIX, code="linked", component="game", path=f,
+                  message=f"{f} fails to load as a module: {err}") for f, err in attribute_load(rd)]
 
 
 def _violations(result):
@@ -180,16 +194,18 @@ def _triage_file(infer, run_dir, failure: str) -> str:
     return m.group(1) if (m and m.group(1) in files) else ("main.js" if "main.js" in files else next(iter(files)))
 
 
-def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch) -> dict:
+def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, include_kit: bool = True) -> dict:
     """Rewrite one file with a SMALL context: that file's body + the siblings' signatures + the
     failure. `main.js` owns config+state+wiring, so most cross-file bugs are a contract mismatch
     against it — when fixing a SYSTEM file, include main.js's body too (bounded: one extra file) so
-    the fixer can see the state shape / call sites it must agree with. Bounded input AND output, so
-    the model returns a complete file, not a truncated blob."""
+    the fixer can see the state shape / call sites it must agree with. `include_kit=False` (an
+    import/export link fix) drops the kit doc, which the fix doesn't need — less context, less
+    truncation on a big file. Bounded input AND output, so the model returns a complete file."""
     files = game_files(run_dir)
     body = files.get(target, "")
     siblings = _sibling_lines(_manifest_files(run_dir), target)
-    parts = [f"# KIT API\n{_kit_doc(spec)}", f"# FILE TO FIX: {target}\n```js\n{body}\n```"]
+    parts = [f"# KIT API\n{_kit_doc(spec)}"] if include_kit else []
+    parts.append(f"# FILE TO FIX: {target}\n```js\n{body}\n```")
     if target != "main.js" and "main.js" in files:
         parts.append(f"# main.js (owns state + calls this file — agree with it; do NOT rewrite it)\n"
                      f"```js\n{files['main.js']}\n```")
@@ -211,8 +227,11 @@ def _patch_file_fix(module, context, error, slot, services, dispatch):
     rewrite of that one file. Never loads every body into one call, so a large multi-file game
     converges instead of overflowing the context into empty responses."""
     infer = lambda system, user, mt: _infer(services, system, user, mt)
-    target = _triage_file(infer, context.state.run_dir, error.message)
-    result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch)
+    # A check that already knows the culprit file (linked/authored) sets error.path — trust it over
+    # a triage guess; only a bare gate failure (probe/render/scroll) needs triage to locate the file.
+    target = error.path or _triage_file(infer, context.state.run_dir, error.message)
+    result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch,
+                          include_kit=(error.code != "linked"))
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"patched {target}: {detail}")
 
@@ -226,6 +245,7 @@ class CodegenModule(Module):
     checks = [
         Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
+        Check(code="linked", detect=_detect_linked, job="fix", blocking=True, run=_patch_file_fix),
         Check(code="runs", detect=_detect_runs, job="fix", run=_patch_file_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_patch_file_fix),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_patch_file_fix),

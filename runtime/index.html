@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Maestro runtime</title>
+<style>
+  body { margin: 0; background: #060608; display: grid; place-items: center; height: 100vh; }
+  canvas { border: 1px solid #222; }
+</style>
+<canvas id="screen"></canvas>
+<script type="module">
+  // ?game=pong loads games/pong.js. A game's config.mode === "3d" routes to the three.js
+  // renderer; anything else uses the 2D canvas renderer. The SIM is identical either way.
+  const name = new URLSearchParams(location.search).get("game") || "pong";
+  const mod = await import(`./games/${name}.js`);
+  const factory = mod.createGame || mod.default;
+  const probe = typeof factory === "function" ? factory(null) : factory;
+  const is3d = (probe.config || {}).mode === "3d";
+  const canvas = document.getElementById("screen");
+  if (is3d) {
+    const { run3d } = await import("./engine3d.js");
+    run3d(factory, canvas);
+  } else {
+    const { run } = await import("./engine.js");
+    run(factory, canvas);
+  }
+</script>

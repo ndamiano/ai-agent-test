@@ -1,0 +1,47 @@
+{
+  "title": "Pacman",
+  "genre": "arcade maze",
+  "screen": { "w": 608, "h": 672 },
+  "grid": { "tile": 32, "note": "19 columns x 21 rows. Build the maze with kit.makeTilemap." },
+  "maze": {
+    "legend": "# = wall (solid), . = pellet, space = empty corridor, P = player start, G = ghost start",
+    "rows": [
+      "###################",
+      "#........#........#",
+      "#.##.###.#.###.##.#",
+      "#.................#",
+      "#.##.#.#####.#.##.#",
+      "#....#...#...#....#",
+      "####.### # ###.####",
+      "   #.#   G   #.#   ",
+      "####.# ##### #.####",
+      "#......#GGG#......#",
+      "####.# ##### #.####",
+      "   #.#       #.#   ",
+      "####.# ##### #.####",
+      "#........#........#",
+      "#.##.###.#.###.##.#",
+      "#..#.....P.....#..#",
+      "##.#.#.#####.#.#.##",
+      "#....#...#...#....#",
+      "#.######.#.######.#",
+      "#.................#",
+      "###################"
+    ]
+  },
+  "entities": [
+    { "id": "player", "desc": "Pacman. Sits on the grid, size ~ one tile. Faces a direction; the player queues a direction with arrow keys and Pacman turns onto it at the next aligned corridor. Moves at a steady speed, blocked by # walls." },
+    { "id": "ghosts", "desc": "3-4 ghosts starting at the G cells. Each moves along corridors at a steady speed, choosing a new direction at intersections (a simple wander: don't reverse unless dead-ended is fine — real chase AI NOT required). Blocked by walls." },
+    { "id": "pellets", "desc": "One pellet on every '.' cell. Pacman eating a cell's pellet removes it and scores 1." }
+  ],
+  "controls": { "ArrowUp/Down/Left/Right": "queue Pacman's next direction" },
+  "mechanics": [
+    "movement is grid-aligned: entities travel cell-to-cell along open corridors; a wall tile (#) blocks entry",
+    "Pacman eats the pellet on any cell he enters; track pellets remaining",
+    "if a ghost occupies the same cell as Pacman, the player loses",
+    "when every pellet is eaten, the player wins"
+  ],
+  "win": "all pellets eaten",
+  "lose": "a ghost catches Pacman",
+  "render": "draw walls as blue rects, pellets as small light dots, Pacman as a yellow circle, ghosts as colored circles/rects, and the score as text"
+}

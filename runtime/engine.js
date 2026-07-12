@@ -1,0 +1,349 @@
+// engine.js — the primitive kit. The fat library a generated game composes.
+//
+// Design law: SIM is separate from RENDER.
+//   - A game's update(dt, input, kit) mutates plain state and NEVER draws.
+//   - A game's draw(g, kit) only reads state and issues draw calls.
+// So the sim runs headless in plain Node (zero deps) — that's where a weak model's
+// logic bugs surface for free — while render only needs a browser canvas.
+//
+// A generated game is an object (or a createGame(kit) factory returning one):
+//   {
+//     config: { width, height, title, background?, gravity? },
+//     state:  { ...anything },
+//     init(kit)            // optional one-time setup; may mutate this.state
+//     update(dt, input, kit)   // advance the sim one step. dt in seconds.
+//     draw(g, kit)         // render this.state via the draw api `g`
+//     onWin?() / onLose?() // optional; the game decides when to call kit.win()/lose()
+//   }
+
+// ── deterministic RNG (seeded — headless runs must reproduce) ─────────────────
+export function makeRng(seed = 1) {
+  let s = seed >>> 0 || 1;
+  const next = () => {
+    // xorshift32
+    s ^= s << 13; s >>>= 0;
+    s ^= s >> 17;
+    s ^= s << 5;  s >>>= 0;
+    return s / 0xffffffff;
+  };
+  return {
+    next,
+    range: (lo, hi) => lo + next() * (hi - lo),
+    int: (lo, hi) => Math.floor(lo + next() * (hi - lo + 1)),
+    pick: (arr) => arr[Math.floor(next() * arr.length)],
+    chance: (p) => next() < p,
+  };
+}
+
+// ── vec2 helpers ─────────────────────────────────────────────────────────────
+export const V = {
+  add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
+  sub: (a, b) => ({ x: a.x - b.x, y: a.y - b.y }),
+  scale: (a, k) => ({ x: a.x * k, y: a.y * k }),
+  len: (a) => Math.hypot(a.x, a.y),
+  norm: (a) => { const l = Math.hypot(a.x, a.y) || 1; return { x: a.x / l, y: a.y / l }; },
+  clamp: (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
+};
+
+// ── entities + physics ───────────────────────────────────────────────────────
+// An entity is a plain object. The kit only assumes optional fields:
+//   x, y (position), vx, vy (velocity), w, h (AABB size), dead (cull flag).
+export function spawn(world, ent) {
+  const e = { x: 0, y: 0, vx: 0, vy: 0, w: 0, h: 0, dead: false, ...ent };
+  world.push(e);
+  return e;
+}
+export function cull(world) {
+  for (let i = world.length - 1; i >= 0; i--) if (world[i].dead) world.splice(i, 1);
+}
+// Semi-implicit Euler integration with optional gravity (px/s^2).
+export function integrate(e, dt, gravity = 0) {
+  e.vy += gravity * dt;
+  e.x += e.vx * dt;
+  e.y += e.vy * dt;
+}
+// 3D integration (y is UP; gravity pulls -y). Units are world-units/SECOND, dt handled here.
+export function integrate3(e, dt, gravity = 0) {
+  e.vy = (e.vy || 0) - gravity * dt;
+  e.x += (e.vx || 0) * dt;
+  e.y += (e.vy || 0) * dt;
+  e.z += (e.vz || 0) * dt;
+}
+// Axis-aligned bounding-box overlap (x,y is top-left).
+export function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+// Resolve `a` out of static `b` along the minimum-penetration axis; returns the hit side.
+export function resolveAabb(a, b) {
+  const dx1 = b.x + b.w - a.x, dx2 = a.x + a.w - b.x;
+  const dy1 = b.y + b.h - a.y, dy2 = a.y + a.h - b.y;
+  const px = Math.min(dx1, dx2), py = Math.min(dy1, dy2);
+  if (px < py) {
+    if (dx1 < dx2) { a.x += px; a.vx = 0; return "left"; }
+    a.x -= px; a.vx = 0; return "right";
+  }
+  if (dy1 < dy2) { a.y += py; a.vy = 0; return "top"; }
+  a.y -= py; a.vy = 0; return "bottom";
+}
+
+// ── platformer physics (px/SECOND; dt handled inside — the model never touches vx*dt) ──
+// solids = array of AABB rects {x,y,w,h} (from tilemap.solidsNear(e) or a platform list).
+// Axis-separated sweep with ground detection. This is THE primitive a small model
+// keeps getting wrong when it hand-rolls gravity/jump in per-frame units.
+export function walk(e, dir, speed) { e.vx = dir * speed; }          // dir -1|0|1, speed px/s
+export function jump(e, speed) { if (e.grounded) { e.vy = -speed; e.grounded = false; } }
+export function physics(e, dt, solids = [], gravity = 2000) {
+  e.vy += gravity * dt;
+  e.x += e.vx * dt;                                   // horizontal, then resolve
+  for (const s of solids) {
+    if (!aabb(e, s)) continue;
+    e.x = e.vx > 0 ? s.x - e.w : s.x + s.w; e.vx = 0;
+  }
+  e.grounded = false;
+  e.y += e.vy * dt;                                   // vertical, then resolve
+  for (const s of solids) {
+    if (!aabb(e, s)) continue;
+    if (e.vy > 0) { e.y = s.y - e.h; e.grounded = true; } else { e.y = s.y + s.h; }
+    e.vy = 0;
+  }
+}
+
+// ── camera (scroll a world larger than the screen) ───────────────────────────
+export function makeCamera(config) {
+  return {
+    x: 0, y: 0,
+    follow(target, worldW, worldH) {                 // center on target, clamp to world bounds
+      this.x = (target.x + (target.w || 0) / 2) - config.width / 2;
+      this.y = (target.y + (target.h || 0) / 2) - config.height / 2;
+      if (worldW != null) this.x = Math.max(0, Math.min(this.x, worldW - config.width));
+      if (worldH != null) this.y = Math.max(0, Math.min(this.y, worldH - config.height));
+    },
+  };
+}
+
+// ── tilemap (rows of chars; solid set decides collision) ─────────────────────
+export function makeTilemap(rows, tile = 32, solid = "#") {
+  const solids = new Set([...solid]);
+  return {
+    rows, tile,
+    w: rows[0]?.length || 0, h: rows.length,
+    at: (cx, cy) => rows[cy]?.[cx] ?? " ",
+    solidAt: (cx, cy) => solids.has(rows[cy]?.[cx]),
+    // world-space AABB vs the grid; returns array of solid tile rects hit
+    solidsNear(e) {
+      const out = [];
+      const x0 = Math.floor(e.x / tile), x1 = Math.floor((e.x + e.w) / tile);
+      const y0 = Math.floor(e.y / tile), y1 = Math.floor((e.y + e.h) / tile);
+      for (let cy = y0; cy <= y1; cy++)
+        for (let cx = x0; cx <= x1; cx++)
+          if (solids.has(rows[cy]?.[cx]))
+            out.push({ x: cx * tile, y: cy * tile, w: tile, h: tile });
+      return out;
+    },
+  };
+}
+
+// ── input abstraction (browser real / headless scripted) ─────────────────────
+// down(key): held now. pressed(key): edge this frame. pointer: {x,y,down}.
+export function makeInput() {
+  const held = new Set(), edge = new Set();
+  const pointer = { x: 0, y: 0, down: false };
+  return {
+    _held: held, _edge: edge, pointer,
+    down: (k) => held.has(k),
+    pressed: (k) => edge.has(k),
+    _set(k, v) { if (v) { if (!held.has(k)) edge.add(k); held.add(k); } else held.delete(k); },
+    _endFrame() { edge.clear(); },
+  };
+}
+
+// ── draw api (canvas2d) — the ONLY render surface ────────────────────────────
+function makeDraw(ctx) {
+  return {
+    ctx,
+    clear: (color = "#000") => { ctx.fillStyle = color; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); },
+    rect: (x, y, w, h, color) => { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); },
+    circle: (x, y, r, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); },
+    line: (x1, y1, x2, y2, color, width = 1) => {
+      ctx.strokeStyle = color; ctx.lineWidth = width;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    },
+    text: (str, x, y, color = "#fff", size = 16, align = "left") => {
+      ctx.fillStyle = color; ctx.font = `${size}px monospace`; ctx.textAlign = align;
+      ctx.fillText(str, x, y);
+    },
+    sprite: (img, x, y, w, h) => { if (img) ctx.drawImage(img, x, y, w, h); },
+    // camera offset: push(cam) before drawing WORLD-space things, pop() before HUD/screen-space.
+    push: (cam) => { ctx.save(); ctx.translate(-(cam?.x || 0), -(cam?.y || 0)); },
+    pop: () => ctx.restore(),
+  };
+}
+
+// ── the runner: shared control surface the kit hands the game ─────────────────
+export function makeKit(config, rng) {
+  let over = null; // null | {won:bool, msg}
+  return {
+    config,
+    rng,
+    V,
+    spawn, cull, integrate, integrate3, aabb, resolveAabb, makeTilemap,
+    physics, walk, jump, makeCamera: () => makeCamera(config),
+    audio: { play: () => {} }, // stub; real backend wired later
+    win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
+    lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },
+    get over() { return over; },
+    _reset() { over = null; },
+  };
+}
+
+// ── browser entry: run a real animation loop with real input + canvas ────────
+export function run(game, canvas) {
+  const g = typeof game === "function" ? game(null) : game;
+  const config = { width: 640, height: 480, background: "#111", gravity: 0, ...(g.config || {}) };
+  canvas.width = config.width; canvas.height = config.height;
+  const ctx = canvas.getContext("2d");
+  const draw = makeDraw(ctx);
+  const input = makeInput();
+  const rng = makeRng(config.seed || 1);
+  const kit = makeKit(config, rng);
+
+  const keymap = (e) => e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  addEventListener("keydown", (e) => input._set(keymap(e), true));
+  addEventListener("keyup", (e) => input._set(keymap(e), false));
+  canvas.addEventListener("mousemove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    input.pointer.x = e.clientX - r.left; input.pointer.y = e.clientY - r.top;
+  });
+  canvas.addEventListener("mousedown", () => { input.pointer.down = true; });
+  addEventListener("mouseup", () => { input.pointer.down = false; });
+
+  if (g.init) g.init(kit);
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); // clamp dt so a tab-switch can't explode the sim
+    last = now;
+    if (!kit.over) g.update(dt, input, kit);
+    input._endFrame();
+    draw.clear(config.background);
+    g.draw(draw, kit);
+    if (kit.over) draw.text(kit.over.msg, config.width / 2, config.height / 2, "#fff", 32, "center");
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  return kit;
+}
+
+// ── headless entry: step the sim only, no draw. THE LOCAL GRADIENT ───────────
+// Runs `frames` updates at a fixed dt with scripted (or empty) input, watchdogs
+// every entity/state number for NaN/Infinity, and reports the first crash.
+// Zero deps — pure Node. An outer process timeout catches infinite loops.
+export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [] } = {}) {
+  const g = typeof game === "function" ? game(null) : game;
+  const config = { width: 640, height: 480, gravity: 0, ...(g.config || {}) };
+  const input = makeInput();
+  const rng = makeRng(config.seed || seed);
+  const kit = makeKit(config, rng);
+  try {
+    if (g.init) g.init(kit);
+  } catch (e) { return { ok: false, frame: 0, phase: "init", error: String(e && e.stack || e) }; }
+
+  const badNum = (v) => typeof v === "number" && !Number.isFinite(v);
+  for (let f = 0; f < frames; f++) {
+    // apply scripted input for this frame: [{frame, key, down}] or {down:[keys]}
+    for (const cmd of script) if (cmd.frame === f) input._set(cmd.key, cmd.down !== false);
+    try {
+      if (!kit.over) g.update(dt, input, kit);
+    } catch (e) {
+      return { ok: false, frame: f, phase: "update", error: String(e && e.stack || e) };
+    }
+    input._endFrame();
+    // watchdog: scan common numeric fields on the world for divergence
+    const world = g.state && (Array.isArray(g.state.world) ? g.state.world
+      : Array.isArray(g.state.entities) ? g.state.entities : null);
+    if (world) {
+      for (const e of world) {
+        for (const k of ["x", "y", "z", "vx", "vy", "vz"]) {
+          if (e[k] !== undefined && badNum(e[k])) return { ok: false, frame: f, phase: "diverged",
+            error: `entity field ${k}=${e[k]} is not finite` };
+        }
+      }
+    }
+    if (kit.over) return { ok: true, frame: f, resolved: kit.over.won ? "win" : "lose", msg: kit.over.msg };
+  }
+  return { ok: true, frame: frames, resolved: "ran" };
+}
+
+// ── probe: correctness gate beyond "didn't crash" ────────────────────────────
+// Two GENERIC invariants no genre-specific knowledge is needed for:
+//   1. CONTROLS LIVE — run the sim with no input and with every direction key
+//      mashed; if the two final worlds are identical, input does nothing.
+//   2. NO WALL-CLIP — if the game keeps a tilemap in state (anything with
+//      solidAt+tile), no colliding entity's center may rest in a solid cell.
+// Returns { ok, violations:[{kind, detail}] } — each violation is a fix prompt.
+function worldOf(g) {
+  return g.state && (Array.isArray(g.state.world) ? g.state.world
+    : Array.isArray(g.state.entities) ? g.state.entities : []) || [];
+}
+function runSnapshot(gameFactory, { frames, dt, seed, script }) {
+  const g = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
+  const config = { gravity: 0, ...(g.config || {}) };
+  const input = makeInput();
+  const kit = makeKit(config, makeRng(config.seed || seed));
+  if (g.init) g.init(kit);
+  for (let f = 0; f < frames && !kit.over; f++) {
+    for (const c of script) if (c.frame === f) input._set(c.key, c.down !== false);
+    g.update(dt, input, kit);
+    input._endFrame();
+  }
+  return g;
+}
+export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {}) {
+  const violations = [];
+  const DIRS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " "];
+  const MIN_MOVE = 4; // px; below this over the whole window a "control" is effectively dead
+  const snap = (script) => runSnapshot(gameFactory, { frames, dt, seed, script });
+
+  let baseline;
+  try { baseline = snap([]); }
+  catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
+  const baseW = worldOf(baseline);
+
+  // Per-key SUSTAINED hold (one key at a time, so left/right can't cancel). Measure the biggest
+  // input-caused displacement of any entity vs the no-input baseline (deterministic → the diff
+  // isolates the input's effect). A spawn (bullet) => controls clearly live.
+  let best = { key: null, disp: 0, spawned: false }, drivenForClip = baseline;
+  for (const key of DIRS) {
+    let g;
+    try { g = snap([{ frame: 0, key, down: true }]); }
+    catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
+    const w = worldOf(g);
+    if (w.length !== baseW.length) { best = { key, disp: Infinity, spawned: true }; drivenForClip = g; break; }
+    let m = 0;
+    for (let i = 0; i < w.length; i++)
+      m = Math.max(m, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),
+                                 (w[i].z || 0) - (baseW[i].z || 0)));
+    if (m > best.disp) { best = { key, disp: m, spawned: false }; drivenForClip = g; }
+  }
+  if (!best.spawned && best.disp < MIN_MOVE) {
+    violations.push({ kind: "dead_controls",
+      detail: `no key moves the player: the strongest input (${best.key}) shifted every entity by at `
+        + `most ${best.disp.toFixed(2)}px over ${frames} frames. It likely responds but FAR too slowly — `
+        + `kit velocities are px/SECOND and integrate/physics apply dt for you; NEVER use per-frame `
+        + `magnitudes. Typical: walker ~150 px/s, jump ~600 px/s, gravity ~2000 px/s². Prefer `
+        + `kit.walk(e,dir,speed) / kit.jump(e,speed) / kit.physics(e,dt,solids,gravity) so dt is handled.` });
+  }
+  // wall-clip on the most-moving run (only meaningful when the game keeps a tilemap)
+  const tm = drivenForClip.state && drivenForClip.state.tilemap;
+  if (tm && typeof tm.solidAt === "function" && tm.tile) {
+    const stuck = worldOf(drivenForClip).filter((e) => e.w > 0 && e.h > 0
+      && tm.solidAt(Math.floor(e.x / tm.tile), Math.floor(e.y / tm.tile)));
+    if (stuck.length) {
+      violations.push({ kind: "wall_clip",
+        detail: `${stuck.length} moving entit${stuck.length > 1 ? "ies rest" : "y rests"} INSIDE a `
+          + `solid wall tile (e.g. ${stuck.slice(0, 3).map((e) => (e.type || e.tag || "entity")
+          + `@${e.x?.toFixed(0)},${e.y?.toFixed(0)}`).join("; ")}). Block movement BEFORE an entity `
+          + `enters a wall; never snap it to the wall tile's own center.` });
+    }
+  }
+  return { ok: violations.length === 0, violations };
+}

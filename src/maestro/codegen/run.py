@@ -87,21 +87,31 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     """Patch a built game from a HUMAN playtest note (the local play-critic: the human is the eye the
     headless gates aren't). One targeted patch from the note, then re-run the loop so any gate the
     patch regresses is re-fixed before shipping."""
-    from maestro.codegen.gates import extract_code, game_path, stage_for_play
-    from maestro.codegen.module import build_author_messages, _CODE_MAX_TOKENS
+    from maestro.codegen.gates import extract_code, game_files, stage_for_play
+    from maestro.codegen.module import _kit_doc, _FILE_RE, _CODE_MAX_TOKENS, _PROMPTS
+    from maestro.codegen.tools import build_codegen_tools
+    from llm_clients.message_builder import MessageBuilder
     from llm_clients.connector_selector import get_connector
 
     state = RunState.for_run(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no run {run_id!r}")
-    current = game_path(state.run_dir).read_text(encoding="utf-8")
+    files = game_files(state.run_dir)
+    bodies = "\n\n".join(f"## FILE: {n}\n```js\n{s}\n```" for n, s in files.items())
     failure = ("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is WRONG when a "
-               f"person plays it. Fix exactly this, keep everything else working:\n{note}")
-    msgs = build_author_messages(spec, current, failure)
-    game_path(state.run_dir).write_text(
-        extract_code(_content(get_connector().generate_with_tools(msgs, [], max_tokens=_CODE_MAX_TOKENS))),
-        encoding="utf-8")
+               f"person plays it. Fix exactly this:\n{note}")
+    user = "\n\n".join([
+        f"# KIT API\n{_kit_doc(spec)}",
+        f"# THE GAME (every file)\n{bodies}",
+        f"# FAILURE (change as few files as possible — ideally one)\n{failure}",
+        "Reply with a line `FILE: <name.js>` then that file's COMPLETE new source as one ```js block.",
+    ])
+    msgs = MessageBuilder((_PROMPTS / "fix_file.txt").read_text(encoding="utf-8")).add_user(user).build()
+    text = _content(get_connector().generate_with_tools(msgs, [], max_tokens=_CODE_MAX_TOKENS))
+    m = _FILE_RE.search(text)
+    target = m.group(1) if m else ("main.js" if "main.js" in files else next(iter(files), "main.js"))
+    build_codegen_tools(state)["write_game_file"](code=extract_code(text), file=target)
     result = run_build(run_id, max_steps=max_steps)   # re-gate + auto-fix any regression the patch caused
     if result.ok:
         stage_for_play(state.run_dir, run_id)
@@ -138,7 +148,8 @@ def _cli(request: str, *, yes: bool = False) -> int:
         for e in result.failures:
             print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
     state = RunState.for_run(run_id)
-    print(f"game: {(state.run_dir / 'game.js').resolve()}")
+    from maestro.codegen.gates import entry_path
+    print(f"game: {entry_path(state.run_dir).resolve()}")
     if result.ok:
         from maestro.codegen.gates import stage_for_play
         print(f"play: runtime/{stage_for_play(state.run_dir, run_id)}")

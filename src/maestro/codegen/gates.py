@@ -1,30 +1,53 @@
 """The local gradient — pure-Node gates that grade a game's SIM (no browser, no critic).
 
-`run_headless` steps the sim N frames catching crashes/divergence; `run_probe` runs the generic
-invariant probe (controls-live, wall-clip, ...). Both shell out to the runtime's `.mjs` runners,
-which import `engine.js` themselves and pass the kit in — a game file imports nothing, so it runs
-from anywhere by absolute path. These are what the module's `runs`/`plays` checks call.
+A game is a FOLDER `<run_dir>/game/`: an entry `main.js` (exports createGame) plus any system files
+it imports, plus `manifest.json` (the code contract). The gates load `main.js`; Node resolves its
+`./*.js` imports from the folder, so a multi-file game runs headless exactly like a one-file one.
+The runners import `engine.js` themselves and pass the kit in.
 """
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 RUNTIME_DIR = Path(__file__).resolve().parents[3] / "runtime"
-GAME_FILE = "game.js"
+GAME_DIR = "game"
+ENTRY = "main.js"
+MANIFEST = "manifest.json"
 
 
-def game_path(run_dir) -> Path:
-    return Path(run_dir) / GAME_FILE
+def game_dir(run_dir) -> Path:
+    return Path(run_dir) / GAME_DIR
+
+
+def entry_path(run_dir) -> Path:
+    return game_dir(run_dir) / ENTRY
+
+
+def manifest_path(run_dir) -> Path:
+    return game_dir(run_dir) / MANIFEST
+
+
+def read_manifest(run_dir) -> dict:
+    p = manifest_path(run_dir)
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+
+def game_files(run_dir) -> dict:
+    """{name: source} for every .js file in the game folder (entry + systems)."""
+    d = game_dir(run_dir)
+    return {p.name: p.read_text(encoding="utf-8") for p in sorted(d.glob("*.js"))} if d.exists() else {}
 
 
 def stage_for_play(run_dir, slug: str) -> str:
-    """Copy a built game.js into the runtime's games/ dir so the browser harness can load it (a game
-    file imports nothing, so a copy is self-contained). Returns the play URL query for index.html.
-    A dev convenience until the frontend serves the run dir directly (Phase 5)."""
-    src = game_path(run_dir)
-    (RUNTIME_DIR / "games" / f"{slug}.js").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    """Copy the whole game/ folder into runtime/games/<slug>/ so the browser harness can load its
+    module graph. Returns the play URL query for index.html."""
+    dst = RUNTIME_DIR / "games" / slug
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(game_dir(run_dir), dst, ignore=shutil.ignore_patterns(MANIFEST))
     return f"index.html?game={slug}"
 
 
@@ -43,11 +66,11 @@ def _run(runner: str, args, timeout: int = 90) -> subprocess.CompletedProcess:
 def run_headless(run_dir, frames: int = 900) -> dict:
     """Step the sim `frames` frames in pure Node. `{"ok": True}` = ran/resolved clean;
     `{"ok": False, ...}` carries the crash/divergence the fix feeds back."""
-    game = game_path(run_dir)
-    if not game.exists():
-        return {"ok": False, "phase": "missing", "error": f"{GAME_FILE} not written yet"}
+    entry = entry_path(run_dir)
+    if not entry.exists():
+        return {"ok": False, "phase": "missing", "error": f"{ENTRY} not written yet"}
     try:
-        p = _run("headless.mjs", [str(game), str(frames)])
+        p = _run("headless.mjs", [str(entry), str(frames)])
     except subprocess.TimeoutExpired:
         return {"ok": False, "phase": "timeout",
                 "error": f"sim did not finish {frames} frames in time (likely an infinite loop)"}
@@ -58,12 +81,12 @@ def run_headless(run_dir, frames: int = 900) -> dict:
 
 
 def _run_violation_gate(run_dir, runner: str, hint: str) -> dict:
-    """Shared body for the probe/render gates: run a `.mjs` that prints `{ok, violations}`."""
-    game = game_path(run_dir)
-    if not game.exists():
-        return {"ok": False, "violations": [{"kind": "missing", "detail": f"{GAME_FILE} not written yet"}]}
+    """Shared body for the probe/render/scroll gates: run a `.mjs` that prints `{ok, violations}`."""
+    entry = entry_path(run_dir)
+    if not entry.exists():
+        return {"ok": False, "violations": [{"kind": "missing", "detail": f"{ENTRY} not written yet"}]}
     try:
-        p = _run(runner, [str(game)])
+        p = _run(runner, [str(entry)])
     except subprocess.TimeoutExpired:
         return {"ok": False, "violations": [{"kind": "timeout", "detail": hint}]}
     try:

@@ -57,6 +57,19 @@ def _run_dir(tmp_path) -> RunState:
     return RunState(tmp_path)
 
 
+def _write_game(tmp_path, code, extra=None):
+    """Write a game folder (game/main.js + a manifest naming it) so `planned`/`authored` pass and
+    the gate checks run. `extra` = {name: src} for extra system files."""
+    d = tmp_path / "game"
+    d.mkdir(exist_ok=True)
+    (d / "main.js").write_text(code, encoding="utf-8")
+    files = [{"name": "main.js", "purpose": "game", "exports": ["createGame"]}]
+    for name, src in (extra or {}).items():
+        (d / name).write_text(src, encoding="utf-8")
+        files.append({"name": name, "purpose": "", "exports": []})
+    (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
+
+
 def _node_eval(js: str) -> dict:
     """Run an inline ES-module snippet against the kit and parse its JSON stdout. Used to unit-test
     kit primitives that need driven input a self-contained headless game can't produce."""
@@ -78,7 +91,7 @@ SEEK_GAME = """export function createGame(kit){ return {
 
 
 def test_steering_seek_reaches_target(tmp_path):
-    (tmp_path / "game.js").write_text(SEEK_GAME)
+    _write_game(tmp_path, SEEK_GAME)
     hl = run_headless(tmp_path)
     assert hl["ok"] is True and hl.get("resolved") == "win"
 
@@ -162,7 +175,7 @@ def test_physics3_falls_and_lands_on_ground():
 
 
 def test_run_headless_green_on_pong(tmp_path):
-    (tmp_path / "game.js").write_text(PONG)
+    _write_game(tmp_path, PONG)
     assert run_headless(_run_dir(tmp_path).run_dir).get("ok") is True
 
 
@@ -172,66 +185,66 @@ def test_run_headless_reports_missing(tmp_path):
 
 
 def test_run_headless_catches_crash(tmp_path):
-    (tmp_path / "game.js").write_text(BROKEN)
+    _write_game(tmp_path, BROKEN)
     hl = run_headless(tmp_path)
     assert hl["ok"] is False and "boom" in hl.get("error", "")
 
 
 def test_run_probe_green_on_pong(tmp_path):
-    (tmp_path / "game.js").write_text(PONG)
+    _write_game(tmp_path, PONG)
     assert run_probe(tmp_path).get("ok") is True
 
 
 def test_run_render_green_on_pong(tmp_path):
-    (tmp_path / "game.js").write_text(PONG)
+    _write_game(tmp_path, PONG)
     assert run_render(tmp_path).get("ok") is True
 
 
 def test_run_render_catches_draw_crash(tmp_path):
-    (tmp_path / "game.js").write_text(DRAW_CRASH)
+    _write_game(tmp_path, DRAW_CRASH)
     rr = run_render(tmp_path)
     assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_crash"
 
 
 def test_run_render_catches_blank_screen(tmp_path):
-    (tmp_path / "game.js").write_text(DRAW_BLANK)
+    _write_game(tmp_path, DRAW_BLANK)
     rr = run_render(tmp_path)
     assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_blank"
 
 
 def test_run_render_skips_3d(tmp_path):
-    (tmp_path / "game.js").write_text(GAME_3D)
+    _write_game(tmp_path, GAME_3D)
     rr = run_render(tmp_path)
     assert rr["ok"] is True and rr.get("skipped") is True
 
 
 def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
     # the whole point of the render gate: the sim gates alone give a false green here.
-    (tmp_path / "game.js").write_text(DRAW_CRASH)
+    _write_game(tmp_path, DRAW_CRASH)
     assert run_headless(tmp_path).get("ok") is True
     assert run_probe(tmp_path).get("ok") is True
     assert run_render(tmp_path).get("ok") is False
 
 
 def test_run_scroll_flags_wide_world_without_camera(tmp_path):
-    (tmp_path / "game.js").write_text(WIDE_NO_CAMERA)
+    _write_game(tmp_path, WIDE_NO_CAMERA)
     sr = run_scroll(tmp_path)
     assert sr["ok"] is False and sr["violations"][0]["kind"] == "no_camera"
 
 
 def test_run_scroll_passes_wide_world_with_camera(tmp_path):
-    (tmp_path / "game.js").write_text(WIDE_WITH_CAMERA)
+    _write_game(tmp_path, WIDE_WITH_CAMERA)
     assert run_scroll(tmp_path).get("ok") is True
 
 
 def test_run_scroll_ignores_confined_game(tmp_path):
     # pong never leaves one screen — the scroll gate must not demand a camera.
-    (tmp_path / "game.js").write_text(PONG)
+    _write_game(tmp_path, PONG)
     assert run_scroll(tmp_path).get("ok") is True
 
 
 def test_wide_no_camera_passes_sim_gates_but_not_scroll(tmp_path):
-    (tmp_path / "game.js").write_text(WIDE_NO_CAMERA)
+    _write_game(tmp_path, WIDE_NO_CAMERA)
     assert run_headless(tmp_path).get("ok") is True
     assert run_probe(tmp_path).get("ok") is True
     assert run_render(tmp_path).get("ok") is True
@@ -260,25 +273,32 @@ def _ctx(state):
     return build_context({"mode": "2d", "design": {}}, state)
 
 
-def test_authored_error_when_no_file(tmp_path):
+def test_planned_error_when_empty(tmp_path):
+    # an empty run reports exactly one thing: plan the manifest (blocking, suppresses all later checks).
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
-    assert [e.code for e in errs] == ["authored"]
+    assert [e.code for e in errs] == ["planned"]
     assert errs[0].type is ErrorType.BUILD
 
 
-def test_authored_blocks_runs_and_plays(tmp_path):
-    # blocking `authored` must suppress the later checks so an empty run reports one thing to do.
+def test_authored_error_per_missing_manifest_file(tmp_path):
+    # with a manifest but no files on disk, one `authored` error per missing file (bounded authoring).
+    d = tmp_path / "game"
+    d.mkdir()
+    (d / "manifest.json").write_text(json.dumps({"files": [
+        {"name": "main.js", "purpose": "entry", "exports": ["createGame"]},
+        {"name": "combat.js", "purpose": "combat", "exports": ["attack"]}]}))
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
-    assert len(errs) == 1
+    assert {e.code for e in errs} == {"authored"}
+    assert {e.path for e in errs} == {"main.js", "combat.js"}
 
 
 def test_clean_game_has_no_errors(tmp_path):
-    (tmp_path / "game.js").write_text(PONG)
+    _write_game(tmp_path, PONG)
     assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []
 
 
 def test_runs_error_on_crash(tmp_path):
-    (tmp_path / "game.js").write_text(BROKEN)
+    _write_game(tmp_path, BROKEN)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["runs"]
     assert errs[0].type is ErrorType.FIX
@@ -286,7 +306,7 @@ def test_runs_error_on_crash(tmp_path):
 
 def test_renders_error_when_draw_crashes(tmp_path):
     # authored + runs + plays are clean; only the render gate fires.
-    (tmp_path / "game.js").write_text(DRAW_CRASH)
+    _write_game(tmp_path, DRAW_CRASH)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["renders"]
     assert "draw_crash" in errs[0].message
@@ -315,19 +335,22 @@ def test_loop_authors_until_gates_pass(tmp_path):
     assert result.ok is True
     assert conn.calls >= 1
     assert result.steps >= 1   # the fix must report so max_steps actually bounds the loop
-    assert (tmp_path / "game.js").read_text().strip() == PONG.strip()
+    assert (tmp_path / "game" / "main.js").read_text().strip() == PONG.strip()
 
 
-def test_build_author_messages_shapes():
-    from maestro.codegen.module import build_author_messages
-    spec = {"mode": "2d", "design": {"title": "T"}}
-    author = build_author_messages(spec, None)
-    user = author[-1]["content"]
-    assert "# KIT API" in user and "# DESIGN SPEC" in user and "CURRENT game.js" not in user
-
-    patch = build_author_messages(spec, "const x=1;", "paddle does not move")
-    puser = patch[-1]["content"]
-    assert "CURRENT game.js" in puser and "const x=1;" in puser and "paddle does not move" in puser
+def test_multi_file_game_loads_and_gates(tmp_path):
+    # a game split across files (main.js imports a system file) loads as a module graph and gates.
+    main = ("import { movePaddle } from './paddle.js';\n"
+            "export function createGame(kit){ return {\n"
+            "  config:{width:320,height:240,seed:1}, state:{world:[]},\n"
+            "  init(kit){ this.state.p = kit.spawn(this.state.world,{x:20,y:100,w:10,h:40}); },\n"
+            "  update(dt,input,kit){ movePaddle(this.state.p, input, dt); },\n"
+            "  draw(g){ g.rect(this.state.p.x, this.state.p.y, 10, 40, '#fff'); } }; }")
+    paddle = ("export function movePaddle(p, input, dt){ if(input.down('w'))p.y-=200*dt; "
+              "if(input.down('s'))p.y+=200*dt; }")
+    _write_game(tmp_path, main, extra={"paddle.js": paddle})
+    assert run_headless(tmp_path).get("ok") is True
+    assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []
 
 
 def test_loop_refuses_unfrozen_spec(tmp_path):

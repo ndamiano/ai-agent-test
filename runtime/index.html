@@ -10,7 +10,8 @@
   // ?game=pong loads games/pong.js. A game's config.mode === "3d" routes to the three.js
   // renderer; anything else uses the 2D canvas renderer. The SIM is identical either way.
   const name = new URLSearchParams(location.search).get("game") || "pong";
-  const mod = await import(`./games/${name}.js`);
+  // A game is a folder (games/<name>/main.js); the bundled samples are single files (games/<name>.js).
+  const mod = await import(`./games/${name}/main.js`).catch(() => import(`./games/${name}.js`));
   const factory = mod.createGame || mod.default;
   const probe = typeof factory === "function" ? factory(null) : factory;
   const is3d = (probe.config || {}).mode === "3d";

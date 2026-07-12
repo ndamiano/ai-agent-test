@@ -1,0 +1,123 @@
+"""Codegen run orchestrator + CLI.
+
+  create_run(user_id)          → a fresh run dir
+  draft_spec(request)          → the local model drafts a design SPEC (stage 1)
+  run_build(run_id)            → the AgentLoop drives CodegenModule to a passing game.js (stage 2)
+  python -m maestro.codegen.run [--yes] "<request>"  → draft → freeze (your ok) → build → play path
+
+The build refuses until the spec is frozen. One game per run: runs/<id>/game.js.
+"""
+
+import json
+import logging
+import re
+import sys
+import time
+import uuid
+from pathlib import Path
+
+from maestro.state import RunState
+
+logger = logging.getLogger(__name__)
+
+_PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+
+def create_run(user_id: str) -> str:
+    run_id = uuid.uuid4().hex[:12]
+    state = RunState.for_run(run_id)
+    state.write_owner(user_id)
+    return run_id
+
+
+def _content(resp) -> str:
+    return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
+
+
+def draft_spec(request: str) -> dict:
+    """Stage 1: prose request → design SPEC JSON. Prose-in, JSON-out — the easy half."""
+    from llm_clients.connector_selector import get_connector
+    from llm_clients.message_builder import MessageBuilder
+
+    system = (_PROMPTS / "spec_draft.txt").read_text(encoding="utf-8")
+    msgs = MessageBuilder(system).add_user(f"Request: {request}\n\nWrite the JSON spec.").build()
+    reply = _content(get_connector().generate_with_tools(msgs, [], max_tokens=4000))
+    m = re.search(r"```(?:json)?\s*\n(.*?)```", reply, re.S)
+    design = json.loads(m.group(1) if m else reply)
+    return {"request": request, "title": design.get("title", request),
+            "mode": design.get("mode", "2d"), "design": design, "frozen": False}
+
+
+def freeze(run_id: str) -> None:
+    state = RunState.for_run(run_id)
+    spec = state.read_spec()
+    spec["frozen"] = True
+    state.write_spec(spec)
+
+
+def run_build(run_id: str, max_steps: int = 60):
+    """Stage 2: drive CodegenModule until game.js passes the local gates. The surviving AgentLoop
+    does the driving — collect errors (authored/runs/plays), fix the top one, repeat."""
+    from maestro.agent_loop import AgentLoop
+    from maestro.codegen.module import CodegenModule
+    from maestro.codegen.tools import build_codegen_tools
+    from maestro.run_control import get_or_create, remove
+    from llm_clients.connector_selector import get_connector
+
+    state = RunState.for_run(run_id)
+    spec = state.read_spec()
+    if spec is None:
+        raise ValueError(f"no spec for run {run_id!r} — draft one first")
+    tools = build_codegen_tools(state)
+    control = get_or_create(run_id)
+    loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),
+                     max_steps=max_steps, control=control)
+    t0 = time.perf_counter()
+    try:
+        result = loop.run()
+    finally:
+        remove(run_id)
+    result.elapsed = time.perf_counter() - t0
+    logger.info("codegen build %s: ok=%s steps=%d elapsed=%.1fs",
+                run_id, result.ok, result.steps, result.elapsed)
+    return result
+
+
+def _cli(request: str, *, yes: bool = False) -> int:
+    from auth import store
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+
+    users = store.list_users()
+    if not users:
+        print("no accounts yet — create one first: python -m auth.cli create <handle>")
+        return 1
+    owner = users[0].id
+
+    run_id = create_run(owner)
+    print(f"run: {run_id}\ndrafting spec for: {request!r}\n")
+    spec = draft_spec(request)
+    RunState.for_run(run_id).write_spec(spec)
+    print(json.dumps(spec["design"], indent=2, ensure_ascii=False))
+
+    if not yes and input("\nFreeze this spec and build? [y/N] ").strip().lower() != "y":
+        print("Not frozen. Edit spec.json and re-run, or freeze later.")
+        return 0
+
+    freeze(run_id)
+    print("\nfrozen — building...\n")
+    result = run_build(run_id)
+
+    mins, secs = divmod(int(result.elapsed), 60)
+    print(f"\nok={result.ok}  steps={result.steps}  elapsed={mins}m{secs:02d}s")
+    if not result.ok:
+        for e in result.failures:
+            print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
+    print(f"game: {(RunState.for_run(run_id).run_dir / 'game.js').resolve()}")
+    return 0 if result.ok else 1
+
+
+if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if a != "--yes"]
+    if not args:
+        sys.exit('usage: python -m maestro.codegen.run [--yes] "<request>"')
+    sys.exit(_cli(" ".join(args), yes="--yes" in sys.argv[1:]))

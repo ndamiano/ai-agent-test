@@ -95,6 +95,33 @@ def test_flyer_thrusts_forward_and_stays_finite():
     assert r["finite"] is True and r["z"] > 5   # +z is forward at yaw 0
 
 
+def test_astar_routes_around_a_wall():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const blocked = (x,y)=> x===2 && y<4;            // a wall with a gap at y=4
+      const path = kit.astar({x:0,y:0}, {x:4,y:0}, (x,y)=>!blocked(x,y), {cols:5, rows:5});
+      const last = path[path.length-1];
+      console.log(JSON.stringify({
+        len: path.length,
+        reachesGoal: !!last && last.x===4 && last.y===0,
+        hitsWall: path.some(c=>blocked(c.x,c.y)),
+      }));
+    """)
+    assert r["len"] > 0 and r["reachesGoal"] is True and r["hitsWall"] is False
+
+
+def test_astar_returns_empty_when_unreachable():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const wall = (x,y)=> x===2;                       // a full wall — no gap
+      const path = kit.astar({x:0,y:0}, {x:4,y:0}, (x,y)=>!wall(x,y), {cols:5, rows:5});
+      console.log(JSON.stringify({len: path.length}));
+    """)
+    assert r["len"] == 0
+
+
 def test_physics3_falls_and_lands_on_ground():
     r = _node_eval("""
       import {makeKit, makeRng} from "./engine.js";

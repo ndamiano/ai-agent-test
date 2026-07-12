@@ -66,6 +66,22 @@ for (const ghost of this.state.enemies) {
 }
 ```
 
+## Pathfinding  (A* on a cell grid — creeps, chase-with-walls, tactics)
+- `kit.astar(start, goal, passable, {cols, rows, diagonal=false})` — `start`/`goal` are `{x,y}` in
+  CELL coords; `passable(cx,cy)` → bool (a wall is not passable). Returns the cell path (each `{x,y}`)
+  from start to goal, EXCLUDING start / INCLUDING goal, or `[]` if unreachable. Recompute when the
+  target moves; small grids only.
+- `kit.cellCenter(cx, cy, cell)` → the px point at a cell's centre — steer an actor toward the next
+  path cell with `kit.seek`.
+```js
+const cols = tm.w, rows = tm.h, cell = tm.tile;
+const passable = (x, y) => !tm.solidAt(x, y);
+const from = { x: Math.floor(creep.x / cell), y: Math.floor(creep.y / cell) };
+const goal = { x: Math.floor(base.x / cell),  y: Math.floor(base.y / cell) };
+const path = kit.astar(from, goal, passable, { cols, rows });
+if (path.length) { kit.seek(creep, kit.cellCenter(path[0].x, path[0].y, cell), 60); kit.integrate(creep, dt); }
+```
+
 ## Camera  (world larger than the screen)
 - `kit.makeCamera()` → `{ x, y, follow(target, worldW?, worldH?) }`. Call `cam.follow(player,
   levelWidth, levelHeight)` in update; it centers on the target and clamps to the world bounds.

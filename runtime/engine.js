@@ -164,6 +164,41 @@ export function wander(e, speed, rng, turn = 3) {        // drift, turning by up
   e.vx = Math.cos(e._heading) * speed; e.vy = Math.sin(e._heading) * speed;
 }
 
+// ── grid pathfinding (A* on a cell grid — tower-defense creeps, chase-with-walls, tactics) ──
+// passable(cx,cy) -> bool. Returns the cell path from `start` to `goal` (each {x,y} in CELL coords),
+// EXCLUDING start, INCLUDING goal — or [] if unreachable. 4-directional unless diagonal:true. Small
+// grids only (open list is a linear scan); cheap enough to recompute when the target moves.
+export function astar(start, goal, passable, { cols = 1e4, rows = 1e4, diagonal = false } = {}) {
+  const key = (x, y) => y * cols + x;
+  const h = (x, y) => Math.abs(x - goal.x) + Math.abs(y - goal.y);
+  const open = [{ x: start.x, y: start.y, g: 0, f: h(start.x, start.y) }];
+  const came = new Map(), gScore = new Map([[key(start.x, start.y), 0]]);
+  const dirs = diagonal ? [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+    : [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  while (open.length) {
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if (open[i].f < open[bi].f) bi = i;
+    const cur = open.splice(bi, 1)[0];
+    if (cur.x === goal.x && cur.y === goal.y) {
+      const path = []; let px = cur.x, py = cur.y, k = key(px, py);
+      while (came.has(k)) { path.unshift({ x: px, y: py }); const p = came.get(k); px = p.x; py = p.y; k = key(px, py); }
+      return path;
+    }
+    for (const [dx, dy] of dirs) {
+      const nx = cur.x + dx, ny = cur.y + dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || !passable(nx, ny)) continue;
+      const ng = cur.g + 1, nk = key(nx, ny);
+      if (ng < (gScore.get(nk) ?? Infinity)) {
+        gScore.set(nk, ng); came.set(nk, { x: cur.x, y: cur.y });
+        open.push({ x: nx, y: ny, g: ng, f: ng + h(nx, ny) });
+      }
+    }
+  }
+  return [];
+}
+// px point at the centre of cell (cx,cy) — move an actor toward path[0] with kit.seek + this.
+export function cellCenter(cx, cy, cell) { return { x: (cx + 0.5) * cell, y: (cy + 0.5) * cell }; }
+
 // ── camera (scroll a world larger than the screen) ───────────────────────────
 export function makeCamera(config) {
   return {
@@ -243,7 +278,8 @@ export function makeKit(config, rng) {
     rng,
     V,
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
-    physics, walk, jump, seek, flee, arrive, pursue, wander, makeCamera: () => makeCamera(config),
+    physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
+    makeCamera: () => makeCamera(config),
     audio: { play: () => {} }, // stub; real backend wired later
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
     lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },

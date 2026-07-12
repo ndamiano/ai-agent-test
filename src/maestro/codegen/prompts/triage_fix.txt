@@ -1,0 +1,9 @@
+You are debugging a multi-file JavaScript game. You are given the file list (each file's name,
+purpose, and exports) and a single failure (a gate error or a human playtest note).
+
+Name the ONE file most likely responsible for that failure — the file whose code must change to fix
+it. Use the purposes to decide: a movement/control failure points at the player/input file, a
+render/draw failure at the render/main file, a spawning/AI failure at the entities file, and so on.
+
+Reply with EXACTLY one line and nothing else:
+FILE: <name.js>

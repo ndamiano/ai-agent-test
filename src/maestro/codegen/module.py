@@ -161,26 +161,58 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
 _FILE_RE = re.compile(r"FILE:\s*([A-Za-z0-9_.-]+\.js)", re.I)
 
 
-def _patch_file_fix(module, context, error, slot, services, dispatch):
-    """Fix a gate failure by rewriting exactly ONE file. All files are given as read context so the
-    model can locate a cross-file bug, but it rewrites only the one it names (`FILE: <name>` then a
-    ```js block) — bounded output, so a fix can't drop another system."""
-    spec = context.spec
-    run_dir = context.state.run_dir
+def _triage_file(infer, run_dir, failure: str) -> str:
+    """Pick the ONE file to fix. For a single-file game there's no choice; otherwise a cheap call
+    over the manifest SIGNATURES (never the bodies) locates the culprit — so the heavy fix call only
+    ever loads one file, and a big game can't overflow the context into an empty response."""
     files = game_files(run_dir)
-    bodies = "\n\n".join(f"## FILE: {name}\n```js\n{src}\n```" for name, src in files.items())
-    system = (_PROMPTS / "fix_file.txt").read_text(encoding="utf-8")
-    user = "\n\n".join([
-        f"# KIT API\n{_kit_doc(spec)}",
-        f"# THE GAME (every file)\n{bodies}",
-        f"# FAILURE (fix it; change as few files as possible — ideally one)\n{error.message}",
-        "Identify the ONE file to change. Reply with a line `FILE: <name.js>` then that file's "
-        "COMPLETE new source as one ```js block.",
-    ])
-    text = _infer(services, system, user, _CODE_MAX_TOKENS)
-    m = _FILE_RE.search(text)
-    target = m.group(1) if m else (entry_path(run_dir).name if "main.js" in files else next(iter(files), "main.js"))
-    result = dispatch("write_game_file", {"code": extract_code(text), "file": target})
+    if len(files) <= 1:
+        return next(iter(files), "main.js")
+    # A crash/stack trace usually names the file it threw in — trust that over a guess.
+    named = [n for n in files if n != "main.js" and re.search(rf"\b{re.escape(n)}\b", failure)]
+    if len(named) == 1:
+        return named[0]
+    sigs = "\n".join(f"- {f['name']}: {f.get('purpose','')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
+                     for f in _manifest_files(run_dir)) or "\n".join(f"- {n}" for n in files)
+    system = (_PROMPTS / "triage_fix.txt").read_text(encoding="utf-8")
+    user = f"# FILES\n{sigs}\n\n# FAILURE\n{failure}\n\nWhich single file must change? Reply ONLY `FILE: <name.js>`."
+    m = _FILE_RE.search(infer(system, user, 200))
+    return m.group(1) if (m and m.group(1) in files) else ("main.js" if "main.js" in files else next(iter(files)))
+
+
+def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch) -> dict:
+    """Rewrite one file with a SMALL context: that file's body + the siblings' signatures + the
+    failure. `main.js` owns config+state+wiring, so most cross-file bugs are a contract mismatch
+    against it — when fixing a SYSTEM file, include main.js's body too (bounded: one extra file) so
+    the fixer can see the state shape / call sites it must agree with. Bounded input AND output, so
+    the model returns a complete file, not a truncated blob."""
+    files = game_files(run_dir)
+    body = files.get(target, "")
+    siblings = _sibling_lines(_manifest_files(run_dir), target)
+    parts = [f"# KIT API\n{_kit_doc(spec)}", f"# FILE TO FIX: {target}\n```js\n{body}\n```"]
+    if target != "main.js" and "main.js" in files:
+        parts.append(f"# main.js (owns state + calls this file — agree with it; do NOT rewrite it)\n"
+                     f"```js\n{files['main.js']}\n```")
+    parts += [
+        f"# OTHER FILES you may import (signatures only — do NOT rewrite these)\n{siblings}",
+        f"# FAILURE\n{failure}",
+        f"Rewrite ./{target} completely. Output ONLY one ```js block.",
+    ]
+    return dispatch("write_game_file",
+                    {"code": extract_code(infer(system_prompt(), "\n\n".join(parts), _CODE_MAX_TOKENS)), "file": target})
+
+
+def system_prompt() -> str:
+    return (_PROMPTS / "fix_file.txt").read_text(encoding="utf-8")
+
+
+def _patch_file_fix(module, context, error, slot, services, dispatch):
+    """Fix a gate failure in two small steps: triage (which file? — over signatures) then a focused
+    rewrite of that one file. Never loads every body into one call, so a large multi-file game
+    converges instead of overflowing the context into empty responses."""
+    infer = lambda system, user, mt: _infer(services, system, user, mt)
+    target = _triage_file(infer, context.state.run_dir, error.message)
+    result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch)
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"patched {target}: {detail}")
 

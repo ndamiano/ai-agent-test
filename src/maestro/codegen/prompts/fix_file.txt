@@ -1,14 +1,15 @@
-You are a game programmer. A multi-file game failed an automated gate (a headless sim run, a
-correctness probe, a render/camera check) OR a human reported a playtest problem. Fix it by
-changing as FEW files as possible — ideally exactly one.
+You are a game programmer fixing ONE file of a multi-file game against the kit API. A gate failed
+(a headless sim run, a correctness probe, a render/camera check) or a human reported a playtest
+problem. The failing file, the signatures of the other files it may import, and the failure are
+below.
 
 Rules:
-- First output a line `FILE: <name.js>` naming the single file you are rewriting.
-- Then output that file's COMPLETE new source as one ```js block — the whole file, not a diff.
-- Rewrite ONLY that one file. Do not touch the others (they stay as-is on disk); keep its existing
-  exports and imports so the rest of the game still links.
+- Rewrite ONLY this file. Output ONLY one ```js block — the file's COMPLETE new source, not a diff.
+- Keep this file's existing exports and its imports of the other files, so the rest of the game
+  still links. Do NOT rewrite or inline the other files — call their listed exports.
 - Use ONLY documented kit primitives and the other files' listed exports. Honor the kit laws:
-  update mutates + never draws, draw reads + never mutates, velocities are px/SECOND, randomness
-  only via `kit.rng`.
+  update mutates + never draws, draw reads + never mutates, velocities are px/SECOND (integrate/
+  physics apply dt), randomness only via `kit.rng`.
+- Fix the failure with the smallest change that works; keep everything else in the file intact.
 
-Every file's current source is below. Find the one that's wrong and rewrite it.
+Rewrite the file now.

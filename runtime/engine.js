@@ -383,3 +383,46 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
   }
   return { ok: true, content };
 }
+
+// ── scroll smoke: a world bigger than the screen needs a camera that follows ──
+// Drive the player across the level and watch draw's camera offset. If entities range well beyond
+// one screen but the view never pans (no g.push(cam), or a static cam), most of the level is
+// permanently off-screen — it passes headless/probe/render yet is unplayable. Tightly guarded so
+// confined games (pong, wrap-around asteroids, one-screen mazes) never false-fire. 3D uses the
+// camera() hook, checked separately.
+export function scrollSmoke(gameFactory, { frames = 300, dt = 1 / 60, seed = 1 } = {}) {
+  const g0 = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
+  const config = { width: 640, height: 480, gravity: 0, ...(g0.config || {}) };
+  if (config.mode === "3d") return { ok: true, skipped: true };
+  const KEYS = ["d", "ArrowRight", "a", "ArrowLeft"];
+  let best = { span: 0, camDx: 0, drew: false };
+  for (const key of KEYS) {
+    const g = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
+    const input = makeInput();
+    const kit = makeKit(config, makeRng(config.seed || seed));
+    let minX = Infinity, maxX = -Infinity, camMin = Infinity, camMax = -Infinity, drew = false;
+    const rec = { ctx: {}, clear: () => {}, pop: () => {}, rect: () => {}, circle: () => {},
+      line: () => {}, text: () => {}, sprite: () => {},
+      push: (cam) => { if (cam && typeof cam.x === "number") { drew = true; camMin = Math.min(camMin, cam.x); camMax = Math.max(camMax, cam.x); } } };
+    try {
+      if (g.init) g.init(kit);
+      for (let f = 0; f < frames && !kit.over; f++) {
+        input._set(key, true);
+        g.update(dt, input, kit);
+        input._endFrame();
+        for (const e of worldOf(g)) if (typeof e.x === "number") { minX = Math.min(minX, e.x); maxX = Math.max(maxX, e.x); }
+        if (typeof g.draw === "function") g.draw(rec, kit);
+      }
+    } catch { continue; } // a draw/update crash is the render/headless gate's job, not this one
+    const span = maxX - minX;
+    if (span > best.span) best = { span, camDx: camMax - camMin, drew };
+  }
+  if (best.span > config.width * 1.5 && (!best.drew || best.camDx < config.width * 0.5)) {
+    return { ok: false, violations: [{ kind: "no_camera",
+      detail: `the world spans ~${Math.round(best.span)}px but the screen is only ${config.width}px and the `
+        + `camera ${best.drew ? `panned just ${Math.round(best.camDx)}px` : "was never used"} — most of the `
+        + `level is off-screen. Make a camera (const cam = kit.makeCamera()), call cam.follow(player, worldW, `
+        + `worldH) each update, and wrap WORLD-space drawing in g.push(cam) … g.pop() (draw HUD after pop).` }] };
+  }
+  return { ok: true, span: Math.round(best.span), camDx: Math.round(best.camDx) };
+}

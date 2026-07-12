@@ -84,3 +84,11 @@ def run_render(run_dir) -> dict:
     screens. 3D games pass through (their render is mesh-sync from shape tags, not draw())."""
     return _run_violation_gate(run_dir, "render.mjs",
                                "render did not finish (likely an infinite loop in draw)")
+
+
+def run_scroll(run_dir) -> dict:
+    """Camera/scroll smoke — a world bigger than the screen must be followed by a panning camera,
+    else most of the level is off-screen (passes every sim gate yet is unplayable). Confined and
+    wrap-around games never fire; 3D passes through."""
+    return _run_violation_gate(run_dir, "scroll.mjs",
+                               "scroll check did not finish (likely an infinite loop in update)")

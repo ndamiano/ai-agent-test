@@ -5,6 +5,7 @@ It IS four checks over a single `game.js`, swept in order by the base `Module`:
   - `runs`: the sim survives a headless smoke run. Fix = patch it from the crash detail.
   - `plays` (when_clean): the generic probe invariants hold. Fix = patch it from the violations.
   - `renders` (when_clean): the draw() path (2D) neither crashes nor paints a blank screen.
+  - `scrolls` (when_clean): a world bigger than the screen is followed by a panning camera.
 
 Each fix is a whole-body `Check.run`: one raw completion (a fenced ```js block, not a tool-call
 arg), then `write_game_file`. The loop rebuilds context from durable state each step, so a patch
@@ -15,7 +16,7 @@ import json
 from pathlib import Path
 
 from maestro.codegen.gates import (
-    RUNTIME_DIR, extract_code, game_path, run_headless, run_probe, run_render,
+    RUNTIME_DIR, extract_code, game_path, run_headless, run_probe, run_render, run_scroll,
 )
 from maestro.modules.module import Check, Error, ErrorType, Module
 
@@ -64,6 +65,14 @@ def _detect_renders(check, module, context):
                   message="RENDER FAILED: " + _violations(rr))]
 
 
+def _detect_scrolls(check, module, context):
+    sr = run_scroll(context.state.run_dir)
+    if sr.get("ok"):
+        return []
+    return [Error(type=ErrorType.FIX, code="scrolls", component="game",
+                  message="CAMERA FAILED: " + _violations(sr))]
+
+
 def _codegen_fix(module, context, error, slot, services, dispatch):
     """One authoring/patch step: infer a complete module (raw fenced block), persist it. The prompt
     is rebuilt from durable state — for a patch it carries the current code + the failing check's
@@ -101,6 +110,7 @@ class CodegenModule(Module):
         Check(code="runs", detect=_detect_runs, job="fix", run=_codegen_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_codegen_fix),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_codegen_fix),
+        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True, run=_codegen_fix),
     ]
 
     def affected_components(self):

@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from maestro.agent_loop import AgentLoop
-from maestro.codegen.gates import RUNTIME_DIR, extract_code, run_headless, run_probe, run_render
+from maestro.codegen.gates import (
+    RUNTIME_DIR, extract_code, run_headless, run_probe, run_render, run_scroll,
+)
 from maestro.codegen.module import CodegenModule
 from maestro.codegen.tools import build_codegen_tools
 from maestro.modules.module import ErrorType
@@ -35,6 +37,19 @@ GAME_3D = """export function createGame(kit){ return {
   config:{mode:"3d",width:200,height:200}, state:{world:[]},
   init(kit){ this.state.world.push({shape:"box",x:0,y:0,z:0,w:1,h:1,d:1,color:"#f00"}); },
   update(dt,input,kit){} }; }"""
+# A level far wider than the screen with the player driven right but NO camera — the far level is
+# off-screen. Passes headless/probe/render; only the scroll gate catches it.
+WIDE_NO_CAMERA = """export function createGame(kit){ return {
+  config:{width:320,height:240}, state:{world:[]},
+  init(kit){ this.state.p = kit.spawn(this.state.world,{x:0,y:100,w:10,h:10}); },
+  update(dt,input,kit){ if(input.down('d')||input.down('ArrowRight')) this.state.p.x += 300*dt; },
+  draw(g){ g.rect(this.state.p.x, this.state.p.y, 10, 10, '#fff'); } }; }"""
+# Same wide world, but a follow camera pans with the player (world-space draw under push/pop).
+WIDE_WITH_CAMERA = """export function createGame(kit){ return {
+  config:{width:320,height:240}, state:{world:[]},
+  init(kit){ this.state.p = kit.spawn(this.state.world,{x:0,y:100,w:10,h:10}); this.cam = kit.makeCamera(); },
+  update(dt,input,kit){ if(input.down('d')||input.down('ArrowRight')) this.state.p.x += 300*dt; this.cam.follow(this.state.p, 4000, 240); },
+  draw(g){ g.push(this.cam); g.rect(this.state.p.x, this.state.p.y, 10, 10, '#fff'); g.pop(); } }; }"""
 
 
 def _run_dir(tmp_path) -> RunState:
@@ -92,6 +107,31 @@ def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
     assert run_headless(tmp_path).get("ok") is True
     assert run_probe(tmp_path).get("ok") is True
     assert run_render(tmp_path).get("ok") is False
+
+
+def test_run_scroll_flags_wide_world_without_camera(tmp_path):
+    (tmp_path / "game.js").write_text(WIDE_NO_CAMERA)
+    sr = run_scroll(tmp_path)
+    assert sr["ok"] is False and sr["violations"][0]["kind"] == "no_camera"
+
+
+def test_run_scroll_passes_wide_world_with_camera(tmp_path):
+    (tmp_path / "game.js").write_text(WIDE_WITH_CAMERA)
+    assert run_scroll(tmp_path).get("ok") is True
+
+
+def test_run_scroll_ignores_confined_game(tmp_path):
+    # pong never leaves one screen — the scroll gate must not demand a camera.
+    (tmp_path / "game.js").write_text(PONG)
+    assert run_scroll(tmp_path).get("ok") is True
+
+
+def test_wide_no_camera_passes_sim_gates_but_not_scroll(tmp_path):
+    (tmp_path / "game.js").write_text(WIDE_NO_CAMERA)
+    assert run_headless(tmp_path).get("ok") is True
+    assert run_probe(tmp_path).get("ok") is True
+    assert run_render(tmp_path).get("ok") is True
+    assert run_scroll(tmp_path).get("ok") is False
 
 
 def test_extract_code_pulls_fenced_block():

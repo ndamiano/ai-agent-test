@@ -285,7 +285,9 @@ export function moveTopDown3(e, input, dt, speed = 8) {
   const d = inputDir(input);
   if (!d.moving) return;
   e.x += d.x * speed * dt; e.z += d.y * speed * dt;
-  e.ry = Math.atan2(d.x, -d.y);   // face the direction of travel (ry = yaw; forward at ry 0 is -z)
+  // face travel: a mesh at rotation.y=ry points to world (-sin ry, -cos ry), so this yaw makes the
+  // model look where it moves.
+  e.ry = Math.atan2(-d.x, -d.y);
 }
 
 // 3D tank: W/S drive forward/back along the current facing, A/D turn. opts {speed, turn(rad/s), back}.
@@ -296,7 +298,9 @@ export function moveTank3(e, input, dt, opts = {}) {
   let f = 0;
   if (input.down("w") || input.down("ArrowUp")) f += 1;
   if (input.down("s") || input.down("ArrowDown")) f -= back;
-  if (f) { e.x += Math.sin(e.ry || 0) * speed * f * dt; e.z += Math.cos(e.ry || 0) * speed * f * dt; }
+  // drive along the mesh's actual facing (a mesh at rotation.y=ry points to world (-sin ry, -cos ry)),
+  // so forward is where the model looks and away from a behind-camera — not toward it.
+  if (f) { const ry = e.ry || 0; e.x -= Math.sin(ry) * speed * f * dt; e.z -= Math.cos(ry) * speed * f * dt; }
 }
 
 // ── tilemap (rows of chars; solid set decides collision) ─────────────────────

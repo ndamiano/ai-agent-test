@@ -303,6 +303,35 @@ export function moveTank3(e, input, dt, opts = {}) {
   if (f) { const ry = e.ry || 0; e.x -= Math.sin(ry) * speed * f * dt; e.z -= Math.cos(ry) * speed * f * dt; }
 }
 
+// ── first-person: mouse-look + eye camera + strafe movement (yaw 0 looks -z) ──
+// Turn the player's aim from mouse-look deltas (needs config.pointerLock so run3d fills input.lookDX/DY).
+export function mouseLook(player, input, sens = 0.0025) {
+  player.yaw = (player.yaw || 0) + (input.lookDX || 0) * sens;
+  player.pitch = Math.max(-1.4, Math.min(1.4, (player.pitch || 0) - (input.lookDY || 0) * sens));
+}
+// Put the camera at the player's eyes, looking along their yaw/pitch. Call in the camera(cam,kit) hook.
+export function fpCam(cam, player, opts = {}) {
+  const eye = opts.eye ?? 1.6, yaw = player.yaw || 0, pitch = player.pitch || 0, cp = Math.cos(pitch);
+  cam.x = player.x || 0; cam.y = (player.y || 0) + eye; cam.z = player.z || 0;
+  cam.tx = cam.x + Math.sin(yaw) * cp;
+  cam.ty = cam.y + Math.sin(pitch);
+  cam.tz = cam.z - Math.cos(yaw) * cp;
+}
+// WASD move relative to the player's yaw: W/S along look, A/D strafe. dt applied, y untouched.
+export function moveFP(player, input, dt, speed = 6) {
+  const yaw = player.yaw || 0;
+  let f = 0, s = 0;
+  if (input.down("w") || input.down("ArrowUp")) f += 1;
+  if (input.down("s") || input.down("ArrowDown")) f -= 1;
+  if (input.down("d") || input.down("ArrowRight")) s += 1;
+  if (input.down("a") || input.down("ArrowLeft")) s -= 1;
+  const L = Math.hypot(f, s);
+  if (!L) return;
+  const fx = Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = Math.sin(yaw);
+  player.x += (fx * f + rx * s) / L * speed * dt;
+  player.z += (fz * f + rz * s) / L * speed * dt;
+}
+
 // ── tilemap (rows of chars; solid set decides collision) ─────────────────────
 export function makeTilemap(rows, tile = 32, solid = "#") {
   const solids = new Set([...solid]);
@@ -332,15 +361,16 @@ export function makeInput() {
   const pointer = { x: 0, y: 0, down: false };
   return {
     _held: held, _edge: edge, pointer,
+    lookDX: 0, lookDY: 0,   // mouse-look delta this frame (first-person; filled by run3d under pointer lock)
     down: (k) => held.has(k),
     pressed: (k) => edge.has(k),
     _set(k, v) { if (v) { if (!held.has(k)) edge.add(k); held.add(k); } else held.delete(k); },
-    _endFrame() { edge.clear(); },
+    _endFrame() { edge.clear(); this.lookDX = 0; this.lookDY = 0; },
   };
 }
 
-// ── draw api (canvas2d) — the ONLY render surface ────────────────────────────
-function makeDraw(ctx) {
+// ── draw api (canvas2d) — the render surface (2D games: the screen; 3D games: the HUD overlay) ──
+export function makeDraw(ctx) {
   return {
     ctx,
     clear: (color = "#000") => { ctx.fillStyle = color; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); },
@@ -372,7 +402,7 @@ export function makeKit(config, rng) {
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
-    chaseCam, moveTopDown, moveTopDown3, moveTank3,
+    chaseCam, moveTopDown, moveTopDown3, moveTank3, mouseLook, fpCam, moveFP,
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

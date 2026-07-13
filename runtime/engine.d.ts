@@ -59,6 +59,7 @@ interface Input {
   down(key: string): boolean;
   pressed(key: string): boolean;
   pointer: { x: number; y: number; down: boolean };
+  lookDX: number; lookDY: number;   // mouse-look delta this frame (first-person; feed to kit.mouseLook)
 }
 
 interface Camera { x: number; y: number; follow(target: Entity, worldW?: number, worldH?: number): void; }
@@ -109,6 +110,11 @@ interface Kit {
   moveTopDown(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTopDown3(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTank3(e: Entity, input: Input, dt: number, opts?: { speed?: number; turn?: number; back?: number }): void;
+  // first-person (set config.pointerLock:true): mouseLook turns the player's yaw/pitch from the mouse;
+  // fpCam puts the camera at the player's eyes looking along that aim; moveFP does WASD relative to yaw.
+  mouseLook(player: Entity, input: Input, sens?: number): void;
+  fpCam(cam: Camera3, player: Entity, opts?: { eye?: number }): void;
+  moveFP(player: Entity, input: Input, dt: number, speed?: number): void;
   audio: { play(name?: string): void };
   // The skin: returns the preloaded sprite image for an entity's `sprite` id, or null if no
   // asset was generated (headless, or an unskinned game) — draw the placeholder shape then.
@@ -121,6 +127,7 @@ interface Kit {
 interface Config {
   width?: number; height?: number; title?: string; background?: string;
   gravity?: number; seed?: number; mode?: "2d" | "3d";
+  pointerLock?: boolean;   // 3D: click captures the mouse for first-person look (fills input.lookDX/DY)
 }
 
 // The object `createGame(kit)` returns. Give `state` a concrete type (declare it in types.ts and

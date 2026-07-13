@@ -15,7 +15,7 @@
 
 import * as THREE from "./vendor/three.module.js";
 import { GLTFLoader } from "./vendor/GLTFLoader.js";
-import { makeInput, chaseCam, realize } from "./engine.js";
+import { makeInput, chaseCam, realize, makeDraw } from "./engine.js";
 
 function worldOf(g) {
   return (g.state && (Array.isArray(g.state.world) ? g.state.world
@@ -111,17 +111,39 @@ export async function run3d(game, canvas, assetBase) {
   addEventListener("keydown", (e) => { input._set(keymap(e), true); if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault(); });
   addEventListener("keyup", (e) => input._set(keymap(e), false));
 
-  // Drag to orbit the view around whatever the game's camera looks at — a runtime capability every 3D
-  // game gets for free, independent of (and applied on top of) the game's own camera() hook.
-  let viewYaw = 0, viewPitch = 0, dragging = false, lastX = 0, lastY = 0;
-  canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
-  addEventListener("mouseup", () => { dragging = false; });
-  addEventListener("mousemove", (e) => {
-    if (!dragging) return;
-    viewYaw -= (e.clientX - lastX) * 0.008;
-    viewPitch = Math.max(-1.0, Math.min(1.0, viewPitch + (e.clientY - lastY) * 0.006));
-    lastX = e.clientX; lastY = e.clientY;
-  });
+  // HUD overlay: a 2D canvas over the WebGL canvas. The game's draw(g, kit) paints screen-space UI
+  // (health, gold, menus, crosshair) onto it — this is how a 3D game gets a HUD.
+  const hud = document.createElement("canvas");
+  hud.width = config.width; hud.height = config.height;
+  hud.style.cssText = "position:fixed;pointer-events:none";
+  document.body.appendChild(hud);
+  const hctx = hud.getContext("2d");
+  const hudDraw = makeDraw(hctx);
+  const placeHud = () => {
+    const r = canvas.getBoundingClientRect();
+    hud.style.left = `${r.left}px`; hud.style.top = `${r.top}px`;
+    hud.style.width = `${r.width}px`; hud.style.height = `${r.height}px`;
+  };
+
+  // Camera control. First-person (config.pointerLock): click locks the pointer, mouse-look feeds
+  // input.lookDX/DY, clicks become pointer.down. Otherwise: drag to orbit the view around the game's
+  // look-at target (a free capability layered on the game's own camera() hook).
+  let viewYaw = 0, viewPitch = 0, dragging = false, lastX = 0, lastY = 0, lookDX = 0, lookDY = 0;
+  if (config.pointerLock) {
+    canvas.addEventListener("click", () => { if (document.pointerLockElement !== canvas) canvas.requestPointerLock(); });
+    addEventListener("mousemove", (e) => { if (document.pointerLockElement === canvas) { lookDX += e.movementX; lookDY += e.movementY; } });
+    addEventListener("mousedown", () => { if (document.pointerLockElement === canvas) input.pointer.down = true; });
+    addEventListener("mouseup", () => { input.pointer.down = false; });
+  } else {
+    canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+    addEventListener("mouseup", () => { dragging = false; });
+    addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      viewYaw -= (e.clientX - lastX) * 0.008;
+      viewPitch = Math.max(-1.0, Math.min(1.0, viewPitch + (e.clientY - lastY) * 0.006));
+      lastX = e.clientX; lastY = e.clientY;
+    });
+  }
 
   const assets = await loadMeshes(assetBase);   // {id: GLB scene}; {} when unskinned → primitives
   if (g.init) g.init(kit);
@@ -150,6 +172,7 @@ export async function run3d(game, canvas, assetBase) {
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    input.lookDX = lookDX; input.lookDY = lookDY; lookDX = 0; lookDY = 0;   // hand this frame's mouse-look to the game
     if (!kit.over) {
       g.update(dt, input, kit);
       if (g.camera) g.camera(cam, kit);
@@ -164,6 +187,8 @@ export async function run3d(game, canvas, assetBase) {
     camera.position.set(cam.tx + Math.sin(ang) * rad, cam.y + viewPitch * rad, cam.tz + Math.cos(ang) * rad);
     camera.lookAt(cam.tx || 0, cam.ty || 0, cam.tz || 0);
     renderer.render(scene, camera);
+    // HUD overlay: clear + let the game paint screen-space UI
+    if (g.draw) { placeHud(); hctx.clearRect(0, 0, hud.width, hud.height); g.draw(hudDraw, kit); }
     if (kit.over) { banner.textContent = kit.over.msg; banner.style.display = "grid"; }
     requestAnimationFrame(frame);
   }

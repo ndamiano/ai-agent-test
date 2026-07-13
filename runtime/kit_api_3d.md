@@ -31,11 +31,12 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 invisible (pure logic markers).
 
 **Two hard rules that shape how you build a 3D game — internalize these:**
-1. **No 2D HUD.** In `mode:"3d"` the runtime NEVER calls your `draw()` — there is no text/overlay
-   layer. Leave `draw` empty and show EVERYTHING with 3D entities: no score text, no menus, no bars.
-   (A "health bar" = a row of small box entities you add/remove; "whose turn" = a marker box you
-   move above the active thing.)
-2. **Only position + `ry` update live.** Each frame the renderer re-reads an entity's x/y/z and `ry`
+1. **`draw(g, kit)` is the HUD — a 2D overlay ON TOP of the 3D scene.** Draw screen-space UI here with
+   the same `g.rect/g.circle/g.text/g.sprite` a 2D game uses: health, score, gold, a crosshair, menus
+   (a shop panel, inventory). Coordinates are screen pixels (0,0 = top-left, up to config.width/height).
+   It reads state, never mutates. Leave `draw` empty if the game needs no HUD. (The 3D WORLD is still
+   drawn from entity shape tags — `draw` is only the flat overlay, not the world.)
+2. **Only position + `ry` update live** for WORLD entities. Each frame the renderer re-reads an entity's x/y/z and `ry`
    only — NOT its size (w/h/d/r) or color (those bake when the entity first appears). To change how
    much health shows, ADD or REMOVE entities (splice pip boxes from `state.world`); to show a hit,
    MOVE the entity (a lunge/recoil), never recolor or resize it.
@@ -76,6 +77,21 @@ update(dt, input, kit) {
   For a ship/car/shark where turning-then-driving feels right.
 - For a flyer with pitch, use `kit.flyer` (below). These read HELD keys and apply dt for you — never
   reach into `input.pressed` for movement, and never accumulate keys into a set.
+
+## First-person  (set `config.pointerLock: true`)
+For a first-person game, put `pointerLock: true` in config. Clicking the canvas locks the mouse;
+mouse motion becomes look, mouse clicks become `input.pointer.down`. Steer with three primitives:
+```js
+update(dt, input, kit) {
+  kit.mouseLook(this.state.player, input);        // turn player.yaw / player.pitch from the mouse
+  kit.moveFP(this.state.player, input, dt, 6);    // WASD relative to facing (W = look dir, A/D strafe)
+  if (input.pointer.down) { /* attack: hit along the aim */ }
+}
+camera(cam, kit) { kit.fpCam(cam, this.state.player); }   // eye at the player, looking along the aim
+```
+`player.yaw`/`player.pitch` are the aim. The forward/aim direction is
+`{ x: Math.sin(yaw)*Math.cos(pitch), y: Math.sin(pitch), z: -Math.cos(yaw)*Math.cos(pitch) }` — use it
+to spawn a projectile or to test which enemy is in front. HUD a crosshair in the center from `draw`.
 
 ## Flight  (USE THIS for a plane/ship/flyer — don't hand-roll 3D orientation)
 - `kit.flyer(e, input, dt, opts?)` — the whole flight step: steer `e.yaw`/`e.pitch` from input,

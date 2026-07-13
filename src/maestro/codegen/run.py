@@ -35,15 +35,27 @@ def _content(resp) -> str:
 
 
 def draft_spec(request: str) -> dict:
-    """Stage 1: prose request → design SPEC JSON. Prose-in, JSON-out — the easy half."""
+    """Stage 1: prose request → design SPEC JSON. Prose-in, JSON-out — the easy half. Retries on a
+    bad JSON parse (local models occasionally emit a trailing comma / stray token)."""
     from llm_clients.connector_selector import get_connector
     from llm_clients.message_builder import MessageBuilder
 
+    conn = get_connector()
     system = (_PROMPTS / "spec_draft.txt").read_text(encoding="utf-8")
-    msgs = MessageBuilder(system).add_user(f"Request: {request}\n\nWrite the JSON spec.").build()
-    reply = _content(get_connector().generate_with_tools(msgs, [], max_tokens=4000))
-    m = re.search(r"```(?:json)?\s*\n(.*?)```", reply, re.S)
-    design = json.loads(m.group(1) if m else reply)
+    user = f"Request: {request}\n\nWrite the JSON spec."
+    design, last = None, ""
+    for attempt in range(3):
+        reply = _content(conn.generate_with_tools(
+            MessageBuilder(system).add_user(user).build(), [], max_tokens=4000))
+        m = re.search(r"```(?:json)?\s*\n(.*?)```", reply, re.S)
+        try:
+            design = json.loads(m.group(1) if m else reply)
+            break
+        except json.JSONDecodeError as e:
+            last = f"{e} — return ONLY one ```json block of STRICT valid JSON, no trailing commas."
+            user = f"Request: {request}\n\nYour previous JSON was invalid: {last}\n\nWrite the JSON spec."
+    if design is None:
+        raise ValueError(f"spec draft never produced valid JSON: {last}")
     return {"request": request, "title": design.get("title", request),
             "mode": design.get("mode", "2d"), "design": design, "frozen": False}
 

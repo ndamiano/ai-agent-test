@@ -237,6 +237,21 @@ export function makeCamera(config) {
   };
 }
 
+// Third-person chase camera for 3D games: place the eye behind + above `target` and look AT it.
+// Sets all six cam fields — eye (x,y,z) AND look-at (tx,ty,tz). This is a kit primitive precisely
+// because the hand-rolled version reliably falls into the half-set trap: move the eye but forget the
+// target, and the view stays pinned to the world origin. opts: {back, up, lookUp, faceYaw}.
+export function chaseCam(cam, target, opts = {}) {
+  if (!target) return;
+  const back = opts.back ?? 16, up = opts.up ?? 12;
+  const yaw = opts.faceYaw ? (target.ry || 0) : 0;  // follow the entity's heading, or a fixed rear view
+  const tx = target.x || 0, ty = target.y || 0, tz = target.z || 0;
+  cam.x = tx - Math.sin(yaw) * back;
+  cam.y = ty + up;
+  cam.z = tz + Math.cos(yaw) * back;
+  cam.tx = tx; cam.ty = ty + (opts.lookUp ?? 1.5); cam.tz = tz;
+}
+
 // ── tilemap (rows of chars; solid set decides collision) ─────────────────────
 export function makeTilemap(rows, tile = 32, solid = "#") {
   const solids = new Set([...solid]);
@@ -306,6 +321,7 @@ export function makeKit(config, rng) {
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
+    chaseCam,
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

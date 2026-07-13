@@ -15,7 +15,7 @@
 
 import * as THREE from "./vendor/three.module.js";
 import { GLTFLoader } from "./vendor/GLTFLoader.js";
-import { makeKit, makeInput, makeRng } from "./engine.js";
+import { makeKit, makeInput, makeRng, chaseCam } from "./engine.js";
 
 function worldOf(g) {
   return (g.state && (Array.isArray(g.state.world) ? g.state.world
@@ -138,7 +138,11 @@ export async function run3d(game, canvas, assetBase) {
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
-    if (!kit.over) { g.update(dt, input, kit); if (g.camera) g.camera(cam, kit); }
+    if (!kit.over) {
+      g.update(dt, input, kit);
+      if (g.camera) g.camera(cam, kit);
+      else if (g.state && g.state.player) chaseCam(cam, g.state.player);  // sane default follow
+    }
     input._endFrame();
     sync();
     camera.position.set(cam.x, cam.y, cam.z);

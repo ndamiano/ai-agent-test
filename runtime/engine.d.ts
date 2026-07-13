@@ -100,6 +100,8 @@ interface Kit {
   stepParticles(world: World, dt: number): void;
   // camera / audio / assets / end
   makeCamera(): Camera;
+  // 3D third-person chase camera: sets the eye behind+above `target` AND the look-at to `target`.
+  chaseCam(cam: Camera3, target: Entity, opts?: { back?: number; up?: number; lookUp?: number; faceYaw?: boolean }): void;
   audio: { play(name?: string): void };
   // The skin: returns the preloaded sprite image for an entity's `sprite` id, or null if no
   // asset was generated (headless, or an unskinned game) — draw the placeholder shape then.

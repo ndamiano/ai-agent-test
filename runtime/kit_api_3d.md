@@ -29,16 +29,19 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 `color` is any CSS color string. Entities with no `shape` are invisible (pure logic markers).
 
 ## Camera  (optional `camera(cam, kit)` hook)
-`cam` has `{ x,y,z }` (the eye position) and `{ tx,ty,tz }` (the look-at point). Set them each
-frame. A classic third-person follow behind a `player`:
+For a third-person follow, DON'T hand-roll the eye/look-at math — call the kit primitive:
 ```js
-camera(cam, kit) {
-  const p = this.state.player;
-  cam.x = p.x;  cam.y = p.y + 12;  cam.z = p.z + 20;   // above and behind
-  cam.tx = p.x; cam.ty = p.y;      cam.tz = p.z;        // look at the player
-}
+camera(cam, kit) { kit.chaseCam(cam, this.state.player); }   // eye behind+above, looks AT the player
 ```
-If you omit `camera`, a fixed 3/4 view is used.
+`kit.chaseCam(cam, target, opts?)` sets ALL of the camera each frame — the eye AND the look-at — so
+the view actually tracks the target. `opts = { back=16, up=12, lookUp=1.5, faceYaw=false }`; set
+`faceYaw:true` to keep the camera behind the target's heading (`target.ry`). Reach for the raw fields
+only for a non-follow shot.
+
+`cam` is `{ x,y,z }` (the eye) plus `{ tx,ty,tz }` (the look-at point). If you set them by hand you
+MUST set BOTH — moving the eye while leaving `tx,ty,tz` unset pins the view to the world origin.
+If you omit the `camera` hook entirely, a game with a `state.player` gets a default chase cam; else a
+fixed 3/4 view.
 
 ## Sim helpers (same kit as 2D; the 3D-specific ones)
 - `kit.integrate3(e, dt, gravity=0)` — `y` is up; gravity pulls -y. Moves x/y/z by v*dt (dt handled).

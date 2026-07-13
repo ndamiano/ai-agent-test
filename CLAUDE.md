@@ -15,12 +15,14 @@ See `docs/ROADMAP.md` for status and `docs/codegen_rebuild_plan.md` for the plan
 
 ## How it works — codegen against a fat kit
 
-The model writes **real JavaScript game code**, not an intermediate representation. Two stages:
+The model writes **real TypeScript game code**, not an intermediate representation. Two stages:
 
 1. **Spec (stage 1, human-gated):** the chat model drafts a small design SPEC from the request
    (title / genre / entities / controls / mechanics / win-lose). The human reviews and **freezes** it.
 2. **Build (stage 2):** a non-LLM **executor** (`maestro/agent_loop.py`) drives the local model to
-   author and patch one `game.js` **against the primitive kit** until the local gates pass.
+   author and patch a **folder of TypeScript modules** (`game/main.ts` + system files, a `manifest.json`
+   contract) **against the primitive kit** until the local gates pass. Simple games are one file;
+   complex ones decompose by system (the model plans the file list first, authors one per step).
 
 **The fat-kit thesis:** breadth comes from the model COMPOSING primitives, not from N per-genre
 generators. Every hard/ambiguous mechanic (physics, collision, tilemaps, pathfinding, 3D) is a kit
@@ -32,14 +34,22 @@ draws; `draw(g, kit)` reads state and never mutates. So the sim runs **headless 
 deps** — the local gradient — and render is the only engine-specific layer. This carries 2D → 3D
 with no change to the gradient. Never violate it.
 
-**The local gradient (no frontier critic):** two pure-Node gates decide "done", not the model:
-- **headless** — step the sim N frames, catch crashes/divergence (NaN/Inf on any position/velocity).
-- **probe** — generic correctness invariants (controls actually move something; no entity rests
-  inside a solid tile; …), each violation carrying an actionable, units-aware diagnosis.
+**The local gradient (no frontier critic):** the gates decide "done", not the model, in order:
+- **typecheck** (`tsc --noEmit`) — the CONTRACT gate. Catches cross-file/type bugs (missing exports,
+  wrong data shapes, bad arg counts, kit misuse) BEFORE the game runs, with file:line attribution.
+  Games are checked against `runtime/engine.d.ts` (ambient kit types). This is the deterministic fix
+  for a whole class of silent cross-file bugs that no runtime gate can see.
+- **headless** — bundle (esbuild) then step the sim N frames, catch crashes/divergence.
+- **probe** — generic correctness invariants (controls actually move something; no entity rests in a
+  solid tile), each violation an actionable, units-aware diagnosis.
+- **render** — call `draw()` against a recording mock: catch draw-time crashes + blank screens.
+- **scroll** — a world bigger than the screen must be followed by a panning camera.
 
 "Done" = the artifact passes the gates, never the model claiming done. Each loop step rebuilds a
-minimal context from durable on-disk state (the frozen spec + the current `game.js` + the failing
-check's message), so context stays ~constant and the transcript is never used as memory.
+minimal context from durable on-disk state (the frozen spec + the failing file + the failing check's
+message), so context stays ~constant and the transcript is never used as memory. A fix rewrites
+exactly ONE file (bounded output), routed by the error's file attribution (tsc's file / a runtime
+crash's sourcemapped throw-site / a triage pick), so fixing one system can't drop another.
 
 ---
 
@@ -53,27 +63,31 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
   engine3d.js            run3d — three.js renderer; the model writes NO three.js, only pure 3D
                          sim + shape tags (box/sphere/ground) + an optional camera(cam,kit) hook.
   vendor/three.module.js vendored three.js (MIT, self-contained)
+  engine.d.ts            ambient TypeScript types for the kit (Kit/GameObject/Entity/World/Input/
+                         DrawApi/…) — games are type-checked against these; precise on the kit surface
+                         + module boundaries, entity FIELDS left open.
   kit_api.md             the injected 2D kit surface (load-bearing prompt input)
   kit_api_3d.md          the injected 3D kit surface
-  headless.mjs           node runner: step the sim, print a JSON verdict (crash/divergence)
-  probe.mjs              node runner: run the generic invariants, print violations
-  index.html             browser harness (routes config.mode==='3d' → run3d else run)
+  headless.mjs / probe.mjs / render.mjs / scroll.mjs   node runners for the four runtime gates
+  index.html             browser harness (loads games/<slug>/main.js bundle; 3D → run3d else run)
   games/, specs/         sample games + specs (fixtures/reference)
+  node_modules/          runtime toolchain (typescript + esbuild; gitignored)
 
 src/
   maestro/
     codegen/             THE build path (replaces the deleted IR):
-      gates.py           run_headless / run_probe — shell out to runtime/*.mjs. A game file imports
-                         nothing (the runner passes the kit), so it runs from any absolute path.
-      tools.py           write_game_file / read_game_file (the bounded write path)
-      module.py          CodegenModule = three Checks over one game.js, swept by the base Module:
-                         authored (blocking) → runs (headless) → plays (when_clean, probe). Each fix
-                         is a whole-body Check.run: ONE raw fenced-```js completion, then
-                         write_game_file. Rebuilt from durable state each step (current code + the
-                         failing check's message), so no transcript memory.
-      prompts/           spec_draft / author_game / fix_game .txt (one file per LLM call)
-      run.py             create_run / draft_spec / freeze / run_build + CLI
-                         `python -m maestro.codegen.run [--yes] "<request>"`
+      gates.py           typecheck (tsc → per-file errors) · build_bundle (esbuild main.ts → main.js
+                         + inline sourcemap) · run_headless/probe/render/scroll (build then run the
+                         bundle with --enable-source-maps, so a crash stack names the .ts source).
+      tools.py           write_game_file(code, file) / read_game_file (per-file .ts, path-safe)
+      module.py          CodegenModule = planned → authored → typechecks → runs → plays → renders →
+                         scrolls (blocking where noted). Each fix is a whole-body Check.run: ONE raw
+                         fenced-```ts completion for ONE file (routed by the error's file), then
+                         write_game_file. Rebuilt from durable state each step — no transcript memory.
+      prompts/           spec_draft · plan_game · author_file · fix_file · triage_fix .txt
+      run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
+                         `python -m maestro.codegen.run [--yes] "<request>"` and
+                         `--fix <run_id> "<what's wrong>"` (the human-note fix path)
     agent_loop.py        AgentLoop — the non-LLM executor that DRIVES the module(s): collect each
                          module's get_errors, subtract human waivers, pick the most urgent (error
                          TYPE human>build>fix, then priority, then check rank), ask the module for a
@@ -90,7 +104,7 @@ src/
                          No registry/engine/projection machinery — a module is instantiated directly.
       context.py         Context (durable per-step snapshot) + build_context + render_dict.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
-                         game.js, owner/waivers/…); the source of truth each step rebuilds from.
+                         game/ folder, owner/waivers/…); the source of truth each step rebuilds from.
     spec.py              Spec wrapper. run_control.py — cross-thread pause/resume signal channel.
     templating.py        render_template ({{include}} partials + {key} subst) — engine-neutral.
   agents/                MainAgent (chat persona) + agent_store, chat.json / summarizer.json

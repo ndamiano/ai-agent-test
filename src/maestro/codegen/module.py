@@ -85,12 +85,15 @@ def _detect_authored(check, module, context):
 
 
 def _detect_typechecks(check, module, context):
-    """`tsc --noEmit` against the kit types — the contract gate. Every error is TAGGED with the file
-    tsc blames (path=), so a wrong data shape / missing export / bad arg count routes the fix to the
-    exact file, before the game ever runs. This replaces the hand-rolled load/contract attribution:
-    tsc is the complete version, with real cross-file type inference."""
+    """`tsc --noEmit` against the kit types — the contract gate. Errors are GROUPED BY FILE and each
+    file's errors handed over together (path=file), so one rewrite fixes all of a file's type errors
+    at once instead of thrashing one line at a time. Routes to the exact file, before the game runs."""
+    by_file = {}
+    for f, msg in typecheck(context.state.run_dir):
+        by_file.setdefault(f, []).append(msg)
     return [Error(type=ErrorType.FIX, code="typechecks", component="game", path=f,
-                  message=f"{f}: {msg}") for f, msg in typecheck(context.state.run_dir)]
+                  message=f"{f} has {len(msgs)} type error(s):\n" + "\n".join(f"  - {m}" for m in msgs))
+            for f, msgs in by_file.items()]
 
 
 def _violations(result):

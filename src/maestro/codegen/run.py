@@ -105,8 +105,10 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
 
     failure = ("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is WRONG when a "
                f"person plays it. Fix exactly this:\n{note}")
-    target = _triage_file(infer, state.run_dir, failure)
-    _focused_fix(infer, spec, state.run_dir, target, failure, build_codegen_tools(state)["write_game_file"])
+    tools = build_codegen_tools(state)
+    dispatch = lambda name, args: tools[name](**args)   # _focused_fix calls dispatch(name, args)
+    target = _triage_file(infer, state.run_dir, failure, use_stack=False)   # a prose note isn't a stack trace
+    _focused_fix(infer, spec, state.run_dir, target, failure, dispatch)
     result = run_build(run_id, max_steps=max_steps)   # re-gate + auto-fix any regression the patch caused
     if result.ok:
         stage_for_play(state.run_dir, run_id)

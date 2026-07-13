@@ -191,17 +191,21 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
 _FILE_RE = re.compile(r"FILE:\s*([A-Za-z0-9_.-]+\.js)", re.I)
 
 
-def _triage_file(infer, run_dir, failure: str) -> str:
+def _triage_file(infer, run_dir, failure: str, use_stack: bool = True) -> str:
     """Pick the ONE file to fix. For a single-file game there's no choice; otherwise a cheap call
     over the manifest SIGNATURES (never the bodies) locates the culprit — so the heavy fix call only
-    ever loads one file, and a big game can't overflow the context into an empty response."""
+    ever loads one file, and a big game can't overflow the context into an empty response.
+    `use_stack` trusts a crash STACK naming exactly one non-main file (propagated frames name main
+    too); a prose human note is NOT a stack — pass False so the LLM reads the note and can pick
+    main.js (where wiring/input usually lives)."""
     files = game_files(run_dir)
     if len(files) <= 1:
         return next(iter(files), "main.js")
-    # A crash/stack trace usually names the file it threw in — trust that over a guess.
-    named = [n for n in files if n != "main.js" and re.search(rf"\b{re.escape(n)}\b", failure)]
-    if len(named) == 1:
-        return named[0]
+    if use_stack:
+        # A crash/stack trace usually names the file it threw in — trust that over a guess.
+        named = [n for n in files if n != "main.js" and re.search(rf"\b{re.escape(n)}\b", failure)]
+        if len(named) == 1:
+            return named[0]
     sigs = "\n".join(f"- {f['name']}: {f.get('purpose','')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
                      for f in _manifest_files(run_dir)) or "\n".join(f"- {n}" for n in files)
     system = (_PROMPTS / "triage_fix.txt").read_text(encoding="utf-8")

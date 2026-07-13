@@ -178,11 +178,29 @@ def _cli_fix(run_id: str, note: str) -> int:
     return 0 if result.ok else 1
 
 
+def _cli_assets(run_id: str) -> int:
+    from maestro.codegen.reskin import add_assets
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    print(f"skinning {run_id} with generated sprites\n")
+    out = add_assets(run_id)
+    got = out["generated"]
+    print(f"\nok={out['ok']}  sprites={len(out['sprites'])}  rendered={len(got)} {got}")
+    if not got:
+        print("  (no images rendered — is ComfyUI up? draw code + manifest still landed; re-run to fill pngs)")
+    if out["ok"]:
+        print(f"play: runtime/index.html?game={run_id}")
+    return 0 if out["ok"] else 1
+
+
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "--fix":
         if len(sys.argv) < 4:
             sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')
         sys.exit(_cli_fix(sys.argv[2], " ".join(sys.argv[3:])))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--assets":
+        if len(sys.argv) < 3:
+            sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')
+        sys.exit(_cli_assets(sys.argv[2]))
     args = [a for a in sys.argv[1:] if a != "--yes"]
     if not args:
         sys.exit('usage: python -m maestro.codegen.run [--yes] "<request>"   |   --fix <run_id> "<note>"')

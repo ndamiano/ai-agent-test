@@ -115,6 +115,12 @@ def stage_for_play(run_dir, slug: str) -> str:
     dst = RUNTIME_DIR / "games" / slug
     dst.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(bundle_path(run_dir), dst / ENTRY)
+    manifest = game_dir(run_dir) / "assets.json"   # the skin, if this run has been through the assets stage
+    if manifest.exists():
+        shutil.copyfile(manifest, dst / "assets.json")
+        src_assets = game_dir(run_dir) / "assets"
+        if src_assets.exists():
+            shutil.copytree(src_assets, dst / "assets", dirs_exist_ok=True)
     return f"index.html?game={slug}"
 
 

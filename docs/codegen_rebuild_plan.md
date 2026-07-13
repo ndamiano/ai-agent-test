@@ -85,19 +85,19 @@ Goal: each primitive family unlocks a game family. Build offline (frontend model
 - Each family: kit code + `kit_api` doc section + a worked example in the prompt + a probe invariant.
   Acceptance per family: local model authors a new genre in ≤5 rounds.
 
-## Phase 5 — Frontend / UX (chat → freeze → build → play)
-- **T5.1 Chat drafts the spec**, renders it for human review/edit at the freeze gate (reuse the
-  existing spec-freeze UI pattern).
-- **T5.2 Build progress** — stream rounds/gate verdicts to the UI (reuse the event bus).
-- **T5.3 Play in-app** — serve the built `game/` folder; iframe the runtime. Save/share later.
-- **T5.4 Per-game HITL edits** — "make the enemies slower" → a targeted patch round.
-
-## Phase 6 — Assets (skin the shapes)
-- **T6.1 Sprite stubs from the sim** — derive the asset set from entity shape tags (the
+## Phase 5 — Assets (skin the shapes)
+- **T5.1 Sprite stubs from the sim** — derive the asset set from entity shape tags (the
   reconcile-by-construction idea survives; retarget it off entities, not IR).
-- **T6.2 2D sprites** over placeholder rects/circles (existing comfyui pipeline).
-- **T6.3 3D meshes** for `box/sphere` entities (TRELLIS) — optional, hd2d-style.
-- **T6.4 Styled-prompt stage** — reuse the authored-description + brief → prompt template idea.
+- **T5.2 2D sprites** over placeholder rects/circles (existing comfyui pipeline).
+- **T5.3 3D meshes** for `box/sphere` entities (TRELLIS) — optional, hd2d-style.
+- **T5.4 Styled-prompt stage** — reuse the authored-description + brief → prompt template idea.
+
+## Phase 6 — Frontend / UX (chat → freeze → build → play)
+- **T6.1 Chat drafts the spec**, renders it for human review/edit at the freeze gate (reuse the
+  existing spec-freeze UI pattern).
+- **T6.2 Build progress** — stream rounds/gate verdicts to the UI (reuse the event bus).
+- **T6.3 Play in-app** — serve the built `game/` folder; iframe the runtime. Save/share later.
+- **T6.4 Per-game HITL edits** — "make the enemies slower" → a targeted patch round.
 
 ## Phase 7 — The "good" tier (deferred moonshot)
 The bent constraint. Not now, but the slot exists.
@@ -108,7 +108,8 @@ The bent constraint. Not now, but the slot exists.
 ---
 
 ## Sequencing & risks
-- **Order:** 1 → 2 → 3, then 4/5/6 in parallel. Never demolish (2) before the replacement (1) is proven.
+- **Order:** 1 → 2 → 3, then 4/5/6 in parallel (assets before frontend — a skinned game validates
+  via the runtime harness; the in-app UX is scaffolding). Never demolish (2) before (1) is proven.
 - **Risk: coherence ceiling.** Bigger games exceed a 30B's one-file coherence. Mitigation: decompose
   authoring (state→systems→render as separate steps) when one-shot's failure rate climbs — measure
   first, don't pre-build.

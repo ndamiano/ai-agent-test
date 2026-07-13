@@ -98,9 +98,12 @@ interface Kit {
   // particles
   burst(world: World, x: number, y: number, n?: number, opts?: BurstOpts): void;
   stepParticles(world: World, dt: number): void;
-  // camera / audio / end
+  // camera / audio / assets / end
   makeCamera(): Camera;
   audio: { play(name?: string): void };
+  // The skin: returns the preloaded sprite image for an entity's `sprite` id, or null if no
+  // asset was generated (headless, or an unskinned game) — draw the placeholder shape then.
+  sprite(id: string): unknown;
   win(msg?: string): void;
   lose(msg?: string): void;
   readonly over: null | { won: boolean; msg: string };

@@ -22,9 +22,17 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
 - **Phase 2 (DONE):** demolished the IR — deleted `renpy/`, `godot/`, the IR (`ir_assemble`/
   `ir_crossref`/schema), every mechanic module, and their tests; kept the `Module`/`Check`/`Error`
   ABC + `AgentLoop` + `Services`. The `api/` build endpoints still call the old entry points lazily
-  (retargeted in Phase 5).
-- **Next:** Phase 3 harden the probe → Phase 4 widen the kit → Phase 5 frontend (retarget `api/` to
-  codegen) → Phase 6 assets → Phase 7 the "good" tier (deferred cloud play-critic).
+  (retargeted in Phase 6).
+- **Phase 5 assets (IN PROGRESS):** skin the placeholder shapes. A post-build reskin stage
+  (`maestro/codegen/reskin.py`, CLI `--assets <run_id>`) plans a sprite set from the spec + source,
+  rewrites the draw code to prefer `kit.sprite(id)` with the shape as fallback, re-gates, then renders
+  the sprites (ComfyUI) into `game/assets/` + `assets.json`; the runtime preloads them. Purely
+  additive — a run with no images still passes every gate and renders as shapes. 2D sprites done
+  (validated end-to-end sans live ComfyUI); 3D meshes (TRELLIS) + styled-prompt stage pending.
+  *(Swapped ahead of frontend: a skinned game validates via the runtime harness; in-app UX is
+  scaffolding.)*
+- **Next:** Phase 3 harden the probe → Phase 4 widen the kit → finish Phase 5 assets → Phase 6
+  frontend (retarget `api/` to codegen) → Phase 7 the "good" tier (deferred cloud play-critic).
 
 ---
 

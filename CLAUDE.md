@@ -60,6 +60,8 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
   engine.js              kit v1: rng, vec math, entities/spawn/cull, integrate(+3), aabb,
                          tilemap, walk/jump/physics, camera, input, run() (browser 2D),
                          simulate() (headless sim), probe() (invariants). integrate3 + z for 3D.
+                         run() preloads the game's assets.json sprites; kit.sprite(id) → the loaded
+                         image or null (null headless ⇒ the game draws its shape).
   engine3d.js            run3d — three.js renderer; the model writes NO three.js, only pure 3D
                          sim + shape tags (box/sphere/ground) + an optional camera(cam,kit) hook.
   vendor/three.module.js vendored three.js (MIT, self-contained)
@@ -85,6 +87,10 @@ src/
                          fenced-```ts completion for ONE file (routed by the error's file), then
                          write_game_file. Rebuilt from durable state each step — no transcript memory.
       prompts/           spec_draft · plan_game · author_file · fix_file · triage_fix .txt
+      reskin.py          the ASSETS stage (skin the shapes): plan a sprite set from spec+source →
+                         rewrite draw code to prefer kit.sprite(id) w/ shape fallback → re-gate →
+                         render sprites (ComfyUI) into game/assets/ + assets.json. Additive: no
+                         images ⇒ still passes gates, renders as shapes. CLI `--assets <run_id>`.
       run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
                          `python -m maestro.codegen.run [--yes] "<request>"` and
                          `--fix <run_id> "<what's wrong>"` (the human-note fix path)

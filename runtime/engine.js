@@ -298,6 +298,7 @@ function makeDraw(ctx) {
 // ── the runner: shared control surface the kit hands the game ─────────────────
 export function makeKit(config, rng) {
   let over = null; // null | {won:bool, msg}
+  let sprites = {}; // id -> loaded Image; empty headless (kit.sprite always null -> game falls to shapes)
   return {
     config,
     rng,
@@ -306,6 +307,8 @@ export function makeKit(config, rng) {
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     audio: { play: () => {} }, // stub; real backend wired later
+    sprite: (id) => sprites[id] || null,
+    _setSprites(map) { sprites = map || {}; },
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
     lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },
     get over() { return over; },
@@ -313,8 +316,29 @@ export function makeKit(config, rng) {
   };
 }
 
+// Preload the game's sprite assets (assets.json in the game folder) into a {id: Image} map.
+// Browser-only; a missing/empty manifest yields {} so every kit.sprite(id) returns null and the
+// game renders its placeholder shapes — assets are a pure skin over a game that already runs.
+async function loadSprites(assetBase) {
+  if (!assetBase) return {};
+  let manifest;
+  try {
+    const res = await fetch(`${assetBase}/assets.json`);
+    if (!res.ok) return {};
+    manifest = await res.json();
+  } catch { return {}; }
+  const sprites = manifest && Array.isArray(manifest.sprites) ? manifest.sprites : [];
+  const entries = await Promise.all(sprites.map((s) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve([s.id, img]);
+    img.onerror = () => resolve(null);
+    img.src = `${assetBase}/${s.file}`;
+  })));
+  return Object.fromEntries(entries.filter(Boolean));
+}
+
 // ── browser entry: run a real animation loop with real input + canvas ────────
-export function run(game, canvas) {
+export async function run(game, canvas, assetBase) {
   const g = typeof game === "function" ? game(null) : game;
   const config = { width: 640, height: 480, background: "#111", gravity: 0, ...(g.config || {}) };
   canvas.width = config.width; canvas.height = config.height;
@@ -323,6 +347,7 @@ export function run(game, canvas) {
   const input = makeInput();
   const rng = makeRng(config.seed || 1);
   const kit = makeKit(config, rng);
+  kit._setSprites(await loadSprites(assetBase));
 
   const keymap = (e) => e.key.length === 1 ? e.key.toLowerCase() : e.key;
   addEventListener("keydown", (e) => input._set(keymap(e), true));

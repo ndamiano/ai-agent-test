@@ -21,6 +21,6 @@
     run3d(factory, canvas);
   } else {
     const { run } = await import("./engine.js");
-    run(factory, canvas);
+    run(factory, canvas, `./games/${name}`);
   }
 </script>

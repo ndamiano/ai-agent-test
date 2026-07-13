@@ -51,15 +51,31 @@ def _manifest_files(run_dir) -> list:
     return [f for f in (read_manifest(run_dir).get("files") or []) if f.get("name")]
 
 
-def _sibling_lines(files: list, exclude: str) -> str:
-    """The importable surface of the OTHER files (name + exports + purpose) — the contract a file is
-    authored against, without dumping any sibling's body."""
+_SIG_RE = re.compile(
+    r"^export\s+(?:async\s+)?function\s+[^\n{]+"           # export function foo(a: T): R
+    r"|^export\s+(?:interface|type|enum)\s+[^\n{=]+"       # export interface/type/enum X …
+    r"|^export\s+(?:const|let)\s+[A-Za-z0-9_]+[^\n=]*",    # export const X: T
+    re.M)
+
+
+def _sibling_lines(run_dir, exclude: str) -> str:
+    """The importable surface of the OTHER files — their real TYPED signatures (not just export
+    names), extracted from each sibling's source, so a caller knows the exact parameters/types to
+    pass. Falls back to the manifest's export names for a file not yet on disk (authoring phase)."""
+    files = game_files(run_dir)
+    manifest = {f["name"]: f for f in _manifest_files(run_dir)}
     out = []
-    for f in files:
-        if f["name"] == exclude:
+    for name in sorted(set(files) | set(manifest)):
+        if name == exclude:
             continue
-        exports = ", ".join(f.get("exports") or []) or "(none)"
-        out.append(f"- ./{f['name']} — {f.get('purpose', '')} — exports: {exports}")
+        purpose = manifest.get(name, {}).get("purpose", "")
+        sigs = _SIG_RE.findall(files.get(name, ""))
+        if sigs:
+            out.append(f"// ./{name} — {purpose}\n" +
+                       "\n".join(f"  {s.strip().rstrip('{')}".rstrip() for s in sigs[:25]))
+        else:
+            exports = ", ".join(manifest.get(name, {}).get("exports") or []) or "(none)"
+            out.append(f"// ./{name} — {purpose} — exports: {exports}")
     return "\n".join(out) or "(none)"
 
 
@@ -175,7 +191,7 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
         f"# KIT API\n{_kit_doc(spec)}",
         _design_block(spec),
         f"# THIS FILE: {me['name']}\npurpose: {me.get('purpose','')}\nmust export: {', '.join(me.get('exports') or []) or '(none)'}",
-        f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(files, me['name'])}",
+        f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}",
         f"Write ./{me['name']} now. Output ONLY one ```js block.",
     ])
     code = extract_code(_infer(services, system, user, _CODE_MAX_TOKENS))
@@ -219,7 +235,7 @@ def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, incl
     truncation on a big file. Bounded input AND output, so the model returns a complete file."""
     files = game_files(run_dir)
     body = files.get(target, "")
-    siblings = _sibling_lines(_manifest_files(run_dir), target)
+    siblings = _sibling_lines(run_dir, target)
     parts = [f"# KIT API\n{_kit_doc(spec)}"] if include_kit else []
     parts.append(f"# FILE TO FIX: {target}\n```ts\n{body}\n```")
     # main.ts owns state+wiring; types.ts owns the shared shapes — most cross-file bugs are a

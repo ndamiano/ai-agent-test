@@ -121,3 +121,10 @@ interface GameObject {
   draw?(g: DrawApi, kit: Kit): void;
   camera?(cam: Camera3, kit: Kit): void;
 }
+
+// Also expose the kit types under a `Kit` namespace, so a game can `extends Kit.Entity` /
+// `Kit.Config` (declaration merging with the `Kit` interface above). Both `Entity` and `Kit.Entity`
+// name the same type — supports the natural "extend the kit's entity with my fields" pattern.
+declare namespace Kit {
+  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, DrawApi, Camera, Camera3, Rng, V, GameObject };
+}

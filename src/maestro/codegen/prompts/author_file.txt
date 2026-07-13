@@ -4,16 +4,19 @@ Rules:
 - Output ONLY a single ```ts block — no prose, no other files.
 - Write exactly the file named below; export exactly the functions/types it must export.
 - This is TypeScript. ANNOTATE every exported function's parameters and return type. The kit types
-  are AMBIENT GLOBALS — use them directly, NEVER import them and NEVER redefine them: `Kit`, `Entity`,
-  `World` (= Entity[]), `Input`, `DrawApi`, `Camera`, `Vec2`, `Vec3`, `GameObject`, `Config`, `Rect`,
-  `Tilemap`. `Entity` already has an open index signature, so `e.type`, `e.hp`, `e.color` are all
-  allowed — put your gameplay fields right on entities. Do NOT declare your own `Entity`/`Kit`/etc.
+  are AMBIENT GLOBALS — use them directly, never IMPORT them: `Kit`, `Entity`, `World` (= Entity[]),
+  `Input`, `DrawApi`, `Camera`, `Vec2`, `Vec3`, `GameObject`, `Config`, `Rect`, `Tilemap`. They also
+  live under a `Kit.` namespace (`Kit.Entity`, `Kit.Config`).
+- To add typed gameplay fields, EXTEND the kit type in types.ts — do NOT redefine it from scratch:
+  `export interface Enemy extends Kit.Entity { hp: number; kind: "goblin" | "orc" }`. `Entity`
+  already has an open index signature, so `e.type`/`e.hp` also work without extending. Either is fine.
 - Import shared shapes + sibling exports from their files: `import type { GameState } from "./types.ts"`,
   `import { movePlayer } from "./player.ts"` (relative paths, `.ts` extension, ONLY the listed
   exports). Do NOT invent exports.
-- If this is `types.ts`: export ONLY NEW game-specific shared types (the tile map's element type, a
-  GameState interface, quest/item shapes) — never re-declare an ambient kit type. Be concrete: a map
-  of `"#"|"."` chars is `export type Tile = "#" | "."; export type TileMap = Tile[][]` — NOT `any`.
+- If this is `types.ts`: export the shared game types — a `GameState` interface (it MUST declare
+  EVERY field any file reads/writes on state), tile/item/entity shapes (extend `Kit.Entity` for typed
+  entities). Be concrete: a map of `"#"|"."` chars is `export type Tile = "#" | ".";
+  export type TileMap = Tile[][]` — NOT `any`. Do not re-declare an ambient type from scratch; extend it.
 - If this is `main.ts`: `export function createGame(kit: Kit): GameObject` (GameObject is NOT
   generic — never write `GameObject<...>`) returning { config, state, init, update, draw }; keep ALL
   state in `this.state`; call the other systems from update/draw (thread `kit` + `this.state`). Do

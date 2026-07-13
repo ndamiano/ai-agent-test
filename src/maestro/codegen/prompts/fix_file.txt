@@ -10,11 +10,13 @@ Rules:
 - If the failure is a `tsc` type error, fix the TYPE mismatch it names (a wrong data shape, a missing
   export, a bad argument) — make this file agree with the shared types and the siblings' signatures.
 - Keep real type annotations. The kit types (Kit, Entity, World, Input, DrawApi, Camera, Vec2,
-  GameObject, Config, Rect, Tilemap) are AMBIENT GLOBALS — use them directly, NEVER import them and
-  NEVER redefine them. `Entity` has an open index signature, so `e.type`/`e.hp`/etc. are allowed.
-  Import only your OWN types from ./types.ts and sibling functions from their files. If a type error
-  says a member is missing from ./types.ts, you're probably importing an ambient type by mistake —
-  drop that import. Do not paper over a type error by widening to `any`.
+  GameObject, Config, Rect, Tilemap) are AMBIENT GLOBALS — use them directly, never IMPORT them (they
+  also live under `Kit.`, e.g. `Kit.Entity`). You MAY extend one for typed fields
+  (`interface Enemy extends Kit.Entity {...}`) but do not redefine it from scratch. Import only your
+  OWN types from ./types.ts. If a type error says a member is missing from ./types.ts, either you
+  imported an ambient type by mistake (drop that import) or the shared `GameState`/type in types.ts is
+  missing a field the code uses — if so this file's error is fixed by adding that field to types.ts.
+  Do not paper over a type error by widening to `any`.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates, velocities are
   px/SECOND, randomness only via `kit.rng`.
 - Fix the failure with the smallest change that works; keep everything else in the file intact.

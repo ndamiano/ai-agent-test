@@ -14,9 +14,12 @@ Rules:
 - If this is `types.ts`: export ONLY NEW game-specific shared types (the tile map's element type, a
   GameState interface, quest/item shapes) — never re-declare an ambient kit type. Be concrete: a map
   of `"#"|"."` chars is `export type Tile = "#" | "."; export type TileMap = Tile[][]` — NOT `any`.
-- If this is `main.ts`: `export function createGame(kit: Kit): GameObject` returning { config, state,
-  init, update, draw }; keep ALL state in `this.state`; call the other systems from update/draw
-  (thread `kit` + `this.state`). Do NOT reimplement a system that has its own file.
+- If this is `main.ts`: `export function createGame(kit: Kit): GameObject` (GameObject is NOT
+  generic — never write `GameObject<...>`) returning { config, state, init, update, draw }; keep ALL
+  state in `this.state`; call the other systems from update/draw (thread `kit` + `this.state`). Do
+  NOT reimplement a system that has its own file. If you type the state via a `GameState` from
+  types.ts, that interface MUST declare EVERY field you read/write anywhere (player, enemies, score,
+  gameOver, …) — a missing field is a type error.
 - If this is a system file: export typed functions taking the state (+ dt/input/kit/g as needed)
   that either mutate state (update-side) or draw (render-side) — never both.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates; velocities are

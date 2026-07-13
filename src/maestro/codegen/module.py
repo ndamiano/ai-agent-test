@@ -222,9 +222,13 @@ def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, incl
     siblings = _sibling_lines(_manifest_files(run_dir), target)
     parts = [f"# KIT API\n{_kit_doc(spec)}"] if include_kit else []
     parts.append(f"# FILE TO FIX: {target}\n```ts\n{body}\n```")
-    if target != "main.ts" and "main.ts" in files:
-        parts.append(f"# main.ts (owns state + calls this file — agree with it; do NOT rewrite it)\n"
-                     f"```ts\n{files['main.ts']}\n```")
+    # main.ts owns state+wiring; types.ts owns the shared shapes — most cross-file bugs are a
+    # mismatch against one of them, and a "property missing on GameState" error reported in one file
+    # is often FIXED in types.ts. Show both (read-only) so the fixer can align to them.
+    for ctx_file in ("main.ts", "types.ts"):
+        if ctx_file != target and ctx_file in files:
+            parts.append(f"# {ctx_file} (read-only context — agree with it; do NOT rewrite it)\n"
+                         f"```ts\n{files[ctx_file]}\n```")
     parts += [
         f"# OTHER FILES you may import (signatures only — do NOT rewrite these)\n{siblings}",
         f"# FAILURE\n{failure}",
@@ -246,8 +250,9 @@ def _patch_file_fix(module, context, error, slot, services, dispatch):
     # A check that already knows the culprit file (linked/authored) sets error.path — trust it over
     # a triage guess; only a bare gate failure (probe/render/scroll) needs triage to locate the file.
     target = error.path or _triage_file(infer, context.state.run_dir, error.message)
-    result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch,
-                          include_kit=(error.code != "typechecks"))
+    # Always include the kit API: a type error is often kit MISUSE (wrong arg count / shape) that
+    # needs the kit signatures to fix.
+    result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch)
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"patched {target}: {detail}")
 

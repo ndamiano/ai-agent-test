@@ -88,8 +88,13 @@ Goal: each primitive family unlocks a game family. Build offline (frontend model
 ## Phase 5 — Assets (skin the shapes)
 - **T5.1 Sprite stubs from the sim** — derive the asset set from entity shape tags (the
   reconcile-by-construction idea survives; retarget it off entities, not IR).
-- **T5.2 2D sprites** over placeholder rects/circles (existing comfyui pipeline).
-- **T5.3 3D meshes** for `box/sphere` entities (TRELLIS) — optional, hd2d-style.
+- **T5.2 2D sprites** (DONE) over placeholder rects/circles: `reskin.py` plans a sprite set, rewrites
+  draw to prefer `kit.sprite(id)` w/ shape fallback, re-gates, renders (ComfyUI).
+- **T5.3 3D meshes** (DONE) for `box/sphere` entities: `reskin.py` (mode-dispatched) plans meshes,
+  tags entities `mesh:"id"`, renders an image (ComfyUI) → GLB (TRELLIS); `engine3d` preloads the GLBs
+  (vendored GLTFLoader) and scales each to its entity box, primitive-shape fallback. Additive.
+- **Render res** (DONE) — bumped 2D→960×540, 3D→1280×720, canvas fills the browser window (aspect-
+  preserved letterbox); pointer maps back to game coords.
 - **T5.4 Styled-prompt stage** — reuse the authored-description + brief → prompt template idea.
 
 ## Phase 6 — Frontend / UX (chat → freeze → build → play)

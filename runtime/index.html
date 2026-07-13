@@ -2,8 +2,8 @@
 <meta charset="utf-8">
 <title>Maestro runtime</title>
 <style>
-  body { margin: 0; background: #060608; display: grid; place-items: center; height: 100vh; }
-  canvas { border: 1px solid #222; }
+  body { margin: 0; background: #060608; display: grid; place-items: center; height: 100vh; overflow: hidden; }
+  canvas { display: block; }
 </style>
 <canvas id="screen"></canvas>
 <script type="module">
@@ -18,7 +18,7 @@
   const canvas = document.getElementById("screen");
   if (is3d) {
     const { run3d } = await import("./engine3d.js");
-    run3d(factory, canvas);
+    run3d(factory, canvas, `./games/${name}`);
   } else {
     const { run } = await import("./engine.js");
     run(factory, canvas, `./games/${name}`);

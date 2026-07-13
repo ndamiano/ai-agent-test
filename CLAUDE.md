@@ -64,7 +64,9 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          image or null (null headless ⇒ the game draws its shape).
   engine3d.js            run3d — three.js renderer; the model writes NO three.js, only pure 3D
                          sim + shape tags (box/sphere/ground) + an optional camera(cam,kit) hook.
-  vendor/three.module.js vendored three.js (MIT, self-contained)
+                         Preloads assets.json meshes; an entity's `mesh` id → the loaded GLB
+                         (recentered + scaled to its box), else the primitive shape. Fills the window.
+  vendor/three.module.js vendored three.js (MIT, self-contained) + GLTFLoader.js (+BufferGeometryUtils)
   engine.d.ts            ambient TypeScript types for the kit (Kit/GameObject/Entity/World/Input/
                          DrawApi/…) — games are type-checked against these; precise on the kit surface
                          + module boundaries, entity FIELDS left open.
@@ -87,10 +89,11 @@ src/
                          fenced-```ts completion for ONE file (routed by the error's file), then
                          write_game_file. Rebuilt from durable state each step — no transcript memory.
       prompts/           spec_draft · plan_game · author_file · fix_file · triage_fix .txt
-      reskin.py          the ASSETS stage (skin the shapes): plan a sprite set from spec+source →
-                         rewrite draw code to prefer kit.sprite(id) w/ shape fallback → re-gate →
-                         render sprites (ComfyUI) into game/assets/ + assets.json. Additive: no
-                         images ⇒ still passes gates, renders as shapes. CLI `--assets <run_id>`.
+      reskin.py          the ASSETS stage (skin the shapes), mode-dispatched: 2D → plan sprites →
+                         rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
+                         3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
+                         (TRELLIS). Both re-gate then write game/assets/ + assets.json. Additive: no
+                         asset ⇒ still passes gates, renders as shapes. CLI `--assets <run_id>`.
       run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
                          `python -m maestro.codegen.run [--yes] "<request>"` and
                          `--fix <run_id> "<what's wrong>"` (the human-note fix path)

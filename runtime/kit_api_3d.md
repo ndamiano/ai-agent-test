@@ -7,7 +7,7 @@ You write PURE simulation — mutate entity positions in 3D — and TAG each ent
 ```js
 export function createGame(kit) {
   return {
-    config: { mode: "3d", width: 800, height: 600, background: "#101018", seed: 1 },
+    config: { mode: "3d", width: 1280, height: 720, background: "#101018", seed: 1 },
     state:  { world: [] },
     init(kit)              { },   // spawn entities into state.world (each tagged with a shape)
     update(dt, input, kit) { },   // advance the sim: mutate e.x,e.y,e.z,e.vx,e.vy,e.vz. NO rendering.

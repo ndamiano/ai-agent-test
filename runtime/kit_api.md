@@ -6,7 +6,7 @@ The game object has this exact shape:
 ```js
 export function createGame(kit) {
   return {
-    config: { width: 640, height: 480, title: "", background: "#111", gravity: 0, seed: 1 },
+    config: { width: 960, height: 540, title: "", background: "#111", gravity: 0, seed: 1 },
     state:  { world: [] },          // anything; put entities in state.world (or state.entities)
     init(kit)              { },      // one-time setup; spawn entities into state.world
     update(dt, input, kit) { },      // advance the sim ONE step (dt = seconds). NEVER draw here.

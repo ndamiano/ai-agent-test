@@ -181,12 +181,15 @@ def _cli_fix(run_id: str, note: str) -> int:
 def _cli_assets(run_id: str) -> int:
     from maestro.codegen.reskin import add_assets
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    print(f"skinning {run_id} with generated sprites\n")
+    print(f"skinning {run_id} with generated assets\n")
     out = add_assets(run_id)
     got = out["generated"]
-    print(f"\nok={out['ok']}  sprites={len(out['sprites'])}  rendered={len(got)} {got}")
+    planned = out.get("meshes") if out["mode"] == "3d" else out.get("sprites")
+    kind = "meshes" if out["mode"] == "3d" else "sprites"
+    print(f"\nok={out['ok']}  mode={out['mode']}  {kind}={len(planned)}  rendered={len(got)} {got}")
     if not got:
-        print("  (no images rendered — is ComfyUI up? draw code + manifest still landed; re-run to fill pngs)")
+        backend = "ComfyUI + TRELLIS" if out["mode"] == "3d" else "ComfyUI"
+        print(f"  (nothing rendered — is {backend} up? tags + manifest still landed; re-run to fill)")
     if out["ok"]:
         print(f"play: runtime/index.html?game={run_id}")
     return 0 if out["ok"] else 1

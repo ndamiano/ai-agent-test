@@ -337,11 +337,26 @@ async function loadSprites(assetBase) {
   return Object.fromEntries(entries.filter(Boolean));
 }
 
+// Scale the canvas to fill the browser window, preserving its aspect (letterboxed). The backing
+// store (canvas.width/height) is untouched — the game keeps drawing in its own coordinate space and
+// the browser upscales — so this is a pure display change, no gameplay impact.
+export function fitToWindow(canvas, aspect) {
+  const fit = () => {
+    let w = innerWidth, h = w / aspect;
+    if (h > innerHeight) { h = innerHeight; w = h * aspect; }
+    canvas.style.width = `${Math.round(w)}px`;
+    canvas.style.height = `${Math.round(h)}px`;
+  };
+  addEventListener("resize", fit);
+  fit();
+}
+
 // ── browser entry: run a real animation loop with real input + canvas ────────
 export async function run(game, canvas, assetBase) {
   const g = typeof game === "function" ? game(null) : game;
-  const config = { width: 640, height: 480, background: "#111", gravity: 0, ...(g.config || {}) };
+  const config = { width: 960, height: 540, background: "#111", gravity: 0, ...(g.config || {}) };
   canvas.width = config.width; canvas.height = config.height;
+  fitToWindow(canvas, config.width / config.height);
   const ctx = canvas.getContext("2d");
   const draw = makeDraw(ctx);
   const input = makeInput();
@@ -354,7 +369,9 @@ export async function run(game, canvas, assetBase) {
   addEventListener("keyup", (e) => input._set(keymap(e), false));
   canvas.addEventListener("mousemove", (e) => {
     const r = canvas.getBoundingClientRect();
-    input.pointer.x = e.clientX - r.left; input.pointer.y = e.clientY - r.top;
+    // rect is the scaled display box; map the pointer back into backing (game) coordinates.
+    input.pointer.x = (e.clientX - r.left) * (canvas.width / r.width);
+    input.pointer.y = (e.clientY - r.top) * (canvas.height / r.height);
   });
   canvas.addEventListener("mousedown", () => { input.pointer.down = true; });
   addEventListener("mouseup", () => { input.pointer.down = false; });

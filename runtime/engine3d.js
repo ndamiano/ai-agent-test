@@ -14,6 +14,7 @@
 //   camera(cam, kit)  // set cam.x/y/z (eye) and cam.tx/ty/tz (look-at) each frame; else a default 3/4 view
 
 import * as THREE from "./vendor/three.module.js";
+import { GLTFLoader } from "./vendor/GLTFLoader.js";
 import { makeKit, makeInput, makeRng } from "./engine.js";
 
 function worldOf(g) {
@@ -21,7 +22,49 @@ function worldOf(g) {
     : Array.isArray(g.state.entities) ? g.state.entities : [])) || [];
 }
 
-function buildMesh(e) {
+// Preload the game's meshes (assets.json `meshes: [{id,file}]`) into an {id: THREE.Object3D} map.
+// A missing/empty manifest yields {} so every entity falls back to its primitive shape — meshes are
+// a pure skin over a game that already renders as boxes/spheres, exactly like 2D sprites.
+async function loadMeshes(assetBase) {
+  if (!assetBase) return {};
+  let manifest;
+  try {
+    const res = await fetch(`${assetBase}/assets.json`);
+    if (!res.ok) return {};
+    manifest = await res.json();
+  } catch { return {}; }
+  const meshes = manifest && Array.isArray(manifest.meshes) ? manifest.meshes : [];
+  const loader = new GLTFLoader();
+  const entries = await Promise.all(meshes.map((m) =>
+    loader.loadAsync(`${assetBase}/${m.file}`).then(
+      (gltf) => [m.id, gltf.scene],
+      () => null)));
+  return Object.fromEntries(entries.filter(Boolean));
+}
+
+// Skin an entity with its preloaded GLB (recentered + scaled to the entity's placeholder box), or
+// fall back to the primitive shape. The GLB is nested under a pivot so the sim's position/yaw still
+// apply at the entity's center regardless of the model's own origin.
+function skinnedMesh(model, e) {
+  const inst = model.clone(true);
+  const box = new THREE.Box3().setFromObject(inst);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  inst.position.sub(center);  // recenter the model on the pivot origin (in model units, pre-scale)
+  const pivot = new THREE.Group();
+  pivot.add(inst);
+  const s = (n, d) => (d > 1e-6 ? n / d : 1);
+  if (e.shape === "sphere") {
+    const u = s(2 * (e.r || 1), Math.max(size.x, size.y, size.z));
+    pivot.scale.setScalar(u);
+  } else {
+    pivot.scale.set(s(e.w || 1, size.x), s(e.h || 1, size.y), s(e.d || 1, size.z));
+  }
+  return pivot;
+}
+
+function buildMesh(e, meshes) {
+  if (e.mesh && meshes[e.mesh] && e.shape !== "ground") return skinnedMesh(meshes[e.mesh], e);
   const color = e.color || "#cccccc";
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.05 });
   let geo;
@@ -34,16 +77,26 @@ function buildMesh(e) {
   return new THREE.Mesh(geo, mat);
 }
 
-export function run3d(game, canvas) {
+export async function run3d(game, canvas, assetBase) {
   const g = typeof game === "function" ? game(null) : game;
-  const config = { width: 800, height: 600, background: "#101018", ...(g.config || {}) };
-  canvas.width = config.width; canvas.height = config.height;
+  const config = { width: 1280, height: 720, background: "#101018", ...(g.config || {}) };
+  const aspect = config.width / config.height;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setSize(config.width, config.height, false);
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(config.background);
-  const camera = new THREE.PerspectiveCamera(60, config.width / config.height, 0.1, 5000);
+  const camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 5000);
+
+  // Fill the window (letterboxed to the config aspect); 3D renders at the display size so it stays
+  // crisp — unlike 2D there is no fixed backing to preserve.
+  const fit = () => {
+    let w = innerWidth, h = w / aspect;
+    if (h > innerHeight) { h = innerHeight; w = h * aspect; }
+    renderer.setSize(w, h);
+  };
+  addEventListener("resize", fit);
+  fit();
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.55));
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -58,22 +111,23 @@ export function run3d(game, canvas) {
   addEventListener("keydown", (e) => { input._set(keymap(e), true); if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault(); });
   addEventListener("keyup", (e) => input._set(keymap(e), false));
 
+  const assets = await loadMeshes(assetBase);   // {id: GLB scene}; {} when unskinned → primitives
   if (g.init) g.init(kit);
 
-  const meshes = new Map();   // entity -> THREE.Mesh
+  const nodes = new Map();   // entity -> THREE.Object3D
   function sync() {
     const live = new Set();
     for (const e of worldOf(g)) {
       if (!e.shape) continue;
       live.add(e);
-      let m = meshes.get(e);
-      if (!m) { m = buildMesh(e); scene.add(m); meshes.set(e, m); }
+      let m = nodes.get(e);
+      if (!m) { m = buildMesh(e, assets); scene.add(m); nodes.set(e, m); }
       if (e.shape !== "ground") {
         m.position.set(e.x || 0, e.y || 0, e.z || 0);
         if (e.ry != null) m.rotation.y = e.ry;
       }
     }
-    for (const [e, m] of meshes) if (!live.has(e)) { scene.remove(m); meshes.delete(e); }
+    for (const [e, m] of nodes) if (!live.has(e)) { scene.remove(m); nodes.delete(e); }
   }
 
   const banner = document.createElement("div");

@@ -1,0 +1,21 @@
+You are skinning ONE TypeScript file of a 3D game that already runs and passes its gates. Meshes have
+been generated for the game's entity kinds. Each world entity is a plain object tagged with a shape,
+e.g. `{ shape: "box", x, y, z, w, h, d, color }` or `{ shape: "sphere", x, y, z, r, color }`. Add a
+`mesh: "<id>"` field to each entity of a listed kind. The runtime swaps in the GLB when it is loaded
+and falls back to the primitive shape when it is not — so this is purely additive.
+
+You get the available mesh ids and the file's current source.
+
+Rules:
+- Output ONLY one ```ts block — the file's COMPLETE new source. The ONLY change you make is inserting
+  a `mesh: "<id>"` field into entity object literals (next to their `shape`/`color`).
+- Match each entity to its kind by how the code names/groups it (the object pushed as the player gets
+  `mesh: "player"`; each object pushed into the slimes list gets `mesh: "slime"`; each crystal gets
+  `mesh: "crystal"`). Use ONLY the mesh ids listed below.
+- Do NOT tag the `ground` entity, and do NOT tag entities whose kind has no listed id — leave them
+  exactly as is.
+- Do not touch update/sim code, positions, velocities, sizes (w/h/d/r), colors, imports, exports,
+  types, camera, or spawn counts. Change nothing but the added `mesh` fields. Honor the kit laws.
+- If this file constructs no entity of a listed kind, return it UNCHANGED.
+
+Rewrite the file now.

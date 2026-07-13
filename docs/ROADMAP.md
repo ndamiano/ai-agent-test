@@ -27,8 +27,10 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   (`maestro/codegen/reskin.py`, CLI `--assets <run_id>`) plans a sprite set from the spec + source,
   rewrites the draw code to prefer `kit.sprite(id)` with the shape as fallback, re-gates, then renders
   the sprites (ComfyUI) into `game/assets/` + `assets.json`; the runtime preloads them. Purely
-  additive — a run with no images still passes every gate and renders as shapes. 2D sprites done
-  (validated end-to-end sans live ComfyUI); 3D meshes (TRELLIS) + styled-prompt stage pending.
+  additive — a run with no images still passes every gate and renders as shapes. Mode-dispatched:
+  3D games instead plan meshes, tag entities `mesh:"id"`, render an image (ComfyUI) → GLB (TRELLIS),
+  which `engine3d` preloads + scales to each entity's box. 2D sprites + 3D meshes done; also bumped
+  render to 16:9 HD filling the window. Styled-prompt stage pending.
   *(Swapped ahead of frontend: a skinned game validates via the runtime harness; in-app UX is
   scaffolding.)*
 - **Next:** Phase 3 harden the probe → Phase 4 widen the kit → finish Phase 5 assets → Phase 6

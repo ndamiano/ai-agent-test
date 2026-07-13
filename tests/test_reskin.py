@@ -100,3 +100,86 @@ def test_stage_copies_skin_when_present(tmp_path):
     finally:
         import shutil
         shutil.rmtree(RUNTIME_DIR / "games" / slug, ignore_errors=True)
+
+
+# ── 3D mesh path ──────────────────────────────────────────────────────────────
+
+def _write_3d_game(tmp_path):
+    d = tmp_path / "game"
+    d.mkdir(exist_ok=True)
+    (d / "main.ts").write_text(
+        "export function createGame(kit: Kit): GameObject {\n"
+        "  return { config: { mode: \"3d\", width: 1280, height: 720 },\n"
+        "    state: { world: [] as any[] },\n"
+        "    init(kit) { this.state.world.push({ shape: \"box\", x:0,y:1,z:0, w:1,h:2,d:1, color:'#fff' }); },\n"
+        "    update(dt, input, kit) {}, draw(g, kit) {} };\n"
+        "}\n", encoding="utf-8")
+    (d / "manifest.json").write_text(json.dumps({"files": [{"name": "main.ts"}]}), encoding="utf-8")
+    return tmp_path
+
+
+def test_is_3d_detects_mode():
+    assert reskin._is_3d({"main.ts": 'config: { mode: "3d", width: 1280 }'})
+    assert not reskin._is_3d({"main.ts": 'config: { width: 960, height: 540 }'})
+
+
+def test_tags_shapes_detects_shape_tag():
+    assert reskin._tags_shapes('{ shape: "box", x:0, w:1 }')
+    assert reskin._tags_shapes("{ shape: 'sphere', r: 2 }")
+    assert not reskin._tags_shapes('{ shape: "ground", size: 200 }')   # ground stays a plane
+    assert not reskin._tags_shapes("state.score += 1")
+
+
+def test_plan_meshes_parses_dedups_and_defaults():
+    reply = """```json
+    {"meshes":[
+      {"id":"Player","prompt":"a robot","w":1,"h":2,"d":1},
+      {"id":"player","prompt":"dup dropped"},
+      {"id":"crystal","prompt":"a gem"},
+      {"id":"nope"}
+    ]}```"""
+    out = reskin.plan_meshes(lambda s, u, m: reply, {"design": {}}, {"main.ts": "x"})
+    assert [m["id"] for m in out] == ["player", "crystal"]     # lowercased, dup + prompt-less dropped
+    assert out[0]["h"] == 2
+    assert out[1]["w"] == 1 and out[1]["h"] == 1 and out[1]["d"] == 1   # defaults
+
+
+def test_reskin_mesh_file_extracts_ts_block():
+    reply = "sure:\n```ts\nexport const y = 2;\n```\ndone"
+    assert reskin.reskin_mesh_file(lambda s, u, m: reply, "main.ts", "old", ["player"]).strip() \
+        == "export const y = 2;"
+
+
+def test_write_mesh_manifest_shape(tmp_path):
+    _write_3d_game(tmp_path)
+    reskin.write_mesh_manifest(tmp_path, [{"id": "player", "prompt": "p", "w": 1, "h": 2, "d": 1},
+                                          {"id": "crystal", "prompt": "c", "w": 1, "h": 1, "d": 1}])
+    m = json.loads((game_dir(tmp_path) / "assets.json").read_text())
+    assert m["meshes"][0] == {"id": "player", "file": "assets/player.glb"}
+    assert m["meshes"][1]["file"] == "assets/crystal.glb"
+
+
+def test_generate_meshes_soft_fails_when_backend_down(tmp_path, monkeypatch):
+    _write_3d_game(tmp_path)
+    import tools.comfyui_tools as ct
+    monkeypatch.setattr(ct, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
+    got = reskin.generate_meshes(tmp_path, [{"id": "player", "prompt": "p", "w": 1, "h": 2, "d": 1}])
+    assert got == set()                        # no crash, no files
+    assert (game_dir(tmp_path) / "assets").exists()
+
+
+def test_stage_copies_mesh_skin_when_present(tmp_path):
+    _write_3d_game(tmp_path)
+    reskin.write_mesh_manifest(tmp_path, [{"id": "player", "prompt": "p", "w": 1, "h": 2, "d": 1}])
+    assets = game_dir(tmp_path) / "assets"
+    assets.mkdir(exist_ok=True)
+    (assets / "player.glb").write_bytes(b"glTF")
+    slug = "test_mesh_stage"
+    try:
+        stage_for_play(tmp_path, slug)
+        dst = RUNTIME_DIR / "games" / slug
+        assert json.loads((dst / "assets.json").read_text())["meshes"][0]["file"] == "assets/player.glb"
+        assert (dst / "assets" / "player.glb").read_bytes() == b"glTF"
+    finally:
+        import shutil
+        shutil.rmtree(RUNTIME_DIR / "games" / slug, ignore_errors=True)

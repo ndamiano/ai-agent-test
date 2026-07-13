@@ -26,7 +26,19 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 - **box:**    `{ shape:"box",    x,y,z, w,h,d, color, ry? }`  — ry = yaw in radians (optional)
 - **sphere:** `{ shape:"sphere", x,y,z, r,     color }`
 - **ground:** `{ shape:"ground", size, color, y? }`          — a flat plane; y defaults to 0
-`color` is any CSS color string. Entities with no `shape` are invisible (pure logic markers).
+`color` is a CSS string and MUST include the leading `#` (`"#c33"`, `"#33cc55"`) — a bare hex like
+`"cc3333"` renders as the wrong color. `y` is the entity's CENTER. Entities with no `shape` are
+invisible (pure logic markers).
+
+**Two hard rules that shape how you build a 3D game — internalize these:**
+1. **No 2D HUD.** In `mode:"3d"` the runtime NEVER calls your `draw()` — there is no text/overlay
+   layer. Leave `draw` empty and show EVERYTHING with 3D entities: no score text, no menus, no bars.
+   (A "health bar" = a row of small box entities you add/remove; "whose turn" = a marker box you
+   move above the active thing.)
+2. **Only position + `ry` update live.** Each frame the renderer re-reads an entity's x/y/z and `ry`
+   only — NOT its size (w/h/d/r) or color (those bake when the entity first appears). To change how
+   much health shows, ADD or REMOVE entities (splice pip boxes from `state.world`); to show a hit,
+   MOVE the entity (a lunge/recoil), never recolor or resize it.
 
 ## Camera  (optional `camera(cam, kit)` hook)
 For a third-person follow, DON'T hand-roll the eye/look-at math — call the kit primitive:

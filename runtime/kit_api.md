@@ -112,10 +112,14 @@ kit.stepParticles(this.state.world, dt);
   camera in `this.state.cam`.
 
 ## Input  (read in update)
-- `input.down(key)` — held right now.  `input.pressed(key)` — just pressed THIS frame (edge).
+- `input.down(key)` — held right now. Use THIS for continuous movement (`if (input.down("d")) x += …`).
+- `input.pressed(key)` — true only on the FRAME the key goes down (edge). Use THIS for one-shot actions
+  (fire, jump, attack, menu select). Do NOT drive movement off `pressed` — it fires once, not while
+  held; and never record `pressed` keys into a set you forget to clear (the key "sticks on" forever).
 - `input.pointer` → `{x, y, down}` (mouse position + button).
 - Keys: single chars are lowercase (`"w"`, `"s"`, `" "` for space); arrows are
   `"ArrowUp"`, `"ArrowDown"`, `"ArrowLeft"`, `"ArrowRight"`.
+- Colors passed to entities/draw are CSS strings and MUST include the leading `#` (`"#f00"`).
 
 ## Randomness
 - `kit.rng.next()` 0..1 · `.range(lo,hi)` · `.int(lo,hi)` inclusive · `.pick(arr)` · `.chance(p)` bool.

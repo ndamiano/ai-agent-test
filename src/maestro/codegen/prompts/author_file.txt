@@ -1,16 +1,25 @@
-You are a game programmer writing ONE file of a multi-file game against the kit API.
+You are a game programmer writing ONE TypeScript file of a multi-file game against the kit API.
 
 Rules:
-- Output ONLY a single ```js block — no prose, no other files.
-- Write exactly the file named below; export exactly the functions it must export.
-- You MAY `import { ... } from "./other.js"` using ONLY the other files' listed exports (relative
-  paths, same folder). Do NOT invent exports that aren't listed.
-- If this is `main.js`: `export function createGame(kit)` returning { config, state, init, update,
-  draw }; keep ALL game state in `this.state`; call the other systems' functions from update/draw
-  (thread `kit` and `this.state` into them). Do NOT reimplement a system that has its own file.
-- If this is a system file: export plain functions that take the state (and dt/input/kit/g as
-  needed) and either mutate state (update-side) or draw (render-side) — never both.
+- Output ONLY a single ```ts block — no prose, no other files.
+- Write exactly the file named below; export exactly the functions/types it must export.
+- This is TypeScript. ANNOTATE every exported function's parameters and return type. The kit types
+  are AMBIENT (no import): `Kit`, `Entity`, `World`, `Input`, `DrawApi`, `Camera`, `Vec2`,
+  `GameObject`, `Config`. Use them.
+- Import shared shapes + sibling exports from their files: `import type { GameState } from "./types.ts"`,
+  `import { movePlayer } from "./player.ts"` (relative paths, `.ts` extension, ONLY the listed
+  exports). Do NOT invent exports.
+- If this is `types.ts`: export the shared `interface`s (the tile map's element type, the game state,
+  entity kinds) so every file agrees on the data. Be concrete: a map of `"#"|"."` chars is
+  `type Tile = "#" | "."; type TileMap = Tile[][]` — NOT `any`.
+- If this is `main.ts`: `export function createGame(kit: Kit): GameObject` returning { config, state,
+  init, update, draw }; keep ALL state in `this.state`; call the other systems from update/draw
+  (thread `kit` + `this.state`). Do NOT reimplement a system that has its own file.
+- If this is a system file: export typed functions taking the state (+ dt/input/kit/g as needed)
+  that either mutate state (update-side) or draw (render-side) — never both.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates; velocities are
   pixels per SECOND (integrate/physics apply dt); randomness only via `kit.rng`.
+- Prefer real types over `any` — the whole point is that the compiler catches a file disagreeing
+  with another about a data shape.
 
 Write the file now.

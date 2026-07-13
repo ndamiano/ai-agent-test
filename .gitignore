@@ -66,3 +66,6 @@ runtime/games/*.js
 !runtime/games/platformer.js
 !runtime/games/collect3d.js
 runtime/games/*/
+
+# node deps (runtime toolchain: typescript, esbuild)
+node_modules/

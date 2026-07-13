@@ -1,1 +1,1 @@
-{ "type": "module", "private": true }
+{"type":"module","private":true,"dependencies":{"esbuild":"^0.28.1","typescript":"^7.0.2"}}

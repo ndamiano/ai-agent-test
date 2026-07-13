@@ -145,8 +145,8 @@ def _cli(request: str, *, yes: bool = False) -> int:
         for e in result.failures:
             print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
     state = RunState.for_run(run_id)
-    from maestro.codegen.gates import entry_path
-    print(f"game: {entry_path(state.run_dir).resolve()}")
+    from maestro.codegen.gates import entry_src_path
+    print(f"game: {entry_src_path(state.run_dir).resolve()}")
     if result.ok:
         from maestro.codegen.gates import stage_for_play
         print(f"play: runtime/{stage_for_play(state.run_dir, run_id)}")

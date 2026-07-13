@@ -11,15 +11,15 @@ from maestro.codegen.gates import game_dir
 
 
 def _safe(name: str) -> str:
-    """A flat .js filename inside the game folder — no paths, no traversal."""
-    name = (name or "main.js").strip().replace("\\", "/").split("/")[-1]
-    if not name.endswith(".js"):
-        name += ".js"
+    """A flat .ts filename inside the game folder — no paths, no traversal."""
+    name = (name or "main.ts").strip().replace("\\", "/").split("/")[-1]
+    if not name.endswith(".ts"):
+        name = re.sub(r"\.js$", "", name) + ".ts"
     return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
 
 
 def build_codegen_tools(state) -> dict:
-    def write_game_file(code: str = "", file: str = "main.js", **_) -> dict:
+    def write_game_file(code: str = "", file: str = "main.ts", **_) -> dict:
         if not code or not code.strip():
             return {"ok": False, "error": "empty code — output the complete file as one ```js block"}
         d = game_dir(state.run_dir)
@@ -28,7 +28,7 @@ def build_codegen_tools(state) -> dict:
         (d / name).write_text(code, encoding="utf-8")
         return {"ok": True, "file": name, "chars": len(code)}
 
-    def read_game_file(file: str = "main.js", **_) -> dict:
+    def read_game_file(file: str = "main.ts", **_) -> dict:
         path = game_dir(state.run_dir) / _safe(file)
         return {"ok": True, "content": path.read_text(encoding="utf-8") if path.exists() else ""}
 

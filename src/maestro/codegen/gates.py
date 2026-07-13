@@ -1,9 +1,13 @@
 """The local gradient — pure-Node gates that grade a game's SIM (no browser, no critic).
 
-A game is a FOLDER `<run_dir>/game/`: an entry `main.js` (exports createGame) plus any system files
-it imports, plus `manifest.json` (the code contract). The gates load `main.js`; Node resolves its
-`./*.js` imports from the folder, so a multi-file game runs headless exactly like a one-file one.
-The runners import `engine.js` themselves and pass the kit in.
+A game is a FOLDER `<run_dir>/game/` of TypeScript modules: an entry `main.ts` (exports createGame)
+plus system files it imports, plus `manifest.json` (the code contract). The gates:
+  1. TYPECHECK with `tsc --noEmit` against the ambient kit types (runtime/engine.d.ts) — this catches
+     the whole class of cross-file/type bugs (missing exports, wrong data shapes, bad arg counts)
+     BEFORE the game runs, with file:line attribution.
+  2. BUNDLE `main.ts` → `main.js` with esbuild (sourcemap) — the runnable artifact.
+  3. Run the bundle headless / probe / render / scroll (node --enable-source-maps, so a runtime
+     crash stack names the .ts SOURCE file, not the bundle).
 """
 
 import json
@@ -14,15 +18,27 @@ from pathlib import Path
 
 RUNTIME_DIR = Path(__file__).resolve().parents[3] / "runtime"
 GAME_DIR = "game"
-ENTRY = "main.js"
+ENTRY_SRC = "main.ts"      # authored entry
+ENTRY = "main.js"          # esbuild bundle (the runnable artifact)
 MANIFEST = "manifest.json"
+_TSC = RUNTIME_DIR / "node_modules" / ".bin" / "tsc"
+_ESBUILD = RUNTIME_DIR / "node_modules" / ".bin" / "esbuild"
+_ENGINE_DTS = RUNTIME_DIR / "engine.d.ts"
+_TSCONFIG = {"compilerOptions": {"noEmit": True, "target": "ES2020", "module": "esnext",
+                                 "moduleResolution": "bundler", "strict": False, "skipLibCheck": True,
+                                 "allowImportingTsExtensions": True, "noImplicitAny": False},
+             "include": ["*.ts"]}
 
 
 def game_dir(run_dir) -> Path:
     return Path(run_dir) / GAME_DIR
 
 
-def entry_path(run_dir) -> Path:
+def entry_src_path(run_dir) -> Path:
+    return game_dir(run_dir) / ENTRY_SRC
+
+
+def bundle_path(run_dir) -> Path:
     return game_dir(run_dir) / ENTRY
 
 
@@ -36,91 +52,88 @@ def read_manifest(run_dir) -> dict:
 
 
 def game_files(run_dir) -> dict:
-    """{name: source} for every .js file in the game folder (entry + systems)."""
+    """{name: source} for every authored .ts file (entry + systems). Excludes .d.ts type stubs and
+    the built .js bundle — those are gate artifacts the model neither writes nor reads."""
     d = game_dir(run_dir)
-    return {p.name: p.read_text(encoding="utf-8") for p in sorted(d.glob("*.js"))} if d.exists() else {}
+    if not d.exists():
+        return {}
+    return {p.name: p.read_text(encoding="utf-8")
+            for p in sorted(d.glob("*.ts")) if not p.name.endswith(".d.ts")}
+
+
+def _run(args, timeout: int = 90, source_maps: bool = False) -> subprocess.CompletedProcess:
+    cmd = ["node", "--enable-source-maps", *args] if source_maps else ["node", *args]
+    return subprocess.run(cmd, cwd=RUNTIME_DIR, capture_output=True, text=True, timeout=timeout)
+
+
+# ── typecheck (the contract gate) ─────────────────────────────────────────────
+_TSC_ERR = re.compile(r"^([A-Za-z0-9_.-]+\.ts)\((\d+),\d+\):\s*(error TS\d+: .*)$", re.M)
+
+
+def typecheck(run_dir) -> list:
+    """Run `tsc --noEmit` over the game's .ts files against the kit types. Returns [(file, message)]
+    per error (deduped), empty when clean. Sets up a self-contained check dir: the ambient
+    engine.d.ts + a tsconfig are dropped in the game folder (gate artifacts, git/stage-ignored)."""
+    d = game_dir(run_dir)
+    if not entry_src_path(run_dir).exists():
+        return []
+    shutil.copyfile(_ENGINE_DTS, d / "engine.d.ts")
+    (d / "tsconfig.json").write_text(json.dumps(_TSCONFIG), encoding="utf-8")
+    try:
+        p = subprocess.run([str(_TSC), "--noEmit", "-p", str(d / "tsconfig.json")],
+                           cwd=d, capture_output=True, text=True, timeout=120)
+    except Exception as e:
+        return [(ENTRY_SRC, f"typecheck runner failed: {e}")]
+    out, seen = [], set()
+    for m in _TSC_ERR.finditer(p.stdout + p.stderr):
+        key = (m.group(1), m.group(3))
+        if m.group(1) != "engine.d.ts" and key not in seen:
+            seen.add(key)
+            out.append((m.group(1), f"line {m.group(2)}: {m.group(3)}"))
+    return out
+
+
+def build_bundle(run_dir) -> dict:
+    """esbuild main.ts (+ its imports) → main.js with a sourcemap. Returns {ok} or {ok:False,error}.
+    Cheap (~1ms); the run gates call it so they always execute the current source."""
+    entry, bundle = entry_src_path(run_dir), bundle_path(run_dir)
+    if not entry.exists():
+        return {"ok": False, "error": f"{ENTRY_SRC} not written yet"}
+    try:
+        p = subprocess.run([str(_ESBUILD), str(entry), "--bundle", "--format=esm",
+                            "--sourcemap=inline", f"--outfile={bundle}"],
+                           cwd=game_dir(run_dir), capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        return {"ok": False, "error": f"bundle runner failed: {e}"}
+    return {"ok": True} if p.returncode == 0 else {"ok": False, "error": (p.stderr or p.stdout)[-500:]}
 
 
 def stage_for_play(run_dir, slug: str) -> str:
-    """Copy the whole game/ folder into runtime/games/<slug>/ so the browser harness can load its
-    module graph. Returns the play URL query for index.html."""
+    """Build the bundle and copy it into runtime/games/<slug>/main.js for the browser harness (the
+    bundle inlines the game's imports, so it's self-contained). Returns the play URL query."""
+    build_bundle(run_dir)
     dst = RUNTIME_DIR / "games" / slug
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(game_dir(run_dir), dst, ignore=shutil.ignore_patterns(MANIFEST))
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(bundle_path(run_dir), dst / ENTRY)
     return f"index.html?game={slug}"
 
 
 def extract_code(text: str) -> str:
-    """Pull the ```js block out of a model reply (the proven authoring shape — a fenced block, not a
-    tool-call argument). Falls back to the whole reply when unfenced."""
-    m = re.search(r"```(?:js|javascript)?\s*\n(.*?)```", text, re.S)
+    """Pull the ```ts/js block out of a model reply (a fenced block, not a tool-call arg). Falls back
+    to the whole reply when unfenced."""
+    m = re.search(r"```(?:ts|typescript|js|javascript)?\s*\n(.*?)```", text, re.S)
     return (m.group(1) if m else text).strip()
 
 
-def _run(runner: str, args, timeout: int = 90) -> subprocess.CompletedProcess:
-    return subprocess.run(["node", runner, *args], cwd=RUNTIME_DIR,
-                          capture_output=True, text=True, timeout=timeout)
-
-
-def attribute_load(run_dir) -> list:
-    """Pin a module-load failure to the culprit file(s). Node's graph-load error names no game file,
-    so import each file on its own: return [(file, one-line error)] for the throwers, dropping
-    main.js when a SYSTEM file also throws (main's error is usually just the sibling's, propagated)."""
-    try:
-        p = _run("attribute.mjs", [str(game_dir(run_dir))], timeout=60)
-        data = json.loads(p.stdout.strip().splitlines()[-1])
-    except Exception:
-        return []
-    throwing = [(f, e) for f, e in data.items() if e]
-    non_main = [(f, e) for f, e in throwing if f != "main.js"]
-    return non_main or throwing
-
-
-def contract_errors(run_dir) -> list:
-    """[(file, msg)] where the code disagrees with the manifest contract: a manifest export the file
-    doesn't actually export, or an import of a name no sibling exports (the isWall vs isWallCell trap
-    — the manifest promised isWall, the code shipped isWallCell). Cheap static text checks."""
-    import re
-    files = game_files(run_dir)
-    manifest = {f["name"]: f for f in read_manifest(run_dir).get("files") or [] if f.get("name")}
-
-    def exports_of(src):
-        names = set(re.findall(r"export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)", src))
-        names |= set(re.findall(r"export\s+(?:const|let|var)\s+([A-Za-z0-9_]+)", src))
-        for block in re.findall(r"export\s*\{([^}]*)\}", src):
-            names |= set(re.findall(r"[A-Za-z0-9_]+", block))
-        return names
-
-    all_exports = set().union(*(exports_of(s) for s in files.values())) if files else set()
-    # A name the manifest PROMISES a file exports but the code doesn't — fix the exporter ONCE
-    # (small, one change) and every importer resolves; so suppress the downstream importer errors.
-    promised = {}  # export name -> the file that should provide it
-    out = []
-    for name, src in files.items():
-        for exp in (manifest.get(name, {}).get("exports") or []):
-            if exp not in exports_of(src):
-                promised[exp] = name
-                out.append((name, f"the manifest says {name} exports {exp!r} but the code exports a "
-                                  f"different name — add `export function {exp}(...)` (or export an alias) "
-                                  f"so the files importing {exp} link. Every importer depends on this."))
-    for name, src in files.items():
-        for block in re.findall(r"import\s*\{([^}]*)\}\s*from", src):
-            for nm in re.findall(r"[A-Za-z0-9_]+", block):
-                if nm not in all_exports and nm not in promised:
-                    out.append((name, f"{name} imports {nm!r} but NO file exports it — import a real "
-                                      f"exported name, or add the export to the file that should own it."))
-    return out
-
-
+# ── run gates (on the bundle) ─────────────────────────────────────────────────
 def run_headless(run_dir, frames: int = 900) -> dict:
-    """Step the sim `frames` frames in pure Node. `{"ok": True}` = ran/resolved clean;
-    `{"ok": False, ...}` carries the crash/divergence the fix feeds back."""
-    entry = entry_path(run_dir)
-    if not entry.exists():
-        return {"ok": False, "phase": "missing", "error": f"{ENTRY} not written yet"}
+    """Build then step the sim `frames` frames in pure Node. `{"ok": True}` = ran/resolved clean;
+    else the crash/divergence (stack names the .ts source via the sourcemap) the fix feeds back."""
+    b = build_bundle(run_dir)
+    if not b.get("ok"):
+        return {"ok": False, "phase": "build", "error": b.get("error", "bundle failed")}
     try:
-        p = _run("headless.mjs", [str(entry), str(frames)])
+        p = _run(["headless.mjs", str(bundle_path(run_dir)), str(frames)], source_maps=True)
     except subprocess.TimeoutExpired:
         return {"ok": False, "phase": "timeout",
                 "error": f"sim did not finish {frames} frames in time (likely an infinite loop)"}
@@ -131,12 +144,11 @@ def run_headless(run_dir, frames: int = 900) -> dict:
 
 
 def _run_violation_gate(run_dir, runner: str, hint: str) -> dict:
-    """Shared body for the probe/render/scroll gates: run a `.mjs` that prints `{ok, violations}`."""
-    entry = entry_path(run_dir)
-    if not entry.exists():
-        return {"ok": False, "violations": [{"kind": "missing", "detail": f"{ENTRY} not written yet"}]}
+    b = build_bundle(run_dir)
+    if not b.get("ok"):
+        return {"ok": False, "violations": [{"kind": "build", "detail": b.get("error", "bundle failed")}]}
     try:
-        p = _run(runner, [str(entry)])
+        p = _run([runner, str(bundle_path(run_dir))], source_maps=True)
     except subprocess.TimeoutExpired:
         return {"ok": False, "violations": [{"kind": "timeout", "detail": hint}]}
     try:
@@ -146,22 +158,15 @@ def _run_violation_gate(run_dir, runner: str, hint: str) -> dict:
 
 
 def run_probe(run_dir) -> dict:
-    """Run the generic correctness invariants (controls live, no wall-clip). `{"ok": True}` = clean;
-    else `violations` each carry a `kind` + an actionable `detail` the fix feeds back."""
     return _run_violation_gate(run_dir, "probe.mjs",
                                "probe did not finish (likely an infinite loop in update)")
 
 
 def run_render(run_dir) -> dict:
-    """Render smoke — exercise the draw() path (2D) headless can't see: draw-time crashes + blank
-    screens. 3D games pass through (their render is mesh-sync from shape tags, not draw())."""
     return _run_violation_gate(run_dir, "render.mjs",
                                "render did not finish (likely an infinite loop in draw)")
 
 
 def run_scroll(run_dir) -> dict:
-    """Camera/scroll smoke — a world bigger than the screen must be followed by a panning camera,
-    else most of the level is off-screen (passes every sim gate yet is unplayable). Confined and
-    wrap-around games never fire; 3D passes through."""
     return _run_violation_gate(run_dir, "scroll.mjs",
                                "scroll check did not finish (likely an infinite loop in update)")

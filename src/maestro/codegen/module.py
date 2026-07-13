@@ -1,18 +1,16 @@
-"""CodegenModule — the decomposed, multi-file build.
+"""CodegenModule — the decomposed, multi-file, typed build.
 
-A game is a FOLDER of ES modules (`game/main.js` + system files) described by a `manifest.json` (the
-code contract: each file's name + purpose + exports). The module is a list of `Check`s swept by the
-base `Module`:
+A game is a FOLDER of TypeScript modules (`game/main.ts` + system files) described by a
+`manifest.json` (the code contract: each file's name + purpose + exports). Checks swept by the base:
 
-  - `planned`  (blocking): manifest.json exists + names main.js. Fix = author the manifest from the
-                           spec's systems (one file per system, small enough to author whole).
-  - `authored` (blocking): every manifest file exists + is non-empty. Fix = author the MISSING files
-                           ONE per step, each against the manifest (its own purpose/exports + the
-                           siblings' signatures) — bounded output, so authoring one system never
-                           touches another.
-  - `runs` / `plays` / `renders` / `scrolls`: the gates. Fix = rewrite exactly ONE file the model
-                           names, with all files as read context and the failure — bounded output,
-                           so fixing combat can't drop movement (the single-file feature-loss trap).
+  - `planned`  (blocking): manifest.json exists + names main.ts. Fix = author the manifest.
+  - `authored` (blocking): every manifest file exists. Fix = author the MISSING files ONE per step,
+                           each against the manifest (its purpose/exports + siblings' signatures).
+  - `typechecks` (blocking): `tsc --noEmit` against the kit types — catches cross-file/type/contract
+                           bugs (missing exports, wrong data shapes, bad arg counts) before the game
+                           runs, with file:line attribution. Fix = the one file tsc blames.
+  - `runs` / `plays` / `renders` / `scrolls`: the runtime gates on the bundle. Fix = the throw-site
+                           file (sourcemapped stack) or a triaged pick — rewrite ONE file, bounded.
 
 Every fix is a whole-body `Check.run`: one raw completion, then a write. Context is rebuilt from the
 durable folder each step — no transcript memory.
@@ -23,8 +21,8 @@ import re
 from pathlib import Path
 
 from maestro.codegen.gates import (
-    RUNTIME_DIR, attribute_load, contract_errors, entry_path, extract_code, game_files,
-    manifest_path, read_manifest, run_headless, run_probe, run_render, run_scroll,
+    ENTRY_SRC, RUNTIME_DIR, extract_code, game_files, manifest_path, read_manifest,
+    run_headless, run_probe, run_render, run_scroll, typecheck,
 )
 from maestro.modules.module import Check, Error, ErrorType, Module
 
@@ -68,7 +66,7 @@ def _sibling_lines(files: list, exclude: str) -> str:
 # ── detectors ─────────────────────────────────────────────────────────────────
 def _detect_planned(check, module, context):
     files = _manifest_files(context.state.run_dir)
-    if files and any(f["name"] == "main.js" for f in files):
+    if files and any(f["name"] == ENTRY_SRC for f in files):
         return []
     return [Error(type=ErrorType.BUILD, code="planned", component="game",
                   message="no manifest yet — plan the game's files from the spec")]
@@ -86,25 +84,20 @@ def _detect_authored(check, module, context):
     return errs
 
 
-def _detect_linked(check, module, context):
-    """Cross-file wiring: the manifest contract holds and every file loads as a module. Emits errors
-    TAGGED with the culprit file (path=), so a duplicate import in player.js routes the fix to
-    player.js — not to main.js because Node's graph-load stack named no game file. Contract mismatches
-    (static, cheap) first; then per-file load attribution."""
-    rd = context.state.run_dir
-    contract = [Error(type=ErrorType.FIX, code="linked", component="game", path=f, message=f"{f}: {msg}")
-                for f, msg in contract_errors(rd)]
-    if contract:
-        return contract
-    return [Error(type=ErrorType.FIX, code="linked", component="game", path=f,
-                  message=f"{f} fails to load as a module: {err}") for f, err in attribute_load(rd)]
+def _detect_typechecks(check, module, context):
+    """`tsc --noEmit` against the kit types — the contract gate. Every error is TAGGED with the file
+    tsc blames (path=), so a wrong data shape / missing export / bad arg count routes the fix to the
+    exact file, before the game ever runs. This replaces the hand-rolled load/contract attribution:
+    tsc is the complete version, with real cross-file type inference."""
+    return [Error(type=ErrorType.FIX, code="typechecks", component="game", path=f,
+                  message=f"{f}: {msg}") for f, msg in typecheck(context.state.run_dir)]
 
 
 def _violations(result):
     return "; ".join(f"[{v.get('kind')}] {v.get('detail')}" for v in result.get("violations", []))
 
 
-_STACK_RE = re.compile(r"/game/([A-Za-z0-9_.-]+\.js):\d+")
+_STACK_RE = re.compile(r"/game/([A-Za-z0-9_.-]+\.ts):\d+")
 
 
 def _throw_site(text: str, files) -> str:
@@ -148,7 +141,7 @@ def _detect_scrolls(check, module, context):
 
 # ── fixes ─────────────────────────────────────────────────────────────────────
 def _plan_fix(module, context, error, slot, services, dispatch):
-    """Author the manifest: the spec's systems → a small set of files (main.js + one per system),
+    """Author the manifest: the spec's systems → a small set of files (main.ts + one per system),
     each with its exports. On unparseable output, fall back to a single-file manifest so the build
     proceeds rather than thrashing on the plan."""
     spec = context.spec
@@ -159,9 +152,9 @@ def _plan_fix(module, context, error, slot, services, dispatch):
     try:
         manifest = json.loads(m.group(1) if m else text)
         files = [f for f in (manifest.get("files") or []) if f.get("name")]
-        assert any(f["name"] == "main.js" for f in files)
+        assert any(f["name"] == "main.ts" for f in files)
     except Exception:
-        manifest = {"files": [{"name": "main.js", "purpose": "the whole game", "exports": ["createGame"]}]}
+        manifest = {"files": [{"name": "main.ts", "purpose": "the whole game", "exports": ["createGame"]}]}
     manifest_path(context.state.run_dir).parent.mkdir(parents=True, exist_ok=True)
     manifest_path(context.state.run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     services._report(f"planned {len(manifest['files'])} file(s): {', '.join(f['name'] for f in manifest['files'])}")
@@ -188,7 +181,7 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     services._report(f"authored {me['name']}: {detail}")
 
 
-_FILE_RE = re.compile(r"FILE:\s*([A-Za-z0-9_.-]+\.js)", re.I)
+_FILE_RE = re.compile(r"FILE:\s*([A-Za-z0-9_.-]+\.ts)", re.I)
 
 
 def _triage_file(infer, run_dir, failure: str, use_stack: bool = True) -> str:
@@ -197,27 +190,27 @@ def _triage_file(infer, run_dir, failure: str, use_stack: bool = True) -> str:
     ever loads one file, and a big game can't overflow the context into an empty response.
     `use_stack` trusts a crash STACK naming exactly one non-main file (propagated frames name main
     too); a prose human note is NOT a stack — pass False so the LLM reads the note and can pick
-    main.js (where wiring/input usually lives)."""
+    main.ts (where wiring/input usually lives)."""
     files = game_files(run_dir)
     if len(files) <= 1:
-        return next(iter(files), "main.js")
+        return next(iter(files), "main.ts")
     if use_stack:
         # A crash/stack trace usually names the file it threw in — trust that over a guess.
-        named = [n for n in files if n != "main.js" and re.search(rf"\b{re.escape(n)}\b", failure)]
+        named = [n for n in files if n != "main.ts" and re.search(rf"\b{re.escape(n)}\b", failure)]
         if len(named) == 1:
             return named[0]
     sigs = "\n".join(f"- {f['name']}: {f.get('purpose','')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
                      for f in _manifest_files(run_dir)) or "\n".join(f"- {n}" for n in files)
     system = (_PROMPTS / "triage_fix.txt").read_text(encoding="utf-8")
-    user = f"# FILES\n{sigs}\n\n# FAILURE\n{failure}\n\nWhich single file must change? Reply ONLY `FILE: <name.js>`."
+    user = f"# FILES\n{sigs}\n\n# FAILURE\n{failure}\n\nWhich single file must change? Reply ONLY `FILE: <name.ts>`."
     m = _FILE_RE.search(infer(system, user, 200))
-    return m.group(1) if (m and m.group(1) in files) else ("main.js" if "main.js" in files else next(iter(files)))
+    return m.group(1) if (m and m.group(1) in files) else ("main.ts" if "main.ts" in files else next(iter(files)))
 
 
 def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, include_kit: bool = True) -> dict:
     """Rewrite one file with a SMALL context: that file's body + the siblings' signatures + the
-    failure. `main.js` owns config+state+wiring, so most cross-file bugs are a contract mismatch
-    against it — when fixing a SYSTEM file, include main.js's body too (bounded: one extra file) so
+    failure. `main.ts` owns config+state+wiring, so most cross-file bugs are a contract mismatch
+    against it — when fixing a SYSTEM file, include main.ts's body too (bounded: one extra file) so
     the fixer can see the state shape / call sites it must agree with. `include_kit=False` (an
     import/export link fix) drops the kit doc, which the fix doesn't need — less context, less
     truncation on a big file. Bounded input AND output, so the model returns a complete file."""
@@ -225,14 +218,14 @@ def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, incl
     body = files.get(target, "")
     siblings = _sibling_lines(_manifest_files(run_dir), target)
     parts = [f"# KIT API\n{_kit_doc(spec)}"] if include_kit else []
-    parts.append(f"# FILE TO FIX: {target}\n```js\n{body}\n```")
-    if target != "main.js" and "main.js" in files:
-        parts.append(f"# main.js (owns state + calls this file — agree with it; do NOT rewrite it)\n"
-                     f"```js\n{files['main.js']}\n```")
+    parts.append(f"# FILE TO FIX: {target}\n```ts\n{body}\n```")
+    if target != "main.ts" and "main.ts" in files:
+        parts.append(f"# main.ts (owns state + calls this file — agree with it; do NOT rewrite it)\n"
+                     f"```ts\n{files['main.ts']}\n```")
     parts += [
         f"# OTHER FILES you may import (signatures only — do NOT rewrite these)\n{siblings}",
         f"# FAILURE\n{failure}",
-        f"Rewrite ./{target} completely. Output ONLY one ```js block.",
+        f"Rewrite ./{target} completely. Output ONLY one ```ts block.",
     ]
     return dispatch("write_game_file",
                     {"code": extract_code(infer(system_prompt(), "\n\n".join(parts), _CODE_MAX_TOKENS)), "file": target})
@@ -251,7 +244,7 @@ def _patch_file_fix(module, context, error, slot, services, dispatch):
     # a triage guess; only a bare gate failure (probe/render/scroll) needs triage to locate the file.
     target = error.path or _triage_file(infer, context.state.run_dir, error.message)
     result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch,
-                          include_kit=(error.code != "linked"))
+                          include_kit=(error.code != "typechecks"))
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"patched {target}: {detail}")
 
@@ -265,7 +258,7 @@ class CodegenModule(Module):
     checks = [
         Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
-        Check(code="linked", detect=_detect_linked, job="fix", blocking=True, run=_patch_file_fix),
+        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=_patch_file_fix),
         Check(code="runs", detect=_detect_runs, job="fix", run=_patch_file_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_patch_file_fix),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_patch_file_fix),

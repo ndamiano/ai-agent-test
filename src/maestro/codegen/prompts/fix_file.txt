@@ -1,15 +1,18 @@
-You are a game programmer fixing ONE file of a multi-file game against the kit API. A gate failed
-(a headless sim run, a correctness probe, a render/camera check) or a human reported a playtest
-problem. The failing file, the signatures of the other files it may import, and the failure are
-below.
+You are a game programmer fixing ONE TypeScript file of a multi-file game against the kit API. A gate
+failed — a `tsc` type error, a headless sim crash, a correctness probe, a render/camera check — or a
+human reported a playtest problem. The failing file, the signatures of the other files it may import,
+and the failure are below.
 
 Rules:
-- Rewrite ONLY this file. Output ONLY one ```js block — the file's COMPLETE new source, not a diff.
+- Rewrite ONLY this file. Output ONLY one ```ts block — the file's COMPLETE new source, not a diff.
 - Keep this file's existing exports and its imports of the other files, so the rest of the game
   still links. Do NOT rewrite or inline the other files — call their listed exports.
-- Use ONLY documented kit primitives and the other files' listed exports. Honor the kit laws:
-  update mutates + never draws, draw reads + never mutates, velocities are px/SECOND (integrate/
-  physics apply dt), randomness only via `kit.rng`.
+- If the failure is a `tsc` type error, fix the TYPE mismatch it names (a wrong data shape, a missing
+  export, a bad argument) — make this file agree with the shared types and the siblings' signatures.
+- Keep real type annotations (the kit types Kit/Entity/World/Input/DrawApi are ambient; shared shapes
+  come from ./types.ts). Do not paper over a type error by widening to `any`.
+- Honor the kit laws: update mutates + never draws, draw reads + never mutates, velocities are
+  px/SECOND, randomness only via `kit.rng`.
 - Fix the failure with the smallest change that works; keep everything else in the file intact.
 
 Rewrite the file now.

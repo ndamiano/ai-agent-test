@@ -293,8 +293,8 @@ export function moveTopDown3(e, input, dt, speed = 8) {
 // 3D tank: W/S drive forward/back along the current facing, A/D turn. opts {speed, turn(rad/s), back}.
 export function moveTank3(e, input, dt, opts = {}) {
   const speed = opts.speed ?? 8, turn = opts.turn ?? 2.5, back = opts.back ?? 0.5;
-  if (input.down("a") || input.down("ArrowLeft")) e.ry = (e.ry || 0) - turn * dt;
-  if (input.down("d") || input.down("ArrowRight")) e.ry = (e.ry || 0) + turn * dt;
+  if (input.down("a") || input.down("ArrowLeft")) e.ry = (e.ry || 0) + turn * dt;   // A = counter-clockwise
+  if (input.down("d") || input.down("ArrowRight")) e.ry = (e.ry || 0) - turn * dt;   // D = clockwise
   let f = 0;
   if (input.down("w") || input.down("ArrowUp")) f += 1;
   if (input.down("s") || input.down("ArrowDown")) f -= back;

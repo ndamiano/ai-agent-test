@@ -58,7 +58,10 @@ function skinnedMesh(model, e) {
     const u = s(2 * (e.r || 1), Math.max(size.x, size.y, size.z));
     pivot.scale.setScalar(u);
   } else {
-    pivot.scale.set(s(e.w || 1, size.x), s(e.h || 1, size.y), s(e.d || 1, size.z));
+    // UNIFORM scale that fits the model inside the entity's box — per-axis scaling distorts a real
+    // model (a dog squished to a cube). Keep the model's proportions; fill the box on its tightest axis.
+    const u = Math.min(s(e.w || 1, size.x), s(e.h || 1, size.y), s(e.d || 1, size.z));
+    pivot.scale.setScalar(u);
   }
   return pivot;
 }

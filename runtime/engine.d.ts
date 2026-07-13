@@ -18,6 +18,7 @@ interface Entity {
 type World = Entity[];
 
 interface Rng {
+  (): number;                 // kit.rng() → float in [0,1); same as kit.rng.next()
   next(): number;
   range(lo: number, hi: number): number;
   int(lo: number, hi: number): number;

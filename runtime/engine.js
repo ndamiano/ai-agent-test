@@ -19,6 +19,9 @@
 // ── deterministic RNG (seeded — headless runs must reproduce) ─────────────────
 export function makeRng(seed = 1) {
   let s = seed >>> 0 || 1;
+  // The rng IS a function — `kit.rng()` returns a float in [0,1) — and also carries the named
+  // helpers (`.next/.range/.int/.pick/.chance`). Both forms work: the model reaches for `kit.rng()`
+  // as often as `kit.rng.next()`, so meet it instead of tripping a not-callable error.
   const next = () => {
     // xorshift32
     s ^= s << 13; s >>>= 0;
@@ -26,13 +29,12 @@ export function makeRng(seed = 1) {
     s ^= s << 5;  s >>>= 0;
     return s / 0xffffffff;
   };
-  return {
-    next,
-    range: (lo, hi) => lo + next() * (hi - lo),
-    int: (lo, hi) => Math.floor(lo + next() * (hi - lo + 1)),
-    pick: (arr) => arr[Math.floor(next() * arr.length)],
-    chance: (p) => next() < p,
-  };
+  next.next = next;
+  next.range = (lo, hi) => lo + next() * (hi - lo);
+  next.int = (lo, hi) => Math.floor(lo + next() * (hi - lo + 1));
+  next.pick = (arr) => arr[Math.floor(next() * arr.length)];
+  next.chance = (p) => next() < p;
+  return next;
 }
 
 // ── vec2 helpers ─────────────────────────────────────────────────────────────
@@ -74,7 +76,10 @@ export function integrate3(e, dt, gravity = 0) {
 export function physics3(e, dt, gravity = 20, ground = 0) {
   e.vy = (e.vy || 0) - gravity * dt;
   e.x += (e.vx || 0) * dt; e.y += (e.vy || 0) * dt; e.z += (e.vz || 0) * dt;
-  if (e.y <= ground) { e.y = ground; e.vy = 0; e.grounded = true; } else e.grounded = false;
+  // y is the entity CENTER (that's where the mesh renders), so rest the BOTTOM on the ground —
+  // landing the center at `ground` would half-bury every entity.
+  const rest = ground + (e.h != null ? e.h / 2 : (e.r || 0));
+  if (e.y <= rest) { e.y = rest; e.vy = 0; e.grounded = true; } else e.grounded = false;
 }
 // Unit facing vector from yaw (around +y) and pitch (up/down). +z is "forward" at yaw 0.
 export function heading3(yaw = 0, pitch = 0) {

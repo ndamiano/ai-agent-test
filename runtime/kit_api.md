@@ -35,6 +35,11 @@ it makes things effectively motionless.)
 - `kit.makeTilemap(rows, tile=32, solid="#")` → `{ at(cx,cy), solidAt(cx,cy), solidsNear(e), w, h }`.
   `solidsNear(e)` returns the solid tile rects overlapping entity `e` (feed each to resolveAabb).
 
+## Top-down movement  (USE THIS for WASD steering — don't hand-roll it)
+`kit.moveTopDown(e, input, dt, speed=150)` — omni-directional WASD/arrow movement on the x/y plane,
+diagonals normalized, dt applied, faces travel via `e.angle`. One call per steered entity in `update`.
+Reads HELD keys — never drive movement off `input.pressed` or a key-set you forget to clear.
+
 ## Platformer physics  (side-view gravity/jump — USE THESE, don't hand-roll it)
 - `kit.walk(e, dir, speed)` — set horizontal intent. `dir` = -1|0|1, `speed` in px/s.
 - `kit.jump(e, speed)` — jump ONLY if `e.grounded` (sets `e.vy = -speed`, clears grounded). px/s.

@@ -62,6 +62,21 @@ fixed 3/4 view.
 - `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.rng`, `kit.V` (clamp/len/norm), `kit.aabb`
   (works on x/y as before — for 3D distance use `Math.hypot(dx,dy,dz)`), `kit.win(msg)/kit.lose(msg)`.
 
+## Movement  (steer the player — USE THIS, do NOT hand-roll WASD + dt)
+Hand-rolled movement is the #1 source of broken games (keys that stick on, moving one frame instead
+of while held, forgotten dt). Call ONE controller per steered entity, every frame in `update`:
+```js
+update(dt, input, kit) {
+  kit.moveTopDown3(this.state.player, input, dt, 10);   // omni: WASD/arrows glide on the ground, faces travel
+}
+```
+- `kit.moveTopDown3(e, input, dt, speed=8)` — omni-directional on the x/z plane (y untouched); sets
+  `e.ry` to face travel. The default for a creature/hero you steer directly.
+- `kit.moveTank3(e, input, dt, {speed, turn, back})` — W/S drive forward/back along `e.ry`, A/D turn.
+  For a ship/car/shark where turning-then-driving feels right.
+- For a flyer with pitch, use `kit.flyer` (below). These read HELD keys and apply dt for you — never
+  reach into `input.pressed` for movement, and never accumulate keys into a set.
+
 ## Flight  (USE THIS for a plane/ship/flyer — don't hand-roll 3D orientation)
 - `kit.flyer(e, input, dt, opts?)` — the whole flight step: steer `e.yaw`/`e.pitch` from input,
   thrust along the facing direction, apply drag, integrate. Defaults: ArrowLeft/Right = yaw,

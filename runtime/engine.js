@@ -257,6 +257,48 @@ export function chaseCam(cam, target, opts = {}) {
   cam.tx = tx; cam.ty = ty + (opts.lookUp ?? 1.5); cam.tz = tz;
 }
 
+// ── movement controllers: input → motion, correct by construction ────────────
+// Movement is where hand-authored code breaks most (latched keys, edge-vs-held input, forgotten dt).
+// These read HELD keys only, normalize diagonals, apply dt, and face the travel direction — so the
+// game composes ONE call instead of re-deriving it. WASD + arrow keys both drive them.
+function inputDir(input) {
+  let x = 0, y = 0;
+  if (input.down("a") || input.down("ArrowLeft")) x -= 1;
+  if (input.down("d") || input.down("ArrowRight")) x += 1;
+  if (input.down("w") || input.down("ArrowUp")) y -= 1;   // up/forward is -y (screen) / -z (world)
+  if (input.down("s") || input.down("ArrowDown")) y += 1;
+  const L = Math.hypot(x, y);
+  return L > 0 ? { x: x / L, y: y / L, moving: true } : { x: 0, y: 0, moving: false };
+}
+
+// 2D top-down / omni: move on the x/y plane, face travel via `e.angle` (radians). speed = px/second.
+export function moveTopDown(e, input, dt, speed = 150) {
+  const d = inputDir(input);
+  if (!d.moving) return;
+  e.x += d.x * speed * dt; e.y += d.y * speed * dt;
+  e.angle = Math.atan2(d.y, d.x);
+}
+
+// 3D top-down / omni: move on the ground plane (x/z; y is up, untouched), face travel via `e.ry`.
+// speed = world-units/second. The natural control for a walker/creature you steer directly.
+export function moveTopDown3(e, input, dt, speed = 8) {
+  const d = inputDir(input);
+  if (!d.moving) return;
+  e.x += d.x * speed * dt; e.z += d.y * speed * dt;
+  e.ry = Math.atan2(d.x, -d.y);   // face the direction of travel (ry = yaw; forward at ry 0 is -z)
+}
+
+// 3D tank: W/S drive forward/back along the current facing, A/D turn. opts {speed, turn(rad/s), back}.
+export function moveTank3(e, input, dt, opts = {}) {
+  const speed = opts.speed ?? 8, turn = opts.turn ?? 2.5, back = opts.back ?? 0.5;
+  if (input.down("a") || input.down("ArrowLeft")) e.ry = (e.ry || 0) - turn * dt;
+  if (input.down("d") || input.down("ArrowRight")) e.ry = (e.ry || 0) + turn * dt;
+  let f = 0;
+  if (input.down("w") || input.down("ArrowUp")) f += 1;
+  if (input.down("s") || input.down("ArrowDown")) f -= back;
+  if (f) { e.x += Math.sin(e.ry || 0) * speed * f * dt; e.z += Math.cos(e.ry || 0) * speed * f * dt; }
+}
+
 // ── tilemap (rows of chars; solid set decides collision) ─────────────────────
 export function makeTilemap(rows, tile = 32, solid = "#") {
   const solids = new Set([...solid]);
@@ -326,7 +368,7 @@ export function makeKit(config, rng) {
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
-    chaseCam,
+    chaseCam, moveTopDown, moveTopDown3, moveTank3,
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

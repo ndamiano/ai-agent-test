@@ -108,6 +108,18 @@ export async function run3d(game, canvas, assetBase) {
   addEventListener("keydown", (e) => { input._set(keymap(e), true); if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault(); });
   addEventListener("keyup", (e) => input._set(keymap(e), false));
 
+  // Drag to orbit the view around whatever the game's camera looks at — a runtime capability every 3D
+  // game gets for free, independent of (and applied on top of) the game's own camera() hook.
+  let viewYaw = 0, viewPitch = 0, dragging = false, lastX = 0, lastY = 0;
+  canvas.addEventListener("mousedown", (e) => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  addEventListener("mouseup", () => { dragging = false; });
+  addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    viewYaw -= (e.clientX - lastX) * 0.008;
+    viewPitch = Math.max(-1.0, Math.min(1.0, viewPitch + (e.clientY - lastY) * 0.006));
+    lastX = e.clientX; lastY = e.clientY;
+  });
+
   const assets = await loadMeshes(assetBase);   // {id: GLB scene}; {} when unskinned → primitives
   if (g.init) g.init(kit);
 
@@ -142,7 +154,11 @@ export async function run3d(game, canvas, assetBase) {
     }
     input._endFrame();
     sync();
-    camera.position.set(cam.x, cam.y, cam.z);
+    // orbit the eye around the look-at target by the user's drag (yaw + height), then look at it
+    const ox = cam.x - cam.tx, oz = cam.z - cam.tz;
+    const rad = Math.hypot(ox, oz) || 1;
+    const ang = Math.atan2(ox, oz) + viewYaw;
+    camera.position.set(cam.tx + Math.sin(ang) * rad, cam.y + viewPitch * rad, cam.tz + Math.cos(ang) * rad);
     camera.lookAt(cam.tx || 0, cam.ty || 0, cam.tz || 0);
     renderer.render(scene, camera);
     if (kit.over) { banner.textContent = kit.over.msg; banner.style.display = "grid"; }

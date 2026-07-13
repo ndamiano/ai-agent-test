@@ -103,6 +103,12 @@ interface Kit {
   makeCamera(): Camera;
   // 3D third-person chase camera: sets the eye behind+above `target` AND the look-at to `target`.
   chaseCam(cam: Camera3, target: Entity, opts?: { back?: number; up?: number; lookUp?: number; faceYaw?: boolean }): void;
+  // movement controllers — input → motion, dt-correct, no key latching. Call one per controlled entity
+  // in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on the
+  // ground plane (x/z, faces travel via ry); moveTank3 = W/S drive along facing, A/D turn.
+  moveTopDown(e: Entity, input: Input, dt: number, speed?: number): void;
+  moveTopDown3(e: Entity, input: Input, dt: number, speed?: number): void;
+  moveTank3(e: Entity, input: Input, dt: number, opts?: { speed?: number; turn?: number; back?: number }): void;
   audio: { play(name?: string): void };
   // The skin: returns the preloaded sprite image for an entity's `sprite` id, or null if no
   // asset was generated (headless, or an unskinned game) — draw the placeholder shape then.

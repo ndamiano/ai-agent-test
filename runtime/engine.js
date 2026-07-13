@@ -372,17 +372,28 @@ export function fitToWindow(canvas, aspect) {
   fit();
 }
 
+// Build a game instance holding a REAL kit. The kit needs the game's config (seed, size), but config
+// lives inside createGame — so peek it with a throwaway null-kit instance, build the kit from it, then
+// re-instantiate WITH the kit. This is why createGame(kit) receives a live kit: a helper that closes
+// over the `kit` parameter works, not just the kit passed into init/update. (Don't touch kit at the
+// createGame top level — it runs during the config peek, before the kit exists; use it in init/update
+// and in helpers those call.)
+export function realize(factory, defaults = {}, seed = 1) {
+  const peek = typeof factory === "function" ? factory(null) : factory;
+  const config = { ...defaults, ...(peek.config || {}) };
+  const kit = makeKit(config, makeRng(config.seed || seed));
+  const g = typeof factory === "function" ? factory(kit) : peek;
+  return { g, config, kit };
+}
+
 // ── browser entry: run a real animation loop with real input + canvas ────────
 export async function run(game, canvas, assetBase) {
-  const g = typeof game === "function" ? game(null) : game;
-  const config = { width: 960, height: 540, background: "#111", gravity: 0, ...(g.config || {}) };
+  const { g, config, kit } = realize(game, { width: 960, height: 540, background: "#111", gravity: 0 });
   canvas.width = config.width; canvas.height = config.height;
   fitToWindow(canvas, config.width / config.height);
   const ctx = canvas.getContext("2d");
   const draw = makeDraw(ctx);
   const input = makeInput();
-  const rng = makeRng(config.seed || 1);
-  const kit = makeKit(config, rng);
   kit._setSprites(await loadSprites(assetBase));
 
   const keymap = (e) => e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -418,11 +429,8 @@ export async function run(game, canvas, assetBase) {
 // every entity/state number for NaN/Infinity, and reports the first crash.
 // Zero deps — pure Node. An outer process timeout catches infinite loops.
 export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [] } = {}) {
-  const g = typeof game === "function" ? game(null) : game;
-  const config = { width: 640, height: 480, gravity: 0, ...(g.config || {}) };
+  const { g, config, kit } = realize(game, { width: 640, height: 480, gravity: 0 }, seed);
   const input = makeInput();
-  const rng = makeRng(config.seed || seed);
-  const kit = makeKit(config, rng);
   try {
     if (g.init) g.init(kit);
   } catch (e) { return { ok: false, frame: 0, phase: "init", error: String(e && e.stack || e) }; }
@@ -465,10 +473,8 @@ function worldOf(g) {
     : Array.isArray(g.state.entities) ? g.state.entities : []) || [];
 }
 function runSnapshot(gameFactory, { frames, dt, seed, script }) {
-  const g = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
-  const config = { gravity: 0, ...(g.config || {}) };
+  const { g, kit } = realize(gameFactory, { gravity: 0 }, seed);
   const input = makeInput();
-  const kit = makeKit(config, makeRng(config.seed || seed));
   if (g.init) g.init(kit);
   for (let f = 0; f < frames && !kit.over; f++) {
     for (const c of script) if (c.frame === f) input._set(c.key, c.down !== false);
@@ -537,11 +543,9 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {})
 // (draw_crash) and require ≥1 visible primitive over the run (draw_blank). 3D games have no
 // draw() (the runtime syncs meshes from shape tags), so they pass through.
 export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
-  const g = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
-  const config = { width: 640, height: 480, gravity: 0, ...(g.config || {}) };
+  const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 }, seed);
   if (config.mode === "3d" || typeof g.draw !== "function") return { ok: true, skipped: true };
   const input = makeInput();
-  const kit = makeKit(config, makeRng(config.seed || seed));
   let content = 0;
   const bump = () => { content++; };
   const rec = { ctx: {}, clear: () => {}, push: () => {}, pop: () => {},
@@ -574,15 +578,14 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
 // confined games (pong, wrap-around asteroids, one-screen mazes) never false-fire. 3D uses the
 // camera() hook, checked separately.
 export function scrollSmoke(gameFactory, { frames = 300, dt = 1 / 60, seed = 1 } = {}) {
-  const g0 = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
-  const config = { width: 640, height: 480, gravity: 0, ...(g0.config || {}) };
+  const defaults = { width: 640, height: 480, gravity: 0 };
+  const config = realize(gameFactory, defaults, seed).config;
   if (config.mode === "3d") return { ok: true, skipped: true };
   const KEYS = ["d", "ArrowRight", "a", "ArrowLeft"];
   let best = { span: 0, camDx: 0, drew: false };
   for (const key of KEYS) {
-    const g = typeof gameFactory === "function" ? gameFactory(null) : gameFactory;
+    const { g, kit } = realize(gameFactory, defaults, seed);
     const input = makeInput();
-    const kit = makeKit(config, makeRng(config.seed || seed));
     let minX = Infinity, maxX = -Infinity, camMin = Infinity, camMax = -Infinity, drew = false;
     const rec = { ctx: {}, clear: () => {}, pop: () => {}, rect: () => {}, circle: () => {},
       line: () => {}, text: () => {}, sprite: () => {},

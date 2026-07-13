@@ -15,7 +15,7 @@
 
 import * as THREE from "./vendor/three.module.js";
 import { GLTFLoader } from "./vendor/GLTFLoader.js";
-import { makeKit, makeInput, makeRng, chaseCam } from "./engine.js";
+import { makeInput, chaseCam, realize } from "./engine.js";
 
 function worldOf(g) {
   return (g.state && (Array.isArray(g.state.world) ? g.state.world
@@ -78,8 +78,7 @@ function buildMesh(e, meshes) {
 }
 
 export async function run3d(game, canvas, assetBase) {
-  const g = typeof game === "function" ? game(null) : game;
-  const config = { width: 1280, height: 720, background: "#101018", ...(g.config || {}) };
+  const { g, config, kit } = realize(game, { width: 1280, height: 720, background: "#101018" });
   const aspect = config.width / config.height;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -103,8 +102,6 @@ export async function run3d(game, canvas, assetBase) {
   sun.position.set(50, 120, 60); scene.add(sun);
 
   const input = makeInput();
-  const rng = makeRng(config.seed || 1);
-  const kit = makeKit(config, rng);
   const cam = { x: 0, y: 30, z: 60, tx: 0, ty: 0, tz: 0 };
 
   const keymap = (e) => e.key.length === 1 ? e.key.toLowerCase() : e.key;

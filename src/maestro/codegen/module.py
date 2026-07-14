@@ -258,19 +258,92 @@ def system_prompt() -> str:
     return (_PROMPTS / "fix_file.txt").read_text(encoding="utf-8")
 
 
-def _patch_file_fix(module, context, error, slot, services, dispatch):
-    """Fix a gate failure in two small steps: triage (which file? — over signatures) then a focused
-    rewrite of that one file. Never loads every body into one call, so a large multi-file game
-    converges instead of overflowing the context into empty responses."""
-    infer = lambda system, user, mt: _infer(services, system, user, mt)
-    # A check that already knows the culprit file (linked/authored) sets error.path — trust it over
-    # a triage guess; only a bare gate failure (probe/render/scroll) needs triage to locate the file.
-    target = error.path or _triage_file(infer, context.state.run_dir, error.message)
-    # Always include the kit API: a type error is often kit MISUSE (wrong arg count / shape) that
-    # needs the kit signatures to fix.
-    result = _focused_fix(infer, context.spec, context.state.run_dir, target, error.message, dispatch)
-    detail = result.get("error") or f"{result.get('chars')} chars"
-    services._report(f"patched {target}: {detail}")
+_READ_SCHEMA = {"type": "function", "function": {
+    "name": "read_game_file",
+    "description": "Read one game file's FULL current source. Read any sibling you need to understand "
+                   "the cross-file wiring before you write the fix.",
+    "parameters": {"type": "object",
+                   "properties": {"file": {"type": "string", "description": "filename, e.g. world.ts"}},
+                   "required": ["file"]}}}
+_WRITE_SCHEMA = {"type": "function", "function": {
+    "name": "write_game_file",
+    "description": "Overwrite ONE file with its COMPLETE new source to fix the failure. Call once you "
+                   "know the fix.",
+    "parameters": {"type": "object",
+                   "properties": {"file": {"type": "string"},
+                                  "code": {"type": "string", "description": "the complete file source"}},
+                   "required": ["file", "code"]}}}
+
+_FIX_LOOP_MAX_TURNS = 8
+
+
+def _read_write_loop_fix(module, context, error, slot, services, dispatch):
+    """Fix a gate failure as a bounded read→write subloop: the model reads whatever siblings it needs
+    (full bodies, on demand) to locate a CROSS-FILE mismatch the signatures can't show, then writes
+    ONE complete file. This is the sanctioned multi-call fix shape (Check.run) — the reads live in an
+    EPHEMERAL transcript confined to this one fix (the outer loop stays stateless and re-gates after).
+    A single-shot fix that only sees main.ts + sibling signatures parks on bugs like 'a file assumes
+    another spawns the player but none does'; reading the body exposes it. Bounded by the Services
+    budget (each infer counts) + a turn cap; on cross-fix stall (escalate) the read tool is dropped so
+    the fix must ACT. Context is rebuilt each turn via MessageBuilder, which dedups superseded reads."""
+    from llm_clients.message_builder import MessageBuilder
+    from maestro.services import parse_args, salvage_tool_call
+
+    spec = context.spec
+    run_dir = context.state.run_dir
+    files = _manifest_files(run_dir)
+    filelist = "\n".join(
+        f"- {f['name']}: {f.get('purpose', '')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
+        for f in files) or "\n".join(f"- {n}" for n in game_files(run_dir))
+    system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
+    user = "\n\n".join([
+        f"# KIT API\n{_kit_doc(spec)}",
+        _design_block(spec),
+        f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
+        f"# FAILING GATE\n{error.message}",
+        "Read whatever files you need to find the root cause, then write ONE file to fix it.",
+    ])
+    # A stalled fix must ACT, not re-read (mirrors Services.run's escalation): drop the read tool.
+    schemas = [_WRITE_SCHEMA] if services.escalate else [_READ_SCHEMA, _WRITE_SCHEMA]
+    history = [{"role": "user", "content": user}]
+    wrote = None
+    nreads = 0
+    for _ in range(_FIX_LOOP_MAX_TURNS):
+        msgs = MessageBuilder(system).extend(history).build()
+        resp = services.infer(msgs, schemas, max_tokens=_CODE_MAX_TOKENS)
+        message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
+        tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
+        if not tcs:
+            salvaged = salvage_tool_call(message.get("content"), schemas)
+            tcs = [salvaged] if salvaged else []
+        if not tcs:
+            history.append({"role": "assistant", "content": message.get("content", "") or ""})
+            history.append({"role": "user",
+                            "content": "Call read_game_file to inspect a file, or write_game_file with "
+                                       "the complete fixed file."})
+            continue
+        history.append({"role": "assistant", "content": message.get("content", "") or "", "tool_calls": tcs})
+        for tc in tcs:
+            name = tc["function"]["name"]
+            args = parse_args(tc["function"].get("arguments"))
+            if name == "write_game_file":
+                result = dispatch("write_game_file",
+                                  {"code": args.get("code", ""), "file": args.get("file", "main.ts")})
+                if result.get("ok"):
+                    wrote = result.get("file")
+                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
+            elif name == "read_game_file":
+                result = dispatch("read_game_file", {"file": args.get("file", "main.ts")})
+                nreads += 1
+                history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                "content": f"// {args.get('file')}\n{result.get('content', '')}"})
+            else:
+                history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                "content": f"unknown tool: {name!r}"})
+        if wrote:
+            services._report(f"patched {wrote} (read {nreads} file(s))")
+            return
+    services._report(f"fix loop ended without a write (read {nreads} file(s))")
 
 
 class CodegenModule(Module):
@@ -282,11 +355,11 @@ class CodegenModule(Module):
     checks = [
         Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
-        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=_patch_file_fix),
-        Check(code="runs", detect=_detect_runs, job="fix", run=_patch_file_fix),
-        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_patch_file_fix),
-        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_patch_file_fix),
-        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True, run=_patch_file_fix),
+        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=_read_write_loop_fix),
+        Check(code="runs", detect=_detect_runs, job="fix", run=_read_write_loop_fix),
+        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_read_write_loop_fix),
+        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_read_write_loop_fix),
+        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True, run=_read_write_loop_fix),
     ]
 
     def affected_components(self):

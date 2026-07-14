@@ -47,9 +47,13 @@ with no change to the gradient. Never violate it.
 
 "Done" = the artifact passes the gates, never the model claiming done. Each loop step rebuilds a
 minimal context from durable on-disk state (the frozen spec + the failing file + the failing check's
-message), so context stays ~constant and the transcript is never used as memory. A fix rewrites
-exactly ONE file (bounded output), routed by the error's file attribution (tsc's file / a runtime
-crash's sourcemapped throw-site / a triage pick), so fixing one system can't drop another.
+message), so context stays ~constant and the transcript is never used as memory. A gate fix is a
+bounded read→write **subloop** (the sanctioned multi-call Check.run): the model reads whatever sibling
+bodies it needs on demand — exposing a CROSS-FILE mismatch the signatures can't show (e.g. main.ts
+assumes world.ts spawns the player but none does) — then writes ONE complete file it self-selects.
+The reads live in an EPHEMERAL transcript confined to that one fix; the outer loop stays stateless and
+re-gates after. Bounded by the Services budget + a turn cap; on cross-fix stall the read tool is
+dropped so the fix must ACT. Still ONE file out (bounded output), so fixing one system can't drop another.
 
 ---
 
@@ -85,10 +89,12 @@ src/
                          bundle with --enable-source-maps, so a crash stack names the .ts source).
       tools.py           write_game_file(code, file) / read_game_file (per-file .ts, path-safe)
       module.py          CodegenModule = planned → authored → typechecks → runs → plays → renders →
-                         scrolls (blocking where noted). Each fix is a whole-body Check.run: ONE raw
-                         fenced-```ts completion for ONE file (routed by the error's file), then
-                         write_game_file. Rebuilt from durable state each step — no transcript memory.
-      prompts/           spec_draft · plan_game · author_file · fix_file · triage_fix .txt
+                         scrolls (blocking where noted). AUTHORING = a whole-body Check.run: ONE raw
+                         fenced-```ts completion per file. GATE FIXES = a read→write subloop
+                         (_read_write_loop_fix): read_game_file any sibling on demand (tool-calls via
+                         MessageBuilder, which dedups superseded reads), then write_game_file ONE
+                         self-selected file. Ephemeral per-fix transcript; outer loop re-gates.
+      prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix .txt
       reskin.py          the ASSETS stage (skin the shapes), mode-dispatched: 2D → plan sprites →
                          rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB

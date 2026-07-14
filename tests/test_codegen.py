@@ -418,6 +418,44 @@ def test_multi_file_game_loads_and_gates(tmp_path):
     assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []
 
 
+class _FakeToolConn:
+    """Scripts the read→write subloop: call 1 reads a file, call 2 writes GOOD to main.ts. Records the
+    tool calls so a test can assert the fix READ before it WROTE (the cross-file capability)."""
+    def __init__(self, code, target="main.ts"):
+        self.code = code
+        self.target = target
+        self.calls = []
+
+    def generate_with_tools(self, messages, tools=None, **kw):
+        step = len(self.calls)
+        if step == 0:
+            tc = {"id": "c0", "type": "function",
+                  "function": {"name": "read_game_file", "arguments": json.dumps({"file": self.target})}}
+        else:
+            tc = {"id": f"c{step}", "type": "function",
+                  "function": {"name": "write_game_file",
+                               "arguments": json.dumps({"file": self.target, "code": self.code})}}
+        self.calls.append(tc["function"]["name"])
+        return {"choices": [{"message": {"content": "", "tool_calls": [tc]}}]}
+
+
+def test_fix_subloop_reads_then_writes_to_green(tmp_path):
+    # A game that crashes headless (init throws). The fix subloop must read, then write a good file;
+    # the outer loop re-gates to green.
+    state = _run_dir(tmp_path)
+    _write_game(tmp_path, BROKEN)
+    spec = {"frozen": True, "mode": "2d", "title": "T", "design": {"title": "T"}}
+    state.write_spec(spec)
+    conn = _FakeToolConn(GOOD)
+    loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
+                     connector=conn, max_steps=15)
+    result = loop.run()
+    assert result.ok is True
+    assert "read_game_file" in conn.calls and "write_game_file" in conn.calls
+    assert conn.calls.index("read_game_file") < conn.calls.index("write_game_file")
+    assert (tmp_path / "game" / "main.ts").read_text().strip() == GOOD.strip()
+
+
 def test_loop_refuses_unfrozen_spec(tmp_path):
     state = _run_dir(tmp_path)
     spec = {"frozen": False, "mode": "2d", "design": {}}

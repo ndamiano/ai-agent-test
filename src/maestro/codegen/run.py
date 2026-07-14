@@ -40,8 +40,11 @@ def draft_spec(request: str) -> dict:
     from llm_clients.connector_selector import get_connector
     from llm_clients.message_builder import MessageBuilder
 
+    from maestro.codegen.gates import RUNTIME_DIR
+
     conn = get_connector()
-    system = (_PROMPTS / "spec_draft.txt").read_text(encoding="utf-8")
+    catalog = (RUNTIME_DIR / "kit_catalog.md").read_text(encoding="utf-8")
+    system = (_PROMPTS / "spec_draft.txt").read_text(encoding="utf-8").replace("{catalog}", catalog)
     user = f"Request: {request}\n\nWrite the JSON spec."
     design, last = None, ""
     for attempt in range(3):

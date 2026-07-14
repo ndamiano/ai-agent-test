@@ -35,6 +35,12 @@ Rules:
   gameOver, …) — a missing field is a type error.
 - If this is a system file: export typed functions taking the state (+ dt/input/kit/g as needed)
   that either mutate state (update-side) or draw (render-side) — never both.
+- COMPOSE the kit, do not hand-roll. The spec's `control.scheme` names the control archetype — use its
+  kit primitive combo from the KIT API (e.g. vehicle-3d → moveTank3 + chaseCam{faceYaw}; first-person-3d
+  → mouseLook + moveFP + fpCam + pointerLock; orbital-3d → moveRelative + chaseCam; platformer →
+  walk + jump + physics; grid-turn → makeTilemap + gridMove). Each name in the spec's `uses` maps to a
+  kit primitive too (chase → seek, tilemap → makeTilemap, particles → burst). NEVER hand-roll movement,
+  camera, physics, or grid math when a kit primitive exists — that is the #1 defect.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates; velocities are
   pixels per SECOND (integrate/physics apply dt); randomness only via `kit.rng`.
 - Prefer real types over `any` — the whole point is that the compiler catches a file disagreeing

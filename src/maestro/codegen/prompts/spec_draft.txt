@@ -1,5 +1,9 @@
-You are a game designer. Given a one-line request, write a DESIGN SPEC as JSON that a programmer
-will build from. Invent the concrete specifics the request leaves open — be decisive, not exhaustive.
+You are a game designer. Given a one-line request, write a DESIGN SPEC as JSON that a programmer will
+build by COMPOSING the kit's building blocks below. Invent the concrete specifics the request leaves
+open — be decisive, not exhaustive.
+
+# KIT CAPABILITY CATALOG
+{catalog}
 
 Output ONLY one ```json block, this exact shape:
 ```json
@@ -7,17 +11,27 @@ Output ONLY one ```json block, this exact shape:
   "title": "...",
   "genre": "...",
   "mode": "2d",
-  "entities": [ {"id": "...", "desc": "one concrete sentence: what it is, how it moves, its size/look"} ],
-  "controls": {"KEY": "what it does"},
-  "mechanics": ["one rule per line: spawning, collision outcomes, scoring, difficulty ramp"],
+  "control": {"entity": "<id of the steered entity>", "scheme": "<one control scheme from the catalog>"},
+  "entities": [ {"id": "...", "desc": "one concrete sentence: WHAT it is, its size, its look (color/shape). NOT how it moves."} ],
+  "controls": {"KEY": "what the player DOES (plain intent, e.g. 'jump', 'drive forward', 'shoot')"},
+  "uses": ["names of catalog behaviors/world blocks this game uses, e.g. 'chase', 'tilemap', 'particles'"],
+  "mechanics": ["one plain RULE + OUTCOME per line: spawning cadence, scoring, win/lose, timers"],
   "win": "the win condition (or null for an endless arcade game)",
   "lose": "the lose condition",
-  "render": "one line: how each thing is drawn (shapes + colors)"
+  "render": "one line: the shapes + colors of each thing (a 3D game is boxes/spheres/ground)"
 }
 ```
 
-Set "mode" to "2d" for a top-down or side-view game (the default), or "3d" only if the request
-clearly wants a game in 3D space (built from boxes, spheres, and a ground plane).
-
-Keep it buildable from simple primitives: rectangles, circles, velocity, collision, a seeded RNG.
-No assets, no networking, no text input. Concrete and small beats broad and vague.
+HARD RULES — the spec describes WHAT the game does, never HOW to code it:
+- Pick "mode": "2d" (top/side view, the default) or "3d" (a game in real 3D space). The control
+  scheme must match the mode (orbital-3d/vehicle-3d/first-person-3d/follow-3d are 3D).
+- Set "control" to the steered entity + ONE catalog scheme. If more than one thing is steered, list the
+  primary and describe the rest in mechanics. EVERY game the player steers needs a scheme.
+- NEVER write implementation: no per-frame or per-tick numbers ("4px/frame", "decay 10% each frame"),
+  no physics math ("add velocity in facing direction", "rotate yaw", "vertex displacement"), no
+  velocities or accelerations. Those are the implementer's job. Describe momentum as "has momentum,
+  can't stop instantly" — a feeling, not a formula.
+- Entities describe WHAT + size + look only. Movement comes from the control scheme, not per entity.
+- Name any catalog behavior you rely on in "uses" (chase/flee/tilemap/scrolling/particles/…). Anything
+  the catalog doesn't cover: state it as a plain rule in "mechanics".
+- Keep it small and buildable. No assets, no networking, no text input.

@@ -72,6 +72,7 @@ interface Input {
   pressed(key: string): boolean;
   pointer: { x: number; y: number; down: boolean };
   lookDX: number; lookDY: number;   // mouse-look delta this frame (first-person; feed to kit.mouseLook)
+  camYaw: number;   // 3D camera's ground heading this frame; feed to kit.moveRelative for orbital control
 }
 
 interface Camera { x: number; y: number; follow(target: Entity, worldW?: number, worldH?: number): void; }
@@ -122,6 +123,9 @@ interface Kit {
   moveTopDown(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTopDown3(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTank3(e: Entity, input: Input, dt: number, opts?: { speed?: number; turn?: number; back?: number }): void;
+  // third-person ORBITAL: WASD relative to the camera (input.camYaw), not the world — W drives into
+  // the screen, A/D strafe. Pair with a chase camera; drag orbits the view and movement follows it.
+  moveRelative(e: Entity, input: Input, dt: number, speed?: number): void;
   // first-person (set config.pointerLock:true): mouseLook turns the player's yaw/pitch from the mouse;
   // fpCam puts the camera at the player's eyes looking along that aim; moveFP does WASD relative to yaw.
   mouseLook(player: Entity, input: Input, sens?: number): void;

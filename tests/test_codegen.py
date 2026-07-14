@@ -260,6 +260,23 @@ def test_physics3_falls_and_lands_on_ground():
     assert abs(r["y"]) < 0.001 and r["grounded"] is True
 
 
+def test_move_relative_follows_camera_yaw():
+    # W drives along the camera's heading (input.camYaw), not a world axis: at yaw 0, W = -z (into a
+    # screen whose chase camera sits at +z); rotate the camera 90deg and the SAME W key drives +x.
+    r = _node_eval("""
+      import {makeKit, makeRng, makeInput} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const input = makeInput(); input._set("w", true);
+      const a = {x:0,y:0,z:0}; input.camYaw = 0;
+      kit.moveRelative(a, input, 1, 10);
+      const b = {x:0,y:0,z:0}; input.camYaw = Math.PI/2;
+      kit.moveRelative(b, input, 1, 10);
+      console.log(JSON.stringify({ ax:+a.x.toFixed(3), az:+a.z.toFixed(3), bx:+b.x.toFixed(3), bz:+b.z.toFixed(3) }));
+    """)
+    assert r["ax"] == 0 and r["az"] == -10           # yaw 0: W -> into screen (-z)
+    assert r["bx"] == 10 and abs(r["bz"]) < 0.001     # yaw 90deg: same W -> +x
+
+
 def test_run_headless_green_on_pong(tmp_path):
     _write_game(tmp_path, GOOD)
     assert run_headless(_run_dir(tmp_path).run_dir).get("ok") is True

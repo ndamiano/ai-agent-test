@@ -74,20 +74,32 @@ fixed 3/4 view.
 - `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.rng`, `kit.V` (clamp/len/norm), `kit.aabb`
   (works on x/y as before — for 3D distance use `Math.hypot(dx,dy,dz)`), `kit.win(msg)/kit.lose(msg)`.
 
-## Movement  (steer the player — USE THIS, do NOT hand-roll WASD + dt)
-Hand-rolled movement is the #1 source of broken games (keys that stick on, moving one frame instead
-of while held, forgotten dt). Call ONE controller per steered entity, every frame in `update`:
+## Control schemes  (PICK ONE complete camera+movement combo — do NOT hand-roll)
+Hand-rolled movement/camera is the #1 source of broken games (keys that stick, forgotten dt, a camera
+that doesn't track the player, movement that ignores where the camera points). Do NOT invent your own —
+CHOOSE the scheme that fits the game and wire its matched pair. Each row is complete and tied together:
+
+| Feel | Movement (in `update`) | Camera (in `camera` hook) |
+|------|------------------------|---------------------------|
+| **Orbital** (3D platformer, marble, collectathon) — drag orbits the view, WASD moves relative to it | `kit.moveRelative(player, input, dt, 10)` | `kit.chaseCam(cam, this.state.player)` |
+| **Follow-travel** (top-down-ish hero) — camera just trails wherever you move | `kit.moveTopDown3(player, input, dt, 10)` | `kit.chaseCam(cam, this.state.player, { faceYaw: true })` |
+| **Vehicle** (ship/car/shark) — turn then drive | `kit.moveTank3(player, input, dt, {})` | `kit.chaseCam(cam, this.state.player, { faceYaw: true })` |
+| **First-person** (set `config.pointerLock:true`) | `kit.mouseLook(player, input); kit.moveFP(player, input, dt, 6)` | `kit.fpCam(cam, this.state.player)` |
+
 ```js
 update(dt, input, kit) {
-  kit.moveTopDown3(this.state.player, input, dt, 10);   // omni: WASD/arrows glide on the ground, faces travel
+  kit.moveRelative(this.state.player, input, dt, 10);   // orbital: WASD relative to the camera
 }
+camera(cam, kit) { kit.chaseCam(cam, this.state.player); }
 ```
-- `kit.moveTopDown3(e, input, dt, speed=8)` — omni-directional on the x/z plane (y untouched); sets
-  `e.ry` to face travel. The default for a creature/hero you steer directly.
-- `kit.moveTank3(e, input, dt, {speed, turn, back})` — W/S drive forward/back along `e.ry`, A/D turn.
-  For a ship/car/shark where turning-then-driving feels right.
+- `kit.moveRelative(e, input, dt, speed=8)` — WASD relative to `input.camYaw` (the camera's heading,
+  filled by the runtime): W into the screen, A/D strafe. Movement and camera stay tied as you orbit.
+- `kit.moveTopDown3(e, input, dt, speed=8)` — omni on the x/z plane in WORLD axes; sets `e.ry` to face
+  travel (so `chaseCam faceYaw` trails you). Use when no manual camera orbit is wanted.
+- `kit.moveTank3(e, input, dt, {speed, turn, back})` — W/S drive along `e.ry`, A/D turn.
 - For a flyer with pitch, use `kit.flyer` (below). These read HELD keys and apply dt for you — never
-  reach into `input.pressed` for movement, and never accumulate keys into a set.
+  reach into `input.pressed` for movement, and never accumulate keys into a set. Momentum/physics ball?
+  Still call a controller for direction; do NOT hand-roll velocity from raw key checks.
 
 ## First-person  (set `config.pointerLock: true`)
 For a first-person game, put `pointerLock: true` in config. Clicking the canvas locks the mouse;

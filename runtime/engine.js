@@ -332,6 +332,28 @@ export function moveFP(player, input, dt, speed = 6) {
   player.z += (fz * f + rz * s) / L * speed * dt;
 }
 
+// ── third-person ORBITAL control: WASD moves relative to the CAMERA, not the world ──
+// The player drags to orbit the view (run3d fills input.camYaw with the camera's ground heading);
+// W drives away from the camera (into the screen), S toward it, A/D strafe. Pairs with any chase
+// camera (chaseCam / the default follow) — movement and camera share one yaw, so they stay tied no
+// matter where the player rotates the view. Sets e.ry to face travel. This is the "3D platformer"
+// feel; use moveTopDown3 instead when the camera should just trail travel with no manual orbit.
+export function moveRelative(e, input, dt, speed = 8) {
+  const yaw = input.camYaw || 0;
+  let f = 0, s = 0;
+  if (input.down("w") || input.down("ArrowUp")) f += 1;
+  if (input.down("s") || input.down("ArrowDown")) f -= 1;
+  if (input.down("d") || input.down("ArrowRight")) s += 1;
+  if (input.down("a") || input.down("ArrowLeft")) s -= 1;
+  const L = Math.hypot(f, s);
+  if (!L) return;
+  const fx = Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = Math.sin(yaw);
+  const dx = (fx * f + rx * s) / L, dz = (fz * f + rz * s) / L;
+  e.x += dx * speed * dt;
+  e.z += dz * speed * dt;
+  e.ry = Math.atan2(-dx, -dz);   // face travel (a mesh at rotation.y=ry points to (-sin ry, -cos ry))
+}
+
 // ── tilemap (rows of chars; solid set decides collision) ─────────────────────
 export function makeTilemap(rows, tile = 32, solid = "#") {
   const solids = new Set([...solid]);
@@ -362,6 +384,7 @@ export function makeInput() {
   return {
     _held: held, _edge: edge, pointer,
     lookDX: 0, lookDY: 0,   // mouse-look delta this frame (first-person; filled by run3d under pointer lock)
+    camYaw: 0,   // ground heading of the 3D camera this frame (filled by run3d); feed to kit.moveRelative
     down: (k) => held.has(k),
     pressed: (k) => edge.has(k),
     _set(k, v) { if (v) { if (!held.has(k)) edge.add(k); held.add(k); } else held.delete(k); },
@@ -460,7 +483,7 @@ export function makeKit(config, rng) {
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
-    chaseCam, moveTopDown, moveTopDown3, moveTank3, mouseLook, fpCam, moveFP,
+    chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

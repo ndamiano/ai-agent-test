@@ -186,6 +186,9 @@ export async function run3d(game, canvas, assetBase) {
     const ang = Math.atan2(ox, oz) + viewYaw;
     camera.position.set(cam.tx + Math.sin(ang) * rad, cam.y + viewPitch * rad, cam.tz + Math.cos(ang) * rad);
     camera.lookAt(cam.tx || 0, cam.ty || 0, cam.tz || 0);
+    // Hand the camera's ground heading to next frame's update() so kit.moveRelative can steer the
+    // player relative to the VIEW the player actually sees (orbit + movement stay tied).
+    input.camYaw = Math.atan2(cam.tx - camera.position.x, -(cam.tz - camera.position.z));
     renderer.render(scene, camera);
     // HUD overlay: transparent 2D canvas over the scene. The game RETURNS items from hud(kit); the
     // engine draws them. The game never touches this canvas, so it can't clear/occlude the 3D scene.

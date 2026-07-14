@@ -195,7 +195,23 @@ def _cli_assets(run_id: str) -> int:
     return 0 if out["ok"] else 1
 
 
+_HELP = """maestro codegen — draft a spec, build a game, skin it with assets.
+
+usage:
+  python -m maestro.codegen.run [--yes] "<request>"   draft → freeze → build → play
+  python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
+  python -m maestro.codegen.run --assets <run_id>         run the asset (reskin) stage on a built run
+  python -m maestro.codegen.run --help | -h              show this help
+
+flags:
+  --yes    skip the interactive spec-freeze gate (auto-freeze the drafted spec)
+"""
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
+        print(_HELP)
+        sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == "--fix":
         if len(sys.argv) < 4:
             sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')

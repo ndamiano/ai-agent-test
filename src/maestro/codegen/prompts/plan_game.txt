@@ -7,6 +7,12 @@ right; only split when the game genuinely has several independent systems.
   simple shooter — is **ONE file, `main.ts` only**. Do NOT split these.
 - Split ONLY a game with 3+ genuinely distinct systems (an RPG: world/level, player+movement,
   combat, enemies/AI, inventory/loot, ui/hud). Then 3–6 files, one per real system. Never more.
+- The spec's `control` scheme and `uses` (tilemap, scrolling, particles, chase, …) are KIT PRIMITIVES —
+  ONE function call each inside main.ts, NOT systems to split out. A platformer that uses `tilemap` +
+  `scrolling` + a control scheme is STILL one file. NEVER create a physics.ts, camera.ts, movement.ts,
+  or render.ts: the kit already PROVIDES physics (kit.physics), camera (kit.chaseCam/fpCam), movement
+  (kit.walk/moveTank3/moveFP/…), and rendering (entity shape tags + draw/hud). Those are calls you make,
+  not files you write. Splitting them is the #1 planning mistake and it makes the build thrash.
 - When you DO split and files share data structures (the map, the player/state shape), ADD a
   `types.ts` that exports the shared `interface`s. Every file imports them, so the compiler enforces
   that all files agree on the data — no "one file expects a char grid, another returns booleans".

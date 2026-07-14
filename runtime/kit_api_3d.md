@@ -31,11 +31,22 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 invisible (pure logic markers).
 
 **Two hard rules that shape how you build a 3D game — internalize these:**
-1. **`draw(g, kit)` is the HUD — a 2D overlay ON TOP of the 3D scene.** Draw screen-space UI here with
-   the same `g.rect/g.circle/g.text/g.sprite` a 2D game uses: health, score, gold, a crosshair, menus
-   (a shop panel, inventory). Coordinates are screen pixels (0,0 = top-left, up to config.width/height).
-   It reads state, never mutates. Leave `draw` empty if the game needs no HUD. (The 3D WORLD is still
-   drawn from entity shape tags — `draw` is only the flat overlay, not the world.)
+1. **A 3D game has NO `draw()`. The HUD is DATA you RETURN from `hud(kit)`.** The scene renders from
+   entity shape tags; the HUD is a screen-space overlay the engine draws from the items you return —
+   you never touch a canvas (so you cannot clear or occlude the scene). Return an array of items:
+   ```ts
+   hud(kit: Kit): HudItem[] {
+     return [
+       { kind: "text", text: `Score: ${this.state.score}`, at: "top-left" },
+       { kind: "bar",  value: this.state.hp, max: 100, at: "top-right", color: "#e44", label: "HP" },
+       ...(this.state.won ? [{ kind: "banner", text: "You win!" }] : []),
+     ];
+   }
+   ```
+   Items: `{kind:"text", text, at?, color?, size?}` · `{kind:"bar", value, max, at?, color?, label?}` ·
+   `{kind:"banner", text, color?}` (centered). `at` is an anchor: `"top-left"`, `"top"`, `"top-right"`,
+   `"left"`, `"center"`, `"right"`, `"bottom-left"`, `"bottom"`, `"bottom-right"` (default `"top-left"`);
+   same-anchor items stack. `hud()` reads state, never mutates. Omit it entirely if the game needs no HUD.
 2. **Only position + `ry` update live** for WORLD entities. Each frame the renderer re-reads an entity's x/y/z and `ry`
    only — NOT its size (w/h/d/r) or color (those bake when the entity first appears). To change how
    much health shows, ADD or REMOVE entities (splice pip boxes from `state.world`); to show a hit,
@@ -91,7 +102,7 @@ camera(cam, kit) { kit.fpCam(cam, this.state.player); }   // eye at the player, 
 ```
 `player.yaw`/`player.pitch` are the aim. The forward/aim direction is
 `{ x: Math.sin(yaw)*Math.cos(pitch), y: Math.sin(pitch), z: -Math.cos(yaw)*Math.cos(pitch) }` — use it
-to spawn a projectile or to test which enemy is in front. HUD a crosshair in the center from `draw`.
+to spawn a projectile or to test which enemy is in front. Show a crosshair with `hud()`: `{kind:"text", text:"+", at:"center"}`.
 
 ## Flight  (USE THIS for a plane/ship/flyer — don't hand-roll 3D orientation)
 - `kit.flyer(e, input, dt, opts?)` — the whole flight step: steer `e.yaw`/`e.pitch` from input,

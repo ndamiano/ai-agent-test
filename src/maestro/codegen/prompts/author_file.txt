@@ -18,12 +18,18 @@ Rules:
   entities). Be concrete: a map of `"#"|"."` chars is `export type Tile = "#" | ".";
   export type TileMap = Tile[][]` — NOT `any`. Do not re-declare an ambient type from scratch; extend it.
 - If this is `main.ts`: `export function createGame(kit: Kit): GameObject` (GameObject is NOT
-  generic — never write `GameObject<...>`) returning { config, state, init, update, draw }. ANNOTATE
-  the hook methods too — they are the kit contract: `init(kit: Kit)`, `update(dt: number, input:
-  Input, kit: Kit)`, `draw(g: DrawApi, kit: Kit)`, `camera(cam: Camera3, kit: Kit)`. `draw`'s `g` is
-  a `DrawApi` — draw ONLY with `g.rect/circle/line/text/sprite/clear` (this includes the 3D HUD);
-  the raw canvas API (`g.fillRect`, `g.fillStyle`, `g.fillText`, `g.font`) does NOT exist on it. Keep
-  ALL state in `this.state`; call the other systems from update/draw (thread `kit` + `this.state`). Do
+  generic — never write `GameObject<...>`) returning { config, state, init, update, and draw and/or
+  hud }. ANNOTATE the hook methods too — they are the kit contract: `init(kit: Kit)`, `update(dt:
+  number, input: Input, kit: Kit)`, `draw(g: DrawApi, kit: Kit)`, `hud(kit: Kit): HudItem[]`,
+  `camera(cam: Camera3, kit: Kit)`.
+  - The HUD (score/health/timer/banner) is DATA you RETURN from `hud(kit)` — an array of
+    `{kind:"text"|"bar"|"banner", ...}` items the engine draws. NEVER hand-draw the HUD, and in a
+    2D `draw` NEVER call `g.clear` for a HUD (it paints over the scene). See the HUD section of the kit API.
+  - A **2D** game uses `draw(g: DrawApi, kit: Kit)` to paint the SCENE (`g.rect/circle/line/text/sprite/
+    clear` only — the raw canvas API `g.fillRect/fillStyle/fillText/font` does NOT exist), plus an
+    optional `hud`. A **3D** game has NO `draw` at all — the scene renders from entity shape tags — and
+    uses only `hud` for the overlay.
+  Keep ALL state in `this.state`; call the other systems from update/draw (thread `kit` + `this.state`). Do
   NOT reimplement a system that has its own file. If you type the state via a `GameState` from
   types.ts, that interface MUST declare EVERY field you read/write anywhere (player, enemies, score,
   gameOver, …) — a missing field is a type error.

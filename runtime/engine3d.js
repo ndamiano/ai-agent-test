@@ -15,7 +15,7 @@
 
 import * as THREE from "./vendor/three.module.js";
 import { GLTFLoader } from "./vendor/GLTFLoader.js";
-import { makeInput, chaseCam, realize, makeDraw } from "./engine.js";
+import { makeInput, chaseCam, realize, makeDraw, renderHud } from "./engine.js";
 
 function worldOf(g) {
   return (g.state && (Array.isArray(g.state.world) ? g.state.world
@@ -187,8 +187,9 @@ export async function run3d(game, canvas, assetBase) {
     camera.position.set(cam.tx + Math.sin(ang) * rad, cam.y + viewPitch * rad, cam.tz + Math.cos(ang) * rad);
     camera.lookAt(cam.tx || 0, cam.ty || 0, cam.tz || 0);
     renderer.render(scene, camera);
-    // HUD overlay: clear + let the game paint screen-space UI
-    if (g.draw) { placeHud(); hctx.clearRect(0, 0, hud.width, hud.height); g.draw(hudDraw, kit); }
+    // HUD overlay: transparent 2D canvas over the scene. The game RETURNS items from hud(kit); the
+    // engine draws them. The game never touches this canvas, so it can't clear/occlude the 3D scene.
+    if (g.hud) { placeHud(); hctx.clearRect(0, 0, hud.width, hud.height); renderHud(hudDraw, g.hud(kit), config.width, config.height); }
     if (kit.over) { banner.textContent = kit.over.msg; banner.style.display = "grid"; }
     requestAnimationFrame(frame);
   }

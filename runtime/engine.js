@@ -391,6 +391,64 @@ export function makeDraw(ctx) {
   };
 }
 
+// ── HUD: a DATA-defined screen-space overlay, identical in 2D and 3D ──────────
+// The game's hud(kit) RETURNS items; the engine draws them. The game never touches the canvas for
+// the HUD, so it cannot clear/occlude the scene or fumble pixel layout. Anchors place items in the
+// nine screen regions; same-anchor items stack. See validateHud for the accepted shape.
+const HUD_ANCHORS = new Set([
+  "top-left", "top", "top-right", "left", "center", "right",
+  "bottom-left", "bottom", "bottom-right"]);
+const _HUD_PAD = 16, _HUD_LINE = 24, _BAR_W = 160, _BAR_H = 12;
+
+export function validateHud(items) {
+  if (items == null) return null;
+  if (!Array.isArray(items)) return "hud() must return an array of HUD items";
+  for (const it of items) {
+    if (!it || typeof it !== "object") return "each HUD item must be an object";
+    if (it.kind === "text" || it.kind === "banner") {
+      if (it.text == null) return `hud ${it.kind} item needs a 'text'`;
+    } else if (it.kind === "bar") {
+      if (typeof it.value !== "number" || typeof it.max !== "number")
+        return "hud bar item needs numeric 'value' and 'max'";
+    } else {
+      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner`;
+    }
+    if (it.at != null && !HUD_ANCHORS.has(it.at))
+      return `unknown hud anchor ${JSON.stringify(it.at)} — use e.g. "top-left", "top", "bottom-right"`;
+  }
+  return null;
+}
+
+export function renderHud(draw, items, W, H) {
+  if (!Array.isArray(items)) return;
+  const cursor = {};   // anchor -> next y (top anchors grow down, bottom anchors grow up)
+  const xOf = (anchor) => anchor.endsWith("left") ? { x: _HUD_PAD, align: "left" }
+    : anchor.endsWith("right") ? { x: W - _HUD_PAD, align: "right" }
+      : { x: W / 2, align: "center" };
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    if (it.kind === "banner") {
+      draw.text(String(it.text), W / 2, H / 2, it.color || "#fff", 32, "center");
+      continue;
+    }
+    const anchor = it.at || "top-left";
+    const down = !anchor.startsWith("bottom");
+    if (cursor[anchor] == null) cursor[anchor] = down ? _HUD_PAD + 16 : H - _HUD_PAD;
+    const y = cursor[anchor];
+    const { x, align } = xOf(anchor);
+    if (it.kind === "text") {
+      draw.text(String(it.text), x, y, it.color || "#fff", it.size || 16, align);
+    } else if (it.kind === "bar") {
+      const bx = align === "right" ? x - _BAR_W : align === "center" ? x - _BAR_W / 2 : x;
+      const frac = Math.max(0, Math.min(1, (it.value || 0) / (it.max || 1)));
+      if (it.label) draw.text(String(it.label), bx, y - 14, "#fff", 12, "left");
+      draw.rect(bx, y - 10, _BAR_W, _BAR_H, "#2a2a33");
+      draw.rect(bx, y - 10, _BAR_W * frac, _BAR_H, it.color || "#39c07a");
+    }
+    cursor[anchor] = down ? y + _HUD_LINE : y - _HUD_LINE;
+  }
+}
+
 // ── the runner: shared control surface the kit hands the game ─────────────────
 export function makeKit(config, rng) {
   let over = null; // null | {won:bool, msg}
@@ -492,7 +550,8 @@ export async function run(game, canvas, assetBase) {
     if (!kit.over) g.update(dt, input, kit);
     input._endFrame();
     draw.clear(config.background);
-    g.draw(draw, kit);
+    if (g.draw) g.draw(draw, kit);
+    if (g.hud) renderHud(draw, g.hud(kit), config.width, config.height);
     if (kit.over) draw.text(kit.over.msg, config.width / 2, config.height / 2, "#fff", 32, "center");
     requestAnimationFrame(frame);
   }
@@ -614,15 +673,23 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {})
 }
 
 // ── render smoke: exercise the draw() path headless can't otherwise see ───────
-// simulate() steps update() ONLY; a game can pass it yet crash or paint nothing in draw() — a
-// blank/broken browser screen. Call draw() against a recording mock each frame: catch throws
-// (draw_crash) and require ≥1 visible primitive over the run (draw_blank). Runs for 3D too — there
-// draw() is the HUD overlay (run3d hands it the same DrawApi), so a HUD that calls a canvas method
-// off the DrawApi (g.fillRect) crashes here instead of only in the browser. A 3D game with no HUD
-// has no draw() and passes through.
+// simulate() steps update() ONLY; a game can pass it yet crash or paint nothing — a blank/broken
+// browser screen. Exercise the two screen-space paths each frame against recording mocks:
+//   - 2D SCENE: draw(g) must not throw (draw_crash) and must paint ≥1 primitive (draw_blank).
+//   - HUD (both modes): hud(kit) must return a valid item array (hud_bad) and not throw (hud_crash).
+// A 3D game has no draw() — its scene renders from world entities — so only its hud() is checked. A
+// 3D game with neither draw nor hud passes through (scene-only).
 export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
   const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 }, seed);
-  if (typeof g.draw !== "function") return { ok: true, skipped: true };
+  const has2dScene = typeof g.draw === "function";
+  const hasHud = typeof g.hud === "function";
+  if (config.mode === "3d" && has2dScene) {
+    return { ok: false, violations: [{ kind: "draw_in_3d",
+      detail: `a 3D game must NOT define draw() — the scene renders from world entity shape tags, and `
+        + `the HUD is DATA returned from hud(kit). A draw() here is dead code (the 3D renderer ignores `
+        + `it) and any g.clear in it would blank the scene. Delete draw(); move HUD into hud().` }] };
+  }
+  if (!has2dScene && !hasHud) return { ok: true, skipped: true };
   const input = makeInput();
   let content = 0;
   const bump = () => { content++; };
@@ -633,14 +700,23 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
     for (let f = 0; f < frames; f++) {
       if (!kit.over) g.update(dt, input, kit);
       input._endFrame();
-      g.draw(rec, kit);
+      if (has2dScene) g.draw(rec, kit);
+      if (hasHud) {
+        const items = g.hud(kit);
+        const bad = validateHud(items);
+        if (bad) return { ok: false, violations: [{ kind: "hud_bad",
+          detail: `hud(kit) returned an invalid overlay: ${bad}. hud() returns an array of `
+            + `{kind:"text"|"bar"|"banner", ...} items — the engine draws them; never touch a canvas.` }] };
+        renderHud(rec, items, config.width || 640, config.height || 480);
+      }
     }
   } catch (e) {
+    const which = has2dScene ? "draw()/hud()" : "hud()";
     return { ok: false, violations: [{ kind: "draw_crash",
-      detail: `draw() threw during render: ${String(e && e.stack || e)}. draw(g,kit) must only READ `
-        + `state and call g.rect/circle/line/text/sprite; never mutate state or read undefined fields.` }] };
+      detail: `${which} threw during render: ${String(e && e.stack || e)}. These must only READ state; `
+        + `never mutate state or read undefined fields.` }] };
   }
-  if (content === 0) {
+  if (has2dScene && content === 0) {
     return { ok: false, violations: [{ kind: "draw_blank",
       detail: `draw() ran ${frames} frames without drawing anything visible (no rect/circle/line/text/`
         + `sprite calls) — the screen would be blank. Render every entity in state.world from `

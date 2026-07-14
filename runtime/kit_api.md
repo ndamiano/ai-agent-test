@@ -10,13 +10,21 @@ export function createGame(kit) {
     state:  { world: [] },          // anything; put entities in state.world (or state.entities)
     init(kit)              { },      // one-time setup; spawn entities into state.world
     update(dt, input, kit) { },      // advance the sim ONE step (dt = seconds). NEVER draw here.
-    draw(g, kit)           { },      // render state via `g`. NEVER change state here.
+    draw(g, kit)           { },      // render the SCENE via `g` (sprites/shapes). NEVER change state.
+    hud(kit)               { return []; },  // OPTIONAL: RETURN screen-space HUD items (see HUD below).
   };
 }
 ```
 
-**Law: update mutates state and never draws; draw reads state and never mutates.** The sim must
+**Law: update mutates state and never draws; draw/hud read state and never mutate.** The sim must
 run with no canvas (it's tested headless). Keep all randomness in `kit.rng` (seeded/reproducible).
+
+**HUD (score, health, timers, banners):** don't hand-draw these in `draw` — RETURN them from `hud(kit)`
+as data and the engine draws them (anchored, no pixel math, can't occlude the scene). Items:
+`{kind:"text", text, at?, color?, size?}` · `{kind:"bar", value, max, at?, color?, label?}` ·
+`{kind:"banner", text, color?}` (centered). `at` anchors to a screen region — `"top-left"` (default),
+`"top"`, `"top-right"`, `"bottom-left"`, `"center"`, … — and same-anchor items stack. This is the
+SAME HUD in 2D and 3D; a 3D game has no `draw` at all (its scene renders from entities) and uses only `hud`.
 
 ## UNITS — read this first
 **All velocities are pixels per SECOND. All accelerations are pixels per second².** The kit

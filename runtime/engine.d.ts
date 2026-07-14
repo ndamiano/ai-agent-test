@@ -55,6 +55,18 @@ interface DrawApi {
   pop(): void;
 }
 
+type HudAnchor =
+  | "top-left" | "top" | "top-right"
+  | "left" | "center" | "right"
+  | "bottom-left" | "bottom" | "bottom-right";
+
+// A screen-space HUD element. The game RETURNS these from hud(kit); the engine draws them (same in
+// 2D and 3D). The game never touches the canvas for the HUD, so it can't occlude the scene.
+type HudItem =
+  | { kind: "text"; text: string | number; at?: HudAnchor; color?: string; size?: number }
+  | { kind: "bar"; value: number; max: number; at?: HudAnchor; color?: string; label?: string }
+  | { kind: "banner"; text: string | number; color?: string };
+
 interface Input {
   down(key: string): boolean;
   pressed(key: string): boolean;
@@ -137,7 +149,11 @@ interface GameObject {
   state: any;
   init?(kit: Kit): void;
   update(dt: number, input: Input, kit: Kit): void;
+  // 2D SCENE: paint the game world onto the canvas. 3D games omit this — the scene renders from
+  // world entities. NEVER draw the HUD here in a way that clears the screen; return HUD from hud().
   draw?(g: DrawApi, kit: Kit): void;
+  // HUD (2D and 3D): RETURN screen-space overlay items; the engine draws them. Read-only, like draw.
+  hud?(kit: Kit): HudItem[];
   camera?(cam: Camera3, kit: Kit): void;
 }
 
@@ -145,5 +161,5 @@ interface GameObject {
 // `Kit.Config` (declaration merging with the `Kit` interface above). Both `Entity` and `Kit.Entity`
 // name the same type — supports the natural "extend the kit's entity with my fields" pattern.
 declare namespace Kit {
-  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, DrawApi, Camera, Camera3, Rng, V, GameObject };
+  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, DrawApi, Camera, Camera3, Rng, V, GameObject, HudItem, HudAnchor };
 }

@@ -64,24 +64,49 @@ GAME_3D = """export function createGame(kit: Kit): GameObject {
     update(dt, input, kit) {},
   };
 }"""
-# A 3D game WITH a HUD draw() — render smoke now EXERCISES it (draw is the 3D HUD overlay), not skips.
+# A 3D game with a DATA HUD — hud(kit) RETURNS items, the engine draws them. Render smoke validates
+# the item array and renders it against the mock (never skips a game that has a HUD).
 HUD_3D = """export function createGame(kit: Kit): GameObject {
   return {
     config: { mode: "3d", width: 200, height: 200 }, state: { world: [] as World, hp: 100 },
     init(kit) {},
     update(dt, input, kit) {},
-    draw(g) { g.text("HP: " + this.state.hp, 10, 20, "#fff"); g.rect(10, 30, 100, 8, "#0f0"); },
+    hud(kit): HudItem[] {
+      return [
+        { kind: "text", text: "HP", at: "top-left" },
+        { kind: "bar", value: this.state.hp, max: 100, at: "top-right", color: "#0f0" },
+      ];
+    },
   };
 }"""
-# A 3D HUD that calls the raw canvas API (g.fillRect) — NOT on the DrawApi. Caught two ways now:
-# typecheck (g is contextually DrawApi via the GameObject return) and the render gate (no longer skips
-# 3D). This is the exact bug that shipped in a real build.
-HUD_CANVAS_MISUSE = """export function createGame(kit: Kit): GameObject {
+# The shipped bug's vector: a 3D game defining draw() at all. The 3D renderer ignores draw() (scene
+# comes from entities; HUD from hud()), so a g.clear there silently blanks the scene. The render gate
+# now rejects any draw() in a 3D game outright.
+HUD_DRAW_IN_3D = """export function createGame(kit: Kit): GameObject {
   return {
     config: { mode: "3d", width: 200, height: 200 }, state: { world: [] as World },
     init(kit) {},
     update(dt, input, kit) {},
+    draw(g) { g.clear("#000"); g.text("score", 10, 20, "#fff"); },
+  };
+}"""
+# A 2D scene draw() calling the raw canvas API (g.fillRect) — NOT on DrawApi. Caught at typecheck
+# because g is contextually a DrawApi via the `: GameObject` return annotation.
+CANVAS_MISUSE_2D = """export function createGame(kit: Kit): GameObject {
+  return {
+    config: { width: 200, height: 200 }, state: { world: [] as World },
+    init(kit) {},
+    update(dt, input, kit) {},
     draw(g) { g.fillRect(10, 10, 50, 20); },
+  };
+}"""
+# A 3D HUD whose hud() returns a malformed item — caught by the render gate's data validation.
+HUD_BAD_DATA = """export function createGame(kit: Kit): GameObject {
+  return {
+    config: { mode: "3d", width: 200, height: 200 }, state: { world: [] as World },
+    init(kit) {},
+    update(dt, input, kit) {},
+    hud(kit): any[] { return [{ kind: "gauge", value: 1 }]; },
   };
 }"""
 # A level far wider than the screen, player driven right but NO camera — passes headless/probe/render;
@@ -280,18 +305,25 @@ def test_run_render_skips_3d_without_draw(tmp_path):
 
 
 def test_run_render_runs_3d_hud(tmp_path):
-    # a 3D game's draw() IS the HUD overlay — the render gate exercises it now instead of skipping.
+    # a 3D game's HUD is data returned from hud() — the render gate validates + renders it, not skips.
     _write_game(tmp_path, HUD_3D)
     rr = run_render(tmp_path)
     assert rr.get("ok") is True and not rr.get("skipped")
 
 
-def test_run_render_catches_3d_hud_canvas_misuse(tmp_path):
-    # the shipped bug: a 3D HUD calling g.fillRect (a canvas method absent from DrawApi) crashed only
-    # in the browser because the render gate skipped 3D. It no longer does.
-    _write_game(tmp_path, HUD_CANVAS_MISUSE)
+def test_run_render_rejects_draw_in_3d(tmp_path):
+    # the shipped bug's vector: a 3D game with draw() (a g.clear there blanks the scene). The render
+    # gate now rejects any draw() in a 3D game — the whole occlusion class is impossible.
+    _write_game(tmp_path, HUD_DRAW_IN_3D)
     rr = run_render(tmp_path)
-    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_crash"
+    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_in_3d"
+
+
+def test_run_render_catches_bad_hud_data(tmp_path):
+    # hud() returning a malformed item is caught by the gate's declarative validation.
+    _write_game(tmp_path, HUD_BAD_DATA)
+    rr = run_render(tmp_path)
+    assert rr["ok"] is False and rr["violations"][0]["kind"] == "hud_bad"
 
 
 def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
@@ -396,7 +428,7 @@ def test_typecheck_catches_canvas_api_on_drawapi(tmp_path):
     # `g` is CONTEXTUALLY a DrawApi, so g.fillRect (not on DrawApi) is a type error before the run.
     # This bites only if the model leaves g unannotated — an explicit `g: any` defeats it, which is
     # why the render gate is the reliable backstop.
-    _write_game(tmp_path, HUD_CANVAS_MISUSE)
+    _write_game(tmp_path, CANVAS_MISUSE_2D)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["typechecks"]
     assert "fillRect" in errs[0].message

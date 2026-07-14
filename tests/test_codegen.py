@@ -56,12 +56,32 @@ DRAW_BLANK = """export function createGame(kit: Kit): GameObject {
     draw(g) {},
   };
 }"""
-# A 3D game has no draw() — render smoke skips it (render is mesh-sync from shape tags).
+# A 3D game with no draw() — render smoke skips it (render is mesh-sync from shape tags).
 GAME_3D = """export function createGame(kit: Kit): GameObject {
   return {
     config: { mode: "3d", width: 200, height: 200 }, state: { world: [] as World },
     init(kit) { this.state.world.push({ shape: "box", x: 0, y: 0, z: 0, w: 1, h: 1, d: 1, color: "#f00" }); },
     update(dt, input, kit) {},
+  };
+}"""
+# A 3D game WITH a HUD draw() — render smoke now EXERCISES it (draw is the 3D HUD overlay), not skips.
+HUD_3D = """export function createGame(kit: Kit): GameObject {
+  return {
+    config: { mode: "3d", width: 200, height: 200 }, state: { world: [] as World, hp: 100 },
+    init(kit) {},
+    update(dt, input, kit) {},
+    draw(g) { g.text("HP: " + this.state.hp, 10, 20, "#fff"); g.rect(10, 30, 100, 8, "#0f0"); },
+  };
+}"""
+# A 3D HUD that calls the raw canvas API (g.fillRect) — NOT on the DrawApi. Caught two ways now:
+# typecheck (g is contextually DrawApi via the GameObject return) and the render gate (no longer skips
+# 3D). This is the exact bug that shipped in a real build.
+HUD_CANVAS_MISUSE = """export function createGame(kit: Kit): GameObject {
+  return {
+    config: { mode: "3d", width: 200, height: 200 }, state: { world: [] as World },
+    init(kit) {},
+    update(dt, input, kit) {},
+    draw(g) { g.fillRect(10, 10, 50, 20); },
   };
 }"""
 # A level far wider than the screen, player driven right but NO camera — passes headless/probe/render;
@@ -253,10 +273,25 @@ def test_run_render_catches_blank_screen(tmp_path):
     assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_blank"
 
 
-def test_run_render_skips_3d(tmp_path):
+def test_run_render_skips_3d_without_draw(tmp_path):
     _write_game(tmp_path, GAME_3D)
     rr = run_render(tmp_path)
     assert rr["ok"] is True and rr.get("skipped") is True
+
+
+def test_run_render_runs_3d_hud(tmp_path):
+    # a 3D game's draw() IS the HUD overlay — the render gate exercises it now instead of skipping.
+    _write_game(tmp_path, HUD_3D)
+    rr = run_render(tmp_path)
+    assert rr.get("ok") is True and not rr.get("skipped")
+
+
+def test_run_render_catches_3d_hud_canvas_misuse(tmp_path):
+    # the shipped bug: a 3D HUD calling g.fillRect (a canvas method absent from DrawApi) crashed only
+    # in the browser because the render gate skipped 3D. It no longer does.
+    _write_game(tmp_path, HUD_CANVAS_MISUSE)
+    rr = run_render(tmp_path)
+    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_crash"
 
 
 def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
@@ -354,6 +389,17 @@ def test_typecheck_catches_cross_file_shape_mismatch(tmp_path):
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["typechecks"]
     assert errs[0].path == "main.ts"
+
+
+def test_typecheck_catches_canvas_api_on_drawapi(tmp_path):
+    # the compile-time catch for the shipped bug: when createGame is annotated `: GameObject`, draw's
+    # `g` is CONTEXTUALLY a DrawApi, so g.fillRect (not on DrawApi) is a type error before the run.
+    # This bites only if the model leaves g unannotated — an explicit `g: any` defeats it, which is
+    # why the render gate is the reliable backstop.
+    _write_game(tmp_path, HUD_CANVAS_MISUSE)
+    errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
+    assert [e.code for e in errs] == ["typechecks"]
+    assert "fillRect" in errs[0].message
 
 
 def test_clean_game_has_no_errors(tmp_path):

@@ -616,11 +616,13 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {})
 // ── render smoke: exercise the draw() path headless can't otherwise see ───────
 // simulate() steps update() ONLY; a game can pass it yet crash or paint nothing in draw() — a
 // blank/broken browser screen. Call draw() against a recording mock each frame: catch throws
-// (draw_crash) and require ≥1 visible primitive over the run (draw_blank). 3D games have no
-// draw() (the runtime syncs meshes from shape tags), so they pass through.
+// (draw_crash) and require ≥1 visible primitive over the run (draw_blank). Runs for 3D too — there
+// draw() is the HUD overlay (run3d hands it the same DrawApi), so a HUD that calls a canvas method
+// off the DrawApi (g.fillRect) crashes here instead of only in the browser. A 3D game with no HUD
+// has no draw() and passes through.
 export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
   const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 }, seed);
-  if (config.mode === "3d" || typeof g.draw !== "function") return { ok: true, skipped: true };
+  if (typeof g.draw !== "function") return { ok: true, skipped: true };
   const input = makeInput();
   let content = 0;
   const bump = () => { content++; };

@@ -261,20 +261,32 @@ def system_prompt() -> str:
 _READ_SCHEMA = {"type": "function", "function": {
     "name": "read_game_file",
     "description": "Read one game file's FULL current source. Read any sibling you need to understand "
-                   "the cross-file wiring before you write the fix.",
+                   "the cross-file wiring before you fix. You MUST read a file before you can edit it.",
     "parameters": {"type": "object",
                    "properties": {"file": {"type": "string", "description": "filename, e.g. world.ts"}},
                    "required": ["file"]}}}
+_EDIT_SCHEMA = {"type": "function", "function": {
+    "name": "edit_game_file",
+    "description": "The PREFERRED fix: replace an exact snippet in a file you have read. old_string must "
+                   "match the current source verbatim and be unique — copy it exactly, including "
+                   "indentation. Prefer this over rewriting the whole file; make the smallest edit that "
+                   "fixes the failure. If it fails it returns the current file body — re-anchor and retry.",
+    "parameters": {"type": "object",
+                   "properties": {"file": {"type": "string"},
+                                  "old_string": {"type": "string", "description": "exact current text to replace"},
+                                  "new_string": {"type": "string", "description": "replacement text"}},
+                   "required": ["file", "old_string", "new_string"]}}}
 _WRITE_SCHEMA = {"type": "function", "function": {
     "name": "write_game_file",
-    "description": "Overwrite ONE file with its COMPLETE new source to fix the failure. Call once you "
-                   "know the fix.",
+    "description": "Escape hatch: overwrite ONE file with its COMPLETE new source. Use only when an edit "
+                   "cannot express the fix (a near-total rewrite). Must be a planned filename.",
     "parameters": {"type": "object",
                    "properties": {"file": {"type": "string"},
                                   "code": {"type": "string", "description": "the complete file source"}},
                    "required": ["file", "code"]}}}
 
 _FIX_LOOP_MAX_TURNS = 8
+_EDIT_FAILS_BEFORE_OVERWRITE = 3  # after N failed edits, force the overwrite escape hatch
 
 
 def _read_write_loop_fix(module, context, error, slot, services, dispatch):
@@ -303,12 +315,21 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
         f"# FAILING GATE\n{error.message}",
         "Read whatever files you need to find the root cause, then write ONE file to fix it.",
     ])
-    # A stalled fix must ACT, not re-read (mirrors Services.run's escalation): drop the read tool.
-    schemas = [_WRITE_SCHEMA] if services.escalate else [_READ_SCHEMA, _WRITE_SCHEMA]
+    # Ladder: read → edit (preferred, grounded, can't gut a file) → overwrite (escape hatch). Enough
+    # failed edits drop edit and force a full-file overwrite; a hard outer stall (escalate) drops the
+    # read tool too, so the fix must ACT rather than re-read (mirrors Services.run's escalation).
+    def _schemas(edit_fails):
+        if services.escalate:
+            return [_WRITE_SCHEMA]
+        if edit_fails >= _EDIT_FAILS_BEFORE_OVERWRITE:
+            return [_READ_SCHEMA, _WRITE_SCHEMA]
+        return [_READ_SCHEMA, _EDIT_SCHEMA, _WRITE_SCHEMA]
+
     history = [{"role": "user", "content": user}]
-    wrote = None
-    nreads = 0
+    wrote = mode = None
+    nreads = edit_fails = 0
     for _ in range(_FIX_LOOP_MAX_TURNS):
+        schemas = _schemas(edit_fails)
         msgs = MessageBuilder(system).extend(history).build()
         resp = services.infer(msgs, schemas, max_tokens=_CODE_MAX_TOKENS)
         message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
@@ -319,8 +340,8 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
         if not tcs:
             history.append({"role": "assistant", "content": message.get("content", "") or ""})
             history.append({"role": "user",
-                            "content": "Call read_game_file to inspect a file, or write_game_file with "
-                                       "the complete fixed file."})
+                            "content": "Call read_game_file to inspect a file, edit_game_file to fix a "
+                                       "snippet, or write_game_file for a full rewrite."})
             continue
         history.append({"role": "assistant", "content": message.get("content", "") or "", "tool_calls": tcs})
         for tc in tcs:
@@ -330,20 +351,28 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
                 result = dispatch("write_game_file",
                                   {"code": args.get("code", ""), "file": args.get("file", "main.ts")})
                 if result.get("ok"):
-                    wrote = result.get("file")
+                    wrote, mode = result.get("file"), "overwrite"
+                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
+            elif name == "edit_game_file":
+                result = dispatch("edit_game_file", {"file": args.get("file", "main.ts"),
+                                                     "old_string": args.get("old_string", ""),
+                                                     "new_string": args.get("new_string", "")})
+                if result.get("ok"):
+                    wrote, mode = result.get("file"), "edit"
+                else:
+                    edit_fails += 1
                 history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
             elif name == "read_game_file":
                 result = dispatch("read_game_file", {"file": args.get("file", "main.ts")})
                 nreads += 1
-                history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                "content": f"// {args.get('file')}\n{result.get('content', '')}"})
+                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
             else:
                 history.append({"role": "tool", "tool_call_id": tc.get("id"),
                                 "content": f"unknown tool: {name!r}"})
         if wrote:
-            services._report(f"patched {wrote} (read {nreads} file(s))")
+            services._report(f"patched {wrote} via {mode} (read {nreads}, edit-miss {edit_fails})")
             return
-    services._report(f"fix loop ended without a write (read {nreads} file(s))")
+    services._report(f"fix loop ended without a write (read {nreads}, edit-miss {edit_fails})")
 
 
 class CodegenModule(Module):

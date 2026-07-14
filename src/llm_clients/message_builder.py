@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Tools whose result carries the full current file body — deduped by file, so the newest body of a
+# file supersedes every earlier read/edit body of it.
+_FILE_BODY_TOOLS = {"read_game_file", "edit_game_file"}
+
 
 class MessageBuilder:
     """
@@ -112,10 +116,17 @@ class MessageBuilder:
                 name = fn.get("name", "")
                 raw_args = fn.get("arguments", "")
                 try:
-                    norm_args = json.dumps(json.loads(raw_args), sort_keys=True)
+                    parsed = json.loads(raw_args)
+                    norm_args = json.dumps(parsed, sort_keys=True)
                 except (json.JSONDecodeError, TypeError):
-                    norm_args = raw_args
-                call_info[tc.get("id", "")] = (name, norm_args)
+                    parsed, norm_args = None, raw_args
+                # read_game_file and edit_game_file both return the CURRENT file body; key them by
+                # file (not name+args) so a fresh read/edit of a file supersedes every earlier body
+                # of it — old_string/new_string differ per edit, so name+args would never collapse.
+                if name in _FILE_BODY_TOOLS and isinstance(parsed, dict) and parsed.get("file"):
+                    call_info[tc.get("id", "")] = ("__filebody__", parsed["file"])
+                else:
+                    call_info[tc.get("id", "")] = (name, norm_args)
 
         # Pass 2: group tool-result message indices by (name, args)
         groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)

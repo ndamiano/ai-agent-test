@@ -67,6 +67,37 @@ def test_dedup_collapses_duplicate_call_keeping_latest(mb):
     assert new["content"] == "NEW CONTENTS"
 
 
+def test_dedup_edit_supersedes_earlier_read_of_same_file(mb):
+    # WHY: read_game_file and edit_game_file both return the file's full body. They are keyed by
+    # FILE, not name+args (old_string/new_string differ per edit) — so a later edit's body must
+    # supersede the earlier read body of the same file, leaving only the newest copy in context.
+    msgs = [
+        _assistant_call("c1", "read_game_file", '{"file": "types.ts"}', content="r"),
+        _tool_result("c1", "OLD BODY"),
+        _assistant_call("c2", "edit_game_file",
+                        '{"file": "types.ts", "old_string": "a", "new_string": "b"}', content="e"),
+        _tool_result("c2", "NEW BODY"),
+    ]
+    out = mb._deduplicate_tool_results(msgs)
+    tool_msgs = [m for m in out if m.get("role") == "tool"]
+    assert "omitted" in tool_msgs[0]["content"]
+    assert tool_msgs[1]["content"] == "NEW BODY"
+
+
+def test_dedup_file_body_keeps_distinct_files(mb):
+    # WHY: file-keying must not collapse ACROSS files — different files' bodies both survive.
+    msgs = [
+        _assistant_call("c1", "read_game_file", '{"file": "a.ts"}', content="r"),
+        _tool_result("c1", "A BODY"),
+        _assistant_call("c2", "edit_game_file",
+                        '{"file": "b.ts", "old_string": "x", "new_string": "y"}', content="e"),
+        _tool_result("c2", "B BODY"),
+    ]
+    out = mb._deduplicate_tool_results(msgs)
+    contents = [m["content"] for m in out if m.get("role") == "tool"]
+    assert contents == ["A BODY", "B BODY"]
+
+
 def test_dedup_normalizes_arg_order_when_matching(mb):
     # WHY: identical args in a different key order are the SAME call — dedup
     # normalizes JSON before comparing, so reordering must still collapse.

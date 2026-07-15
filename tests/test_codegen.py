@@ -520,24 +520,26 @@ def test_multi_file_game_loads_and_gates(tmp_path):
 
 
 class _FakeToolConn:
-    """Scripts the read→write subloop: call 1 reads a file, call 2 writes GOOD to main.ts. Records the
-    tool calls so a test can assert the fix READ before it WROTE (the cross-file capability)."""
+    """Scripts the read→write subloop: call 1 reads a file (a tool call), call 2 writes GOOD to main.ts
+    as a fenced `FILE:` content block (NOT a tool call — a quote-heavy file as a tool-arg 500s the local
+    server). Records the actions so a test can assert the fix READ before it WROTE."""
     def __init__(self, code, target="main.ts"):
         self.code = code
         self.target = target
         self.calls = []
+        self.reasonings = []
 
     def generate_with_tools(self, messages, tools=None, **kw):
+        self.reasonings.append(kw.get("reasoning"))
         step = len(self.calls)
         if step == 0:
+            self.calls.append("read_game_file")
             tc = {"id": "c0", "type": "function",
                   "function": {"name": "read_game_file", "arguments": json.dumps({"file": self.target})}}
-        else:
-            tc = {"id": f"c{step}", "type": "function",
-                  "function": {"name": "write_game_file",
-                               "arguments": json.dumps({"file": self.target, "code": self.code})}}
-        self.calls.append(tc["function"]["name"])
-        return {"choices": [{"message": {"content": "", "tool_calls": [tc]}}]}
+            return {"choices": [{"message": {"content": "", "tool_calls": [tc]}}]}
+        self.calls.append("write_game_file")
+        content = f"Fixed it.\nFILE: {self.target}\n```ts\n{self.code}\n```"
+        return {"choices": [{"message": {"content": content}}]}
 
 
 def test_fix_subloop_reads_then_writes_to_green(tmp_path):
@@ -555,6 +557,9 @@ def test_fix_subloop_reads_then_writes_to_green(tmp_path):
     assert "read_game_file" in conn.calls and "write_game_file" in conn.calls
     assert conn.calls.index("read_game_file") < conn.calls.index("write_game_file")
     assert (tmp_path / "game" / "main.ts").read_text().strip() == GOOD.strip()
+    # the fix loop forces reasoning OFF — a thinking model burns the whole budget reasoning and emits
+    # ZERO content, so the full-file write never lands.
+    assert conn.reasonings and all(r == "none" for r in conn.reasonings)
 
 
 def test_loop_refuses_unfrozen_spec(tmp_path):
@@ -568,6 +573,65 @@ def test_loop_refuses_unfrozen_spec(tmp_path):
 
 
 # ── context assembly (the fixes that converge multi-file builds) ────────────────
+def test_fix_schemas_never_expose_write_and_keep_read():
+    """WRITE is never a tool (a quote-heavy file as a tool-call JSON arg 500s the server's tool-arg
+    parser — it goes out as fenced content). The escalate / edit-fail path drops EDIT but KEEPS READ,
+    so the forced full rewrite is grounded (forcing a write of an unread file makes it stub + brick)."""
+    from maestro.codegen.module import _fix_schemas
+
+    def names(schemas):
+        return {s["function"]["name"] for s in schemas}
+
+    assert names(_fix_schemas(escalate=False, edit_fails=0)) == {"read_game_file", "edit_game_file"}
+    assert names(_fix_schemas(escalate=True, edit_fails=0)) == {"read_game_file"}   # edit dropped, read stays
+    assert names(_fix_schemas(escalate=False, edit_fails=3)) == {"read_game_file"}  # same on edit-fail
+    assert all("write_game_file" not in names(_fix_schemas(e, f))
+               for e in (True, False) for f in (0, 3))
+
+
+def test_content_write_extracts_file_and_body():
+    """A full-file rewrite is a `FILE: name` tag + a fenced block in message content — parsed back to
+    (name, code). A single-file game can omit the tag; multi-file with no tag can't be routed."""
+    from maestro.codegen.module import _content_write
+    multi = {"types.ts": "", "main.ts": ""}
+    got = _content_write("Here is the fix:\nFILE: types.ts\n```ts\nexport interface P {}\n```", multi)
+    assert got == ("types.ts", "export interface P {}")
+    # no fenced block → not a write
+    assert _content_write("let me read main.ts first", multi) is None
+    # no FILE tag in a multi-file game → cannot route
+    assert _content_write("```ts\nexport {}\n```", multi) is None
+    # single-file game → tag optional, routes to the only file
+    assert _content_write("```ts\nexport const x = 1\n```", {"main.ts": ""}) == ("main.ts", "export const x = 1")
+
+
+def test_is_stub_rejects_placeholder_and_empty_bodies():
+    """A reserve-the-file placeholder or an essentially-empty body is not a fix — writing it bricks
+    the file. Real source passes."""
+    from maestro.codegen.module import _is_stub
+    assert _is_stub("// This is a placeholder to allow reading the actual file first.\n"
+                    "// DO NOT USE - will be replaced with proper fix.\n")
+    assert _is_stub("")
+    assert _is_stub("   \n// TODO\n")
+    assert _is_stub("// fill this in later\nexport {};")
+    real = ("export function createGame(kit: Kit): GameObject {\n"
+            "  return { config: {}, state: { world: [] }, update() {}, draw() {} };\n}\n")
+    assert not _is_stub(real)
+
+
+def test_fix_loop_injects_contract_invariant_only_for_multifile(tmp_path):
+    """A game with a shared contract file gets the contract-invariant reminder in its fix context (so a
+    fix rewriting types.ts can't re-declare Entity / any-out a field); a single-file game does not."""
+    from maestro.codegen.module import _is_contract, _manifest_files
+    multi = [{"name": "types.ts", "purpose": "shared interfaces", "exports": ["GameState"]},
+             {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]}]
+    assert any(_is_contract(f) for f in multi)
+    solo = [{"name": "main.ts", "purpose": "the whole game", "exports": ["createGame"]}]
+    assert not any(_is_contract(f) for f in solo)
+    invariant = (Path(__file__).resolve().parents[1] / "src/maestro/codegen/prompts"
+                 / "contract_invariant.txt").read_text()
+    assert "extends Kit.Entity" in invariant and "any" in invariant
+
+
 def test_sibling_sigs_capture_full_multiline_params(tmp_path):
     """A multi-line function signature must expose ALL its parameters — truncating at the first line
     drops the arg list, and a caller can't match the arg count (the arg-count oscillation bug)."""

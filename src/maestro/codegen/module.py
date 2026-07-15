@@ -257,11 +257,7 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
                      f"aren't here (import the types you need from their file)\n{contract}")
     parts.append(f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}")
     if _is_contract(me):
-        parts.append("This file is the SHARED CONTRACT for every other system listed above. Declare the "
-                     "interfaces/state COMPLETE enough for ALL of them at once — every field each system "
-                     "will read or write (player stats + inventory, entity/enemy fields, world/quest state, "
-                     "timers, flags). A missing field forces every consumer to be re-patched, so err "
-                     "toward MORE fields, not fewer.")
+        parts.append((_PROMPTS / "contract_rules.txt").read_text(encoding="utf-8"))
     parts.append(f"Write ./{me['name']} now. Output ONLY one ```js block.")
     code = extract_code(_infer(services, system, user="\n\n".join(parts), max_tokens=_CODE_MAX_TOKENS))
     result = dispatch("write_game_file", {"code": code, "file": me["name"]})
@@ -345,17 +341,45 @@ _EDIT_SCHEMA = {"type": "function", "function": {
                                   "old_string": {"type": "string", "description": "exact current text to replace"},
                                   "new_string": {"type": "string", "description": "replacement text"}},
                    "required": ["file", "old_string", "new_string"]}}}
-_WRITE_SCHEMA = {"type": "function", "function": {
-    "name": "write_game_file",
-    "description": "Escape hatch: overwrite ONE file with its COMPLETE new source. Use only when an edit "
-                   "cannot express the fix (a near-total rewrite). Must be a planned filename.",
-    "parameters": {"type": "object",
-                   "properties": {"file": {"type": "string"},
-                                  "code": {"type": "string", "description": "the complete file source"}},
-                   "required": ["file", "code"]}}}
-
 _FIX_LOOP_MAX_TURNS = 8
 _EDIT_FAILS_BEFORE_OVERWRITE = 3  # after N failed edits, force the overwrite escape hatch
+
+_STUB_RE = re.compile(r"placeholder|do not use|will be replaced|fill (?:this|it|in) (?:later|next)"
+                      r"|actual (?:file|fix|implementation) (?:first|later)", re.I)
+
+
+def _is_stub(code: str) -> bool:
+    """A write that isn't a real fix — a reserve-the-file placeholder, or a body that is essentially
+    empty once comments/blanks are stripped. Overwriting a real file with this bricks it."""
+    real = "\n".join(l for l in code.splitlines()
+                     if l.strip() and not l.strip().startswith(("//", "/*", "*")))
+    return len(real.strip()) < 30 or bool(_STUB_RE.search(code))
+
+
+def _content_write(content: str, files):
+    """A full-file WRITE emitted as message CONTENT (a `FILE: name.ts` tag + a fenced block), NOT as a
+    tool-call `code` argument. A whole file with embedded quotes as a JSON tool-arg makes the local
+    server's tool-arg parser 500 ("missing closing quote") — so authoring already ships files as fenced
+    completions, and the fix loop does too. Returns (name, code) or None."""
+    if not content:
+        return None
+    code = extract_code(content)
+    if not code.strip():
+        return None
+    m = _FILE_RE.search(content)
+    name = m.group(1) if m else (next(iter(files)) if len(files) == 1 else None)
+    return (name, code) if name else None
+
+
+def _fix_schemas(escalate: bool, edit_fails: int) -> list:
+    """The fix-loop TOOLSET — read + edit. The WRITE is not a tool: it is emitted as fenced content
+    (see _content_write), because a quote-heavy file as a tool-call JSON arg 500s the local server's
+    tool-arg parser. Ladder: read → edit (grounded, can't gut a file) → full rewrite via content.
+    Enough failed edits (or a hard outer stall) drop EDIT to force the rewrite — but READ always stays
+    so the rewrite is grounded (forcing a write of an unread file makes the model stub and brick it)."""
+    if escalate or edit_fails >= _EDIT_FAILS_BEFORE_OVERWRITE:
+        return [_READ_SCHEMA]
+    return [_READ_SCHEMA, _EDIT_SCHEMA]
 
 
 def _read_write_loop_fix(module, context, error, slot, services, dispatch):
@@ -377,52 +401,62 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
         f"- {f['name']}: {f.get('purpose', '')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
         for f in files) or "\n".join(f"- {n}" for n in game_files(run_dir))
     system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
+    contract = ((_PROMPTS / "contract_invariant.txt").read_text(encoding="utf-8")
+                if any(_is_contract(f) for f in files) else "")
     user = "\n\n".join(p for p in [
         _kit_context(spec, error),
         _design_block(spec),
+        contract,
         f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
         f"# FAILING GATE\n{error.message}",
         "Read whatever files you need to find the root cause, then write ONE file to fix it.",
     ] if p)
-    # Ladder: read → edit (preferred, grounded, can't gut a file) → overwrite (escape hatch). Enough
-    # failed edits drop edit and force a full-file overwrite; a hard outer stall (escalate) drops the
-    # read tool too, so the fix must ACT rather than re-read (mirrors Services.run's escalation).
-    def _schemas(edit_fails):
-        if services.escalate:
-            return [_WRITE_SCHEMA]
-        if edit_fails >= _EDIT_FAILS_BEFORE_OVERWRITE:
-            return [_READ_SCHEMA, _WRITE_SCHEMA]
-        return [_READ_SCHEMA, _EDIT_SCHEMA, _WRITE_SCHEMA]
-
     history = [{"role": "user", "content": user}]
     wrote = mode = None
     nreads = edit_fails = 0
     for _ in range(_FIX_LOOP_MAX_TURNS):
-        schemas = _schemas(edit_fails)
+        schemas = _fix_schemas(services.escalate, edit_fails)
         msgs = MessageBuilder(system).extend(history).build()
-        resp = services.infer(msgs, schemas, max_tokens=_CODE_MAX_TOKENS)
+        # reasoning OFF: the fix WRITE is a full-file transcription emitted as content, and a reasoning
+        # model with thinking on burns the whole token budget on reasoning (observed: 58k reasoning,
+        # ZERO content) and never emits the file. The reads do the diagnosis empirically; escalate's
+        # value here is dropping edit (see _fix_schemas), NOT a reasoning bump that starves the write.
+        resp = services.infer(msgs, schemas, reasoning="none", max_tokens=_CODE_MAX_TOKENS)
         message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
+        content = message.get("content", "") or ""
         tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
+        # A full-file WRITE arrives as fenced CONTENT (not a tool call — see _content_write). Take it
+        # when the turn isn't a tool call, so an explanatory snippet alongside a read isn't misread.
+        written = _content_write(content, game_files(run_dir)) if not tcs else None
+        if written:
+            name, code = written
+            history.append({"role": "assistant", "content": content})
+            if _is_stub(code):
+                history.append({"role": "user", "content": "That is a placeholder/stub, not a fix — it "
+                                "would brick the file. Read the real body, then output `FILE: <name.ts>` "
+                                "followed by the COMPLETE working source in one ```ts block."})
+                continue
+            result = dispatch("write_game_file", {"code": code, "file": name})
+            if result.get("ok"):
+                services._report(f"patched {name} via overwrite (read {nreads}, edit-miss {edit_fails})")
+                return
+            history.append({"role": "user", "content": f"write failed: {result.get('error')}. Fix and resend."})
+            continue
         if not tcs:
-            salvaged = salvage_tool_call(message.get("content"), schemas)
+            salvaged = salvage_tool_call(content, schemas)
             tcs = [salvaged] if salvaged else []
         if not tcs:
-            history.append({"role": "assistant", "content": message.get("content", "") or ""})
+            history.append({"role": "assistant", "content": content})
             history.append({"role": "user",
-                            "content": "Call read_game_file to inspect a file, edit_game_file to fix a "
-                                       "snippet, or write_game_file for a full rewrite."})
+                            "content": "read_game_file to inspect a file, edit_game_file for a snippet "
+                                       "fix, or output `FILE: <name.ts>` + a fenced ```ts block to "
+                                       "rewrite a whole file."})
             continue
-        history.append({"role": "assistant", "content": message.get("content", "") or "", "tool_calls": tcs})
+        history.append({"role": "assistant", "content": content, "tool_calls": tcs})
         for tc in tcs:
             name = tc["function"]["name"]
             args = parse_args(tc["function"].get("arguments"))
-            if name == "write_game_file":
-                result = dispatch("write_game_file",
-                                  {"code": args.get("code", ""), "file": args.get("file", "main.ts")})
-                if result.get("ok"):
-                    wrote, mode = result.get("file"), "overwrite"
-                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
-            elif name == "edit_game_file":
+            if name == "edit_game_file":
                 result = dispatch("edit_game_file", {"file": args.get("file", "main.ts"),
                                                      "old_string": args.get("old_string", ""),
                                                      "new_string": args.get("new_string", "")})

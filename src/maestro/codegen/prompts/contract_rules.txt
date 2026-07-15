@@ -1,0 +1,24 @@
+This file is the SHARED CONTRACT every other system imports. It is the ONE source of truth for the
+game's data shapes. Three hard rules — a violation forces casts and re-patches across every file:
+
+1. NEVER re-declare a kit type. `Entity`, `World`, `Vec2`, `Vec3`, `Input`, `DrawApi` are AMBIENT
+   globals (also `Kit.Entity` etc.). A gameplay entity EXTENDS the kit one — it never replaces it:
+     WRONG:  export interface Entity { id: string; x: number; y: number }   // shadows the kit type
+             export interface Player extends Entity { health: number }       // NOT a Kit.Entity
+     RIGHT:  export interface Player extends Kit.Entity { health: number; maxHealth: number }
+   A Player/Enemy that does not extend Kit.Entity cannot be passed to kit.spawn/move/physics — that
+   is a guaranteed type error in every system.
+
+2. NEVER `any` a shared gameplay shape. `any` turns off the compiler — the whole reason these files
+   share a contract is so tsc catches them disagreeing. Type the real fields:
+     WRONG:  world?: any;  quests?: any;  particles?: any;
+     RIGHT:  world: Kit.Entity[];  quests: Quest[];  particles: Particle[];   (and declare Quest/Particle)
+
+3. The player has ONE home. Pick `state.player: Player` OR the player lives in a `state.world`
+   array — never both. Two homes means every system guesses which one, and they cross:
+     WRONG:  player: Player;  world?: any;  playerEntityId?: any;   // three ways to reach the player
+     RIGHT:  player: Player;  world: Kit.Entity[];                  // player is state.player, period
+
+Declare EVERY field any system reads or writes (player stats + inventory, enemy fields, world/quest
+state, timers, flags). A missing field forces a re-patch, so err toward MORE fields — but real typed
+fields, never `any`.

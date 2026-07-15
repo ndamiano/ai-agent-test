@@ -80,15 +80,39 @@ def reskin_file(infer, name: str, src: str, ids: list) -> str:
     return _ts_block(infer(system, user, 6000))
 
 
+# matches both a code tag `mesh: "id"` and a JSON field `"mesh":"id"` (worldgen bakes ids into WORLD)
+_MESH_TAG = re.compile(r"""["']?mesh["']?\s*:\s*["']([A-Za-z0-9_]+)["']""")
+
+
+def _existing_mesh_ids(files: dict) -> list:
+    """Mesh ids ALREADY tagged in the source (e.g. worldgen buildings tagged `mesh:"timber_house"`).
+    These are a hard contract — every one MUST get a generated mesh, or that entity renders as a bare
+    box. Returned lowercased + de-duped, in first-seen order."""
+    seen, out = set(), []
+    for src in files.values():
+        for m in _MESH_TAG.finditer(src):
+            mid = m.group(1).lower()
+            if mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+    return out
+
+
 def plan_meshes(infer, spec: dict, files: dict) -> list:
     """LLM call 1 (3D): spec + source → the mesh manifest [{id, prompt, w, h, d}]. Each entry is one
     on-screen object KIND; `prompt` is an IMAGE prompt (TRELLIS turns a rendered image into the mesh),
-    the id becomes the tag the entities key on."""
+    the id becomes the tag the entities key on. Any `mesh:"id"` tag already in the source (a generated
+    world's labelled buildings/props) is a REQUIRED id — we pass them in and union them back so none
+    is silently dropped, so every tagged entity gets a real mesh instead of a placeholder box."""
+    required = _existing_mesh_ids(files)
     system = (_PROMPTS / "plan_meshes.txt").read_text(encoding="utf-8")
     src = "\n\n".join(f"// ── {name} ──\n{code}" for name, code in files.items())
+    req_note = (f"\n\nREQUIRED ids (entities in the source already carry these `mesh` tags — you MUST "
+                f"output a mesh for EACH, with a vivid prompt + dims): {', '.join(required)}"
+                if required else "")
     user = (f"SPEC:\n{json.dumps(spec.get('design', spec), ensure_ascii=False, indent=2)}\n\n"
-            f"GAME SOURCE:\n{src}\n\nList the meshes.")
-    plan = _json_block(infer(system, user, 2000))
+            f"GAME SOURCE:\n{src}{req_note}\n\nList the meshes.")
+    plan = _json_block(infer(system, user, 3000))
     meshes = plan.get("meshes", []) if isinstance(plan, dict) else []
     out, seen = [], set()
     for m in meshes:
@@ -98,6 +122,13 @@ def plan_meshes(infer, spec: dict, files: dict) -> list:
         seen.add(mid)
         out.append({"id": mid, "prompt": str(m["prompt"]),
                     "w": int(m.get("w", 1)), "h": int(m.get("h", 1)), "d": int(m.get("d", 1))})
+    # safety net: a required id the planner dropped still gets a mesh (prompt derived from the id)
+    for mid in required:
+        if mid not in seen:
+            label = mid.replace("_", " ")
+            out.append({"id": mid, "prompt": f"a single {label}, medieval village style, one clean "
+                        f"3/4 view of the whole object, centered on a plain neutral background",
+                        "w": 4, "h": 4, "d": 4})
     return out
 
 
@@ -235,6 +266,8 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
     for name, src in files.items():
         if not detect(src):
             continue
+        if src.lstrip().startswith("// GENERATED"):
+            continue   # a generated file (e.g. worldgen's world.ts) is already tagged — never rewrite it
         new = reskin(infer, name, src, ids)
         if new.strip() and new.strip() != src.strip():
             write(code=new, file=name)

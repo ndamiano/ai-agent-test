@@ -108,7 +108,7 @@ def build(recipe, out_dir: Path):
         cxw = wx(f["x"] + f["w"] / 2 - 0.5)
         czw = wz(f["y"] + f["h"] / 2 - 0.5)
         buildings.append({
-            "id": fid, "label": label, "x": cxw, "z": czw,
+            "id": fid, "label": label, "mesh": label.replace(" ", "_"), "x": cxw, "z": czw,
             "w": round(f["w"] * CELL, 2), "d": round(f["h"] * CELL, 2),
             "h": BUILDING_H.get(label, 4.0),
             "hx": round(height_at(cxw, czw), 3),
@@ -144,7 +144,7 @@ export function spawnWorld(world: any[]): void {
   world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell });
   for (const b of WORLD.buildings)
     world.push({ shape: "box", x: b.x, y: b.hx + b.h / 2, z: b.z, w: b.w, h: b.h, d: b.d,
-                 color: b.color, type: "building", label: b.label, mesh: b.label.replace(/ /g, "_") });
+                 color: b.color, type: "building", label: b.label, mesh: b.mesh });
 }
 
 // Bilinear ground height at world (x,z). Put every entity ON the ground with this.

@@ -1,0 +1,14 @@
+# THIS IS A CONTRACT MISMATCH — find the LOGIC bug, don't just green the type checker
+The TS error names a SITE where a file references a field / type / export the shared types do not
+provide. The error tells you WHERE, not WHICH fix. There are usually several edits that make tsc pass,
+and the obvious one is usually WRONG:
+- Adding the missing field to the type (`health?: any`) greens tsc but is a silent bug when the field
+  already exists under another name (`hp`) — the game logic keeps reading the real field, and your new
+  one stays empty. This is the field-hallucination trap.
+The correct fix is almost always to reconcile the CALLER to what already exists:
+1. Read the referenced type's real definition (shown in AUTHORITY) and the file that errors.
+2. If a member already covers the concept (the usage counts show which names dominate), RENAME the
+   caller's reference to that existing member. Do not add a new field.
+3. Add a field to the type ONLY when the spec genuinely calls for data no existing member holds.
+4. For a missing export, the type is usually exported under a different name — import the real one.
+Fix the logical root cause the TS error points at, not the TS error.

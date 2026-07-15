@@ -151,6 +151,27 @@ def _append_field(types_path, typ: str, prop: str) -> bool:
     return True
 
 
+# The ambient kit globals (from engine.d.ts). A file importing one of these from ./types.ts is a
+# CALLER bug (they're globals — use directly, never import) — declaring `export type Kit = any` to
+# satisfy the import masks the real type with `any` and launders the bad import. Skip these; the
+# authority-guided LLM removes the import instead.
+_KIT_AMBIENT = {"Kit", "Entity", "World", "Input", "DrawApi", "Camera", "Vec2", "GameObject",
+                "Config", "Rect", "Tilemap"}
+
+
+def _exported_elsewhere(sources: dict, name: str) -> bool:
+    """True if a NON-types.ts game file already exports `name` (a function/type/const living in its own
+    system file). A missing-export error for such a name is a wrong IMPORT PATH, not a missing shared
+    type — declaring a stub in types.ts hides the real symbol and doesn't fix the caller."""
+    for fname, src in sources.items():
+        if fname == "types.ts":
+            continue
+        if re.search(rf"export\s+(?:async\s+)?(?:interface|type|enum|const|let|var|function|class)\s+{re.escape(name)}\b", src) \
+           or re.search(rf"export\s*\{{[^}}]*\b{re.escape(name)}\b[^}}]*\}}", src):
+            return True
+    return False
+
+
 def _declare_export(types_path, name: str) -> bool:
     src = types_path.read_text(encoding="utf-8")
     if re.search(rf"export\s+(?:interface|type|enum|const)\s+{re.escape(name)}\b", src):
@@ -200,10 +221,16 @@ def _convert_union_to_enum(types_path, typ: str, sources: dict) -> bool:
     return True
 
 
-def _reconcile_pass(types_path, errors, sources, seen) -> list:
+def _reconcile_pass(types_path, errors, sources, seen, include_fields: bool = True) -> list:
     """One sweep of the safe monotone transforms over the current tsc errors, in order — enum-ify a
     union used as a value, declare a missing export, append a missing field, relax an over-strict
-    required field. Each is idempotent and de-duped via `seen`. Returns the changes it made."""
+    required field. Each is idempotent and de-duped via `seen`. Returns the changes it made.
+
+    `include_fields=False` DROPS the append-a-missing-field transform. Appending `health?: any` to a
+    type when the caller meant the existing `hp` field greens tsc while laundering a hallucination
+    into the contract as a permanent, unused field. The contract-mismatch fix class disables it so a
+    field mismatch is resolved by the authority-guided LLM (reconcile the CALLER to the real field)
+    instead — enum/export/relax stay on (genuinely additive, not hallucination-prone)."""
     changes = []
 
     def once(key, kind, fn):
@@ -217,11 +244,13 @@ def _reconcile_pass(types_path, errors, sources, seen) -> list:
         u = _USED_AS_VALUE.search(msg)
         if u:
             once(u.group(1), "enum", lambda t=u.group(1): _convert_union_to_enum(types_path, t, sources))
-    for msg in errors:                                              # 2. declare missing exports
+    for msg in errors:                                              # 2. declare GENUINELY-missing shared exports
         e = _MISSING_EXPORT.search(msg)
-        if e:
+        # Skip an ambient kit type or a name a sibling file already exports — both are caller bugs
+        # (bad import), not missing shared types; declaring an `any` stub would launder them.
+        if e and e.group(1) not in _KIT_AMBIENT and not _exported_elsewhere(sources, e.group(1)):
             once(e.group(1), "export", lambda n=e.group(1): _declare_export(types_path, n))
-    for msg in errors:                                              # 3. append missing fields
+    for msg in errors if include_fields else []:                   # 3. append missing fields (opt-out)
         p = _MISSING_PROP.search(msg) or _LITERAL_UNKNOWN.search(msg)
         if p:
             once((p.group(2), p.group(1)), "field",
@@ -241,21 +270,24 @@ def _reconcile_pass(types_path, errors, sources, seen) -> list:
     return changes
 
 
-def reconcile_types(run_dir) -> dict:
+def reconcile_types(run_dir, include_fields: bool = True) -> dict:
     """Deterministic superset reconciler for the shared `types.ts` contract. Iterates the safe monotone
     transforms — enum-ify unions used as values, declare missing exports, append missing fields, relax
     over-strict required fields — to its OWN fixpoint in a single call (relaxing one required field
     reveals the next; declaring a type reveals its field gaps), so ONE loop step clears the whole
     contract instead of one edit per step. Never removes or restructures, so it converges. A relax is
     applied ONLY when the source is a partial object literal (`{…}`); a NAMED wrong type passed where an
-    interface is expected is a real call bug left for the fix loop. Returns {changes, count}."""
+    interface is expected is a real call bug left for the fix loop. `include_fields=False` drops the
+    field-append transform (see _reconcile_pass) — the contract-mismatch class routes field mismatches
+    to the authority-guided LLM instead of laundering them into the type. Returns {changes, count}."""
     types_path = game_dir(run_dir) / "types.ts"
     if not typecheck(run_dir) or not types_path.exists():
         return {"changes": [], "count": 0}
     sources = {p.name: p.read_text(encoding="utf-8") for p in game_dir(run_dir).glob("*.ts")}
     changes, seen = [], set()
     for _ in range(40):                                             # fixpoint; bounded against any pathological non-convergence
-        made = _reconcile_pass(types_path, [m for _, m in typecheck(run_dir)], sources, seen)
+        made = _reconcile_pass(types_path, [m for _, m in typecheck(run_dir)], sources, seen,
+                               include_fields=include_fields)
         if not made:
             break
         changes += made

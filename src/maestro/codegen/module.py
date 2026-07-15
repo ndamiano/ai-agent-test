@@ -188,32 +188,43 @@ def _throw_site(text: str, files) -> str:
     return None
 
 
-def _gate_error(code: str, label: str, detail: str, run_dir) -> Error:
-    return Error(type=ErrorType.FIX, code=code, component="game",
+def _gate_error(code: str, label: str, detail: str, run_dir, kind: str = None) -> Error:
+    return Error(type=ErrorType.FIX, code=code, component="game", kind=kind,
                  path=_throw_site(detail, game_files(run_dir)),
                  message=f"{label}: {detail}")
+
+
+def _first_kind(result) -> str:
+    """The dominant violation's kind — the classification hint a fix class routes on. One Error still
+    carries the whole violation list in `message` (context); `kind` just names the primary failure so
+    the fixer picks the right authority. Not part of Error.identity, so stall detection is unchanged."""
+    return next((v.get("kind") for v in result.get("violations", []) if v.get("kind")), None)
 
 
 def _detect_runs(check, module, context):
     hl = run_headless(context.state.run_dir)
     if hl.get("ok"):
         return []
-    return [_gate_error("runs", "HEADLESS FAILED", json.dumps(hl), context.state.run_dir)]
+    return [_gate_error("runs", "HEADLESS FAILED", json.dumps(hl), context.state.run_dir,
+                        kind=hl.get("phase") or "crash")]
 
 
 def _detect_plays(check, module, context):
     pr = run_probe(context.state.run_dir)
-    return [] if pr.get("ok") else [_gate_error("plays", "PROBE FAILED", _violations(pr), context.state.run_dir)]
+    return [] if pr.get("ok") else [_gate_error("plays", "PROBE FAILED", _violations(pr),
+                                                context.state.run_dir, kind=_first_kind(pr))]
 
 
 def _detect_renders(check, module, context):
     rr = run_render(context.state.run_dir)
-    return [] if rr.get("ok") else [_gate_error("renders", "RENDER FAILED", _violations(rr), context.state.run_dir)]
+    return [] if rr.get("ok") else [_gate_error("renders", "RENDER FAILED", _violations(rr),
+                                                context.state.run_dir, kind=_first_kind(rr))]
 
 
 def _detect_scrolls(check, module, context):
     sr = run_scroll(context.state.run_dir)
     return [] if sr.get("ok") else [Error(type=ErrorType.FIX, code="scrolls", component="game",
+                                          kind=_first_kind(sr) or "no_camera",
                                           message="CAMERA FAILED: " + _violations(sr))]
 
 
@@ -341,8 +352,17 @@ _EDIT_SCHEMA = {"type": "function", "function": {
                                   "old_string": {"type": "string", "description": "exact current text to replace"},
                                   "new_string": {"type": "string", "description": "replacement text"}},
                    "required": ["file", "old_string", "new_string"]}}}
+_WRITE_SCHEMA = {"type": "function", "function": {
+    "name": "write_game_file",
+    "description": "Overwrite a file with its COMPLETE new source — use when an edit can't express the "
+                   "fix and the whole file must be rebuilt. Pass the ENTIRE working file in `code`, never "
+                   "a stub/placeholder/partial. Read the file first so the rewrite is grounded.",
+    "parameters": {"type": "object",
+                   "properties": {"file": {"type": "string"},
+                                  "code": {"type": "string", "description": "the complete file source"}},
+                   "required": ["file", "code"]}}}
 _FIX_LOOP_MAX_TURNS = 8
-_EDIT_FAILS_BEFORE_OVERWRITE = 3  # after N failed edits, force the overwrite escape hatch
+_EDIT_FAILS_BEFORE_OVERWRITE = 3  # after N failed edits, drop edit so the fix must overwrite
 
 _STUB_RE = re.compile(r"placeholder|do not use|will be replaced|fill (?:this|it|in) (?:later|next)"
                       r"|actual (?:file|fix|implementation) (?:first|later)", re.I)
@@ -356,41 +376,32 @@ def _is_stub(code: str) -> bool:
     return len(real.strip()) < 30 or bool(_STUB_RE.search(code))
 
 
-def _content_write(content: str, files):
-    """A full-file WRITE emitted as message CONTENT (a `FILE: name.ts` tag + a fenced block), NOT as a
-    tool-call `code` argument. A whole file with embedded quotes as a JSON tool-arg makes the local
-    server's tool-arg parser 500 ("missing closing quote") — so authoring already ships files as fenced
-    completions, and the fix loop does too. Returns (name, code) or None."""
-    if not content:
-        return None
-    code = extract_code(content)
-    if not code.strip():
-        return None
-    m = _FILE_RE.search(content)
-    name = m.group(1) if m else (next(iter(files)) if len(files) == 1 else None)
-    return (name, code) if name else None
-
-
 def _fix_schemas(escalate: bool, edit_fails: int) -> list:
-    """The fix-loop TOOLSET — read + edit. The WRITE is not a tool: it is emitted as fenced content
-    (see _content_write), because a quote-heavy file as a tool-call JSON arg 500s the local server's
-    tool-arg parser. Ladder: read → edit (grounded, can't gut a file) → full rewrite via content.
-    Enough failed edits (or a hard outer stall) drop EDIT to force the rewrite — but READ always stays
-    so the rewrite is grounded (forcing a write of an unread file makes the model stub and brick it)."""
+    """The fix-loop TOOLSET — read (inspect a sibling) · edit (grounded snippet fix) · write (full-file
+    overwrite). All three are real tool calls; a whole quote-heavy file round-trips fine as a JSON `code`
+    arg (verified against the live server). Ladder: on an outer STALL (escalate) or enough failed edits,
+    drop EDIT to force a decisive OVERWRITE — but KEEP READ so the overwrite is grounded (a blind write
+    with no sibling bodies churns). WRITE is always offered so a fix can always land."""
+    schemas = [_READ_SCHEMA, _EDIT_SCHEMA, _WRITE_SCHEMA]
     if escalate or edit_fails >= _EDIT_FAILS_BEFORE_OVERWRITE:
-        return [_READ_SCHEMA]
-    return [_READ_SCHEMA, _EDIT_SCHEMA]
+        schemas = [s for s in schemas if s is not _EDIT_SCHEMA]
+    return schemas
 
 
-def _read_write_loop_fix(module, context, error, slot, services, dispatch):
-    """Fix a gate failure as a bounded read→write subloop: the model reads whatever siblings it needs
-    (full bodies, on demand) to locate a CROSS-FILE mismatch the signatures can't show, then writes
-    ONE complete file. This is the sanctioned multi-call fix shape (Check.run) — the reads live in an
-    EPHEMERAL transcript confined to this one fix (the outer loop stays stateless and re-gates after).
-    A single-shot fix that only sees main.ts + sibling signatures parks on bugs like 'a file assumes
-    another spawns the player but none does'; reading the body exposes it. Bounded by the Services
-    budget (each infer counts) + a turn cap; on cross-fix stall (escalate) the read tool is dropped so
-    the fix must ACT. Context is rebuilt each turn via MessageBuilder, which dedups superseded reads."""
+def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_class=None):
+    """Fix a gate failure as a bounded read→edit/write subloop: the model reads whatever siblings it
+    needs (full bodies, on demand) to locate a CROSS-FILE mismatch the signatures can't show, then edits
+    or overwrites the file — every action a real tool call (read/edit/write). This is the sanctioned
+    multi-call fix shape (Check.run) — the reads live in an EPHEMERAL transcript confined to this one fix
+    (the outer loop stays stateless and re-gates after). A single-shot fix that only sees main.ts +
+    sibling signatures parks on bugs like 'a file assumes another spawns the player but none does';
+    reading the body exposes it. Bounded by the Services budget (each infer counts) + a turn cap; on
+    cross-fix stall (escalate) the EDIT tool is dropped so the fix must decisively OVERWRITE (read kept
+    so it's grounded). Context is rebuilt each turn via MessageBuilder, which dedups superseded reads.
+
+    `fix_class` (see fix_classes.py) supplies the error-class-specific steering: an AUTHORITY block (the
+    on-disk context that biases toward the correct root cause, e.g. a type's real members) and a
+    DIRECTIVE (root-cause framing). `default`/None adds neither — the generic loop, unchanged."""
     from llm_clients.message_builder import MessageBuilder
     from maestro.services import parse_args, salvage_tool_call
 
@@ -403,12 +414,16 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
     system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
     contract = ((_PROMPTS / "contract_invariant.txt").read_text(encoding="utf-8")
                 if any(_is_contract(f) for f in files) else "")
+    authority = fix_class.authority(spec, run_dir, error) if (fix_class and fix_class.authority) else ""
+    directive = fix_class.directive if fix_class else ""
     user = "\n\n".join(p for p in [
         _kit_context(spec, error),
         _design_block(spec),
         contract,
         f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
         f"# FAILING GATE\n{error.message}",
+        authority,
+        directive,
         "Read whatever files you need to find the root cause, then write ONE file to fix it.",
     ] if p)
     history = [{"role": "user", "content": user}]
@@ -417,46 +432,37 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
     for _ in range(_FIX_LOOP_MAX_TURNS):
         schemas = _fix_schemas(services.escalate, edit_fails)
         msgs = MessageBuilder(system).extend(history).build()
-        # reasoning OFF: the fix WRITE is a full-file transcription emitted as content, and a reasoning
-        # model with thinking on burns the whole token budget on reasoning (observed: 58k reasoning,
-        # ZERO content) and never emits the file. The reads do the diagnosis empirically; escalate's
-        # value here is dropping edit (see _fix_schemas), NOT a reasoning bump that starves the write.
+        # reasoning OFF: local models honor only on/off, and the fix is a bounded read→act loop where
+        # thinking-on burns the token budget on reasoning and starves the tool call. The reads do the
+        # diagnosis empirically.
         resp = services.infer(msgs, schemas, reasoning="none", max_tokens=_CODE_MAX_TOKENS)
         message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
         content = message.get("content", "") or ""
         tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
-        # A full-file WRITE arrives as fenced CONTENT (not a tool call — see _content_write). Take it
-        # when the turn isn't a tool call, so an explanatory snippet alongside a read isn't misread.
-        written = _content_write(content, game_files(run_dir)) if not tcs else None
-        if written:
-            name, code = written
-            history.append({"role": "assistant", "content": content})
-            if _is_stub(code):
-                history.append({"role": "user", "content": "That is a placeholder/stub, not a fix — it "
-                                "would brick the file. Read the real body, then output `FILE: <name.ts>` "
-                                "followed by the COMPLETE working source in one ```ts block."})
-                continue
-            result = dispatch("write_game_file", {"code": code, "file": name})
-            if result.get("ok"):
-                services._report(f"patched {name} via overwrite (read {nreads}, edit-miss {edit_fails})")
-                return
-            history.append({"role": "user", "content": f"write failed: {result.get('error')}. Fix and resend."})
-            continue
         if not tcs:
             salvaged = salvage_tool_call(content, schemas)
             tcs = [salvaged] if salvaged else []
         if not tcs:
             history.append({"role": "assistant", "content": content})
             history.append({"role": "user",
-                            "content": "read_game_file to inspect a file, edit_game_file for a snippet "
-                                       "fix, or output `FILE: <name.ts>` + a fenced ```ts block to "
-                                       "rewrite a whole file."})
+                            "content": "Call a tool: read_game_file to inspect a file, edit_game_file "
+                                       "for a snippet fix, or write_game_file to overwrite a whole file."})
             continue
         history.append({"role": "assistant", "content": content, "tool_calls": tcs})
         for tc in tcs:
             name = tc["function"]["name"]
             args = parse_args(tc["function"].get("arguments"))
-            if name == "edit_game_file":
+            if name == "write_game_file":
+                code = args.get("code", "")
+                if _is_stub(code):
+                    result = {"ok": False, "error": "that is a stub/placeholder, not the complete file — "
+                              "resend the ENTIRE working source in `code`."}
+                else:
+                    result = dispatch("write_game_file", {"code": code, "file": args.get("file", "main.ts")})
+                    if result.get("ok"):
+                        wrote, mode = result.get("file"), "write"
+                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
+            elif name == "edit_game_file":
                 result = dispatch("edit_game_file", {"file": args.get("file", "main.ts"),
                                                      "old_string": args.get("old_string", ""),
                                                      "new_string": args.get("new_string", "")})
@@ -478,21 +484,25 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
     services._report(f"fix loop ended without a write (read {nreads}, edit-miss {edit_fails})")
 
 
-def _reconcile_then_fix(module, context, error, slot, services, dispatch):
-    """Typecheck failures get the DETERMINISTIC superset reconciler first: every CONTRACT-shaped error
-    (missing export, a union used as a value, a field the shared types lack, a too-strict required
-    field) is fixed by a SAFE, LOCAL, monotone edit to types.ts — declare/append/relax/enum-ify, never
-    remove or restructure. This heals all consumers at once and converges, where an unguided LLM
-    rewrite of the contract oscillates (it drops fields or restructures a type wrongly). Only the
-    remaining PER-FILE logic bugs fall through to the LLM read→write loop."""
-    from maestro.codegen.gates import reconcile_types
-    res = reconcile_types(context.state.run_dir)
-    if res.get("count"):
-        summary = ", ".join(f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
-                            for k, v in res["changes"][:8])
-        services._report(f"reconciled types.ts ({res['count']} edit(s): {summary})")
-        return
-    _read_write_loop_fix(module, context, error, slot, services, dispatch)
+def dispatch_fix(module, context, error, slot, services, dispatch):
+    """Route a gate failure to its FIX CLASS (fix_classes.classify), then run that class's fix: its
+    optional DETERMINISTIC pre-pass first (a safe bulk collapse — e.g. the contract reconciler heals
+    all consumers at once and converges where an unguided LLM rewrite oscillates), and only if that
+    made no change, the read→write loop steered by the class's authority + directive. The class is the
+    codegen analog of IR's per-check owner: it decides WHICH authority resolves the error, so a probe
+    `dead_controls` and a tsc contract error can share the same machinery without the gate knowing.
+    `default` matches everything and adds no steering, so any unclassified failure is exactly today's
+    generic loop — never worse."""
+    from maestro.codegen.fix_classes import classify
+    cls = classify(error)
+    if cls.deterministic is not None:
+        res = cls.deterministic(context.state.run_dir, error) or {}
+        if res.get("count"):
+            summary = ", ".join(f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
+                                for k, v in res.get("changes", [])[:8])
+            services._report(f"[{cls.id}] reconciled types.ts ({res['count']} edit(s): {summary})")
+            return
+    _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_class=cls)
 
 
 class CodegenModule(Module):
@@ -504,11 +514,11 @@ class CodegenModule(Module):
     checks = [
         Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
-        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=_reconcile_then_fix),
-        Check(code="runs", detect=_detect_runs, job="fix", run=_read_write_loop_fix),
-        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_read_write_loop_fix),
-        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_read_write_loop_fix),
-        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True, run=_read_write_loop_fix),
+        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=dispatch_fix),
+        Check(code="runs", detect=_detect_runs, job="fix", run=dispatch_fix),
+        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=dispatch_fix),
+        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=dispatch_fix),
+        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True, run=dispatch_fix),
     ]
 
     def affected_components(self):

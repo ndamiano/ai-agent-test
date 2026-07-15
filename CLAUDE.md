@@ -90,11 +90,25 @@ src/
       tools.py           write_game_file(code, file) / read_game_file (per-file .ts, path-safe)
       module.py          CodegenModule = planned → authored → typechecks → runs → plays → renders →
                          scrolls (blocking where noted). AUTHORING = a whole-body Check.run: ONE raw
-                         fenced-```ts completion per file. GATE FIXES = a read→write subloop
-                         (_read_write_loop_fix): read_game_file any sibling on demand (tool-calls via
-                         MessageBuilder, which dedups superseded reads), then write_game_file ONE
-                         self-selected file. Ephemeral per-fix transcript; outer loop re-gates.
-      prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix .txt
+                         fenced-```ts completion per file. GATE FIXES route through dispatch_fix →
+                         a FIX CLASS (fix_classes.py), then a read→write subloop (_read_write_loop_fix):
+                         read_game_file any sibling on demand (tool-calls via MessageBuilder, which
+                         dedups superseded reads), then write_game_file ONE self-selected file.
+                         Ephemeral per-fix transcript; outer loop re-gates.
+      fix_classes.py     the error-class → fixer MAP (codegen analog of IR's per-check owner). A GATE
+                         detects a raw failure; a FIX CLASS resolves it — chosen by matching the Error
+                         (its `kind` for our gates, the TS code in its message for tsc). A class owns
+                         the AUTHORITY it injects (the on-disk context that biases toward the correct
+                         ROOT CAUSE, not any tsc-greening edit — e.g. a type's real members + which
+                         names dominate) + a DIRECTIVE + an optional DETERMINISTIC pre-pass. tsc pins
+                         the SITE but underdetermines the REPAIR, so ownership is by AUTHORITY not code.
+                         contract-mismatch (field/export/shape) reconciles the CALLER to what exists
+                         (its deterministic pass runs reconcile_types include_fields=False, so a field
+                         mismatch is NOT laundered into types.ts — it goes to the authority LLM).
+                         `default` matches everything + adds no steering = today's generic loop, so an
+                         unclassified failure degrades to the status quo, never worse.
+      prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix .txt +
+                         fix_kinds/<class>.txt (per-fix-class root-cause directives)
       reskin.py          the ASSETS stage (skin the shapes), mode-dispatched: 2D → plan sprites →
                          rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
@@ -151,9 +165,10 @@ src/
 
 **Inference path (chat / spec draft):** `MainAgent` / `draft_spec` → `MessageBuilder` →
 `get_connector()` → `OpenAICompatibleConnector`.
-**Inference path (build):** `AgentLoop` → `Module.get_fix` → `Services.infer` → connector. A codegen
-fix asks for a raw completion (`services.infer(msgs, [])`, empty tools) and extracts the fenced
-```js block — a whole 300-line file as a fenced block, not as a JSON-escaped tool-call argument.
+**Inference path (build):** `AgentLoop` → `Module.get_fix` → `Services.infer` → connector. AUTHORING
+asks for a raw completion (`services.infer(msgs, [])`, empty tools) and extracts the fenced ```ts block
+(one whole file per call). GATE FIXES run the read→edit/write subloop where read/edit/write are all real
+tool calls — a whole quote-heavy file round-trips fine as a `write_game_file` `code` arg (verified).
 
 **Adding a mechanic:** widen the KIT (`runtime/engine.js` + a `kit_api*.md` section + a worked
 example in the prompt + a probe invariant). Generation just composes the new primitive. Adding a

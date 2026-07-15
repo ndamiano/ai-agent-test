@@ -224,11 +224,14 @@ class MessageBuilder:
         Drop oldest messages until total char count fits within MESSAGE_BUDGET_CHARS.
 
         Never drops:
-        - The most recent user message (the current turn).
+        - The FIRST user message (the task/instructions anchor) and the LAST user message
+          (the current turn). In an agent loop the task lives in the first user turn; dropping it
+          strands the fix with no gate/authority to act on.
         - Any message that would break tool_call_id linkage: a tool result is only
           dropped together with its paired assistant tool-call message, and vice-versa.
 
-        Drops from the front of the list (oldest first).
+        Drops from the front of the list (oldest first) — so the oldest tool reads go first, keeping
+        the task + the most RECENT (most relevant) file bodies.
         """
 
         def _msg_chars(msg: Dict[str, Any]) -> int:
@@ -240,11 +243,10 @@ class MessageBuilder:
         if total <= self.MESSAGE_BUDGET_CHARS:
             return messages
 
-        # Index of last user message — always protected.
-        last_user_idx = max(
-            (i for i, m in enumerate(messages) if m.get("role") == "user"),
-            default=None,
-        )
+        # First + last user messages — always protected (task anchor + current turn). Tracked by object
+        # identity, not index, since `result` is mutated as messages are dropped.
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        protected = {id(user_msgs[0]), id(user_msgs[-1])} if user_msgs else set()
 
         dropped = 0
         result = list(messages)
@@ -252,8 +254,8 @@ class MessageBuilder:
         while i < len(result) and total > self.MESSAGE_BUDGET_CHARS:
             msg = result[i]
 
-            # Never drop the last user message.
-            if i == last_user_idx:
+            # Never drop a protected (first/last) user message.
+            if id(msg) in protected:
                 i += 1
                 continue
 

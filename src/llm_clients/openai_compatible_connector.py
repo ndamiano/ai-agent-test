@@ -239,6 +239,17 @@ class OpenAICompatibleConnector(BaseConnector):
                         return self._context_length
         except Exception:
             pass
+        # The local router doesn't report context_length — fall back to the configured server window
+        # (lmstudio.n_ctx, the launch `-c`). Without this the budget defaults to a value larger than
+        # the real window and the transcript is never trimmed → the prompt overflows the context.
+        try:
+            from config.settings_manager import settings_manager
+            n_ctx = (settings_manager.get_settings().get("lmstudio") or {}).get("n_ctx")
+            if n_ctx:
+                self._context_length = int(n_ctx)
+                return self._context_length
+        except Exception:
+            pass
         return None
 
     def _is_versioned_path(self, url: str) -> bool:

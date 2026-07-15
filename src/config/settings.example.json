@@ -7,7 +7,8 @@
     "dialogue_model": "",
     "temperature": 0.7,
     "max_tokens": 50000,
-    "reasoning": "low"
+    "reasoning": "low",
+    "n_ctx": 32768
   },
   "cline": {
     "api_key": "",

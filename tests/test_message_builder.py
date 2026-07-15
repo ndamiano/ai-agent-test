@@ -203,17 +203,35 @@ def test_budget_drops_oldest_first_protects_latest_user(mb):
     # WHY: over budget, the OLDEST turns are dropped and the current user turn
     # (the actual question being answered) must survive — trimming the latest
     # turn would answer the wrong prompt.
-    mb.MESSAGE_BUDGET_CHARS = 40
+    mb.MESSAGE_BUDGET_CHARS = 60
     msgs = [
-        {"role": "user", "content": "X" * 100},       # old, droppable
+        {"role": "user", "content": "task"},          # first user — protected (task anchor)
         {"role": "assistant", "content": "Y" * 100},  # old, droppable
         {"role": "user", "content": "now"},           # latest user — protected
     ]
     out = mb._enforce_budget(msgs)
     assert {"role": "user", "content": "now"} in out
-    # the fat old turns are gone
-    assert all(m["content"] != "X" * 100 for m in out)
+    # the fat old middle turn is gone
     assert all(m["content"] != "Y" * 100 for m in out)
+
+
+def test_budget_protects_first_user_task_anchor(mb):
+    # WHY: an agent loop puts the TASK (gate + authority) in the first user turn, then appends reads.
+    # A late nudge makes a newer user turn, but the task must never be trimmed away — dropping it
+    # strands the fix with nothing to act on. First AND last user turns survive; oldest reads go first.
+    mb.MESSAGE_BUDGET_CHARS = 80
+    msgs = [
+        {"role": "user", "content": "TASK: fix the gate"},                 # first user — protected
+        _assistant_call("c1", "read_game_file", '{"file": "a.ts"}'),
+        _tool_result("c1", "A" * 200),                                     # oldest read — droppable
+        _assistant_call("c2", "read_game_file", '{"file": "b.ts"}'),
+        _tool_result("c2", "B" * 200),                                     # newer read — droppable
+        {"role": "user", "content": "call a tool"},                        # nudge (last user) — protected
+    ]
+    out = mb._enforce_budget(msgs)
+    assert {"role": "user", "content": "TASK: fix the gate"} in out        # task survived
+    assert {"role": "user", "content": "call a tool"} in out              # current turn survived
+    assert all("A" * 200 != (m.get("content") or "") for m in out)        # oldest read trimmed
 
 
 def test_budget_drops_toolcall_and_result_together(mb):
@@ -237,6 +255,21 @@ def test_budget_drops_toolcall_and_result_together(mb):
                and m["tool_call_id"] not in call_ids]
     assert orphans == []
     assert {"role": "user", "content": "now"} in out
+
+
+def test_budget_derives_from_context_window(monkeypatch):
+    # WHY: the budget MUST track the server's real context window, else it never trims and the prompt
+    # overflows. When the connector reports n_ctx (via /v1/models or the lmstudio.n_ctx fallback), the
+    # budget is 50% of the window in chars (~4 chars/token) — half for input, half reserved for output.
+    import llm_clients.connector_selector as cs
+
+    class _FakeConn:
+        def get_context_length(self):
+            return 32768
+
+    monkeypatch.setattr(cs, "get_connector", lambda *a, **k: _FakeConn())
+    b = MessageBuilder("SYS")
+    assert b.MESSAGE_BUDGET_CHARS == 32768 * 4 // 2 == 65536
 
 
 # ── build(): the composed pipeline ───────────────────────────────────────────

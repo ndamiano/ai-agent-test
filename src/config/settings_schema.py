@@ -18,6 +18,10 @@ class LLMStudioSettings(BaseModel):
         "Lets a strong prose model speak the lines while `model` keeps doing tools/JSON. "
         "Empty = use `model` for everything."))
     max_tokens: int = Field(50000, ge=1)
+    n_ctx: int = Field(32768, ge=1, description=(
+        "The server's runtime context window in tokens (llama-server `-c`). The local router does not "
+        "report it, so set it to match your launch flag. MessageBuilder budgets input against this so "
+        "it trims the transcript BEFORE the prompt overflows the window; too-large a value = no trim."))
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
     reasoning: Optional[ReasoningLevel] = None
 

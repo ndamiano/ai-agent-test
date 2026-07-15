@@ -78,11 +78,13 @@ def run_build(run_id: str, max_steps: int = 60):
     from maestro.codegen.tools import build_codegen_tools
     from maestro.run_control import get_or_create, remove
     from llm_clients.connector_selector import get_connector
+    from llm_clients.log_context import set_log_dir
 
     state = RunState.for_run(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no spec for run {run_id!r} — draft one first")
+    set_log_dir(str(state.run_dir / "logs"))
     tools = build_codegen_tools(state)
     control = get_or_create(run_id)
     loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),

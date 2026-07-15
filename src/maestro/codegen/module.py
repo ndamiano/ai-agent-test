@@ -36,6 +36,26 @@ def _kit_doc(spec: dict) -> str:
     return (RUNTIME_DIR / doc).read_text(encoding="utf-8")
 
 
+def _kit_sig_block() -> str:
+    """Just the kit CALL SIGNATURES from engine.d.ts — the lines an arg-count fix needs, not the 9KB
+    prose doc. Every `name(args): ret;` inside the Kit interface."""
+    dts = (RUNTIME_DIR / "engine.d.ts").read_text(encoding="utf-8")
+    sigs = re.findall(r"^\s{2,}(\w+\s*\([^;{]*\)\s*:\s*[^;{]+);", dts, re.M)
+    return "# KIT CALL SIGNATURES (match arg count/types exactly)\n```ts\n" + "\n".join(sigs) + "\n```"
+
+
+def _kit_context(spec: dict, error) -> str:
+    """The kit surface a fix actually needs. A runtime gate (crash/probe/render) needs the full kit
+    behavior + laws. A typecheck fix does NOT — it's a type/contract/call bug: inject nothing, unless
+    an arg-count error is in play, then just the signatures. Cuts ~9KB of noise from typecheck fixes,
+    where it drowns the one-line failing gate (the small-model distraction law)."""
+    if getattr(error, "code", None) != "typechecks":
+        return f"# KIT API\n{_kit_doc(spec)}"
+    if "TS2554" in error.message or "arguments, but got" in error.message:
+        return _kit_sig_block()
+    return ""
+
+
 def _design_block(spec: dict) -> str:
     return f"# DESIGN SPEC\n```json\n{json.dumps(spec.get('design', spec), indent=1)}\n```"
 
@@ -51,9 +71,12 @@ def _manifest_files(run_dir) -> list:
     return [f for f in (read_manifest(run_dir).get("files") or []) if f.get("name")]
 
 
-_SIG_RE = re.compile(
-    r"^export\s+(?:async\s+)?function\s+[^\n{]+"           # export function foo(a: T): R
-    r"|^export\s+(?:interface|type|enum)\s+[^\n{=]+"       # export interface/type/enum X …
+# A function signature spans multiple lines (one param per line is common). Capturing only the first
+# line drops every parameter, so a caller can't see the arg count/types it must pass — the #1 cause of
+# unfixable arg-count oscillation. Match across newlines through the `)` + optional return type.
+_FN_SIG_RE = re.compile(r"export\s+(?:async\s+)?function\s+\w+\s*\([\s\S]*?\)\s*(?::\s*[^{\n]+)?(?=\s*\{)")
+_TYPE_SIG_RE = re.compile(
+    r"^export\s+(?:interface|type|enum)\s+[^\n{=]+"        # export interface/type/enum X …
     r"|^export\s+(?:const|let)\s+[A-Za-z0-9_]+[^\n=]*",    # export const X: T
     re.M)
 
@@ -69,10 +92,11 @@ def _sibling_lines(run_dir, exclude: str) -> str:
         if name == exclude:
             continue
         purpose = manifest.get(name, {}).get("purpose", "")
-        sigs = _SIG_RE.findall(files.get(name, ""))
+        src = files.get(name, "")
+        sigs = [re.sub(r"\s+", " ", s).strip() for s in _FN_SIG_RE.findall(src)]
+        sigs += [s.strip().rstrip("{").rstrip() for s in _TYPE_SIG_RE.findall(src)]
         if sigs:
-            out.append(f"// ./{name} — {purpose}\n" +
-                       "\n".join(f"  {s.strip().rstrip('{')}".rstrip() for s in sigs[:25]))
+            out.append(f"// ./{name} — {purpose}\n" + "\n".join(f"  {s}" for s in sigs[:25]))
         else:
             exports = ", ".join(manifest.get(name, {}).get("exports") or []) or "(none)"
             out.append(f"// ./{name} — {purpose} — exports: {exports}")
@@ -88,16 +112,41 @@ def _detect_planned(check, module, context):
                   message="no manifest yet — plan the game's files from the spec")]
 
 
+def _is_contract(f) -> bool:
+    """A shared-types file: authored FIRST, and its body is injected into every consumer so no file
+    invents its own state shape (the multi-file split-brain fix)."""
+    n = f.get("name", "").lower()
+    p = f.get("purpose", "").lower()
+    return n == "types.ts" or "shared interface" in p or "shared type" in p or \
+        "type definition" in p or ("interface" in p and "state" in p)
+
+
 def _detect_authored(check, module, context):
+    # ONE file at a time in MANIFEST order (dependency order — the planner lists shared types first),
+    # so the contract is authored before its consumers instead of alphabetically after them.
     run_dir = context.state.run_dir
     on_disk = game_files(run_dir)
-    errs = []
     for f in _manifest_files(run_dir):
         name = f["name"]
         if not (on_disk.get(name) or "").strip():
-            errs.append(Error(type=ErrorType.BUILD, code="authored", component="game",
-                              path=name, message=f"{name} not written yet — author it ({f.get('purpose','')})"))
-    return errs
+            return [Error(type=ErrorType.BUILD, code="authored", component="game",
+                          path=name, message=f"{name} not written yet — author it ({f.get('purpose','')})")]
+    return []
+
+
+def _contract_block(run_dir, exclude: str) -> str:
+    """Full source of already-authored contract/types files — a consumer authors against these EXACT
+    shapes rather than guessing fields that won't match."""
+    files = game_files(run_dir)
+    out = []
+    for f in _manifest_files(run_dir):
+        name = f["name"]
+        if name == exclude or not _is_contract(f):
+            continue
+        body = (files.get(name) or "").strip()
+        if body:
+            out.append(f"// ./{name} (import the shared types from here — use these EXACT shapes)\n{body}")
+    return "\n\n".join(out)
 
 
 def _detect_typechecks(check, module, context):
@@ -187,14 +236,24 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     files = _manifest_files(run_dir)
     me = next((f for f in files if f["name"] == error.path), {"name": error.path, "purpose": "", "exports": []})
     system = (_PROMPTS / "author_file.txt").read_text(encoding="utf-8")
-    user = "\n\n".join([
+    parts = [
         f"# KIT API\n{_kit_doc(spec)}",
         _design_block(spec),
         f"# THIS FILE: {me['name']}\npurpose: {me.get('purpose','')}\nmust export: {', '.join(me.get('exports') or []) or '(none)'}",
-        f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}",
-        f"Write ./{me['name']} now. Output ONLY one ```js block.",
-    ])
-    code = extract_code(_infer(services, system, user, _CODE_MAX_TOKENS))
+    ]
+    contract = _contract_block(run_dir, me["name"])
+    if contract:
+        parts.append("# SHARED TYPES — author against these EXACT shapes; do NOT invent fields that "
+                     f"aren't here (import the types you need from their file)\n{contract}")
+    parts.append(f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}")
+    if _is_contract(me):
+        parts.append("This file is the SHARED CONTRACT for every other system listed above. Declare the "
+                     "interfaces/state COMPLETE enough for ALL of them at once — every field each system "
+                     "will read or write (player stats + inventory, entity/enemy fields, world/quest state, "
+                     "timers, flags). A missing field forces every consumer to be re-patched, so err "
+                     "toward MORE fields, not fewer.")
+    parts.append(f"Write ./{me['name']} now. Output ONLY one ```js block.")
+    code = extract_code(_infer(services, system, user="\n\n".join(parts), max_tokens=_CODE_MAX_TOKENS))
     result = dispatch("write_game_file", {"code": code, "file": me["name"]})
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"authored {me['name']}: {detail}")
@@ -308,13 +367,13 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
         f"- {f['name']}: {f.get('purpose', '')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
         for f in files) or "\n".join(f"- {n}" for n in game_files(run_dir))
     system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
-    user = "\n\n".join([
-        f"# KIT API\n{_kit_doc(spec)}",
+    user = "\n\n".join(p for p in [
+        _kit_context(spec, error),
         _design_block(spec),
         f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
         f"# FAILING GATE\n{error.message}",
         "Read whatever files you need to find the root cause, then write ONE file to fix it.",
-    ])
+    ] if p)
     # Ladder: read → edit (preferred, grounded, can't gut a file) → overwrite (escape hatch). Enough
     # failed edits drop edit and force a full-file overwrite; a hard outer stall (escalate) drops the
     # read tool too, so the fix must ACT rather than re-read (mirrors Services.run's escalation).
@@ -375,6 +434,23 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch):
     services._report(f"fix loop ended without a write (read {nreads}, edit-miss {edit_fails})")
 
 
+def _reconcile_then_fix(module, context, error, slot, services, dispatch):
+    """Typecheck failures get the DETERMINISTIC superset reconciler first: every CONTRACT-shaped error
+    (missing export, a union used as a value, a field the shared types lack, a too-strict required
+    field) is fixed by a SAFE, LOCAL, monotone edit to types.ts — declare/append/relax/enum-ify, never
+    remove or restructure. This heals all consumers at once and converges, where an unguided LLM
+    rewrite of the contract oscillates (it drops fields or restructures a type wrongly). Only the
+    remaining PER-FILE logic bugs fall through to the LLM read→write loop."""
+    from maestro.codegen.gates import reconcile_types
+    res = reconcile_types(context.state.run_dir)
+    if res.get("count"):
+        summary = ", ".join(f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
+                            for k, v in res["changes"][:8])
+        services._report(f"reconciled types.ts ({res['count']} edit(s): {summary})")
+        return
+    _read_write_loop_fix(module, context, error, slot, services, dispatch)
+
+
 class CodegenModule(Module):
     id = "codegen"
     layer = "engine"
@@ -384,7 +460,7 @@ class CodegenModule(Module):
     checks = [
         Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
-        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=_read_write_loop_fix),
+        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=_reconcile_then_fix),
         Check(code="runs", detect=_detect_runs, job="fix", run=_read_write_loop_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=_read_write_loop_fix),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=_read_write_loop_fix),

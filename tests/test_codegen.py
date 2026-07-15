@@ -405,16 +405,18 @@ def test_planned_error_when_empty(tmp_path):
     assert errs[0].type is ErrorType.BUILD
 
 
-def test_authored_error_per_missing_manifest_file(tmp_path):
-    # with a manifest but no files on disk, one `authored` error per missing file (bounded authoring).
+def test_authored_authors_in_manifest_order_one_at_a_time(tmp_path):
+    # authoring is ONE file at a time in MANIFEST (dependency) order — the shared-types file the
+    # planner lists first is authored before its consumers, not alphabetically after them.
     d = tmp_path / "game"
     d.mkdir()
     (d / "manifest.json").write_text(json.dumps({"files": [
-        {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]},
-        {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]}]}))
+        {"name": "types.ts", "purpose": "shared interfaces", "exports": ["GameState"]},
+        {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]},
+        {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]}]}))
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
-    assert {e.code for e in errs} == {"authored"}
-    assert {e.path for e in errs} == {"main.ts", "combat.ts"}
+    assert [e.code for e in errs] == ["authored"]
+    assert [e.path for e in errs] == ["types.ts"]   # first missing in manifest order, alone
 
 
 def test_typecheck_gate_catches_type_error(tmp_path):
@@ -559,3 +561,34 @@ def test_loop_refuses_unfrozen_spec(tmp_path):
                      connector=_FakeConn(GOOD), max_steps=5)
     with pytest.raises(RuntimeError):
         loop.run()
+
+
+# ── context assembly (the fixes that converge multi-file builds) ────────────────
+def test_sibling_sigs_capture_full_multiline_params(tmp_path):
+    """A multi-line function signature must expose ALL its parameters — truncating at the first line
+    drops the arg list, and a caller can't match the arg count (the arg-count oscillation bug)."""
+    from maestro.codegen.module import _sibling_lines
+    combat = ("import { Entity, GameState } from './types';\n"
+              "export function applyDamage(\n  target: Entity,\n  amount: number,\n"
+              "  state: GameState,\n  kit: any\n): void {\n  target.hp -= amount;\n}\n")
+    _write_game(tmp_path, GOOD, extra={"combat.ts": combat})
+    sigs = _sibling_lines(_run_dir(tmp_path).run_dir, exclude="main.ts")
+    assert "applyDamage" in sigs
+    for param in ("target: Entity", "amount: number", "state: GameState", "kit: any"):
+        assert param in sigs, f"missing {param!r} — signature was truncated"
+
+
+def test_kit_context_dropped_for_pure_typecheck_fix():
+    """A type/contract typecheck fix gets NO kit doc (noise); a runtime gate gets the full doc; an
+    arg-count typecheck fix gets just the signatures."""
+    from maestro.codegen.module import _kit_context
+    from maestro.modules.module import Error, ErrorType
+    spec = {"mode": "3d"}
+    pure = Error(type=ErrorType.FIX, code="typechecks", component="game",
+                 message="types.ts has 1 type error(s):\n  - line 3: error TS2305: no exported member 'X'")
+    assert _kit_context(spec, pure) == ""
+    argc = Error(type=ErrorType.FIX, code="typechecks", component="game",
+                 message="main.ts: error TS2554: Expected 4 arguments, but got 3.")
+    assert "KIT CALL SIGNATURES" in _kit_context(spec, argc)
+    runtime = Error(type=ErrorType.FIX, code="runs", component="game", message="HEADLESS FAILED")
+    assert "# KIT API" in _kit_context(spec, runtime)

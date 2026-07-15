@@ -93,6 +93,175 @@ def typecheck(run_dir) -> list:
     return out
 
 
+# ── type-contract reconciler ──────────────────────────────────────────────────
+# The shared types.ts is the multi-file contract. When a consumer disagrees with it, an LLM "fixes" it
+# by rewriting the whole file — dropping fields other files need, or restructuring a type wholesale
+# (e.g. turning the Entity interface into a string union) → oscillation. This reconciler instead makes
+# only SAFE, LOCAL, monotone edits derived from tsc's own errors — APPEND a field, DECLARE a missing
+# export, RELAX a required field to optional, or turn a union used as a value into an enum. It never
+# removes or restructures, so it converges to a permissive superset that every consumer typechecks
+# against. Precision is traded for convergence (the validated trade for reaching a running game).
+def _iter_interfaces(src: str):
+    """Yield (name, body_start, body_end) for each `export interface NAME {…}` — body_end is the index
+    of the interface's own closing brace, found by balancing braces so nested object-typed fields don't
+    end it early."""
+    for m in re.finditer(r"export\s+interface\s+([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\{", src):
+        name = m.group(1)
+        depth, i, n = 1, m.end(), len(src)
+        while i < n and depth:
+            c = src[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            yield name, m.end(), i - 1
+
+
+def _has_member(body: str, prop: str) -> bool:
+    return re.search(rf"(?:^|[{{;\n])\s*{re.escape(prop)}\s*[?!]?\s*:", body) is not None
+
+
+# TS2339/2551 (prop missing on a type) · TS2353/2561 (object literal specifies an unknown prop) —
+# both mean "interface T lacks field P". TS2305/2724 — a type imported from ./types is not exported.
+# TS2741 — a partial object literal omits a field T requires. TS2739 — same, listing several. TS2693/
+# 2459 — a union type is used as a value (needs to be an enum).
+_MISSING_PROP = re.compile(r"Property '([^']+)' does not exist on type '([^']+)'")
+_LITERAL_UNKNOWN = re.compile(r"Object literal may only specify known properties, "
+                              r"(?:and|but) '([^']+)' does not exist in type '([^']+)'")
+_MISSING_EXPORT = re.compile(r"has no exported member(?: named)? '([^']+)'")
+_REQ_MISSING_ONE = re.compile(r"Property '([^']+)' is missing in type '(\{[^']*)' but required in type '([^']+)'")
+_REQ_MISSING_MANY = re.compile(r"Type '([^']+)' is missing the following properties from type "
+                               r"'([^']+)': (.+)")
+_USED_AS_VALUE = re.compile(r"'([^']+)' only refers to a type, but is being used as a value")
+_IDENT = re.compile(r"[A-Za-z_]\w*")
+
+
+def _append_field(types_path, typ: str, prop: str) -> bool:
+    src = types_path.read_text(encoding="utf-8")
+    target = next(((s, e) for name, s, e in _iter_interfaces(src) if name == typ), None)
+    if target is None:
+        return False
+    body_start, body_end = target
+    if _has_member(src[body_start:body_end], prop):
+        return False
+    newline = "\n" if not src[:body_end].endswith("\n") else ""
+    types_path.write_text(src[:body_end] + newline + f"  {prop}?: any;\n" + src[body_end:], encoding="utf-8")
+    return True
+
+
+def _declare_export(types_path, name: str) -> bool:
+    src = types_path.read_text(encoding="utf-8")
+    if re.search(rf"export\s+(?:interface|type|enum|const)\s+{re.escape(name)}\b", src):
+        return False
+    sep = "" if src.endswith("\n") else "\n"
+    types_path.write_text(src + sep + f"export type {name} = any;\n", encoding="utf-8")
+    return True
+
+
+def _relax_field(types_path, typ: str, prop: str) -> bool:
+    """Make a REQUIRED field optional (`p:` → `p?:`) in a types.ts interface — so a partial literal
+    that omits it typechecks. Only touches an existing required field of an interface we own."""
+    src = types_path.read_text(encoding="utf-8")
+    target = next(((s, e) for name, s, e in _iter_interfaces(src) if name == typ), None)
+    if target is None:
+        return False
+    body_start, body_end = target
+    body = src[body_start:body_end]
+    new_body, n = re.subn(rf"(^|[{{;\n])(\s*{re.escape(prop)})\s*:", r"\1\2?:", body, count=1)
+    if not n or f"{prop}?:" not in new_body:
+        return False
+    types_path.write_text(src[:body_start] + new_body + src[body_end:], encoding="utf-8")
+    return True
+
+
+def _convert_union_to_enum(types_path, typ: str, sources: dict) -> bool:
+    """Turn `export type X = 'a' | 'b'` into `export enum X { … }` when X is used as a value (X.Member).
+    Members come from the actual `X.Name` usages across the game; each member keeps its runtime value
+    by matching a union literal case-insensitively (else the lowercased name)."""
+    src = types_path.read_text(encoding="utf-8")
+    m = re.search(rf"export\s+type\s+{re.escape(typ)}\s*=\s*([^;]+);", src)
+    if not m:
+        return False
+    values = re.findall(r"['\"]([^'\"]+)['\"]", m.group(1))
+    used = set()
+    for body in sources.values():
+        used.update(re.findall(rf"\b{re.escape(typ)}\.([A-Za-z_]\w*)", body))
+    if not used:
+        return False
+    members = []
+    for name in sorted(used):
+        val = next((v for v in values if v.lower() == name.lower()
+                    or v.replace("_", "").lower() == name.lower()), name.lower())
+        members.append(f'{name} = "{val}"')
+    enum = f"export enum {typ} {{ {', '.join(members)} }}"
+    types_path.write_text(src[:m.start()] + enum + src[m.end():], encoding="utf-8")
+    return True
+
+
+def _reconcile_pass(types_path, errors, sources, seen) -> list:
+    """One sweep of the safe monotone transforms over the current tsc errors, in order — enum-ify a
+    union used as a value, declare a missing export, append a missing field, relax an over-strict
+    required field. Each is idempotent and de-duped via `seen`. Returns the changes it made."""
+    changes = []
+
+    def once(key, kind, fn):
+        if key in seen:
+            return
+        seen.add(key)
+        if fn():
+            changes.append((kind, key))
+
+    for msg in errors:                                              # 1. union → enum (structural, first)
+        u = _USED_AS_VALUE.search(msg)
+        if u:
+            once(u.group(1), "enum", lambda t=u.group(1): _convert_union_to_enum(types_path, t, sources))
+    for msg in errors:                                              # 2. declare missing exports
+        e = _MISSING_EXPORT.search(msg)
+        if e:
+            once(e.group(1), "export", lambda n=e.group(1): _declare_export(types_path, n))
+    for msg in errors:                                              # 3. append missing fields
+        p = _MISSING_PROP.search(msg) or _LITERAL_UNKNOWN.search(msg)
+        if p:
+            once((p.group(2), p.group(1)), "field",
+                 lambda t=p.group(2), f=p.group(1): _append_field(types_path, t, f))
+    for msg in errors:                                              # 4. relax over-strict required
+        one = _REQ_MISSING_ONE.search(msg)
+        if one:
+            once((one.group(3), one.group(1)), "relax",
+                 lambda t=one.group(3), f=one.group(1): _relax_field(types_path, t, f))
+            continue
+        many = _REQ_MISSING_MANY.search(msg)
+        if many and many.group(1).lstrip().startswith("{"):         # source is a partial literal, not a wrong named type
+            typ, props = many.group(2), _IDENT.findall(many.group(3).split(" and ")[0])
+            for prop in props:
+                once((typ, prop, "relax"), "relax",
+                     lambda t=typ, f=prop: _relax_field(types_path, t, f))
+    return changes
+
+
+def reconcile_types(run_dir) -> dict:
+    """Deterministic superset reconciler for the shared `types.ts` contract. Iterates the safe monotone
+    transforms — enum-ify unions used as values, declare missing exports, append missing fields, relax
+    over-strict required fields — to its OWN fixpoint in a single call (relaxing one required field
+    reveals the next; declaring a type reveals its field gaps), so ONE loop step clears the whole
+    contract instead of one edit per step. Never removes or restructures, so it converges. A relax is
+    applied ONLY when the source is a partial object literal (`{…}`); a NAMED wrong type passed where an
+    interface is expected is a real call bug left for the fix loop. Returns {changes, count}."""
+    types_path = game_dir(run_dir) / "types.ts"
+    if not typecheck(run_dir) or not types_path.exists():
+        return {"changes": [], "count": 0}
+    sources = {p.name: p.read_text(encoding="utf-8") for p in game_dir(run_dir).glob("*.ts")}
+    changes, seen = [], set()
+    for _ in range(40):                                             # fixpoint; bounded against any pathological non-convergence
+        made = _reconcile_pass(types_path, [m for _, m in typecheck(run_dir)], sources, seen)
+        if not made:
+            break
+        changes += made
+    return {"changes": changes, "count": len(changes)}
+
+
 def build_bundle(run_dir) -> dict:
     """esbuild main.ts (+ its imports) → main.js with a sourcemap. Returns {ok} or {ok:False,error}.
     Cheap (~1ms); the run gates call it so they always execute the current source."""

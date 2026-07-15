@@ -121,12 +121,22 @@ def _is_contract(f) -> bool:
         "type definition" in p or ("interface" in p and "state" in p)
 
 
+def _authoring_order(run_dir) -> list:
+    """Files in DEPENDENCY order: the shared contract first (consumers author against real types), the
+    ENTRY file (main.ts) LAST. main.ts is the one file that depends on ALL the others — it imports and
+    wires every system — so authoring it last lets it bind against its siblings' REAL on-disk
+    signatures instead of guessing an API that doesn't exist yet (the source of phantom calls and
+    missing imports). Everything else keeps its manifest order."""
+    files = _manifest_files(run_dir)
+    return sorted(files, key=lambda f: (f["name"] == ENTRY_SRC, _is_contract(f) is False))
+
+
 def _detect_authored(check, module, context):
-    # ONE file at a time in MANIFEST order (dependency order — the planner lists shared types first),
-    # so the contract is authored before its consumers instead of alphabetically after them.
+    # ONE file at a time in dependency order (contract first, entry last), so each file is authored
+    # against its dependencies' real bodies rather than a plan it will drift from.
     run_dir = context.state.run_dir
     on_disk = game_files(run_dir)
-    for f in _manifest_files(run_dir):
+    for f in _authoring_order(run_dir):
         name = f["name"]
         if not (on_disk.get(name) or "").strip():
             return [Error(type=ErrorType.BUILD, code="authored", component="game",

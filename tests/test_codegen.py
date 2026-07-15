@@ -405,18 +405,22 @@ def test_planned_error_when_empty(tmp_path):
     assert errs[0].type is ErrorType.BUILD
 
 
-def test_authored_authors_in_manifest_order_one_at_a_time(tmp_path):
-    # authoring is ONE file at a time in MANIFEST (dependency) order — the shared-types file the
-    # planner lists first is authored before its consumers, not alphabetically after them.
+def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
+    # authoring is ONE file at a time in DEPENDENCY order: the shared-types file FIRST (consumers
+    # author against real types), the entry main.ts LAST (it wires every system, so it binds against
+    # its siblings' real on-disk signatures) — even though the manifest lists main.ts second.
+    from maestro.codegen.module import _authoring_order
     d = tmp_path / "game"
     d.mkdir()
     (d / "manifest.json").write_text(json.dumps({"files": [
         {"name": "types.ts", "purpose": "shared interfaces", "exports": ["GameState"]},
-        {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]},
-        {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]}]}))
+        {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]},
+        {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]}]}))
+    order = [f["name"] for f in _authoring_order(_run_dir(tmp_path).run_dir)]
+    assert order == ["types.ts", "combat.ts", "main.ts"]   # contract first, systems, entry LAST
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["authored"]
-    assert [e.path for e in errs] == ["types.ts"]   # first missing in manifest order, alone
+    assert [e.path for e in errs] == ["types.ts"]   # first to author
 
 
 def test_typecheck_gate_catches_type_error(tmp_path):

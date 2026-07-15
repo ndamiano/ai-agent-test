@@ -354,6 +354,33 @@ export function moveRelative(e, input, dt, speed = 8) {
   e.ry = Math.atan2(-dx, -dz);   // face travel (a mesh at rotation.y=ry points to (-sin ry, -cos ry))
 }
 
+// ── atomic 3D control scheme (one name → coherent mover + camera) ─────────────
+// A whole 3D control feel is ONE choice: `config.controls`. `kit.drive` (called in update) runs the
+// matching MOVER; run3d reads the SAME `config.controls` to wire the matching CAMERA (see engine3d
+// schemeCamera). Because both derive from one name, the mover and camera can't be mismatched — the #1
+// source of broken 3D (world-axis movement under a camera that doesn't rotate). Pick a name, call
+// kit.drive, omit the camera hook.
+export const CONTROL_SCHEMES = ["orbital", "follow", "vehicle", "fp"];
+
+export function driveScheme(scheme, e, input, dt, speed = 8) {
+  switch (scheme) {
+    case "follow":  return moveTopDown3(e, input, dt, speed);   // WASD in world axes; camera trails travel
+    case "vehicle": return moveTank3(e, input, dt, { speed });  // W/S drive along facing, A/D turn
+    case "fp":      mouseLook(e, input); return moveFP(e, input, dt, speed);  // mouse aims, WASD relative
+    case "orbital":                                              // WASD relative to the orbited camera
+    default:        return moveRelative(e, input, dt, speed);
+  }
+}
+
+// The camera half of a scheme (run3d calls this in render when config.controls is set and the game
+// declares no camera() hook). Same `scheme` value as driveScheme, so the pair is coherent by name.
+export function schemeCamera(scheme, cam, player) {
+  if (!player) return;
+  if (scheme === "fp") return fpCam(cam, player);
+  if (scheme === "follow" || scheme === "vehicle") return chaseCam(cam, player, { faceYaw: true });
+  return chaseCam(cam, player);   // orbital + default
+}
+
 // ── tilemap (rows of chars; solid set decides collision) ─────────────────────
 export function makeTilemap(rows, tile = 32, solid = "#") {
   const solids = new Set([...solid]);
@@ -484,6 +511,7 @@ export function makeKit(config, rng) {
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
+    drive: (e, input, dt, speed) => driveScheme(config.controls, e, input, dt, speed),
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

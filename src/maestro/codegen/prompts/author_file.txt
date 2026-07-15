@@ -39,8 +39,12 @@ Rules:
   kit primitive combo from the KIT API (e.g. vehicle-3d → moveTank3 + chaseCam{faceYaw}; first-person-3d
   → mouseLook + moveFP + fpCam + pointerLock; orbital-3d → moveRelative + chaseCam; platformer →
   walk + jump + physics; grid-turn → makeTilemap + gridMove). Each name in the spec's `uses` maps to a
-  kit primitive too (chase → seek, tilemap → makeTilemap, particles → burst). NEVER hand-roll movement,
-  camera, physics, or grid math when a kit primitive exists — that is the #1 defect.
+  kit primitive too (chase → seek, tilemap → makeTilemap, particles → burst — but burst is 2D ONLY;
+  a 3D game has no particles and must NOT call kit.burst, see the 3D kit surface). NEVER hand-roll
+  movement, camera, physics, or grid math when a kit primitive exists — that is the #1 defect.
+- COLLISION: there is no 3D solid-collision primitive. In 3D never write an AABB loop over the world
+  to block the player (it pins them against road/ground slabs); leave the town open or clamp bounds
+  with kit.V.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates; velocities are
   pixels per SECOND (integrate/physics apply dt); randomness only via `kit.rng`.
 - Prefer real types over `any` — the whole point is that the compiler catches a file disagreeing

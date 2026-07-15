@@ -27,7 +27,7 @@ class MessageBuilder:
         messages = MessageBuilder(system_prompt).extend(history).build()
     """
 
-    TOOL_RESULT_MAX_CHARS: int = 8_000
+    TOOL_RESULT_MAX_CHARS: int = 32_000
 
     def __init__(self, system_prompt: str) -> None:
         from config.settings_manager import settings_manager

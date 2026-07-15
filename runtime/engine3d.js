@@ -15,7 +15,7 @@
 
 import * as THREE from "./vendor/three.module.js";
 import { GLTFLoader } from "./vendor/GLTFLoader.js";
-import { makeInput, chaseCam, realize, makeDraw, renderHud } from "./engine.js";
+import { makeInput, chaseCam, schemeCamera, realize, makeDraw, renderHud } from "./engine.js";
 
 function worldOf(g) {
   return (g.state && (Array.isArray(g.state.world) ? g.state.world
@@ -125,11 +125,12 @@ export async function run3d(game, canvas, assetBase) {
     hud.style.width = `${r.width}px`; hud.style.height = `${r.height}px`;
   };
 
-  // Camera control. First-person (config.pointerLock): click locks the pointer, mouse-look feeds
-  // input.lookDX/DY, clicks become pointer.down. Otherwise: drag to orbit the view around the game's
-  // look-at target (a free capability layered on the game's own camera() hook).
+  // Camera control. First-person (config.pointerLock OR controls:"fp"): click locks the pointer,
+  // mouse-look feeds input.lookDX/DY, clicks become pointer.down. Otherwise: drag to orbit the view
+  // around the game's look-at target (a free capability layered on the game's own camera() hook).
+  const firstPerson = config.pointerLock || config.controls === "fp";
   let viewYaw = 0, viewPitch = 0, dragging = false, lastX = 0, lastY = 0, lookDX = 0, lookDY = 0;
-  if (config.pointerLock) {
+  if (firstPerson) {
     canvas.addEventListener("click", () => { if (document.pointerLockElement !== canvas) canvas.requestPointerLock(); });
     addEventListener("mousemove", (e) => { if (document.pointerLockElement === canvas) { lookDX += e.movementX; lookDY += e.movementY; } });
     addEventListener("mousedown", () => { if (document.pointerLockElement === canvas) input.pointer.down = true; });
@@ -175,7 +176,8 @@ export async function run3d(game, canvas, assetBase) {
     input.lookDX = lookDX; input.lookDY = lookDY; lookDX = 0; lookDY = 0;   // hand this frame's mouse-look to the game
     if (!kit.over) {
       g.update(dt, input, kit);
-      if (g.camera) g.camera(cam, kit);
+      if (g.camera) g.camera(cam, kit);                                    // explicit hook wins
+      else if (config.controls) schemeCamera(config.controls, cam, g.state && g.state.player);  // scheme-wired
       else if (g.state && g.state.player) chaseCam(cam, g.state.player);  // sane default follow
     }
     input._endFrame();

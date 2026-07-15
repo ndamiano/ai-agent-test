@@ -117,9 +117,16 @@ interface Kit {
   makeCamera(): Camera;
   // 3D third-person chase camera: sets the eye behind+above `target` AND the look-at to `target`.
   chaseCam(cam: Camera3, target: Entity, opts?: { back?: number; up?: number; lookUp?: number; faceYaw?: boolean }): void;
-  // movement controllers — input → motion, dt-correct, no key latching. Call one per controlled entity
-  // in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on the
-  // ground plane (x/z, faces travel via ry); moveTank3 = W/S drive along facing, A/D turn.
+  // 3D control (PREFERRED): pick a whole feel with `config.controls` and call kit.drive in update — it
+  // runs the matching mover, and the runtime auto-wires the matching camera from the SAME name (omit the
+  // camera hook), so the mover+camera can never be mismatched. Schemes: "orbital" (WASD relative to a
+  // drag-orbited follow cam — third-person default), "follow" (world-axis, camera trails travel),
+  // "vehicle" (W/S drive + A/D turn), "fp" (mouse-look first person; enables pointer capture itself).
+  drive(player: Entity, input: Input, dt: number, speed?: number): void;
+  // movement controllers — the individual movers kit.drive dispatches to. Prefer kit.drive; reach for
+  // these only for a bespoke rig. input → motion, dt-correct, no key latching. Call one per controlled
+  // entity in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on
+  // the ground plane (x/z, faces travel via ry); moveTank3 = W/S drive along facing, A/D turn.
   moveTopDown(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTopDown3(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTank3(e: Entity, input: Input, dt: number, opts?: { speed?: number; turn?: number; back?: number }): void;
@@ -144,6 +151,8 @@ interface Config {
   width?: number; height?: number; title?: string; background?: string;
   gravity?: number; seed?: number; mode?: "2d" | "3d";
   pointerLock?: boolean;   // 3D: click captures the mouse for first-person look (fills input.lookDX/DY)
+  // 3D control scheme — picks the mover (kit.drive) AND the camera (runtime) as one coherent pair.
+  controls?: "orbital" | "follow" | "vehicle" | "fp";
 }
 
 // The object `createGame(kit)` returns. Give `state` a concrete type (declare it in types.ts and

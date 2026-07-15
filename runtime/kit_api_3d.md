@@ -73,29 +73,61 @@ fixed 3/4 view.
   `e.grounded`. For a 3D platformer/collectathon where things fall and stand on the floor.
 - `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.rng`, `kit.V` (clamp/len/norm), `kit.aabb`
   (works on x/y as before — for 3D distance use `Math.hypot(dx,dy,dz)`), `kit.win(msg)/kit.lose(msg)`.
+- Randomness ONLY via `kit.rng` — `kit.rng.range(lo,hi)`, `kit.rng.int(lo,hi)`, `kit.rng.pick(arr)`,
+  `kit.rng.chance(p)`. NEVER `Math.random()` (it breaks the deterministic headless gate).
 
-## Control schemes  (PICK ONE complete camera+movement combo — do NOT hand-roll)
-Hand-rolled movement/camera is the #1 source of broken games (keys that stick, forgotten dt, a camera
-that doesn't track the player, movement that ignores where the camera points). Do NOT invent your own —
-CHOOSE the scheme that fits the game and wire its matched pair. Each row is complete and tied together:
+## Effects, collision & bounds  (3D-specific — READ THIS, the 2D kit misleads here)
+- **NO particles in 3D.** `kit.burst` / `kit.stepParticles` are 2D-only — they spawn shape-less x/y
+  particles the 3D renderer can't draw, and a wrong arg count spawns millions and OOMs. For a 3D
+  "pop"/"poof", spawn a few short-lived `sphere` entities yourself with an upward `vy`, `integrate3`
+  them, and `kit.cull` when a `life` counter expires — or just skip the effect. Do NOT call `kit.burst`.
+- **There is NO 3D solid-collision primitive.** Do NOT hand-roll an AABB loop against the world — a
+  town's road/ground slabs are huge boxes the player overlaps every frame, which pins the player in
+  place (the #1 broken-3D-movement bug). Two correct options: (a) leave the town OPEN (drive freely
+  past buildings — fine for an explore/collect game), or (b) keep the player inside the map with
+  `player.x = kit.V.clamp(player.x, -HALF, HALF)` (same for z). Collect/trigger on DISTANCE only:
+  `if (Math.hypot(px-e.x, py-e.y, pz-e.z) < R) { ...collect... }`.
+- **Animate decoration/pickups by MUTATING position** (allowed live; color/size bake). A floating
+  balloon or a hovering marker bobs: `e.y = baseY + Math.sin(kit's t * 2) * 0.5` (keep a `t += dt` in
+  state). A spinning pickup turns: `e.ry += dt`. This is how a scene feels alive.
 
-| Feel | Movement (in `update`) | Camera (in `camera` hook) |
-|------|------------------------|---------------------------|
-| **Orbital** (3D platformer, marble, collectathon) — drag orbits the view, WASD moves relative to it | `kit.moveRelative(player, input, dt, 10)` | `kit.chaseCam(cam, this.state.player)` |
-| **Follow-travel** (top-down-ish hero) — camera just trails wherever you move | `kit.moveTopDown3(player, input, dt, 10)` | `kit.chaseCam(cam, this.state.player, { faceYaw: true })` |
-| **Vehicle** (ship/car/shark) — turn then drive | `kit.moveTank3(player, input, dt, {})` | `kit.chaseCam(cam, this.state.player, { faceYaw: true })` |
-| **First-person** (set `config.pointerLock:true`) | `kit.mouseLook(player, input); kit.moveFP(player, input, dt, 6)` | `kit.fpCam(cam, this.state.player)` |
+## Composing a 3D scene that READS as its subject (the gates can't see "looks good" — you must)
+The scene is ONLY your shape-tagged entities, so BUILD it deliberately — a flat monochrome grid reads
+as nothing. For a town: a grass `ground`, gray road strips, and buildings that VARY (`kit.rng` their
+size + pick from a palette of 4–6 warm colors), each a body `box` + a wider thin `box` roof + a small
+dark door box. Scatter trees (brown trunk `box` + green `sphere` foliage) and lampposts (thin `box` +
+small bright `sphere`) along the streets, and a landmark at the center (fountain/square). Tens of
+placed props, not thousands. The same principle holds for any subject: enumerate its real objects and
+compose each from a few shaded primitives.
+
+## Control scheme  (ONE choice: `config.controls` + `kit.drive` — do NOT hand-roll, do NOT pair by hand)
+A whole 3D control feel is a SINGLE decision. Set `config.controls` to a scheme name, call `kit.drive`
+in `update`, and OMIT the camera hook — the runtime wires the matching camera from the same name. The
+mover and camera are tied by ONE value, so they can't be mismatched (world-axis movement under a camera
+that doesn't rotate — "left" always goes the same way — is the #1 broken-3D bug; this makes it
+impossible). Pick the row that fits:
+
+| `config.controls` | Feel | What you get |
+|-------------------|------|--------------|
+| `"orbital"` | third-person hero / platformer / RPG (Skyrim-ish) | drag orbits the view; WASD moves relative to it; chase cam. **Default 3D choice.** |
+| `"follow"` | top-down-ish hero | WASD in world axes; camera trails your travel |
+| `"vehicle"` | ship / car / shark | W/S drive along facing, A/D turn; chase cam behind heading |
+| `"fp"` | first person (shooter/explorer) | mouse-look aims; WASD relative to aim; eye camera. Captures the pointer itself — no `pointerLock` needed |
 
 ```js
+const config = { mode: "3d", controls: "orbital" };   // ONE choice
+// ...
 update(dt, input, kit) {
-  kit.moveRelative(this.state.player, input, dt, 10);   // orbital: WASD relative to the camera
+  kit.drive(this.state.player, input, dt, 10);         // runs the scheme's mover
+  // ...game logic...
 }
-camera(cam, kit) { kit.chaseCam(cam, this.state.player); }
+// NO camera() hook — the runtime wires the scheme's camera for you.
 ```
-- `kit.moveRelative(e, input, dt, speed=8)` — WASD relative to `input.camYaw` (the camera's heading,
-  filled by the runtime): W into the screen, A/D strafe. Movement and camera stay tied as you orbit.
-- `kit.moveTopDown3(e, input, dt, speed=8)` — omni on the x/z plane in WORLD axes; sets `e.ry` to face
-  travel (so `chaseCam faceYaw` trails you). Use when no manual camera orbit is wanted.
+`kit.drive(player, input, dt, speed=8)` dispatches to the scheme's mover; the runtime picks the scheme's
+camera. That is the whole control rig — do not also write a `camera()` hook or call a raw mover unless
+you need a bespoke rig. The raw movers `kit.drive` dispatches to (for that rare bespoke case):
+- `kit.moveRelative(e, input, dt, speed=8)` — WASD relative to `input.camYaw`; W into the screen, A/D strafe.
+- `kit.moveTopDown3(e, input, dt, speed=8)` — omni on the x/z plane in WORLD axes; sets `e.ry` to face travel.
 - `kit.moveTank3(e, input, dt, {speed, turn, back})` — W/S drive along `e.ry`, A/D turn.
 - For a flyer with pitch, use `kit.flyer` (below). These read HELD keys and apply dt for you — never
   reach into `input.pressed` for movement, and never accumulate keys into a set. Momentum/physics ball?

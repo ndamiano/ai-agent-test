@@ -419,6 +419,15 @@ export function makeInput() {
   };
 }
 
+// The selection half of a {kind:"menu"} HUD item: returns the 0-based index of the number key
+// (1..9) pressed THIS frame, or -1. Pair with a menu whose options you drew in order:
+//   const pick = kit.menuPick(input); if (pick === 0) buySpeed(); else if (pick === 1) ...
+// So a dialogue/shop choice is two lines: render the menu in hud(), act on kit.menuPick in update().
+export function menuPick(input) {
+  for (let i = 1; i <= 9; i++) if (input.pressed(String(i))) return i - 1;
+  return -1;
+}
+
 // ── draw api (canvas2d) — the render surface (2D games: the screen; 3D games: the HUD overlay) ──
 export function makeDraw(ctx) {
   return {
@@ -455,18 +464,62 @@ export function validateHud(items) {
   if (!Array.isArray(items)) return "hud() must return an array of HUD items";
   for (const it of items) {
     if (!it || typeof it !== "object") return "each HUD item must be an object";
-    if (it.kind === "text" || it.kind === "banner") {
+    if (it.kind === "text" || it.kind === "banner" || it.kind === "panel") {
       if (it.text == null) return `hud ${it.kind} item needs a 'text'`;
     } else if (it.kind === "bar") {
       if (typeof it.value !== "number" || typeof it.max !== "number")
         return "hud bar item needs numeric 'value' and 'max'";
+    } else if (it.kind === "menu") {
+      if (!Array.isArray(it.options) || it.options.length === 0)
+        return "hud menu item needs a non-empty 'options' string array";
     } else {
-      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner`;
+      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner | panel | menu`;
     }
     if (it.at != null && !HUD_ANCHORS.has(it.at))
       return `unknown hud anchor ${JSON.stringify(it.at)} — use e.g. "top-left", "top", "bottom-right"`;
   }
   return null;
+}
+
+// A boxed HUD overlay (dialogue panel / choice menu) — a self-contained card placed by anchor, drawn
+// with plain rects (works over both the 2D canvas and the 3D overlay). The SIM owns all state and
+// selection; this only draws what the game returns from hud(). Border via thin rects (no line dep).
+function _hudBox(draw, x, y, w, h) {
+  draw.rect(x, y, w, h, "rgba(12,14,20,0.85)");
+  const b = "#e8dcc0", t = 2;
+  draw.rect(x, y, w, t, b); draw.rect(x, y + h - t, w, t, b);
+  draw.rect(x, y, t, h, b); draw.rect(x + w - t, y, t, h, b);
+}
+function _hudBoxPos(anchor, W, H, bw, bh) {
+  const pad = 24;
+  const x = anchor.endsWith("left") ? pad : anchor.endsWith("right") ? W - pad - bw : (W - bw) / 2;
+  const y = anchor.startsWith("top") ? pad : anchor.startsWith("bottom") ? H - pad - bh : (H - bh) / 2;
+  return { x, y };
+}
+function _drawPanel(draw, it, W, H) {
+  const lines = String(it.text).split("\n");
+  const bw = Math.min(W - 48, 680), titleH = it.title ? 30 : 0;
+  const bh = 24 + titleH + lines.length * 24;
+  const { x, y } = _hudBoxPos(it.at || "bottom", W, H, bw, bh);
+  _hudBox(draw, x, y, bw, bh);
+  let ty = y + 22;
+  if (it.title) { draw.text(String(it.title), x + 18, ty, it.color || "#ffd27a", 20, "left"); ty += 30; }
+  for (const ln of lines) { draw.text(ln, x + 18, ty, "#f2ead8", 16, "left"); ty += 24; }
+}
+function _drawMenu(draw, it, W, H) {
+  const opts = it.options.map(String);
+  const bw = Math.min(W - 48, 560), titleH = it.title ? 32 : 0;
+  const bh = 20 + titleH + opts.length * 30;
+  const { x, y } = _hudBoxPos(it.at || "center", W, H, bw, bh);
+  _hudBox(draw, x, y, bw, bh);
+  let ty = y + 22;
+  if (it.title) { draw.text(String(it.title), x + 18, ty, it.color || "#ffd27a", 20, "left"); ty += 32; }
+  opts.forEach((opt, i) => {
+    const sel = it.selected === i;
+    if (sel) draw.rect(x + 8, ty - 16, bw - 16, 26, "rgba(255,210,120,0.22)");
+    draw.text(`${sel ? "▶ " : ""}${i + 1}) ${opt}`, x + 18, ty, sel ? "#ffe9b0" : "#e2dccb", 16, "left");
+    ty += 30;
+  });
 }
 
 export function renderHud(draw, items, W, H) {
@@ -481,6 +534,8 @@ export function renderHud(draw, items, W, H) {
       draw.text(String(it.text), W / 2, H / 2, it.color || "#fff", 32, "center");
       continue;
     }
+    if (it.kind === "panel") { _drawPanel(draw, it, W, H); continue; }
+    if (it.kind === "menu") { _drawMenu(draw, it, W, H); continue; }
     const anchor = it.at || "top-left";
     const down = !anchor.startsWith("bottom");
     if (cursor[anchor] == null) cursor[anchor] = down ? _HUD_PAD + 16 : H - _HUD_PAD;
@@ -512,6 +567,7 @@ export function makeKit(config, rng) {
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
     drive: (e, input, dt, speed) => driveScheme(config.controls, e, input, dt, speed),
+    menuPick,
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },
@@ -700,12 +756,26 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {})
     if (m > best.disp) { best = { key, disp: m, spawned: false }; drivenForClip = g; }
   }
   if (!best.spawned && best.disp < MIN_MOVE) {
-    violations.push({ kind: "dead_controls",
-      detail: `no key moves the player: the strongest input (${best.key}) shifted every entity by at `
-        + `most ${best.disp.toFixed(2)}px over ${frames} frames. It likely responds but FAR too slowly — `
-        + `kit velocities are px/SECOND and integrate/physics apply dt for you; NEVER use per-frame `
-        + `magnitudes. Typical: walker ~150 px/s, jump ~600 px/s, gravity ~2000 px/s². Prefer `
-        + `kit.walk(e,dir,speed) / kit.jump(e,speed) / kit.physics(e,dt,solids,gravity) so dt is handled.` });
+    const is3d = baseW.some((e) => e && (e.z !== undefined
+      || e.shape === "box" || e.shape === "sphere" || e.shape === "ground"));
+    const head = `no key moves the player: the strongest input (${best.key}) shifted every entity by `
+      + `at most ${best.disp.toFixed(2)} over ${frames} frames. `;
+    const detail = is3d
+      // 3D: the #1 cause is a player that isn't the entity the probe (and renderer) sees.
+      ? head + `In a 3D game the usual cause is that the object you move is NOT a member of `
+        + `state.world — the probe (and the renderer) only see entities IN state.world. The player MUST `
+        + `be a SHAPE-TAGGED entity pushed into state.world, and state.player must reference that SAME `
+        + `object: \`state.player = kit.spawn(world, { shape:"box", x,y,z, w,h,d, color })\` (never a bare `
+        + `state object kept outside the world). Move it with kit.drive(player,input,dt,speed) or `
+        + `kit.moveTopDown3/moveRelative; speeds are units/SECOND. Do NOT use kit.walk/jump/physics — those `
+        + `are the 2D kit. Also make sure movement isn't gated off every frame (e.g. a dialogue/pause flag `
+        + `stuck true).`
+      // 2D: the classic too-slow / per-frame-magnitude mistake.
+      : head + `It likely responds but FAR too slowly — kit velocities are px/SECOND and integrate/physics `
+        + `apply dt for you; NEVER use per-frame magnitudes. Typical: walker ~150 px/s, jump ~600 px/s, `
+        + `gravity ~2000 px/s². Prefer kit.walk(e,dir,speed) / kit.jump(e,speed) / kit.physics(e,dt,solids,`
+        + `gravity) so dt is handled.`;
+    violations.push({ kind: "dead_controls", detail });
   }
   // wall-clip on the most-moving run (only meaningful when the game keeps a tilemap)
   const tm = drivenForClip.state && drivenForClip.state.tilemap;

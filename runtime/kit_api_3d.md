@@ -30,6 +30,28 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 `"cc3333"` renders as the wrong color. `y` is the entity's CENTER. Entities with no `shape` are
 invisible (pure logic markers).
 
+**The player IS a world entity.** The character you control must be a SHAPE-TAGGED entity pushed into
+`state.world`, and `state.player` must reference that SAME object — create it once with
+`this.state.player = kit.spawn(this.state.world, { shape:"box", x,y,z, w,h,d, color })`. A bare
+`state.player = { x, y, z, … }` kept OUTSIDE `state.world` is invisible AND the movement gate can't see
+it move (dead-controls). One object, in the world, referenced by `state.player`.
+
+**If a `world.ts` file is provided (a generated village), BUILD ON IT — do not author terrain/town
+yourself.** Import it and use its API; the town, streets, and terrain already exist:
+```ts
+import { WORLD, spawnWorld, heightAt } from "./world.ts";
+// init(kit): spawn the village, then put the player ON the ground at the plaza
+spawnWorld(this.state.world);
+const px = WORLD.plaza.x, pz = WORLD.plaza.z;
+this.state.player = kit.spawn(this.state.world, { shape:"box", x:px, y:heightAt(px,pz)+0.9, z:pz, w:0.8,h:1.7,d:0.8, color:"#28303a" });
+// place NPCs/items relative to WORLD.buildings (each has {x,z,w,d,label}) or on WORLD.grass ([x,z] cells)
+// update(dt,input,kit): after kit.drive, keep the player on the terrain EVERY frame:
+this.state.player.y = heightAt(this.state.player.x, this.state.player.z) + 0.9;
+```
+`WORLD.buildings` (`[{id,label,x,z,w,d,h,color}]`, `label` = kind e.g. "market stall"), `WORLD.plaza
+{x,z}`, `WORLD.gate {x,z}`, `WORLD.grass [[x,z],…]`. `heightAt(x,z)` is the ground height — every entity's
+`y` should be `heightAt(x,z) + halfHeight`. Use `controls:"orbital"`, no camera hook.
+
 **Two hard rules that shape how you build a 3D game — internalize these:**
 1. **A 3D game has NO `draw()`. The HUD is DATA you RETURN from `hud(kit)`.** The scene renders from
    entity shape tags; the HUD is a screen-space overlay the engine draws from the items you return —
@@ -44,9 +66,49 @@ invisible (pure logic markers).
    }
    ```
    Items: `{kind:"text", text, at?, color?, size?}` · `{kind:"bar", value, max, at?, color?, label?}` ·
-   `{kind:"banner", text, color?}` (centered). `at` is an anchor: `"top-left"`, `"top"`, `"top-right"`,
-   `"left"`, `"center"`, `"right"`, `"bottom-left"`, `"bottom"`, `"bottom-right"` (default `"top-left"`);
-   same-anchor items stack. `hud()` reads state, never mutates. Omit it entirely if the game needs no HUD.
+   `{kind:"banner", text, color?}` (centered) · `{kind:"panel", text, title?, at?, color?}` (a titled
+   text card — dialogue line / narration / quest log; multi-line via `\n`) · `{kind:"menu", options,
+   selected?, title?, at?, color?}` (a numbered choice list). `at` is an anchor: `"top-left"`, `"top"`,
+   `"top-right"`, `"left"`, `"center"`, `"right"`, `"bottom-left"`, `"bottom"`, `"bottom-right"` (default
+   `"top-left"`); same-anchor items stack. `hud()` reads state, never mutates. Omit it if the game needs no HUD.
+
+   **Conversation, quests, shops, upgrades — build them from `panel` + `menu` (this is how a game gets
+   DEPTH).** The engine only DRAWS these; the SIM owns every bit of state and choice (sim/render law).
+   The pattern: when the player is near an NPC and presses an interact key, open a talk state; render it;
+   read a number key to pick a choice; branch. NEVER `console.log` dialogue (invisible) or cram a
+   conversation into a `banner`.
+   You MUST wire the WHOLE loop — open, advance the lines, and ACT on the choice. A menu that only
+   renders (no `kit.menuPick` branch) is a dead menu: the player sees choices but can't pick them. When
+   `state.talk` is set, DON'T just `return` after an Escape check — read `kit.menuPick(input)` and branch.
+   ```ts
+   // update(): open → advance → CHOOSE. The SIM drives it all, on plain state.
+   const t = this.state.talk;
+   if (t) {
+     const npc = t.npc, atChoice = t.line >= npc.lines.length - 1;   // last line shows the choices
+     if (!atChoice && input.pressed("e")) { t.line++; return; }      // advance dialogue
+     if (atChoice) {
+       const pick = kit.menuPick(input);                             // 0-based: which number key
+       if (pick === 0) { this.state.quests.push(makeQuest(npc)); this.state.talk = null; }   // Accept
+       else if (pick === 1) this.state.talk = null;                  // Decline / Leave
+     }
+     if (input.pressed("Escape")) this.state.talk = null;
+     return;                                                         // movement paused while talking
+   }
+   const near = this.state.npcs.find(n => Math.hypot(n.x-p.x, n.z-p.z) < 3);
+   if (near && input.pressed("e")) this.state.talk = { npc: near, line: 0 };
+   // hud(): render the current talk state as a panel (the line) + a menu (the choices, only at the end)
+   hud() {
+     const t = this.state.talk; if (!t) return [/* normal hud */];
+     const items = [{ kind: "panel", title: t.npc.name, text: t.npc.lines[t.line], at: "bottom" }];
+     if (t.line >= t.npc.lines.length - 1)
+       items.push({ kind: "menu", options: ["Accept the quest", "Not now"], at: "center" });
+     return items;
+   }
+   ```
+   A SHOP/UPGRADE is the same shape: a `menu` of `["Speed +1 (10 coins)", "Bag +1 (15 coins)", "Leave"]`,
+   and in update() `const pick = kit.menuPick(input)` → if `pick===0 && state.coins>=10` spend and bump the
+   stat. A QUEST LOG is a `panel` whose `text` is your active quests joined with `\n`. Real depth = these
+   small interactive loops (talk → choose → consequence), not more collectibles.
 2. **Only position + `ry` update live** for WORLD entities. Each frame the renderer re-reads an entity's x/y/z and `ry`
    only — NOT its size (w/h/d/r) or color (those bake when the entity first appears). To change how
    much health shows, ADD or REMOVE entities (splice pip boxes from `state.world`); to show a hit,

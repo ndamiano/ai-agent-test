@@ -65,7 +65,13 @@ type HudAnchor =
 type HudItem =
   | { kind: "text"; text: string | number; at?: HudAnchor; color?: string; size?: number }
   | { kind: "bar"; value: number; max: number; at?: HudAnchor; color?: string; label?: string }
-  | { kind: "banner"; text: string | number; color?: string };
+  | { kind: "banner"; text: string | number; color?: string }
+  // a titled text card — NPC dialogue line, narration, quest log. Multi-line via "\n" in text.
+  | { kind: "panel"; text: string | number; title?: string; at?: HudAnchor; color?: string }
+  // a numbered choice list (quest accept/decline, shop/upgrade buy). The engine draws "1) …", "2) …";
+  // the SIM owns the state: read the matching digit key (or arrows + set `selected`) in update() and
+  // branch. `selected` (optional) highlights a row for arrow-key navigation.
+  | { kind: "menu"; options: string[]; selected?: number; title?: string; at?: HudAnchor; color?: string };
 
 interface Input {
   down(key: string): boolean;
@@ -123,6 +129,9 @@ interface Kit {
   // drag-orbited follow cam — third-person default), "follow" (world-axis, camera trails travel),
   // "vehicle" (W/S drive + A/D turn), "fp" (mouse-look first person; enables pointer capture itself).
   drive(player: Entity, input: Input, dt: number, speed?: number): void;
+  // selection for a {kind:"menu"} HUD item: 0-based index of the number key (1..9) pressed this
+  // frame, else -1. Render the menu in hud(); branch on kit.menuPick(input) in update().
+  menuPick(input: Input): number;
   // movement controllers — the individual movers kit.drive dispatches to. Prefer kit.drive; reach for
   // these only for a bespoke rig. input → motion, dt-correct, no key latching. Call one per controlled
   // entity in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on

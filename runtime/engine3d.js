@@ -66,8 +66,36 @@ function skinnedMesh(model, e) {
   return pivot;
 }
 
+// A terrain patch: a subdivided plane displaced by a height grid and tinted per-vertex by a color
+// grid (biome/street colors). One mesh for a whole town, lit + smooth — replaces a field of boxes.
+// e = { shape:"heightfield", grid:number[gh][gw], colors:string[gh][gw], cell, y? }.
+function buildHeightfield(e) {
+  const grid = e.grid, colors = e.colors;
+  const gh = grid.length, gw = grid[0].length, cell = e.cell || 2;
+  // PlaneGeometry gives a gw×gh vertex grid (row-major); we overwrite each vertex to its exact world
+  // (x, height, z) — no rotation — so terrain lines up cell-for-cell with where the game places things.
+  const geo = new THREE.PlaneGeometry(1, 1, gw - 1, gh - 1);
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
+  for (let r = 0; r < gh; r++) {
+    for (let cx = 0; cx < gw; cx++) {
+      const i = r * gw + cx;
+      pos.setXYZ(i, (cx - (gw - 1) / 2) * cell, grid[r][cx], (r - (gh - 1) / 2) * cell);
+      c.set((colors && colors[r] && colors[r][cx]) || "#5f9a4c");
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    }
+  }
+  pos.needsUpdate = true;
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.97, metalness: 0.0 });
+  const m = new THREE.Mesh(geo, mat);
+  m.position.y = e.y || 0;
+  return m;
+}
+
 function buildMesh(e, meshes) {
   if (e.mesh && meshes[e.mesh] && e.shape !== "ground") return skinnedMesh(meshes[e.mesh], e);
+  if (e.shape === "heightfield") return buildHeightfield(e);
   const color = e.color || "#cccccc";
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.05 });
   let geo;

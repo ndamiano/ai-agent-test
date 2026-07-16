@@ -691,10 +691,18 @@ export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [
     const world = g.state && (Array.isArray(g.state.world) ? g.state.world
       : Array.isArray(g.state.entities) ? g.state.entities : null);
     if (world) {
-      for (const e of world) {
+      for (let i = 0; i < world.length; i++) {
+        const e = world[i];
         for (const k of ["x", "y", "z", "vx", "vy", "vz"]) {
-          if (e[k] !== undefined && badNum(e[k])) return { ok: false, frame: f, phase: "diverged",
-            error: `entity field ${k}=${e[k]} is not finite` };
+          if (e[k] !== undefined && badNum(e[k])) {
+            const who = ["type", "shape", "id", "label"].map(p => e[p] !== undefined && `${p}=${e[p]}`).filter(Boolean).join(" ");
+            const when = f === 0 ? "on the first update()" : `at frame ${f}`;
+            return { ok: false, frame: f, phase: "diverged",
+              error: `entity field ${k}=${e[k]} is not finite ${when} — the offending entity is `
+                   + `[${who || `world[${i}]`}]. Find every write to .${k} on THAT entity (its spawn `
+                   + `and any update() line that reassigns .${k}); a value flowing in is undefined or `
+                   + `NaN (an uninitialized state field, a missing WORLD key, or 0/0). Fix that one write.` };
+          }
         }
       }
     }

@@ -36,9 +36,10 @@ Rules:
 - If this is a system file: export typed functions taking the state (+ dt/input/kit/g as needed)
   that either mutate state (update-side) or draw (render-side) — never both.
 - COMPOSE the kit, do not hand-roll. The spec's `control.scheme` names the control archetype — use its
-  kit primitive combo from the KIT API (e.g. vehicle-3d → moveTank3 + chaseCam{faceYaw}; first-person-3d
-  → mouseLook + moveFP + fpCam + pointerLock; orbital-3d → moveRelative + chaseCam; platformer →
-  walk + jump + physics; grid-turn → makeTilemap + gridMove). Each name in the spec's `uses` maps to a
+  kit primitive combo from the KIT API. For a 3D control scheme this is ONE decision — set
+  `config.controls` and call `kit.drive` (do NOT hand-roll movers/cameras): first-person-3d →
+  `config.controls:"fp"`; vehicle-3d → `config.controls:"vehicle"`; orbital-3d/third-person →
+  `config.controls:"orbital"`. Non-3D: platformer → walk + jump + physics; grid-turn → makeTilemap + gridMove. Each name in the spec's `uses` maps to a
   kit primitive too (chase → seek, tilemap → makeTilemap, particles → burst — but burst is 2D ONLY;
   a 3D game has no particles and must NOT call kit.burst, see the 3D kit surface). NEVER hand-roll
   movement, camera, physics, or grid math when a kit primitive exists — that is the #1 defect.

@@ -91,6 +91,49 @@ def test_full_read_still_grounds_after_partial(tools):
     assert r["ok"] is True
 
 
+def test_read_elides_giant_inline_line(tmp_path):
+    # worldgen bakes a 100KB heightfield onto ONE line; the model needs the sibling function, not data.
+    data = '{"height":[' + ",".join("0.5" for _ in range(40_000)) + "]}"
+    world = f"export const WORLD: any = {data};\nexport function heightAt(x, z) {{ return 0; }}\n"
+    _game(tmp_path, {"main.ts": SRC, "world.ts": world})
+    tools = build_codegen_tools(RunState(tmp_path))
+    r = tools["read_file"](file="world.ts")
+    assert r["ok"] and r["elided"] is True
+    assert "chars of inline data elided" in r["content"]
+    assert "export function heightAt" in r["content"]  # the code survives
+    assert len(r["content"]) < 2_000            # 160KB line collapsed to head + marker
+
+
+def test_read_caps_over_long_result(tmp_path):
+    from maestro.codegen.tools import MAX_READ_CHARS
+    body = "\n".join(f"const v{i} = {i};" for i in range(4_000))  # many short lines, no giant line
+    _game(tmp_path, {"main.ts": SRC, "big.ts": body})
+    tools = build_codegen_tools(RunState(tmp_path))
+    r = tools["read_file"](file="big.ts")
+    assert r["ok"] and r["truncated"] is True and r["elided"] is False
+    assert "chars truncated" in r["content"]
+    assert len(r["content"]) <= MAX_READ_CHARS + 200
+    assert r["content"].startswith("const v0 = 0;")   # head kept
+    assert r["content"].rstrip().endswith(";")         # tail kept
+
+
+def test_read_short_file_unchanged(tools):
+    r = tools["read_file"](file="main.ts")
+    assert r["ok"] and r["elided"] is False and r["truncated"] is False
+    assert r["content"] == SRC
+
+
+def test_edit_grounds_after_elided_read(tmp_path):
+    # elision changes the returned bytes but not grounding: an anchor on real code still lands.
+    data = '[' + ",".join("1" for _ in range(40_000)) + "]"
+    world = f"export const WORLD: any = {data};\nexport const TAG = 1;\n"
+    _game(tmp_path, {"main.ts": SRC, "world.ts": world})
+    tools = build_codegen_tools(RunState(tmp_path))
+    tools["read_file"](file="world.ts")
+    r = tools["edit"](file="world.ts", old_string="export const TAG = 1;", new_string="export const TAG = 2;")
+    assert r["ok"] is True  # grounded despite the read being elided
+
+
 def test_write_rejects_off_plan_filename(tools):
     r = tools["write"](file="_bounce_back().ts", code="export const X = 1;\n")
     assert r["ok"] is False

@@ -124,3 +124,40 @@ def test_run_build_seeds_world_before_loop(tmp_path, stub_bridge, monkeypatch):
         assert _FakeLoop.seen_world is True                     # world.ts existed by the time the loop built
         files = read_manifest(st.run_dir)["files"]
         assert [f["name"] for f in files] == ["main.ts"]
+
+
+def test_world_ts_carries_schema_header_surviving_read_elision():
+    """The WORLD literal is a 100KB single line the read tool elides; the schema-bearing keys
+    (buildings/grass/plaza/...) sit inside it. A generated shape comment must survive elision so the
+    model spawns from real field names instead of guessing (a wrong name → undefined → y=NaN)."""
+    import json, re
+    from maestro.codegen.worldgen_bridge import _write_world_ts, _ts_shape
+    from maestro.codegen.tools import _elide_long_lines, _cap_chars
+
+    assert _ts_shape({"x": 1.0, "z": 3.0, "h": 0.9}) == "{x, z, h}"
+    assert _ts_shape([[-33.0, -23.0], [-31.0, -23.0]]) == "[number, number][]"
+    assert _ts_shape([[0.6] * 34] * 24) == "number[][]"          # a heightfield grid, not a tuple
+    assert _ts_shape([{"id": "well", "x": 1.0}]) == "{id, x}[]"
+
+    data = {"cell": 2.0, "gw": 34, "gh": 24, "seed": 0,
+            "height": [[0.5] * 34 for _ in range(24)],
+            "color": [["#abc"] * 34 for _ in range(24)],
+            "buildings": [{"id": "well", "label": "stone well", "x": 1.0, "z": 1.0}],
+            "grass": [[-33.0, -23.0]], "grass_points": [[-33.0, 0.6, -22.0]],
+            "props": [{"x": -7.0, "y": 0.8, "z": -23.0, "r": 0.5, "color": "#70747a"}],
+            "plaza": {"x": 1.0, "z": 3.0, "h": 0.9}, "gate": {"x": -9.0, "z": 23.0}}
+
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "world.ts"
+        _write_world_ts(p, data)
+        served, elided = _elide_long_lines(p.read_text())
+        served, _ = _cap_chars(served)
+
+    assert elided is True                                        # the giant WORLD literal was cut
+    assert "WORLD shape" in served                               # ...but the schema survived
+    for key in data:                                             # every field name is visible
+        assert f"//   {key}:" in served
+    assert "plaza: {x, z, h}" in served                          # a schema buried mid-literal
+    assert "returns NaN ONLY when x or z is itself NaN/undefined" in served  # the heightAt contract

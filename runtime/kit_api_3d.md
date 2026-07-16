@@ -50,7 +50,8 @@ this.state.player.y = heightAt(this.state.player.x, this.state.player.z) + 0.9;
 ```
 `WORLD.buildings` (`[{id,label,x,z,w,d,h,color}]`, `label` = kind e.g. "market stall"), `WORLD.plaza
 {x,z}`, `WORLD.gate {x,z}`, `WORLD.grass [[x,z],…]`. `heightAt(x,z)` is the ground height — every entity's
-`y` should be `heightAt(x,z) + halfHeight`. Use `controls:"orbital"`, no camera hook.
+`y` should be `heightAt(x,z) + halfHeight`. Set `controls` from the spec's scheme (`"orbital"` for a
+third-person town, `"fp"` for a first-person walk-through — see Control scheme below), no camera hook.
 
 **Two hard rules that shape how you build a 3D game — internalize these:**
 1. **A 3D game has NO `draw()`. The HUD is DATA you RETURN from `hud(kit)`.** The scene renders from
@@ -167,14 +168,19 @@ A whole 3D control feel is a SINGLE decision. Set `config.controls` to a scheme 
 in `update`, and OMIT the camera hook — the runtime wires the matching camera from the same name. The
 mover and camera are tied by ONE value, so they can't be mismatched (world-axis movement under a camera
 that doesn't rotate — "left" always goes the same way — is the #1 broken-3D bug; this makes it
-impossible). Pick the row that fits:
+impossible).
+
+**The choice comes from the spec's `control.scheme` — NOT a default. Map it:**
+`first-person-3d`/first-person/walking-sim/FPS → **`"fp"`** · `orbital-3d`/third-person hero/RPG/platformer
+→ **`"orbital"`** · `vehicle-3d`/ship/car → **`"vehicle"`** · top-down → **`"follow"`**. If the spec says
+first-person, `controls` MUST be `"fp"` — orbital is a THIRD-person camera and is wrong for it. Pick the row:
 
 | `config.controls` | Feel | What you get |
 |-------------------|------|--------------|
-| `"orbital"` | third-person hero / platformer / RPG (Skyrim-ish) | drag orbits the view; WASD moves relative to it; chase cam. **Default 3D choice.** |
+| `"orbital"` | third-person hero / platformer / RPG (Skyrim-ish) | drag orbits the view; WASD moves relative to it; chase cam |
 | `"follow"` | top-down-ish hero | WASD in world axes; camera trails your travel |
 | `"vehicle"` | ship / car / shark | W/S drive along facing, A/D turn; chase cam behind heading |
-| `"fp"` | first person (shooter/explorer) | mouse-look aims; WASD relative to aim; eye camera. Captures the pointer itself — no `pointerLock` needed |
+| `"fp"` | **first person** (shooter / explorer / walking-sim) | mouse-look aims; WASD relative to aim; eye-level camera. Captures the pointer itself — no `pointerLock` needed |
 
 ```js
 const config = { mode: "3d", controls: "orbital" };   // ONE choice
@@ -195,16 +201,16 @@ you need a bespoke rig. The raw movers `kit.drive` dispatches to (for that rare 
   reach into `input.pressed` for movement, and never accumulate keys into a set. Momentum/physics ball?
   Still call a controller for direction; do NOT hand-roll velocity from raw key checks.
 
-## First-person  (set `config.pointerLock: true`)
-For a first-person game, put `pointerLock: true` in config. Clicking the canvas locks the mouse;
-mouse motion becomes look, mouse clicks become `input.pointer.down`. Steer with three primitives:
+## First-person aiming  (you already chose `controls: "fp"` above)
+`controls: "fp"` gives you the whole first-person rig — mouse-look, WASD-relative movement, and the
+eye-level camera, all from `kit.drive`. Do NOT also set `pointerLock` or call `mouseLook`/`moveFP`/
+`fpCam` by hand — the scheme wires them. This section is ONLY the extra combat/interaction on top:
 ```js
 update(dt, input, kit) {
-  kit.mouseLook(this.state.player, input);        // turn player.yaw / player.pitch from the mouse
-  kit.moveFP(this.state.player, input, dt, 6);    // WASD relative to facing (W = look dir, A/D strafe)
-  if (input.pointer.down) { /* attack: hit along the aim */ }
+  kit.drive(this.state.player, input, dt, 6);     // the "fp" rig: look + move + camera
+  if (input.pointer.down) { /* attack / interact: hit along the aim */ }
 }
-camera(cam, kit) { kit.fpCam(cam, this.state.player); }   // eye at the player, looking along the aim
+// NO camera() hook — the "fp" scheme wires the eye camera for you.
 ```
 `player.yaw`/`player.pitch` are the aim. The forward/aim direction is
 `{ x: Math.sin(yaw)*Math.cos(pitch), y: Math.sin(pitch), z: -Math.cos(yaw)*Math.cos(pitch) }` — use it

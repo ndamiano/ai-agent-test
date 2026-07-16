@@ -100,15 +100,22 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
         if i and i % 10 == 0:
             _unload()
         slug = os.path.splitext(os.path.basename(png))[0]
-        try:
-            with open(png, "rb") as f:
-                glb = _http_post_raw(f"{ep}/generate", f.read(), "image/png")
-            glb_path = os.path.join(out_dir, f"{slug}.glb")
-            with open(glb_path, "wb") as g:
-                g.write(glb)
-            done.add(slug)
-        except Exception as e:
-            logger.error(f"trellis {slug} failed: {e}")
+        with open(png, "rb") as f:
+            img = f.read()
+        # A 500 is almost always the leak-degraded pipeline, not the image (observed live: 7/14
+        # intermittent failures with successes in between) — unload for a fresh pipeline and retry
+        # once before giving up. A missing GLB renders as a bare slab, worse than the reload cost.
+        for attempt in (1, 2):
+            try:
+                glb = _http_post_raw(f"{ep}/generate", img, "image/png")
+                with open(os.path.join(out_dir, f"{slug}.glb"), "wb") as g:
+                    g.write(glb)
+                done.add(slug)
+                break
+            except Exception as e:
+                logger.error(f"trellis {slug} failed (attempt {attempt}): {e}")
+                if attempt == 1:
+                    _unload()
     _unload()
     return done
 

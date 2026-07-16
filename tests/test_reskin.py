@@ -210,3 +210,32 @@ def test_stage_copies_mesh_skin_when_present(tmp_path):
     finally:
         import shutil
         shutil.rmtree(RUNTIME_DIR / "games" / slug, ignore_errors=True)
+
+
+def test_trellis_batch_retries_after_unload(tmp_path, monkeypatch):
+    """A 500 mid-batch is usually the leak-degraded pipeline — one unload + retry must recover the
+    mesh instead of leaving a bare slab."""
+    import tools.comfyui_tools as ct
+
+    (tmp_path / "beast.png").write_bytes(b"png")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    calls = []
+
+    def fake_post(url, body, ctype, timeout=None):
+        calls.append(url)
+        if url.endswith("/unload"):
+            return b""
+        if url.endswith("/generate") and len([c for c in calls if c.endswith("/generate")]) == 1:
+            raise ConnectionError("HTTP Error 500")
+        return b"glb-bytes"
+
+    monkeypatch.setattr(ct, "_http_post_raw", fake_post)
+    monkeypatch.setattr(ct, "_comfyui_free_vram", lambda ep: None)
+    monkeypatch.setattr(ct, "_llm_get_loaded_model", lambda: None)
+
+    done = ct.run_trellis_batch(str(tmp_path), str(out))
+    assert done == {"beast"}
+    assert (out / "beast.glb").read_bytes() == b"glb-bytes"
+    assert [c for c in calls if c.endswith("/generate")] and len([c for c in calls if c.endswith("/unload")]) >= 2

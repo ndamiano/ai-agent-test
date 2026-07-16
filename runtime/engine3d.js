@@ -69,7 +69,7 @@ function skinnedMesh(model, e) {
 // A terrain patch: a subdivided plane displaced by a height grid and tinted per-vertex by a color
 // grid (biome/street colors). One mesh for a whole town, lit + smooth — replaces a field of boxes.
 // e = { shape:"heightfield", grid:number[gh][gw], colors:string[gh][gw], cell, y? }.
-function buildHeightfield(e) {
+function buildHeightfield(e, assetBase) {
   const grid = e.grid, colors = e.colors;
   const gh = grid.length, gw = grid[0].length, cell = e.cell || 2;
   // PlaneGeometry gives a gw×gh vertex grid (row-major); we overwrite each vertex to its exact world
@@ -90,12 +90,21 @@ function buildHeightfield(e) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.97, metalness: 0.0 });
   const m = new THREE.Mesh(geo, mat);
   m.position.y = e.y || 0;
+  // a baked terrain texture (grass/paths/stone with real detail) beats interpolated vertex colors —
+  // load it async and switch the material over to it when it arrives; vertex colors are the fallback.
+  if (e.texture) {
+    const url = assetBase ? `${assetBase}/${e.texture}` : e.texture;
+    new THREE.TextureLoader().load(url, (tex) => {
+      if ("colorSpace" in tex) tex.colorSpace = THREE.SRGBColorSpace;
+      mat.map = tex; mat.vertexColors = false; mat.color.set("#ffffff"); mat.needsUpdate = true;
+    });
+  }
   return m;
 }
 
-function buildMesh(e, meshes) {
+function buildMesh(e, meshes, assetBase) {
   if (e.mesh && meshes[e.mesh] && e.shape !== "ground") return skinnedMesh(meshes[e.mesh], e);
-  if (e.shape === "heightfield") return buildHeightfield(e);
+  if (e.shape === "heightfield") return buildHeightfield(e, assetBase);
   const color = e.color || "#cccccc";
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.05 });
   let geo;
@@ -184,7 +193,7 @@ export async function run3d(game, canvas, assetBase) {
       if (!e.shape) continue;
       live.add(e);
       let m = nodes.get(e);
-      if (!m) { m = buildMesh(e, assets); scene.add(m); nodes.set(e, m); }
+      if (!m) { m = buildMesh(e, assets, assetBase); scene.add(m); nodes.set(e, m); }
       if (e.shape !== "ground") {
         m.position.set(e.x || 0, e.y || 0, e.z || 0);
         if (e.ry != null) m.rotation.y = e.ry;

@@ -88,7 +88,7 @@ def build(recipe, out_dir: Path):
             if (cx, cy) in building_cells:
                 base = "#8a7355"
             height[cy][cx] = round(h, 3)
-            color[cy][cx] = _jitter(base, cx, cy, seed)
+            color[cy][cx] = base   # crisp per-cell; a baked texture (below) carries the fine detail
             if (cx, cy) not in building_cells and theme not in ("worn path", "cobbled plaza", "dense hedgerow"):
                 grass.append([wx(cx), wz(cy)])
 
@@ -126,6 +126,7 @@ def build(recipe, out_dir: Path):
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_world_ts(out_dir / "world.ts", data)
+    _bake_terrain(color, out_dir / "assets" / "terrain.png")
     _write_preview(out_dir.parent / "town_preview.png", data)
     print(f"seed={seed} town={ww}x{wh} buildings={len(buildings)} grass={len(grass)}")
     return data
@@ -141,7 +142,7 @@ export const WORLD: any = %s;
 // Spawn the village: ONE terrain heightfield entity (the ground) + a labelled box per building. The
 // building `label` (kind) is also its `mesh` id, so the asset stage can skin each kind.
 export function spawnWorld(world: any[]): void {
-  world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell });
+  world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell, texture: "assets/terrain.png" });
   for (const b of WORLD.buildings)
     world.push({ shape: "box", x: b.x, y: b.hx + b.h / 2, z: b.z, w: b.w, h: b.h, d: b.d,
                  color: b.color, type: "building", label: b.label, mesh: b.mesh });
@@ -161,6 +162,29 @@ export function heightAt(x: number, z: number): number {
 }
 ''' % j
     path.write_text(src, encoding="utf-8")
+
+
+def _bake_terrain(color_grid, path: Path, P: int = 18):
+    """A crisp, detailed ground texture the runtime maps onto the terrain — beats interpolated vertex
+    colors (which smear grass/path/stone into fuzz). Per-cell base color (crisp edges → sharp paths) +
+    fine grain (grass texture) + soft large-scale mottling (patchiness). PIL only, no numpy."""
+    from PIL import Image, ImageDraw, ImageChops, ImageFilter
+    gh, gw = len(color_grid), len(color_grid[0])
+    W, H = gw * P, gh * P
+    img = Image.new("RGB", (W, H))
+    d = ImageDraw.Draw(img)
+    for cy in range(gh):
+        for cx in range(gw):
+            d.rectangle([cx * P, cy * P, (cx + 1) * P, (cy + 1) * P], fill=color_grid[cy][cx])
+    # fine grain (grass blades / dirt speckle) — gaussian noise, softened, overlaid
+    grain = Image.effect_noise((W, H), 24).convert("L").filter(ImageFilter.GaussianBlur(0.5))
+    img = ImageChops.overlay(img, Image.merge("RGB", (grain, grain, grain)))
+    # large-scale mottling (sun/wear patches) — low-res noise upsampled + blurred, multiplied in gently
+    mw, mh = max(1, W // 8), max(1, H // 8)
+    mott = Image.effect_noise((mw, mh), 34).convert("L").resize((W, H)).filter(ImageFilter.GaussianBlur(3))
+    img = Image.blend(img, ImageChops.multiply(img, Image.merge("RGB", (mott, mott, mott))), 0.16)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(path)
 
 
 def _write_preview(path: Path, data):

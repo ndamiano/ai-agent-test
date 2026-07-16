@@ -142,32 +142,3 @@ export const useWebSocket = () => {
     }
     return context
 }
-
-export const useTaskWebSocket = (taskId: string | null) => {
-    const { subscribe } = useWebSocket()
-    const [messages, setMessages] = useState<WebSocketMessage[]>([])
-    const [finished, setFinished] = useState(false)
-
-    useEffect(() => {
-        if (!taskId) {
-            setMessages([])
-            setFinished(false)
-            return
-        }
-
-        setMessages([])
-        setFinished(false)
-
-        const unsubscribe = subscribe(taskId, (message) => {
-            setMessages(prev => [...prev, message])
-
-            if (message.type === 'task_completed' || message.type === 'task_failed') {
-                setFinished(true)
-            }
-        })
-
-        return unsubscribe
-    }, [taskId, subscribe])
-
-    return { messages, finished }
-}

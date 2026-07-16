@@ -21,8 +21,14 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   `AgentLoop`; live parity on asteroids/pacman/platformer/collect3d(3D).
 - **Phase 2 (DONE):** demolished the IR — deleted `renpy/`, `godot/`, the IR (`ir_assemble`/
   `ir_crossref`/schema), every mechanic module, and their tests; kept the `Module`/`Check`/`Error`
-  ABC + `AgentLoop` + `Services`. The `api/` build endpoints still call the old entry points lazily
-  (retargeted in Phase 6).
+  ABC + `AgentLoop` + `Services`.
+- **Phase 6 frontend (DONE):** retargeted `api/` + the SPA to codegen. The games router is
+  codegen-only (list/detail/freeze/build/pause/resume/auto-pause/fix/assets → `maestro.codegen.run`);
+  chat drafts specs via `tools/chat_tools.py`; build/spec progress emits through `tools/build_events.py`;
+  a built run stages to `runtime/games/<id>/` served at `/play`. The GamesPanel reviews the codegen
+  spec read-only, drives freeze→build→skin→fix→play, and the IR component/asset browser is deleted.
+  Also finished the demolition: removed the leftover `renpy/`/`godot/`/`utils/` dirs, `maestro/spec.py`,
+  `tools/tts_tools.py`, and the dead IR asset generators in `comfyui_tools.py`.
 - **Phase 5 assets (IN PROGRESS):** skin the placeholder shapes. A post-build reskin stage
   (`maestro/codegen/reskin.py`, CLI `--assets <run_id>`) plans a sprite set from the spec + source,
   rewrites the draw code to prefer `kit.sprite(id)` with the shape as fallback, re-gates, then renders
@@ -33,8 +39,8 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   render to 16:9 HD filling the window. Styled-prompt stage pending.
   *(Swapped ahead of frontend: a skinned game validates via the runtime harness; in-app UX is
   scaffolding.)*
-- **Next:** Phase 3 harden the probe → Phase 4 widen the kit → finish Phase 5 assets → Phase 6
-  frontend (retarget `api/` to codegen) → Phase 7 the "good" tier (deferred cloud play-critic).
+- **Next:** Phase 3 harden the probe → Phase 4 widen the kit → finish Phase 5 assets (styled-prompt
+  stage) → Phase 7 the "good" tier (deferred cloud play-critic).
 
 ---
 

@@ -1,7 +1,6 @@
 """Prompt templating: {{include:NAME}} partials + {key} substitution.
 
-Relocated out of the deleted renpy backend so the Module ABC's prompt loading stays engine-neutral.
-The codegen prompts are static (read verbatim), but the ABC keeps this for any future module that
+The codegen prompts are static (read verbatim); the Module ABC keeps this for any future module that
 wants a templated correction prompt.
 """
 

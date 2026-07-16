@@ -364,7 +364,7 @@ class OpenAICompatibleConnector(BaseConnector):
         """Call the OpenAI-compatible Responses endpoint, translating to/from chat shape.
 
         The Responses API honors reasoning.effort — how we keep a local reasoning model from
-        spending ~30k tokens thinking per node. Speaks the same {choices, usage} shape back to
+        spending ~30k tokens thinking per call. Speaks the same {choices, usage} shape back to
         callers as the old chat path did, so call sites are unchanged."""
         self._evict_for(model or self.model_name)
         payload = self._responses_payload(messages, tools, response_format, max_tokens,

@@ -63,22 +63,60 @@ def draft_spec(request: str) -> dict:
             "mode": design.get("mode", "2d"), "design": design, "frozen": False}
 
 
-def freeze(run_id: str) -> None:
+def propose_spec(request: str, run_id: str) -> dict:
+    """Draft a spec from the request, persist it to the run, and announce it for human review."""
+    from tools.build_events import _emit
+
+    spec = draft_spec(request)
+    RunState.for_run(run_id).write_spec(spec)
+    _emit("spec_proposed", run_id, title=spec["title"], mode=spec["mode"])
+    return spec
+
+
+def amend_spec(run_id: str, note: str) -> dict:
+    """Re-draft an existing spec's design from a free-text revision note. Writes it UNFROZEN so the
+    build refuses until the human re-freezes."""
+    from tools.build_events import _emit
+
+    state = RunState.for_run(run_id)
+    spec = state.read_spec()
+    if spec is None:
+        raise ValueError(f"no run {run_id!r}")
+    augmented = (f"Original request: {spec['request']}\n"
+                 f"Revision requested: {note}\n"
+                 f"Current design JSON: {json.dumps(spec['design'], ensure_ascii=False)}\n"
+                 "Produce the full updated design.")
+    revised = draft_spec(augmented)
+    revised["request"] = spec["request"]
+    revised["frozen"] = False
+    state.write_spec(revised)
+    _emit("spec_amend_requested", run_id, note=note)
+    return revised
+
+
+def freeze_spec(run_id: str) -> dict:
+    """The human's out-of-band approval: freeze the spec so the build may run."""
+    from tools.build_events import _emit
+
     state = RunState.for_run(run_id)
     spec = state.read_spec()
     spec["frozen"] = True
     state.write_spec(spec)
+    _emit("spec_frozen", run_id, title=spec["title"])
+    return {"ok": True, "frozen": True}
 
 
 def run_build(run_id: str, max_steps: int = 60):
     """Stage 2: drive CodegenModule until game.js passes the local gates. The surviving AgentLoop
     does the driving — collect errors (authored/runs/plays), fix the top one, repeat."""
     from maestro.agent_loop import AgentLoop
+    from maestro.codegen.gates import stage_for_play
     from maestro.codegen.module import CodegenModule
     from maestro.codegen.tools import build_codegen_tools
     from maestro.run_control import get_or_create, remove
     from llm_clients.connector_selector import get_connector
     from llm_clients.log_context import set_log_dir
+    from tools.build_events import _emit
 
     state = RunState.for_run(run_id)
     spec = state.read_spec()
@@ -88,13 +126,17 @@ def run_build(run_id: str, max_steps: int = 60):
     tools = build_codegen_tools(state)
     control = get_or_create(run_id)
     loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),
-                     max_steps=max_steps, control=control)
+                     max_steps=max_steps, control=control,
+                     on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
+                     on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid))
     t0 = time.perf_counter()
     try:
         result = loop.run()
     finally:
         remove(run_id)
     result.elapsed = time.perf_counter() - t0
+    if result.ok:
+        stage_for_play(state.run_dir, run_id)
     logger.info("codegen build %s: ok=%s steps=%d elapsed=%.1fs",
                 run_id, result.ok, result.steps, result.elapsed)
     return result
@@ -104,7 +146,6 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     """Patch a built game from a HUMAN playtest note (the local play-critic: the human is the eye the
     headless gates aren't). One targeted patch from the note, then re-run the loop so any gate the
     patch regresses is re-fixed before shipping."""
-    from maestro.codegen.gates import stage_for_play
     from maestro.codegen.module import _triage_file, _focused_fix
     from maestro.codegen.tools import build_codegen_tools
     from llm_clients.message_builder import MessageBuilder
@@ -126,10 +167,7 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     dispatch = lambda name, args: tools[name](**args)   # _focused_fix calls dispatch(name, args)
     target = _triage_file(infer, state.run_dir, failure, use_stack=False)   # a prose note isn't a stack trace
     _focused_fix(infer, spec, state.run_dir, target, failure, dispatch)
-    result = run_build(run_id, max_steps=max_steps)   # re-gate + auto-fix any regression the patch caused
-    if result.ok:
-        stage_for_play(state.run_dir, run_id)
-    return result
+    return run_build(run_id, max_steps=max_steps)   # re-gate (stages on ok) + auto-fix any regression the patch caused
 
 
 def _cli(request: str, *, yes: bool = False) -> int:
@@ -152,7 +190,7 @@ def _cli(request: str, *, yes: bool = False) -> int:
         print("Not frozen. Edit spec.json and re-run, or freeze later.")
         return 0
 
-    freeze(run_id)
+    freeze_spec(run_id)
     print("\nfrozen — building...\n")
     result = run_build(run_id)
 
@@ -165,8 +203,7 @@ def _cli(request: str, *, yes: bool = False) -> int:
     from maestro.codegen.gates import entry_src_path
     print(f"game: {entry_src_path(state.run_dir).resolve()}")
     if result.ok:
-        from maestro.codegen.gates import stage_for_play
-        print(f"play: runtime/{stage_for_play(state.run_dir, run_id)}")
+        print(f"play: runtime/index.html?game={run_id}")
     return 0 if result.ok else 1
 
 

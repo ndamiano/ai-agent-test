@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatElapsed, identityToIdkey } from './GamesPanel'
+import { formatElapsed, stageFor } from './GamesPanel'
 
 describe('formatElapsed', () => {
     it('renders m:ss, zero-padding seconds', () => {
@@ -15,16 +15,22 @@ describe('formatElapsed', () => {
     })
 })
 
-describe('identityToIdkey', () => {
-    it('matches the backend idkey format — null in place of empty path/ref', () => {
-        // Error.identity() serializes an absent path/ref as "" (module.py); idkey() serializes
-        // the same absent fields as null — this converts one to the other.
-        expect(identityToIdkey(['build', 'min_count', 'cast', '', '']))
-            .toBe(JSON.stringify(['build', 'min_count', 'cast', null, null]))
+describe('stageFor', () => {
+    it('is draft until frozen, regardless of build state', () => {
+        expect(stageFor(false, false, false)).toBe('draft')
+        expect(stageFor(false, true, true)).toBe('draft')
     })
 
-    it('preserves a real path/ref', () => {
-        expect(identityToIdkey(['build', 'dangling_ref', 'nodes', 'scene_3', 'has_key']))
-            .toBe(JSON.stringify(['build', 'dangling_ref', 'nodes', 'scene_3', 'has_key']))
+    it('is building while a frozen spec is mid-build', () => {
+        expect(stageFor(true, true, false)).toBe('building')
+        expect(stageFor(true, true, true)).toBe('building')
+    })
+
+    it('is built once a build has produced a bundle and nothing is running', () => {
+        expect(stageFor(true, false, true)).toBe('built')
+    })
+
+    it('is ready when frozen but never built', () => {
+        expect(stageFor(true, false, false)).toBe('ready')
     })
 })

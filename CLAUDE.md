@@ -134,9 +134,9 @@ src/
       context.py         Context (durable per-step snapshot) + build_context + render_dict.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
                          game/ folder, owner/waivers/…); the source of truth each step rebuilds from.
-    spec.py              Spec wrapper. run_control.py — cross-thread pause/resume signal channel.
+    run_control.py       cross-thread pause/resume signal channel.
     templating.py        render_template ({{include}} partials + {key} subst) — engine-neutral.
-  agents/                MainAgent (chat persona) + agent_store, chat.json / summarizer.json
+  agents/                MainAgent (chat persona) + agent_store, config/agents/chat.json
   auth/                  identity + access (sqlite at <working_dir>/private/auth.db): store.py
                          (users + bearer sessions + credit ledger, pbkdf2, token stored as a hash +
                          TTL), deps.py (header-only bearer gate on /api + /auth; static SPA served
@@ -149,9 +149,14 @@ src/
                          auto-refunded (refunds are a manual admin action). No self-serve signup.
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing) +
                          build_queue.py (single-GPU FIFO build serializer). WS events route
-                         per-user server-side (event_bus resolves run → owner). NOTE: the games
-                         router's build/propose/freeze/edit endpoints still call the old IR entry
-                         points (lazily); retargeting them to maestro.codegen is Phase 5.
+                         per-user server-side (event_bus resolves run → owner). The games router is
+                         codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets,
+                         all against maestro.codegen.run; freeze→freeze_spec, build→build_queue→
+                         codegen run_build, fix→fix_from_note, assets→reskin.add_assets. Chat drafts
+                         specs via tools/chat_tools.py (propose_game_spec/amend_game_spec →
+                         codegen.propose_spec/amend_spec). Build progress + spec events emit through
+                         tools/build_events.py (_emit → event_bus). A built run is staged to
+                         runtime/games/<id>/ and served at /play (StaticFiles mount) for the SPA.
   config/                settings_schema.py (Pydantic), settings_manager.py (singleton)
   llm_clients/           connector_selector.py, openai_compatible_connector.py, message_builder.py,
                          inference.py (call_llm / PipelineAgent / json_with_correction). The

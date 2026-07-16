@@ -94,7 +94,7 @@ class BuildQueue:
 
     # ── worker ────────────────────────────────────────────────────────────────
     def _drain(self) -> None:
-        import maestro.run  # module ref so tests can monkeypatch run_build
+        from maestro.codegen import run as codegen_run  # module ref so tests can monkeypatch run_build
 
         while True:
             with self._not_empty:
@@ -114,7 +114,7 @@ class BuildQueue:
                 # container death, and park-for-human are all resumable and do NOT refund — as long
                 # as the run can eventually finish, it stays charged. Refunds are a manual admin
                 # action only, never automatic here.
-                maestro.run.run_build(item.run_id)   # removes its own control in finally
+                codegen_run.run_build(item.run_id)   # removes its own control in finally
             except Exception:
                 logger.exception("build failed for %s", item.run_id)
             finally:
@@ -123,7 +123,7 @@ class BuildQueue:
 
     # ── events ────────────────────────────────────────────────────────────────
     def _emit(self, event_type: str, run_id: str, **fields) -> None:
-        from tools.spec_tools import _emit as emit
+        from tools.build_events import _emit as emit
         emit(event_type, run_id, **fields)
 
     def _emit_positions(self) -> None:

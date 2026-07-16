@@ -1,4 +1,4 @@
-import type { Game, GameDetail, SystemStatus, Asset } from '../types'
+import type { Game, GameDetail, SystemStatus } from '../types'
 import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
@@ -29,15 +29,6 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...extra,
     }
-}
-
-// Protected binary GET (asset image, .glb, packaged download) with the bearer token on the
-// Authorization header — never in the URL. `<img>`/anchor consumers turn the returned bytes into
-// a blob: object URL. A 401 clears the token centrally, same as `request`.
-async function authFetch(path: string, init?: RequestInit): Promise<Response> {
-    const res = await fetch(`${base}${path}`, { ...init, headers: authHeaders(init?.headers) })
-    if (res.status === 401) { handleUnauthorized(); throw new ApiError(401, null) }
-    return res
 }
 
 // Carries the HTTP status + parsed body so callers can react to a specific failure — notably a
@@ -181,12 +172,8 @@ export const api = {
         request<Game[]>('/games'),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
-    amendSpec: (runId: string, changes: Record<string, any>, reason = 'human edited the plan') =>
-        request<GameDetail>(`/games/${runId}/spec`, { method: 'PATCH', body: JSON.stringify({ changes, reason }) }),
     freezeGame: (runId: string) =>
         request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
-    listModules: () =>
-        request<{ id: string; description: string }[]>('/system/modules'),
     buildGame: (runId: string, autoPause = false) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ auto_pause: autoPause }) }),
 
@@ -197,71 +184,12 @@ export const api = {
         request<{ status: string }>(`/games/${runId}/resume`, { method: 'POST' }),
     setAutoPause: (runId: string, enabled: boolean) =>
         request<{ auto_pause: boolean }>(`/games/${runId}/auto-pause`, { method: 'POST', body: JSON.stringify({ enabled }) }),
-    compileGame: (runId: string, distribute = false) =>
-        request<{ ok: boolean; reason?: string }>(`/games/${runId}/compile`, { method: 'POST', body: JSON.stringify({ distribute }) }),
-    regenerateAssets: (runId: string) =>
-        request<Record<string, any>>(`/games/${runId}/regenerate-assets`, { method: 'POST' }),
-    regenerateAsset: (runId: string, filename: string) =>
-        request<Record<string, any>>(`/games/${runId}/regenerate-asset`, {
-            method: 'POST', body: JSON.stringify({ filename }),
-        }),
-    // Fetch one asset file's bytes as a blob: object URL for an <img src>. Caller revokes it on
-    // unmount / refetch. Rejects (throws) if the file is missing or unauthorized.
-    fetchAssetObjectUrl: async (runId: string, filename: string): Promise<string> => {
-        const res = await authFetch(`/games/${runId}/asset-file/${encodeURIComponent(filename)}`)
-        if (!res.ok) throw new ApiError(res.status, null)
-        return URL.createObjectURL(await res.blob())
-    },
-    // True iff the asset file exists (HEAD) — the mesh-badge probe.
-    assetFileExists: async (runId: string, filename: string): Promise<boolean> => {
-        try {
-            const res = await authFetch(
-                `/games/${runId}/asset-file/${encodeURIComponent(filename)}`, { method: 'HEAD' })
-            return res.ok
-        } catch { return false }
-    },
-    // Pull the packaged self-contained build as a blob (authed), for a browser download.
-    fetchDownloadBlob: async (runId: string): Promise<Blob> => {
-        const res = await authFetch(`/games/${runId}/download`)
-        if (!res.ok) throw new ApiError(res.status, null)
-        return res.blob()
-    },
-    editComponent: (runId: string, componentId: string, content: Record<string, any>) =>
-        request<{ ok: boolean }>(`/games/${runId}/component/${componentId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
-    editNode: (runId: string, nodeId: string, content: Record<string, any>) =>
-        request<{ ok: boolean }>(`/games/${runId}/node/${nodeId}`, { method: 'PUT', body: JSON.stringify({ content }) }),
-    rewriteNode: (runId: string, nodeId: string, note: string) =>
-        request<{ status: string }>(`/games/${runId}/node/${nodeId}/rewrite`, { method: 'POST', body: JSON.stringify({ note }) }),
-
-    // Done arbitration
-    addTodo: (runId: string, component_id: string, text: string) =>
-        request<{ id: string }>(`/games/${runId}/todos`, { method: 'POST', body: JSON.stringify({ component_id, text }) }),
-    resolveTodo: (runId: string, todoId: string, done = true) =>
-        request<{ done: boolean }>(`/games/${runId}/todos/${todoId}`, { method: 'PATCH', body: JSON.stringify({ done }) }),
-    waiveCheck: (runId: string, idkey: string) =>
-        request<{ idkey: string }>(`/games/${runId}/waive`, { method: 'POST', body: JSON.stringify({ idkey }) }),
-    unwaiveCheck: (runId: string, idkey: string) =>
-        request<{ idkey: string }>(`/games/${runId}/unwaive`, { method: 'POST', body: JSON.stringify({ idkey }) }),
-
-    // Asset browser (Epic C) — component-blind: works for any component id the artifact has
-    // (nodes, characters, places, combat, items, story, asset_manifest, ...).
-    listAssets: (runId: string, componentId: string) =>
-        request<Asset[]>(`/games/${runId}/assets/${componentId}`),
-    getAsset: (runId: string, componentId: string, itemId: string) =>
-        request<Asset>(`/games/${runId}/assets/${componentId}/${itemId}`),
-    editAsset: (runId: string, componentId: string, itemId: string, content: Record<string, any>) =>
-        request<{ ok: boolean; cleared_own_dirty: boolean; flagged_dependents: string[] }>(
-            `/games/${runId}/assets/${componentId}/${itemId}`,
-            { method: 'PUT', body: JSON.stringify({ content }) }),
-    setAssetDirty: (runId: string, idkey: string, note = '') =>
-        request<{ ok: boolean; idkey: string; note: string }>(
-            `/games/${runId}/assets/dirty`, { method: 'POST', body: JSON.stringify({ idkey, note }) }),
-    thumbsUpAsset: (runId: string, idkey: string) =>
-        request<{ ok: boolean; idkey: string; cleared: boolean }>(
-            `/games/${runId}/assets/thumbs-up`, { method: 'POST', body: JSON.stringify({ idkey }) }),
-    thumbsDownAsset: (runId: string, idkey: string, note = '') =>
-        request<{ ok: boolean; idkey: string; note: string }>(
-            `/games/${runId}/assets/thumbs-down`, { method: 'POST', body: JSON.stringify({ idkey, note }) }),
+    // Free-text patch of a built game — re-runs the build loop from a human note.
+    fixGame: (runId: string, note: string) =>
+        request<{ status: string; run_id: string }>(`/games/${runId}/fix`, { method: 'POST', body: JSON.stringify({ note }) }),
+    // Skin the shapes: plan + render assets for a built game (additive, re-gates after).
+    skinAssets: (runId: string) =>
+        request<{ status: string; run_id: string }>(`/games/${runId}/assets`, { method: 'POST' }),
 
     // System
     getStatus: () =>

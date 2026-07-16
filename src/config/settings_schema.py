@@ -5,7 +5,7 @@ from typing import Dict, Literal, Optional
 
 # Reasoning-effort knob for reasoning models, sent as reasoning.effort on the Responses API
 # (the only endpoint this connector speaks). "none" disables reasoning — the lever that stops
-# a local model spending ~30k tokens thinking per node. None = the model's own default.
+# a local model spending ~30k tokens thinking per call. None = the model's own default.
 # ("off" is NOT a valid value — it errors.)
 ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
@@ -43,8 +43,8 @@ class ComfyUISettings(BaseModel):
 class TrellisSettings(BaseModel):
     """TRELLIS.2-4B runs as a standalone HTTP server (tools/trellis_server.py, launched by its own
     cu128 venv + prebuilt Blackwell CUDA wheels); maestro POSTs sprites to it. It is THE mesh
-    backend: an hd2d build FAILS LOUDLY (MeshBackendError) when this endpoint does not answer
-    /health — no silent downgrade. The repo/weights paths live on the server's launch args."""
+    backend for the reskin 3D path: when this endpoint is down the mesh render is skipped and the
+    entity falls back to its primitive shape. The repo/weights paths live on the server's launch args."""
     endpoint: str = Field("http://localhost:8189", min_length=1)
 
 
@@ -70,14 +70,13 @@ class MusicSettings(BaseModel):
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
     max_iterations: int = Field(10, ge=1)
-    max_waves: int = Field(20, ge=1)
     use_json_mode: bool = Field(False)
 
 
 DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
-    "large":  ModelCategorySettings(message_budget_chars=30000, max_iterations=10, max_waves=20, use_json_mode=False),
-    "medium": ModelCategorySettings(message_budget_chars=20000, max_iterations=8,  max_waves=15, use_json_mode=False),
-    "small":  ModelCategorySettings(message_budget_chars=250000, max_iterations=6,  max_waves=10, use_json_mode=True),
+    "large":  ModelCategorySettings(message_budget_chars=30000, max_iterations=10, use_json_mode=False),
+    "medium": ModelCategorySettings(message_budget_chars=20000, max_iterations=8,  use_json_mode=False),
+    "small":  ModelCategorySettings(message_budget_chars=250000, max_iterations=6,  use_json_mode=True),
 }
 
 
@@ -95,7 +94,6 @@ class AppSettings(BaseModel):
     # Concurrent build fixes (parallel LLM calls per loop step). >1 needs an inference server that
     # batches concurrent requests (LM Studio does); tool writes stay serialized either way.
     parallel_fixes: int = Field(1, ge=1, le=8)
-    renpy_sdk_path: Optional[str] = None
     model_category: Literal["large", "medium", "small"] = "large"
     lmstudio: LLMStudioSettings
     cline: Optional[ClineSettings] = None

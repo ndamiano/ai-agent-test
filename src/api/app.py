@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 import logging
@@ -52,7 +52,6 @@ async def startup_event():
         import tools.system_tools  # noqa: F401
         import tools.comfyui_tools  # noqa: F401
         import tools.chat_tools  # noqa: F401
-        import maestro.modules  # noqa: F401 — registers mechanic-modules
         logging.info("Tools registered successfully")
 
     except Exception as e:
@@ -89,6 +88,11 @@ app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 # the API routers above win; skipped when dist/ is absent (dev runs the Vite server instead).
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
+
+# Serve the runtime harness so the SPA can open a built game (mounted before the SPA catch-all).
+_runtime = Path(__file__).resolve().parents[2] / "runtime"
+if _runtime.is_dir():
+    app.mount("/play", StaticFiles(directory=_runtime, html=True), name="play")
 
 _frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _frontend_dist.is_dir():

@@ -1,8 +1,7 @@
 """Module — the composable unit a game is built from.
 
-Modules depict a set of functionality that one of the projectors can build. They ensure that a
-set of context is valid, as well as help fix invalid context. They do this by reporting errors
-as well as how to fix those errors.
+A module ensures a set of context is valid, and helps fix invalid context, by reporting errors and
+how to fix them.
 
 A module IS a list of `Check`s — each a (detector -> fix) pair over the shared components. The base
 runs them: `get_errors` sweeps the checks; `get_correction_prompt`/`get_fix` build the fix for an
@@ -119,31 +118,18 @@ class Check:
 
 
 class Module(ABC):
-    """One mechanic-module. Sub classes are only required to implement `get_errors`; everything else
+    """One buildable unit. Sub classes are only required to implement `get_errors`; everything else
      has a working default.
     """
 
     id: str
-    substrates: Tuple[str, ...] = ("discrete",)
     priority: int = 100   # order within an error tier; lower acts first (cast < dialogue)
-
-    # ── spec-composition surface (what the proposer picks from) ──────────────
-    layer: str = "engine"               # "engine" = internal machinery, hidden from the catalog;
-                                        # "aspect" = the concrete, LLM-facing pick that RESOLVES to
-                                        # its engine module(s) via `requires` (nouns-primary)
-    description: str = ""               # one-line, LLM-facing: what this mechanic adds
-    selectable: bool = True             # False = always-on foundation, hidden from the catalog
-    requires: Tuple[str, ...] = ()      # modules pulled in automatically when this is chosen
 
     # ── authoring surface (defaults are inert) ───────────────────────────────
     component: str = ""                  # the on-disk component this module authors (if any)
     mode_prompt: str = ""                # the system prompt for a single correction step
     mode_tools: frozenset = frozenset()  # the tools a correction step may call (fallback)
     skeleton: str = ""                   # the component's authoring shape, appended to the prompt
-    schemas: Dict[str, Callable] = {}    # component_id -> structural write-time validator
-    skeletons: Dict[str, str] = {}       # component_id -> authoring shape (for the guide)
-    tool_names: Tuple[str, ...] = ()     # gated tool-schema names this module contributes
-    projected: bool = False              # needs an engine-specific renderer (see unprojectable)
 
     projector: Optional[Callable] = None     # (artifact) -> the compact graph view for this component
     checks: List[Check] = []                 # the (detector -> fix) pairs this module IS (see get_errors)
@@ -247,11 +233,6 @@ class Module(ABC):
         import json
         return ["", f"CURRENT {self.component or 'component'} (graph view):",
                 json.dumps(view, ensure_ascii=False)]
-
-    def params(self) -> Dict:
-        """Tunable knobs -> FLOOR (int knobs take the max when composed, list knobs the union). The
-        spec stores the resolved value; get_errors reads it from `context.param(...)`."""
-        return {}
 
     def affected_components(self) -> Tuple[str, ...]:
         """The components this module touches when present. A soft surface for context injection —

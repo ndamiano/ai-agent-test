@@ -46,20 +46,6 @@ describe('client auth', () => {
         expect(handler).toHaveBeenCalledTimes(1)
     })
 
-    it('fetches protected assets with the bearer header and no token in the URL', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({
-            ok: true, status: 200, blob: async () => new Blob(['x']),
-        })
-        vi.stubGlobal('fetch', fetchMock)
-        vi.stubGlobal('URL', { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} })
-
-        await api.fetchDownloadBlob('r1')
-
-        const [url, init] = fetchMock.mock.calls[0]
-        expect(url).toBe('/api/games/r1/download')          // no ?token= in the URL
-        expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok123')
-    })
-
     it('revokes the token server-side on logout', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 })
         vi.stubGlobal('fetch', fetchMock)

@@ -6,7 +6,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.state import RunState
-from maestro.spec import Spec
 
 
 def test_component_roundtrip_and_artifact(tmp_path):
@@ -39,10 +38,10 @@ def test_reserved_name_rejected_as_component(tmp_path):
 
 def test_spec_roundtrip(tmp_path):
     state = RunState(tmp_path)
-    state.write_spec({"title": "T", "frozen": True, "components": []})
-    spec = Spec(state.read_spec())
-    assert spec.title == "T"
-    assert spec.frozen is True
+    state.write_spec({"title": "T", "mode": "2d", "frozen": True})
+    spec = state.read_spec()
+    assert spec["title"] == "T"
+    assert spec["frozen"] is True
 
 
 def test_run_dir_under_working_directory(tmp_path, monkeypatch):

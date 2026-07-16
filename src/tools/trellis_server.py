@@ -1,6 +1,6 @@
 """Standalone TRELLIS.2 HTTP server — run BY the TRELLIS venv (NOT the maestro venv), a long-lived
-process maestro POSTs sprites to (like ComfyUI / the TTS server). Replaces the per-build subprocess
-batch: the 4B pipeline loads ONCE and stays resident across builds instead of reloading every run.
+process maestro POSTs sprites to (like ComfyUI). Replaces the per-build subprocess batch: the 4B
+pipeline loads ONCE and stays resident across builds instead of reloading every run.
 
 TRELLIS.2-4B is image->mesh WITH native PBR textures (base colour / roughness / metallic), so its
 meshes drop into the HD-2D world already coloured. It needs its own cu128 venv + prebuilt Blackwell

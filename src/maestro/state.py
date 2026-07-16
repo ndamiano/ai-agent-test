@@ -2,13 +2,12 @@
 
 Each game gets its own run directory under <working_directory>/runs/<run_id>/.
 Inside it:
-  - <component_id>.json   one file per artifact component (characters, nodes, ...)
+  - <component_id>.json   one file per artifact component (a generic Module's authored output)
   - spec.json             the frozen contract
-  - story_state.json      continuity bible (Phase 6)
-
-Component ids map directly to the filenames the compiler reads (characters.json,
-asset_manifest.json, nodes.json, brief.json), so the run dir IS a valid
-compile working dir.
+  - story_state.json      continuity bible
+  - game/                 the codegen path's TypeScript source (main.ts + system files,
+                           manifest.json) — written directly by maestro.codegen.tools, not
+                           through the component mechanism above
 
 This is the source of truth. The agent's transcript is not used as memory; each
 step rebuilds context from here.
@@ -24,13 +23,11 @@ SPEC_FILE = "spec.json"
 STORY_STATE_FILE = "story_state.json"
 HUMAN_TODOS_FILE = "human_todos.json"
 WAIVERS_FILE = "waivers.json"
-DIRTY_FILE = "dirty.json"
 OWNER_FILE = "owner.json"
 CHARGED_FILE = "charged.json"
 
 # Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, DIRTY_FILE, OWNER_FILE,
-             CHARGED_FILE}
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, OWNER_FILE, CHARGED_FILE}
 
 
 class RunState:
@@ -108,12 +105,6 @@ class RunState:
 
     def write_waivers(self, waivers: List[Dict]) -> None:
         self._write(WAIVERS_FILE, waivers)
-
-    def read_dirty(self) -> List[Dict]:
-        return self._read(DIRTY_FILE) or []
-
-    def write_dirty(self, dirty: List[Dict]) -> None:
-        self._write(DIRTY_FILE, dirty)
 
     # ── io ────────────────────────────────────────────────────────────────────
     def _write(self, filename: str, data) -> None:

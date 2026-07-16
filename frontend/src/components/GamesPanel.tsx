@@ -1,10 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { AlertTriangle } from 'lucide-react'
 import { api, ApiError } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import { useAuth } from '../contexts/AuthContext'
-import type { Game, GameDetail, TodoItem, WebSocketMessage } from '../types'
-import ComponentBrowser from './browser'
+import type { Game, GameDetail, WebSocketMessage } from '../types'
 
 export const formatElapsed = (secs: number): string => {
     const s = Math.max(0, Math.floor(secs))
@@ -12,21 +10,17 @@ export const formatElapsed = (secs: number): string => {
     return `${m}:${String(s % 60).padStart(2, '0')}`
 }
 
-// error_parked's `identity` is Error.identity() serialized (type/code/component/path/ref, ""
-// standing in for None) — convert to the idkey format (JSON array, null for absent path/ref) so
-// the same waive endpoint the To-do pane uses can clear a parked error directly from the notice.
-export const identityToIdkey = (identity: string[]): string =>
-    JSON.stringify([identity[0], identity[1], identity[2], identity[3] || null, identity[4] || null])
+export type Stage = 'draft' | 'building' | 'built' | 'ready'
 
-type ParkedError = { identity: string[]; message: string }
+// Lifecycle stage drives which controls show — a draft is a review-and-freeze page, not the full
+// build cockpit; `built` unlocks skin/fix/play but still allows a rebuild.
+export const stageFor = (frozen: boolean, building: boolean, built: boolean): Stage =>
+    !frozen ? 'draft' : building ? 'building' : built ? 'built' : 'ready'
 
-// The build progress header: step/max as a bar, a running elapsed timer, current failing count,
-// component done/failing summary, and — when present — a "parked, needs you" notice (Epic E).
+// The build progress header: step/max as a bar, a running elapsed timer, current failing count.
 const BuildProgressHeader: React.FC<{
     step: number; maxSteps: number; nFailing: number; elapsedSec: number
-    componentsDone: number; componentsTotal: number
-    parked: ParkedError[]; onWaive: (identity: string[]) => void
-}> = ({ step, maxSteps, nFailing, elapsedSec, componentsDone, componentsTotal, parked, onWaive }) => {
+}> = ({ step, maxSteps, nFailing, elapsedSec }) => {
     const pct = maxSteps > 0 ? Math.min(100, Math.round((step / maxSteps) * 100)) : 0
     return (
         <div className="bg-[#141414] border border-white/[0.06] rounded-lg px-3 py-2 space-y-1.5">
@@ -34,25 +28,10 @@ const BuildProgressHeader: React.FC<{
                 <span className="font-mono text-gray-300">step {step}{maxSteps ? ` / ${maxSteps}` : ''}</span>
                 <span className="font-mono text-gray-300">{formatElapsed(elapsedSec)}</span>
                 <span className={nFailing > 0 ? 'text-amber-400' : 'text-green-400'}>{nFailing} failing</span>
-                <span className="ml-auto text-gray-500">{componentsDone}/{componentsTotal} components done</span>
             </div>
             <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
                 <div className="h-full bg-blue-500 transition-[width] duration-500" style={{ width: `${pct}%` }} />
             </div>
-            {parked.length > 0 && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded px-2.5 py-1.5 space-y-1">
-                    <div className="text-red-300 text-[11px] font-semibold flex items-center gap-1">
-                        <AlertTriangle size={12} /> Parked — needs you ({parked.length})
-                    </div>
-                    {parked.map((p, i) => (
-                        <div key={i} className="flex items-start justify-between gap-2 text-[11px] text-gray-300">
-                            <span><span className="font-mono text-red-400">[{p.identity[2] || '—'}]</span> {p.message}</span>
-                            <button onClick={() => onWaive(p.identity)} title="accept as-is (waive)"
-                                className="text-gray-500 hover:text-amber-400 shrink-0">waive</button>
-                        </div>
-                    ))}
-                </div>
-            )}
         </div>
     )
 }
@@ -67,95 +46,59 @@ const Badge: React.FC<{ label: string; tone: 'green' | 'blue' | 'gray' | 'amber'
     return <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${tones[tone]}`}>{label}</span>
 }
 
-const AUTO_REASON = 'auto-included (foundation or required dependency)'
-const FOUNDATION = ['human', 'assets']   // always-on, not human-removable
+// `design` is freeform JSON (genre/entities/controls/mechanics/win-lose/...) — render it read-only,
+// recursing into nested objects/arrays so any shape the model drafted is still legible.
+const DesignValue: React.FC<{ value: any }> = ({ value }) => {
+    if (value == null) return <span className="text-gray-600 italic">—</span>
+    if (Array.isArray(value)) {
+        if (value.length === 0) return <span className="text-gray-600 italic">—</span>
+        return (
+            <ul className="list-disc list-inside space-y-0.5">
+                {value.map((v, i) => (
+                    <li key={i} className="text-gray-300">
+                        {typeof v === 'object' && v !== null ? <DesignValue value={v} /> : String(v)}
+                    </li>
+                ))}
+            </ul>
+        )
+    }
+    if (typeof value === 'object') {
+        const entries = Object.entries(value)
+        if (entries.length === 0) return <span className="text-gray-600 italic">—</span>
+        return (
+            <div className="pl-3 border-l border-white/[0.06] space-y-1">
+                {entries.map(([k, v]) => (
+                    <div key={k}>
+                        <span className="text-gray-500 text-[11px] font-semibold">{k}: </span>
+                        <DesignValue value={v} />
+                    </div>
+                ))}
+            </div>
+        )
+    }
+    return <span className="text-gray-300">{String(value)}</span>
+}
 
-// The plan a freeze decision is made on: the engine + which mechanic-modules build this game and
-// WHY each was picked (the proposer's justification, or an auto note for forced/dependency modules).
-// This is the spec's actual contract now that done-conditions live in code. On a draft it's
-// editable — remove/add a module or change sizing — so the review can act on what it reveals;
-// every edit re-resolves the plan server-side (foundation forced, deps expanded, engine re-derived).
-const SpecPlan: React.FC<{ spec: Record<string, any>; editable: boolean; busy: boolean; onAmend: (c: Record<string, any>) => void }>
-    = ({ spec, editable, busy, onAmend }) => {
-    const [catalog, setCatalog] = useState<{ id: string; description: string }[]>([])
-    useEffect(() => { if (editable) api.listModules().then(setCatalog).catch(() => { }) }, [editable])
-
-    const modules: string[] = Array.isArray(spec.modules) ? spec.modules : []
-    const reasons: Record<string, string> = spec.module_reasons || {}
-    const params: Record<string, any> = spec.params || {}
-    const sizing = Object.entries(params).filter(([, v]) => typeof v === 'number') as [string, number][]
-    const sss: Record<string, any> = spec.story_state_schema || {}
-    const facts: any[] = Array.isArray(sss.established_facts) ? sss.established_facts : []
-    const threads: any[] = Array.isArray(sss.open_threads) ? sss.open_threads : []
-    const entities = sss.entity_states && typeof sss.entity_states === 'object' ? Object.keys(sss.entity_states) : []
-
-    // The set we send on edit is the human-chosen modules (foundation/deps are re-derived server-side).
-    const chosen = modules.filter(m => !FOUNDATION.includes(m))
-    const available = catalog.filter(c => !modules.includes(c.id))
-    const setModules = (ids: string[]) => onAmend({ modules: ids })
-    const bumpSizing = (k: string, v: number) => onAmend({ params: { ...params, [k]: Math.max(1, v) } })
-
+const SpecReview: React.FC<{ spec: GameDetail['spec'] }> = ({ spec }) => {
+    const entries = Object.entries(spec.design ?? {})
     return (
         <section className="space-y-2">
             <div className="flex items-center gap-2">
-                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Plan</h3>
-                {spec.engine && <Badge label={spec.engine} tone="blue" />}
-                {spec.substrate && <Badge label={spec.substrate} tone="gray" />}
-                {editable && <span className="text-gray-600 text-[10px] ml-auto">editable — engine is derived from your modules</span>}
+                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Spec</h3>
+                <Badge label={spec.mode.toUpperCase()} tone="blue" />
             </div>
-            <div className="bg-[#1a1a1a] border border-white/[0.06] rounded-lg px-3 py-2 space-y-1.5">
-                <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide">Modules ({modules.length})</div>
-                <ul className="space-y-1">
-                    {modules.map(id => {
-                        const reason = reasons[id]
-                        const auto = !reason || reason === AUTO_REASON
-                        const missing = reason === '(reason missing)'
-                        const removable = editable && !FOUNDATION.includes(id)
-                        return (
-                            <li key={id} className="flex gap-2 text-[12px] leading-snug items-baseline">
-                                <span className="font-mono text-blue-300 shrink-0">{id}</span>
-                                <span className={missing ? 'text-amber-400' : auto ? 'text-gray-600 italic' : 'text-gray-300'}>
-                                    {auto && !missing ? 'auto-included' : reason}
-                                </span>
-                                {removable && (
-                                    <button onClick={() => setModules(chosen.filter(m => m !== id))} disabled={busy}
-                                        title="remove this module" className="ml-auto shrink-0 text-gray-600 hover:text-red-400 disabled:opacity-40">×</button>
-                                )}
-                            </li>
-                        )
-                    })}
-                </ul>
-                {editable && available.length > 0 && (
-                    <select value="" disabled={busy} onChange={e => { if (e.target.value) setModules([...chosen, e.target.value]) }}
-                        className="bg-black/40 border border-white/[0.1] rounded text-[11px] text-gray-300 px-1.5 py-1 w-full">
-                        <option value="">+ add a module…</option>
-                        {available.map(c => <option key={c.id} value={c.id} title={c.description}>{c.id} — {c.description.slice(0, 70)}</option>)}
-                    </select>
-                )}
-                {sizing.length > 0 && (
-                    <div className="pt-1.5 border-t border-white/[0.05]">
-                        <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">Sizing</div>
-                        <div className="flex flex-wrap gap-1.5">
-                            {sizing.map(([k, v]) => editable ? (
-                                <span key={k} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-white/[0.05] text-gray-300 font-mono">
-                                    <button onClick={() => bumpSizing(k, v - 1)} disabled={busy} className="text-gray-500 hover:text-white disabled:opacity-40">−</button>
-                                    {k}: {v}
-                                    <button onClick={() => bumpSizing(k, v + 1)} disabled={busy} className="text-gray-500 hover:text-white disabled:opacity-40">+</button>
-                                </span>
-                            ) : (
-                                <span key={k} className="px-1.5 py-0.5 rounded text-[10px] bg-white/[0.05] text-gray-400 font-mono">{k}: {v}</span>
-                            ))}
+            {spec.request && <p className="text-gray-400 text-sm">{spec.request}</p>}
+            <div className="bg-[#1a1a1a] border border-white/[0.06] rounded-lg px-3 py-2 space-y-2">
+                {entries.length === 0
+                    ? <div className="text-gray-600 text-xs italic">no design detail yet</div>
+                    : entries.map(([key, value]) => (
+                        <div key={key}>
+                            <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-0.5">{key}</div>
+                            <DesignValue value={value} />
                         </div>
-                    </div>
-                )}
-                {(facts.length > 0 || threads.length > 0 || entities.length > 0) && (
-                    <div className="pt-1.5 border-t border-white/[0.05] space-y-0.5 text-[11px] text-gray-500">
-                        {facts.length > 0 && <div><span className="text-gray-600">facts:</span> {facts.join(' · ')}</div>}
-                        {entities.length > 0 && <div><span className="text-gray-600">entities:</span> {entities.join(', ')}</div>}
-                        {threads.length > 0 && <div><span className="text-gray-600">threads:</span> {threads.join(' · ')}</div>}
-                    </div>
-                )}
+                    ))}
             </div>
+            <p className="text-gray-600 text-[11px]">Read-only — ask Maestro in chat to amend the spec before freezing.</p>
         </section>
     )
 }
@@ -169,15 +112,13 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const [building, setBuilding] = useState(false)
     const [status, setStatus] = useState<string>('idle')
     const [feed, setFeed] = useState<string[]>([])
-    const [liveTodo, setLiveTodo] = useState<TodoItem[] | null>(null)
     const [acting, setActing] = useState(false)
-    const [newTodoText, setNewTodoText] = useState('')
-    const [newTodoComp, setNewTodoComp] = useState('')
+    const [skinning, setSkinning] = useState(false)
+    const [fixNote, setFixNote] = useState('')
     const [autoPause, setAutoPause] = useState(false)
     const [progress, setProgress] = useState<{ step: number; maxSteps: number; nFailing: number } | null>(null)
     const [startedAt, setStartedAt] = useState<number | null>(null)
     const [elapsedSec, setElapsedSec] = useState(0)
-    const [parked, setParked] = useState<ParkedError[]>([])
 
     const load = useCallback(() => {
         let cancelled = false
@@ -191,8 +132,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     }, [runId])
 
     useEffect(() => {
-        setFeed([]); setLiveTodo(null)
-        setProgress(null); setStartedAt(null); setElapsedSec(0); setParked([])
+        setFeed([])
+        setProgress(null); setStartedAt(null); setElapsedSec(0); setSkinning(false)
         return load()
     }, [load])
 
@@ -204,38 +145,29 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         return () => clearInterval(id)
     }, [building, startedAt])
 
-    const waiveParked = (identity: string[]) => {
-        const key = identityToIdkey(identity)
-        setParked(prev => prev.filter(p => identityToIdkey(p.identity) !== key))
-        act(() => api.waiveCheck(runId, key), 'Waive failed')
-    }
-
-    // Live build events for this run.
+    // Live build + spec + asset events for this run.
     useEffect(() => {
         const unsub = subscribe(runId, (msg: WebSocketMessage) => {
             switch (msg.type) {
+                case 'spec_proposed':
+                case 'spec_frozen':
+                    load()
+                    break
                 case 'build_started':
                     setBuilding(true); setStatus('running')
-                    setFeed([`build started — ${msg.n_failing} checks failing`])
-                    if (msg.todo) setLiveTodo(msg.todo)
+                    setFeed(prev => [...prev.slice(-60), `build started — ${msg.n_failing} checks failing`])
                     setProgress({ step: 0, maxSteps: msg.max_steps ?? 0, nFailing: msg.n_failing ?? 0 })
-                    setParked([])
                     if (msg.started_at != null) { setStartedAt(msg.started_at); setElapsedSec(0) }
                     break
                 case 'build_step':
-                    setFeed(prev => [...prev.slice(-60), `step ${msg.step}${msg.mode ? ` [${msg.mode}]` : ''}: ${msg.summary} — ${msg.n_failing} failing`])
-                    if (msg.todo) setLiveTodo(msg.todo)
+                    setFeed(prev => [...prev.slice(-60), `step ${msg.step}: ${msg.summary} — ${msg.n_failing} failing`])
                     setProgress({ step: msg.step ?? 0, maxSteps: msg.max_steps ?? 0, nFailing: msg.n_failing ?? 0 })
                     // Re-sync the local timer to the backend's authoritative elapsed so drift
                     // between build_step events (which fire irregularly) never compounds.
                     if (msg.elapsed != null) { setStartedAt(Date.now() / 1000 - msg.elapsed); setElapsedSec(msg.elapsed) }
                     break
                 case 'error_parked':
-                    if (msg.identity) {
-                        setParked(prev => prev.some(p => identityToIdkey(p.identity) === identityToIdkey(msg.identity!))
-                            ? prev : [...prev, { identity: msg.identity!, message: msg.message ?? '' }])
-                    }
-                    setFeed(prev => [...prev.slice(-60), `⚑ parked — needs you: ${msg.message ?? ''}`])
+                    setFeed(prev => [...prev.slice(-60), `⚑ parked — needs a fix note: ${msg.message ?? ''}`])
                     break
                 case 'build_paused':
                     setStatus('paused'); setFeed(prev => [...prev.slice(-60), '⏸ paused'])
@@ -248,12 +180,19 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     break
                 case 'component_complete':
                     setFeed(prev => [...prev.slice(-60), `✓ ${msg.component_id} complete`])
-                    load()
                     break
                 case 'build_done':
-                    setBuilding(false); setStatus('built'); setLiveTodo(null)
+                    setBuilding(false); setStatus('built')
                     setFeed(prev => [...prev.slice(-60), msg.ok ? '✓ build complete' : '✗ build ended with failures'])
-                    if (msg.ok) setParked([])   // nothing failing left, so nothing stays parked
+                    load(); onChanged()
+                    break
+                case 'assets_started':
+                    setSkinning(true)
+                    setFeed(prev => [...prev.slice(-60), '⏳ skinning assets…'])
+                    break
+                case 'assets_done':
+                    setSkinning(false)
+                    setFeed(prev => [...prev.slice(-60), msg.ok ? `✓ assets rendered (${msg.rendered ?? 0})` : '✗ asset skin failed'])
                     load(); onChanged()
                     break
             }
@@ -263,13 +202,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
     const feedRef = useRef<HTMLDivElement>(null)
     useEffect(() => { feedRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed])
-
-    // Compile / package / regenerate read + rewrite the whole run, so they still wait for the
-    // executor to be parked (paused or done). Per-asset content EDITS do NOT — the browser edits
-    // any component mid-build (backend C3 dropped the paused-build gate; an edit just reflags).
-    const running = building && status !== 'paused'
-    const editable = !!detail?.frozen && !running
-    const contentEditable = !!detail?.frozen
 
     const act = async (fn: () => Promise<unknown>, errMsg: string, reload = true) => {
         setActing(true); setError(null)
@@ -299,73 +231,28 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     }
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
-    const compile = () => act(async () => {
-        const r = await api.compileGame(runId, true)
-        setFeed(prev => [...prev.slice(-60), r.ok ? '✓ packaged' : `✗ package failed: ${r.reason}`])
-    }, 'Package failed')
-    const regenerate = () => act(async () => {
-        await api.regenerateAssets(runId)
-        setFeed(prev => [...prev.slice(-60), '✓ images regenerated (recompile to repackage)'])
-    }, 'Regenerate failed')
-    const download = () => act(async () => {
-        // Package into a self-contained build (engine bundled) before pulling it, so the user
-        // never needs Ren'Py or Godot installed to play.
-        setFeed(prev => [...prev.slice(-60), '⏳ packaging self-contained build…'])
-        const r = await api.compileGame(runId, true)
-        if (!r.ok) { setFeed(prev => [...prev.slice(-60), `✗ package failed: ${r.reason}`]); return }
-        // Pull the packaged build over an authed fetch (token on the header) and save the blob —
-        // no token in the URL. Revoke the object URL once the click has fired.
-        const blob = await api.fetchDownloadBlob(runId)
-        const href = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = href
-        a.download = `${runId}.zip`
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(href)
-    }, 'Download failed', false)
-    const componentIds: string[] = Object.keys(detail?.artifact ?? {})
-    const addTodo = () => act(async () => {
-        await api.addTodo(runId, newTodoComp || componentIds[0] || '', newTodoText)
-        setNewTodoText('')
-    }, 'Add todo failed')
-    const resolveTodo = (id: string, done: boolean) => act(() => api.resolveTodo(runId, id, done), 'Update failed')
-    const waive = (t: TodoItem) => act(() => api.waiveCheck(runId, t.idkey), 'Waive failed')
-    const unwaive = (idkey: string) => act(() => api.unwaiveCheck(runId, idkey), 'Unwaive failed')
-    const amend = (changes: Record<string, any>) => act(async () => {
-        const d = await api.amendSpec(runId, changes)
-        setDetail(d); setBuilding(d.building); setStatus(d.status)
-    }, 'Edit failed', false)
+    const skin = () => act(async () => { setSkinning(true); await api.skinAssets(runId) }, 'Skin failed', false)
+    const submitFix = () => {
+        const note = fixNote.trim()
+        if (!note) return
+        setFixNote('')
+        act(async () => { await api.fixGame(runId, note); setBuilding(true); setStatus('running') }, 'Fix failed', false)
+    }
 
     if (loading && !detail) return <div className="p-6 text-gray-500 text-sm">Loading…</div>
     if (error && !detail) return <div className="p-6 text-red-400 text-sm">Error: {error}</div>
     if (!detail) return null
 
-    const statusTone = (status === 'paused' || running) ? 'amber' : 'gray'
-    const todo = liveTodo ?? detail.todo
-
-    // Epic E1: a light per-component summary derived from data already on the to-do (no new
-    // per-asset event plumbing) — components with an open error/todo are "failing", everything
-    // else on disk counts as "done".
-    const failingComponentIds = new Set(todo.map(t => t.component).filter(Boolean))
-    const allComponentIds = new Set([...componentIds, ...failingComponentIds])
-    const componentsTotal = allComponentIds.size
-    const componentsDone = Math.max(0, componentsTotal - failingComponentIds.size)
-
-    // Lifecycle stage drives which controls show — a draft is a review-and-approve page, not the
-    // full build cockpit.
-    const stage: 'draft' | 'building' | 'built' | 'ready' =
-        !detail.frozen ? 'draft' : building ? 'building' : detail.built ? 'built' : 'ready'
-    const planEditable = stage === 'draft'
+    const statusTone = (status === 'paused' || building) ? 'amber' : 'gray'
+    const stage = stageFor(detail.frozen, building, detail.built)
     const showBuildArea = stage === 'building' || stage === 'built'
 
     return (
         <div className="h-full flex flex-col">
-            {/* ── FIXED TOP: controls + input bar + side-by-side feeds ────────────── */}
             <div className="flex-shrink-0 border-b border-white/[0.08] px-5 pt-3 pb-3 space-y-3">
                 <div className="flex items-center gap-2 flex-wrap">
                     <h2 className="text-white text-base font-semibold">{detail.spec.title || detail.run_id}</h2>
+                    <Badge label={detail.mode.toUpperCase()} tone="blue" />
                     {detail.frozen ? <Badge label="frozen" tone="blue" /> : <Badge label="draft" tone="gray" />}
                     {detail.built ? <Badge label="built" tone="green" /> : null}
                     {building ? <Badge label={status === 'paused' ? 'paused' : 'building…'} tone={statusTone as any} /> : null}
@@ -374,14 +261,13 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
                 <div className="flex gap-2 flex-wrap items-center">
                     {stage === 'draft' && (
-                        <button onClick={freeze} disabled={acting} title="lock the plan and let the build start"
-                            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Approve &amp; freeze</button>
+                        <button onClick={freeze} disabled={acting} title="lock the spec and let the build start"
+                            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Freeze</button>
                     )}
-                    {stage === 'ready' && (
-                        <button onClick={build} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Generate game</button>
-                    )}
-                    {stage === 'built' && (
-                        <button onClick={build} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Regenerate</button>
+                    {stage !== 'draft' && !building && (
+                        <button onClick={build} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">
+                            {detail.built ? 'Rebuild' : 'Build'}
+                        </button>
                     )}
                     {building && status === 'running' && (
                         <button onClick={pause} disabled={acting} className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Pause</button>
@@ -389,29 +275,26 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     {building && status === 'paused' && (
                         <button onClick={resume} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Resume</button>
                     )}
-                    {stage === 'built' && (
-                        <button onClick={compile} disabled={acting || !editable} title={editable ? 'rebuild the package from the current components' : 'pause the build first'}
-                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium">Package</button>
-                    )}
-                    {stage === 'built' && (
-                        <button onClick={regenerate} disabled={acting || !editable || !detail.assets_exist}
-                            title={!detail.assets_exist ? 'no images yet' : editable ? 'regenerate all images from the manifest' : 'pause the build first'}
-                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium">Regenerate images</button>
-                    )}
                     {(stage === 'ready' || stage === 'building') && (
                         <label className="flex items-center gap-1.5 text-gray-400 text-xs ml-1 cursor-pointer select-none">
                             <input type="checkbox" checked={autoPause} onChange={e => toggleAutoPause(e.target.checked)} className="accent-amber-500" />
-                            pause after each part
+                            pause after each step
                         </label>
                     )}
-                    {stage !== 'draft' && (
-                        <button onClick={download} disabled={acting || !editable} title={editable ? 'package a self-contained build and download it' : 'pause the build first'}
-                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium ml-auto">Download</button>
+                    {stage === 'built' && (
+                        <button onClick={skin} disabled={acting || skinning} title="plan + render assets for this game"
+                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium">
+                            {skinning ? 'Skinning…' : 'Skin assets'}
+                        </button>
+                    )}
+                    {stage === 'built' && detail.play_url && (
+                        <a href={detail.play_url} target="_blank" rel="noreferrer"
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium ml-auto">Play</a>
                     )}
                 </div>
 
                 {stage === 'draft' && (
-                    <div className="text-gray-500 text-xs">Review the plan below, edit it if needed, then approve to start building.</div>
+                    <div className="text-gray-500 text-xs">Review the spec below, then freeze to start building.</div>
                 )}
 
                 {error && <p className="text-red-400 text-xs">{error}</p>}
@@ -419,82 +302,33 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 {showBuildArea && <>
                     {progress && (
                         <BuildProgressHeader step={progress.step} maxSteps={progress.maxSteps} nFailing={progress.nFailing}
-                            elapsedSec={elapsedSec} componentsDone={componentsDone} componentsTotal={componentsTotal}
-                            parked={parked} onWaive={waiveParked} />
+                            elapsedSec={elapsedSec} />
                     )}
 
-                    {/* Single full-width human input bar: add a todo against any component */}
-                    <div className="flex gap-2">
-                        <select value={newTodoComp} onChange={e => setNewTodoComp(e.target.value)}
-                            className="bg-black/40 border border-white/[0.1] rounded text-xs text-gray-300 px-1.5 py-1.5">
-                            {componentIds.map(id => <option key={id} value={id}>{id}</option>)}
-                        </select>
-                        <input value={newTodoText} onChange={e => setNewTodoText(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && newTodoText.trim()) addTodo() }}
-                            placeholder="Add a todo for yourself (you decide when it's done) — blocks completion until resolved…"
-                            className="flex-1 bg-black/40 border border-white/[0.1] rounded text-xs text-gray-200 px-2 py-1.5" />
-                        <button onClick={addTodo} disabled={acting || !newTodoText.trim()}
-                            className="bg-blue-600/80 hover:bg-blue-700 disabled:opacity-40 text-white px-3 py-1.5 rounded text-xs">Add todo</button>
-                    </div>
-
-                    {/* Two side-by-side scrollable feeds: build log | to-do */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="flex flex-col">
-                            <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">Build feed</div>
-                            <div className="bg-black/40 border border-white/[0.06] rounded h-36 overflow-y-auto px-2.5 py-1.5 font-mono text-[11px] text-gray-400 space-y-0.5">
-                                {feed.length === 0 ? <div className="text-gray-600">no activity yet</div> : feed.map((line, i) => <div key={i}>{line}</div>)}
-                                <div ref={feedRef} />
-                            </div>
-                        </div>
-                        <div className="flex flex-col">
-                            <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">
-                                To-do {todo.length === 0 ? '— complete ✓' : `(${todo.length})`}{liveTodo ? <span className="text-amber-400 ml-1 normal-case">· live</span> : null}
-                            </div>
-                            <div className="bg-black/40 border border-white/[0.06] rounded h-36 overflow-y-auto px-2.5 py-1.5 text-[11px] space-y-1">
-                                {todo.length === 0 ? <div className="text-green-400">Every check passes.</div> : todo.map((t, i) => {
-                                    const human = t.type === 'human'
-                                    return (
-                                    <div key={i} className="flex items-start justify-between gap-2 group text-gray-300">
-                                        <span><span className={`font-mono ${human ? 'text-blue-400' : 'text-amber-400'}`}>[{t.component || '—'}]</span>{' '}
-                                            <span className="text-gray-500">{human ? 'todo' : t.code}</span>: {t.detail}</span>
-                                        {human ? (
-                                            <button onClick={() => t.path && resolveTodo(t.path, true)} disabled={acting} className="text-green-400 hover:text-green-300 shrink-0">done</button>
-                                        ) : (
-                                            <button onClick={() => waive(t)} disabled={acting} title="accept as-is (waive)"
-                                                className="text-gray-600 hover:text-amber-400 shrink-0 opacity-0 group-hover:opacity-100">waive</button>
-                                        )}
-                                    </div>
-                                )})}
-                            </div>
-                        </div>
-                    </div>
-
-                    {detail.waivers.length > 0 && (
-                        <div className="flex flex-col">
-                            <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">Waived ({detail.waivers.length})</div>
-                            <ul className="space-y-1">
-                                {detail.waivers.map(w => (
-                                    <li key={w.idkey} className="text-[11px] text-gray-400 flex items-center justify-between gap-2">
-                                        <span className="font-mono text-gray-600 truncate">{w.note || w.idkey}</span>
-                                        <button onClick={() => unwaive(w.idkey)} disabled={acting} className="text-gray-600 hover:text-gray-300 shrink-0">Reinstate</button>
-                                    </li>
-                                ))}
-                            </ul>
+                    {stage === 'built' && (
+                        <div className="flex gap-2">
+                            <input value={fixNote} onChange={e => setFixNote(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter' && fixNote.trim()) submitFix() }}
+                                placeholder="Describe what's wrong — patches the built game…"
+                                className="flex-1 bg-black/40 border border-white/[0.1] rounded text-xs text-gray-200 px-2 py-1.5" />
+                            <button onClick={submitFix} disabled={acting || !fixNote.trim()}
+                                className="bg-blue-600/80 hover:bg-blue-700 disabled:opacity-40 text-white px-3 py-1.5 rounded text-xs">Fix</button>
                         </div>
                     )}
+
+                    <div className="flex flex-col">
+                        <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">Build feed</div>
+                        <div className="bg-black/40 border border-white/[0.06] rounded h-36 overflow-y-auto px-2.5 py-1.5 font-mono text-[11px] text-gray-400 space-y-0.5">
+                            {feed.length === 0 ? <div className="text-gray-600">no activity yet</div> : feed.map((line, i) => <div key={i}>{line}</div>)}
+                            <div ref={feedRef} />
+                        </div>
+                    </div>
                 </>}
             </div>
 
-            {/* ── SCROLLABLE BODY: one browser — a leading Spec tab (the plan/draft review) then a
-                tab per component. Draft opens on Spec (no components yet); built opens on the first
-                component. ── */}
             <div className="flex-1 flex flex-col min-h-0">
-                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
-                    <ComponentBrowser runId={runId} componentIds={componentIds} editable={contentEditable}
-                        specNode={<>
-                            <SpecPlan spec={detail.spec as Record<string, any>} editable={planEditable} busy={acting} onAmend={amend} />
-                            {detail.spec.request && <p className="text-gray-400 text-sm">{detail.spec.request}</p>}
-                        </>} />
+                <div className="flex-1 overflow-y-auto px-5 py-4">
+                    <SpecReview spec={detail.spec} />
                 </div>
             </div>
         </div>
@@ -504,7 +338,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 // Build/spec lifecycle events that change a row's badges or add a row — refresh the list on these.
 const LIST_REFRESH_EVENTS = new Set([
     'spec_proposed', 'spec_frozen', 'build_started', 'build_paused', 'build_resumed',
-    'component_complete', 'build_done',
+    'component_complete', 'build_done', 'assets_started', 'assets_done',
 ])
 
 const GamesPanel: React.FC<{ focusRunId?: string | null }> = ({ focusRunId }) => {
@@ -563,10 +397,10 @@ const GamesPanel: React.FC<{ focusRunId?: string | null }> = ({ focusRunId }) =>
                         >
                             <div className="text-white text-sm font-medium truncate">{g.title || g.run_id}</div>
                             <div className="flex items-center gap-1.5 mt-1">
+                                <Badge label={g.mode.toUpperCase()} tone="gray" />
                                 {g.frozen ? <Badge label="frozen" tone="blue" /> : <Badge label="draft" tone="gray" />}
                                 {g.built ? <Badge label="built" tone="green" /> : null}
                                 {g.building ? <Badge label="building…" tone="amber" /> : null}
-                                <span className="text-gray-600 text-[10px]">{g.n_components} comp</span>
                             </div>
                         </button>
                     ))}

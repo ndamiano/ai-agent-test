@@ -1,9 +1,8 @@
 """The per-step build context — a fresh, minimal snapshot rebuilt from durable on-disk state each
 loop step (never the transcript), so context stays ~constant as the artifact grows.
 
-`Context` is what `get_errors` reads (the assembled artifact + the spec's resolved `params`).
-`render_dict` turns it into the dict the leaf renderers in `maestro.context_render` and a module's
-own `render_context` consume when building a `get_correction_prompt`.
+`Context` is what `get_errors` reads (the assembled artifact + the frozen spec). `render_dict` turns
+it into the dict a module's own `render_context` consumes when building a `get_correction_prompt`.
 """
 
 from dataclasses import dataclass, field
@@ -12,28 +11,13 @@ from typing import Dict, List, Optional
 
 @dataclass
 class Context:
-    spec: Dict                       # spec data: title/request/modules/params/story_state_schema/engine
+    spec: Dict                       # the frozen spec
     state: object                    # RunState
     artifact: Dict                   # the assembled artifact, loaded once this step
     errors: List = field(default_factory=list)   # the effective to-do this step (Error objects)
     last_result: Optional[str] = None
     last_read: Optional[str] = None
     stalled: bool = False
-
-    @property
-    def run_dir(self):
-        return self.state.run_dir
-
-    @property
-    def engine(self) -> str:
-        return self.spec.get("engine", "renpy")
-
-    def param(self, name: str, default: int = 0) -> int:
-        """A resolved sizing knob from the frozen spec (>= the module's floor)."""
-        return (self.spec.get("params") or {}).get(name, default)
-
-    def component(self, cid: str):
-        return self.artifact.get(cid)
 
     def story_state(self) -> Dict:
         return self.state.read_story_state() or {}

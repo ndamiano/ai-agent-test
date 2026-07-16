@@ -11,6 +11,7 @@ Output ONLY one ```json block, this exact shape:
   "title": "...",
   "genre": "...",
   "mode": "2d",
+  "world": null,
   "control": {"entity": "<id of the steered entity>", "scheme": "<one control scheme from the catalog>"},
   "entities": [ {"id": "...", "desc": "one concrete sentence: WHAT it is, its size, its look (color/shape). NOT how it moves."} ],
   "controls": {"KEY": "what the player DOES (plain intent, e.g. 'jump', 'drive forward', 'shoot')"},
@@ -25,6 +26,12 @@ Output ONLY one ```json block, this exact shape:
 HARD RULES — the spec describes WHAT the game does, never HOW to code it:
 - Pick "mode": "2d" (top/side view, the default) or "3d" (a game in real 3D space). The control
   scheme must match the mode (orbital-3d/vehicle-3d/first-person-3d/follow-3d are 3D).
+- "world": for a 3D game set in an explorable PLACE the player walks around (a village/town RPG, an
+  open settlement to roam, talk, and quest in), set this to an object
+  {"settlement": "<the place's name>", "size": "small|medium|large",
+   "biomes": [ordered low→high, e.g. "ocean","beach","grassland","forest","hill","mountain"]}.
+  worldgen GENERATES the terrain + laid-out town and the programmer authors the gameplay (player,
+  NPCs, items, quests) on top of it. Otherwise leave it null. Only ever set with "mode":"3d".
 - Set "control" to the steered entity + ONE catalog scheme. If more than one thing is steered, list the
   primary and describe the rest in mechanics. EVERY game the player steers needs a scheme.
 - NEVER write implementation: no per-frame or per-tick numbers ("4px/frame", "decay 10% each frame"),

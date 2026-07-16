@@ -17,10 +17,60 @@ import uuid
 from pathlib import Path
 
 from maestro.state import RunState
+from maestro.templating import render_template
 
 logger = logging.getLogger(__name__)
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
+_WORLDGEN_BIOMES = ["ocean", "beach", "grassland", "forest", "hill", "mountain"]
+
+
+def _recipe_from_spec(spec: dict) -> dict:
+    """The worldgen recipe for a world-flagged spec — the requested settlement / size / biomes."""
+    w = spec.get("world") if isinstance(spec.get("world"), dict) else {}
+    name = (w.get("settlement") or spec.get("title") or "Village").strip()
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "settlement"
+    return {"archetype": "continent", "size": w.get("size") or "small",
+            "palette": {"biomes": w.get("biomes") or _WORLDGEN_BIOMES},
+            "locations": [{"id": slug, "type": "settlement", "name": name}]}
+
+
+def _world_main_purpose(spec: dict) -> str:
+    """main.ts's manifest purpose for a world game — the fixed scaffold (import world.ts, spawnWorld,
+    player-on-ground, drive, dialogue primitives) with the frozen spec's entities + objective inlined,
+    so the model realizes THIS game on the village, not a fixed Rivervale."""
+    d = spec.get("design", spec)
+    ents = d.get("entities") or []
+    entities = "; ".join(f"{e.get('id', '?')}: {e.get('desc', '')}" for e in ents) or "the spec's entities"
+    return render_template(_PROMPTS / "world_main_purpose.txt", {
+        "title": d.get("title") or spec.get("title") or "the game",
+        "entities": entities,
+        "objective": d.get("win") or "explore the village",
+        "lose": d.get("lose") or "none",
+    })
+
+
+def _maybe_seed_worldgen(run_id: str, state: RunState, spec: dict) -> None:
+    """World-flagged 3D game: worldgen OWNS the layout. Before the build loop, generate world.ts
+    (terrain heightfield + labelled building parcels) via the bridge and force a single-file manifest
+    (main.ts only) so the planner is bypassed and the model authors gameplay ON TOP. Idempotent — on
+    re-entry (re-gate after ok, reskin, note-fix) world.ts already exists and this is a no-op, so the
+    town is never regenerated under a half-built game."""
+    from maestro.codegen import worldgen_bridge
+    from maestro.codegen.gates import game_dir
+
+    if not spec.get("world"):
+        return
+    gd = game_dir(state.run_dir)
+    if (gd / "world.ts").exists():
+        return
+    gd.mkdir(parents=True, exist_ok=True)
+    info = worldgen_bridge.build(_recipe_from_spec(spec), gd)
+    logger.info("worldgen seed %s: %sx%s town, %d buildings",
+                run_id, info["gw"], info["gh"], len(info["buildings"]))
+    manifest = {"files": [{"name": "main.ts", "purpose": _world_main_purpose(spec),
+                           "exports": ["createGame"]}]}
+    (gd / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def create_run(user_id: str) -> str:
@@ -60,7 +110,8 @@ def draft_spec(request: str) -> dict:
     if design is None:
         raise ValueError(f"spec draft never produced valid JSON: {last}")
     return {"request": request, "title": design.get("title", request),
-            "mode": design.get("mode", "2d"), "design": design, "frozen": False}
+            "mode": design.get("mode", "2d"), "world": design.get("world"),
+            "design": design, "frozen": False}
 
 
 def propose_spec(request: str, run_id: str) -> dict:
@@ -123,6 +174,7 @@ def run_build(run_id: str, max_steps: int = 60):
     if spec is None:
         raise ValueError(f"no spec for run {run_id!r} — draft one first")
     set_log_dir(str(state.run_dir / "logs"))
+    _maybe_seed_worldgen(run_id, state, spec)
     tools = build_codegen_tools(state)
     control = get_or_create(run_id)
     loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),

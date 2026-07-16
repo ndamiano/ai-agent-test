@@ -1,2 +1,0 @@
-EFFECTS change state (on a line or a choice): {"set_flag"}, {"clear_flag"}, {"add_item"},
-  {"remove_item"}, {"set_var": {"var", "value"}}, {"add_var": {"var", "delta"}}.

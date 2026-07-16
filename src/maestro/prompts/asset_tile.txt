@@ -1,1 +1,0 @@
-{subject}. {style} Seamless top-down terrain texture, tileable.

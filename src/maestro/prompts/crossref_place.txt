@@ -1,9 +1,0 @@
-A `move` (or a start/spawn) points at a PLACE id that does not exist. The TARGET names the source
-place + hotspot. Repoint that move to a real place, or create the missing one:
-
-    edit_place(place_id="<source place>", ...) so the move's target is one of the PLACES ids below,
-    or write_place a place whose id is EXACTLY the missing target.
-
-A move target must be a declared place id. Do NOT rename the source place — fix only the dangling
-move. Reuse EXACT ids from PLACES.
-{{include:tool_call_rule}}

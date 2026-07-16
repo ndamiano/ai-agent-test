@@ -1,1 +1,0 @@
-Derive every detail from the concept and request, never from the skeleton's placeholder ids.

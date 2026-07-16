@@ -15,24 +15,7 @@ import functools
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
-
-# TODO:: Should this be in here or should we move this to an appropriate utility file?
-_PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
-_PROMPT_CACHE: Dict[str, str] = {}
-
-def load_prompt(name: str) -> str:
-    """A cached prompt-file load."""
-    if name not in _PROMPT_CACHE:
-        from maestro.templating import render_template
-        _PROMPT_CACHE[name] = render_template(_PROMPTS_DIR / name, {})
-    return _PROMPT_CACHE[name]
-
-
-def skeleton_guide(component: str, skeleton: str) -> str:
-    return f"`{component}` JSON SHAPE — fill this skeleton (invent the content):\n{skeleton}"
-
 
 class ErrorType(Enum):
     HUMAN = "human"
@@ -191,9 +174,9 @@ class Module(ABC):
         rd = render_dict(context, active=error.component or None, target=error, active_view=view,
                          available_tools=tools, slot_index=slot)
         rd["artifact"] = context.artifact   # renderers compose their own blocks from the raw components
-        system = load_prompt(prompt or self.mode_prompt)
+        system = prompt or self.mode_prompt or ""
         if skel:
-            system += "\n\n" + skeleton_guide(self.component, skel)
+            system += f"\n\n`{self.component}` JSON SHAPE — fill this skeleton (invent the content):\n{skel}"
         user = chk.context(self, rd) if (chk and chk.context) else self.render_context(rd)
         # Parallel siblings each pick the single most obvious id (everyone writes the hero) and
         # collide on the no-overwrite guard; a view with open_slots already differentiates via the

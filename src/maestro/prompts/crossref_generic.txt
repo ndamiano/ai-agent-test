@@ -1,6 +1,0 @@
-A reference points at an id that does not resolve. The TARGET names the exact path, the bad id, and
-its KIND. Repoint it to a real id of that kind from the catalogue below, or declare the missing one
-where that kind is declared.
-
-Edit ONLY the site the TARGET names. Reuse EXACT ids. Never invent an id, never rename the holder,
-and never nest the id in an object — a reference is a plain string id. Tool call only.

@@ -1,8 +1,0 @@
-A scene has no background, or its background is not a real asset. The TARGET names the scene(s).
-{{include:tool_call_rule}}
-
-Set each named scene's `location` to a background id from the LOCATIONS list below:
-    edit_node(node_id="<the scene in the target>", location="<a LOCATIONS id>")
-
-Pick the location that best fits where the scene happens. Use an EXACT id from LOCATIONS — do NOT
-invent a background. Change only `location`; leave the scene's lines and `end` untouched.

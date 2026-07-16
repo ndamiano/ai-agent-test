@@ -74,22 +74,21 @@ def build(recipe, out_dir: Path):
             for xx in range(f["x"], f["x"] + f["w"]):
                 building_cells[(xx, yy)] = f.get("label", "town building")
 
-    # height + color grids, indexed [cy][cx] (natural); heightfield vertex (r=cy,c=cx) -> world
+    # height + color grids + a material grid, indexed [cy][cx]. The material grid drives the baked
+    # texture (grass/path/stone); buildings sit ON GRASS (no dirt plot — stark plots looked awful).
     height = [[0.0] * ww for _ in range(wh)]
     color = [["#5f9a4c"] * ww for _ in range(wh)]
+    material = [["grass"] * ww for _ in range(wh)]
     grass = []
     for cy in range(wh):
         for cx in range(ww):
             ch = rows[cy][cx]
             theme, role = legend[ch]["theme"], legend[ch]["role"]
-            h = raw_height(cx, cy)
-            base = THEME_COLOR.get(theme, "#5f9a4c")
-            # a building parcel: flatten slightly + dirt tone under it
-            if (cx, cy) in building_cells:
-                base = "#8a7355"
-            height[cy][cx] = round(h, 3)
-            color[cy][cx] = base   # crisp per-cell; a baked texture (below) carries the fine detail
-            if (cx, cy) not in building_cells and theme not in ("worn path", "cobbled plaza", "dense hedgerow"):
+            height[cy][cx] = round(raw_height(cx, cy), 3)
+            color[cy][cx] = THEME_COLOR.get(theme, "#5f9a4c")   # flat fallback (used only if the texture is absent)
+            mat = "path" if theme == "worn path" else "stone" if theme == "cobbled plaza" else "grass"
+            material[cy][cx] = mat
+            if (cx, cy) not in building_cells and mat == "grass":
                 grass.append([wx(cx), wz(cy)])
 
     def height_at(x, z):
@@ -126,7 +125,7 @@ def build(recipe, out_dir: Path):
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_world_ts(out_dir / "world.ts", data)
-    _bake_terrain(color, out_dir / "assets" / "terrain.png")
+    _bake_terrain(material, out_dir / "assets" / "terrain.png")
     _write_preview(out_dir.parent / "town_preview.png", data)
     print(f"seed={seed} town={ww}x{wh} buildings={len(buildings)} grass={len(grass)}")
     return data
@@ -164,25 +163,47 @@ export function heightAt(x: number, z: number): number {
     path.write_text(src, encoding="utf-8")
 
 
-def _bake_terrain(color_grid, path: Path, P: int = 18):
-    """A crisp, detailed ground texture the runtime maps onto the terrain — beats interpolated vertex
-    colors (which smear grass/path/stone into fuzz). Per-cell base color (crisp edges → sharp paths) +
-    fine grain (grass texture) + soft large-scale mottling (patchiness). PIL only, no numpy."""
-    from PIL import Image, ImageDraw, ImageChops, ImageFilter
-    gh, gw = len(color_grid), len(color_grid[0])
-    W, H = gw * P, gh * P
-    img = Image.new("RGB", (W, H))
-    d = ImageDraw.Draw(img)
-    for cy in range(gh):
-        for cx in range(gw):
-            d.rectangle([cx * P, cy * P, (cx + 1) * P, (cy + 1) * P], fill=color_grid[cy][cx])
-    # fine grain (grass blades / dirt speckle) — gaussian noise, softened, overlaid
-    grain = Image.effect_noise((W, H), 24).convert("L").filter(ImageFilter.GaussianBlur(0.5))
-    img = ImageChops.overlay(img, Image.merge("RGB", (grain, grain, grain)))
-    # large-scale mottling (sun/wear patches) — low-res noise upsampled + blurred, multiplied in gently
-    mw, mh = max(1, W // 8), max(1, H // 8)
-    mott = Image.effect_noise((mw, mh), 34).convert("L").resize((W, H)).filter(ImageFilter.GaussianBlur(3))
-    img = Image.blend(img, ImageChops.multiply(img, Image.merge("RGB", (mott, mott, mott))), 0.16)
+TILES_DIR = Path(__file__).resolve().parents[2] / "assets" / "tiles"
+_MATERIAL_TILE = {"grass": "grass", "path": "dirt_path", "stone": "stone_tile"}
+
+
+def _tiled(name: str, W: int, H: int, tile_px: int):
+    """A seamless tile texture repeated to fill WxH — continuous ground, no per-cell grid."""
+    from PIL import Image
+    t = Image.open(TILES_DIR / f"{name}.png").convert("RGB").resize((tile_px, tile_px))
+    base = Image.new("RGB", (W, H))
+    for y in range(0, H, tile_px):
+        for x in range(0, W, tile_px):
+            base.paste(t, (x, y))
+    return base
+
+
+def _bake_terrain(material_grid, path: Path, cell_px: int = 22):
+    """The ground texture the runtime maps onto the terrain, composited from the seamless painted tile
+    set (assets/tiles). Grass fills everything continuously; dirt paths and the stone plaza are laid in
+    with FEATHERED masks (blurred cell masks → organic edges, not axis-aligned tile squares). This reads
+    like a hand-painted village ground and matches the buildings, instead of a flat-color checkerboard."""
+    from PIL import Image, ImageFilter
+    gh, gw = len(material_grid), len(material_grid[0])
+    W, H = gw * cell_px, gh * cell_px
+    tile_px = cell_px * 5                                   # one tile spans ~5 cells → visible detail, few repeats
+    img = _tiled(_MATERIAL_TILE["grass"], W, H, tile_px)
+
+    def lay(mat: str, blur: float):
+        present = any(mat in row for row in material_grid)
+        if not present:
+            return
+        m = Image.new("L", (gw, gh), 0)
+        px = m.load()
+        for cy in range(gh):
+            for cx in range(gw):
+                if material_grid[cy][cx] == mat:
+                    px[cx, cy] = 255
+        m = m.resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(blur))
+        img.paste(_tiled(_MATERIAL_TILE[mat], W, H, tile_px), (0, 0), m)
+
+    lay("path", cell_px * 0.5)                              # worn dirt trails, soft edges
+    lay("stone", cell_px * 0.32)                            # plaza, a touch crisper
     path.parent.mkdir(parents=True, exist_ok=True)
     img.save(path)
 

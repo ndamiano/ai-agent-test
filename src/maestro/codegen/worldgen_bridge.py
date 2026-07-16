@@ -3,6 +3,7 @@ the model authors on top of. No engine change beyond the `heightfield` shape. wo
 file main.ts imports; its API (spawnWorld/heightAt/WORLD) is stable so authored games keep working."""
 import json
 import math
+import random
 import sys
 from pathlib import Path
 
@@ -101,6 +102,26 @@ def build(recipe, out_dir: Path):
         h01, h11 = height[z0 + 1][x0], height[z0 + 1][x0 + 1]
         return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
 
+    # Scatter FOLIAGE + PROPS across the open ground — worldgen places these like it places the well,
+    # so the world comes populated and the ground reads as a living field, not a flat mat.
+    srng = random.Random(seed ^ 0x5EED)
+    grass_points = []                       # grass tufts (rendered as one instanced grassfield)
+    for gx, gz in grass:
+        for _ in range(3):
+            jx = gx + srng.uniform(-CELL / 2, CELL / 2)
+            jz = gz + srng.uniform(-CELL / 2, CELL / 2)
+            grass_points.append([round(jx, 2), round(height_at(jx, jz), 3), round(jz, 2)])
+    props = []                              # bushes + rocks (sparse, as sphere entities)
+    for i, (gx, gz) in enumerate(srng.sample(grass, min(34, len(grass)))):
+        y = height_at(gx, gz)
+        if i % 3 == 0:
+            props.append({"x": round(gx, 2), "y": round(y + 0.25, 2), "z": round(gz, 2),
+                          "r": round(srng.uniform(0.3, 0.6), 2), "color": "#8a8f95"})   # rock
+        else:
+            props.append({"x": round(gx, 2), "y": round(y + 0.45, 2), "z": round(gz, 2),
+                          "r": round(srng.uniform(0.5, 0.9), 2),
+                          "color": srng.choice(["#3f7a3c", "#356f34", "#4a8a44"])})     # bush
+
     buildings = []
     for fid, f in town["footprints"].items():
         label = f.get("label", "town building")
@@ -121,13 +142,14 @@ def build(recipe, out_dir: Path):
 
     data = {"cell": CELL, "gw": ww, "gh": wh, "seed": seed,
             "height": height, "color": color, "buildings": buildings,
-            "grass": grass, "plaza": plaza, "gate": gate}
+            "grass": grass, "grass_points": grass_points, "props": props,
+            "plaza": plaza, "gate": gate}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_world_ts(out_dir / "world.ts", data)
     _bake_terrain(material, out_dir / "assets" / "terrain.png")
     _write_preview(out_dir.parent / "town_preview.png", data)
-    print(f"seed={seed} town={ww}x{wh} buildings={len(buildings)} grass={len(grass)}")
+    print(f"seed={seed} town={ww}x{wh} buildings={len(buildings)} tufts={len(grass_points)} props={len(props)}")
     return data
 
 
@@ -142,6 +164,9 @@ export const WORLD: any = %s;
 // building `label` (kind) is also its `mesh` id, so the asset stage can skin each kind.
 export function spawnWorld(world: any[]): void {
   world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell, texture: "assets/terrain.png" });
+  world.push({ shape: "grassfield", points: WORLD.grass_points, h: 1.0, w: 0.14, base: "#2f6b32", tip: "#7cc257" });
+  for (const p of WORLD.props)
+    world.push({ shape: "sphere", x: p.x, y: p.y, z: p.z, r: p.r, color: p.color });
   for (const b of WORLD.buildings)
     world.push({ shape: "box", x: b.x, y: b.hx + b.h / 2, z: b.z, w: b.w, h: b.h, d: b.d,
                  color: b.color, type: "building", label: b.label, mesh: b.mesh });
@@ -188,6 +213,8 @@ def _bake_terrain(material_grid, path: Path, cell_px: int = 22):
     W, H = gw * cell_px, gh * cell_px
     tile_px = cell_px * 5                                   # one tile spans ~5 cells → visible detail, few repeats
     img = _tiled(_MATERIAL_TILE["grass"], W, H, tile_px)
+    flat = img.resize((1, 1)).resize((W, H))               # its mean color
+    img = Image.blend(img, flat, 0.5)                       # quiet the base — the scattered tufts carry the detail now
 
     def lay(mat: str, blur: float):
         present = any(mat in row for row in material_grid)

@@ -102,9 +102,51 @@ function buildHeightfield(e, assetBase) {
   return m;
 }
 
+// A grass field: thousands of little tufts as ONE instanced mesh. Each tuft is a fan of triangle
+// blades (base dark → tip light — the cheap grass gradient), scattered at the given world points with
+// random yaw/scale. Triangle blades need no alpha texture (no transparency sorting) and read as a
+// living field from any angle — the thing that makes stylized ground look good. The SAME primitive
+// scatters any small detail (set base/tip + h/w): grass, reeds, a cave's crystal shards.
+// e = { shape:"grassfield", points:[[x,y,z],…], h?, w?, base?, tip? }.
+function buildGrassfield(e) {
+  const pts = e.points || [];
+  if (!pts.length) return new THREE.Group();
+  const blades = 4, h = e.h || 1.0, w = e.w || 0.14;
+  const verts = [], cols = [];
+  const base = new THREE.Color(e.base || "#2f6b32"), tip = new THREE.Color(e.tip || "#7cc257");
+  for (let b = 0; b < blades; b++) {
+    const a = (b / blades) * Math.PI + b * 0.3;      // fan the blades around the tuft
+    const px = -Math.sin(a), pz = Math.cos(a);        // blade-width direction
+    const dx = Math.cos(a) * 0.18, dz = Math.sin(a) * 0.18;  // tip bend
+    verts.push(px * -w, 0, pz * -w, px * w, 0, pz * w, dx, h, dz);
+    cols.push(base.r, base.g, base.b, base.r, base.g, base.b, tip.r, tip.g, tip.b);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(cols, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 1 });
+  const mesh = new THREE.InstancedMesh(geo, mat, pts.length);
+  const dummy = new THREE.Object3D();
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    dummy.position.set(p[0], p[1] || 0, p[2]);
+    dummy.rotation.set(0, rnd() * Math.PI * 2, 0);
+    const s = 0.7 + rnd() * 0.7;
+    dummy.scale.set(s, s * (0.8 + rnd() * 0.6), s);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  return mesh;
+}
+
 function buildMesh(e, meshes, assetBase) {
   if (e.mesh && meshes[e.mesh] && e.shape !== "ground") return skinnedMesh(meshes[e.mesh], e);
   if (e.shape === "heightfield") return buildHeightfield(e, assetBase);
+  if (e.shape === "grassfield") return buildGrassfield(e);
   const color = e.color || "#cccccc";
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.05 });
   let geo;

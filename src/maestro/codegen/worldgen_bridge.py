@@ -107,7 +107,7 @@ def build(recipe, out_dir: Path):
     srng = random.Random(seed ^ 0x5EED)
     grass_points = []                       # grass tufts (rendered as one instanced grassfield)
     for gx, gz in grass:
-        for _ in range(3):
+        for _ in range(6):
             jx = gx + srng.uniform(-CELL / 2, CELL / 2)
             jz = gz + srng.uniform(-CELL / 2, CELL / 2)
             grass_points.append([round(jx, 2), round(height_at(jx, jz), 3), round(jz, 2)])
@@ -115,8 +115,8 @@ def build(recipe, out_dir: Path):
     for i, (gx, gz) in enumerate(srng.sample(grass, min(34, len(grass)))):
         y = height_at(gx, gz)
         if i % 3 == 0:
-            props.append({"x": round(gx, 2), "y": round(y + 0.25, 2), "z": round(gz, 2),
-                          "r": round(srng.uniform(0.3, 0.6), 2), "color": "#8a8f95"})   # rock
+            props.append({"x": round(gx, 2), "y": round(y + 0.18, 2), "z": round(gz, 2),
+                          "r": round(srng.uniform(0.3, 0.55), 2), "color": "#70747a"})   # rock (mostly buried)
         else:
             props.append({"x": round(gx, 2), "y": round(y + 0.45, 2), "z": round(gz, 2),
                           "r": round(srng.uniform(0.5, 0.9), 2),
@@ -164,7 +164,7 @@ export const WORLD: any = %s;
 // building `label` (kind) is also its `mesh` id, so the asset stage can skin each kind.
 export function spawnWorld(world: any[]): void {
   world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell, texture: "assets/terrain.png" });
-  world.push({ shape: "grassfield", points: WORLD.grass_points, h: 1.0, w: 0.14, base: "#2f6b32", tip: "#7cc257" });
+  world.push({ shape: "grassfield", points: WORLD.grass_points, h: 0.45, w: 0.12, base: "#2f6b32", tip: "#7cc257" });
   for (const p of WORLD.props)
     world.push({ shape: "sphere", x: p.x, y: p.y, z: p.z, r: p.r, color: p.color });
   for (const b of WORLD.buildings)

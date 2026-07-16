@@ -26,6 +26,9 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 - **box:**    `{ shape:"box",    x,y,z, w,h,d, color, ry? }`  — ry = yaw in radians (optional)
 - **sphere:** `{ shape:"sphere", x,y,z, r,     color }`
 - **ground:** `{ shape:"ground", size, color, y? }`          — a flat plane; y defaults to 0
+- **heightfield / grassfield:** the terrain + grass that `spawnWorld` seeds into a generated village.
+  You do NOT author these — `spawnWorld` pushes them. They are FULLY renderable; NEVER filter or
+  remove entities from `state.world` after `spawnWorld` (a `shape`-allowlist filter deletes the ground).
 `color` is a CSS string and MUST include the leading `#` (`"#c33"`, `"#33cc55"`) — a bare hex like
 `"cc3333"` renders as the wrong color. `y` is the entity's CENTER. Entities with no `shape` are
 invisible (pure logic markers).

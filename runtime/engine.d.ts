@@ -12,7 +12,7 @@ interface Entity {
   w?: number; h?: number; d?: number;
   dead?: boolean; grounded?: boolean;
   yaw?: number; pitch?: number; ry?: number;
-  color?: string; shape?: "box" | "sphere" | "ground";
+  color?: string; shape?: "box" | "sphere" | "ground" | "heightfield" | "grassfield";
   [k: string]: any;
 }
 type World = Entity[];

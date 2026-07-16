@@ -71,7 +71,10 @@ type HudItem =
   // a numbered choice list (quest accept/decline, shop/upgrade buy). The engine draws "1) …", "2) …";
   // the SIM owns the state: read the matching digit key (or arrows + set `selected`) in update() and
   // branch. `selected` (optional) highlights a row for arrow-key navigation.
-  | { kind: "menu"; options: string[]; selected?: number; title?: string; at?: HudAnchor; color?: string };
+  | { kind: "menu"; options: string[]; selected?: number; title?: string; at?: HudAnchor; color?: string }
+  // a WORLD-ANCHORED waypoint label (3D): the engine projects world (x,z) to the screen each frame,
+  // clamping to the screen edge with a direction hint when off-screen — quest/objective wayfinding.
+  | { kind: "marker"; x: number; z: number; y?: number; text?: string; color?: string };
 
 interface Input {
   down(key: string): boolean;
@@ -83,6 +86,11 @@ interface Input {
 
 interface Camera { x: number; y: number; follow(target: Entity, worldW?: number, worldH?: number): void; }
 interface Camera3 { x: number; y: number; z: number; tx: number; ty: number; tz: number; }
+
+// Anything kit.talkOpen can converse as — usually an NPC entity carrying these fields.
+interface Talker { name?: string; lines: string[]; options?: string[]; [k: string]: any; }
+// A quest in state.quests (managed via kit.quest.*).
+interface Quest { id: string; title: string; reward: number; done: boolean; [k: string]: any; }
 
 interface FlyerOpts { thrust?: number; turn?: number; climb?: number; drag?: number; keys?: Record<string, string>; }
 interface BurstOpts { speed?: number; life?: number; color?: string; size?: number; rng?: Rng; }
@@ -112,6 +120,15 @@ interface Kit {
   arrive(e: Entity, target: Vec2, speed: number, slow?: number): number;
   pursue(e: Entity, target: Entity, speed: number, lead?: number): number;
   wander(e: Entity, speed: number, rng?: Rng, turn?: number): void;
+  // 3D steering (NPCs on the ground plane): these move x/z, APPLY dt themselves (no integrate3
+  // needed) and set e.ry to face travel. Keep y on the terrain after: e.y = heightAt(e.x,e.z)+halfH.
+  seek3(e: Entity, target: { x: number; z: number }, speed: number, dt: number): number;
+  flee3(e: Entity, threat: { x: number; z: number }, speed: number, dt: number): void;
+  wander3(e: Entity, speed: number, dt: number, rng?: Rng, turn?: number): void;
+  patrol3(e: Entity, points: ({ x: number; z: number } | [number, number])[], speed: number, dt: number, arriveAt?: number): void;
+  // push an entity out of centered footprint rects (e.g. WORLD.buildings) — call AFTER moving it,
+  // so walkers (player included) slide around buildings instead of through them.
+  avoidRects(e: Entity, rects: { x: number; z: number; w: number; d: number }[], pad?: number): void;
   // grid / pathfinding
   astar(start: Vec2, goal: Vec2, passable: (x: number, y: number) => boolean, opts?: AstarOpts): Vec2[];
   cellCenter(cx: number, cy: number, cell: number): Vec2;
@@ -132,6 +149,29 @@ interface Kit {
   // selection for a {kind:"menu"} HUD item: 0-based index of the number key (1..9) pressed this
   // frame, else -1. Render the menu in hud(); branch on kit.menuPick(input) in update().
   menuPick(input: Input): number;
+  // ── dialogue / shop: the WHOLE talk loop as one primitive (see Talker) ──
+  // update(): const pick = kit.talkStep(state, input); if (pick) act on pick.pick;
+  //           if (state.talk) return;   // paused while talking
+  //           if (near && input.pressed("e")) kit.talkOpen(state, near);
+  // hud():    items.push(...kit.talkHud(state))
+  // A SHOP is the same loop with priced options passed to talkOpen.
+  talkOpen(state: any, npc: Talker, options?: string[]): void;
+  talkStep(state: any, input: Input, advanceKey?: string): null | { npc: Talker; pick: number };
+  talkHud(state: any): HudItem[];
+  // ── quests: milestone progression WITHOUT ending the game. Completing a quest notifies and play
+  // continues — reserve kit.win/lose for the spec's DEFINITE ending. Quests live in state.quests.
+  quest: {
+    add(state: any, q: { id: string; title: string; reward?: number }): Quest | null;
+    // marks done ONCE + announces; returns the quest — apply its .reward yourself:
+    // const q = kit.quest.complete(state, "beast"); if (q) state.gold += q.reward;
+    complete(state: any, id: string): Quest | null;
+    active(state: any): Quest[];
+    isDone(state: any, id: string): boolean;
+    log(state: any, at?: HudAnchor): HudItem[];   // spread into hud(): ...kit.quest.log(this.state)
+  };
+  // transient on-screen toast ("Got 10 gold", "The gate opens") — drawn by the engine for a few
+  // seconds, never blocks play, never ends the game. NOT for dialogue (use talk) or endings (win/lose).
+  notify(msg: string, secs?: number): void;
   // movement controllers — the individual movers kit.drive dispatches to. Prefer kit.drive; reach for
   // these only for a bespoke rig. input → motion, dt-correct, no key latching. Call one per controlled
   // entity in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on
@@ -162,6 +202,7 @@ interface Config {
   pointerLock?: boolean;   // 3D: click captures the mouse for first-person look (fills input.lookDX/DY)
   // 3D control scheme — picks the mover (kit.drive) AND the camera (runtime) as one coherent pair.
   controls?: "orbital" | "follow" | "vehicle" | "fp";
+  fog?: false | { near?: number; far?: number };   // 3D distance fog (default on; fades the world edge)
 }
 
 // The object `createGame(kit)` returns. Give `state` a concrete type (declare it in types.ts and
@@ -183,5 +224,5 @@ interface GameObject {
 // `Kit.Config` (declaration merging with the `Kit` interface above). Both `Entity` and `Kit.Entity`
 // name the same type — supports the natural "extend the kit's entity with my fields" pattern.
 declare namespace Kit {
-  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, DrawApi, Camera, Camera3, Rng, V, GameObject, HudItem, HudAnchor };
+  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, DrawApi, Camera, Camera3, Rng, V, GameObject, HudItem, HudAnchor, Talker, Quest };
 }

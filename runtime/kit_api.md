@@ -140,9 +140,20 @@ kit.stepParticles(this.state.world, dt);
 ## Vectors  `kit.V`
 - `add,sub,scale(a,k),len(a),norm(a)` and `clamp(v,lo,hi)` (clamp a scalar).
 
+## Dialogue, quests & toasts  (depth without ending the game)
+- `kit.talkOpen(state, npc, options?)` / `kit.talkStep(state, input)` / `kit.talkHud(state)` — the
+  WHOLE talk loop as one primitive: npc = `{name, lines:[...], options?:[...]}`; talkStep (call every
+  frame) advances on E, returns `{npc, pick}` when a choice is made, closes on Escape; spread
+  `...kit.talkHud(state)` into hud(). A shop = talkOpen with priced options.
+- `kit.quest.add(state, {id,title,reward})` · `.complete(state,id)` (announces itself; returns the
+  quest — pay its reward yourself) · `.isDone(state,id)` · `...kit.quest.log(state)` in hud().
+- `kit.notify(msg)` — transient toast the engine draws for a few seconds ("Got 10 gold").
+
 ## Ending the game
 - `kit.win(msg)` / `kit.lose(msg)` — end play (idempotent; first call wins). `kit.over` is
-  `null` or `{won, msg}`. The runner stops calling update once over and shows `msg`.
+  `null` or `{won, msg}`. The runner stops calling update once over and shows `msg`. Call these ONLY
+  for the spec's definite ending — a quest/milestone completing is `kit.quest.complete`/`kit.notify`
+  and play continues.
 
 ## Draw api  `g`  (draw only)
 - `g.clear(color)` — fill the screen. (The runner already clears to `config.background`.)

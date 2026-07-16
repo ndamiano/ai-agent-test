@@ -80,7 +80,9 @@ def typecheck(run_dir) -> list:
     shutil.copyfile(_ENGINE_DTS, d / "engine.d.ts")
     (d / "tsconfig.json").write_text(json.dumps(_TSCONFIG), encoding="utf-8")
     try:
-        p = subprocess.run([str(_TSC), "--noEmit", "-p", str(d / "tsconfig.json")],
+        # --pretty false pins the parseable `file(line,col): error TS…` format — tsc otherwise
+        # auto-enables colored "pretty" output under some environments and the regex goes blind.
+        p = subprocess.run([str(_TSC), "--noEmit", "--pretty", "false", "-p", str(d / "tsconfig.json")],
                            cwd=d, capture_output=True, text=True, timeout=120)
     except Exception as e:
         return [(ENTRY_SRC, f"typecheck runner failed: {e}")]
@@ -350,12 +352,12 @@ def run_headless(run_dir, frames: int = 900) -> dict:
         return {"ok": False, "phase": "runner", "error": (p.stdout + p.stderr)[-800:]}
 
 
-def _run_violation_gate(run_dir, runner: str, hint: str) -> dict:
+def _run_violation_gate(run_dir, runner: str, hint: str, extra_args: list | None = None) -> dict:
     b = build_bundle(run_dir)
     if not b.get("ok"):
         return {"ok": False, "violations": [{"kind": "build", "detail": b.get("error", "bundle failed")}]}
     try:
-        p = _run([runner, str(bundle_path(run_dir))], source_maps=True)
+        p = _run([runner, str(bundle_path(run_dir))] + (extra_args or []), source_maps=True)
     except subprocess.TimeoutExpired:
         return {"ok": False, "violations": [{"kind": "timeout", "detail": hint}]}
     try:

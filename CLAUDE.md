@@ -63,11 +63,18 @@ dropped so the fix must ACT. Still ONE file out (bounded output), so fixing one 
 runtime/                 The primitive KIT (hand/frontier-authored offline, run local)
   engine.js              kit v1: rng, vec math, entities/spawn/cull, integrate(+3), aabb,
                          tilemap, walk/jump/physics, camera, input, run() (browser 2D),
-                         simulate() (headless sim), probe() (invariants). integrate3 + z for 3D.
-                         run() preloads the game's assets.json sprites; kit.sprite(id) → the loaded
-                         image or null (null headless ⇒ the game draws its shape).
+                         simulate() (headless sim), probe() (invariants + dead-mouse-in-non-fp).
+                         integrate3 + z for 3D; 3D steering (seek3/flee3/wander3/patrol3 +
+                         avoidRects building collision). DEPTH primitives: talkOpen/talkStep/talkHud
+                         (the whole dialogue/shop loop), kit.quest (add/complete/log — milestones
+                         that do NOT end the game; win/lose reserved for the spec's ending),
+                         kit.notify (engine-drawn toasts). run() preloads the game's assets.json
+                         sprites; kit.sprite(id) → the loaded image or null (null headless ⇒ the
+                         game draws its shape).
   engine3d.js            run3d — three.js renderer; the model writes NO three.js, only pure 3D
                          sim + shape tags (box/sphere/ground) + an optional camera(cam,kit) hook.
+                         Hemisphere light + distance fog (config.fog), procedural walk-bob on moving
+                         entities, {kind:"marker"} HUD items projected to screen waypoints, toasts.
                          Preloads assets.json meshes; an entity's `mesh` id → the loaded GLB
                          (recentered + scaled to its box), else the primitive shape. Fills the window.
   vendor/three.module.js vendored three.js (MIT, self-contained) + GLTFLoader.js (+BufferGeometryUtils)
@@ -117,8 +124,11 @@ src/
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
                          (TRELLIS). Both re-gate then write game/assets/ + assets.json. Additive: no
                          asset ⇒ still passes gates, renders as shapes. CLI `--assets <run_id>`.
-      worldgen_bridge.py the WORLD pre-seed: when the frozen spec sets `world`, run_build seeds a
-                         heightfield + world.ts (buildings/terrain) from src/worldgen before authoring.
+      worldgen_bridge.py the WORLD pre-seed: when the frozen spec sets `world`, run_build seeds
+                         world.ts from src/worldgen before authoring — the town (heightfield +
+                         buildings) inside a WILDERNESS RING (forest trees, 3 POIs w/ set dressing,
+                         roads out of the gate, named regions) so the game is a place, not a room.
+                         WORLD exports buildings/plaza/gate/grass/pois/regions/road + heightAt.
       run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
                          `python -m maestro.codegen.run [--yes] "<request>"` and
                          `--fix <run_id> "<what's wrong>"` (the human-note fix path)

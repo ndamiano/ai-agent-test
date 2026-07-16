@@ -32,6 +32,9 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 `color` is a CSS string and MUST include the leading `#` (`"#c33"`, `"#33cc55"`) — a bare hex like
 `"cc3333"` renders as the wrong color. `y` is the entity's CENTER. Entities with no `shape` are
 invisible (pure logic markers).
+**Box axes:** `w` spans x, `h` spans UP (height), `d` spans z. A creature described as "3m LONG" is
+`d:3` (or `w:3`), NOT `h:3` — `h:3` is a 3m-TALL monolith. A four-legged beast reads better as a low
+long body box (`w:1, h:1.2, d:2.6`) plus a small head box than as one slab.
 
 **The player IS a world entity.** The character you control must be a SHAPE-TAGGED entity pushed into
 `state.world`, and `state.player` must reference that SAME object — create it once with
@@ -39,22 +42,30 @@ invisible (pure logic markers).
 `state.player = { x, y, z, … }` kept OUTSIDE `state.world` is invisible AND the movement gate can't see
 it move (dead-controls). One object, in the world, referenced by `state.player`.
 
-**If a `world.ts` file is provided (a generated village), BUILD ON IT — do not author terrain/town
-yourself.** Import it and use its API; the town, streets, and terrain already exist:
+**If a `world.ts` file is provided (a generated world), BUILD ON IT — do not author terrain/town
+yourself.** Import it and use its API; the town, streets, terrain, forest, roads, and outlying sites
+already exist:
 ```ts
 import { WORLD, spawnWorld, heightAt } from "./world.ts";
-// init(kit): spawn the village, then put the player ON the ground at the plaza
+// init(kit): spawn the world, then put the player ON the ground at the plaza
 spawnWorld(this.state.world);
 const px = WORLD.plaza.x, pz = WORLD.plaza.z;
 this.state.player = kit.spawn(this.state.world, { shape:"box", x:px, y:heightAt(px,pz)+0.9, z:pz, w:0.8,h:1.7,d:0.8, color:"#28303a" });
-// place NPCs/items relative to WORLD.buildings (each has {x,z,w,d,label}) or on WORLD.grass ([x,z] cells)
+// place NPCs at buildings (each has {x,z,w,d,label}), creatures at WORLD.regions points,
+// objectives at WORLD.pois — use the WHOLE map, not just the plaza
 // update(dt,input,kit): after kit.drive, keep the player on the terrain EVERY frame:
 this.state.player.y = heightAt(this.state.player.x, this.state.player.z) + 0.9;
+kit.avoidRects(this.state.player, WORLD.buildings);   // slide around buildings, not through them
 ```
 `WORLD.buildings` (`[{id,label,x,z,w,d,h,color}]`, `label` = kind e.g. "market stall"), `WORLD.plaza
-{x,z}`, `WORLD.gate {x,z}`, `WORLD.grass [[x,z],…]`. `heightAt(x,z)` is the ground height — every entity's
+{x,z}`, `WORLD.gate {x,z}` (where the roads leave town), `WORLD.grass [[x,z],…]` (open town ground),
+`WORLD.pois` (`[{id,kind,label,x,z}]` — real outlying sites: a cave, ruins, a camp, far outside the
+village, already dressed with props by spawnWorld), `WORLD.regions` (`{forest:[[x,z],…],
+meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground height — every entity's
 `y` should be `heightAt(x,z) + halfHeight`. Set `controls` from the spec's scheme (`"orbital"` for a
 third-person town, `"fp"` for a first-person walk-through — see Control scheme below), no camera hook.
+Spread the GAME across the world: town = talk/trade/quests, wilderness = danger/objectives (put a
+goal at a POI so the player travels), and mark the current objective with a `marker` HUD item.
 
 **Two hard rules that shape how you build a 3D game — internalize these:**
 1. **A 3D game has NO `draw()`. The HUD is DATA you RETURN from `hud(kit)`.** The scene renders from
@@ -72,47 +83,49 @@ third-person town, `"fp"` for a first-person walk-through — see Control scheme
    Items: `{kind:"text", text, at?, color?, size?}` · `{kind:"bar", value, max, at?, color?, label?}` ·
    `{kind:"banner", text, color?}` (centered) · `{kind:"panel", text, title?, at?, color?}` (a titled
    text card — dialogue line / narration / quest log; multi-line via `\n`) · `{kind:"menu", options,
-   selected?, title?, at?, color?}` (a numbered choice list). `at` is an anchor: `"top-left"`, `"top"`,
-   `"top-right"`, `"left"`, `"center"`, `"right"`, `"bottom-left"`, `"bottom"`, `"bottom-right"` (default
-   `"top-left"`); same-anchor items stack. `hud()` reads state, never mutates. Omit it if the game needs no HUD.
+   selected?, title?, at?, color?}` (a numbered choice list) · `{kind:"marker", x, z, text?, color?}`
+   (a WORLD-anchored waypoint: the engine projects it to the screen with a distance and an edge arrow
+   when off-screen — put one on the current objective so the player can FIND it). `at` is an anchor:
+   `"top-left"`, `"top"`, `"top-right"`, `"left"`, `"center"`, `"right"`, `"bottom-left"`, `"bottom"`,
+   `"bottom-right"` (default `"top-left"`); same-anchor items stack. `hud()` reads state, never
+   mutates. Omit it if the game needs no HUD.
 
-   **Conversation, quests, shops, upgrades — build them from `panel` + `menu` (this is how a game gets
-   DEPTH).** The engine only DRAWS these; the SIM owns every bit of state and choice (sim/render law).
-   The pattern: when the player is near an NPC and presses an interact key, open a talk state; render it;
-   read a number key to pick a choice; branch. NEVER `console.log` dialogue (invisible) or cram a
-   conversation into a `banner`.
-   You MUST wire the WHOLE loop — open, advance the lines, and ACT on the choice. A menu that only
-   renders (no `kit.menuPick` branch) is a dead menu: the player sees choices but can't pick them. When
-   `state.talk` is set, DON'T just `return` after an Escape check — read `kit.menuPick(input)` and branch.
+   **Conversation, quests, shops — the kit OWNS these loops (this is how a game gets DEPTH). Do NOT
+   hand-roll a talk state machine.** Three primitives, all on plain state (sim/render law intact):
    ```ts
-   // update(): open → advance → CHOOSE. The SIM drives it all, on plain state.
-   const t = this.state.talk;
-   if (t) {
-     const npc = t.npc, atChoice = t.line >= npc.lines.length - 1;   // last line shows the choices
-     if (!atChoice && input.pressed("e")) { t.line++; return; }      // advance dialogue
-     if (atChoice) {
-       const pick = kit.menuPick(input);                             // 0-based: which number key
-       if (pick === 0) { this.state.quests.push(makeQuest(npc)); this.state.talk = null; }   // Accept
-       else if (pick === 1) this.state.talk = null;                  // Decline / Leave
+   // update(): ONE call runs the whole dialogue — advance on E, choose with number keys, Escape closes.
+   const pick = kit.talkStep(this.state, input);        // null, or {npc, pick} when a choice was made
+   if (pick) {
+     if (pick.npc.role === "elder" && pick.pick === 0)   // "Accept the quest"
+       kit.quest.add(this.state, { id: "beast", title: "Slay the beast", reward: 50 });
+     if (pick.npc.role === "vendor" && pick.pick === 0 && this.state.gold >= 10) {
+       this.state.gold -= 10; this.state.hp = Math.min(100, this.state.hp + 40);
+       kit.notify("Bought a potion (+40 hp)");
      }
-     if (input.pressed("Escape")) this.state.talk = null;
-     return;                                                         // movement paused while talking
    }
-   const near = this.state.npcs.find(n => Math.hypot(n.x-p.x, n.z-p.z) < 3);
-   if (near && input.pressed("e")) this.state.talk = { npc: near, line: 0 };
-   // hud(): render the current talk state as a panel (the line) + a menu (the choices, only at the end)
-   hud() {
-     const t = this.state.talk; if (!t) return [/* normal hud */];
-     const items = [{ kind: "panel", title: t.npc.name, text: t.npc.lines[t.line], at: "bottom" }];
-     if (t.line >= t.npc.lines.length - 1)
-       items.push({ kind: "menu", options: ["Accept the quest", "Not now"], at: "center" });
-     return items;
+   if (this.state.talk) return;                          // movement paused while talking
+   const near = this.state.npcs.find(n => Math.hypot(n.x - p.x, n.z - p.z) < 3);
+   if (near && input.pressed("e"))
+     kit.talkOpen(this.state, near);                     // near = {name, lines:[...], options?:[...]}
+   // a SHOP is talkOpen with priced options: kit.talkOpen(this.state, vendor,
+   //   ["Health potion (10g)", "Sharper sword (25g)", "Leave"])
+   // hud(): spread the ready-made items in — the panel/menu render themselves:
+   hud(kit: Kit): Kit.HudItem[] {
+     return [
+       { kind: "text", text: `Gold: ${this.state.gold}`, at: "top-left" },
+       ...kit.quest.log(this.state),                     // the quest list panel (auto-hides when empty)
+       ...kit.talkHud(this.state),                       // the dialogue panel + choice menu while talking
+     ];
    }
    ```
-   A SHOP/UPGRADE is the same shape: a `menu` of `["Speed +1 (10 coins)", "Bag +1 (15 coins)", "Leave"]`,
-   and in update() `const pick = kit.menuPick(input)` → if `pick===0 && state.coins>=10` spend and bump the
-   stat. A QUEST LOG is a `panel` whose `text` is your active quests joined with `\n`. Real depth = these
-   small interactive loops (talk → choose → consequence), not more collectibles.
+   **Quests are how an open game progresses WITHOUT ending** — `kit.quest.add(state, {id, title,
+   reward})` on accept, `kit.quest.complete(state, id)` when its condition is met (it announces
+   itself; returns the quest — pay `q.reward` into your gold yourself), `kit.quest.isDone(state, id)`
+   to gate follow-ups. `kit.notify("Got 10 gold")` is a transient toast for any small accomplishment.
+   **Call `kit.win`/`kit.lose` ONLY for the spec's definite ending — they STOP the game.** Accepting a
+   quest, finishing a side task, buying a sword: `quest.complete`/`notify`, never `kit.win`. Real
+   depth = several NPCs with DIFFERENT lines/roles (a vendor who sells, an elder who quests, a smith
+   who upgrades), not more collectibles.
 2. **Only position + `ry` update live** for WORLD entities. Each frame the renderer re-reads an entity's x/y/z and `ry`
    only — NOT its size (w/h/d/r) or color (those bake when the entity first appears). To change how
    much health shows, ADD or REMOVE entities (splice pip boxes from `state.world`); to show a hit,
@@ -142,15 +155,27 @@ fixed 3/4 view.
 - Randomness ONLY via `kit.rng` — `kit.rng.range(lo,hi)`, `kit.rng.int(lo,hi)`, `kit.rng.pick(arr)`,
   `kit.rng.chance(p)`. NEVER `Math.random()` (it breaks the deterministic headless gate).
 
+## NPC / creature steering (3D — do NOT hand-roll dx/dz chase math or reuse the 2D seek/wander,
+they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the entity to its travel:
+- `kit.seek3(e, target, speed, dt)` — walk straight at target's `(x,z)`; returns distance left.
+  A wolf: `if (kit.seek3(wolf, player, 4, dt) < 1.5) bite();`
+- `kit.flee3(e, threat, speed, dt)` — run directly away.
+- `kit.wander3(e, speed, dt, kit.rng)` — amble around, slowly turning (a villager mooching about).
+  Leash it home: `if (Math.hypot(v.x-v.homeX, v.z-v.homeZ) > 6) kit.seek3(v, {x:v.homeX, z:v.homeZ}, 2, dt); else kit.wander3(v, 1.2, dt, kit.rng);`
+- `kit.patrol3(e, points, speed, dt)` — walk a looping route of `{x,z}` (or `[x,z]`) points (a guard).
+- After ANY steering (and after `kit.drive` on the player): keep it on the terrain —
+  `e.y = heightAt(e.x, e.z) + halfHeight` — and `kit.avoidRects(e, WORLD.buildings)` so walkers
+  slide around buildings instead of through them.
+
 ## Effects, collision & bounds  (3D-specific — READ THIS, the 2D kit misleads here)
 - **NO particles in 3D.** `kit.burst` / `kit.stepParticles` are 2D-only — they spawn shape-less x/y
   particles the 3D renderer can't draw, and a wrong arg count spawns millions and OOMs. For a 3D
   "pop"/"poof", spawn a few short-lived `sphere` entities yourself with an upward `vy`, `integrate3`
   them, and `kit.cull` when a `life` counter expires — or just skip the effect. Do NOT call `kit.burst`.
-- **There is NO 3D solid-collision primitive.** Do NOT hand-roll an AABB loop against the world — a
-  town's road/ground slabs are huge boxes the player overlaps every frame, which pins the player in
-  place (the #1 broken-3D-movement bug). Two correct options: (a) leave the town OPEN (drive freely
-  past buildings — fine for an explore/collect game), or (b) keep the player inside the map with
+- **Solid collision = `kit.avoidRects`, nothing else.** Do NOT hand-roll an AABB loop against the
+  world — a town's road/ground slabs are huge boxes the player overlaps every frame, which pins the
+  player in place (the #1 broken-3D-movement bug). For buildings/obstacles call
+  `kit.avoidRects(e, WORLD.buildings)` AFTER moving; to keep the player inside the map clamp with
   `player.x = kit.V.clamp(player.x, -HALF, HALF)` (same for z). Collect/trigger on DISTANCE only:
   `if (Math.hypot(px-e.x, py-e.y, pz-e.z) < R) { ...collect... }`.
 - **Animate decoration/pickups by MUTATING position** (allowed live; color/size bake). A floating
@@ -176,7 +201,13 @@ impossible).
 **The choice comes from the spec's `control.scheme` — NOT a default. Map it:**
 `first-person-3d`/first-person/walking-sim/FPS → **`"fp"`** · `orbital-3d`/third-person hero/RPG/platformer
 → **`"orbital"`** · `vehicle-3d`/ship/car → **`"vehicle"`** · top-down → **`"follow"`**. If the spec says
-first-person, `controls` MUST be `"fp"` — orbital is a THIRD-person camera and is wrong for it. Pick the row:
+first-person, `controls` MUST be `"fp"` — orbital is a THIRD-person camera and is wrong for it.
+
+**Outside `"fp"` there is NO mouse input.** In orbital/follow/vehicle the mouse is the camera
+(drag = orbit); `input.pointer` is never set and there is no `"mouse0"`/`"click"` key. If the spec
+says "click to attack/shoot/use", bind that action to a KEYBOARD key instead — `" "` (space) or
+`"f"`, read with `input.pressed` — and show the key in the HUD. A mouse-bound action in these
+schemes can NEVER fire (the game becomes unwinnable) and the probe gate rejects it. Pick the row:
 
 | `config.controls` | Feel | What you get |
 |-------------------|------|--------------|
@@ -241,7 +272,10 @@ camera(cam, kit) {                                          // chase-cam behind 
 
 ## Input  (same as 2D)
 `input.down(key)`, `input.pressed(key)`; keys are lowercase chars or `"ArrowUp"`…`"ArrowRight"`, `" "`.
+There is NO `"mouse0"`/`"click"` key, and `input.pointer` only works under `controls:"fp"` — every
+action in the other schemes is a keyboard key.
 
 ## Law
 `update` mutates state and never renders; the runtime handles all drawing. Keep the sim pure so it
-runs headless. Randomness only via `kit.rng`.
+runs headless. Randomness only via `kit.rng`. `kit.win`/`kit.lose` END the game — milestones along
+the way are `kit.quest.complete` / `kit.notify`, which keep it running.

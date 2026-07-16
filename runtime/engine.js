@@ -169,6 +169,52 @@ export function wander(e, speed, rng, turn = 3) {        // drift, turning by up
   e.vx = Math.cos(e._heading) * speed; e.vy = Math.sin(e._heading) * speed;
 }
 
+// ── 3D steering (NPCs on the ground plane: x/z move, y untouched — set it from the terrain) ──
+// All of these APPLY dt themselves (no integrate3 needed) and set e.ry to face travel (a mesh at
+// rotation.y=ry points to (-sin ry, -cos ry)). After steering, keep the NPC on the ground:
+// `e.y = heightAt(e.x, e.z) + halfHeight`.
+export function seek3(e, target, speed, dt) {      // walk straight at target's (x,z); returns distance left
+  const dx = target.x - e.x, dz = target.z - e.z, d = Math.hypot(dx, dz);
+  if (d > 1e-6) {
+    const s = Math.min(speed * dt, d);
+    e.x += dx / d * s; e.z += dz / d * s;
+    e.ry = Math.atan2(-dx, -dz);
+  }
+  return d;
+}
+export function flee3(e, threat, speed, dt) {      // walk directly away from threat's (x,z)
+  const dx = e.x - threat.x, dz = e.z - threat.z, d = Math.hypot(dx, dz) || 1;
+  e.x += dx / d * speed * dt; e.z += dz / d * speed * dt;
+  e.ry = Math.atan2(-dx / d, -dz / d);
+}
+export function wander3(e, speed, dt, rng, turn = 2) {   // amble: drift on x/z, slowly turning
+  e._heading = (e._heading ?? (rng ? rng.next() * 6.283 : 0)) + (rng ? (rng.next() - 0.5) * turn * dt * 6 : 0);
+  const dx = Math.sin(e._heading), dz = Math.cos(e._heading);
+  e.x += dx * speed * dt; e.z += dz * speed * dt;
+  e.ry = Math.atan2(-dx, -dz);
+}
+export function patrol3(e, points, speed, dt, arriveAt = 0.8) {  // walk a route of {x,z} (or [x,z]) points, looping
+  if (!points || !points.length) return;
+  e._wp = e._wp ?? 0;
+  const p = points[e._wp % points.length];
+  if (seek3(e, { x: p.x ?? p[0], z: p.z ?? p[1] }, speed, dt) < arriveAt)
+    e._wp = (e._wp + 1) % points.length;
+}
+// Push an entity out of centered footprint rects [{x,z,w,d}] (e.g. WORLD.buildings) — call AFTER
+// moving it (player or NPC) so walkers slide around buildings instead of through them. pad stays
+// SMALL: a town's streets are ~2 units wide, and pad + half the walker's width comes out of every
+// gap on both sides — a fat pad seals the alleys and wedges walkers at spawn.
+export function avoidRects(e, rects, pad = 0.1) {
+  for (const r of rects) {
+    const hw = r.w / 2 + pad + (e.w || 0) / 2, hd = r.d / 2 + pad + (e.d || 0) / 2;
+    const dx = e.x - r.x, dz = e.z - r.z;
+    if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
+      const px = hw - Math.abs(dx), pz = hd - Math.abs(dz);
+      if (px < pz) e.x = r.x + (dx < 0 ? -hw : hw); else e.z = r.z + (dz < 0 ? -hd : hd);
+    }
+  }
+}
+
 // ── grid pathfinding (A* on a cell grid — tower-defense creeps, chase-with-walls, tactics) ──
 // passable(cx,cy) -> bool. Returns the cell path from `start` to `goal` (each {x,y} in CELL coords),
 // EXCLUDING start, INCLUDING goal — or [] if unreachable. 4-directional unless diagonal:true. Small
@@ -428,6 +474,85 @@ export function menuPick(input) {
   return -1;
 }
 
+// ── dialogue / shop (the WHOLE talk loop as one primitive — open, advance, choose, close) ──────
+// State lives in `state.talk` (plain data, sim-pure). The speaker is any object with
+// { name, lines: string[] } and optionally { options: string[] } (the choices offered after the
+// last line). Wire it with THREE calls and nothing else:
+//   update():  const pick = talkStep(state, input);            // advance/choose/close — every frame
+//              if (pick) { /* act on pick.pick (0-based option index) for pick.npc */ }
+//              if (state.talk) return;                          // movement paused while talking
+//              if (nearNpc && input.pressed("e")) talkOpen(state, nearNpc);
+//   hud():     items.push(...talkHud(state));
+// A SHOP is the same loop with priced options: talkOpen(state, vendor,
+//   ["Health potion (10g)", "Sharper sword (25g)", "Leave"]) and branch on pick.pick.
+export function talkOpen(state, npc, options) {
+  state.talk = { npc, line: 0, options: options ?? npc.options ?? null };
+}
+export function talkStep(state, input, advanceKey = "e") {
+  const t = state.talk;
+  if (!t) return null;
+  if (input.pressed("Escape")) { state.talk = null; return null; }
+  const lines = t.npc.lines || [""];
+  if (t.line < lines.length - 1) {                 // mid-dialogue: advance
+    if (input.pressed(advanceKey)) t.line++;
+    return null;
+  }
+  const opts = t.options;                          // last line: choose (or close)
+  if (opts && opts.length) {
+    const pick = menuPick(input);
+    if (pick >= 0 && pick < opts.length) { state.talk = null; return { npc: t.npc, pick }; }
+    return null;
+  }
+  if (input.pressed(advanceKey)) state.talk = null;
+  return null;
+}
+export function talkHud(state) {
+  const t = state.talk;
+  if (!t) return [];
+  const lines = t.npc.lines || [""], last = t.line >= lines.length - 1;
+  const items = [{ kind: "panel", title: t.npc.name || "…", at: "bottom",
+                   text: String(lines[Math.min(t.line, lines.length - 1)]) }];
+  if (last && t.options && t.options.length)
+    items.push({ kind: "menu", options: t.options, at: "center" });
+  return items;
+}
+
+// ── quests (milestone progression WITHOUT ending the game — the Skyrim shape, not the soccer one) ──
+// Quests are plain data in `state.quests`; completing one notifies and keeps playing. Reserve
+// kit.win/kit.lose for the spec's DEFINITE ending (they stop the game); everything else that feels
+// like an accomplishment is quest.complete / notify.
+function makeQuestApi(notify) {
+  const list = (state) => state.quests || (state.quests = []);
+  return {
+    // add(state, {id, title, reward?}) — idempotent by id; announces "New quest".
+    add(state, q) {
+      const L = list(state);
+      if (L.some((x) => x.id === q.id)) return null;
+      const nq = { done: false, reward: 0, ...q };
+      L.push(nq);
+      notify(`New quest: ${nq.title}`);
+      return nq;
+    },
+    // complete(state, id) — marks done ONCE and announces; returns the quest (apply its .reward
+    // yourself: `const q = kit.quest.complete(state,"beast"); if (q) state.gold += q.reward;`).
+    complete(state, id) {
+      const q = list(state).find((x) => x.id === id && !x.done);
+      if (!q) return null;
+      q.done = true;
+      notify(`Quest complete: ${q.title}` + (q.reward ? ` (+${q.reward})` : ""));
+      return q;
+    },
+    active: (state) => list(state).filter((q) => !q.done),
+    isDone: (state, id) => list(state).some((q) => q.id === id && q.done),
+    // log(state) → HUD items for the quest list; spread into hud(): `...kit.quest.log(this.state)`.
+    log(state, at = "top-right") {
+      const L = list(state);
+      return L.length ? [{ kind: "panel", title: "Quests", at,
+                           text: L.map((q) => `${q.done ? "✓" : "•"} ${q.title}`).join("\n") }] : [];
+    },
+  };
+}
+
 // ── draw api (canvas2d) — the render surface (2D games: the screen; 3D games: the HUD overlay) ──
 export function makeDraw(ctx) {
   return {
@@ -472,8 +597,11 @@ export function validateHud(items) {
     } else if (it.kind === "menu") {
       if (!Array.isArray(it.options) || it.options.length === 0)
         return "hud menu item needs a non-empty 'options' string array";
+    } else if (it.kind === "marker") {
+      if (typeof it.x !== "number" || typeof it.z !== "number")
+        return "hud marker item needs numeric world 'x' and 'z'";
     } else {
-      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner | panel | menu`;
+      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner | panel | menu | marker`;
     }
     if (it.at != null && !HUD_ANCHORS.has(it.at))
       return `unknown hud anchor ${JSON.stringify(it.at)} — use e.g. "top-left", "top", "bottom-right"`;
@@ -530,6 +658,7 @@ export function renderHud(draw, items, W, H) {
       : { x: W / 2, align: "center" };
   for (const it of items) {
     if (!it || typeof it !== "object") continue;
+    if (it.kind === "marker") continue;   // world-anchored; run3d projects it to a screen label first
     if (it.kind === "banner") {
       draw.text(String(it.text), W / 2, H / 2, it.color || "#fff", 32, "center");
       continue;
@@ -558,19 +687,29 @@ export function renderHud(draw, items, W, H) {
 export function makeKit(config, rng) {
   let over = null; // null | {won:bool, msg}
   let sprites = {}; // id -> loaded Image; empty headless (kit.sprite always null -> game falls to shapes)
+  let toasts = []; // transient notify() messages; stepped+drawn by the frame loop, inert headless
+  const notify = (msg, secs = 3) => {
+    toasts.push({ msg: String(msg), ttl: secs });
+    if (toasts.length > 4) toasts.shift();
+  };
   return {
     config,
     rng,
     V,
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
+    seek3, flee3, wander3, patrol3, avoidRects,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
     drive: (e, input, dt, speed) => driveScheme(config.controls, e, input, dt, speed),
-    menuPick,
+    menuPick, talkOpen, talkStep, talkHud,
+    quest: makeQuestApi(notify),
+    notify,
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },
+    _stepToasts(dt) { for (const t of toasts) t.ttl -= dt; toasts = toasts.filter((t) => t.ttl > 0); },
+    _toastItems: () => toasts.map((t) => ({ kind: "text", text: t.msg, at: "top", color: "#ffe9b0", size: 18 })),
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
     lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },
     get over() { return over; },
@@ -656,9 +795,11 @@ export async function run(game, canvas, assetBase) {
     last = now;
     if (!kit.over) g.update(dt, input, kit);
     input._endFrame();
+    kit._stepToasts(dt);
     draw.clear(config.background);
     if (g.draw) g.draw(draw, kit);
-    if (g.hud) renderHud(draw, g.hud(kit), config.width, config.height);
+    const hudItems = [...(g.hud ? g.hud(kit) || [] : []), ...kit._toastItems()];
+    if (hudItems.length) renderHud(draw, hudItems, config.width, config.height);
     if (kit.over) draw.text(kit.over.msg, config.width / 2, config.height / 2, "#fff", 32, "center");
     requestAnimationFrame(frame);
   }
@@ -733,8 +874,26 @@ function runSnapshot(gameFactory, { frames, dt, seed, script }) {
   }
   return g;
 }
-export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1 } = {}) {
+export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = "" } = {}) {
   const violations = [];
+
+  // CODE that reads the mouse outside the "fp" scheme: in a 3D orbital/follow/vehicle game the mouse
+  // is the camera (input.pointer is never fed; there is no "mouse0" key), so a mouse-gated action can
+  // never fire — the game passes every gate yet is unwinnable. Deterministic, so check it first.
+  if (src) {
+    const mouseRead = src.match(/input\s*\.\s*pointer|["'`]mouse\d?["'`]/);
+    if (mouseRead) {
+      const cfg = realize(gameFactory, { gravity: 0 }, seed).config;
+      if (cfg.mode === "3d" && cfg.controls !== "fp") {
+        violations.push({ kind: "dead_mouse_control",
+          detail: `the code gates an action on the mouse (${JSON.stringify(mouseRead[0])}), but the `
+            + `"${cfg.controls || "default"}" control scheme has no mouse input (the mouse orbits the `
+            + `camera; input.pointer is never set outside "fp", and "mouse0" is not a key). That `
+            + `branch can NEVER run. Bind the action to a KEYBOARD key instead — e.g. attack on `
+            + `" " (space) or "f", checked with input.pressed(key) — and show the key in the HUD.` });
+      }
+    }
+  }
   const DIRS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " "];
   const MIN_MOVE = 4; // px; below this over the whole window a "control" is effectively dead
   const snap = (script) => runSnapshot(gameFactory, { frames, dt, seed, script });

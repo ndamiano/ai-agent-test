@@ -179,9 +179,16 @@ export async function run3d(game, canvas, assetBase) {
   addEventListener("resize", fit);
   fit();
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  // Hemisphere (sky/ground tint) reads deeper than flat ambient; distance fog fades the world edge
+  // into the sky color so the horizon never shows as a floating table edge. config.fog: false to
+  // disable, or {near, far} to tune.
+  scene.add(new THREE.HemisphereLight(0xe8f1ff, 0x5f6a50, 0.6));
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
   sun.position.set(50, 120, 60); scene.add(sun);
+  if (config.fog !== false) {
+    const f = config.fog || {};
+    scene.fog = new THREE.Fog(config.background, f.near ?? 70, f.far ?? 280);
+  }
 
   const input = makeInput();
   const cam = { x: 0, y: 30, z: 60, tx: 0, ty: 0, tz: 0 };
@@ -228,20 +235,36 @@ export async function run3d(game, canvas, assetBase) {
   const assets = await loadMeshes(assetBase);   // {id: GLB scene}; {} when unskinned → primitives
   if (g.init) g.init(kit);
 
-  const nodes = new Map();   // entity -> THREE.Object3D
-  function sync() {
+  const nodes = new Map();   // entity -> {m: THREE.Object3D, px, pz, phase} (last pos → walk bob)
+  function sync(dt) {
     const live = new Set();
     for (const e of worldOf(g)) {
       if (!e.shape) continue;
       live.add(e);
-      let m = nodes.get(e);
-      if (!m) { m = buildMesh(e, assets, assetBase); scene.add(m); nodes.set(e, m); }
+      let rec = nodes.get(e);
+      if (!rec) {
+        rec = { m: buildMesh(e, assets, assetBase), px: e.x || 0, pz: e.z || 0, phase: Math.random() * 6 };
+        scene.add(rec.m); nodes.set(e, rec);
+      }
       if (e.shape !== "ground") {
-        m.position.set(e.x || 0, e.y || 0, e.z || 0);
-        if (e.ry != null) m.rotation.y = e.ry;
+        const x = e.x || 0, y = e.y || 0, z = e.z || 0;
+        // procedural locomotion: anything that WALKED this frame (moderate horizontal speed) bobs at
+        // its stride rate — sliding statues read dead. Static things (buildings, props) never move,
+        // so they never bob; a teleport (speed spike) doesn't either.
+        const sp = dt > 0 ? Math.hypot(x - rec.px, z - rec.pz) / dt : 0;
+        const walking = sp > 0.6 && sp < 40;
+        let bob = 0;
+        if (walking) {
+          rec.phase += sp * dt * 2.4;
+          bob = Math.abs(Math.sin(rec.phase)) * Math.min(0.1, 0.05 * (e.h || e.r || 1));
+          rec.m.rotation.z = Math.sin(rec.phase) * 0.04;
+        } else if (rec.m.rotation.z) rec.m.rotation.z *= 0.8;
+        rec.m.position.set(x, y + bob, z);
+        if (e.ry != null) rec.m.rotation.y = e.ry;
+        rec.px = x; rec.pz = z;
       }
     }
-    for (const [e, m] of nodes) if (!live.has(e)) { scene.remove(m); nodes.delete(e); }
+    for (const [e, rec] of nodes) if (!live.has(e)) { scene.remove(rec.m); nodes.delete(e); }
   }
 
   const banner = document.createElement("div");
@@ -260,7 +283,8 @@ export async function run3d(game, canvas, assetBase) {
       else if (g.state && g.state.player) chaseCam(cam, g.state.player);  // sane default follow
     }
     input._endFrame();
-    sync();
+    kit._stepToasts(dt);
+    sync(dt);
     // orbit the eye around the look-at target by the user's drag (yaw + height), then look at it
     const ox = cam.x - cam.tx, oz = cam.z - cam.tz;
     const rad = Math.hypot(ox, oz) || 1;
@@ -273,7 +297,28 @@ export async function run3d(game, canvas, assetBase) {
     renderer.render(scene, camera);
     // HUD overlay: transparent 2D canvas over the scene. The game RETURNS items from hud(kit); the
     // engine draws them. The game never touches this canvas, so it can't clear/occlude the 3D scene.
-    if (g.hud) { placeHud(); hctx.clearRect(0, 0, hud.width, hud.height); renderHud(hudDraw, g.hud(kit), config.width, config.height); }
+    // `marker` items are world-anchored — project each to a screen label (clamped to the screen edge
+    // with a direction hint when the target is off-screen/behind), so quests have wayfinding.
+    const items = [...(g.hud ? g.hud(kit) || [] : []), ...kit._toastItems()];
+    placeHud(); hctx.clearRect(0, 0, hud.width, hud.height);   // always clear — items come and go
+    if (items.length) {
+      const W = config.width, H = config.height, pad = 46;
+      const flat = [];
+      for (const it of items) {
+        if (!it || it.kind !== "marker") { flat.push(it); continue; }
+        const p = new THREE.Vector3(it.x, it.y ?? (cam.ty + 2), it.z).project(camera);
+        const behind = p.z > 1;
+        let sx = (p.x * 0.5 + 0.5) * W, sy = (-p.y * 0.5 + 0.5) * H;
+        if (behind) { sx = W - sx; sy = H - pad; }
+        const off = sx < pad || sx > W - pad || sy < pad || sy > H - pad;
+        sx = Math.max(pad, Math.min(W - pad, sx)); sy = Math.max(pad, Math.min(H - pad, sy));
+        const dist = g.state && g.state.player
+          ? Math.hypot(it.x - g.state.player.x, it.z - g.state.player.z) : 0;
+        const tag = `${off || behind ? "➤ " : "▼ "}${it.text || ""}${dist > 3 ? ` ${Math.round(dist)}m` : ""}`;
+        hudDraw.text(tag, sx, sy, it.color || "#ffd27a", 15, "center");
+      }
+      renderHud(hudDraw, flat, W, H);
+    }
     if (kit.over) { banner.textContent = kit.over.msg; banner.style.display = "grid"; }
     requestAnimationFrame(frame);
   }

@@ -11,6 +11,7 @@ import worldgen
 from worldgen import noise, towns
 
 CELL = 2.0  # world units per town cell
+RING = 22   # wilderness cells beyond the town on every side — the "leave the village" space
 
 THEME_COLOR = {
     "cobbled plaza": "#b7b0a0", "worn path": "#977c50", "stone well": "#9aa0a8",
@@ -48,7 +49,8 @@ def build(recipe, out_dir: Path):
     sett = next(s for s in world["sites"] if s["type"] == "settlement")
     town = towns.build_town(sett, [], world, seed)
     rows, legend = town["tiles"]["rows"], town["tiles"]["legend"]
-    ww, wh = town["ww"], town["wh"]
+    tw, th = town["ww"], town["wh"]              # the town grid
+    ww, wh = tw + 2 * RING, th + 2 * RING        # full grid: town centered in a wilderness ring
     ox, oz = ww * CELL / 2, wh * CELL / 2
 
     def wx(cx):
@@ -57,35 +59,48 @@ def build(recipe, out_dir: Path):
     def wz(cy):
         return round((cy + 0.5) * CELL - oz, 3)
 
+    def in_town(fx, fy):
+        return RING <= fx < RING + tw and RING <= fy < RING + th
+
     el = world["elevation"]
     EH, EW = len(el), len(el[0])
     cx0, cy0 = sett["x"], sett["y"]
 
-    def raw_height(cx, cy):
-        u, v = cx / max(1, ww - 1), cy / max(1, wh - 1)
+    def raw_height(fx, fy):
+        cx, cy = fx - RING, fy - RING                          # town-relative; the ring extrapolates
+        u, v = cx / max(1, tw - 1), cy / max(1, th - 1)
         mx = min(EW - 1, max(0, int(cx0 - 4 + u * 8)))
         my = min(EH - 1, max(0, int(cy0 - 3 + v * 6)))
         macro = (el[my][mx] - 0.5) * 4.0                      # gentle rolling base (±2 units)
-        detail = noise.fbm(cx / 5.0, cy / 5.0, seed + 4242, octaves=4) * 0.6  # organic wobble
-        return macro + detail
+        detail = noise.fbm(fx / 5.0, fy / 5.0, seed + 4242, octaves=4) * 0.6  # organic wobble
+        # outside the walls the ground rolls harder, and the far rim lifts into hills so the world
+        # reads as a valley you're inside — never a floating table edge
+        dx = max(0, RING - fx, fx - (RING + tw - 1))
+        dy = max(0, RING - fy, fy - (RING + th - 1))
+        t = min(1.0, max(dx, dy) / RING)
+        rough = noise.fbm(fx / 9.0, fy / 9.0, seed + 77, octaves=3) * 1.6 * t
+        rim = (t ** 2.5) * 6.0
+        return macro + detail + rough + rim
 
     building_cells = {}
     for fid, f in town["footprints"].items():
         for yy in range(f["y"], f["y"] + f["h"]):
             for xx in range(f["x"], f["x"] + f["w"]):
-                building_cells[(xx, yy)] = f.get("label", "town building")
+                building_cells[(xx + RING, yy + RING)] = f.get("label", "town building")
 
-    # height + color grids + a material grid, indexed [cy][cx]. The material grid drives the baked
-    # texture (grass/path/stone); buildings sit ON GRASS (no dirt plot — stark plots looked awful).
+    # height + color grids + a material grid, indexed [cy][cx] over the FULL grid. The material grid
+    # drives the baked texture (grass/path/stone); buildings sit ON GRASS (no dirt plot — stark plots
+    # looked awful). Ring cells default to grass; forest/roads/POIs carve them below.
     height = [[0.0] * ww for _ in range(wh)]
     color = [["#5f9a4c"] * ww for _ in range(wh)]
     material = [["grass"] * ww for _ in range(wh)]
     grass = []
     for cy in range(wh):
         for cx in range(ww):
-            ch = rows[cy][cx]
-            theme, role = legend[ch]["theme"], legend[ch]["role"]
             height[cy][cx] = round(raw_height(cx, cy), 3)
+            if not in_town(cx, cy):
+                continue
+            theme = legend[rows[cy - RING][cx - RING]]["theme"]
             color[cy][cx] = THEME_COLOR.get(theme, "#5f9a4c")   # flat fallback (used only if the texture is absent)
             mat = "path" if theme == "worn path" else "stone" if theme == "cobbled plaza" else "grass"
             material[cy][cx] = mat
@@ -102,31 +117,153 @@ def build(recipe, out_dir: Path):
         h01, h11 = height[z0 + 1][x0], height[z0 + 1][x0 + 1]
         return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
 
+    # ── the WILDERNESS: forest, POIs, and roads in the ring — the reason the world isn't one room ──
+    margin = 3
+    def near_town(fx, fy):
+        return RING - margin <= fx < RING + tw + margin and RING - margin <= fy < RING + th + margin
+
+    forest_cells = [(fx, fy) for fy in range(1, wh - 1) for fx in range(1, ww - 1)
+                    if not near_town(fx, fy)
+                    and noise.fbm(fx / 6.0, fy / 6.0, seed + 909, octaves=3) > 0.22]
+    for fx, fy in forest_cells:
+        color[fy][fx] = THEME_COLOR["forest"]
+
+    # POIs: destinations OUT THERE (a cave, a ruin, a camp) fanned around the town, roughly opposite
+    # and beside the gate heading, deep in the ring — quests get somewhere to point.
+    g = town["gates"][0]["cell"]
+    gx, gy = g[0] + RING, g[1] + RING
+    cxc, cyc = ww / 2.0, wh / 2.0
+    ga = math.atan2(gy - cyc, gx - cxc)
+    prng = random.Random(seed ^ 0xB01)
+    pois, poi_cells = [], []
+    for i, (kind, label) in enumerate([("cave", "cave mouth"), ("ruins", "old ruin"), ("camp", "abandoned camp")]):
+        a = ga + (0.0, -1.9, 2.1)[i] + prng.uniform(-0.25, 0.25)
+        spot = None
+        for da in (0.0, 0.35, -0.35, 0.7, -0.7):    # rotate off obstructions until a ring spot fits
+            for r_frac in (0.88, 0.76, 0.64):
+                r = (min(ww, wh) / 2.0 - 4) * r_frac
+                fx = int(cxc + math.cos(a + da) * r)
+                fy = int(cyc + math.sin(a + da) * r * 0.85)
+                if 3 <= fx < ww - 3 and 3 <= fy < wh - 3 and not near_town(fx, fy):
+                    spot = (fx, fy)
+                    break
+            if spot:
+                break
+        fx, fy = spot or (3, 3)                      # corner fallback — always in the ring
+        poi_cells.append((fx, fy))
+        pois.append({"id": kind, "kind": kind, "label": label, "x": wx(fx), "z": wz(fy)})
+
+    # Roads: worn paths from the gate out to the first two POIs, and onward past the first to the
+    # map edge (the world implies it continues). Painted into the material grid like town streets.
+    road = []
+    def carve_road(x0, y0, x1, y1):
+        steps = max(2, int(max(abs(x1 - x0), abs(y1 - y0)) * 2))
+        for s in range(steps + 1):
+            t = s / steps
+            fx = int(round(x0 + (x1 - x0) * t + noise.fbm(t * 7.0, 0.3, seed + 55, octaves=2) * 2.2))
+            fy = int(round(y0 + (y1 - y0) * t + noise.fbm(0.7, t * 7.0, seed + 56, octaves=2) * 2.2))
+            for dx, dy in ((0, 0), (1, 0), (0, 1)):
+                xx, yy = fx + dx, fy + dy
+                if 0 <= xx < ww and 0 <= yy < wh and not in_town(xx, yy) and (xx, yy) not in building_cells:
+                    material[yy][xx] = "path"
+                    color[yy][xx] = THEME_COLOR["worn path"]
+            if s % 4 == 0:
+                road.append([wx(fx), wz(fy)])
+
+    carve_road(gx, gy, *poi_cells[0])
+    carve_road(gx, gy, *poi_cells[1])
+    ex = max(2, min(ww - 3, int(cxc + math.cos(ga) * ww)))   # past POI 0 toward the rim
+    ey = max(2, min(wh - 3, int(cyc + math.sin(ga) * wh)))
+    carve_road(*poi_cells[0], ex, ey)
+
+    # Trees: fill the forest cells (skip roads and POI clearings). Exported as [x, z, scale] — the
+    # ~4KB form; spawnWorld builds each as trunk box + foliage sphere on the terrain.
+    trng = random.Random(seed ^ 0x7EE5)
+    trees = []
+    for fx, fy in forest_cells:
+        if material[fy][fx] != "grass":
+            continue
+        if any(abs(fx - px) < 3 and abs(fy - py) < 3 for px, py in poi_cells):
+            continue
+        if trng.random() > 0.5:
+            continue
+        jx = wx(fx) + trng.uniform(-0.8, 0.8)
+        jz = wz(fy) + trng.uniform(-0.8, 0.8)
+        trees.append([round(jx, 2), round(jz, 2), round(trng.uniform(0.8, 1.5), 2)])
+    if len(trees) > 160:
+        trees = trees[:: len(trees) // 160 + 1]
+
+    # Regions: named spawn areas for gameplay ("the beast lairs in the forest") — sampled clear
+    # points, not exhaustive cell lists.
+    rrng = random.Random(seed ^ 0x4E64)
+    ring_grass = [(fx, fy) for fy in range(1, wh - 1) for fx in range(1, ww - 1)
+                  if not near_town(fx, fy) and material[fy][fx] == "grass"]
+    fset = set(forest_cells)
+    fpts = [c for c in ring_grass if c in fset]
+    mpts = [c for c in ring_grass if c not in fset]
+    regions = {"forest": [[wx(fx), wz(fy)] for fx, fy in rrng.sample(fpts, min(50, len(fpts)))],
+               "meadow": [[wx(fx), wz(fy)] for fx, fy in rrng.sample(mpts, min(50, len(mpts)))]}
+
+    # POI set dressing: a few primitives per site (tagged with a mesh id so the asset stage can skin
+    # them), heights pre-resolved onto the terrain.
+    def part(shape, x, z, lift, **kw):
+        return {"shape": shape, "x": round(x, 2), "z": round(z, 2),
+                "y": round(height_at(x, z) + lift, 2), **kw}
+    for p in pois:
+        x, z = p["x"], p["z"]
+        if p["kind"] == "cave":
+            p["parts"] = [
+                part("sphere", x - 1.7, z - 1.2, 0.8, r=2.3, color="#6d7076"),
+                part("sphere", x + 1.9, z - 1.5, 0.5, r=1.6, color="#7a7d84"),
+                part("box", x, z, 1.1, w=2.4, h=2.2, d=2.0, color="#15171c", mesh="cave_mouth", label="cave mouth"),
+            ]
+        elif p["kind"] == "ruins":
+            p["parts"] = [
+                part("box", x - 2.2, z, 0.9, w=0.7, h=1.8, d=4.2, color="#8a8177", mesh="ruin_wall", label="ruined wall"),
+                part("box", x + 2.3, z - 0.4, 0.6, w=0.7, h=1.2, d=3.4, color="#938a80", mesh="ruin_wall", label="ruined wall"),
+                part("box", x + 0.2, z - 2.4, 0.7, w=3.8, h=1.5, d=0.7, color="#857c72", mesh="ruin_wall", label="ruined wall"),
+                part("box", x - 0.4, z + 2.2, 0.4, w=2.6, h=0.8, d=0.7, color="#9a9187", mesh="ruin_wall", label="ruined wall"),
+            ]
+        else:   # camp
+            p["parts"] = [
+                part("box", x, z, 0.8, w=2.0, h=1.6, d=2.2, color="#b0703c", mesh="tent", label="tent"),
+                part("box", x + 2.1, z + 0.8, 0.25, w=1.6, h=0.5, d=0.5, color="#6c4a2a", label="log"),
+                part("sphere", x - 1.9, z + 1.4, 0.22, r=0.25, color="#ff7a2a", label="campfire"),
+                part("sphere", x - 2.3, z + 1.1, 0.15, r=0.22, color="#5b5e63"),
+                part("sphere", x - 1.5, z + 1.7, 0.15, r=0.22, color="#5b5e63"),
+            ]
+
     # Scatter FOLIAGE + PROPS across the open ground — worldgen places these like it places the well,
     # so the world comes populated and the ground reads as a living field, not a flat mat.
     srng = random.Random(seed ^ 0x5EED)
     grass_points = []                       # grass tufts (rendered as one instanced grassfield)
-    for gx, gz in grass:
+    for gx2, gz2 in grass:
         for _ in range(6):
-            jx = gx + srng.uniform(-CELL / 2, CELL / 2)
-            jz = gz + srng.uniform(-CELL / 2, CELL / 2)
+            jx = gx2 + srng.uniform(-CELL / 2, CELL / 2)
+            jz = gz2 + srng.uniform(-CELL / 2, CELL / 2)
+            grass_points.append([round(jx, 2), round(height_at(jx, jz), 3), round(jz, 2)])
+    for fx, fy in srng.sample(ring_grass, min(1300, len(ring_grass))):   # sparser tufts in the wild
+        for _ in range(2):
+            jx = wx(fx) + srng.uniform(-CELL / 2, CELL / 2)
+            jz = wz(fy) + srng.uniform(-CELL / 2, CELL / 2)
             grass_points.append([round(jx, 2), round(height_at(jx, jz), 3), round(jz, 2)])
     props = []                              # bushes + rocks (sparse, as sphere entities)
-    for i, (gx, gz) in enumerate(srng.sample(grass, min(34, len(grass)))):
-        y = height_at(gx, gz)
+    wild = [[wx(fx), wz(fy)] for fx, fy in rrng.sample(mpts, min(40, len(mpts)))]
+    for i, (gx2, gz2) in enumerate(srng.sample(grass, min(34, len(grass))) + wild):
+        y = height_at(gx2, gz2)
         if i % 3 == 0:
-            props.append({"x": round(gx, 2), "y": round(y + 0.18, 2), "z": round(gz, 2),
+            props.append({"x": round(gx2, 2), "y": round(y + 0.18, 2), "z": round(gz2, 2),
                           "r": round(srng.uniform(0.3, 0.55), 2), "color": "#70747a"})   # rock (mostly buried)
         else:
-            props.append({"x": round(gx, 2), "y": round(y + 0.45, 2), "z": round(gz, 2),
+            props.append({"x": round(gx2, 2), "y": round(y + 0.45, 2), "z": round(gz2, 2),
                           "r": round(srng.uniform(0.5, 0.9), 2),
                           "color": srng.choice(["#3f7a3c", "#356f34", "#4a8a44"])})     # bush
 
     buildings = []
     for fid, f in town["footprints"].items():
         label = f.get("label", "town building")
-        cxw = wx(f["x"] + f["w"] / 2 - 0.5)
-        czw = wz(f["y"] + f["h"] / 2 - 0.5)
+        cxw = wx(f["x"] + RING + f["w"] / 2 - 0.5)
+        czw = wz(f["y"] + RING + f["h"] / 2 - 0.5)
         buildings.append({
             "id": fid, "label": label, "mesh": label.replace(" ", "_"), "x": cxw, "z": czw,
             "w": round(f["w"] * CELL, 2), "d": round(f["h"] * CELL, 2),
@@ -135,21 +272,35 @@ def build(recipe, out_dir: Path):
             "color": LABEL_COLOR.get(label, "#a9824f"),
         })
 
-    plaza = {"x": wx(town["plaza"][0]), "z": wz(town["plaza"][1]),
-             "h": round(height_at(wx(town["plaza"][0]), wz(town["plaza"][1])), 3)}
-    g = town["gates"][0]["cell"]
-    gate = {"x": wx(g[0]), "z": wz(g[1])}
+    # The plaza point is the SPAWN — the well parcel sits at the town's center, so nudge to the
+    # nearest open cell (not a building footprint or its 8-neighbourhood) so nothing wedges the player.
+    pcx, pcy = town["plaza"][0] + RING, town["plaza"][1] + RING
+    def blocked(fx, fy):
+        return any((fx + dx, fy + dy) in building_cells for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+    if blocked(pcx, pcy):
+        for radius in (2, 3, 4):
+            open_cells = [(pcx + dx, pcy + dy) for dx in range(-radius, radius + 1)
+                          for dy in range(-radius, radius + 1)
+                          if in_town(pcx + dx, pcy + dy) and not blocked(pcx + dx, pcy + dy)]
+            if open_cells:
+                pcx, pcy = min(open_cells, key=lambda c: abs(c[0] - pcx) + abs(c[1] - pcy))
+                break
+    plaza = {"x": wx(pcx), "z": wz(pcy)}
+    plaza["h"] = round(height_at(plaza["x"], plaza["z"]), 3)
+    gate = {"x": wx(gx), "z": wz(gy)}
 
     data = {"cell": CELL, "gw": ww, "gh": wh, "seed": seed,
             "height": height, "color": color, "buildings": buildings,
             "grass": grass, "grass_points": grass_points, "props": props,
+            "trees": trees, "pois": pois, "road": road, "regions": regions,
             "plaza": plaza, "gate": gate}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_world_ts(out_dir / "world.ts", data)
     _bake_terrain(material, out_dir / "assets" / "terrain.png")
     _write_preview(out_dir.parent / "town_preview.png", data)
-    print(f"seed={seed} town={ww}x{wh} buildings={len(buildings)} tufts={len(grass_points)} props={len(props)}")
+    print(f"seed={seed} world={ww}x{wh} (town {tw}x{th}) buildings={len(buildings)} trees={len(trees)} "
+          f"pois={len(pois)} tufts={len(grass_points)} props={len(props)}")
     return data
 
 
@@ -193,14 +344,16 @@ def _world_schema_comment(data: dict) -> str:
 
 def _write_world_ts(path: Path, data: dict):
     j = json.dumps(data, separators=(",", ":"))
-    src = '''// GENERATED by worldgen — the static village: a terrain heightfield + labelled building parcels.
-// main.ts authors gameplay ON TOP: call spawnWorld(state.world) in init, then place your player/NPCs/
-// items using WORLD.buildings / WORLD.plaza / WORLD.grass and heightAt(x,z). Do NOT edit this file.
+    src = '''// GENERATED by worldgen — the static WORLD: a village inside a wilderness (forest, roads, POIs),
+// all on one terrain heightfield. main.ts authors gameplay ON TOP: call spawnWorld(state.world) in
+// init, then place your player/NPCs/items using WORLD.buildings / WORLD.plaza / WORLD.grass /
+// WORLD.pois / WORLD.regions and heightAt(x,z). Do NOT edit this file.
 %s
 export const WORLD: any = %s;
 
-// Spawn the village: ONE terrain heightfield entity (the ground) + a labelled box per building. The
-// building `label` (kind) is also its `mesh` id, so the asset stage can skin each kind.
+// Spawn the world: ONE terrain heightfield entity (the ground), the village buildings, the forest,
+// and each POI's set dressing. A building's `label` (kind) is also its `mesh` id, so the asset
+// stage can skin each kind; POI parts carry mesh ids too.
 export function spawnWorld(world: any[]): void {
   world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell, texture: "assets/terrain.png" });
   world.push({ shape: "grassfield", points: WORLD.grass_points, h: 0.45, w: 0.12, base: "#2f6b32", tip: "#7cc257" });
@@ -209,6 +362,16 @@ export function spawnWorld(world: any[]): void {
   for (const b of WORLD.buildings)
     world.push({ shape: "box", x: b.x, y: b.hx + b.h / 2, z: b.z, w: b.w, h: b.h, d: b.d,
                  color: b.color, type: "building", label: b.label, mesh: b.mesh });
+  for (const t of WORLD.trees) {   // [x, z, scale] → trunk + foliage on the terrain
+    const y = heightAt(t[0], t[1]);
+    world.push({ shape: "box", x: t[0], y: y + 0.9 * t[2], z: t[1], w: 0.34 * t[2], h: 1.8 * t[2],
+                 d: 0.34 * t[2], color: "#6c4a2a", type: "tree" });
+    world.push({ shape: "sphere", x: t[0], y: y + 2.2 * t[2], z: t[1], r: 1.15 * t[2],
+                 color: "#3c7a38", type: "tree" });
+  }
+  for (const p of WORLD.pois)
+    for (const s of p.parts)
+      world.push({ type: "poi", poi: p.id, ...s });
 }
 
 // Bilinear ground height at world (x,z). Put every entity ON the ground with this. ALWAYS returns a

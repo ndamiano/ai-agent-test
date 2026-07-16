@@ -23,7 +23,19 @@ The CAMERA comes WITH the control scheme — never design a camera separately.
 - `scrolling` — the world is bigger than the screen; the camera follows the player (2D)
 - `particles` — bursts of short-lived specks (explosions, hits, sparkles)
 
+## Depth blocks — dialogue, quests, shops (name the ones you use)
+- `dialogue` — talk to a character: named NPC, their lines, optional choices at the end
+- `quest` — an accepted task with a completion condition and a reward; a quest COMPLETING does not
+  end the game — progression continues (the open-world shape)
+- `shop` — trade with a vendor: priced options bought with the game's currency
+- `notify` — transient on-screen messages ("Got 10 gold") for small accomplishments
+A game with these gets DEPTH from different NPC ROLES: design each named NPC with its own role
+(vendor / quest-giver / craftsman) and its own voice, never one shared script.
+
 ## Everything else = plain behavior rules
 Spawning cadence, scoring, win/lose, timers, collectibles, doors, waves — state the RULE and the
 OUTCOME in plain language ("a new enemy appears every 2 seconds", "collecting all coins wins"). The
 implementer chooses the numbers and wiring.
+For an open-ended game (a sandbox/settlement/life sim with no final victory) set "win": null and
+carry ALL progression as quests/milestones; for a finite goal ("defeat the beast") state it as the
+win — reaching it ends the game.

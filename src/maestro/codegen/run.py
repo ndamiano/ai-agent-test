@@ -42,8 +42,10 @@ def _world_main_purpose(spec: dict) -> str:
     d = spec.get("design", spec)
     ents = d.get("entities") or []
     entities = "; ".join(f"{e.get('id', '?')}: {e.get('desc', '')}" for e in ents) or "the spec's entities"
+    scheme = ((d.get("control") or {}).get("scheme") or "").lower()
     return render_template(_PROMPTS / "world_main_purpose.txt", {
         "title": d.get("title") or spec.get("title") or "the game",
+        "controls": "fp" if "first-person" in scheme else "orbital",
         "entities": entities,
         "objective": d.get("win") or "explore the village",
         "lose": d.get("lose") or "none",

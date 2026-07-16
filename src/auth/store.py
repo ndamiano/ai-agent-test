@@ -136,12 +136,6 @@ def set_password(handle: str, password: str) -> None:
             raise ValueError(f"no user {handle!r}")
 
 
-def get_user(user_id: str) -> Optional[User]:
-    with _db() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return _row_to_user(row) if row else None
-
-
 def get_user_by_handle(handle: str) -> Optional[User]:
     with _db() as conn:
         row = conn.execute("SELECT * FROM users WHERE handle = ?", (handle,)).fetchone()

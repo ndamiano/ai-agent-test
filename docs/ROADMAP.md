@@ -13,7 +13,7 @@ architecture + how it works, see `CLAUDE.md`.
 
 The universal Game IR was retired: it was a {VN, point-click, walking-RPG} engine faking
 universality, topped out at "valid" not "good", and couldn't express most games. The model now
-writes **real JS game code against a fat primitive kit**, gated by a pure-Node local gradient
+writes **real TypeScript game code against a fat primitive kit**, gated by a pure-Node local gradient
 (headless + probe). This buys **any game + local** (bending "good" for now). Full plan +
 task breakdown: **`docs/codegen_rebuild_plan.md`**.
 

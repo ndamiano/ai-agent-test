@@ -148,8 +148,7 @@ def _responses_stream_to_chat_chunks(events):
     """Responses-API SSE events -> chat-shaped streaming chunks.
 
     Re-emits the typed Responses event stream as OpenAI chat `{"choices":[{"delta":...}]}`
-    chunks so existing accumulators (MainAgent._get_response_with_tools, inference.call_llm)
-    work unchanged.
+    chunks so existing accumulators (MainAgent._get_response_with_tools) work unchanged.
 
     Assistant text streams token-by-token via `response.output_text.delta`. Tool calls are
     taken from the terminal `response.output_item.done` item, which always carries the

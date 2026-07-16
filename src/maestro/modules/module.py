@@ -205,18 +205,6 @@ class Module(ABC):
         tail = f"\n\nCurrent state:\n{json.dumps(view, ensure_ascii=False)}" if view else ""
         return head + tail
 
-    def self_digest(self, artifact: Dict) -> List[str]:
-        """A COMPACT view of this module's OWN component, for a structural repair on it (dedup a
-        field, merge duplicate ids, fix a broken graph edge). The default is the projector's graph
-        view if the module has one, else nothing — a small-component module overrides with an
-        id-level index. Never the raw component prose."""
-        view = self.view(artifact)
-        if not view:
-            return []
-        import json
-        return ["", f"CURRENT {self.component or 'component'} (graph view):",
-                json.dumps(view, ensure_ascii=False)]
-
     def affected_components(self) -> Tuple[str, ...]:
         """The components this module touches when present. A soft surface for context injection —
         not a gate. Defaults to the owned `component`."""

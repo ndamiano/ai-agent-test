@@ -48,25 +48,6 @@ class TrellisSettings(BaseModel):
     endpoint: str = Field("http://localhost:8189", min_length=1)
 
 
-class TTSSettings(BaseModel):
-    endpoint: str = Field("http://localhost:8880", min_length=1)
-    model: str = Field("", description="Optional model id the TTS server expects.")
-    # Speaker presets the local TTS server exposes; cast members are mapped onto these
-    # deterministically by id. Empty -> the server's default voice for every speaker.
-    voices: list[str] = Field(default_factory=list)
-    format: Literal["wav", "ogg", "mp3", "opus"] = "wav"
-
-
-class MusicSettings(BaseModel):
-    """Ambient/score generation. `backend` names a real model server (e.g. "musicgen") whose
-    `endpoint` gets POSTed each track's prompt; empty (the default) skips the pass entirely and
-    tracks ship as silent placeholders — no music beats a procedural tone. An unreachable backend
-    degrades to silent placeholders too — music never blocks a build (mirrors the voice pass)."""
-    backend: str = Field("", description="Real music model backend; empty = no music.")
-    endpoint: str = Field("", description="HTTP endpoint for the music model.")
-    seconds: int = Field(30, ge=1, description="Requested track length for a real backend.")
-
-
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
     max_iterations: int = Field(10, ge=1)
@@ -80,17 +61,9 @@ DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
 }
 
 
-class AssetSettings(BaseModel):
-    """tile_source "library" ships terrain from the curated pack in src/assets/tiles (per-run
-    generated tiles only fill classes the library lacks); "generated" prefers the run's own
-    tiles — flip it when generation clears the quality bar."""
-    tile_source: Literal["library", "generated"] = "library"
-
-
 class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline", "openrouter"]
     working_directory: Optional[str] = "outputs"
-    refine_before_execution: bool = False
     # Concurrent build fixes (parallel LLM calls per loop step). >1 needs an inference server that
     # batches concurrent requests (LM Studio does); tool writes stay serialized either way.
     parallel_fixes: int = Field(1, ge=1, le=8)
@@ -99,6 +72,3 @@ class AppSettings(BaseModel):
     cline: Optional[ClineSettings] = None
     comfyui: Optional[ComfyUISettings] = None
     trellis: Optional[TrellisSettings] = None
-    assets: Optional[AssetSettings] = None
-    tts: Optional[TTSSettings] = None
-    music: Optional[MusicSettings] = None

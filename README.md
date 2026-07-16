@@ -6,22 +6,9 @@ See `docs/VISION.md` for the philosophy, `docs/ROADMAP.md` for the plan and curr
 
 ## How it works
 
-You talk to Maestro through a chat interface. When you ask for something, Maestro does **not** write the artifact by hand and does **not** run a fixed pipeline. It drafts a per-game **spec** — a contract of components, each with checkable done-conditions — for you to review and freeze. Once frozen, a non-LLM **executor** drives an agentic loop that builds the artifact against the spec until every done-condition passes. "Done" means the artifact satisfies the frozen spec, decided by the modules' checks (`get_errors`, minus the human's waivers) — never the agent claiming it.
+You talk to Maestro through a chat interface. When you ask for something, Maestro does **not** write the game by hand and does **not** run a fixed pipeline. It drafts a per-game **spec** — title / genre / entities / controls / mechanics / win-lose — for you to review and freeze. Once frozen, a non-LLM **executor** drives the local model to author a folder of **TypeScript modules** against a primitive **kit**, patching until the local gates pass. "Done" means the artifact passes the gates (typecheck → headless → probe → render → scroll) — never the model claiming it.
 
-The agent emits the engine-neutral **Game IR** (JSON — `docs/game_ir.schema.json`), never raw engine source. A selected backend projects the assembled IR to a runnable artifact.
-
-There is no genre or preset box. The spec drafter picks **mechanic-modules** from a catalog
-(`scenes`, `world`, `combat`, `cast`, `story`, `inventory`, …) — a `{module_id: reason}` map it
-must justify against the story it just wrote — and the composed set determines what gets built:
-a dialogue-graph visual novel, a room/hotspot adventure, a walkable RPG with card/turn combat, or
-any composition of these.
-
-**Engines** (the target the IR projects to; selected automatically from the module set):
-
-| Engine | Output |
-|---|---|
-| `renpy` | A packaged Ren'Py project (requires the Ren'Py SDK) — visual novels + point-and-click |
-| `godot` | A Godot 4 project — `game.json` + a static GDScript runtime; needed for `combat` + walkable worlds; browser via Godot Web export |
+The model writes **real TypeScript game code**, not an intermediate representation. Breadth comes from the model COMPOSING kit primitives (physics, collision, tilemaps, pathfinding, 3D) rather than from per-genre generators. `update(dt, input, kit)` mutates plain state and never draws; `draw(g, kit)` reads state and never mutates — so the sim runs headless in pure Node, and render (2D canvas or three.js) is the only engine-specific layer.
 
 ## Setup
 
@@ -39,7 +26,7 @@ npm install
 npm run dev
 ```
 
-Settings live in `src/config/settings.json` (gitignored) and can also be edited from the web UI. Maestro talks to any OpenAI-compatible endpoint (LM Studio, etc.) via its Responses API; image generation uses ComfyUI. Set `model_category` to `small` when running local models. Building a Ren'Py game into a distributable requires the Ren'Py SDK (`renpy_sdk_path` setting or `RENPY_SDK` env var).
+Settings live in `src/config/settings.json` (gitignored) and can also be edited from the web UI. Maestro talks to any OpenAI-compatible endpoint (LM Studio, etc.) via its Responses API; image generation uses ComfyUI and 3D meshes use a TRELLIS server. Set `model_category` to `small` when running local models.
 
 ### Local model server
 
@@ -75,36 +62,13 @@ The server flavor (LM Studio native REST vs llama.cpp router) is **auto-detected
 
 `comfyui.vram_management: true` makes image generation evict the LLM from VRAM first and reload it after, so one GPU time-shares between the language model and SDXL. It works with **both** LM Studio and a llama.cpp **router** (a single-model llama-server can't be evicted, so the LLM stays resident — leave this `false` and make sure the LLM + image model both fit at once).
 
-### Voice (text-to-speech)
-
-Optional per-line voice. Maestro POSTs each spoken line to a local OpenAI-compatible `/v1/audio/speech` server (e.g. **Kokoro-FastAPI**) and projects the clips into the Ren'Py build; a silent placeholder backfills any line that fails to synthesize.
-
-```bash
-# Kokoro-FastAPI, CPU image (tiny model — near real-time, zero GPU/VRAM contention).
-# No --restart, so it never autostarts; manage it manually.
-docker run -d -p 8880:8880 --name kokoro ghcr.io/remsky/kokoro-fastapi-cpu:latest
-docker start kokoro   # when you want voice
-docker stop  kokoro   # frees it
-```
-
-The GPU image's bundled PyTorch lacks Blackwell/sm_120 kernels, so use the CPU image on RTX 50-series. Settings:
-
-```json
-"tts": {
-  "endpoint": "http://localhost:8880",
-  "model": "kokoro",
-  "voices": ["af_heart", "am_michael", "bf_emma", "bm_george"],
-  "format": "wav"
-}
-```
-
-`voices` are mapped onto cast members deterministically by id (empty → the server's default voice). Omit the whole `tts` block to disable voice. List the server's voices with `curl -s localhost:8880/v1/audio/voices`.
-
 ## Build a game from the CLI
 
 ```bash
-cd src && python -m maestro.run "<request>"   # propose → freeze → build
+cd src && python -m maestro.codegen.run "<request>"   # draft → freeze → build
 ```
+
+Play a build by opening `runtime/index.html?game=<slug>` in a browser (2D or 3D auto-routed).
 
 ## Tests
 
@@ -114,25 +78,25 @@ cd src && python -m pytest ../tests/ --ignore=../tests/integration -q
 
 Integration tests in `tests/integration/` require live LLM services.
 
-## Evals
-
-`eval/` grades finished artifacts with an LLM judge against rubrics (`eval/cli.py score game`). Hill-climbing (judge-scored prompt mutation) was removed in the rebuild and is slated to return; prompts are kept as swappable `.txt` files so it can. See `eval/EVAL.md`.
-
 ## Repository layout
 
 ```
+runtime/        the primitive KIT (engine.js/engine3d.js), the game gates (headless/probe/
+                render/scroll), ambient TS types (engine.d.ts), kit_api*.md, browser harness
 src/
   agents/       MainAgent (chat persona — drafts/amends specs) + agent configs
   api/          FastAPI routers + WebSocket event bus
   config/       settings schema/manager
-  llm_clients/  connectors, message builder, shared inference primitives
-  maestro/      the agentic build system — spec, state, modules/, agent_loop (the
-                non-LLM executor), services, tools, IR assemble/crossref, engine dispatch
-  renpy/        Ren'Py engine backend (IR → script.rpy → packaged project)
-  godot/        Godot 4 engine backend (IR → game.json + static GDScript runtime)
-  tools/        tool manager, ComfyUI, system tools, execution context
+  llm_clients/  connectors, message builder, strip_fences helper
+  maestro/
+    codegen/    the build path — gates, tools (write/read/edit_game_file), module (the
+                CodegenModule), fix_classes, prompts/, reskin (assets), run, worldgen_bridge
+    agent_loop.py  the non-LLM executor that drives the module
+    services.py    the bounded gateway a fix calls through
+    modules/, state.py, run_control.py
+  auth/         identity, sessions, credit ledger
+  tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
 frontend/       chat-first React + Vite UI
-eval/           rubrics, briefs, judge, scoring CLI
 tests/          pytest suite
-docs/           Game IR schema + rationale
+docs/           vision, roadmap, plan, deploy
 ```

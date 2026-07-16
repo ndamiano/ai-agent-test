@@ -46,8 +46,3 @@ _provider: CreditProvider = UnconfiguredProvider()
 
 def get_provider() -> CreditProvider:
     return _provider
-
-
-def set_provider(provider: CreditProvider) -> None:
-    global _provider
-    _provider = provider

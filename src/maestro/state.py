@@ -21,13 +21,12 @@ from typing import Dict, List, Optional
 
 SPEC_FILE = "spec.json"
 STORY_STATE_FILE = "story_state.json"
-HUMAN_TODOS_FILE = "human_todos.json"
 WAIVERS_FILE = "waivers.json"
 OWNER_FILE = "owner.json"
 CHARGED_FILE = "charged.json"
 
 # Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, STORY_STATE_FILE, HUMAN_TODOS_FILE, WAIVERS_FILE, OWNER_FILE, CHARGED_FILE}
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE, WAIVERS_FILE, OWNER_FILE, CHARGED_FILE}
 
 
 class RunState:
@@ -93,18 +92,8 @@ class RunState:
     def read_story_state(self) -> Optional[Dict]:
         return self._read(STORY_STATE_FILE)
 
-    # ── human-in-the-loop (durable, read by the executor each step) ───────────
-    def read_human_todos(self) -> List[Dict]:
-        return self._read(HUMAN_TODOS_FILE) or []
-
-    def write_human_todos(self, todos: List[Dict]) -> None:
-        self._write(HUMAN_TODOS_FILE, todos)
-
     def read_waivers(self) -> List[Dict]:
         return self._read(WAIVERS_FILE) or []
-
-    def write_waivers(self, waivers: List[Dict]) -> None:
-        self._write(WAIVERS_FILE, waivers)
 
     # ── io ────────────────────────────────────────────────────────────────────
     def _write(self, filename: str, data) -> None:

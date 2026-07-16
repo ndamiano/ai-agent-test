@@ -60,7 +60,7 @@ Local model support is a core requirement, not an afterthought. Designing for lo
 Plugin systems, third-party modules and engines, and contribution frameworks come after the core output quality is proven. Building platform infrastructure before the product works is the wrong order.
 
 **Not trying to replace human creativity.**  
-Maestro handles the parts of creative production that are slow, tedious, or technically complex — generating a consistent cast of characters, structuring a plot, writing 200 lines of Ren'Py script. The creative direction, judgment, and taste still come from the person using it.
+Maestro handles the parts of creative production that are slow, tedious, or technically complex — generating a consistent cast of characters, structuring a plot, writing 200 lines of game code. The creative direction, judgment, and taste still come from the person using it.
 
 **Not trying to support every LLM provider.**  
 OpenAI-compatible API is the standard. Any endpoint that speaks it works. Native support for individual proprietary APIs is not worth the maintenance cost.

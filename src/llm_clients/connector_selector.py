@@ -14,13 +14,6 @@ def _hash_settings(settings: Dict[str, Any]) -> str:
     return hashlib.md5(json.dumps(settings, sort_keys=True).encode()).hexdigest()
 
 
-def reset_connector_cache() -> None:
-    """Force invalidation of the cached connector. Call after settings changes."""
-    global _cached_connector, _cached_settings_hash
-    _cached_connector = None
-    _cached_settings_hash = None
-
-
 def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[str, Any]] = None) -> OpenAICompatibleConnector:
     global _cached_connector, _cached_settings_hash
 

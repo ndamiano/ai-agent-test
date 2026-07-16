@@ -114,6 +114,8 @@ src/
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
                          (TRELLIS). Both re-gate then write game/assets/ + assets.json. Additive: no
                          asset ⇒ still passes gates, renders as shapes. CLI `--assets <run_id>`.
+      worldgen_bridge.py the WORLD pre-seed: when the frozen spec sets `world`, run_build seeds a
+                         heightfield + world.ts (buildings/terrain) from src/worldgen before authoring.
       run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
                          `python -m maestro.codegen.run [--yes] "<request>"` and
                          `--fix <run_id> "<what's wrong>"` (the human-note fix path)
@@ -159,7 +161,7 @@ src/
                          runtime/games/<id>/ and served at /play (StaticFiles mount) for the SPA.
   config/                settings_schema.py (Pydantic), settings_manager.py (singleton)
   llm_clients/           connector_selector.py, openai_compatible_connector.py, message_builder.py,
-                         inference.py (call_llm / PipelineAgent / json_with_correction). The
+                         inference.py (strip_fences). The
                          connector speaks ONLY the OpenAI-compatible Responses API (/v1/responses) —
                          the one local endpoint that honors reasoning.effort. It translates the
                          chat-shaped messages/tools callers pass into Responses input/tools and

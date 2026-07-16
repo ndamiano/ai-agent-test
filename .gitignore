@@ -42,17 +42,8 @@ pipeline_inputs/
 # RenPy template binary assets (copy from any SDK-generated project)
 src/pipelines/*/renpy_templates/**/*.png
 
-# Eval system — generated artifacts, not source
-eval/fixtures/
-eval/results/
-eval/games/
-
-# Compiled game projects (regenerable from the IR)
+# Compiled/generated game build outputs (regenerable)
 build/
-
-
-# dialogue probe experiment outputs (research logs, not source)
-eval/probe_runs/
 
 # Staged build copies for browser play (run-id named); the sample games stay tracked.
 runtime/games/*.js

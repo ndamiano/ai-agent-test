@@ -30,31 +30,25 @@ Durable state — `runs/` and `private/auth.db` (user accounts + games + the cre
 touches it (it's not in the tree). Never point `WORKING_DIRECTORY` off `/data`, and never `docker
 volume rm maestro-data` — that wipes every account and game.
 
-### Host-mounted engines (required at build time, NOT baked into the image)
+### Build toolchain
 
-The build must produce runnable executables, so both engines are needed — but they are bind-mounted
-read-only from the host, not baked in:
+The codegen build gates run a Node toolchain (`tsc` + `esbuild`) against the game folder — no game
+engines. The toolchain lives in `runtime/node_modules/` (gitignored); the container needs Node plus
+those packages installed. Generated games are plain TypeScript bundled to JS and served as static
+files at `/play`.
 
-- **Ren'Py SDK** → mounted at `/opt/renpy`; the code reads env `RENPY_SDK=/opt/renpy`. Host path in
-  `.env` var `RENPY_SDK_HOST`.
-- **Godot binary** → mounted onto `/usr/local/bin/godot` (the code finds it via `which godot`). Host
-  path in `GODOT_BIN_HOST`.
-- **Godot export templates** (version-matched, separate large dir) → mounted under
-  `~/.local/share/godot/export_templates/` (HOME is `/home/maestro` in the image). Host path in
-  `GODOT_TEMPLATES_HOST`. The template dir **must** match the Godot binary version or native export
-  fails.
-
-The image apt-installs the shared libraries these binaries dlopen (libgl1, libglib2.0-0, SDL2,
-fontconfig, X libs, …) so `renpy.sh` and `godot` execute headlessly inside the slim container. The
-exact library set is to be validated on the first successful build — extend it if lint/export report
-a missing `.so`.
+> **TODO (deploy-tested change):** the `Dockerfile` and `docker-compose.yml` still apt-provision and
+> bind-mount the Ren'Py SDK + Godot binary/export templates from the pre-codegen path. Nothing reads
+> `RENPY_SDK` / `which godot` anymore — those mounts and the related `.env` host-path vars
+> (`RENPY_SDK_HOST`, `GODOT_BIN_HOST`, `GODOT_TEMPLATES_HOST`) are dead weight and should be removed
+> once a container build+deploy has been re-verified.
 
 ### Brand-new box (provision → configure → deploy)
 
 On the **prod box**:
 
 ```bash
-# 1. one-time host setup: Docker + compose, Ren'Py SDK, Godot binary + export templates
+# 1. one-time host setup: Docker + compose (+ Node build toolchain for the container)
 ./scripts/provision.sh        # confirm the version vars at the top first
 ```
 
@@ -229,9 +223,9 @@ These were flagged in the pre-open security audit and consciously deferred. Fix 
   depth; run creation + freeze are free (only `build` costs 1 credit, `INITIAL_CREDITS=100`), and
   failed builds refund. One account can queue ~100 builds and monopolize the GPU. Mitigation for now:
   trusted users + watch the queue. Fix = per-user in-flight cap + bounded queue.
-- **`.rpy` Python injection.** `renpy/ir_vn.py` interpolates effect variable names unescaped into
-  Ren'Py `$` statements. A crafted build (or a human `edit_node`) can inject Python that runs when the
-  *generated game* is played — a risk to whoever downloads and runs another user's game. Trusted
-  testers who don't swap game files → low risk. Fix = validate/escape effect var names.
+- **Untrusted generated JS in the browser.** A build ships model-authored TypeScript bundled to JS
+  and served at `/play` as static files. Playing another user's game runs their code in your browser;
+  a crafted build could exfiltrate via the page's origin. Trusted testers who only play their own
+  builds → low risk. Fix = sandbox the player (isolated origin / iframe + CSP).
 - **Session TTL 30 days, no rotation** (`auth/store.py`); **`/docs` + `/openapi.json` public**
   (`auth/deps.py` PUBLIC_PATHS) expose the API surface. Both hardening, not blockers.

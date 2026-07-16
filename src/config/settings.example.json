@@ -21,17 +21,6 @@
     "endpoint": "http://localhost:8188",
     "vram_management": false
   },
-  "tts": {
-    "endpoint": "http://localhost:8880",
-    "model": "",
-    "voices": [],
-    "format": "wav"
-  },
-  "music": {
-    "backend": "",
-    "endpoint": "",
-    "seconds": 30
-  },
   "trellis": {
     "endpoint": "http://localhost:8189"
   }

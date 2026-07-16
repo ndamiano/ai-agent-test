@@ -17,7 +17,7 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-_READ_TOOLS = {"read_node", "read_place", "read_component", "read_story_state"}
+_READ_TOOLS = {"read_game_file"}
 _BUILD_MAX_TOKENS = 8000
 
 
@@ -117,7 +117,7 @@ def _summarize(action: Dict, result: Dict) -> str:
 def _read_payload(action: Dict, result: Dict) -> Optional[str]:
     if action.get("tool") not in _READ_TOOLS or not isinstance(result, dict) or result.get("error"):
         return None
-    for key in ("content", "story_state"):
+    for key in ("content",):
         if key in result:
             val = result[key]
             text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)

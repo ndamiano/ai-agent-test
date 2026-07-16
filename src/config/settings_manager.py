@@ -26,7 +26,6 @@ class SettingsManager:
         self.defaults = {
             "connector_type": os.getenv("CONNECTOR_TYPE", "lmstudio"),
             "working_directory": default_working_dir,
-            "refine_before_execution": False,
             "model_category": os.getenv("MODEL_CATEGORY", "large"),
             "lmstudio": {
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),

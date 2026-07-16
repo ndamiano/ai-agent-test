@@ -17,7 +17,7 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-_READ_TOOLS = {"read_game_file"}
+_READ_TOOLS = {"read_file"}
 _BUILD_MAX_TOKENS = 8000
 
 

@@ -68,13 +68,13 @@ def test_dedup_collapses_duplicate_call_keeping_latest(mb):
 
 
 def test_dedup_edit_supersedes_earlier_read_of_same_file(mb):
-    # WHY: read_game_file and edit_game_file both return the file's full body. They are keyed by
+    # WHY: read_file and edit both return the file's full body. They are keyed by
     # FILE, not name+args (old_string/new_string differ per edit) — so a later edit's body must
     # supersede the earlier read body of the same file, leaving only the newest copy in context.
     msgs = [
-        _assistant_call("c1", "read_game_file", '{"file": "types.ts"}', content="r"),
+        _assistant_call("c1", "read_file", '{"file": "types.ts"}', content="r"),
         _tool_result("c1", "OLD BODY"),
-        _assistant_call("c2", "edit_game_file",
+        _assistant_call("c2", "edit",
                         '{"file": "types.ts", "old_string": "a", "new_string": "b"}', content="e"),
         _tool_result("c2", "NEW BODY"),
     ]
@@ -87,15 +87,29 @@ def test_dedup_edit_supersedes_earlier_read_of_same_file(mb):
 def test_dedup_file_body_keeps_distinct_files(mb):
     # WHY: file-keying must not collapse ACROSS files — different files' bodies both survive.
     msgs = [
-        _assistant_call("c1", "read_game_file", '{"file": "a.ts"}', content="r"),
+        _assistant_call("c1", "read_file", '{"file": "a.ts"}', content="r"),
         _tool_result("c1", "A BODY"),
-        _assistant_call("c2", "edit_game_file",
+        _assistant_call("c2", "edit",
                         '{"file": "b.ts", "old_string": "x", "new_string": "y"}', content="e"),
         _tool_result("c2", "B BODY"),
     ]
     out = mb._deduplicate_tool_results(msgs)
     contents = [m["content"] for m in out if m.get("role") == "tool"]
     assert contents == ["A BODY", "B BODY"]
+
+
+def test_dedup_partial_read_does_not_evict_full_body(mb):
+    # WHY: a partial read (offset/limit) is only a slice — it must NOT be file-keyed, so it neither
+    # supersedes the full body nor gets superseded by it. The full read survives verbatim.
+    msgs = [
+        _assistant_call("c1", "read_file", '{"file": "a.ts"}', content="r"),
+        _tool_result("c1", "FULL BODY"),
+        _assistant_call("c2", "read_file", '{"file": "a.ts", "offset": 5, "limit": 3}', content="r"),
+        _tool_result("c2", "SLICE"),
+    ]
+    out = mb._deduplicate_tool_results(msgs)
+    contents = [m["content"] for m in out if m.get("role") == "tool"]
+    assert contents == ["FULL BODY", "SLICE"]
 
 
 def test_dedup_normalizes_arg_order_when_matching(mb):
@@ -222,9 +236,9 @@ def test_budget_protects_first_user_task_anchor(mb):
     mb.MESSAGE_BUDGET_CHARS = 80
     msgs = [
         {"role": "user", "content": "TASK: fix the gate"},                 # first user — protected
-        _assistant_call("c1", "read_game_file", '{"file": "a.ts"}'),
+        _assistant_call("c1", "read_file", '{"file": "a.ts"}'),
         _tool_result("c1", "A" * 200),                                     # oldest read — droppable
-        _assistant_call("c2", "read_game_file", '{"file": "b.ts"}'),
+        _assistant_call("c2", "read_file", '{"file": "b.ts"}'),
         _tool_result("c2", "B" * 200),                                     # newer read — droppable
         {"role": "user", "content": "call a tool"},                        # nudge (last user) — protected
     ]
@@ -270,6 +284,29 @@ def test_budget_derives_from_context_window(monkeypatch):
     monkeypatch.setattr(cs, "get_connector", lambda *a, **k: _FakeConn())
     b = MessageBuilder("SYS")
     assert b.MESSAGE_BUDGET_CHARS == 32768 * 4 // 2 == 65536
+
+
+def test_budget_charges_system_prompt_against_input_half(monkeypatch):
+    # WHY: MESSAGE_BUDGET_CHARS is the INPUT half of the window (system + messages share it). A fat
+    # system prompt (e.g. the fix loop's 9-16KB kit doc) must eat into the budget, else the real prompt
+    # silently overflows the window. Same messages fit with a small system, get trimmed with a big one.
+    import llm_clients.connector_selector as cs
+    monkeypatch.setattr(cs, "get_connector",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
+    msgs = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "X" * 400},
+        {"role": "user", "content": "now"},
+    ]
+    small = MessageBuilder("s")
+    small.MESSAGE_BUDGET_CHARS = 500
+    assert small._enforce_budget(list(msgs)) == msgs        # 407 chars fit under 500 - 1
+
+    big = MessageBuilder("S" * 200)
+    big.MESSAGE_BUDGET_CHARS = 500
+    out = big._enforce_budget(list(msgs))                   # effective budget 300 → the fat turn drops
+    assert all(m["content"] != "X" * 400 for m in out)
+    assert {"role": "user", "content": "now"} in out
 
 
 # ── build(): the composed pipeline ───────────────────────────────────────────

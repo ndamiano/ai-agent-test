@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 # Tools whose result carries the full current file body — deduped by file, so the newest body of a
 # file supersedes every earlier read/edit body of it.
-_FILE_BODY_TOOLS = {"read_game_file", "edit_game_file"}
+_FILE_BODY_TOOLS = {"read_file", "edit"}
 
 
 class MessageBuilder:
@@ -120,10 +120,15 @@ class MessageBuilder:
                     norm_args = json.dumps(parsed, sort_keys=True)
                 except (json.JSONDecodeError, TypeError):
                     parsed, norm_args = None, raw_args
-                # read_game_file and edit_game_file both return the CURRENT file body; key them by
+                # A FULL read_file and every edit return the CURRENT file body; key them by
                 # file (not name+args) so a fresh read/edit of a file supersedes every earlier body
                 # of it — old_string/new_string differ per edit, so name+args would never collapse.
-                if name in _FILE_BODY_TOOLS and isinstance(parsed, dict) and parsed.get("file"):
+                # A PARTIAL read (offset/limit) is only a slice — key it normally so it neither
+                # supersedes nor is superseded by the full body.
+                is_partial_read = (name == "read_file" and isinstance(parsed, dict)
+                                   and (parsed.get("offset") is not None or parsed.get("limit") is not None))
+                if name in _FILE_BODY_TOOLS and not is_partial_read \
+                        and isinstance(parsed, dict) and parsed.get("file"):
                     call_info[tc.get("id", "")] = ("__filebody__", parsed["file"])
                 else:
                     call_info[tc.get("id", "")] = (name, norm_args)
@@ -239,8 +244,14 @@ class MessageBuilder:
             tool_calls_str = json.dumps(msg.get("tool_calls", [])) if msg.get("tool_calls") else ""
             return len(content) + len(tool_calls_str)
 
+        # MESSAGE_BUDGET_CHARS is the INPUT half of the window (system + messages). The system prompt
+        # is prepended AFTER this pass but shares that half, so charge it against the budget here —
+        # otherwise a fat system prompt (e.g. the 9-16KB kit doc) silently pushes the real prompt over
+        # the window. Floor at 0 so a system larger than the budget still trims messages to nothing.
+        budget = max(self.MESSAGE_BUDGET_CHARS - len(self._system or ""), 0)
+
         total = sum(_msg_chars(m) for m in messages)
-        if total <= self.MESSAGE_BUDGET_CHARS:
+        if total <= budget:
             return messages
 
         # First + last user messages — always protected (task anchor + current turn). Tracked by object
@@ -251,7 +262,7 @@ class MessageBuilder:
         dropped = 0
         result = list(messages)
         i = 0
-        while i < len(result) and total > self.MESSAGE_BUDGET_CHARS:
+        while i < len(result) and total > budget:
             msg = result[i]
 
             # Never drop a protected (first/last) user message.
@@ -286,9 +297,10 @@ class MessageBuilder:
         if dropped:
             logger.warning(
                 "MessageBuilder: dropped %d message(s) to stay within %d-char budget "
-                "(was %d chars).",
+                "(%d for system, was %d chars).",
                 dropped,
-                self.MESSAGE_BUDGET_CHARS,
+                budget,
+                len(self._system or ""),
                 sum(_msg_chars(m) for m in messages),
             )
 

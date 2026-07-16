@@ -31,8 +31,8 @@ gate, asset pipeline, connector/llm_clients. What dies: the whole IR (`ir_assemb
 ## Phase 1 — Productize the loop (make it real, delete scratchpad)
 Goal: the validated flow lives in the real codebase, driven by `AgentLoop`, not throwaway scripts.
 
-- **T1.1 Codegen tools.** New `maestro/codegen/tools.py`: `write_game_file(slug, code)`,
-  `read_game_file(slug)`, `run_headless(slug)`, `run_probe(slug)` — wrap the node runners as tool
+- **T1.1 Codegen tools.** New `maestro/codegen/tools.py`: `write(slug, code)`,
+  `read_file(slug)`, `run_headless(slug)`, `run_probe(slug)` — wrap the node runners as tool
   callables returning structured dicts. Acceptance: callable from python, JSON verdicts match the CLI.
 - **T1.2 Two modules.** `SpecModule` (stage 1: one `Check` — spec exists + minimally shaped; fix =
   draft via `spec_draft.txt`) and `CodegenModule` (stage 2: checks = `authored` [file exists],

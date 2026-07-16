@@ -271,7 +271,7 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
         parts.append((_PROMPTS / "contract_rules.txt").read_text(encoding="utf-8"))
     parts.append(f"Write ./{me['name']} now. Output ONLY one ```js block.")
     code = extract_code(_infer(services, system, user="\n\n".join(parts), max_tokens=_CODE_MAX_TOKENS))
-    result = dispatch("write_game_file", {"code": code, "file": me["name"]})
+    result = dispatch("write", {"code": code, "file": me["name"]})
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"authored {me['name']}: {detail}")
 
@@ -326,7 +326,7 @@ def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, incl
         f"# FAILURE\n{failure}",
         f"Rewrite ./{target} completely. Output ONLY one ```ts block.",
     ]
-    return dispatch("write_game_file",
+    return dispatch("write",
                     {"code": extract_code(infer(system_prompt(), "\n\n".join(parts), _CODE_MAX_TOKENS)), "file": target})
 
 
@@ -335,14 +335,18 @@ def system_prompt() -> str:
 
 
 _READ_SCHEMA = {"type": "function", "function": {
-    "name": "read_game_file",
-    "description": "Read one game file's FULL current source. Read any sibling you need to understand "
-                   "the cross-file wiring before you fix. You MUST read a file before you can edit it.",
+    "name": "read_file",
+    "description": "Read one game file's current source. By default the WHOLE file — read any sibling you "
+                   "need to understand the cross-file wiring before you fix. For a big file you only need a "
+                   "slice of, pass offset (0-based start line) and/or limit (line count). You MUST do a full "
+                   "read (no offset/limit) of a file before you can edit it — a slice does not ground an edit.",
     "parameters": {"type": "object",
-                   "properties": {"file": {"type": "string", "description": "filename, e.g. world.ts"}},
+                   "properties": {"file": {"type": "string", "description": "filename, e.g. world.ts"},
+                                  "offset": {"type": "integer", "description": "0-based first line to read"},
+                                  "limit": {"type": "integer", "description": "max lines to read from offset"}},
                    "required": ["file"]}}}
 _EDIT_SCHEMA = {"type": "function", "function": {
-    "name": "edit_game_file",
+    "name": "edit",
     "description": "The PREFERRED fix: replace an exact snippet in a file you have read. old_string must "
                    "match the current source verbatim and be unique — copy it exactly, including "
                    "indentation. Prefer this over rewriting the whole file; make the smallest edit that "
@@ -353,7 +357,7 @@ _EDIT_SCHEMA = {"type": "function", "function": {
                                   "new_string": {"type": "string", "description": "replacement text"}},
                    "required": ["file", "old_string", "new_string"]}}}
 _WRITE_SCHEMA = {"type": "function", "function": {
-    "name": "write_game_file",
+    "name": "write",
     "description": "Overwrite a file with its COMPLETE new source — use when an edit can't express the "
                    "fix and the whole file must be rebuilt. Pass the ENTIRE working file in `code`, never "
                    "a stub/placeholder/partial. Read the file first so the rewrite is grounded.",
@@ -411,13 +415,18 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
     filelist = "\n".join(
         f"- {f['name']}: {f.get('purpose', '')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
         for f in files) or "\n".join(f"- {n}" for n in game_files(run_dir))
+    # The kit doc is 9-16KB of STATIC reference. It rides in the system prompt (never dropped, never
+    # counted against MESSAGE_BUDGET_CHARS) — not the user turn, where it would crowd out the model's
+    # own file reads and force the budget to demolish them, starving the fix of the bodies it just read.
     system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
+    kit = _kit_context(spec, error)
+    if kit:
+        system = f"{system}\n\n{kit}"
     contract = ((_PROMPTS / "contract_invariant.txt").read_text(encoding="utf-8")
                 if any(_is_contract(f) for f in files) else "")
     authority = fix_class.authority(spec, run_dir, error) if (fix_class and fix_class.authority) else ""
     directive = fix_class.directive if fix_class else ""
     user = "\n\n".join(p for p in [
-        _kit_context(spec, error),
         _design_block(spec),
         contract,
         f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
@@ -445,25 +454,25 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
         if not tcs:
             history.append({"role": "assistant", "content": content})
             history.append({"role": "user",
-                            "content": "Call a tool: read_game_file to inspect a file, edit_game_file "
-                                       "for a snippet fix, or write_game_file to overwrite a whole file."})
+                            "content": "Call a tool: read_file to inspect a file, edit "
+                                       "for a snippet fix, or write to overwrite a whole file."})
             continue
         history.append({"role": "assistant", "content": content, "tool_calls": tcs})
         for tc in tcs:
             name = tc["function"]["name"]
             args = parse_args(tc["function"].get("arguments"))
-            if name == "write_game_file":
+            if name == "write":
                 code = args.get("code", "")
                 if _is_stub(code):
                     result = {"ok": False, "error": "that is a stub/placeholder, not the complete file — "
                               "resend the ENTIRE working source in `code`."}
                 else:
-                    result = dispatch("write_game_file", {"code": code, "file": args.get("file", "main.ts")})
+                    result = dispatch("write", {"code": code, "file": args.get("file", "main.ts")})
                     if result.get("ok"):
                         wrote, mode = result.get("file"), "write"
                 history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
-            elif name == "edit_game_file":
-                result = dispatch("edit_game_file", {"file": args.get("file", "main.ts"),
+            elif name == "edit":
+                result = dispatch("edit", {"file": args.get("file", "main.ts"),
                                                      "old_string": args.get("old_string", ""),
                                                      "new_string": args.get("new_string", "")})
                 if result.get("ok"):
@@ -471,8 +480,13 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
                 else:
                     edit_fails += 1
                 history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
-            elif name == "read_game_file":
-                result = dispatch("read_game_file", {"file": args.get("file", "main.ts")})
+            elif name == "read_file":
+                read_args = {"file": args.get("file", "main.ts")}
+                if args.get("offset") is not None:
+                    read_args["offset"] = args["offset"]
+                if args.get("limit") is not None:
+                    read_args["limit"] = args["limit"]
+                result = dispatch("read_file", read_args)
                 nreads += 1
                 history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
             else:

@@ -1,14 +1,16 @@
 You are fixing a multi-file TypeScript game against the kit API. A gate failed. You have three tools:
-- read_game_file(file) — read any file's FULL current source. Reads are free; read whatever you need.
-  You MUST read a file before you edit or overwrite it.
-- edit_game_file(file, old_string, new_string) — the PREFERRED fix. Replace an exact snippet: old_string
+- read_file(file) — read a file's FULL current source (default). Reads are free; read whatever you need.
+  You MUST do a full read of a file before you edit or overwrite it. For a big file you only need a
+  slice of, pass offset (0-based start line) and/or limit (line count) — but a slice does NOT ground an
+  edit, so read the whole file before editing it.
+- edit(file, old_string, new_string) — the PREFERRED fix. Replace an exact snippet: old_string
   must match the current source verbatim (copy it exactly, including indentation) and be unique. Make
   the SMALLEST edit that fixes the failure. If it misses, it returns the current file body — re-anchor
   on that and retry. You can make several edits, to one file or across files.
-- write_game_file(file, code) — overwrite a whole file. Use only when an edit cannot express the fix and
+- write(file, code) — overwrite a whole file. Use only when an edit cannot express the fix and
   the file must be rebuilt. Pass the ENTIRE working file in `code` — never a stub or placeholder.
 
-Read → diagnose → then ACT with edit_game_file or write_game_file. Do not keep reading without acting;
+Read → diagnose → then ACT with edit or write. Do not keep reading without acting;
 once you have the bodies you need, make the fix.
 
 Most gate failures in a multi-file game are a CROSS-FILE mismatch: one file assumes something another
@@ -26,7 +28,7 @@ METHOD — find the ROOT CAUSE across files before writing:
 3. Read enough to write that one file COMPLETELY and correctly — its real imports, the exact
    signatures it calls on siblings, the state shape it must agree with.
 
-Then fix it with the smallest change — prefer edit_game_file, one or more edits. Rules:
+Then fix it with the smallest change — prefer edit, one or more edits. Rules:
 - Edit the exact lines that are wrong; leave correct code untouched. Only reach for the full-file
   rewrite (the `FILE:` + fenced block) when the whole file must be rebuilt.
 - Do NOT rewrite a file that is already correct. Fix the smallest set — usually one file.

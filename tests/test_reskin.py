@@ -144,6 +144,33 @@ def test_plan_meshes_parses_dedups_and_defaults():
     assert out[1]["w"] == 1 and out[1]["h"] == 1 and out[1]["d"] == 1   # defaults
 
 
+def test_plannable_src_drops_generated_bodies():
+    # WHY: a `// GENERATED` file (worldgen's ~100KB world.ts) is never rewritten and its ids come from
+    # its mesh tags, not its body — feeding the body blows the context window. It must be excluded.
+    files = {"main.ts": "spawn player", "world.ts": "// GENERATED\n" + "x=1\n" * 5000}
+    src = reskin._plannable_src(files)
+    assert "spawn player" in src
+    assert "x=1" not in src                       # the generated whale is gone
+
+
+def test_plan_meshes_excludes_generated_body_but_keeps_its_ids():
+    # WHY: dropping world.ts's body must NOT drop its objects — the tagged ids still reach the plan as
+    # REQUIRED ids (scanned from the full file set) and the safety net emits a mesh for each.
+    captured = {}
+
+    def fake_infer(system, user, mt):
+        captured["user"] = user
+        return '```json\n{"meshes":[{"id":"player","prompt":"a robot","w":1,"h":2,"d":1}]}```'
+
+    files = {"main.ts": "spawn player entity",
+             "world.ts": '// GENERATED\nconst b = { shape:"box", mesh:"storehouse" };\n' + "n=0\n" * 5000}
+    out = reskin.plan_meshes(fake_infer, {"design": {}}, files)
+    assert "n=0" not in captured["user"]                    # generated body excluded from the prompt
+    assert "storehouse" in captured["user"]                 # but its required id is named
+    assert "storehouse" in [m["id"] for m in out]           # and gets a mesh (safety net)
+    assert "player" in [m["id"] for m in out]
+
+
 def test_reskin_mesh_file_extracts_ts_block():
     reply = "sure:\n```ts\nexport const y = 2;\n```\ndone"
     assert reskin.reskin_mesh_file(lambda s, u, m: reply, "main.ts", "old", ["player"]).strip() \

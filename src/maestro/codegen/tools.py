@@ -1,16 +1,19 @@
 """The bounded write/read/edit tools a codegen Fix dispatches through Services.
 
-A game is a folder of ES modules. A fix prefers `edit_game_file` — a grounded anchor edit (exact
-old→new, unique-or-fail) that CANNOT gut a file to a stub — and falls back to `write_game_file`
-(whole-file overwrite, the escape hatch) only when edits can't land. `read_game_file` pulls a file
-back.
+A game is a folder of ES modules. A fix prefers `edit` — a grounded anchor edit (exact
+old→new, unique-or-fail) that CANNOT gut a file to a stub — and falls back to `write`
+(whole-file overwrite, the escape hatch) only when edits can't land. `read_file` pulls a file back —
+whole by default, or a line window (offset/limit) for a big file you only need a slice of.
 
 Grounding is stateful. Every file has a `version` (bumped on each write/edit). A read/edit result
-carries the current bytes and stamps the version the model has now SEEN. `edit_game_file` refuses to
+carries the current bytes and stamps the version the model has now SEEN. `edit` refuses to
 apply against bytes the model hasn't seen at the current version — but it does NOT error empty: it
 returns the current content in the SAME result, so the model re-anchors and retries in one turn.
-Every content-bearing result therefore carries the latest file body; MessageBuilder file-keys these
-so only the newest body per file survives in context.
+A FULL `read_file` (no offset/limit) stamps seen; a PARTIAL read does NOT — you cannot anchor an edit
+against a slice you've only partly seen, so a window read still forces a full read before editing.
+Every content-bearing result therefore carries the latest file body; MessageBuilder file-keys FULL
+reads/edits so only the newest body per file survives — a partial read keys normally so a slice never
+evicts the full body.
 """
 
 import re
@@ -48,13 +51,21 @@ def build_codegen_tools(state) -> dict:
         seen[name] = versions[name]
         return versions[name]
 
-    def read_game_file(file: str = "main.ts", **_) -> dict:
+    def read_file(file: str = "main.ts", offset: int = 0, limit: int = None, **_) -> dict:
         name = _safe(file)
         content = _read(name)
-        seen[name] = versions.get(name, 0)
-        return {"ok": True, "file": name, "version": versions.get(name, 0), "content": content}
+        partial = offset > 0 or limit is not None
+        if not partial:
+            seen[name] = versions.get(name, 0)
+            return {"ok": True, "file": name, "version": versions.get(name, 0), "content": content}
+        lines = content.splitlines(keepends=True)
+        start = max(offset, 0)
+        end = len(lines) if limit is None else min(start + max(limit, 0), len(lines))
+        return {"ok": True, "file": name, "version": versions.get(name, 0), "partial": True,
+                "offset": start, "shown_lines": end - start, "total_lines": len(lines),
+                "content": "".join(lines[start:end])}
 
-    def edit_game_file(file: str = "main.ts", old_string: str = "", new_string: str = "", **_) -> dict:
+    def edit(file: str = "main.ts", old_string: str = "", new_string: str = "", **_) -> dict:
         name = _safe(file)
         cur = versions.get(name, 0)
         content = _read(name)
@@ -77,7 +88,7 @@ def build_codegen_tools(state) -> dict:
         v = _bump(name, new_body)
         return {"ok": True, "file": name, "version": v, "content": new_body}
 
-    def write_game_file(code: str = "", file: str = "main.ts", **_) -> dict:
+    def write(code: str = "", file: str = "main.ts", **_) -> dict:
         if not code or not code.strip():
             return {"ok": False, "error": "empty code — output the complete file as one ```ts block"}
         name = _safe(file)
@@ -88,5 +99,5 @@ def build_codegen_tools(state) -> dict:
         v = _bump(name, code)
         return {"ok": True, "file": name, "version": v, "chars": len(code)}
 
-    return {"write_game_file": write_game_file, "read_game_file": read_game_file,
-            "edit_game_file": edit_game_file}
+    return {"write": write, "read_file": read_file,
+            "edit": edit}

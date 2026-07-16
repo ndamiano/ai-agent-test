@@ -381,15 +381,15 @@ def test_extract_code_pulls_fenced_block():
 
 
 # ── tools ─────────────────────────────────────────────────────────────────────
-def test_write_then_read_game_file(tmp_path):
+def test_write_then_read_file(tmp_path):
     tools = build_codegen_tools(_run_dir(tmp_path))
-    assert tools["write_game_file"](code=GOOD)["ok"] is True
-    assert tools["read_game_file"]()["content"] == GOOD
+    assert tools["write"](code=GOOD)["ok"] is True
+    assert tools["read_file"]()["content"] == GOOD
 
 
 def test_write_rejects_empty(tmp_path):
     tools = build_codegen_tools(_run_dir(tmp_path))
-    assert tools["write_game_file"](code="  ")["ok"] is False
+    assert tools["write"](code="  ")["ok"] is False
 
 
 # ── module checks ─────────────────────────────────────────────────────────────
@@ -521,7 +521,7 @@ def test_multi_file_game_loads_and_gates(tmp_path):
 
 class _FakeToolConn:
     """Scripts the read→write subloop: call 1 reads a file, call 2 overwrites main.ts — both are real
-    tool calls (a quote-heavy file round-trips fine as a write_game_file `code` arg). Records the actions
+    tool calls (a quote-heavy file round-trips fine as a write `code` arg). Records the actions
     so a test can assert the fix READ before it WROTE."""
     def __init__(self, code, target="main.ts"):
         self.code = code
@@ -533,13 +533,13 @@ class _FakeToolConn:
         self.reasonings.append(kw.get("reasoning"))
         step = len(self.calls)
         if step == 0:
-            self.calls.append("read_game_file")
+            self.calls.append("read_file")
             tc = {"id": "c0", "type": "function",
-                  "function": {"name": "read_game_file", "arguments": json.dumps({"file": self.target})}}
+                  "function": {"name": "read_file", "arguments": json.dumps({"file": self.target})}}
             return {"choices": [{"message": {"content": "", "tool_calls": [tc]}}]}
-        self.calls.append("write_game_file")
+        self.calls.append("write")
         tc = {"id": "c1", "type": "function",
-              "function": {"name": "write_game_file",
+              "function": {"name": "write",
                            "arguments": json.dumps({"file": self.target, "code": self.code})}}
         return {"choices": [{"message": {"content": "Fixed it.", "tool_calls": [tc]}}]}
 
@@ -556,8 +556,8 @@ def test_fix_subloop_reads_then_writes_to_green(tmp_path):
                      connector=conn, max_steps=15)
     result = loop.run()
     assert result.ok is True
-    assert "read_game_file" in conn.calls and "write_game_file" in conn.calls
-    assert conn.calls.index("read_game_file") < conn.calls.index("write_game_file")
+    assert "read_file" in conn.calls and "write" in conn.calls
+    assert conn.calls.index("read_file") < conn.calls.index("write")
     assert (tmp_path / "game" / "main.ts").read_text().strip() == GOOD.strip()
     # the fix loop forces reasoning OFF — a thinking model burns the whole budget reasoning and starves
     # the tool call.
@@ -584,11 +584,11 @@ def test_fix_schemas_ladder():
     def names(schemas):
         return {s["function"]["name"] for s in schemas}
 
-    assert names(_fix_schemas(escalate=False, edit_fails=0)) == {"read_game_file", "edit_game_file", "write_game_file"}
-    assert names(_fix_schemas(escalate=True, edit_fails=0)) == {"read_game_file", "write_game_file"}   # edit dropped, read kept
-    assert names(_fix_schemas(escalate=False, edit_fails=3)) == {"read_game_file", "write_game_file"}  # same on edit-fail
-    assert names(_fix_schemas(escalate=True, edit_fails=3)) == {"read_game_file", "write_game_file"}
-    assert all(names(_fix_schemas(e, f)) >= {"read_game_file", "write_game_file"}                      # read+write always
+    assert names(_fix_schemas(escalate=False, edit_fails=0)) == {"read_file", "edit", "write"}
+    assert names(_fix_schemas(escalate=True, edit_fails=0)) == {"read_file", "write"}   # edit dropped, read kept
+    assert names(_fix_schemas(escalate=False, edit_fails=3)) == {"read_file", "write"}  # same on edit-fail
+    assert names(_fix_schemas(escalate=True, edit_fails=3)) == {"read_file", "write"}
+    assert all(names(_fix_schemas(e, f)) >= {"read_file", "write"}                      # read+write always
                for e in (True, False) for f in (0, 3))
 
 

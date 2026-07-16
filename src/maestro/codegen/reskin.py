@@ -26,8 +26,20 @@ _SHAPE_TAG = re.compile(r"""shape\s*:\s*["'](box|sphere)["']""")
 _MODE_3D = re.compile(r"""mode\s*:\s*["']3d["']""")
 
 
+_GENERATED = "// GENERATED"
+
+
 def _content(resp) -> str:
     return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
+
+
+def _plannable_src(files: dict) -> str:
+    """The source a planner reads: AUTHORED files only. A `// GENERATED` file (worldgen's world.ts is
+    ~100KB of baked terrain heightfield + labelled parcels) is never rewritten (see _reskin_and_gate)
+    and its objects are already `mesh:`-tagged, so its body is pure context bloat — feeding it blows the
+    window. Its ids still reach the planner via _existing_mesh_ids, which scans the full file set."""
+    return "\n\n".join(f"// ── {name} ──\n{code}" for name, code in files.items()
+                       if not code.lstrip().startswith(_GENERATED))
 
 
 def _json_block(text: str) -> dict:
@@ -56,7 +68,7 @@ def plan_assets(infer, spec: dict, files: dict) -> list:
     """LLM call 1: spec + game source → the sprite manifest [{id, prompt, w, h}]. The ids become the
     contract the draw rewrite keys on."""
     system = (_PROMPTS / "plan_assets.txt").read_text(encoding="utf-8")
-    src = "\n\n".join(f"// ── {name} ──\n{code}" for name, code in files.items())
+    src = _plannable_src(files)
     user = (f"SPEC:\n{json.dumps(spec.get('design', spec), ensure_ascii=False, indent=2)}\n\n"
             f"GAME SOURCE:\n{src}\n\nList the sprites.")
     plan = _json_block(infer(system, user, 2000))
@@ -106,7 +118,7 @@ def plan_meshes(infer, spec: dict, files: dict) -> list:
     is silently dropped, so every tagged entity gets a real mesh instead of a placeholder box."""
     required = _existing_mesh_ids(files)
     system = (_PROMPTS / "plan_meshes.txt").read_text(encoding="utf-8")
-    src = "\n\n".join(f"// ── {name} ──\n{code}" for name, code in files.items())
+    src = _plannable_src(files)
     req_note = (f"\n\nREQUIRED ids (entities in the source already carry these `mesh` tags — you MUST "
                 f"output a mesh for EACH, with a vivid prompt + dims): {', '.join(required)}"
                 if required else "")
@@ -262,11 +274,11 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
     """Rewrite each matching file (detect → reskin), then re-gate and auto-fix any regression."""
     from maestro.codegen.run import run_build
     from maestro.codegen.tools import build_codegen_tools
-    write = build_codegen_tools(state)["write_game_file"]
+    write = build_codegen_tools(state)["write"]
     for name, src in files.items():
         if not detect(src):
             continue
-        if src.lstrip().startswith("// GENERATED"):
+        if src.lstrip().startswith(_GENERATED):
             continue   # a generated file (e.g. worldgen's world.ts) is already tagged — never rewrite it
         new = reskin(infer, name, src, ids)
         if new.strip() and new.strip() != src.strip():

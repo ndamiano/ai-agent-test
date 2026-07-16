@@ -87,13 +87,16 @@ src/
       gates.py           typecheck (tsc → per-file errors) · build_bundle (esbuild main.ts → main.js
                          + inline sourcemap) · run_headless/probe/render/scroll (build then run the
                          bundle with --enable-source-maps, so a crash stack names the .ts source).
-      tools.py           write_game_file(code, file) / read_game_file (per-file .ts, path-safe)
+      tools.py           write(code, file) / edit(file, old, new) / read_file (whole file, or
+                         offset/limit line window; per-file .ts, path-safe — a slice does NOT ground
+                         an edit). The 9-16KB kit doc rides in the fix loop's SYSTEM prompt (uncounted
+                         by the char budget), not a user turn, so file reads aren't demolished to fit.
       module.py          CodegenModule = planned → authored → typechecks → runs → plays → renders →
                          scrolls (blocking where noted). AUTHORING = a whole-body Check.run: ONE raw
                          fenced-```ts completion per file. GATE FIXES route through dispatch_fix →
                          a FIX CLASS (fix_classes.py), then a read→write subloop (_read_write_loop_fix):
-                         read_game_file any sibling on demand (tool-calls via MessageBuilder, which
-                         dedups superseded reads), then write_game_file ONE self-selected file.
+                         read_file any sibling on demand (tool-calls via MessageBuilder, which
+                         dedups superseded reads), then write/edit ONE self-selected file.
                          Ephemeral per-fix transcript; outer loop re-gates.
       fix_classes.py     the error-class → fixer MAP (codegen analog of IR's per-check owner). A GATE
                          detects a raw failure; a FIX CLASS resolves it — chosen by matching the Error
@@ -175,7 +178,7 @@ src/
 **Inference path (build):** `AgentLoop` → `Module.get_fix` → `Services.infer` → connector. AUTHORING
 asks for a raw completion (`services.infer(msgs, [])`, empty tools) and extracts the fenced ```ts block
 (one whole file per call). GATE FIXES run the read→edit/write subloop where read/edit/write are all real
-tool calls — a whole quote-heavy file round-trips fine as a `write_game_file` `code` arg (verified).
+tool calls — a whole quote-heavy file round-trips fine as a `write` `code` arg (verified).
 
 **Adding a mechanic:** widen the KIT (`runtime/engine.js` + a `kit_api*.md` section + a worked
 example in the prompt + a probe invariant). Generation just composes the new primitive. Adding a

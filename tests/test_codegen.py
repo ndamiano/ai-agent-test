@@ -646,5 +646,8 @@ def test_kit_context_dropped_for_pure_typecheck_fix():
     argc = Error(type=ErrorType.FIX, code="typechecks", component="game",
                  message="main.ts: error TS2554: Expected 4 arguments, but got 3.")
     assert "KIT CALL SIGNATURES" in _kit_context(spec, argc)
+    argtype = Error(type=ErrorType.FIX, code="typechecks", component="game",
+                    message="render.ts: error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.")
+    assert "KIT CALL SIGNATURES" in _kit_context(spec, argtype)
     runtime = Error(type=ErrorType.FIX, code="runs", component="game", message="HEADLESS FAILED")
     assert "# KIT API" in _kit_context(spec, runtime)

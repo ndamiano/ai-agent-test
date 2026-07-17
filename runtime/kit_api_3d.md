@@ -57,8 +57,12 @@ this.state.player = kit.spawn(this.state.world, { shape:"box", x:px, y:heightAt(
 this.state.player.y = heightAt(this.state.player.x, this.state.player.z) + 0.9;
 kit.avoidRects(this.state.player, WORLD.buildings);   // slide around buildings, not through them
 ```
-`WORLD.buildings` (`[{id,label,x,z,w,d,h,color}]`, `label` = kind e.g. "market stall"), `WORLD.plaza
-{x,z}`, `WORLD.gate {x,z}` (where the roads leave town), `WORLD.grass [[x,z],…]` (open town ground),
+`WORLD.buildings` (`[{id,label,x,z,w,d,h,color}]`, `label` = kind — the SET VARIES per world, so
+NEVER `find(b => b.label === "...")` a guessed name (a miss silently drops your NPC/shop). Place
+people by POSITION instead — e.g. the building nearest the plaza:
+`const home = WORLD.buildings.reduce((a,b) => Math.hypot(a.x-WORLD.plaza.x, a.z-WORLD.plaza.z) <
+Math.hypot(b.x-WORLD.plaza.x, b.z-WORLD.plaza.z) ? a : b);` — or just spread NPCs over
+`WORLD.buildings[i]` by index), `WORLD.plaza {x,z}`, `WORLD.gate {x,z}` (where the roads leave town), `WORLD.grass [[x,z],…]` (open town ground),
 `WORLD.pois` (`[{id,kind,label,x,z}]` — real outlying sites: a cave, ruins, a camp, far outside the
 village, already dressed with props by spawnWorld), `WORLD.regions` (`{forest:[[x,z],…],
 meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground height — every entity's
@@ -131,6 +135,46 @@ goal at a POI so the player travels), and mark the current objective with a `mar
    much health shows, ADD or REMOVE entities (splice pip boxes from `state.world`); to show a hit,
    MOVE the entity (a lunge/recoil), never recolor or resize it.
 
+## Sub-modes: combat / minigame overlays  (walk into an enemy → a turn-based fight opens)
+A game with a battle screen, a puzzle overlay, or any "now we're doing something else" is ONE game
+with a `state.mode` switch — never a second engine, never a canvas. The world keeps rendering behind
+the overlay; the HUD becomes the sub-game's UI. The pattern:
+```ts
+// state: { mode: "world", combat: null, deck: [...], gold: 0, hp: 30, ... }
+update(dt, input, kit) {
+  const s = this.state;
+  if (s.mode === "combat") {                 // the sub-game OWNS the frame: no movement below
+    const c = s.combat, n = c.hand.length;
+    if (input.pressed("ArrowLeft"))  c.selected = (c.selected - 1 + n) % n;
+    if (input.pressed("ArrowRight")) c.selected = (c.selected + 1) % n;
+    if (input.pressed(" ")) { /* play c.hand[c.selected], then the foe answers (kit.rng.pick) */ }
+    if (c.foeHp <= 0) { s.mode = "world"; s.combat = null; kit.notify("Won! +10g"); }  // NOT kit.win
+    if (c.myHp <= 0) kit.lose("Slain.");     // kit.win/lose ONLY for the spec's real ending
+    return;                                   // ← the return IS the mode switch
+  }
+  kit.drive(s.player, input, dt, 8);          // world mode: move, steer NPCs, ...
+  for (const e of s.enemies)                  // contact starts the fight
+    if (Math.hypot(e.x - s.player.x, e.z - s.player.z) < 1.6) {
+      s.combat = { hand: [...], selected: 0, myHp: s.hp, foeHp: e.hp, foe: e };  // deal from s.deck
+      s.mode = "combat"; return;
+    }
+}
+hud(kit) {
+  const s = this.state;
+  if (s.mode === "combat") return [           // the sub-game's UI is HUD items over the frozen scene
+    { kind: "bar", value: s.combat.myHp, max: 30, at: "bottom-left", label: "You" },
+    { kind: "bar", value: s.combat.foeHp, max: 16, at: "top-right", color: "#e44", label: "Foe" },
+    { kind: "menu", title: "Hand (←/→ pick, SPACE play)", at: "bottom", selected: s.combat.selected,
+      options: s.combat.hand.map(c => `${c.name} ⚔${c.attack}`) },
+  ];
+  return [ /* the world-mode HUD */ ];
+}
+```
+What persists (deck, gold, hp) lives at the TOP of state, not inside `state.combat` — combat copies
+in what it needs and writes back on exit. Different enemies = different deck arrays on the enemy
+entities (data, not code). A shop that sells cards is the vendor pattern above: on the pick,
+`if (s.gold >= 12) { s.gold -= 12; s.deck.push({name:"Cleave", attack:7}); }`.
+
 ## Camera  (optional `camera(cam, kit)` hook)
 For a third-person follow, DON'T hand-roll the eye/look-at math — call the kit primitive:
 ```js
@@ -152,8 +196,10 @@ fixed 3/4 view.
   `e.grounded`. For a 3D platformer/collectathon where things fall and stand on the floor.
 - `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.rng`, `kit.V` (clamp/len/norm), `kit.aabb`
   (works on x/y as before — for 3D distance use `Math.hypot(dx,dy,dz)`), `kit.win(msg)/kit.lose(msg)`.
-- Randomness ONLY via `kit.rng` — `kit.rng.range(lo,hi)`, `kit.rng.int(lo,hi)`, `kit.rng.pick(arr)`,
-  `kit.rng.chance(p)`. NEVER `Math.random()` (it breaks the deterministic headless gate).
+- Randomness ONLY via `kit.rng` — `kit.rng.range(lo,hi)` (FLOAT — never an array index),
+  `kit.rng.int(lo,hi)` inclusive ints, `kit.rng.pick(arr)` (a random ELEMENT — use this for "a random
+  card/enemy/point"), `kit.rng.chance(p)`, `kit.rng.shuffle(arr)`. NEVER `Math.random()`/`Date.now()`
+  (they break the deterministic gates).
 
 ## NPC / creature steering (3D — do NOT hand-roll dx/dz chase math or reuse the 2D seek/wander,
 they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the entity to its travel:

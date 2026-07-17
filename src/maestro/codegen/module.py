@@ -47,11 +47,11 @@ def _kit_sig_block() -> str:
 def _kit_context(spec: dict, error) -> str:
     """The kit surface a fix actually needs. A runtime gate (crash/probe/render) needs the full kit
     behavior + laws. A typecheck fix does NOT — it's a type/contract/call bug: inject nothing, unless
-    an arg-count error is in play, then just the signatures. Cuts ~9KB of noise from typecheck fixes,
+    an arg-count/arg-type error is in play, then just the signatures. Cuts ~9KB of noise from typecheck fixes,
     where it drowns the one-line failing gate (the small-model distraction law)."""
     if getattr(error, "code", None) != "typechecks":
         return f"# KIT API\n{_kit_doc(spec)}"
-    if "TS2554" in error.message or "arguments, but got" in error.message:
+    if any(c in error.message for c in ("TS2554", "TS2345")) or "arguments, but got" in error.message:
         return _kit_sig_block()
     return ""
 

@@ -13,6 +13,9 @@ right; only split when the game genuinely has several independent systems.
   or render.ts: the kit already PROVIDES physics (kit.physics), camera (kit.chaseCam/fpCam), movement
   (kit.walk/moveTank3/moveFP/…), and rendering (entity shape tags + draw/hud). Those are calls you make,
   not files you write. Splitting them is the #1 planning mistake and it makes the build thrash.
+- A SUB-MODE (a card battle / puzzle / minigame that opens over the world and returns to it) is ONE
+  file owning that whole loop (its state shape, turn logic, and HUD items) — never split a sub-mode
+  into logic + render + types of its own.
 - When you DO split and files share data structures (the map, the player/state shape), ADD a
   `types.ts` that exports the shared `interface`s. Every file imports them, so the compiler enforces
   that all files agree on the data — no "one file expects a char grid, another returns booleans".

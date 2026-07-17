@@ -53,6 +53,9 @@ runtime/games/*.js
 !runtime/games/platformer.js
 !runtime/games/collect3d.js
 runtime/games/*/
+!runtime/games/cardbound_proof/
+runtime/games/cardbound_proof/*
+!runtime/games/cardbound_proof/main.ts
 
 # node deps (runtime toolchain: typescript, esbuild)
 node_modules/

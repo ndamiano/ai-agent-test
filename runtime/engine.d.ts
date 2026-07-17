@@ -24,6 +24,7 @@ interface Rng {
   int(lo: number, hi: number): number;
   pick<T>(arr: T[]): T;
   chance(p: number): boolean;
+  shuffle<T>(arr: T[]): T[];
 }
 
 interface V {

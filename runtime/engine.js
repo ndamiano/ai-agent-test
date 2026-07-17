@@ -34,6 +34,13 @@ export function makeRng(seed = 1) {
   next.int = (lo, hi) => Math.floor(lo + next() * (hi - lo + 1));
   next.pick = (arr) => arr[Math.floor(next() * arr.length)];
   next.chance = (p) => next() < p;
+  next.shuffle = (arr) => {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  };
   return next;
 }
 
@@ -881,6 +888,17 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
   // is the camera (input.pointer is never fed; there is no "mouse0" key), so a mouse-gated action can
   // never fire — the game passes every gate yet is unwinnable. Deterministic, so check it first.
   if (src) {
+    // Nondeterminism breaks every gate's baseline-vs-driven comparison (and replay): the whole
+    // reason kit.rng exists. Deterministic to detect, so check it first.
+    const nondet = src.match(/Math\s*\.\s*random|Date\s*\.\s*now|new\s+Date\s*\(/);
+    if (nondet) {
+      violations.push({ kind: "nondeterminism",
+        detail: `the code calls ${JSON.stringify(nondet[0])} — a game must be DETERMINISTIC (the `
+          + `headless/probe gates diff a no-input run against driven runs; random state makes that `
+          + `diff meaningless). Replace EVERY Math.random/Date.now with kit.rng: .next() 0..1, `
+          + `.range(lo,hi), .int(lo,hi) inclusive, .pick(arr), .chance(p). A helper that needs `
+          + `randomness must take the rng as a parameter (thread kit.rng from init/update).` });
+    }
     const mouseRead = src.match(/input\s*\.\s*pointer|["'`]mouse\d?["'`]/);
     if (mouseRead) {
       const cfg = realize(gameFactory, { gravity: 0 }, seed).config;
@@ -894,7 +912,14 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
       }
     }
   }
-  const DIRS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " "];
+  // Base movement keys, plus every key literal the game ITSELF reads (a turn game's controls may be
+  // Enter/e/r/1-9 — keys the base mash never touches, so a fully-working game read as dead). Capped:
+  // each key costs a full sim run.
+  const declared = src
+    ? [...src.matchAll(/input\s*\.\s*(?:pressed|down)\(\s*["'`]([^"'`]{1,12})["'`]/g)].map((m) => m[1])
+    : [];
+  const DIRS = [...new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " ",
+                            ...declared])].slice(0, 20);
   const MIN_MOVE = 4; // px; below this over the whole window a "control" is effectively dead
   const snap = (script) => runSnapshot(gameFactory, { frames, dt, seed, script });
 
@@ -906,7 +931,26 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
   // Per-key SUSTAINED hold (one key at a time, so left/right can't cancel). Measure the biggest
   // input-caused displacement of any entity vs the no-input baseline (deterministic → the diff
   // isolates the input's effect). A spawn (bullet) => controls clearly live.
-  let best = { key: null, disp: 0, spawned: false }, drivenForClip = baseline;
+  // Position-free state digest: a turn/card/menu game's controls mutate STATE (hand, health, turn)
+  // without moving any entity. Positions/velocities are EXCLUDED so a sub-MIN_MOVE drift can't
+  // launder a too-slow mover into "live" — spatial liveness stays owned by the displacement check.
+  const POS = new Set(["x", "y", "z", "vx", "vy", "vz"]);
+  const digest = (v, seen = new WeakSet()) => {
+    if (v === null || typeof v === "number" || typeof v === "boolean" || typeof v === "string") return JSON.stringify(v);
+    if (typeof v !== "object") return "";                    // functions/undefined
+    if (seen.has(v)) return "~";
+    seen.add(v);
+    if (Array.isArray(v)) return "[" + v.map((e) => digest(e, seen)).join(",") + "]";
+    return "{" + Object.keys(v).sort().filter((k) => !POS.has(k))
+      .map((k) => k + ":" + digest(v[k], seen)).join(",") + "}";
+  };
+  const baseDigest = digest(baseline.state);
+  // The digest signal is only meaningful if a no-input run reproduces itself: a nondeterministic
+  // init (random deck, Date-seeded anything) makes every digest differ, input or not.
+  let digestReliable;
+  try { digestReliable = digest(snap([]).state) === baseDigest; }
+  catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
+  let best = { key: null, disp: 0, spawned: false }, drivenForClip = baseline, stateChanged = false;
   for (const key of DIRS) {
     let g;
     try { g = snap([{ frame: 0, key, down: true }]); }
@@ -916,17 +960,21 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
     // (a brick smashed, a pellet eaten) happens under gameplay regardless of input, so it must NOT
     // read as a live control — that false-green let a breakout with a dead paddle pass.
     if (w.length > baseW.length) { best = { key, disp: Infinity, spawned: true }; drivenForClip = g; break; }
+    if (digestReliable && !stateChanged && digest(g.state) !== baseDigest) stateChanged = true;
     let m = 0;
     for (let i = 0; i < w.length; i++)
       m = Math.max(m, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),
                                  (w[i].z || 0) - (baseW[i].z || 0)));
     if (m > best.disp) { best = { key, disp: m, spawned: false }; drivenForClip = g; }
   }
-  if (!best.spawned && best.disp < MIN_MOVE) {
+  if (!best.spawned && !stateChanged && best.disp < MIN_MOVE) {
     const is3d = baseW.some((e) => e && (e.z !== undefined
       || e.shape === "box" || e.shape === "sphere" || e.shape === "ground"));
-    const head = `no key moves the player: the strongest input (${best.key}) shifted every entity by `
-      + `at most ${best.disp.toFixed(2)} over ${frames} frames. `;
+    const head = `no key does anything: the strongest input (${best.key}) shifted every entity by `
+      + `at most ${best.disp.toFixed(2)} over ${frames} frames, and no key changed game state at all. `
+      + `If the game is turn/menu-driven (input mutates state, not positions), check the KEY LITERALS: `
+      + `keys are KeyboardEvent.key values — space is " " (a single space), NOT "Space"; arrows are `
+      + `"ArrowLeft" etc. `;
     const detail = is3d
       // 3D: the #1 cause is a player that isn't the entity the probe (and renderer) sees.
       ? head + `In a 3D game the usual cause is that the object you move is NOT a member of `

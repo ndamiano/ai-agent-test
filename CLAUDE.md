@@ -40,8 +40,10 @@ with no change to the gradient. Never violate it.
   Games are checked against `runtime/engine.d.ts` (ambient kit types). This is the deterministic fix
   for a whole class of silent cross-file bugs that no runtime gate can see.
 - **headless** — bundle (esbuild) then step the sim N frames, catch crashes/divergence.
-- **probe** — generic correctness invariants (controls actually move something; no entity rests in a
-  solid tile), each violation an actionable, units-aware diagnosis.
+- **probe** — generic correctness invariants (controls actually DO something — move an entity, spawn
+  one, or mutate non-positional state, so turn/card games count; no entity rests in a solid tile; no
+  Math.random/Date.now — determinism is what makes the gates' diffs meaningful), each violation an
+  actionable, units-aware diagnosis.
 - **render** — call `draw()` against a recording mock: catch draw-time crashes + blank screens.
 - **scroll** — a world bigger than the screen must be followed by a panning camera.
 

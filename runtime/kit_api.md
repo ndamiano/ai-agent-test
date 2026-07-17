@@ -135,7 +135,10 @@ kit.stepParticles(this.state.world, dt);
 - Colors passed to entities/draw are CSS strings and MUST include the leading `#` (`"#f00"`).
 
 ## Randomness
-- `kit.rng.next()` 0..1 · `.range(lo,hi)` · `.int(lo,hi)` inclusive · `.pick(arr)` · `.chance(p)` bool.
+- `kit.rng.next()` 0..1 · `.range(lo,hi)` FLOAT (never an array index) · `.int(lo,hi)` inclusive ints
+  · `.pick(arr)` a random ELEMENT (use for "a random card/enemy") · `.chance(p)` bool
+  · `.shuffle(arr)` in-place (decks, spawn orders). NEVER `Math.random()`/`Date.now()` — they break
+  the deterministic gates.
 
 ## Vectors  `kit.V`
 - `add,sub,scale(a,k),len(a),norm(a)` and `clamp(v,lo,hi)` (clamp a scalar).

@@ -158,3 +158,58 @@ def test_probe_rejects_mouse_gated_code_outside_fp():
 def test_probe_allows_keyboard_code_and_fp_mouse():
     assert "dead_mouse_control" not in _probe_kinds("orbital", 'if (input.pressed("f")) attack();')
     assert "dead_mouse_control" not in _probe_kinds("fp", "if (input.pointer.down) attack();")
+
+
+def _probe_game(game_js: str, src: str = "") -> list:
+    r = _node_eval("""
+import { probe } from "./engine.js";
+const game = %s;
+const res = probe(game, { src: %s });
+console.log(JSON.stringify(res.violations.map(v => v.kind)));
+""" % (game_js, json.dumps(src)))
+    return r
+
+
+_TURN_GAME = """(kit) => ({
+  state: { world: [], score: 0 },
+  update(dt, input, k) { if (input.pressed(" ")) this.state.score += 1; },
+})"""
+
+_DEAD_GAME = """(kit) => ({
+  state: { world: [], score: 0 },
+  update(dt, input, k) {},
+})"""
+
+_RANDOM_DEAD_GAME = """(kit) => ({
+  state: { world: [], roll: Math.random() },
+  update(dt, input, k) {},
+})"""
+
+
+def test_probe_passes_turn_game_that_mutates_state_without_movement():
+    assert _probe_game(_TURN_GAME) == []
+
+
+def test_probe_still_flags_game_where_input_does_nothing():
+    assert "dead_controls" in _probe_game(_DEAD_GAME)
+
+
+def test_probe_flags_nondeterministic_source():
+    assert "nondeterminism" in _probe_game(_DEAD_GAME, src="const j = Math.random();")
+    assert "nondeterminism" not in _probe_game(_TURN_GAME, src="const j = kit.rng.next();")
+
+
+def test_probe_random_state_cannot_fake_live_controls():
+    assert "dead_controls" in _probe_game(_RANDOM_DEAD_GAME)
+
+
+_ENTER_ONLY_GAME = """(kit) => ({
+  state: { world: [], turn: 0 },
+  update(dt, input, k) { if (input.pressed("Enter")) this.state.turn += 1; },
+})"""
+
+
+def test_probe_mashes_keys_the_game_declares():
+    src = 'if (input.pressed("Enter")) endTurn();'
+    assert _probe_game(_ENTER_ONLY_GAME, src=src) == []
+    assert "dead_controls" in _probe_game(_ENTER_ONLY_GAME)  # without src, Enter never mashed

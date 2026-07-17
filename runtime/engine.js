@@ -1025,12 +1025,24 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
         + `the HUD is DATA returned from hud(kit). A draw() here is dead code (the 3D renderer ignores `
         + `it) and any g.clear in it would blank the scene. Delete draw(); move HUD into hud().` }] };
   }
+  if (config.mode !== "3d" && !has2dScene) {
+    return { ok: false, violations: [{ kind: "missing_draw",
+      detail: `a 2D game MUST define draw(g, kit) — the scene renders ONLY from it (hud() is a thin `
+        + `overlay; without draw the screen is the background color plus floating HUD text). Write `
+        + `draw: paint the tilemap/ground, then every entity in state (crops, NPCs, the player) as `
+        + `rects/circles/sprites at their positions, world-space under g.push(cam)/g.pop().` }] };
+  }
   if (!has2dScene && !hasHud) return { ok: true, skipped: true };
   const input = makeInput();
   let content = 0;
   const bump = () => { content++; };
   const rec = { ctx: {}, clear: () => {}, push: () => {}, pop: () => {},
                 rect: bump, circle: bump, line: bump, text: bump, sprite: bump };
+  // HUD items render against a NON-counting mock: HUD text must not mask a blank SCENE (a game with
+  // no world drawing but a chatty hud() read as "painted something").
+  const noop = () => {};
+  const hudRec = { ctx: {}, clear: noop, push: noop, pop: noop,
+                   rect: noop, circle: noop, line: noop, text: noop, sprite: noop };
   try {
     if (g.init) g.init(kit);
     for (let f = 0; f < frames; f++) {
@@ -1043,7 +1055,7 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
         if (bad) return { ok: false, violations: [{ kind: "hud_bad",
           detail: `hud(kit) returned an invalid overlay: ${bad}. hud() returns an array of `
             + `{kind:"text"|"bar"|"banner", ...} items — the engine draws them; never touch a canvas.` }] };
-        renderHud(rec, items, config.width || 640, config.height || 480);
+        renderHud(hudRec, items, config.width || 640, config.height || 480);
       }
     }
   } catch (e) {

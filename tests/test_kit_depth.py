@@ -213,3 +213,28 @@ def test_probe_mashes_keys_the_game_declares():
     src = 'if (input.pressed("Enter")) endTurn();'
     assert _probe_game(_ENTER_ONLY_GAME, src=src) == []
     assert "dead_controls" in _probe_game(_ENTER_ONLY_GAME)  # without src, Enter never mashed
+
+
+def _render_kinds(game_js: str) -> list:
+    r = _node_eval("""
+import { renderSmoke } from "./engine.js";
+const game = %s;
+const res = renderSmoke(game);
+console.log(JSON.stringify((res.violations || []).map(v => v.kind)));
+""" % game_js)
+    return r
+
+
+def test_render_requires_draw_in_2d():
+    no_draw = """(kit) => ({
+      state: { world: [] },
+      update(dt, input, k) {},
+      hud(k) { return [{ kind: "text", text: "Gold: 100" }]; },
+    })"""
+    assert "missing_draw" in _render_kinds(no_draw)
+    with_draw = """(kit) => ({
+      state: { world: [] },
+      update(dt, input, k) {},
+      draw(g, k) { g.rect(0, 0, 10, 10, "#fff"); },
+    })"""
+    assert _render_kinds(with_draw) == []

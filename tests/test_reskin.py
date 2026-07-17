@@ -239,3 +239,45 @@ def test_trellis_batch_retries_after_unload(tmp_path, monkeypatch):
     assert done == {"beast"}
     assert (out / "beast.glb").read_bytes() == b"glb-bytes"
     assert [c for c in calls if c.endswith("/generate")] and len([c for c in calls if c.endswith("/unload")]) >= 2
+
+
+def test_decimate_glb_end_to_end(tmp_path):
+    """The decimation hook must run the real node script on a real (tiny) GLB and leave a valid,
+    no-larger file — and keep the original untouched when the script fails."""
+    import json
+    import struct
+
+    import tools.comfyui_tools as ct
+
+    def tri_glb() -> bytes:
+        buf = struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0) + struct.pack("<3I", 0, 1, 2)
+        doc = json.dumps({
+            "asset": {"version": "2.0"},
+            "scenes": [{"nodes": [0]}], "scene": 0, "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                 "min": [0, 0, 0], "max": [1, 1, 0]},
+                {"bufferView": 1, "componentType": 5125, "count": 3, "type": "SCALAR"},
+            ],
+            "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36},
+                            {"buffer": 0, "byteOffset": 36, "byteLength": 12}],
+            "buffers": [{"byteLength": len(buf)}],
+        }).encode()
+        doc += b" " * (-len(doc) % 4)
+        total = 12 + 8 + len(doc) + 8 + len(buf)
+        return (b"glTF" + struct.pack("<II", 2, total)
+                + struct.pack("<I", len(doc)) + b"JSON" + doc
+                + struct.pack("<I", len(buf)) + b"BIN\x00" + buf)
+
+    glb = tmp_path / "thing.glb"
+    glb.write_bytes(tri_glb())
+    orig_size = glb.stat().st_size
+    assert ct._decimate_glb(str(glb)) is True
+    out = glb.read_bytes()
+    assert out[:4] == b"glTF" and len(out) <= orig_size * 2   # valid, not exploded
+
+    bad = tmp_path / "bad.glb"
+    bad.write_bytes(b"not a glb")
+    assert ct._decimate_glb(str(bad)) is False
+    assert bad.read_bytes() == b"not a glb"   # original untouched on failure

@@ -115,8 +115,10 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
         for attempt in (1, 2):
             try:
                 glb = _http_post_raw(f"{ep}/generate", img, "image/png")
-                with open(os.path.join(out_dir, f"{slug}.glb"), "wb") as g:
+                glb_path = os.path.join(out_dir, f"{slug}.glb")
+                with open(glb_path, "wb") as g:
                     g.write(glb)
+                _decimate_glb(glb_path)
                 done.add(slug)
                 break
             except Exception as e:
@@ -125,6 +127,29 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
                     _unload()
     _unload()
     return done
+
+
+def _decimate_glb(glb_path: str) -> bool:
+    """Shrink a raw TRELLIS GLB to game weight (~16MB → ~1MB; runtime/decimate.mjs). Soft — a
+    failure keeps the fat original (heavy but playable), never a broken file."""
+    import os
+    import subprocess
+    runtime = Path(__file__).resolve().parents[2] / "runtime"
+    tmp = f"{glb_path}.dec.glb"
+    try:
+        p = subprocess.run(["node", str(runtime / "decimate.mjs"), glb_path, tmp],
+                           capture_output=True, text=True, timeout=300, cwd=runtime)
+        if p.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+            os.replace(tmp, glb_path)
+            return True
+        logger.warning(f"decimate kept original for {os.path.basename(glb_path)}: "
+                       f"{(p.stderr or p.stdout)[-200:]}")
+    except Exception as e:
+        logger.warning(f"decimate kept original for {os.path.basename(glb_path)}: {e}")
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return False
 
 
 def _load_workflow(path: Path) -> dict:

@@ -150,7 +150,9 @@ def reskin_mesh_file(infer, name: str, src: str, ids: list) -> str:
     system = (_PROMPTS / "reskin_mesh.txt").read_text(encoding="utf-8")
     user = (f"Available mesh ids: {', '.join(ids)}\n\nFile: {name}\n\n```ts\n{src}\n```\n\n"
             "Rewrite the file, tagging each entity with its mesh id.")
-    return _ts_block(infer(system, user, 6000))
+    # The completion is the WHOLE file back plus tags — a fixed cap silently truncates a big main.ts
+    # (no fence ⇒ empty ⇒ the skin never wires). ~3 chars/token, plus headroom.
+    return _ts_block(infer(system, user, max(6000, len(src) // 2)))
 
 
 def _autocrop(path: Path, pad_frac: float = 0.06) -> None:
@@ -284,6 +286,9 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
         if new.strip() and new.strip() != src.strip():
             write(code=new, file=name)
             logger.info("assets %s: reskinned %s", run_id, name)
+        else:
+            logger.warning("assets %s: reskin of %s produced %s — file left untouched (assets will "
+                           "not be wired here)", run_id, name, "nothing" if not new.strip() else "no change")
     return run_build(run_id, max_steps=max_steps)
 
 

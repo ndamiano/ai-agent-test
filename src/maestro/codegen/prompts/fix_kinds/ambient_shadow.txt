@@ -1,0 +1,4 @@
+Kit, Entity, Input, GameObject, World and the other kit types are AMBIENT globals from engine.d.ts —
+they are NEVER imported and NEVER re-declared. Delete any `import … Kit …` line and any local
+`declare namespace Kit` block, then use the names directly; the real signatures come from the ambient
+declarations. Do not invent replacement declarations.

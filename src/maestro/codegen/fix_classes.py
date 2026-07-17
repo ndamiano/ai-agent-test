@@ -137,12 +137,57 @@ CONTRACT = FixClass(
     deterministic=_contract_deterministic,
 )
 
+
+# ── ambient-shadow ────────────────────────────────────────────────────────────
+# The game imported or re-declared the AMBIENT kit types (Kit/Entity/Input come from engine.d.ts as
+# globals). A local `declare namespace Kit {…}` shadows the real one with hallucinated signatures, and
+# `import { Kit } from "./types"` poisons every importer — one root, errors across many files, which
+# the one-file-per-fix loop churns on. Both forms are mechanically removable.
+_AMBIENT_CODES = ("TS2459", "TS2708")
+_KIT_IMPORT = re.compile(r"^[ \t]*import[^\n]*\bKit\b[^\n]*from[^\n]*\n", re.M)
+_KIT_NAMESPACE = re.compile(r"(?:/\*\*(?:[^*]|\*(?!/))*\*/\s*)?declare\s+namespace\s+Kit\s*\{")
+
+
+def _matches_ambient(error) -> bool:
+    msg = error.message or ""
+    return any(c in msg for c in _AMBIENT_CODES) or ("TS2307" in msg and "'./kit'" in msg)
+
+
+def _strip_kit_shadow(run_dir, error) -> Optional[dict]:
+    changes, count = [], 0
+    for name, src in game_files(run_dir).items():
+        new = _KIT_IMPORT.sub("", src)
+        m = _KIT_NAMESPACE.search(new)
+        if m:
+            depth, j = 0, new.find("{", m.start())
+            for j in range(j, len(new)):
+                if new[j] == "{":
+                    depth += 1
+                elif new[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            new = new[:m.start()] + new[j + 1:]
+        if new != src:
+            (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
+            changes.append(name)
+            count += 1
+    return {"changes": changes, "count": count} if count else None
+
+
+AMBIENT = FixClass(
+    id="ambient-shadow",
+    matches=_matches_ambient,
+    directive=_directive("ambient_shadow.txt"),
+    deterministic=_strip_kit_shadow,
+)
+
 DEFAULT = FixClass(id="default", matches=lambda e: True)
 
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [CONTRACT, DEFAULT]
+FIX_CLASSES = [AMBIENT, CONTRACT, DEFAULT]
 
 
 def classify(error) -> FixClass:

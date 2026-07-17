@@ -154,3 +154,27 @@ def test_does_not_declare_export_that_a_sibling_owns(tmp_path):
     res = reconcile_types(rd, include_fields=False)
     assert not any(k == "export" and v == "movePlayer" for k, v in res["changes"])
     assert "export type movePlayer = any;" not in (game_dir(rd) / "types.ts").read_text()
+
+
+def test_ambient_shadow_class_matches_and_strips(tmp_path):
+    from maestro.codegen.fix_classes import classify, _strip_kit_shadow
+    e = _err("types.ts: error TS2459: Module '\"./types\"' declares 'Kit' locally, but it is not exported.")
+    assert classify(e).id == "ambient-shadow"
+    e2 = _err("main.ts: error TS2708: Cannot use namespace 'Kit' as a value.")
+    assert classify(e2).id == "ambient-shadow"
+
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "manifest.json").write_text(
+        '{"files": [{"name": "types.ts"}, {"name": "ui.ts"}]}', encoding="utf-8")
+    (game / "types.ts").write_text(
+        "/** ambient */\ndeclare namespace Kit {\n  interface Entity { x: number; }\n}\n"
+        "export interface Crop extends Kit.Entity { stage: number; }\n", encoding="utf-8")
+    (game / "ui.ts").write_text(
+        'import type { Kit } from "./types";\nexport function drawUi(state: any, kit: Kit): void {}\n',
+        encoding="utf-8")
+    r = _strip_kit_shadow(tmp_path, e)
+    assert r and set(r["changes"]) == {"types.ts", "ui.ts"}
+    assert "declare namespace Kit" not in (game / "types.ts").read_text()
+    assert "Crop extends Kit.Entity" in (game / "types.ts").read_text()
+    assert "import" not in (game / "ui.ts").read_text()

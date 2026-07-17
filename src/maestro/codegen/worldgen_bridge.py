@@ -252,25 +252,27 @@ def build(recipe, out_dir: Path):
     for i, (gx2, gz2) in enumerate(srng.sample(grass, min(34, len(grass))) + wild):
         y = height_at(gx2, gz2)
         kind = i % 6
+        # each prop carries a mesh id — the asset stage's GLB replaces the primitive in place,
+        # keeping the wilderness in the same rendered style as the buildings
         if kind == 0:                       # buried round rock
             props.append({"x": round(gx2, 2), "y": round(y + 0.18, 2), "z": round(gz2, 2),
-                          "r": round(srng.uniform(0.3, 0.55), 2), "color": "#70747a"})
+                          "r": round(srng.uniform(0.3, 0.55), 2), "color": "#70747a", "mesh": "rock"})
         elif kind == 1:                     # angular slab, randomly turned
             w = round(srng.uniform(0.7, 1.3), 2)
             h = round(srng.uniform(0.35, 0.7), 2)
             props.append({"x": round(gx2, 2), "y": round(y + h * 0.35, 2), "z": round(gz2, 2),
                           "w": w, "h": h, "d": round(w * srng.uniform(0.5, 0.8), 2),
-                          "ry": round(srng.uniform(0, 3.1), 2),
+                          "ry": round(srng.uniform(0, 3.1), 2), "mesh": "rock_slab",
                           "color": srng.choice(["#7b7f86", "#666a70", "#8a8d92"])})
-        elif kind == 2:                     # boulder pair
+        elif kind == 2:                     # boulder pair (same rock mesh at two scales)
             r = round(srng.uniform(0.5, 0.8), 2)
             props.append({"x": round(gx2, 2), "y": round(y + r * 0.55, 2), "z": round(gz2, 2),
-                          "r": r, "color": "#75797f"})
-            props.append({"x": round(gx2 + r, 2), "y": round(y + r * 0.3, 2),
-                          "z": round(gz2 + r * 0.6, 2), "r": round(r * 0.55, 2), "color": "#83868c"})
+                          "r": r, "color": "#75797f", "mesh": "rock"})
+            props.append({"x": round(gx2 + r, 2), "y": round(y + r * 0.3, 2), "z": round(gz2 + r * 0.6, 2),
+                          "r": round(r * 0.55, 2), "color": "#83868c", "mesh": "rock"})
         else:                               # bush
             props.append({"x": round(gx2, 2), "y": round(y + 0.45, 2), "z": round(gz2, 2),
-                          "r": round(srng.uniform(0.5, 0.9), 2),
+                          "r": round(srng.uniform(0.5, 0.9), 2), "mesh": "bush",
                           "color": srng.choice(["#3f7a3c", "#356f34", "#4a8a44"])})
 
     buildings = []
@@ -372,35 +374,43 @@ export function spawnWorld(world: any[]): void {
   world.push({ shape: "heightfield", grid: WORLD.height, colors: WORLD.color, cell: WORLD.cell, texture: "assets/terrain.png" });
   world.push({ shape: "grassfield", points: WORLD.grass_points, h: 0.45, w: 0.12, base: "#2f6b32", tip: "#7cc257" });
   for (const p of WORLD.props)
-    p.w ? world.push({ shape: "box", x: p.x, y: p.y, z: p.z, w: p.w, h: p.h, d: p.d, ry: p.ry || 0, color: p.color })
-        : world.push({ shape: "sphere", x: p.x, y: p.y, z: p.z, r: p.r, color: p.color });
+    p.w ? world.push({ shape: "box", x: p.x, y: p.y, z: p.z, w: p.w, h: p.h, d: p.d, ry: p.ry || 0, color: p.color, mesh: p.mesh })
+        : world.push({ shape: "sphere", x: p.x, y: p.y, z: p.z, r: p.r, color: p.color, mesh: p.mesh });
   for (const b of WORLD.buildings)
     world.push({ shape: "box", x: b.x, y: b.hx + b.h / 2, z: b.z, w: b.w, h: b.h, d: b.d,
                  color: b.color, type: "building", label: b.label, mesh: b.mesh });
   // [x, z, scale] → one of four tree forms (deterministic from position, so the forest is varied
-  // but stable): broadleaf, conifer, tall-slim, pale birch.
+  // but stable): broadleaf, conifer, tall-slim, pale birch. Each tree is BOTH a primitive compound
+  // (the unskinned fallback, hidden once its mesh loads) AND one skinOnly anchor the asset stage's
+  // GLB renders through — so a skinned world's trees match the buildings' style.
+  const TREE_FORMS = ["tree_broadleaf", "tree_conifer", "tree_slim", "tree_birch"];
   for (const t of WORLD.trees) {
     const y = heightAt(t[0], t[1]), s = t[2];
     const v = (Math.abs(Math.round(t[0] * 13.7 + t[1] * 7.3)) | 0) % 4;
+    const id = TREE_FORMS[v];
     const trunk = (h: number, w: number, color: string) =>
-      world.push({ shape: "box", x: t[0], y: y + h / 2, z: t[1], w, h, d: w, color, type: "tree" });
+      world.push({ shape: "box", x: t[0], y: y + h / 2, z: t[1], w, h, d: w, color, type: "tree", hideIfSkinned: id });
     const puff = (r: number, py: number, color: string, ox = 0, oz = 0) =>
-      world.push({ shape: "sphere", x: t[0] + ox, y: y + py, z: t[1] + oz, r, color, type: "tree" });
+      world.push({ shape: "sphere", x: t[0] + ox, y: y + py, z: t[1] + oz, r, color, type: "tree", hideIfSkinned: id });
     if (v === 0) {        // broadleaf
       trunk(1.8 * s, 0.34 * s, "#6c4a2a");
       puff(1.15 * s, 2.2 * s, "#3c7a38");
+      world.push({ shape: "box", skinOnly: true, mesh: "tree_broadleaf", x: t[0], y: y + 1.7 * s, z: t[1], w: 2.4 * s, h: 3.4 * s, d: 2.4 * s, color: "#3c7a38", type: "tree" });
     } else if (v === 1) { // conifer: stacked, darkening upward
       trunk(1.3 * s, 0.3 * s, "#5c3f24");
       puff(0.95 * s, 1.7 * s, "#2c5f2e");
       puff(0.7 * s, 2.5 * s, "#2a582b");
       puff(0.45 * s, 3.1 * s, "#275227");
+      world.push({ shape: "box", skinOnly: true, mesh: "tree_conifer", x: t[0], y: y + 1.8 * s, z: t[1], w: 2.0 * s, h: 3.6 * s, d: 2.0 * s, color: "#2c5f2e", type: "tree" });
     } else if (v === 2) { // tall and slim
       trunk(2.6 * s, 0.26 * s, "#7a5533");
       puff(0.8 * s, 3.0 * s, "#4c8f3f");
+      world.push({ shape: "box", skinOnly: true, mesh: "tree_slim", x: t[0], y: y + 1.9 * s, z: t[1], w: 1.7 * s, h: 3.8 * s, d: 1.7 * s, color: "#4c8f3f", type: "tree" });
     } else {              // birch-ish: pale trunk, twin light puffs
       trunk(2.0 * s, 0.24 * s, "#c9c2ae");
       puff(0.7 * s, 2.4 * s, "#7ba14b");
       puff(0.5 * s, 1.9 * s, "#86ad55", 0.5 * s, 0.3 * s);
+      world.push({ shape: "box", skinOnly: true, mesh: "tree_birch", x: t[0], y: y + 1.5 * s, z: t[1], w: 1.6 * s, h: 3.0 * s, d: 1.6 * s, color: "#7ba14b", type: "tree" });
     }
   }
   for (const p of WORLD.pois)

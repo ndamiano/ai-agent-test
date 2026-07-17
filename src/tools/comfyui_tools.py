@@ -99,6 +99,13 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
         # (lazy reload ~45s) resets it — far cheaper than the degradation.
         if i and i % 10 == 0:
             _unload()
+        # A live backend can pull the 20GB+ LLM back onto the GPU MID-BATCH (observed: a chat
+        # request during a batch → every later mesh OOMs at ~100MiB free). The status GET is
+        # milliseconds — evict again before every mesh.
+        reloaded = _llm_get_loaded_model()
+        if reloaded:
+            logger.info(f"trellis batch: LLM {reloaded} reappeared on the GPU — evicting")
+            _llm_unload(reloaded)
         slug = os.path.splitext(os.path.basename(png))[0]
         with open(png, "rb") as f:
             img = f.read()

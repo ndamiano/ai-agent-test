@@ -240,6 +240,11 @@ export async function run3d(game, canvas, assetBase) {
     const live = new Set();
     for (const e of worldOf(g)) {
       if (!e.shape) continue;
+      // Skin-aware substitution (a tree/rock is pretty primitives OR one GLB, never both):
+      // skinOnly entities exist only for their mesh (skip while unskinned); hideIfSkinned
+      // primitives are the fallback look (skip once the named mesh is loaded).
+      if (e.skinOnly && !(e.mesh && assets[e.mesh])) continue;
+      if (e.hideIfSkinned && assets[e.hideIfSkinned]) continue;
       live.add(e);
       let rec = nodes.get(e);
       if (!rec) {

@@ -577,19 +577,65 @@ def test_loop_refuses_unfrozen_spec(tmp_path):
 # ── context assembly (the fixes that converge multi-file builds) ────────────────
 def test_fix_schemas_ladder():
     """read · edit · write are all real tool calls. On an outer STALL (escalate) or enough failed edits,
-    EDIT is dropped to force a decisive overwrite — but READ is KEPT so the overwrite is grounded (a
-    blind write with no sibling bodies churns). WRITE is always offered so a fix can always land."""
-    from maestro.codegen.module import _fix_schemas
+    EDIT is dropped to force a decisive overwrite — READ is kept so that overwrite is grounded. But once
+    the fix has READ enough without writing, READ is dropped too so a big/corrupt file can't eat every
+    turn in reads while none writes. WRITE is always offered so a fix can always land."""
+    from maestro.codegen.module import _fix_schemas, _READS_BEFORE_FORCE_ACT
 
     def names(schemas):
         return {s["function"]["name"] for s in schemas}
 
-    assert names(_fix_schemas(escalate=False, edit_fails=0)) == {"read_file", "edit", "write"}
-    assert names(_fix_schemas(escalate=True, edit_fails=0)) == {"read_file", "write"}   # edit dropped, read kept
-    assert names(_fix_schemas(escalate=False, edit_fails=3)) == {"read_file", "write"}  # same on edit-fail
-    assert names(_fix_schemas(escalate=True, edit_fails=3)) == {"read_file", "write"}
-    assert all(names(_fix_schemas(e, f)) >= {"read_file", "write"}                      # read+write always
-               for e in (True, False) for f in (0, 3))
+    lo = _READS_BEFORE_FORCE_ACT - 1
+    hi = _READS_BEFORE_FORCE_ACT
+    assert names(_fix_schemas(escalate=False, edit_fails=0, nreads=0)) == {"read_file", "edit", "write"}
+    assert names(_fix_schemas(escalate=True, edit_fails=0, nreads=0)) == {"read_file", "write"}   # edit dropped, read kept
+    assert names(_fix_schemas(escalate=False, edit_fails=3, nreads=0)) == {"read_file", "write"}  # same on edit-fail
+    assert names(_fix_schemas(escalate=True, edit_fails=3, nreads=0)) == {"read_file", "write"}
+    # read is still offered right up to the threshold, then dropped so the fix must ACT
+    assert "read_file" in names(_fix_schemas(escalate=False, edit_fails=0, nreads=lo))
+    assert names(_fix_schemas(escalate=False, edit_fails=0, nreads=hi)) == {"edit", "write"}
+    assert names(_fix_schemas(escalate=True, edit_fails=0, nreads=hi)) == {"write"}   # both edit+read gone → must overwrite
+    assert all("write" in names(_fix_schemas(e, f, r))                                # write always available
+               for e in (True, False) for f in (0, 3) for r in (0, hi))
+
+
+def test_author_via_write_uses_the_write_tool():
+    """Authoring goes THROUGH the write tool (a real tool call with the file in a `code` arg), not a
+    raw fenced-block completion — the tool boundary is what stops the model chattering / duplicating a
+    function inside a free-form block. The write schema is offered to the model, and the tool call's
+    `code` is what lands."""
+    from maestro.codegen.module import _author_via_write
+
+    offered = {}
+
+    class Svc:
+        def infer(self, msgs, schemas, max_tokens=None):
+            offered["names"] = {s["function"]["name"] for s in schemas}
+            return {"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "c1", "function": {"name": "write",
+                                          "arguments": json.dumps({"file": "main.ts", "code": "export const x = 1;"})}}]}}]}
+
+    landed = {}
+    dispatch = lambda name, args: landed.update(name=name, **args) or {"ok": True, "chars": len(args["code"])}
+    res = _author_via_write(Svc(), "sys", "user", dispatch, "main.ts", 1000)
+    assert offered["names"] == {"write"}                       # the write tool WAS offered to the model
+    assert landed["name"] == "write" and landed["code"] == "export const x = 1;"
+    assert res["ok"] is True
+
+
+def test_author_via_write_falls_back_to_fence_when_no_tool_call():
+    """A local model that ignores the tool and emits a ```ts block still lands — the fence is scraped as
+    a last resort so authoring never silently writes nothing."""
+    from maestro.codegen.module import _author_via_write
+
+    class Svc:
+        def infer(self, msgs, schemas, max_tokens=None):
+            return {"choices": [{"message": {"content": "here you go\n```ts\nexport const y = 2;\n```"}}]}
+
+    landed = {}
+    dispatch = lambda name, args: landed.update(args) or {"ok": True}
+    _author_via_write(Svc(), "sys", "user", dispatch, "main.ts", 1000)
+    assert landed["code"] == "export const y = 2;"
 
 
 def test_is_stub_rejects_placeholder_and_empty_bodies():

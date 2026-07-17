@@ -188,9 +188,14 @@ src/
 **Inference path (chat / spec draft):** `MainAgent` / `draft_spec` → `MessageBuilder` →
 `get_connector()` → `OpenAICompatibleConnector`.
 **Inference path (build):** `AgentLoop` → `Module.get_fix` → `Services.infer` → connector. AUTHORING
-asks for a raw completion (`services.infer(msgs, [])`, empty tools) and extracts the fenced ```ts block
-(one whole file per call). GATE FIXES run the read→edit/write subloop where read/edit/write are all real
-tool calls — a whole quote-heavy file round-trips fine as a `write` `code` arg (verified).
+goes THROUGH the `write` tool (`_author_via_write`, one whole file per call as the `code` arg) — the
+tool boundary is what keeps the model from treating the block as a scratchpad (chatter comments, a
+second "rewritten" copy of a function that redeclares an export); it falls back to salvaging a tool
+call, then a fenced block, so a model that ignores the tool still lands. GATE FIXES run the
+read→edit/write subloop where read/edit/write are all real tool calls — a whole quote-heavy file
+round-trips fine as a `write` `code` arg (verified). The fix loop drops EDIT once edits keep missing
+(force a decisive overwrite) and drops READ once it has read enough without writing
+(`_READS_BEFORE_FORCE_ACT`) so a big/corrupt file can't eat every turn in reads while none writes.
 
 **Adding a mechanic:** widen the KIT (`runtime/engine.js` + a `kit_api*.md` section + a worked
 example in the prompt + a probe invariant). Generation just composes the new primitive. Adding a

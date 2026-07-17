@@ -59,3 +59,5 @@ runtime/games/cardbound_proof/*
 
 # node deps (runtime toolchain: typescript, esbuild)
 node_modules/
+
+scratchpad/

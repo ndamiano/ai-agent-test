@@ -67,6 +67,26 @@ def _infer(services, system: str, user: str, max_tokens: int) -> str:
     return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
 
 
+def _author_via_write(services, system: str, user: str, dispatch, file: str, max_tokens: int) -> dict:
+    """Author ONE file THROUGH the write tool — the same real tool call the fix loop uses, not a raw
+    fenced-block completion scraped by extract_code. The tool boundary is what stops the model treating
+    the block as a scratchpad (chatter comments, a second "rewritten" copy of a function): the payload
+    is a single `code` arg for one named file, not free-form markdown. Falls back to salvaging a tool
+    call, then to a fenced block, from the content — a local model that ignores the tool still lands."""
+    from llm_clients.message_builder import MessageBuilder
+    from maestro.services import parse_args, salvage_tool_call
+    msgs = MessageBuilder(system).add_user(user).build()
+    resp = services.infer(msgs, [_WRITE_SCHEMA], max_tokens=max_tokens)
+    message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
+    content = message.get("content", "") or ""
+    tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name") == "write"]
+    if not tcs:
+        salvaged = salvage_tool_call(content, [_WRITE_SCHEMA])
+        tcs = [salvaged] if salvaged else []
+    code = parse_args(tcs[0]["function"].get("arguments")).get("code", "") if tcs else extract_code(content)
+    return dispatch("write", {"code": code, "file": file})
+
+
 def _manifest_files(run_dir) -> list:
     return [f for f in (read_manifest(run_dir).get("files") or []) if f.get("name")]
 
@@ -269,9 +289,8 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     parts.append(f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}")
     if _is_contract(me):
         parts.append((_PROMPTS / "contract_rules.txt").read_text(encoding="utf-8"))
-    parts.append(f"Write ./{me['name']} now. Output ONLY one ```js block.")
-    code = extract_code(_infer(services, system, user="\n\n".join(parts), max_tokens=_CODE_MAX_TOKENS))
-    result = dispatch("write", {"code": code, "file": me["name"]})
+    parts.append(f"Call write to create ./{me['name']} now — the whole file as the `code` arg.")
+    result = _author_via_write(services, system, "\n\n".join(parts), dispatch, me["name"], _CODE_MAX_TOKENS)
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"authored {me['name']}: {detail}")
 
@@ -367,6 +386,8 @@ _WRITE_SCHEMA = {"type": "function", "function": {
                    "required": ["file", "code"]}}}
 _FIX_LOOP_MAX_TURNS = 8
 _EDIT_FAILS_BEFORE_OVERWRITE = 3  # after N failed edits, drop edit so the fix must overwrite
+_READS_BEFORE_FORCE_ACT = 4  # after N reads with no write, drop read so the fix must ACT (kills the
+                             # read-thrash where a big/corrupt file eats every turn and none writes
 
 _STUB_RE = re.compile(r"placeholder|do not use|will be replaced|fill (?:this|it|in) (?:later|next)"
                       r"|actual (?:file|fix|implementation) (?:first|later)", re.I)
@@ -380,15 +401,19 @@ def _is_stub(code: str) -> bool:
     return len(real.strip()) < 30 or bool(_STUB_RE.search(code))
 
 
-def _fix_schemas(escalate: bool, edit_fails: int) -> list:
+def _fix_schemas(escalate: bool, edit_fails: int, nreads: int) -> list:
     """The fix-loop TOOLSET — read (inspect a sibling) · edit (grounded snippet fix) · write (full-file
     overwrite). All three are real tool calls; a whole quote-heavy file round-trips fine as a JSON `code`
     arg (verified against the live server). Ladder: on an outer STALL (escalate) or enough failed edits,
-    drop EDIT to force a decisive OVERWRITE — but KEEP READ so the overwrite is grounded (a blind write
-    with no sibling bodies churns). WRITE is always offered so a fix can always land."""
+    drop EDIT to force a decisive OVERWRITE. Once the fix has READ enough without writing
+    (`_READS_BEFORE_FORCE_ACT`), drop READ too so a big/corrupt file can't eat every turn in reads while
+    none writes — the model has its grounding in history and must now ACT. WRITE is always offered so a
+    fix can always land."""
     schemas = [_READ_SCHEMA, _EDIT_SCHEMA, _WRITE_SCHEMA]
     if escalate or edit_fails >= _EDIT_FAILS_BEFORE_OVERWRITE:
         schemas = [s for s in schemas if s is not _EDIT_SCHEMA]
+    if nreads >= _READS_BEFORE_FORCE_ACT:
+        schemas = [s for s in schemas if s is not _READ_SCHEMA]
     return schemas
 
 
@@ -439,7 +464,7 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
     wrote = mode = None
     nreads = edit_fails = 0
     for _ in range(_FIX_LOOP_MAX_TURNS):
-        schemas = _fix_schemas(services.escalate, edit_fails)
+        schemas = _fix_schemas(services.escalate, edit_fails, nreads)
         msgs = MessageBuilder(system).extend(history).build()
         # reasoning OFF: local models honor only on/off, and the fix is a bounded read→act loop where
         # thinking-on burns the token budget on reasoning and starves the tool call. The reads do the

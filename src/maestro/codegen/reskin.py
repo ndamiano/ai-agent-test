@@ -307,8 +307,67 @@ def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
             "generated": sorted(generated), "result": result}
 
 
+def _glb_dims(path: Path):
+    """A GLB's model-space size [sx, sy, sz] from its POSITION accessors' min/max (the JSON chunk;
+    node transforms ignored — TRELLIS emits a single untransformed mesh). None when unparseable."""
+    import struct
+    try:
+        raw = path.read_bytes()
+        if raw[:4] != b"glTF":
+            return None
+        ln = struct.unpack_from("<I", raw, 12)[0]
+        doc = json.loads(raw[20:20 + ln])
+        lo = [float("inf")] * 3
+        hi = [float("-inf")] * 3
+        for mesh in doc.get("meshes", []):
+            for prim in mesh.get("primitives", []):
+                idx = (prim.get("attributes") or {}).get("POSITION")
+                if idx is None:
+                    continue
+                acc = doc["accessors"][idx]
+                for k in range(3):
+                    lo[k] = min(lo[k], acc["min"][k])
+                    hi[k] = max(hi[k], acc["max"][k])
+        dims = [hi[k] - lo[k] for k in range(3)]
+        return dims if all(d > 1e-6 for d in dims) else None
+    except Exception:
+        return None
+
+
+def fit_building_boxes(run_dir) -> int:
+    """Shrink each skinned building's box to the dims its GLB actually renders at. The renderer
+    scales a model UNIFORMLY to fit inside the entity box, so a slender stall in a fat parcel leaves
+    invisible collision air around it. The parcel stays the SLOT (position unchanged); the box —
+    which is both the render bound and the avoidRects hitbox — becomes the fitted mesh size, so
+    walls sit exactly where the model shows them. No-mesh buildings keep the parcel box (the
+    primitive slab fills it exactly). Returns how many buildings were fitted."""
+    from maestro.codegen.worldgen_bridge import _write_world_ts
+
+    world_path = game_dir(run_dir) / "world.ts"
+    if not world_path.exists():
+        return 0
+    src = world_path.read_text(encoding="utf-8")
+    m = re.search(r"export const WORLD: any = (\{.*?\});\n", src, re.S)
+    if not m:
+        return 0
+    data = json.loads(m.group(1))
+    assets = game_dir(run_dir) / "assets"
+    fitted = 0
+    for b in data.get("buildings", []):
+        dims = _glb_dims(assets / f"{b.get('mesh', '')}.glb") if b.get("mesh") else None
+        if not dims:
+            continue
+        sx, sy, sz = dims
+        u = min(b["w"] / sx, b["h"] / sy, b["d"] / sz)
+        b["w"], b["h"], b["d"] = round(sx * u, 2), round(sy * u, 2), round(sz * u, 2)
+        fitted += 1
+    if fitted:
+        _write_world_ts(world_path, data)
+    return fitted
+
+
 def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
-    from maestro.codegen.gates import stage_for_play
+    from maestro.codegen.gates import build_bundle, stage_for_play
     meshes = plan_meshes(infer, spec, files)
     if not meshes:
         raise ValueError("mesh plan produced no meshes")
@@ -320,6 +379,10 @@ def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
     generated = generate_meshes(state.run_dir, meshes)
     write_mesh_manifest(state.run_dir, meshes)
     logger.info("assets %s: rendered %d/%d mesh(es)", run_id, len(generated), len(meshes))
+    fitted = fit_building_boxes(state.run_dir)
+    if fitted:
+        logger.info("assets %s: fitted %d building box(es) to their meshes", run_id, fitted)
+        build_bundle(state.run_dir)
 
     if result.ok:
         stage_for_play(state.run_dir, run_id)

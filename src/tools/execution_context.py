@@ -43,6 +43,26 @@ def get_user_id() -> Optional[str]:
     return _user_id_var.get()
 
 
+_run_id_var: ContextVar[Optional[str]] = ContextVar('run_id', default=None)
+
+
+@contextmanager
+def run_scope(run_id: Optional[str]):
+    """Bind the run whose build is executing so inference enqueued anywhere below (the queue
+    connector) is attributed — and metered — to that game. Restores the prior value (not
+    reset(token)) for the same cross-Context reason as the scopes above."""
+    prev = _run_id_var.get()
+    _run_id_var.set(run_id)
+    try:
+        yield
+    finally:
+        _run_id_var.set(prev)
+
+
+def get_run_id() -> Optional[str]:
+    return _run_id_var.get()
+
+
 def get_task_id() -> Optional[str]:
     return _task_id_var.get()
 

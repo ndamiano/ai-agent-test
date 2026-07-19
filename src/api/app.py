@@ -27,7 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import system, agents, websocket, chat, games, billing
+from api.routers import system, agents, websocket, chat, games, billing, workqueue
 from auth.router import router as auth_router
 from auth.deps import install_auth
 
@@ -83,6 +83,8 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+# Outside the /api user gate on purpose — workers auth with the shared workqueue token.
+app.include_router(workqueue.router, prefix="/worker", tags=["workqueue"])
 
 # Serve the built frontend same-origin (one process, one Funnel port, no CORS). Mounted LAST so
 # the API routers above win; skipped when dist/ is absent (dev runs the Vite server instead).

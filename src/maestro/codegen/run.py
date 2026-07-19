@@ -183,6 +183,7 @@ def run_build(run_id: str, max_steps: int = 60):
     from llm_clients.connector_selector import get_connector
     from llm_clients.log_context import set_log_dir
     from tools.build_events import _emit
+    from tools.execution_context import run_scope
 
     from db import store as db_store
 
@@ -201,7 +202,8 @@ def run_build(run_id: str, max_steps: int = 60):
     db_store.set_status(run_id, "building")
     t0 = time.perf_counter()
     try:
-        result = loop.run()
+        with run_scope(run_id):
+            result = loop.run()
     except BaseException:
         db_store.set_status(run_id, "failed")
         raise
@@ -239,8 +241,10 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
                f"person plays it. Fix exactly this:\n{note}")
     tools = build_codegen_tools(state)
     dispatch = lambda name, args: tools[name](**args)   # _focused_fix calls dispatch(name, args)
-    target = _triage_file(infer, state.run_dir, failure, use_stack=False)   # a prose note isn't a stack trace
-    _focused_fix(infer, spec, state.run_dir, target, failure, dispatch)
+    from tools.execution_context import run_scope
+    with run_scope(run_id):
+        target = _triage_file(infer, state.run_dir, failure, use_stack=False)   # a prose note isn't a stack trace
+        _focused_fix(infer, spec, state.run_dir, target, failure, dispatch)
     return run_build(run_id, max_steps=max_steps)   # re-gate (stages on ok) + auto-fix any regression the patch caused
 
 

@@ -48,6 +48,20 @@ class TrellisSettings(BaseModel):
     endpoint: str = Field("http://localhost:8189", min_length=1)
 
 
+class WorkQueueSettings(BaseModel):
+    """The worker-pull inference queue. When enabled, LLM inference is enqueued as jobs rows and
+    executed by worker agents (worker/agent.py) that claim over HTTP — the same shape whether the
+    worker is the local 5090 or a RunPod pod. Disabled = the connector calls its base_url directly."""
+    enabled: bool = Field(False)
+    token: str = Field("", description=(
+        "Shared bearer token worker agents present on /worker endpoints. Empty = every worker "
+        "request is refused, even when enabled."))
+    job_timeout_seconds: int = Field(900, ge=1, description=(
+        "How long an enqueuer waits for a claimed job to complete before giving up."))
+    lease_seconds: int = Field(120, ge=5, description=(
+        "A claimed job returns to pending if the worker misses heartbeats for this long."))
+
+
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
     max_iterations: int = Field(10, ge=1)
@@ -72,3 +86,4 @@ class AppSettings(BaseModel):
     cline: Optional[ClineSettings] = None
     comfyui: Optional[ComfyUISettings] = None
     trellis: Optional[TrellisSettings] = None
+    workqueue: Optional[WorkQueueSettings] = None

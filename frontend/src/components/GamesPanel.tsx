@@ -17,20 +17,36 @@ export type Stage = 'draft' | 'building' | 'built' | 'ready'
 export const stageFor = (frozen: boolean, building: boolean, built: boolean): Stage =>
     !frozen ? 'draft' : building ? 'building' : built ? 'built' : 'ready'
 
-// The build progress header: step/max as a bar, a running elapsed timer, current failing count.
+// The build progress header: a step counter (not step/max — a build finishes when the gates
+// pass, and a cap read as a countdown), a running elapsed timer, current failing count.
 const BuildProgressHeader: React.FC<{
-    step: number; maxSteps: number; nFailing: number; elapsedSec: number
-}> = ({ step, maxSteps, nFailing, elapsedSec }) => {
-    const pct = maxSteps > 0 ? Math.min(100, Math.round((step / maxSteps) * 100)) : 0
+    step: number; nFailing: number; elapsedSec: number
+}> = ({ step, nFailing, elapsedSec }) => (
+    <div className="bg-[#141414] border border-white/[0.06] rounded-lg px-3 py-2">
+        <div className="flex items-center gap-3 text-[11px]">
+            <span className="font-mono text-gray-300">step {step}</span>
+            <span className="font-mono text-gray-300">{formatElapsed(elapsedSec)}</span>
+            <span className={nFailing > 0 ? 'text-amber-400' : 'text-green-400'}>{nFailing} failing</span>
+        </div>
+    </div>
+)
+
+// The compute budget as an obfuscated draining bar — remaining/granted, no numbers (the plan's
+// contract: users see a bar, never seconds). Green while healthy, amber under a third, red under
+// a tenth. Hidden until the game has been charged (granted > 0).
+export const computeRemaining = (granted: number, used: number): number =>
+    granted > 0 ? Math.max(0, Math.min(1, (granted - used) / granted)) : 0
+
+const ComputeBar: React.FC<{ granted: number; used: number }> = ({ granted, used }) => {
+    if (granted <= 0) return null
+    const remaining = computeRemaining(granted, used)
+    const color = remaining < 0.1 ? 'bg-red-500' : remaining < 0.34 ? 'bg-amber-500' : 'bg-green-500'
     return (
-        <div className="bg-[#141414] border border-white/[0.06] rounded-lg px-3 py-2 space-y-1.5">
-            <div className="flex items-center gap-3 text-[11px]">
-                <span className="font-mono text-gray-300">step {step}{maxSteps ? ` / ${maxSteps}` : ''}</span>
-                <span className="font-mono text-gray-300">{formatElapsed(elapsedSec)}</span>
-                <span className={nFailing > 0 ? 'text-amber-400' : 'text-green-400'}>{nFailing} failing</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                <div className="h-full bg-blue-500 transition-[width] duration-500" style={{ width: `${pct}%` }} />
+        <div className="flex items-center gap-2" title="compute remaining for this game">
+            <span className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide">Compute</span>
+            <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                <div className={`h-full ${color} transition-[width] duration-700`}
+                    style={{ width: `${remaining * 100}%` }} />
             </div>
         </div>
     )
@@ -116,7 +132,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const [skinning, setSkinning] = useState(false)
     const [fixNote, setFixNote] = useState('')
     const [autoPause, setAutoPause] = useState(false)
-    const [progress, setProgress] = useState<{ step: number; maxSteps: number; nFailing: number } | null>(null)
+    const [progress, setProgress] = useState<{ step: number; nFailing: number } | null>(null)
     const [startedAt, setStartedAt] = useState<number | null>(null)
     const [elapsedSec, setElapsedSec] = useState(0)
 
@@ -145,6 +161,14 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         return () => clearInterval(id)
     }, [building, startedAt])
 
+    // While building, re-pull the detail on a slow tick so the compute bar drains live —
+    // seconds_used moves on job completions, which no websocket event carries.
+    useEffect(() => {
+        if (!building) return
+        const id = setInterval(load, 10000)
+        return () => clearInterval(id)
+    }, [building, load])
+
     // Live build + spec + asset events for this run.
     useEffect(() => {
         const unsub = subscribe(runId, (msg: WebSocketMessage) => {
@@ -156,12 +180,12 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'build_started':
                     setBuilding(true); setStatus('running')
                     setFeed(prev => [...prev.slice(-60), `build started — ${msg.n_failing} checks failing`])
-                    setProgress({ step: 0, maxSteps: msg.max_steps ?? 0, nFailing: msg.n_failing ?? 0 })
+                    setProgress({ step: 0, nFailing: msg.n_failing ?? 0 })
                     if (msg.started_at != null) { setStartedAt(msg.started_at); setElapsedSec(0) }
                     break
                 case 'build_step':
                     setFeed(prev => [...prev.slice(-60), `step ${msg.step}: ${msg.summary} — ${msg.n_failing} failing`])
-                    setProgress({ step: msg.step ?? 0, maxSteps: msg.max_steps ?? 0, nFailing: msg.n_failing ?? 0 })
+                    setProgress({ step: msg.step ?? 0, nFailing: msg.n_failing ?? 0 })
                     // Re-sync the local timer to the backend's authoritative elapsed so drift
                     // between build_step events (which fire irregularly) never compounds.
                     if (msg.elapsed != null) { setStartedAt(Date.now() / 1000 - msg.elapsed); setElapsedSec(msg.elapsed) }
@@ -297,11 +321,13 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     <div className="text-gray-500 text-xs">Review the spec below, then freeze to start building.</div>
                 )}
 
+                <ComputeBar granted={detail.seconds_granted} used={detail.seconds_used} />
+
                 {error && <p className="text-red-400 text-xs">{error}</p>}
 
                 {showBuildArea && <>
                     {progress && (
-                        <BuildProgressHeader step={progress.step} maxSteps={progress.maxSteps} nFailing={progress.nFailing}
+                        <BuildProgressHeader step={progress.step} nFailing={progress.nFailing}
                             elapsedSec={elapsedSec} />
                     )}
 

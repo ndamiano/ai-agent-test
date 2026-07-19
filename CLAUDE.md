@@ -172,11 +172,23 @@ src/
                          credits_spent + seconds_granted/used compute budget), builds (one row per
                          build/fix/assets attempt: status, steps, queued/started/finished), events
                          (append-only build/spec lifecycle log; GET /games/{id}/events replays it),
-                         jobs + workers (schema for the coming worker-pull inference queue). Plain
+                         jobs + workers (the worker-pull inference queue: atomic claim w/ lease,
+                         complete debits games.seconds_used + worker busy_seconds in one txn;
+                         lapsed lease ⇒ silent requeue, stale completion dropped). Plain
                          parameterized SQL, short-lived connections — the run dir stays the source
                          of truth for spec + artifacts; rows index, never duplicate.
-  api/                   FastAPI routers (chat, games, agents, system, websocket, billing) +
-                         build_queue.py (single-GPU FIFO build serializer). WS events route
+  worker/                agent.py — the pull-side worker (python -m worker.agent): long-poll
+                         /worker/claim → forward payload verbatim to its local inference server
+                         (llama.cpp today; same shape for ComfyUI/TRELLIS later) → /worker/complete
+                         with the result + measured exec_seconds; heartbeats during long jobs,
+                         SIGTERM finishes in-flight then exits. Dials OUT only — identical on the
+                         home box and a RunPod pod. Auth: the shared workqueue token (never
+                         forwarded to the inference target).
+  api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
+                         workqueue) + build_queue.py (single-GPU FIFO build serializer). The
+                         workqueue router (/worker/claim|heartbeat|complete, mounted OUTSIDE the
+                         user gate) is the pull side of the inference queue — token-gated
+                         (settings workqueue.token, fail-closed when unset). WS events route
                          per-user server-side (event_bus resolves run → owner). The games router is
                          codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets,
                          all against maestro.codegen.run; freeze→freeze_spec, build→build_queue→
@@ -221,6 +233,11 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 
 **Settings:** `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
 - `connector_type: lmstudio`, `lmstudio.base_url` (the local llama.cpp router), `lmstudio.model`.
+- `workqueue.enabled` routes LLM inference through the worker-pull queue (QueueConnector: enqueue
+  a jobs row, wait for a worker) instead of calling base_url directly; `workqueue.token` is the
+  worker bearer secret. Run a worker: `python -m worker.agent --token <token>` (defaults:
+  server localhost:8000, target localhost:1234, queue llm). exec_seconds are debited to the
+  owning game via the run_scope contextvar set around run_build/fix_from_note.
 - **Model categories** `large`/`medium`/`small` control `message_budget_chars`, `max_iterations`,
   `use_json_mode`. Use `small` for local models.
 - `lmstudio.dialogue_model` (optional) routes prose inference to a second model; the connector

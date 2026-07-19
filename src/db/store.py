@@ -218,6 +218,112 @@ def builds_for(game_id: str) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
+# ── jobs (the worker-pull inference queue) ────────────────────────────────────
+# Producers (the build loop, in-process) enqueue; workers claim over HTTP. A claim is a single
+# atomic UPDATE...RETURNING, so two workers can never take the same job. A claimed job whose
+# lease lapses (worker died mid-inference) returns to pending on the next claim sweep — the
+# enqueuer just keeps waiting and the retry is invisible to it.
+def enqueue_job(queue: str, payload: Dict, game_id: Optional[str] = None,
+                build_id: Optional[str] = None, model: Optional[str] = None) -> str:
+    job_id = uuid.uuid4().hex[:16]
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, created_at) "
+            "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (job_id, queue, game_id, build_id,
+             json.dumps(payload, ensure_ascii=False), model, time.time()),
+        )
+    return job_id
+
+
+def claim_job(queue: str, worker_id: str, lease_seconds: float) -> Optional[Dict]:
+    """Atomically claim the oldest pending job on `queue` (requeueing expired leases first).
+    Returns the job dict with a decoded payload, or None if the queue is empty."""
+    now = time.time()
+    with _db() as conn:
+        conn.execute(
+            "UPDATE jobs SET status = 'pending', worker_id = NULL, lease_expires_at = NULL "
+            "WHERE status = 'claimed' AND lease_expires_at < ?", (now,))
+        row = conn.execute(
+            "UPDATE jobs SET status = 'claimed', worker_id = ?, started_at = ?, "
+            "lease_expires_at = ? WHERE id = ("
+            "  SELECT id FROM jobs WHERE queue = ? AND status = 'pending' "
+            "  ORDER BY created_at LIMIT 1) "
+            "RETURNING *",
+            (worker_id, now, now + lease_seconds, queue),
+        ).fetchone()
+    if row is None:
+        return None
+    job = dict(row)
+    job["payload"] = json.loads(job["payload"]) if job["payload"] else {}
+    return job
+
+
+def heartbeat_job(job_id: str, worker_id: str, lease_seconds: float) -> bool:
+    """Extend a claimed job's lease. False if the job isn't this worker's claim any more
+    (lease already lapsed and someone else took it) — the worker should drop the job."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET lease_expires_at = ? "
+            "WHERE id = ? AND worker_id = ? AND status = 'claimed'",
+            (time.time() + lease_seconds, job_id, worker_id),
+        )
+    return cur.rowcount == 1
+
+
+def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Optional[str],
+                 exec_seconds: float, gpu_type: Optional[str] = None) -> bool:
+    """Land a job's outcome and debit its game's compute budget. One transaction: the job row,
+    the games seconds_used debit, and the worker's busy-seconds all move together. False if the
+    job isn't this worker's claim (lease lapsed — the retry's result wins, this one is dropped)."""
+    now = time.time()
+    status = "failed" if error else "done"
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = ?, result = ?, error = ?, exec_seconds = ?, gpu_type = ?, "
+            "finished_at = ? WHERE id = ? AND worker_id = ? AND status = 'claimed'",
+            (status, json.dumps(result, ensure_ascii=False) if result is not None else None,
+             error, exec_seconds, gpu_type, now, job_id, worker_id),
+        )
+        if cur.rowcount != 1:
+            return False
+        row = conn.execute("SELECT game_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row and row["game_id"]:
+            conn.execute(
+                "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
+                (exec_seconds, now, row["game_id"]))
+        conn.execute(
+            "UPDATE workers SET busy_seconds = busy_seconds + ?, last_seen_at = ? WHERE id = ?",
+            (exec_seconds, now, worker_id))
+    return True
+
+
+def get_job(job_id: str) -> Optional[Dict]:
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    if row is None:
+        return None
+    job = dict(row)
+    job["payload"] = json.loads(job["payload"]) if job["payload"] else {}
+    job["result"] = json.loads(job["result"]) if job["result"] else None
+    return job
+
+
+# ── workers (fleet + utilization facts) ───────────────────────────────────────
+def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
+                source: Optional[str] = None) -> None:
+    now = time.time()
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE workers SET queue = ?, last_seen_at = ? WHERE id = ?",
+            (queue, now, worker_id))
+        if cur.rowcount == 0:
+            conn.execute(
+                "INSERT INTO workers (id, queue, gpu_type, source, started_at, last_seen_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (worker_id, queue, gpu_type, source, now, now))
+
+
 # ── events (append-only build/spec lifecycle log) ─────────────────────────────
 def record_event(game_id: str, kind: str, payload: Dict, build_id: Optional[str] = None) -> None:
     with _db() as conn:

@@ -36,6 +36,9 @@ export interface GameDetail {
     auto_pause: boolean
     assets_exist: boolean
     play_url: string | null
+    credits_spent: number
+    seconds_granted: number
+    seconds_used: number
 }
 
 export interface SystemStatus {

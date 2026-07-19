@@ -25,7 +25,10 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
     if settings is None:
         settings = settings_manager.get_connector_settings(connector_type)
 
-    settings_hash = _hash_settings(settings)
+    # workqueue.enabled swaps the transport (jobs table + worker agents) while keeping the
+    # provider settings (model, budgets, reasoning) — so it participates in cache invalidation.
+    workqueue = global_settings.get("workqueue") or {}
+    settings_hash = _hash_settings({**settings, "_workqueue": workqueue})
     if _cached_connector is not None and _cached_settings_hash == settings_hash:
         return _cached_connector
 
@@ -34,7 +37,7 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
     if not base_url:
         base_url = "https://api.cline.bot/api" if connector_type == "cline" else "http://localhost:1234"
 
-    _cached_connector = OpenAICompatibleConnector(
+    kwargs = dict(
         base_url=base_url,
         api_key=api_key,
         model=settings.get("model", "default"),
@@ -42,6 +45,13 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
         frequency_penalty=settings.get("frequency_penalty", 0.5),
         reasoning=settings.get("reasoning"),
     )
+    if workqueue.get("enabled"):
+        from llm_clients.queue_connector import QueueConnector
+        _cached_connector = QueueConnector(
+            **kwargs, queue="llm",
+            job_timeout_seconds=workqueue.get("job_timeout_seconds", 900))
+    else:
+        _cached_connector = OpenAICompatibleConnector(**kwargs)
     _cached_settings_hash = settings_hash
 
     return _cached_connector

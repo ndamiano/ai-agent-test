@@ -23,5 +23,11 @@
   },
   "trellis": {
     "endpoint": "http://localhost:8189"
+  },
+  "workqueue": {
+    "enabled": false,
+    "token": "",
+    "job_timeout_seconds": 900,
+    "lease_seconds": 120
   }
 }

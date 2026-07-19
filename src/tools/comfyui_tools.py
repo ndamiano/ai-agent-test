@@ -77,9 +77,16 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     failure leaves billboards.
 
     The 4B pipeline needs ~19GB and the mesh pass runs after the LLM/ComfyUI phase (they may be
-    resident), so free everyone's VRAM first, then unload trellis after so they can reclaim it."""
+    resident), so free everyone's VRAM first, then unload trellis after so they can reclaim it.
+
+    On the queue transport each sprite is one mesh job instead: the worker holds the retry and
+    VRAM discipline (worker/handlers.py), this side only lands the bytes."""
     import glob
     import os
+    from db import queue_client
+    if queue_client.enabled():
+        return _run_trellis_batch_queued(sprite_dir, out_dir)
+
     ep = _trellis_endpoint()
     _comfyui_free_vram(_get_comfyui_endpoint())
     loaded = _llm_get_loaded_model()
@@ -126,6 +133,29 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
                 if attempt == 1:
                     _unload()
     _unload()
+    return done
+
+
+def _run_trellis_batch_queued(sprite_dir: str, out_dir: str) -> set:
+    import base64
+    import glob
+    import os
+    from db import queue_client
+
+    done: set = set()
+    for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
+        slug = os.path.splitext(os.path.basename(png))[0]
+        with open(png, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("ascii")
+        job = queue_client.run_job("mesh", {"kind": "trellis_mesh", "image_b64": img_b64})
+        if job["status"] != "done":
+            logger.error(f"trellis {slug} failed: {job.get('error')}")
+            continue
+        glb_path = os.path.join(out_dir, f"{slug}.glb")
+        with open(glb_path, "wb") as g:
+            g.write(base64.b64decode(job["result"]["glb_b64"]))
+        _decimate_glb(glb_path)
+        done.add(slug)
     return done
 
 
@@ -432,6 +462,40 @@ def _save_images_to_working_dir(images: list, endpoint: str) -> list:
     return saved
 
 
+def _save_image_bytes(filename: str, data: bytes) -> str:
+    from tools.execution_context import resolve_base_path
+    base_dir = resolve_base_path()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    dest = base_dir / filename
+    dest.write_bytes(data)
+    logger.info(f"Saved image: {dest}")
+    return str(dest)
+
+
+def _run_comfyui_job_queued(prompt: str, workflow: dict) -> Dict[str, Any]:
+    """Hand the resolved workflow to an image worker; it owns the GPU and returns the outputs
+    inline, which we land in the working directory exactly like the direct path."""
+    from db import queue_client
+    import base64
+
+    job = queue_client.run_job("image", {"kind": "comfy_image", "workflow": workflow})
+    if job["status"] != "done":
+        return {"success": False, "error": job.get("error") or "image job lost"}
+    images = (job["result"] or {}).get("images") or []
+    saved_paths = [_save_image_bytes(img["filename"], base64.b64decode(img["b64"]))
+                   for img in images]
+    saved_str = ", ".join(saved_paths) if saved_paths else "(none saved)"
+    return {
+        "success": True,
+        "prompt_id": (job["result"] or {}).get("prompt_id"),
+        "prompt": prompt,
+        "images": [{"filename": img["filename"]} for img in images],
+        "image_count": len(images),
+        "saved_paths": saved_paths,
+        "message": f"Image generated successfully. Saved to: {saved_str}",
+    }
+
+
 def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dict]) -> Dict[str, Any]:
     """Submit one job to ComfyUI and wait for result. No VRAM management."""
     if workflow_override is not None:
@@ -440,6 +504,10 @@ def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dic
         workflow = _load_workflow(_TXT2IMG_WORKFLOW_PATH)
         workflow["11"]["inputs"]["text"] = prompt
         workflow["19"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
+
+    from db import queue_client
+    if queue_client.enabled():
+        return _run_comfyui_job_queued(prompt, workflow)
 
     client_id = str(uuid.uuid4())
     queue_resp = _http_post(f"{endpoint}/prompt", {"prompt": workflow, "client_id": client_id})
@@ -483,9 +551,11 @@ def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dic
 def vram_bracket():
     """Free ComfyUI/LM-Studio VRAM for the duration, reloading the LLM on exit. Lets a caller
     wrap one or more `run_jobs` passes in ONE unload/reload cycle instead of paying it per pass.
-    No-op unless `comfyui.vram_management`."""
+    No-op unless `comfyui.vram_management`, and always a no-op on the queue transport — there the
+    worker next to the card owns eviction, and this process may not even see a GPU."""
+    from db import queue_client
     cfg = _get_comfyui_settings()
-    vram_management = cfg.get("vram_management", False)
+    vram_management = cfg.get("vram_management", False) and not queue_client.enabled()
     endpoint = _get_comfyui_endpoint()
     unloaded_model: Optional[str] = None
     if vram_management:
@@ -538,8 +608,9 @@ def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dic
         log_violation(violation, source="generate_image_tool")
         return {"success": False, "error": "blocked by safety filter"}
 
+    from db import queue_client
     comfyui_settings = _get_comfyui_settings()
-    vram_management  = comfyui_settings.get("vram_management", False)
+    vram_management  = comfyui_settings.get("vram_management", False) and not queue_client.enabled()
     endpoint         = _get_comfyui_endpoint()
 
     unloaded_model: Optional[str] = None

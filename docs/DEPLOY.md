@@ -7,10 +7,20 @@ The container path is the alternative to the manual runbook below: one Docker im
 edits to deploy.
 
 **One decision, one container.** The image is CPU-only — the control plane: API + SPA + the job
-queue + the node-based build gates. GPU inference is done by **worker agents** (`worker/agent.py`)
-that PULL jobs over `/worker` from wherever the GPUs live (home box, RunPod pod), authed by
-`WORKQUEUE_TOKEN`. The asset backends (ComfyUI/TRELLIS) are still called directly — point
-`COMFYUI_ENDPOINT`/`TRELLIS_ENDPOINT` at the GPU box (e.g. its tailscale IP) until they're queued.
+queue + the node-based build gates. Every GPU backend is driven by **worker agents**
+(`worker/agent.py`) that PULL jobs over `/worker` from wherever the GPUs live (home box, RunPod
+pod), authed by `WORKQUEUE_TOKEN`. One worker process per queue:
+
+```bash
+python -m worker.agent --server http://<control-plane>:8000 --token <WORKQUEUE_TOKEN> \
+    --queue llm   --target http://localhost:8080     # llama.cpp router
+python -m worker.agent ... --queue image --target http://localhost:8188   # ComfyUI
+python -m worker.agent ... --queue mesh  --target http://localhost:8189   # TRELLIS
+```
+
+With `WORKQUEUE_ENABLED=true` the control plane never dials a GPU box, so ComfyUI/TRELLIS can stay
+bound to localhost. `COMFYUI_ENDPOINT`/`TRELLIS_ENDPOINT` only matter with the queue disabled
+(everything on one box).
 
 ### Files
 

@@ -216,6 +216,9 @@ def test_trellis_batch_retries_after_unload(tmp_path, monkeypatch):
     """A 500 mid-batch is usually the leak-degraded pipeline — one unload + retry must recover the
     mesh instead of leaving a bare slab."""
     import tools.comfyui_tools as ct
+    from db import queue_client
+
+    monkeypatch.setattr(queue_client, "enabled", lambda: False)   # the direct transport
 
     (tmp_path / "beast.png").write_bytes(b"png")
     out = tmp_path / "out"

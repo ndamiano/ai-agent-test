@@ -18,8 +18,6 @@ from llm_clients.openai_compatible_connector import (
 
 logger = logging.getLogger(__name__)
 
-_POLL_INTERVAL = 0.25
-
 
 class QueueConnector(OpenAICompatibleConnector):
     connector_name = "queue"
@@ -70,22 +68,11 @@ class QueueConnector(OpenAICompatibleConnector):
     def _run_job(self, payload: dict) -> dict:
         """Enqueue one Responses request and wait for a worker to land it. Returns the job row;
         status 'failed' with an error on timeout, so callers have one shape to branch on."""
-        from db import store as db_store
-        from tools.execution_context import get_run_id
+        from db import queue_client
 
-        job_id = db_store.enqueue_job(
+        return queue_client.run_job(
             self.queue, {"path": "/v1/responses", "body": payload},
-            game_id=get_run_id(), model=payload.get("model"))
-        deadline = time.time() + self.job_timeout_seconds
-        while time.time() < deadline:
-            job = db_store.get_job(job_id)
-            if job and job["status"] in ("done", "failed"):
-                return job
-            time.sleep(_POLL_INTERVAL)
-        logger.error("queue job %s timed out after %.0fs", job_id, self.job_timeout_seconds)
-        return {"status": "failed", "error":
-                f"queue job {job_id} timed out after {self.job_timeout_seconds:.0f}s "
-                "(no worker, or the worker is stuck)"}
+            model=payload.get("model"), timeout_seconds=self.job_timeout_seconds)
 
     def generate_with_tools_stream(self, messages: list, tools: list = None):
         """The queue is request/response; streaming callers get the full reply as one chunk."""

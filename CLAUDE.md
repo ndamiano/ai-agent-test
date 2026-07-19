@@ -177,13 +177,20 @@ src/
                          lapsed lease ⇒ silent requeue, stale completion dropped). Plain
                          parameterized SQL, short-lived connections — the run dir stays the source
                          of truth for spec + artifacts; rows index, never duplicate.
+                         queue_client.py — the enqueue side every producer shares (run_job: land a
+                         jobs row, wait for a worker, hand back the row; a timeout comes back as a
+                         failed job). LLM, image and mesh all go through it.
   worker/                agent.py — the pull-side worker (python -m worker.agent): long-poll
-                         /worker/claim → forward payload verbatim to its local inference server
-                         (llama.cpp today; same shape for ComfyUI/TRELLIS later) → /worker/complete
+                         /worker/claim → run the payload through handlers.py → /worker/complete
                          with the result + measured exec_seconds; heartbeats during long jobs,
                          SIGTERM finishes in-flight then exits. Dials OUT only — identical on the
                          home box and a RunPod pod. Auth: the shared workqueue token (never
-                         forwarded to the inference target).
+                         forwarded to the inference target). handlers.py = one handler per payload
+                         `kind`, ONE worker process per queue: llm (verbatim forward to llama.cpp),
+                         image (the ComfyUI submit → poll /history → fetch /view flow, images back
+                         inline as base64), mesh (one TRELLIS POST → glb base64, its unload-every-10
+                         + retry-once VRAM discipline). GPU eviction lives HERE, next to the card
+                         (--comfy-target/--llm-target), so the control plane never touches a GPU.
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
                          workqueue) + build_queue.py (single-GPU FIFO build serializer). The
                          workqueue router (/worker/claim|heartbeat|complete, mounted OUTSIDE the
@@ -233,11 +240,15 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 
 **Settings:** `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
 - `connector_type: lmstudio`, `lmstudio.base_url` (the local llama.cpp router), `lmstudio.model`.
-- `workqueue.enabled` routes LLM inference through the worker-pull queue (QueueConnector: enqueue
-  a jobs row, wait for a worker) instead of calling base_url directly; `workqueue.token` is the
-  worker bearer secret. Run a worker: `python -m worker.agent --token <token>` (defaults:
-  server localhost:8000, target localhost:1234, queue llm). exec_seconds are debited to the
-  owning game via the run_scope contextvar set around run_build/fix_from_note.
+- `workqueue.enabled` routes ALL GPU work through the worker-pull queue (enqueue a jobs row, wait
+  for a worker) instead of calling a backend directly: LLM inference (QueueConnector), sprite/mesh
+  images (queue `image`) and TRELLIS meshes (queue `mesh`). `workqueue.token` is the worker bearer
+  secret. One worker per queue, all three on the GPU box:
+  `python -m worker.agent --server <cp>:8000 --token <token> --queue image --target localhost:8188`
+  (defaults: server localhost:8000, target localhost:1234, queue llm). With the queue on, the
+  control plane touches no GPU — `comfyui.vram_management` no-ops here and the worker evicts
+  instead. exec_seconds are debited to the owning game via the run_scope contextvar set around
+  run_build/fix_from_note.
 - **Model categories** `large`/`medium`/`small` control `message_budget_chars`, `max_iterations`,
   `use_json_mode`. Use `small` for local models.
 - `lmstudio.dialogue_model` (optional) routes prose inference to a second model; the connector

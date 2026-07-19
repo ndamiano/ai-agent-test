@@ -182,12 +182,54 @@ AMBIENT = FixClass(
     deterministic=_strip_kit_shadow,
 )
 
+
+# ── phantom-import ────────────────────────────────────────────────────────────
+# The game imports a local module that does not exist on disk — and the write allow-list (the
+# manifest) means the model CANNOT create it, so the error is unresolvable by authoring: it retries
+# the off-plan file forever (first prod build stalled here on `./types` in a single-file game).
+# Deterministically strip the phantom import; the names it bound go undefined, which the next fix
+# resolves the only way left — defining them inline.
+_PHANTOM = re.compile(r"TS2307: Cannot find module '(\.\/[\w.-]+)'")
+
+
+def _matches_phantom(error) -> bool:
+    return bool(_PHANTOM.search(error.message or ""))
+
+
+def _strip_phantom_imports(run_dir, error) -> Optional[dict]:
+    from maestro.codegen.gates import game_dir
+
+    changes, count = [], 0
+    modules = set(_PHANTOM.findall(error.message or ""))
+    missing = {m for m in modules
+               if not (game_dir(run_dir) / (m[2:] + ".ts")).exists()}
+    if not missing:
+        return None
+    for name, src in game_files(run_dir).items():
+        new = src
+        for mod in missing:
+            new = re.sub(r"^[ \t]*import[^\n]*from\s+[\"']" + re.escape(mod) + r"[\"'];?[^\n]*\n",
+                         "", new, flags=re.M)
+        if new != src:
+            (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
+            changes.append(("strip-import", name))
+            count += 1
+    return {"changes": changes, "count": count} if count else None
+
+
+PHANTOM = FixClass(
+    id="phantom-import",
+    matches=_matches_phantom,
+    directive=_directive("phantom_import.txt"),
+    deterministic=_strip_phantom_imports,
+)
+
 DEFAULT = FixClass(id="default", matches=lambda e: True)
 
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [AMBIENT, CONTRACT, DEFAULT]
+FIX_CLASSES = [AMBIENT, PHANTOM, CONTRACT, DEFAULT]
 
 
 def classify(error) -> FixClass:

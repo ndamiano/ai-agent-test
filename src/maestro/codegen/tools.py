@@ -133,8 +133,10 @@ def build_codegen_tools(state) -> dict:
         name = _safe(file)
         planned = _planned_names(state)
         if planned and name not in planned:
-            return {"ok": False, "error": f"off-plan filename {name!r} — write only a planned file: "
-                                          f"{', '.join(sorted(planned))}"}
+            return {"ok": False, "error":
+                    f"off-plan filename {name!r} — you can ONLY write: {', '.join(sorted(planned))}. "
+                    f"Never import from {name!r}: define its contents (types, helpers) inside a "
+                    "planned file instead."}
         v = _bump(name, code)
         return {"ok": True, "file": name, "version": v, "chars": len(code)}
 

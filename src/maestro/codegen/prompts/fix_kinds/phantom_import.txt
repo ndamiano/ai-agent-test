@@ -1,0 +1,4 @@
+ROOT CAUSE: the file imports a local module that DOES NOT EXIST and CANNOT be created — the plan
+does not include it, so writing it will be refused. Do NOT try to author the missing module.
+Remove the import and define whatever it provided (interfaces, types, helpers) INSIDE the file
+that needs them.

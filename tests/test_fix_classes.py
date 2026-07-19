@@ -180,6 +180,36 @@ def test_ambient_shadow_class_matches_and_strips(tmp_path):
     assert "import" not in (game / "ui.ts").read_text()
 
 
+def test_phantom_import_class_strips_imports_of_nonexistent_modules(tmp_path):
+    """An import of a local module that isn't on disk (and can't be authored — off-plan) is
+    stripped deterministically; an import of a module that EXISTS is untouched and no-ops."""
+    from maestro.codegen.fix_classes import classify, _strip_phantom_imports
+
+    e = _err("main.ts: error TS2307: Cannot find module './types' or its corresponding type declarations.")
+    assert classify(e).id == "phantom-import"
+    # './kit' stays with ambient-shadow (ordering).
+    kit = _err("main.ts: error TS2307: Cannot find module './kit'.")
+    assert classify(kit).id == "ambient-shadow"
+
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "manifest.json").write_text('{"files": [{"name": "main.ts"}]}', encoding="utf-8")
+    (game / "main.ts").write_text(
+        'import type { State, Entity } from "./types";\n'
+        'import { helper } from "./real";\n'
+        "export function createGame(kit: Kit) { return {}; }\n", encoding="utf-8")
+    (game / "real.ts").write_text("export const helper = 1;\n", encoding="utf-8")
+
+    r = _strip_phantom_imports(tmp_path, e)
+    assert r and r["changes"] == [("strip-import", "main.ts")]
+    src = (game / "main.ts").read_text()
+    assert '"./types"' not in src
+    assert '"./real"' in src                      # existing module import untouched
+
+    exists = _err("main.ts: error TS2307: Cannot find module './real'.")
+    assert _strip_phantom_imports(tmp_path, exists) is None   # module exists — a real bug, not phantom
+
+
 def test_dispatch_fix_reports_every_deterministic_change_shape(tmp_path):
     """The summary line must format both change shapes — reconcile's (kind, (a, b)) tuples and
     ambient-shadow's (kind, filename) — a bare-string change once crashed the whole build here."""

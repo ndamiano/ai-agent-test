@@ -18,6 +18,10 @@ from db import store
 @pytest.fixture(autouse=True)
 def _tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
+    # The global LLM rate limiter is a shared token bucket — earlier suite tests can drain it,
+    # turning connector calls into rate-limit errors here. Refill it.
+    from llm_clients.rate_limiter import get_llm_rate_limiter
+    get_llm_rate_limiter().reset()
 
 
 # ── store semantics ───────────────────────────────────────────────────────────

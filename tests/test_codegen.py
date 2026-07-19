@@ -697,3 +697,30 @@ def test_kit_context_dropped_for_pure_typecheck_fix():
     assert "KIT CALL SIGNATURES" in _kit_context(spec, argtype)
     runtime = Error(type=ErrorType.FIX, code="runs", component="game", message="HEADLESS FAILED")
     assert "# KIT API" in _kit_context(spec, runtime)
+
+
+def test_kit_surface_errors_get_the_ambient_dts():
+    """A hallucinated kit name/member (TS2304/TS2552, TS2339 on a kit type) gets the ambient
+    engine.d.ts — the model can't fix misuse of an API it can't see (the churn class from the
+    first prod build). A TS2339 on a GAME type stays lean (that's the contract reconciler's job)."""
+    from maestro.codegen.module import _kit_context
+    from maestro.modules.module import Error, ErrorType
+    spec = {"mode": "2d"}
+
+    def err(msg):
+        return Error(type=ErrorType.FIX, code="typechecks", component="game", message=msg)
+
+    hallucinated_name = err("main.ts: error TS2304: Cannot find name 'g_fillRect'.")
+    assert "KIT AMBIENT TYPES" in _kit_context(spec, hallucinated_name)
+    assert "DrawApi" in _kit_context(spec, hallucinated_name)
+
+    kit_member = err("main.ts: error TS2339: Property 'mouseX' does not exist on type 'Kit'.")
+    assert "KIT AMBIENT TYPES" in _kit_context(spec, kit_member)
+
+    # Mixed list (the real prod failure): surface errors dominate → ambient types injected.
+    mixed = err("main.ts has 9 type error(s):\n  - line 315: error TS2339: Property 'mouseX' does "
+                "not exist on type 'Kit'.\n  - line 495: error TS2304: Cannot find name 'g_fillRect'.")
+    assert "KIT AMBIENT TYPES" in _kit_context(spec, mixed)
+
+    game_member = err("main.ts: error TS2339: Property 'hp' does not exist on type 'Enemy'.")
+    assert _kit_context(spec, game_member) == ""

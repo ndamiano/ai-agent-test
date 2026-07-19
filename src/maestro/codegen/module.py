@@ -44,13 +44,35 @@ def _kit_sig_block() -> str:
     return "# KIT CALL SIGNATURES (match arg count/types exactly)\n```ts\n" + "\n".join(sigs) + "\n```"
 
 
+def _kit_surface_block() -> str:
+    """The full ambient type surface (engine.d.ts) — the exact contract tsc checks against. For a
+    fix where the model INVENTED kit API (g_fillRect, kit.mouseX), signatures alone aren't enough:
+    field members (input.lookDX, entity fields) only exist here."""
+    dts = (RUNTIME_DIR / "engine.d.ts").read_text(encoding="utf-8")
+    return "# KIT AMBIENT TYPES (the ONLY kit surface that exists — use EXACTLY these members)\n```ts\n" + dts + "\n```"
+
+
+# The model called kit API that does not exist (hallucinated names / members). TS2304/TS2552 =
+# unknown name; TS2339/TS2551 on a KIT type = unknown member of the kit surface.
+_KIT_TYPE_NAMES = ("'Kit'", "'DrawApi'", "'Input'", "'World'", "'Rng'", "'Camera'", "'Tilemap'")
+
+
+def _is_kit_surface_error(msg: str) -> bool:
+    if any(c in msg for c in ("TS2304", "TS2552")):
+        return True
+    return any(c in msg for c in ("TS2339", "TS2551")) and any(t in msg for t in _KIT_TYPE_NAMES)
+
+
 def _kit_context(spec: dict, error) -> str:
     """The kit surface a fix actually needs. A runtime gate (crash/probe/render) needs the full kit
     behavior + laws. A typecheck fix does NOT — it's a type/contract/call bug: inject nothing, unless
-    an arg-count/arg-type error is in play, then just the signatures. Cuts ~9KB of noise from typecheck fixes,
-    where it drowns the one-line failing gate (the small-model distraction law)."""
+    the error shows kit MISUSE — arg-count/arg-type gets just the signatures; a hallucinated
+    name/member gets the ambient d.ts (fixing API the model can't see just re-hallucinates it).
+    Everything else stays lean (the small-model distraction law)."""
     if getattr(error, "code", None) != "typechecks":
         return f"# KIT API\n{_kit_doc(spec)}"
+    if _is_kit_surface_error(error.message):
+        return _kit_surface_block()
     if any(c in error.message for c in ("TS2554", "TS2345")) or "arguments, but got" in error.message:
         return _kit_sig_block()
     return ""

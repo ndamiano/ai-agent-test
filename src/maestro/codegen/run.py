@@ -76,9 +76,11 @@ def _maybe_seed_worldgen(run_id: str, state: RunState, spec: dict) -> None:
 
 
 def create_run(user_id: str) -> str:
+    from db import store as db_store
+
     run_id = uuid.uuid4().hex[:12]
-    state = RunState.for_run(run_id)
-    state.write_owner(user_id)
+    RunState.for_run(run_id)   # materialize the run dir
+    db_store.create_game(run_id, user_id)
     return run_id
 
 
@@ -122,6 +124,7 @@ def propose_spec(request: str, run_id: str) -> dict:
 
     spec = draft_spec(request)
     RunState.for_run(run_id).write_spec(spec)
+    _mirror_spec_meta(run_id, spec)
     _emit("spec_proposed", run_id, title=spec["title"], mode=spec["mode"])
     return spec
 
@@ -143,6 +146,7 @@ def amend_spec(run_id: str, note: str) -> dict:
     revised["request"] = spec["request"]
     revised["frozen"] = False
     state.write_spec(revised)
+    _mirror_spec_meta(run_id, revised)
     _emit("spec_amend_requested", run_id, note=note)
     return revised
 
@@ -155,8 +159,17 @@ def freeze_spec(run_id: str) -> dict:
     spec = state.read_spec()
     spec["frozen"] = True
     state.write_spec(spec)
+    _mirror_spec_meta(run_id, spec)
     _emit("spec_frozen", run_id, title=spec["title"])
     return {"ok": True, "frozen": True}
+
+
+def _mirror_spec_meta(run_id: str, spec: dict) -> None:
+    """spec.json is the source of truth; the games row mirrors its identity fields for listing."""
+    from db import store as db_store
+
+    db_store.update_spec_meta(run_id, spec.get("title", ""), spec.get("mode", ""),
+                              bool(spec.get("frozen")))
 
 
 def run_build(run_id: str, max_steps: int = 60):
@@ -171,6 +184,8 @@ def run_build(run_id: str, max_steps: int = 60):
     from llm_clients.log_context import set_log_dir
     from tools.build_events import _emit
 
+    from db import store as db_store
+
     state = RunState.for_run(run_id)
     spec = state.read_spec()
     if spec is None:
@@ -183,14 +198,19 @@ def run_build(run_id: str, max_steps: int = 60):
                      max_steps=max_steps, control=control,
                      on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
                      on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid))
+    db_store.set_status(run_id, "building")
     t0 = time.perf_counter()
     try:
         result = loop.run()
+    except BaseException:
+        db_store.set_status(run_id, "failed")
+        raise
     finally:
         remove(run_id)
     result.elapsed = time.perf_counter() - t0
     if result.ok:
         stage_for_play(state.run_dir, run_id)
+    db_store.set_status(run_id, "built" if result.ok else "failed")
     logger.info("codegen build %s: ok=%s steps=%d elapsed=%.1fs",
                 run_id, result.ok, result.steps, result.elapsed)
     return result

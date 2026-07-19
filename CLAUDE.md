@@ -150,7 +150,8 @@ src/
                          No registry/engine/projection machinery — a module is instantiated directly.
       context.py         Context (durable per-step snapshot) + build_context + render_dict.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
-                         game/ folder, owner/waivers/…); the source of truth each step rebuilds from.
+                         game/ folder, waivers); the source of truth each step rebuilds from.
+                         Ownership + charge state live in db/, not the run dir.
     run_control.py       cross-thread pause/resume signal channel.
     templating.py        render_template ({{include}} partials + {key} subst) — engine-neutral.
   agents/                MainAgent (chat persona) + agent_store, config/agents/chat.json
@@ -160,10 +161,20 @@ src/
                          in the clear), ratelimit.py (per-handle login throttle), router.py (login/
                          logout, NO signup), billing.py (cost(spec), flat 1), credits.py (provider-
                          agnostic top-up seam; default refuses every event), cli.py (manual
-                         create/grant/refund). Runs are owned (owner.json; cross-user = 403); the WS
-                         authenticates via token query param. Credits gate builds: a run is charged
-                         ONCE on first enqueue (durable `charged` marker), never re-deducted, never
-                         auto-refunded (refunds are a manual admin action). No self-serve signup.
+                         create/grant/refund). Games are owned (games.user_id in db/; cross-user =
+                         403); the WS authenticates via token query param. Credits gate builds: a
+                         game is charged ONCE on first enqueue (credits_spent on its games row,
+                         which also grants seconds_granted = credits × SECONDS_PER_CREDIT), never
+                         re-deducted, never auto-refunded (refunds are a manual admin action). No
+                         self-serve signup.
+  db/                    platform datastore (sqlite at <working_dir>/private/platform.db, WAL):
+                         store.py — games (ownership, title/mode/status mirror of spec.json,
+                         credits_spent + seconds_granted/used compute budget), builds (one row per
+                         build/fix/assets attempt: status, steps, queued/started/finished), events
+                         (append-only build/spec lifecycle log; GET /games/{id}/events replays it),
+                         jobs + workers (schema for the coming worker-pull inference queue). Plain
+                         parameterized SQL, short-lived connections — the run dir stays the source
+                         of truth for spec + artifacts; rows index, never duplicate.
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing) +
                          build_queue.py (single-GPU FIFO build serializer). WS events route
                          per-user server-side (event_bus resolves run → owner). The games router is
@@ -172,7 +183,7 @@ src/
                          codegen run_build, fix→fix_from_note, assets→reskin.add_assets. Chat drafts
                          specs via tools/chat_tools.py (propose_game_spec/amend_game_spec →
                          codegen.propose_spec/amend_spec). Build progress + spec events emit through
-                         tools/build_events.py (_emit → event_bus). A built run is staged to
+                         tools/build_events.py (_emit → db events log + event_bus). A built run is staged to
                          runtime/games/<id>/ and served at /play (StaticFiles mount) for the SPA.
   config/                settings_schema.py (Pydantic), settings_manager.py (singleton)
   llm_clients/           connector_selector.py, openai_compatible_connector.py, message_builder.py,

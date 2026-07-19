@@ -1,8 +1,10 @@
 """Games router — browse and drive codegen build runs.
 
-A "game" is one run dir under <working_directory>/runs/<run_id>/. The list is a cheap spec read
-per row. The detail view derives live status from the build queue + the run control. Freeze, build
-(queued on the single GPU), pause/resume, fix-from-note, and asset skinning all live here.
+A "game" is a games row in the platform db plus its run dir under
+<working_directory>/runs/<run_id>/. The list reads the db only; the detail view reads the spec
+from disk (source of truth) and derives live status from the build queue + the run control.
+Freeze, build (queued on the single GPU), pause/resume, fix-from-note, and asset skinning all
+live here.
 """
 
 import logging
@@ -15,6 +17,7 @@ from pydantic import BaseModel
 from api.build_queue import build_queue, AlreadyQueued
 from auth.deps import get_current_user
 from auth.store import User
+from db import store as db_store
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
 
 logger = logging.getLogger(__name__)
@@ -39,11 +42,6 @@ _active_lock = threading.Lock()
 _active: set = set()
 
 
-def _runs_dir():
-    from tools.execution_context import resolve_base_path
-    return resolve_base_path() / "runs"
-
-
 def _built(run_id: str) -> bool:
     return (RUNTIME_DIR / "games" / run_id / "main.js").exists()
 
@@ -52,43 +50,32 @@ def _require_state(run_id: str, user: User):
     """The run's state, scoped to its owner: 404 if there's no spec, 403 if it isn't this user's."""
     from maestro.state import RunState
 
+    owner = db_store.owner_of(run_id)
     state = RunState.for_run(run_id)
-    if state.read_spec() is None:
+    if owner is None or state.read_spec() is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
-    if state.read_owner() != user.id:
+    if owner != user.id:
         raise HTTPException(status_code=403, detail="not your game")
     return state
 
 
 @router.get("", response_model=List[Dict])
 async def list_games(user: User = Depends(get_current_user)):
-    """Lightweight summary of the caller's runs (one spec read per row)."""
-    from maestro.state import RunState
-
-    runs = _runs_dir()
-    if not runs.exists():
-        return []
-
+    """Lightweight summary of the caller's games — db rows only, no per-row file reads."""
     games: List[Dict] = []
-    for run_dir in runs.iterdir():
-        if not run_dir.is_dir():
-            continue
-        state = RunState(run_dir)
-        spec = state.read_spec()
-        if spec is None:
-            continue
-        if state.read_owner() != user.id:
-            continue
+    for row in db_store.list_games(user.id):
+        if not row["title"] and row["status"] == "draft":
+            continue   # created but never drafted — nothing to show yet
         games.append({
-            "run_id": run_dir.name,
-            "title": spec.get("title", ""),
-            "mode": spec.get("mode", ""),
-            "frozen": bool(spec.get("frozen")),
-            "built": _built(run_dir.name),
-            "building": build_queue.is_active(run_dir.name),
-            "mtime": run_dir.stat().st_mtime,
+            "run_id": row["id"],
+            "title": row["title"],
+            "mode": row["mode"],
+            "status": row["status"],
+            "frozen": row["status"] != "draft",
+            "built": _built(row["id"]),
+            "building": build_queue.is_active(row["id"]),
+            "mtime": row["updated_at"],
         })
-
     games.sort(key=lambda g: g["mtime"], reverse=True)
     return games
 
@@ -100,6 +87,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
 
     state = _require_state(run_id, user)
     spec_data = state.read_spec()
+    row = db_store.game(run_id) or {}
     ctrl = get_control(run_id)
     built = _built(run_id)
     qstate = build_queue.state_of(run_id)
@@ -121,7 +109,18 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "auto_pause": ctrl.auto_pause if ctrl else False,
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         "play_url": f"/play/index.html?game={run_id}" if built else None,
+        "credits_spent": row.get("credits_spent", 0),
+        "seconds_granted": row.get("seconds_granted", 0),
+        "seconds_used": row.get("seconds_used", 0),
     }
+
+
+@router.get("/{run_id}/events", response_model=List[Dict])
+async def game_events(run_id: str, after: int = 0, user: User = Depends(get_current_user)):
+    """The game's durable event log (spec/build lifecycle), for catch-up after a reconnect —
+    the websocket only delivers what happens while a socket is open."""
+    _require_state(run_id, user)
+    return db_store.events_for(run_id, after_id=after)
 
 
 @router.post("/{run_id}/freeze", response_model=Dict)
@@ -150,14 +149,14 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
     from auth import store
-    from auth.billing import cost
+    from auth.billing import cost, SECONDS_PER_CREDIT
 
-    if not state.is_charged():
+    if not db_store.is_charged(run_id):
         price = cost(spec_data)
         if not store.deduct(user.id, price, "build", run_id):
             raise HTTPException(status_code=402, detail={
                 "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-        state.mark_charged()
+        db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
 
     try:
         position = build_queue.enqueue(run_id, user.id, body.auto_pause)
@@ -194,12 +193,12 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     never re-charges."""
     from maestro.run_control import get as get_control
 
-    state = _require_state(run_id, user)
+    _require_state(run_id, user)
     ctrl = get_control(run_id)
     if ctrl is not None:
         ctrl.request_resume()
         return {"run_id": run_id, "status": "running"}
-    if not state.is_charged():
+    if not db_store.is_charged(run_id):
         raise HTTPException(status_code=409, detail="no build to resume for this run")
     try:
         position = build_queue.enqueue(run_id, user.id)
@@ -230,11 +229,17 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
             raise HTTPException(status_code=409, detail="a fix is already running for this run")
         _active.add(key)
 
+    build_id = db_store.create_build(run_id, kind="fix")
+
     def _run():
+        db_store.build_started(build_id)
         try:
-            fix_from_note(run_id, body.note)
+            result = fix_from_note(run_id, body.note)
+            db_store.build_finished(build_id, "succeeded" if result.ok else "failed",
+                                    steps=result.steps)
         except Exception:
             logger.exception("fix failed for %s", run_id)
+            db_store.build_finished(build_id, "failed")
         finally:
             with _active_lock:
                 _active.discard(key)
@@ -257,15 +262,21 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             raise HTTPException(status_code=409, detail="assets are already being skinned for this run")
         _active.add(key)
 
+    build_id = db_store.create_build(run_id, kind="assets")
+
     def _run():
+        db_store.build_started(build_id)
         _emit("assets_started", run_id)
         try:
             result = add_assets(run_id)
-            _emit("assets_done", run_id, ok=result.get("ok", False),
+            ok = result.get("ok", False)
+            _emit("assets_done", run_id, ok=ok,
                   mode=result.get("mode"), rendered=result.get("generated", []))
+            db_store.build_finished(build_id, "succeeded" if ok else "failed")
         except Exception:
             logger.exception("asset skin failed for %s", run_id)
             _emit("assets_done", run_id, ok=False, mode=None, rendered=[])
+            db_store.build_finished(build_id, "failed")
         finally:
             with _active_lock:
                 _active.discard(key)

@@ -63,8 +63,8 @@ class _StubProvider(CreditProvider):
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     from api.app import app
-    from api.routers import games
-    monkeypatch.setattr(games, "_runs_dir", lambda: tmp_path / "runs")
+    from db import store as db_store
+    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
     return TestClient(app)
 
 

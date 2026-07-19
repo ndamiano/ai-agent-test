@@ -10,14 +10,14 @@ from starlette.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from auth import store
+from db import store as db_store
 
 
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
+    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
     from api.app import app
-    from api.routers import games
-    monkeypatch.setattr(games, "_runs_dir", lambda: tmp_path / "runs")
     # No `with` — we don't want the app's startup handlers (tool registration) in a unit test.
     return TestClient(app)
 

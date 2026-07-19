@@ -22,11 +22,9 @@ from typing import Dict, List, Optional
 SPEC_FILE = "spec.json"
 STORY_STATE_FILE = "story_state.json"
 WAIVERS_FILE = "waivers.json"
-OWNER_FILE = "owner.json"
-CHARGED_FILE = "charged.json"
-
-# Files that live in the run dir but are NOT artifact components.
-_RESERVED = {SPEC_FILE, STORY_STATE_FILE, WAIVERS_FILE, OWNER_FILE, CHARGED_FILE}
+# Files that live in the run dir but are NOT artifact components. Ownership and charge state
+# live in db.store, not the run dir.
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE, WAIVERS_FILE}
 
 
 class RunState:
@@ -66,24 +64,6 @@ class RunState:
 
     def read_spec(self) -> Optional[Dict]:
         return self._read(SPEC_FILE)
-
-    # ── ownership (the run's owning user; set at create) ──────────────────────
-    def write_owner(self, user_id: str) -> None:
-        self._write(OWNER_FILE, {"user_id": user_id})
-
-    def read_owner(self) -> Optional[str]:
-        data = self._read(OWNER_FILE)
-        return data.get("user_id") if data else None
-
-    # ── billing (durable "this run has been charged once" marker) ──────────────
-    def is_charged(self) -> bool:
-        """True once this run has been charged for a build. The charge is per-run and idempotent:
-        a build enqueued for an already-charged run (re-trigger, resume-after-crash) is never
-        deducted again — charged stays charged as long as the run can eventually finish."""
-        return self._read(CHARGED_FILE) is not None
-
-    def mark_charged(self) -> None:
-        self._write(CHARGED_FILE, {"charged": True})
 
     # ── story state (Phase 6) ─────────────────────────────────────────────────
     def write_story_state(self, state: Dict) -> None:

@@ -6,6 +6,9 @@ the scaleout S3 usage hook) drop in HERE, leaving the ledger and the build gate 
 
 from typing import Dict
 
+# One credit buys this much GPU-execution budget (4 hours of 5090-seconds).
+SECONDS_PER_CREDIT = 14_400
+
 
 def cost(spec: Dict) -> int:
     return 1

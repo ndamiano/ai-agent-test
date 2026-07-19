@@ -19,15 +19,15 @@ class EventBus:
         self.consumer_task: Optional[asyncio.Task] = None
         self._shutdown = False
         self.logger = logging.getLogger(__name__)
-        # run_id -> owning user id. owner.json is write-once, so a cached owner never goes stale.
+        # run_id -> owning user id. Ownership is write-once, so a cached owner never goes stale.
         self._owner_cache: dict = {}
 
     def _owner_of(self, run_id: str) -> Optional[str]:
         owner = self._owner_cache.get(run_id)
         if owner is None:
-            from maestro.state import RunState
+            from db import store as db_store
             try:
-                owner = RunState.for_run(run_id).read_owner()
+                owner = db_store.owner_of(run_id)
             except Exception:
                 owner = None
             if owner is not None:

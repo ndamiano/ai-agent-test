@@ -1,4 +1,5 @@
-"""Publish a build/spec lifecycle event to the per-owner WebSocket bus."""
+"""Publish a build/spec lifecycle event: append it to the durable event log, then push it to
+the per-owner WebSocket bus. The db row survives the socket; the socket is just live delivery."""
 
 import logging
 
@@ -6,6 +7,11 @@ logger = logging.getLogger(__name__)
 
 
 def _emit(event_type: str, run_id: str, **payload) -> None:
+    try:
+        from db import store as db_store
+        db_store.record_event(run_id, event_type, payload)
+    except Exception:
+        logger.exception("failed to persist event %s for %s", event_type, run_id)
     try:
         from api.websocket.event_bus import event_bus
         from config.time_utils import get_utc_timestamp

@@ -12,20 +12,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from api.websocket.event_bus import EventBus
 from api.websocket import manager as manager_mod
-from maestro.state import RunState
-
-
-class _Owned:
-    def __init__(self, owner):
-        self._owner = owner
-
-    def read_owner(self):
-        return self._owner
+from db import store as db_store
 
 
 def _own(owner):
-    """Patch RunState.for_run so every run resolves to `owner`."""
-    return patch.object(RunState, "for_run", classmethod(lambda cls, rid: _Owned(owner)))
+    """Patch db ownership so every run resolves to `owner`."""
+    return patch.object(db_store, "owner_of", lambda rid: owner)
 
 
 class TestOwnerCache(unittest.TestCase):
@@ -33,12 +25,11 @@ class TestOwnerCache(unittest.TestCase):
         bus = EventBus()
         reads = []
 
-        class _Counting:
-            def read_owner(self):
-                reads.append(1)
-                return "u1"
+        def _counting(rid):
+            reads.append(1)
+            return "u1"
 
-        with patch.object(RunState, "for_run", classmethod(lambda cls, rid: _Counting())):
+        with patch.object(db_store, "owner_of", _counting):
             assert bus._owner_of("r1") == "u1"
             assert bus._owner_of("r1") == "u1"
         assert reads == [1]                       # second lookup served from cache

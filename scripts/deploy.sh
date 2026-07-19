@@ -46,7 +46,7 @@ ssh "${PROD_HOST}" "cd '${REMOTE_DIR}' && docker compose build && docker compose
 
 echo "==> Health check"
 # Probe from the prod box (localhost:PORT) so we don't depend on the app port being publicly open.
-if ssh "${PROD_HOST}" "curl -fsS --retry 5 --retry-delay 3 --retry-connrefused http://localhost:${HEALTH_PORT}/healthz >/dev/null"; then
+if ssh "${PROD_HOST}" "curl -fsS --retry 10 --retry-delay 3 --retry-all-errors http://localhost:${HEALTH_PORT}/healthz >/dev/null"; then
   echo "==> DEPLOY OK — ${PROD_HOST} is serving /healthz"
 else
   echo "ERROR: health check failed on ${PROD_HOST}:${HEALTH_PORT}. Check 'docker compose logs' on the box." >&2

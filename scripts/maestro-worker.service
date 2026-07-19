@@ -1,0 +1,27 @@
+# Worker agent unit — runs on a GPU box, pulls inference jobs from the control plane.
+#
+#   sudo cp scripts/maestro-worker.service /etc/systemd/system/
+#   sudo systemctl edit maestro-worker    # set WORKER_TOKEN (keep it out of this file)
+#     [Service]
+#     Environment=WORKER_TOKEN=<the control plane's WORKQUEUE_TOKEN>
+#   sudo systemctl enable --now maestro-worker
+#
+# SIGTERM finishes the in-flight job then exits; Restart covers crashes and reboots.
+
+[Unit]
+Description=Maestro inference worker (pulls the llm queue)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nick
+WorkingDirectory=/home/nick/Documents/ai-agent-test/src
+ExecStart=/home/nick/Documents/ai-agent-test/venv/bin/python -m worker.agent \
+    --server http://100.66.19.121:8000 \
+    --target http://localhost:8080 \
+    --queue llm
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

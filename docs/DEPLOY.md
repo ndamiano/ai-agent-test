@@ -6,10 +6,11 @@ The container path is the alternative to the manual runbook below: one Docker im
 (API + SPA, same-origin, single uvicorn worker). Everything is parameterized by `.env` — no code
 edits to deploy.
 
-**One decision, one container.** The image is CPU-only. It is a *client* of the GPU services
-(LM Studio `:1234`, ComfyUI `:8188`, TTS `:8880`, Trellis `:8189`) — those stay on the host and are
-reached over `host.docker.internal` (compose wires `extra_hosts: host-gateway`). They are **not**
-containerized here.
+**One decision, one container.** The image is CPU-only — the control plane: API + SPA + the job
+queue + the node-based build gates. GPU inference is done by **worker agents** (`worker/agent.py`)
+that PULL jobs over `/worker` from wherever the GPUs live (home box, RunPod pod), authed by
+`WORKQUEUE_TOKEN`. The asset backends (ComfyUI/TRELLIS) are still called directly — point
+`COMFYUI_ENDPOINT`/`TRELLIS_ENDPOINT` at the GPU box (e.g. its tailscale IP) until they're queued.
 
 ### Files
 
@@ -24,24 +25,20 @@ containerized here.
 
 ### The data invariant (critical)
 
-Durable state — `runs/` and `private/auth.db` (user accounts + games + the credit ledger) — lives at
-`WORKING_DIRECTORY=/data`, a path **outside** the source tree, backed by the **named Docker volume
-`maestro-data`**. It survives image rebuilds and `deploy.sh` runs. `rsync` in `deploy.sh` never
-touches it (it's not in the tree). Never point `WORKING_DIRECTORY` off `/data`, and never `docker
-volume rm maestro-data` — that wipes every account and game.
+Durable state lives on **two named Docker volumes**, both outside the rsync'd source tree:
+- `maestro-data` → `/data`: `runs/` + `private/auth.db` (accounts, credit ledger) +
+  `private/platform.db` (games, builds, jobs, events).
+- `maestro-games` → `/app/runtime/games`: staged playable bundles served at `/play`.
+
+Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY` off `/data`, and
+never `docker volume rm` either volume — that wipes accounts and games.
 
 ### Build toolchain
 
 The codegen build gates run a Node toolchain (`tsc` + `esbuild`) against the game folder — no game
-engines. The toolchain lives in `runtime/node_modules/` (gitignored); the container needs Node plus
-those packages installed. Generated games are plain TypeScript bundled to JS and served as static
-files at `/play`.
-
-> **TODO (deploy-tested change):** the `Dockerfile` and `docker-compose.yml` still apt-provision and
-> bind-mount the Ren'Py SDK + Godot binary/export templates from the pre-codegen path. Nothing reads
-> `RENPY_SDK` / `which godot` anymore — those mounts and the related `.env` host-path vars
-> (`RENPY_SDK_HOST`, `GODOT_BIN_HOST`, `GODOT_TEMPLATES_HOST`) are dead weight and should be removed
-> once a container build+deploy has been re-verified.
+engines. The image bakes `node` plus `runtime/node_modules` (npm-ci'd in a linux build stage so the
+platform-specific binaries resolve). Generated games are plain TypeScript bundled to JS and served
+as static files at `/play`.
 
 ### Brand-new box (provision → configure → deploy)
 

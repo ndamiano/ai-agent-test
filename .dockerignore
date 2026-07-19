@@ -15,6 +15,11 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 
+# Runtime: the toolchain is npm-ci'd in its own stage (platform binaries), and games/ is local
+# staged build output (gigabytes) — the container gets a named volume there instead.
+runtime/node_modules/
+runtime/games/
+
 # Local state + secrets — must never enter the image (durable state lives on the /data volume)
 outputs/
 src/config/settings.json

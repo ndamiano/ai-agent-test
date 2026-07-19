@@ -31,7 +31,8 @@ class SettingsManager:
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
                 "model": os.getenv("LMSTUDIO_MODEL", "local-model"),
                 "dialogue_model": os.getenv("LMSTUDIO_DIALOGUE_MODEL", ""),
-                "max_tokens": 50000
+                "max_tokens": 50000,
+                "n_ctx": int(os.getenv("LMSTUDIO_N_CTX", "32768"))
             },
             "cline": {
                 "api_key": os.getenv("CLINE_API_KEY", ""),
@@ -42,6 +43,15 @@ class SettingsManager:
             "comfyui": {
                 "endpoint": os.getenv("COMFYUI_ENDPOINT", "http://localhost:8188"),
                 "vram_management": os.getenv("COMFYUI_VRAM_MANAGEMENT", "false").lower() == "true"
+            },
+            "trellis": {
+                "endpoint": os.getenv("TRELLIS_ENDPOINT", "http://localhost:8189")
+            },
+            "workqueue": {
+                "enabled": os.getenv("WORKQUEUE_ENABLED", "false").lower() == "true",
+                "token": os.getenv("WORKQUEUE_TOKEN", ""),
+                "job_timeout_seconds": int(os.getenv("WORKQUEUE_JOB_TIMEOUT", "900")),
+                "lease_seconds": int(os.getenv("WORKQUEUE_LEASE", "120"))
             }
         }
 

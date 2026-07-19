@@ -28,6 +28,8 @@ rsync -az --delete \
   --exclude 'venv/' \
   --exclude 'frontend/node_modules/' \
   --exclude 'frontend/dist/' \
+  --exclude 'runtime/node_modules/' \
+  --exclude 'runtime/games/' \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
   --exclude 'src/logs/' \

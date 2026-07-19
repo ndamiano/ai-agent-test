@@ -9,56 +9,47 @@ COPY frontend/ ./
 RUN npm run build
 
 
-# Stage 2 — CPU-only Python runtime. The app is a CLIENT of the GPU services (LM Studio, ComfyUI,
-# TTS, Trellis) over HTTP; no CUDA here.
+# Stage 2 — the codegen gate toolchain (tsc + esbuild + gltf tooling), resolved for linux in a
+# node stage so the platform-specific binaries (esbuild, native tsc) land correctly.
+FROM node:20-slim AS gate-toolchain
+WORKDIR /toolchain
+COPY runtime/package.json runtime/package-lock.json ./
+RUN npm ci
+
+
+# Stage 3 — CPU-only Python runtime. The container is the CONTROL PLANE: API + SPA + the job
+# queue + the node-based build gates (tsc/esbuild/headless sim as subprocesses). GPU inference
+# happens on worker agents that PULL jobs over /worker — nothing GPU-shaped lives here.
 FROM python:3.12-slim AS runtime
 
-# Shared libraries the HOST-MOUNTED engine binaries (renpy.sh, godot) need to EXECUTE headlessly.
-# The SDK/Godot are not baked into the image (bind-mounted at runtime) but they still dlopen these.
-# WHY apt here: the slim base has none of them; without these the mounted binaries fail to start.
-# The exact set is to be validated on the first successful build — trim or extend as lint/export
-# surface missing-.so errors.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl \
-        libgl1 \
-        libglu1-mesa \
-        libglib2.0-0 \
-        fontconfig \
-        libfreetype6 \
-        libpng16-16 \
-        libsdl2-2.0-0 \
-        libasound2 \
-        libx11-6 \
-        libxext6 \
-        libxrandr2 \
-        libxcursor1 \
-        libxinerama1 \
-        libxi6 \
-        libxrender1 \
+# curl for the compose healthcheck; node for the gate subprocesses.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 
-# Non-root runtime user with a real HOME so Godot resolves ~/.local/share/godot/export_templates.
 RUN useradd --create-home --home-dir /home/maestro --shell /bin/bash maestro
 ENV HOME=/home/maestro
 
 WORKDIR /app
 
-# Reference requirements.txt as-is (a parallel dependency audit rewrites it). Layer-cached before
-# the source copy so a code change doesn't reinstall deps.
+# Layer-cached before the source copy so a code change doesn't reinstall deps.
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Preserve the layout app.py's static-mount math depends on:
 # Path(__file__).resolve().parents[2] from /app/src/api/app.py == /app, so dist lands at
-# /app/frontend/dist and run.py inserts /app/src on sys.path.
+# /app/frontend/dist, the kit at /app/runtime, and run.py inserts /app/src on sys.path.
 COPY run.py ./
 COPY src/ ./src/
+COPY runtime/ ./runtime/
+COPY --from=gate-toolchain /toolchain/node_modules ./runtime/node_modules
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 
-# Durable state (runs/ + private/auth.db) lives OUTSIDE the source tree on a named volume.
-# Creating + chowning the mountpoint means the empty named volume inherits maestro's ownership on
-# first mount, so the non-root process can write without an entrypoint chown.
-RUN mkdir -p /data && chown -R maestro:maestro /data /app
+# Durable state lives OUTSIDE the source tree on named volumes: /data (runs/ + private/ dbs) and
+# /app/runtime/games (staged playable bundles — served at /play, must survive image rebuilds).
+# Creating + chowning the mountpoints means the empty named volumes inherit maestro's ownership
+# on first mount, so the non-root process can write without an entrypoint chown.
+RUN mkdir -p /data /app/runtime/games && chown -R maestro:maestro /data /app
 ENV WORKING_DIRECTORY=/data
 
 USER maestro

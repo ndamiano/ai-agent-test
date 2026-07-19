@@ -174,7 +174,26 @@ def test_ambient_shadow_class_matches_and_strips(tmp_path):
         'import type { Kit } from "./types";\nexport function drawUi(state: any, kit: Kit): void {}\n',
         encoding="utf-8")
     r = _strip_kit_shadow(tmp_path, e)
-    assert r and set(r["changes"]) == {"types.ts", "ui.ts"}
+    assert r and set(r["changes"]) == {("strip", "types.ts"), ("strip", "ui.ts")}
     assert "declare namespace Kit" not in (game / "types.ts").read_text()
     assert "Crop extends Kit.Entity" in (game / "types.ts").read_text()
     assert "import" not in (game / "ui.ts").read_text()
+
+
+def test_dispatch_fix_reports_every_deterministic_change_shape(tmp_path):
+    """The summary line must format both change shapes — reconcile's (kind, (a, b)) tuples and
+    ambient-shadow's (kind, filename) — a bare-string change once crashed the whole build here."""
+    from unittest.mock import MagicMock, patch
+    from maestro.codegen.module import dispatch_fix
+    from maestro.codegen import fix_classes
+
+    for changes in ([("strip", "main.ts")], [("field", ("Hero", "stamina"))]):
+        cls = fix_classes.FixClass(
+            id="stub", matches=lambda e: True,
+            deterministic=lambda rd, e, c=changes: {"changes": c, "count": len(c)})
+        services = MagicMock()
+        context = MagicMock()
+        context.state.run_dir = tmp_path
+        with patch.object(fix_classes, "classify", lambda e: cls):
+            dispatch_fix(None, context, _err("boom"), 0, services, lambda n, a: None)
+        assert services._report.called

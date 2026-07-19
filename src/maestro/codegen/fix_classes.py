@@ -170,7 +170,7 @@ def _strip_kit_shadow(run_dir, error) -> Optional[dict]:
             new = new[:m.start()] + new[j + 1:]
         if new != src:
             (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
-            changes.append(name)
+            changes.append(("strip", name))   # (kind, key) — the deterministic-pass change contract
             count += 1
     return {"changes": changes, "count": count} if count else None
 

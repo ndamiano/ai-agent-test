@@ -539,7 +539,7 @@ def dispatch_fix(module, context, error, slot, services, dispatch):
         if res.get("count"):
             summary = ", ".join(f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
                                 for k, v in res.get("changes", [])[:8])
-            services._report(f"[{cls.id}] reconciled types.ts ({res['count']} edit(s): {summary})")
+            services._report(f"[{cls.id}] deterministic pass ({res['count']} edit(s): {summary})")
             return
     _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_class=cls)
 

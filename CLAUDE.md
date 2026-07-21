@@ -188,9 +188,8 @@ src/
                          forwarded to the inference target). handlers.py = one handler per payload
                          `kind`, ONE worker process per queue: llm (verbatim forward to llama.cpp),
                          image (the ComfyUI submit → poll /history → fetch /view flow, images back
-                         inline as base64), mesh (one TRELLIS POST → glb base64, retry-once). No
-                         handler frees VRAM for another backend: a queue owns its GPU, so two
-                         queues must not share a card.
+                         inline as base64), mesh (one TRELLIS POST → glb base64, retry-once).
+                         A queue owns its GPU.
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
                          workqueue) + build_queue.py (single-GPU FIFO build serializer). The
                          workqueue router (/worker/claim|heartbeat|complete, mounted OUTSIDE the
@@ -243,8 +242,7 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 - `workqueue.enabled` routes ALL GPU work through the worker-pull queue (enqueue a jobs row, wait
   for a worker) instead of calling a backend directly: LLM inference (QueueConnector), sprite/mesh
   images (queue `image`) and TRELLIS meshes (queue `mesh`). `workqueue.token` is the worker bearer
-  secret. One worker per queue, and a queue owns its card outright — nothing evicts anything, so
-  co-locating two queues on one GPU only works if both backends fit resident:
+  secret. One worker per queue, and a queue owns its card:
   `python -m worker.agent --server <cp>:8000 --token <token> --queue image --target localhost:8188`
   (defaults: server localhost:8000, target localhost:1234, queue llm). With the queue on, the
   control plane touches no GPU at all. exec_seconds are debited to the owning game via the

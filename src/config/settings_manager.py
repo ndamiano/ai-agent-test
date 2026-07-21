@@ -8,6 +8,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _merge(defaults: Dict[str, Any], loaded: Dict[str, Any]) -> Dict[str, Any]:
+    """`loaded` over `defaults`, one level deep — the settings blocks (lmstudio, comfyui, …) are
+    flat dicts, so a file that names a block need not repeat every key in it."""
+    out = dict(defaults)
+    for k, v in loaded.items():
+        base = out.get(k)
+        out[k] = {**base, **v} if isinstance(base, dict) and isinstance(v, dict) else v
+    return out
+
+
 class SettingsManager:
 
     def __init__(self):
@@ -67,7 +77,9 @@ class SettingsManager:
                 with open(self.settings_path, 'r') as f:
                     settings = json.load(f)
                     logger.info(f"Settings loaded from {self.settings_path}")
-                    return settings
+                    # Callers subscript this dict directly, so a key the file omits is a KeyError
+                    # rather than the schema default it looks like — layer the defaults under it.
+                    return _merge(self.defaults, settings)
             else:
                 # Create settings file with defaults
                 logger.info(f"Settings file not found, creating with defaults at {self.settings_path}")

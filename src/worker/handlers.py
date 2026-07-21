@@ -2,8 +2,7 @@
 
 The llm queue is a verbatim forward (no kind), so its handler is one POST. The image queue is not:
 ComfyUI is submit → poll history → fetch each image. Payloads carry no endpoints; the target is the
-worker's own CLI config. One queue owns one GPU, so a handler never has to make room for another
-backend.
+worker's own CLI config. A queue owns its GPU.
 
 Handlers return (result, error): exactly one is non-None.
 """

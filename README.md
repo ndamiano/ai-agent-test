@@ -56,7 +56,7 @@ The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). 
 }
 ```
 
-Nothing frees VRAM for anything else: a GPU serves one backend. Running the LLM and ComfyUI on one card means both must fit at once.
+A GPU serves one backend. Running the LLM and ComfyUI on one card means both must fit resident at once.
 
 ## Build a game from the CLI
 

@@ -4,8 +4,7 @@ Claims jobs from the platform's /worker endpoints, runs each payload against a l
 (worker/handlers.py — verbatim forward for llm, the ComfyUI submit/poll/fetch flow for image,
 one POST for mesh), measures execution time, and lands the result. Runs identically on the home
 GPU box and inside a RunPod container — the worker dials OUT, so NAT/ephemeral pod networking
-never matters. One process per queue, and a queue owns its GPU outright — nothing here makes room
-for another backend, so two queues must not share a card.
+never matters. One process per queue, and a queue owns its GPU.
 
   python -m worker.agent --queue llm   --target http://localhost:8080 --token <t>
   python -m worker.agent --queue image --target http://localhost:8188 --token <t>

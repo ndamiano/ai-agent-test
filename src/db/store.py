@@ -11,6 +11,7 @@ Postgres port is DDL + driver work, not a rewrite.
 
 import json
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -97,15 +98,26 @@ def _db_path() -> Path:
     return Path(settings_manager.get_settings()["working_directory"]).resolve() / "private" / "platform.db"
 
 
+# Paths whose WAL mode + schema this process has already applied. Doing that per connection is
+# both wasted DDL on every query and a correctness bug: switching journal_mode needs a lock the
+# busy handler does NOT cover, so sqlite returns "database is locked" outright whenever another
+# connection is mid-transaction — which, under the worker's claim poll, is most of the time.
+_INITIALIZED: set = set()
+_INIT_LOCK = threading.Lock()
+
+
 @contextmanager
 def _db():
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=10.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
-    conn.executescript(_SCHEMA)
+    with _INIT_LOCK:
+        if str(path) not in _INITIALIZED:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(_SCHEMA)
+            _INITIALIZED.add(str(path))
     try:
         yield conn
         conn.commit()

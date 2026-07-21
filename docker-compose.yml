@@ -18,6 +18,9 @@ services:
       - maestro-data:/data
       # Staged playable bundles (runtime/games/<id>, served at /play) — also rebuild-durable.
       - maestro-games:/app/runtime/games
+      # settings.json is dockerignored (never baked into the image), so structured config the
+      # env can't express (runpod.queues) rides a host bind — create the file before first up.
+      - ./src/config/settings.json:/app/src/config/settings.json
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]

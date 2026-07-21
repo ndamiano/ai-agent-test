@@ -90,8 +90,11 @@ CREATE TABLE IF NOT EXISTS workers (
 
 
 def _db_path() -> Path:
-    from tools.execution_context import resolve_base_path
-    return resolve_base_path() / "private" / "platform.db"
+    # Not resolve_base_path(): tools repoint the execution_context working dir (the reskin points it
+    # at game/assets/ for ComfyUI), which would fork an empty db there — an enqueued job would land
+    # where no worker is looking.
+    from config.settings_manager import settings_manager
+    return Path(settings_manager.get_settings()["working_directory"]).resolve() / "private" / "platform.db"
 
 
 @contextmanager

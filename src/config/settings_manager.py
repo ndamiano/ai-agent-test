@@ -31,6 +31,10 @@ class SettingsManager:
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
                 "model": os.getenv("LMSTUDIO_MODEL", "local-model"),
                 "dialogue_model": os.getenv("LMSTUDIO_DIALOGUE_MODEL", ""),
+                # "none" is the floor the fix loop escalates FROM. Absent this key an env-configured
+                # deployment sends no reasoning field, and a thinking model spends a small token
+                # budget entirely on reasoning.
+                "reasoning": os.getenv("LMSTUDIO_REASONING", "none"),
                 "max_tokens": 50000,
                 "n_ctx": int(os.getenv("LMSTUDIO_N_CTX", "32768"))
             },

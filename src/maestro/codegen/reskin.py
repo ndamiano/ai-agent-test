@@ -43,6 +43,9 @@ def _plannable_src(files: dict) -> str:
 
 
 def _json_block(text: str) -> dict:
+    if not text.strip():
+        raise ValueError("the planner returned no content — the model spent its whole token budget "
+                         "on reasoning, or the inference call failed")
     m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.S)
     return json.loads(m.group(1) if m else text)
 
@@ -84,12 +87,23 @@ def plan_assets(infer, spec: dict, files: dict) -> list:
     return out
 
 
+def _rewrite_budget(src: str) -> int:
+    """Output budget for a whole-file rewrite: the completion is the whole file back, so a flat cap
+    truncates a big one mid-token and the syntax error lands on disk. ~3 chars/token plus headroom."""
+    return max(6000, len(src) // 2)
+
+
+def _looks_truncated(src: str, new: str) -> bool:
+    """A rewrite that lost a big fraction of the body, or ends mid-block, is a cut-off completion."""
+    return len(new) < len(src) * 0.6 or new.count("{") != new.count("}")
+
+
 def reskin_file(infer, name: str, src: str, ids: list) -> str:
     """LLM call 2 (per drawing file): rewrite draw code to prefer kit.sprite(id) with shape fallback."""
     system = (_PROMPTS / "reskin_draw.txt").read_text(encoding="utf-8")
     user = (f"Available sprite ids: {', '.join(ids)}\n\nFile: {name}\n\n```ts\n{src}\n```\n\n"
             "Rewrite the file, skinning each drawn kind with its sprite id.")
-    return _ts_block(infer(system, user, 6000))
+    return _ts_block(infer(system, user, _rewrite_budget(src)))
 
 
 # matches both a code tag `mesh: "id"` and a JSON field `"mesh":"id"` (worldgen bakes ids into WORLD)
@@ -150,9 +164,7 @@ def reskin_mesh_file(infer, name: str, src: str, ids: list) -> str:
     system = (_PROMPTS / "reskin_mesh.txt").read_text(encoding="utf-8")
     user = (f"Available mesh ids: {', '.join(ids)}\n\nFile: {name}\n\n```ts\n{src}\n```\n\n"
             "Rewrite the file, tagging each entity with its mesh id.")
-    # The completion is the WHOLE file back plus tags — a fixed cap silently truncates a big main.ts
-    # (no fence ⇒ empty ⇒ the skin never wires). ~3 chars/token, plus headroom.
-    return _ts_block(infer(system, user, max(6000, len(src) // 2)))
+    return _ts_block(infer(system, user, _rewrite_budget(src)))
 
 
 def _autocrop(path: Path, pad_frac: float = 0.06) -> None:
@@ -264,8 +276,10 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
     conn = get_connector()
 
     def infer(system, user, mt):
+        # reasoning="none" explicitly: these calls carry a small max_tokens, so a thinking model
+        # spends the whole budget reasoning and returns an empty message.
         return _content(conn.generate_with_tools(
-            MessageBuilder(system).add_user(user).build(), [], max_tokens=mt))
+            MessageBuilder(system).add_user(user).build(), [], max_tokens=mt, reasoning="none"))
 
     files = game_files(state.run_dir)
     skin = _skin_3d if _is_3d(files) else _skin_2d
@@ -283,7 +297,10 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
         if src.lstrip().startswith(_GENERATED):
             continue   # a generated file (e.g. worldgen's world.ts) is already tagged — never rewrite it
         new = reskin(infer, name, src, ids)
-        if new.strip() and new.strip() != src.strip():
+        if new.strip() and _looks_truncated(src, new):
+            logger.warning("assets %s: reskin of %s came back truncated (%d chars from %d) — file "
+                           "left untouched", run_id, name, len(new), len(src))
+        elif new.strip() and new.strip() != src.strip():
             write(code=new, file=name)
             logger.info("assets %s: reskinned %s", run_id, name)
         else:

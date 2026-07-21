@@ -1,0 +1,25 @@
+# The llm-queue GPU worker: llama.cpp in router mode + the pull-side agent, one container.
+#
+# Pinned by digest, not by tag: ggml-org publishes only rolling tags (server-cuda, full-cuda), so
+# `:server-cuda` silently changes under you. This digest is llama-server build 10068 (571d0d540),
+# verified to serve /v1/responses, /models and /models/unload in router mode.
+#
+# Weights are NOT baked — they come from the RunPod network volume at /workspace (see
+# scripts/provision_volume.sh). The image is code; the volume is weights.
+FROM ghcr.io/ggml-org/llama.cpp@sha256:b19cec9fe85f11d001f8911d87bc20a0479bfaf8ab99fd8dcef2258a4fd8c0ab
+
+# python3 and curl ship with the base image; pip does not. requests is the worker's only dependency,
+# so take the distro package rather than bootstrapping pip.
+RUN apt-get update && apt-get install -y --no-install-recommends python3-requests \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY src/worker /opt/maestro/src/worker
+COPY scripts/worker-llm-entrypoint.sh /opt/maestro/entrypoint.sh
+RUN chmod +x /opt/maestro/entrypoint.sh
+
+ENV PYTHONPATH=/opt/maestro/src \
+    PYTHONUNBUFFERED=1 \
+    LLAMA_PORT=8080 \
+    MODELS_DIR=/workspace/models/LLM
+
+ENTRYPOINT ["/opt/maestro/entrypoint.sh"]

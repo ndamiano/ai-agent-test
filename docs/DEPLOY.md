@@ -98,6 +98,25 @@ docker compose exec -w /app/src app python -m auth.cli create <handle>   # promp
 docker compose exec -w /app/src app python -m auth.cli grant  <handle> <n>
 ```
 
+### GPU workers on RunPod
+
+The control plane touches no GPU — every backend is a pull-side worker that dials out to it. One
+container image per queue, weights on a RunPod **network volume** (the image is code, the volume is
+weights), so a pod boots without re-downloading 60 GB.
+
+```bash
+# 1. one-time: populate the volume. Any cheap pod with it mounted; no GPU used.
+VOL=/workspace bash scripts/provision_volume.sh
+
+# 2. build + push the two worker images
+docker build -f Dockerfile.worker-llm   -t <registry>/maestro-worker-llm .
+docker build -f Dockerfile.worker-image -t <registry>/maestro-worker-image .
+```
+
+Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (`WORKER_TOKEN` must
+match `workqueue.token` on the control plane). Neither pod exposes a port: the inference server binds
+`127.0.0.1`, since a reachable one is an unauthenticated GPU.
+
 ### Enable the git hook (optional)
 
 ```bash

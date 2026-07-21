@@ -4,6 +4,8 @@ and staging carrying the skin across."""
 
 import json
 
+import pytest
+
 from maestro.codegen import reskin
 from maestro.codegen.gates import game_dir, stage_for_play, RUNTIME_DIR
 
@@ -39,6 +41,13 @@ def test_plan_assets_parses_dedups_and_defaults():
     assert ids == ["player", "enemy"]          # lowercased, dup + prompt-less dropped
     assert out[0]["w"] == 24
     assert out[1]["w"] == 32 and out[1]["h"] == 32   # defaults
+
+
+def test_plan_assets_names_the_empty_completion():
+    """A thinking model that spends its whole budget reasoning returns no content; the failure must
+    name that, not surface three frames away as a JSONDecodeError on column 1."""
+    with pytest.raises(ValueError, match="no content"):
+        reskin.plan_assets(lambda s, u, m: "", {"design": {}}, {"main.ts": "x"})
 
 
 def test_reskin_file_extracts_ts_block():
@@ -284,3 +293,18 @@ def test_decimate_glb_end_to_end(tmp_path):
     bad.write_bytes(b"not a glb")
     assert ct._decimate_glb(str(bad)) is False
     assert bad.read_bytes() == b"not a glb"   # original untouched on failure
+
+
+def test_rewrite_budget_scales_with_the_file():
+    """A flat cap truncates a big file mid-token; the budget must track the input size."""
+    assert reskin._rewrite_budget("x" * 1000) == 6000        # floor for small files
+    assert reskin._rewrite_budget("x" * 24000) == 12000      # a 622-line main.ts needs > 6000
+
+
+def test_truncated_rewrite_is_left_unwritten(tmp_path, monkeypatch):
+    """A cut-off completion must never overwrite a working file — that is what turns an additive
+    skin into a syntax error the gate loop then burns its whole step budget repairing."""
+    src = "function a() {\n" + "  const x = 1;\n" * 40 + "}\n"
+    assert reskin._looks_truncated(src, src[:len(src) // 3])   # cut off mid-body
+    assert reskin._looks_truncated(src, src + "\nfunction b() {")  # unbalanced braces
+    assert not reskin._looks_truncated(src, src.replace("const x", "const y"))

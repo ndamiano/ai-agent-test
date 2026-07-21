@@ -4,7 +4,6 @@ import json
 import uuid
 import time
 import logging
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -76,11 +75,8 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
     is already resident there). Returns the set of slugs that produced a .glb. Never raises — a
     failure leaves billboards.
 
-    The 4B pipeline needs ~19GB and the mesh pass runs after the LLM/ComfyUI phase (they may be
-    resident), so free everyone's VRAM first, then unload trellis after so they can reclaim it.
-
-    On the queue transport each sprite is one mesh job instead: the worker holds the retry and
-    VRAM discipline (worker/handlers.py), this side only lands the bytes."""
+    On the queue transport each sprite is one mesh job instead: the worker holds the retry,
+    this side only lands the bytes."""
     import glob
     import os
     from db import queue_client
@@ -88,37 +84,14 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
         return _run_trellis_batch_queued(sprite_dir, out_dir)
 
     ep = _trellis_endpoint()
-    _comfyui_free_vram(_get_comfyui_endpoint())
-    loaded = _llm_get_loaded_model()
-    if loaded:
-        _llm_unload(loaded)
-
-    def _unload() -> None:
-        try:
-            _http_post_raw(f"{ep}/unload", b"", "application/json", timeout=60)
-        except Exception:
-            pass
-
     done: set = set()
-    for i, png in enumerate(sorted(glob.glob(os.path.join(sprite_dir, "*.png")))):
-        # The resident pipeline leaks VRAM across generates (observed live: 70s/mesh at batch
-        # start, 160s+ and CuMesh OOM 500s by mesh ~30 on a 32GB card). A periodic unload
-        # (lazy reload ~45s) resets it — far cheaper than the degradation.
-        if i and i % 10 == 0:
-            _unload()
-        # A live backend can pull the 20GB+ LLM back onto the GPU MID-BATCH (observed: a chat
-        # request during a batch → every later mesh OOMs at ~100MiB free). The status GET is
-        # milliseconds — evict again before every mesh.
-        reloaded = _llm_get_loaded_model()
-        if reloaded:
-            logger.info(f"trellis batch: LLM {reloaded} reappeared on the GPU — evicting")
-            _llm_unload(reloaded)
+    for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
         slug = os.path.splitext(os.path.basename(png))[0]
         with open(png, "rb") as f:
             img = f.read()
-        # A 500 is almost always the leak-degraded pipeline, not the image (observed live: 7/14
-        # intermittent failures with successes in between) — unload for a fresh pipeline and retry
-        # once before giving up. A missing GLB renders as a bare slab, worse than the reload cost.
+        # The pipeline degrades across generates (observed live: 7/14 intermittent 500s with
+        # successes in between), so a failure is almost always that, not the image. Retry once —
+        # a missing GLB renders as a bare slab.
         for attempt in (1, 2):
             try:
                 glb = _http_post_raw(f"{ep}/generate", img, "image/png")
@@ -130,9 +103,6 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
                 break
             except Exception as e:
                 logger.error(f"trellis {slug} failed (attempt {attempt}): {e}")
-                if attempt == 1:
-                    _unload()
-    _unload()
     return done
 
 
@@ -197,12 +167,6 @@ def _get_comfyui_endpoint() -> str:
     return _get_comfyui_settings().get("endpoint", "http://localhost:8188").rstrip("/")
 
 
-def _get_lmstudio_base_url() -> str:
-    from config.settings_manager import settings_manager
-    settings = settings_manager.get_settings()
-    return settings.get("lmstudio", {}).get("base_url", "http://localhost:1234").rstrip("/")
-
-
 def _http_post(url: str, data: dict) -> dict:
     payload = json.dumps(data).encode("utf-8")
     req = urllib.request.Request(
@@ -236,205 +200,6 @@ def _poll_until_done(endpoint: str, prompt_id: str, timeout: int = 300) -> dict:
             return history[prompt_id]
         time.sleep(1)
     raise TimeoutError(f"ComfyUI job {prompt_id} did not complete within {timeout}s")
-
-
-def _lmstudio_get_loaded_model() -> Optional[str]:
-    """Return identifier of first loaded model in LM Studio, or None."""
-    try:
-        base_url = _get_lmstudio_base_url()
-        data = _http_get(f"{base_url}/api/v0/models")
-        models = data.get("data", [])
-        for m in models:
-            if m.get("state") == "loaded":
-                return m.get("id")
-        return None
-    except Exception as e:
-        logger.warning(f"Could not query LM Studio models: {e}")
-        return None
-
-
-def _lmstudio_unload(model_id: str, wait_timeout: int = 30) -> bool:
-    """Unload a model from LM Studio and wait until it is no longer loaded."""
-    try:
-        base_url = _get_lmstudio_base_url()
-        _http_post(f"{base_url}/api/v1/models/unload", {"instance_id": model_id})
-        logger.info(f"LM Studio: unload requested for {model_id}, waiting for VRAM release...")
-    except Exception as e:
-        logger.warning(f"LM Studio unload failed: {e}")
-        return False
-
-    # Poll until model is no longer in loaded state
-    deadline = time.time() + wait_timeout
-    while time.time() < deadline:
-        try:
-            base_url = _get_lmstudio_base_url()
-            data = _http_get(f"{base_url}/api/v0/models")
-            loaded_ids = {m.get("id") for m in data.get("data", []) if m.get("state") == "loaded"}
-            if model_id not in loaded_ids:
-                logger.info(f"LM Studio: {model_id} confirmed unloaded")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-
-    logger.warning(f"LM Studio: {model_id} did not confirm unload within {wait_timeout}s — proceeding anyway")
-    return False
-
-
-def _lmstudio_load(model_id: str) -> bool:
-    """Load a model into LM Studio. Returns True on success."""
-    try:
-        base_url = _get_lmstudio_base_url()
-        _http_post(f"{base_url}/api/v1/models/load", {"model": model_id})
-        logger.info(f"LM Studio: loaded {model_id}")
-        return True
-    except Exception as e:
-        logger.warning(f"LM Studio load failed: {e}")
-        return False
-
-
-def _llamacpp_get_loaded_model() -> Optional[str]:
-    """Return the id of the first model the llama.cpp router reports as loaded, or None."""
-    try:
-        base_url = _get_lmstudio_base_url()
-        data = _http_get(f"{base_url}/models")
-        for m in data.get("data", []):
-            if m.get("status", {}).get("value") == "loaded":
-                return m.get("id")
-        return None
-    except Exception as e:
-        logger.warning(f"Could not query llama.cpp models: {e}")
-        return None
-
-
-def _llamacpp_unload(model_id: str, wait_timeout: int = 30) -> bool:
-    """Unload a model from the llama.cpp router and wait until it reports unloaded."""
-    try:
-        base_url = _get_lmstudio_base_url()
-        _http_post(f"{base_url}/models/unload", {"model": model_id})
-        logger.info(f"llama.cpp: unload requested for {model_id}, waiting for VRAM release...")
-    except Exception as e:
-        logger.warning(f"llama.cpp unload failed: {e}")
-        return False
-
-    deadline = time.time() + wait_timeout
-    while time.time() < deadline:
-        try:
-            base_url = _get_lmstudio_base_url()
-            data = _http_get(f"{base_url}/models")
-            for m in data.get("data", []):
-                if m.get("id") == model_id and m.get("status", {}).get("value") == "unloaded":
-                    logger.info(f"llama.cpp: {model_id} confirmed unloaded")
-                    return True
-        except Exception:
-            pass
-        time.sleep(1)
-
-    logger.warning(f"llama.cpp: {model_id} did not confirm unload within {wait_timeout}s — proceeding anyway")
-    return False
-
-
-def _llamacpp_load(model_id: str) -> bool:
-    """Load a model into the llama.cpp router. Returns True on success."""
-    try:
-        base_url = _get_lmstudio_base_url()
-        _http_post(f"{base_url}/models/load", {"model": model_id})
-        logger.info(f"llama.cpp: loaded {model_id}")
-        return True
-    except Exception as e:
-        logger.warning(f"llama.cpp load failed: {e}")
-        return False
-
-
-# The LLM server flavor is auto-detected from the endpoint, never configured: `connector_type`
-# stays the OpenAI-compatible label while the actual server is either LM Studio (native /api/v0
-# REST) or a llama.cpp router (/models with per-model status). Whichever route answers wins; a
-# plain single-model llama-server answers neither -> no VRAM management (its model is pinned for
-# the process lifetime, so the LLM simply stays resident alongside the image model).
-_llm_flavor: Optional[str] = None
-
-
-def _detect_llm_flavor() -> str:
-    global _llm_flavor
-    if _llm_flavor is not None:
-        return _llm_flavor
-    base_url = _get_lmstudio_base_url()
-    try:
-        _http_get(f"{base_url}/api/v0/models")
-        _llm_flavor = "lmstudio"
-        return _llm_flavor
-    except Exception:
-        pass
-    try:
-        data = _http_get(f"{base_url}/models")
-        if any("status" in (m or {}) for m in data.get("data", [])):
-            _llm_flavor = "llamacpp"
-            return _llm_flavor
-    except Exception:
-        pass
-    return "none"  # not cached: re-probe next call (server may not be up yet)
-
-
-def reset_llm_flavor_cache() -> None:
-    """Drop the cached LLM-server flavor. Call after the LLM endpoint changes."""
-    global _llm_flavor
-    _llm_flavor = None
-
-
-def _llm_get_loaded_model() -> Optional[str]:
-    flavor = _detect_llm_flavor()
-    if flavor == "lmstudio":
-        return _lmstudio_get_loaded_model()
-    if flavor == "llamacpp":
-        return _llamacpp_get_loaded_model()
-    return None
-
-
-def _llm_unload(model_id: str) -> bool:
-    flavor = _detect_llm_flavor()
-    if flavor == "lmstudio":
-        return _lmstudio_unload(model_id)
-    if flavor == "llamacpp":
-        return _llamacpp_unload(model_id)
-    return False
-
-
-def _llm_load(model_id: str) -> bool:
-    flavor = _detect_llm_flavor()
-    if flavor == "lmstudio":
-        return _lmstudio_load(model_id)
-    if flavor == "llamacpp":
-        return _llamacpp_load(model_id)
-    return False
-
-
-def _comfyui_free_vram(endpoint: str, timeout: int = 60) -> None:
-    """Ask ComfyUI to release models from VRAM, then poll until VRAM usage stabilizes."""
-    try:
-        _http_post(f"{endpoint}/free", {"unload_models": True, "free_memory": True})
-    except Exception as e:
-        logger.warning(f"ComfyUI /free failed: {e}")
-        return
-
-    # Poll /system_stats until torch_vram_free stabilizes (two consecutive equal readings)
-    deadline = time.time() + timeout
-    prev_free = None
-    while time.time() < deadline:
-        time.sleep(2)
-        try:
-            stats = _http_get(f"{endpoint}/system_stats")
-            devices = stats.get("devices", [])
-            if not devices:
-                break
-            vram_free = devices[0].get("torch_vram_free", 0)
-            if prev_free is not None and vram_free == prev_free:
-                logger.info(f"ComfyUI VRAM stabilized: {vram_free // 1024 // 1024} MiB free")
-                return
-            prev_free = vram_free
-        except Exception:
-            break
-
-    logger.warning("ComfyUI VRAM poll timed out or failed, proceeding anyway")
 
 
 def _save_images_to_working_dir(images: list, endpoint: str) -> list:
@@ -497,7 +262,7 @@ def _run_comfyui_job_queued(prompt: str, workflow: dict) -> Dict[str, Any]:
 
 
 def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dict]) -> Dict[str, Any]:
-    """Submit one job to ComfyUI and wait for result. No VRAM management."""
+    """Submit one job to ComfyUI and wait for result."""
     if workflow_override is not None:
         workflow = workflow_override
     else:
@@ -547,34 +312,8 @@ def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dic
     }
 
 
-@contextmanager
-def vram_bracket():
-    """Free ComfyUI/LM-Studio VRAM for the duration, reloading the LLM on exit. Lets a caller
-    wrap one or more `run_jobs` passes in ONE unload/reload cycle instead of paying it per pass.
-    No-op unless `comfyui.vram_management`, and always a no-op on the queue transport — there the
-    worker next to the card owns eviction, and this process may not even see a GPU."""
-    from db import queue_client
-    cfg = _get_comfyui_settings()
-    vram_management = cfg.get("vram_management", False) and not queue_client.enabled()
-    endpoint = _get_comfyui_endpoint()
-    unloaded_model: Optional[str] = None
-    if vram_management:
-        _comfyui_free_vram(endpoint)
-        unloaded_model = _llm_get_loaded_model()
-        if unloaded_model:
-            _llm_unload(unloaded_model)
-    try:
-        yield
-    finally:
-        if vram_management:
-            _comfyui_free_vram(endpoint)
-            if unloaded_model:
-                _llm_load(unloaded_model)
-
-
 def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Run image jobs sequentially (no VRAM management — wrap in `vram_bracket`). Each job:
-    {"prompt": str, "workflow_override": dict | None}.
+    """Run image jobs sequentially. Each job: {"prompt": str, "workflow_override": dict | None}.
 
     The local image model (uncensored SDXL) has no built-in guardrails, so every finalized
     prompt is screened here before it reaches the model — the one chokepoint every image job
@@ -608,38 +347,13 @@ def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dic
         log_violation(violation, source="generate_image_tool")
         return {"success": False, "error": "blocked by safety filter"}
 
-    from db import queue_client
-    comfyui_settings = _get_comfyui_settings()
-    vram_management  = comfyui_settings.get("vram_management", False) and not queue_client.enabled()
-    endpoint         = _get_comfyui_endpoint()
-
-    unloaded_model: Optional[str] = None
+    endpoint = _get_comfyui_endpoint()
     try:
-        if vram_management:
-            _comfyui_free_vram(endpoint)
-            unloaded_model = _llm_get_loaded_model()
-            if unloaded_model:
-                _llm_unload(unloaded_model)
-
-        result = _run_comfyui_job(endpoint, prompt, workflow_override)
-
-        if vram_management:
-            _comfyui_free_vram(endpoint)
-            if unloaded_model:
-                _llm_load(unloaded_model)
-
-        return result
-
+        return _run_comfyui_job(endpoint, prompt, workflow_override)
     except urllib.error.URLError as e:
-        if vram_management and unloaded_model:
-            _llm_load(unloaded_model)
         return {"success": False, "error": f"Cannot reach ComfyUI at {endpoint}: {e.reason}. Is ComfyUI running with --listen?"}
     except TimeoutError as e:
-        if vram_management and unloaded_model:
-            _llm_load(unloaded_model)
         return {"success": False, "error": str(e)}
     except Exception as e:
-        if vram_management and unloaded_model:
-            _llm_load(unloaded_model)
         logger.error(f"generate_image failed: {e}")
         return {"success": False, "error": str(e)}

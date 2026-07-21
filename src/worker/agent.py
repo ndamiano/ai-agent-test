@@ -4,8 +4,8 @@ Claims jobs from the platform's /worker endpoints, runs each payload against a l
 (worker/handlers.py — verbatim forward for llm, the ComfyUI submit/poll/fetch flow for image,
 one POST for mesh), measures execution time, and lands the result. Runs identically on the home
 GPU box and inside a RunPod container — the worker dials OUT, so NAT/ephemeral pod networking
-never matters. One process per queue: a queue IS the serialization that keeps two backends off
-the same card at once.
+never matters. One process per queue, and a queue owns its GPU outright — nothing here makes room
+for another backend, so two queues must not share a card.
 
   python -m worker.agent --queue llm   --target http://localhost:8080 --token <t>
   python -m worker.agent --queue image --target http://localhost:8188 --token <t>
@@ -36,15 +36,10 @@ HEARTBEAT_INTERVAL = 45.0
 
 class Agent:
     def __init__(self, server: str, target: str, queue: str, token: str,
-                 worker_id: str = None, gpu_type: str = None, source: str = "local",
-                 comfy_target: str = "http://localhost:8188",
-                 llm_target: str = "http://localhost:8080"):
+                 worker_id: str = None, gpu_type: str = None, source: str = "local"):
         self.server = server.rstrip("/")
         self.target = target.rstrip("/")
         self.queue = queue
-        # Only the image/mesh handlers use these: they evict the card's other tenants first.
-        self.comfy_target = comfy_target.rstrip("/")
-        self.llm_target = llm_target.rstrip("/") if llm_target else ""
         self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.gpu_type = gpu_type
         self.source = source
@@ -130,18 +125,13 @@ def main(argv=None) -> int:
     parser.add_argument("--worker-id", default=None)
     parser.add_argument("--gpu-type", default=None)
     parser.add_argument("--source", default="local")
-    parser.add_argument("--comfy-target", default="http://localhost:8188",
-                        help="ComfyUI on this box — image/mesh jobs free its VRAM around a job")
-    parser.add_argument("--llm-target", default="http://localhost:8080",
-                        help="llama.cpp router on this box — evicted before image/mesh jobs")
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("--token (or WORKER_TOKEN) is required")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     agent = Agent(args.server, args.target, args.queue, args.token,
-                  worker_id=args.worker_id, gpu_type=args.gpu_type, source=args.source,
-                  comfy_target=args.comfy_target, llm_target=args.llm_target)
+                  worker_id=args.worker_id, gpu_type=args.gpu_type, source=args.source)
 
     def _stop(signum, frame):
         logger.info("signal %s — finishing current job then exiting", signum)

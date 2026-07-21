@@ -202,11 +202,9 @@ class Services:
             self._emit("build_resumed", step=self.spent)
 
     def infer(self, messages, schemas, reasoning: Optional[str] = None,
-              max_tokens: Optional[int] = None, dialogue: bool = False):
+              max_tokens: Optional[int] = None):
         """One LLM call — checkpointed, budgeted. Raises BudgetExhausted when the per-fix cap is
-        hit. dialogue=True routes to the configured dialogue model (settings
-        lmstudio.dialogue_model) when one is set — prose calls go to the model that writes the
-        most human lines; tool/JSON steps stay on the primary."""
+        hit."""
         self.checkpoint()
         if self.spent >= self.budget:
             raise BudgetExhausted()
@@ -215,12 +213,6 @@ class Services:
         eff = reasoning or ("high" if self.escalate else None)
         if eff:
             kw["reasoning"] = eff
-        if dialogue:
-            from config.settings_manager import settings_manager
-            dm = ((settings_manager.get_settings().get("lmstudio") or {})
-                  .get("dialogue_model") or "").strip()
-            if dm:
-                kw["model"] = dm
         return self.conn.generate_with_tools(messages, schemas, **kw)
 
     def dispatch(self, name, args) -> Dict:

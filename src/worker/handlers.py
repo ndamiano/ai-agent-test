@@ -1,10 +1,9 @@
 """What a worker DOES with a claimed payload, keyed by `payload["kind"]`.
 
-The llm queue is a verbatim forward (no kind), so its handler is one POST. The image and mesh
-queues are not: ComfyUI is submit → poll history → fetch each image, and both backends need the
-GPU to themselves, so the VRAM juggling that used to run control-plane-side lives here — next to
-the GPU it is actually juggling. Payloads carry no endpoints; every target is the worker's own
-CLI config.
+The llm queue is a verbatim forward (no kind), so its handler is one POST. The image queue is not:
+ComfyUI is submit → poll history → fetch each image. Payloads carry no endpoints; the target is the
+worker's own CLI config. One queue owns one GPU, so a handler never has to make room for another
+backend.
 
 Handlers return (result, error): exactly one is non-None.
 """
@@ -18,7 +17,6 @@ import uuid
 logger = logging.getLogger("worker")
 
 COMFY_POLL_TIMEOUT = 600
-TRELLIS_UNLOAD_EVERY = 10
 
 
 def _headers(extra):
@@ -34,30 +32,6 @@ def _get(agent, url, headers=None, **kw):
     return agent.session.get(url, headers=_headers(headers), **kw)
 
 
-def _evict_llm(agent) -> None:
-    """Unload whatever the llama.cpp router has resident — the 30B and an image/mesh pipeline
-    cannot co-reside on one card. The router reloads on demand for the next llm job."""
-    if not agent.llm_target:
-        return
-    try:
-        r = _get(agent, f"{agent.llm_target}/models", timeout=10)
-        for m in (r.json().get("data") or []):
-            if m.get("state") in ("loaded", "loading") or m.get("loaded"):
-                _post(agent, f"{agent.llm_target}/models/unload",
-                      json={"model": m["id"]}, timeout=60)
-                logger.info("evicted LLM %s from the GPU", m["id"])
-    except Exception as e:
-        logger.warning("LLM eviction skipped: %s", e)
-
-
-def _free_comfy(agent) -> None:
-    try:
-        _post(agent, f"{agent.comfy_target}/free",
-              json={"unload_models": True, "free_memory": True}, timeout=60)
-    except Exception as e:
-        logger.warning("ComfyUI VRAM free skipped: %s", e)
-
-
 def http_passthrough(agent, payload):
     """The llm queue: forward the body verbatim to the local inference server."""
     url = f"{agent.target}{payload.get('path', '/v1/responses')}"
@@ -69,9 +43,6 @@ def http_passthrough(agent, payload):
 
 def comfy_image(agent, payload):
     """Run one fully-resolved ComfyUI workflow; return every output image inline as base64."""
-    _free_comfy(agent)
-    _evict_llm(agent)
-
     r = _post(agent, f"{agent.target}/prompt",
               json={"prompt": payload["workflow"], "client_id": str(uuid.uuid4())}, timeout=60)
     if r.status_code != 200:
@@ -102,22 +73,14 @@ def comfy_image(agent, payload):
                 return None, f"ComfyUI /view status {got.status_code} for {img['filename']}"
             images.append({"filename": img["filename"],
                            "b64": base64.b64encode(got.content).decode("ascii")})
-    _free_comfy(agent)
     return {"prompt_id": prompt_id, "images": images}, None
 
 
 def trellis_mesh(agent, payload):
     """One sprite → one textured GLB, inline as base64.
 
-    The resident 4B pipeline leaks VRAM across generates (observed: 70s/mesh early, 160s+ and
-    CuMesh OOM by ~30), so unload periodically; a 500 is almost always that degradation, so
-    unload and retry once before giving up."""
-    _free_comfy(agent)
-    _evict_llm(agent)
-    agent.mesh_count = getattr(agent, "mesh_count", 0) + 1
-    if agent.mesh_count % TRELLIS_UNLOAD_EVERY == 0:
-        _trellis_unload(agent)
-
+    Retry once: the 4B pipeline degrades across generates (observed: 70s/mesh early, 160s+ and
+    CuMesh OOM by ~30), and a 500 is almost always that."""
     img = base64.b64decode(payload["image_b64"])
     last = ""
     for attempt in (1, 2):
@@ -130,17 +93,7 @@ def trellis_mesh(agent, payload):
         except Exception as e:
             last = str(e)
         logger.warning("trellis generate failed (attempt %d): %s", attempt, last)
-        if attempt == 1:
-            _trellis_unload(agent)
     return None, f"TRELLIS failed: {last}"
-
-
-def _trellis_unload(agent) -> None:
-    try:
-        _post(agent, f"{agent.target}/unload", data=b"", timeout=60,
-              headers={"Content-Type": "application/json"})
-    except Exception as e:
-        logger.warning("TRELLIS unload skipped: %s", e)
 
 
 HANDLERS = {

@@ -3,8 +3,8 @@
 Same request building and response normalization as OpenAICompatibleConnector — only the
 transport differs: instead of POSTing the Responses payload to a local server, it lands the
 payload as a jobs row and waits for a worker agent to claim, execute, and complete it. The
-worker forwards the payload verbatim to ITS local server, so model routing/eviction live with
-the GPU, not here. Callers see the identical chat-shaped {choices, usage} result.
+worker forwards the payload verbatim to ITS local server, so model routing lives with the
+GPU, not here. Callers see the identical chat-shaped {choices, usage} result.
 """
 
 import logging

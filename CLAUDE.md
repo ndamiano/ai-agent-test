@@ -188,9 +188,9 @@ src/
                          forwarded to the inference target). handlers.py = one handler per payload
                          `kind`, ONE worker process per queue: llm (verbatim forward to llama.cpp),
                          image (the ComfyUI submit → poll /history → fetch /view flow, images back
-                         inline as base64), mesh (one TRELLIS POST → glb base64, its unload-every-10
-                         + retry-once VRAM discipline). GPU eviction lives HERE, next to the card
-                         (--comfy-target/--llm-target), so the control plane never touches a GPU.
+                         inline as base64), mesh (one TRELLIS POST → glb base64, retry-once). No
+                         handler frees VRAM for another backend: a queue owns its GPU, so two
+                         queues must not share a card.
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
                          workqueue) + build_queue.py (single-GPU FIFO build serializer). The
                          workqueue router (/worker/claim|heartbeat|complete, mounted OUTSIDE the
@@ -243,16 +243,14 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 - `workqueue.enabled` routes ALL GPU work through the worker-pull queue (enqueue a jobs row, wait
   for a worker) instead of calling a backend directly: LLM inference (QueueConnector), sprite/mesh
   images (queue `image`) and TRELLIS meshes (queue `mesh`). `workqueue.token` is the worker bearer
-  secret. One worker per queue, all three on the GPU box:
+  secret. One worker per queue, and a queue owns its card outright — nothing evicts anything, so
+  co-locating two queues on one GPU only works if both backends fit resident:
   `python -m worker.agent --server <cp>:8000 --token <token> --queue image --target localhost:8188`
   (defaults: server localhost:8000, target localhost:1234, queue llm). With the queue on, the
-  control plane touches no GPU — `comfyui.vram_management` no-ops here and the worker evicts
-  instead. exec_seconds are debited to the owning game via the run_scope contextvar set around
-  run_build/fix_from_note.
+  control plane touches no GPU at all. exec_seconds are debited to the owning game via the
+  run_scope contextvar set around run_build/fix_from_note.
 - **Model categories** `large`/`medium`/`small` control `message_budget_chars`, `max_iterations`,
   `use_json_mode`. Use `small` for local models.
-- `lmstudio.dialogue_model` (optional) routes prose inference to a second model; the connector
-  evicts the resident model via the router's `/models/unload` on every switch (VRAM can't share).
 
 **Run a build (CLI):** `cd src && python -m maestro.codegen.run "<request>"` (draft → freeze → build).
 **Play a build:** open `runtime/index.html?game=<path-or-slug>` in a browser (2D or 3D auto-routed).

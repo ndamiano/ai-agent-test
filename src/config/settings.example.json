@@ -4,7 +4,6 @@
   "lmstudio": {
     "base_url": "http://localhost:1234",
     "model": "local-model",
-    "dialogue_model": "",
     "temperature": 0.7,
     "max_tokens": 50000,
     "reasoning": "low",
@@ -18,8 +17,7 @@
     "max_tokens": 50000
   },
   "comfyui": {
-    "endpoint": "http://localhost:8188",
-    "vram_management": false
+    "endpoint": "http://localhost:8188"
   },
   "trellis": {
     "endpoint": "http://localhost:8189"

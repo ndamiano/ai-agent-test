@@ -13,10 +13,6 @@ ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 class LLMStudioSettings(BaseModel):
     base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
-    dialogue_model: str = Field("", description=(
-        "Optional second model for DIALOGUE inference only (the scene turn loop + closer). "
-        "Lets a strong prose model speak the lines while `model` keeps doing tools/JSON. "
-        "Empty = use `model` for everything."))
     max_tokens: int = Field(50000, ge=1)
     n_ctx: int = Field(32768, ge=1, description=(
         "The server's runtime context window in tokens (llama-server `-c`). The local router does not "
@@ -37,7 +33,6 @@ class ClineSettings(BaseModel):
 
 class ComfyUISettings(BaseModel):
     endpoint: str = Field("http://localhost:8188", min_length=1)
-    vram_management: bool = Field(False)
 
 
 class TrellisSettings(BaseModel):

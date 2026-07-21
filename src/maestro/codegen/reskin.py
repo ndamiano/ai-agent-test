@@ -185,14 +185,14 @@ def _autocrop(path: Path, pad_frac: float = 0.06) -> None:
 def generate_sprites(run_dir, sprites: list) -> set:
     """Render each sprite prompt to game/assets/<id>.png via ComfyUI. Soft-fails per sprite (and
     wholesale if the server is down) — returns the set of ids that produced a file."""
-    from tools.comfyui_tools import build_item_job, run_jobs, vram_bracket
+    from tools.comfyui_tools import build_item_job, run_jobs
     from tools.execution_context import execution_context
 
     assets_dir = game_dir(run_dir) / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     jobs = [build_item_job(s["prompt"]) for s in sprites]
     try:
-        with execution_context(working_directory=str(assets_dir)), vram_bracket():
+        with execution_context(working_directory=str(assets_dir)):
             results = run_jobs(jobs)
     except Exception as e:
         logger.warning("sprite render skipped (ComfyUI unavailable?): %s", e)
@@ -228,7 +228,7 @@ def generate_meshes(run_dir, meshes: list) -> set:
     empty set) — the mesh tags + manifest still land and the game renders its primitive shapes, so a
     re-run with the servers up fills the GLBs. Mirrors the 2D sprite soft-degrade."""
     import tempfile
-    from tools.comfyui_tools import build_item_job, run_jobs, vram_bracket, run_trellis_batch
+    from tools.comfyui_tools import build_item_job, run_jobs, run_trellis_batch
     from tools.execution_context import execution_context
 
     assets_dir = game_dir(run_dir) / "assets"
@@ -236,7 +236,7 @@ def generate_meshes(run_dir, meshes: list) -> set:
     with tempfile.TemporaryDirectory() as tmp:
         jobs = [build_item_job(m["prompt"]) for m in meshes]
         try:
-            with execution_context(working_directory=tmp), vram_bracket():
+            with execution_context(working_directory=tmp):
                 results = run_jobs(jobs)
         except Exception as e:
             logger.warning("mesh image render skipped (ComfyUI unavailable?): %s", e)

@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -36,8 +35,7 @@ class _Resp:
 
 
 def _agent(queue="image", target="http://gpu"):
-    a = Agent("http://server", target, queue, "wsecret", worker_id="w1",
-              comfy_target="http://comfy", llm_target="http://llm")
+    a = Agent("http://server", target, queue, "wsecret", worker_id="w1")
     a.session = MagicMock()
     return a
 
@@ -106,15 +104,6 @@ def test_trellis_batch_skips_failed_meshes(monkeypatch, tmp_path):
     assert not (out / "barrel.glb").exists()
 
 
-def test_queue_transport_disables_local_vram_management(monkeypatch):
-    monkeypatch.setattr(queue_client, "enabled", lambda: True)
-    monkeypatch.setattr(ct, "_get_comfyui_settings", lambda: {"vram_management": True})
-    monkeypatch.setattr(ct, "_comfyui_free_vram",
-                        lambda *a, **kw: pytest.fail("control plane touched the GPU"))
-    with ct.vram_bracket():
-        pass
-
-
 # --- worker: the flows that need the GPU ------------------------------------
 
 def test_comfy_image_handler_submits_polls_and_fetches():
@@ -138,8 +127,6 @@ def test_comfy_image_handler_submits_polls_and_fetches():
     assert result["images"] == [{"filename": "out.png",
                                  "b64": base64.b64encode(PNG).decode()}]
     assert any(u.startswith("http://gpu/view?filename=out.png") for u in gets)
-    # the card is cleared for the image model before the workflow runs
-    assert any(c.args[0] == "http://comfy/free" for c in a.session.post.call_args_list)
 
 
 def test_comfy_image_handler_reports_submit_failure():
@@ -151,7 +138,7 @@ def test_comfy_image_handler_reports_submit_failure():
     assert result is None and "bad workflow" in error
 
 
-def test_trellis_handler_unloads_and_retries_once():
+def test_trellis_handler_retries_once():
     a = _agent(queue="mesh", target="http://trellis")
     a.session.get.side_effect = lambda url, **kw: _Resp(200, {"data": []})
     calls = []
@@ -169,7 +156,7 @@ def test_trellis_handler_unloads_and_retries_once():
 
     assert error is None
     assert base64.b64decode(result["glb_b64"]) == GLB
-    assert calls.count("http://trellis/unload") == 1   # unloaded between the two attempts
+    assert calls.count("http://trellis/generate") == 2
 
 
 def test_trellis_handler_gives_up_after_two_attempts():

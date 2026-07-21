@@ -34,7 +34,7 @@ Maestro speaks the OpenAI-compatible `/v1/responses` API. Two known-good local s
 
 **LM Studio** — load a model, start its local server, point `lmstudio.base_url` at it (default `http://localhost:1234`).
 
-**llama.cpp** (`llama-server`) — run in **router mode** so VRAM management can evict the LLM (see below). Router mode exposes the native `/models/load` + `/models/unload` endpoints; a single-model `llama-server -m model.gguf` pins its model in VRAM for the whole process lifetime and cannot be evicted.
+**llama.cpp** (`llama-server`) — run in **router mode**, so the model id is a filename stem rather than baked into the launch flags.
 
 ```bash
 llama-server \
@@ -56,11 +56,7 @@ The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). 
 }
 ```
 
-The server flavor (LM Studio native REST vs llama.cpp router) is **auto-detected** from the endpoint — no flag to set.
-
-### VRAM management
-
-`comfyui.vram_management: true` makes image generation evict the LLM from VRAM first and reload it after, so one GPU time-shares between the language model and SDXL. It works with **both** LM Studio and a llama.cpp **router** (a single-model llama-server can't be evicted, so the LLM stays resident — leave this `false` and make sure the LLM + image model both fit at once).
+Nothing frees VRAM for anything else: a GPU serves one backend. Running the LLM and ComfyUI on one card means both must fit at once.
 
 ## Build a game from the CLI
 

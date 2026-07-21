@@ -15,7 +15,6 @@ API:
   GET  /health            -> {"status": "ok", "loaded": <bool>}
   POST /generate          body = PNG bytes (image/png); query ?ptype=&texture= override defaults
                           -> 200 model/gltf-binary (the .glb bytes) | 500 on failure
-  POST /unload            -> release the pipeline from VRAM (so ComfyUI/the LLM can reclaim it)
 """
 import argparse
 import io
@@ -57,8 +56,8 @@ def _blackwell_patches():
 
 
 class TrellisEngine:
-    """Holds the 4B pipeline. Lazy-loads on first generate; unload() frees VRAM on demand so
-    ComfyUI / the LLM can reclaim the GPU between mesh passes."""
+    """Holds the 4B pipeline, lazy-loaded on first generate and resident for the process lifetime —
+    this server owns its GPU."""
 
     def __init__(self, repo: str, weights: str, ptype: str, texture: int):
         self.repo, self.weights = repo, weights
@@ -86,7 +85,6 @@ class TrellisEngine:
         print(f"[trellis] loaded in {time.time() - t0:.1f}s", flush=True)
 
     def generate(self, png_bytes: bytes, ptype: str, texture: int) -> bytes:
-        import torch
         from PIL import Image
         self._ensure()
         img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
@@ -134,14 +132,6 @@ class TrellisEngine:
             gc.collect()
             torch.cuda.empty_cache()
 
-    def unload(self):
-        if self._pipe is None:
-            return
-        import torch
-        self._pipe = None
-        torch.cuda.empty_cache()
-        print("[trellis] unloaded", flush=True)
-
 
 def build_app(engine: TrellisEngine):
     from fastapi import FastAPI, Request, Response, HTTPException
@@ -167,11 +157,6 @@ def build_app(engine: TrellisEngine):
         except Exception as e:
             print(f"[trellis] FAIL: {str(e)[:200]}", flush=True)
             raise HTTPException(status_code=500, detail=str(e)[:200])
-
-    @app.post("/unload")
-    def unload():
-        engine.unload()
-        return {"status": "ok"}
 
     return app
 

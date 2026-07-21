@@ -2,7 +2,7 @@
 #
 # Pinned by digest, not by tag: ggml-org publishes only rolling tags (server-cuda, full-cuda), so
 # `:server-cuda` silently changes under you. This digest is llama-server build 10068 (571d0d540),
-# verified to serve /v1/responses, /models and /models/unload in router mode.
+# verified to serve /v1/responses and /models in router mode.
 #
 # Weights are NOT baked — they come from the RunPod network volume at /workspace (see
 # scripts/provision_volume.sh). The image is code; the volume is weights.

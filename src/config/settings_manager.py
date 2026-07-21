@@ -30,7 +30,6 @@ class SettingsManager:
             "lmstudio": {
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
                 "model": os.getenv("LMSTUDIO_MODEL", "local-model"),
-                "dialogue_model": os.getenv("LMSTUDIO_DIALOGUE_MODEL", ""),
                 # "none" is the floor the fix loop escalates FROM. Absent this key an env-configured
                 # deployment sends no reasoning field, and a thinking model spends a small token
                 # budget entirely on reasoning.
@@ -45,8 +44,7 @@ class SettingsManager:
                 "max_tokens": 50000
             },
             "comfyui": {
-                "endpoint": os.getenv("COMFYUI_ENDPOINT", "http://localhost:8188"),
-                "vram_management": os.getenv("COMFYUI_VRAM_MANAGEMENT", "false").lower() == "true"
+                "endpoint": os.getenv("COMFYUI_ENDPOINT", "http://localhost:8188")
             },
             "trellis": {
                 "endpoint": os.getenv("TRELLIS_ENDPOINT", "http://localhost:8189")

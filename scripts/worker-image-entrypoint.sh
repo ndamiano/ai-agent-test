@@ -24,13 +24,9 @@ curl -sf "http://127.0.0.1:$COMFY_PORT/system_stats" >/dev/null || {
     echo "ComfyUI did not answer /system_stats within 180s" >&2; exit 1; }
 echo "ComfyUI up: $(curl -s "http://127.0.0.1:$COMFY_PORT/system_stats" | head -c 300)"
 
-# --llm-target "": no llama.cpp on this pod, so the handler's LLM eviction is a no-op it should
-# skip rather than warn about. --comfy-target is this same instance — that IS the VRAM it frees.
 exec python -m worker.agent \
     --server "$CP_URL" \
     --queue image \
     --target "http://127.0.0.1:$COMFY_PORT" \
-    --comfy-target "http://127.0.0.1:$COMFY_PORT" \
-    --llm-target "" \
     --source runpod \
     ${GPU_TYPE:+--gpu-type "$GPU_TYPE"}

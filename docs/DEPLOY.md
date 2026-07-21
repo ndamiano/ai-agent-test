@@ -111,13 +111,13 @@ weights), so a pod boots without re-downloading 60 GB.
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v2 .
-docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v2 .
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v3 .
+docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v3 .
 docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v6 .
 docker push ndamiano100/maestro-worker:mesh-v6   # etc.
 ```
 
-Current tags: `llm-v2`, `image-v2`, `mesh-v6`. Bump the tag on every push — RunPod caches images
+Current tags: `llm-v3`, `image-v3`, `mesh-v6`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
 
 The mesh image is the fussy one; its runtime deps are the home-verified TRELLIS stack exactly

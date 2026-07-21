@@ -245,14 +245,17 @@ def _save_image_bytes(filename: str, data: bytes) -> str:
 def _run_comfyui_job_queued(prompt: str, workflow: dict) -> Dict[str, Any]:
     """Hand the resolved workflow to an image worker; it owns the GPU and returns the outputs
     inline, which we land in the working directory exactly like the direct path."""
+    from pathlib import Path as _Path
+
     from db import queue_client
-    import base64
 
     job = queue_client.run_job("image", {"kind": "comfy_image", "workflow": workflow})
     if job["status"] != "done":
         return {"success": False, "error": job.get("error") or "image job lost"}
     images = (job["result"] or {}).get("images") or []
-    saved_paths = [_save_image_bytes(img["filename"], base64.b64decode(img["b64"]))
+    # The control plane offloaded each image to <data_dir>/blobs at completion; the row
+    # carries paths — same disk as this process.
+    saved_paths = [_save_image_bytes(img["filename"], _Path(img["file"]).read_bytes())
                    for img in images]
     saved_str = ", ".join(saved_paths) if saved_paths else "(none saved)"
     return {

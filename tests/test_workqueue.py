@@ -160,6 +160,28 @@ def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
     assert list((tmp_path / "blobs").glob("*")) == []
 
 
+def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypatch):
+    import base64
+    from api.routers import workqueue as wq
+    monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
+
+    jid = store.enqueue_job("image", {"kind": "comfy_image"})
+    client.post("/worker/claim", json={"queue": "image", "worker_id": "w1"}, headers=_hdr())
+    r = client.post("/worker/complete", json={
+        "job_id": jid, "worker_id": "w1",
+        "result": {"prompt_id": "p1", "images": [
+            {"filename": "a.png", "b64": base64.b64encode(b"png-a").decode("ascii")},
+            {"filename": "b.png", "b64": base64.b64encode(b"png-b").decode("ascii")},
+        ]}}, headers=_hdr())
+    assert r.json()["ok"] is True
+
+    imgs = store.get_job(jid)["result"]["images"]
+    assert all("b64" not in img for img in imgs)
+    assert [img["filename"] for img in imgs] == ["a.png", "b.png"]
+    assert Path(imgs[0]["file"]).read_bytes() == b"png-a"
+    assert Path(imgs[1]["file"]).read_bytes() == b"png-b"
+
+
 def test_glb_completion_refuses_a_path_shaped_job_id(client, tmp_path, monkeypatch):
     import base64
     from api.routers import workqueue as wq

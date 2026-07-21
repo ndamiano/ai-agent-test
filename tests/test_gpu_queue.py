@@ -47,9 +47,12 @@ def test_comfy_image_job_saves_returned_bytes(monkeypatch, tmp_path):
 
     def run_job(queue, payload, **kw):
         seen["queue"], seen["payload"] = queue, payload
+        # The control plane offloads image bytes at completion; consumers get paths.
+        blob = tmp_path / "blob-0.png"
+        blob.write_bytes(PNG)
         return {"status": "done", "result": {
             "prompt_id": "p1",
-            "images": [{"filename": "out.png", "b64": base64.b64encode(PNG).decode()}]}}
+            "images": [{"filename": "out.png", "file": str(blob)}]}}
 
     monkeypatch.setattr(queue_client, "enabled", lambda: True)
     monkeypatch.setattr(queue_client, "run_job", run_job)

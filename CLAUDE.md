@@ -177,9 +177,10 @@ src/
                          complete debits games.seconds_used + worker busy_seconds in one txn;
                          lapsed lease ⇒ silent requeue, stale completion dropped; workers carry
                          pod_id + terminated_at for the scaler, and queue_stats/live_workers/
-                         stale_workers feed it; a result's glb_b64 never lands in the row — the
-                         workqueue router decodes it to <data_dir>/blobs/<job_id>.glb and stores
-                         a glb_file path, today local disk, the S3 seam later). Plain
+                         stale_workers feed it; result binaries never land in the row — the
+                         workqueue router decodes a mesh's glb_b64 and each image entry's b64
+                         to <data_dir>/blobs/ and stores paths (glb_file / file), today local
+                         disk, the S3 seam later). Plain
                          parameterized SQL, short-lived connections — the run dir stays the source
                          of truth for spec + artifacts; rows index, never duplicate.
                          queue_client.py — the enqueue side every producer shares (run_job: land a

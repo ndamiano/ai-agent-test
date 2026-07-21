@@ -118,20 +118,34 @@ def _blob_dir() -> Path:
 _JOB_ID_RE = re.compile(r"[0-9a-f]{16,32}")
 
 
-def _offload_glb(job_id: str, result: Optional[Dict]) -> Optional[Path]:
-    """A 20MB+ GLB does not belong in a jobs row: decode it to <data_dir>/blobs and hand the
-    row a path instead. The job_id names the file, so it must be one of ours (hex), not a
-    path. Caller removes the file if the completion turns out to be stale."""
-    if not result or "glb_b64" not in result:
-        return None
+def _offload_blobs(job_id: str, result: Optional[Dict]) -> list:
+    """Big binaries do not belong in jobs rows: decode them to <data_dir>/blobs and hand the
+    row paths instead — a mesh's glb_b64 becomes glb_file, each image entry's b64 becomes
+    file. The job_id names the files, so it must be one of ours (hex), not a path. Caller
+    removes the files if the completion turns out to be stale."""
+    if not result:
+        return []
+    has_images = any("b64" in img for img in result.get("images") or [])
+    if "glb_b64" not in result and not has_images:
+        return []
     if not _JOB_ID_RE.fullmatch(job_id):
         raise HTTPException(status_code=400, detail="bad job id")
     blob_dir = _blob_dir()
     blob_dir.mkdir(parents=True, exist_ok=True)
-    path = blob_dir / f"{job_id}.glb"
-    path.write_bytes(base64.b64decode(result.pop("glb_b64")))
-    result["glb_file"] = str(path)
-    return path
+    written = []
+    if "glb_b64" in result:
+        path = blob_dir / f"{job_id}.glb"
+        path.write_bytes(base64.b64decode(result.pop("glb_b64")))
+        result["glb_file"] = str(path)
+        written.append(path)
+    for i, img in enumerate(result.get("images") or []):
+        if "b64" not in img:
+            continue
+        path = blob_dir / f"{job_id}-{i}.png"
+        path.write_bytes(base64.b64decode(img.pop("b64")))
+        img["file"] = str(path)
+        written.append(path)
+    return written
 
 
 @router.post("/complete", response_model=Dict)
@@ -139,9 +153,10 @@ async def complete(body: CompleteBody, request: Request):
     """Land a result (or failure). ok=false means the lease lapsed and the job was requeued —
     this worker's result was dropped and it should just move on."""
     _require_worker(request)
-    blob = await asyncio.to_thread(_offload_glb, body.job_id, body.result)
+    blobs = await asyncio.to_thread(_offload_blobs, body.job_id, body.result)
     ok = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
                                body.exec_seconds, body.gpu_type)
-    if not ok and blob is not None:
-        blob.unlink(missing_ok=True)
+    if not ok:
+        for blob in blobs:
+            blob.unlink(missing_ok=True)
     return {"ok": ok}

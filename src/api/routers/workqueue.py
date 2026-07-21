@@ -7,7 +7,10 @@ the queue is fail-closed until explicitly configured.
 """
 
 import asyncio
+import base64
 import hmac
+import re
+from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -42,10 +45,20 @@ class ClaimBody(BaseModel):
     worker_id: str
     gpu_type: Optional[str] = None
     source: Optional[str] = None
+    pod_id: Optional[str] = None
+    # The worker's requested long-poll window. This doubles as the scale-down debounce: an
+    # idle-exit worker passes its idle_exit_seconds here, and a null claim then MEANS "the queue
+    # stayed empty that long" — no client-side timer. Maps 1:1 to SQS ReceiveMessage
+    # WaitTimeSeconds. Capped at the server max.
+    wait_seconds: Optional[float] = None
 
 
 class HeartbeatBody(BaseModel):
     job_id: str
+    worker_id: str
+
+
+class DeregisterBody(BaseModel):
     worker_id: str
 
 
@@ -64,9 +77,11 @@ async def claim(body: ClaimBody, request: Request):
     arrives within the window — the agent just calls again."""
     cfg = _require_worker(request)
     lease = cfg.get("lease_seconds", 120)
-    db_store.worker_seen(body.worker_id, body.queue, body.gpu_type, body.source)
+    db_store.worker_seen(body.worker_id, body.queue, body.gpu_type, body.source, body.pod_id)
+    window = CLAIM_LONG_POLL_SECONDS if body.wait_seconds is None \
+        else max(0.0, min(body.wait_seconds, CLAIM_LONG_POLL_SECONDS))
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + CLAIM_LONG_POLL_SECONDS
+    deadline = loop.time() + window
     while True:
         job = await asyncio.to_thread(db_store.claim_job, body.queue, body.worker_id, lease)
         if job is not None:
@@ -80,7 +95,43 @@ async def claim(body: ClaimBody, request: Request):
 async def heartbeat(body: HeartbeatBody, request: Request):
     cfg = _require_worker(request)
     ok = db_store.heartbeat_job(body.job_id, body.worker_id, cfg.get("lease_seconds", 120))
+    # A busy worker only ever hits this endpoint — without the touch its last_seen_at goes stale
+    # over any long job and the reaper would kill a pod mid-work.
+    db_store.touch_worker(body.worker_id)
     return {"ok": ok}
+
+
+@router.post("/deregister", response_model=Dict)
+async def deregister(body: DeregisterBody, request: Request):
+    """A worker announcing its own clean exit (idle self-exit or SIGTERM drain). The reaper
+    terminates the pod behind any terminated worker row — this is the scale-down handshake."""
+    _require_worker(request)
+    db_store.set_worker_terminated(body.worker_id)
+    return {"ok": True}
+
+
+def _blob_dir() -> Path:
+    from config.settings_manager import settings_manager
+    return Path(settings_manager.get_settings()["data_dir"]).resolve() / "blobs"
+
+
+_JOB_ID_RE = re.compile(r"[0-9a-f]{16,32}")
+
+
+def _offload_glb(job_id: str, result: Optional[Dict]) -> Optional[Path]:
+    """A 20MB+ GLB does not belong in a jobs row: decode it to <data_dir>/blobs and hand the
+    row a path instead. The job_id names the file, so it must be one of ours (hex), not a
+    path. Caller removes the file if the completion turns out to be stale."""
+    if not result or "glb_b64" not in result:
+        return None
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise HTTPException(status_code=400, detail="bad job id")
+    blob_dir = _blob_dir()
+    blob_dir.mkdir(parents=True, exist_ok=True)
+    path = blob_dir / f"{job_id}.glb"
+    path.write_bytes(base64.b64decode(result.pop("glb_b64")))
+    result["glb_file"] = str(path)
+    return path
 
 
 @router.post("/complete", response_model=Dict)
@@ -88,6 +139,9 @@ async def complete(body: CompleteBody, request: Request):
     """Land a result (or failure). ok=false means the lease lapsed and the job was requeued —
     this worker's result was dropped and it should just move on."""
     _require_worker(request)
+    blob = await asyncio.to_thread(_offload_glb, body.job_id, body.result)
     ok = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
                                body.exec_seconds, body.gpu_type)
+    if not ok and blob is not None:
+        blob.unlink(missing_ok=True)
     return {"ok": ok}

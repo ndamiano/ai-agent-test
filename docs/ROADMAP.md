@@ -62,6 +62,10 @@ good with refund-on-fail. Measure real cost/time/failure per game.
 - **Deploy:** `DEPLOY.md` — single worker serves API + SPA same-origin, public HTTPS via Tailscale
   Funnel. Pre-open hardening landed: prod launch (no dev reload), pinned/same-origin CORS,
   per-handle login throttle.
+- **Compute (landed):** every GPU backend is worker-pull (`worker/agent.py`, queues llm/image/mesh),
+  three RunPod worker images + the provisioned network volume, and a queue-driven autoscaler
+  (`src/scaler/`) — workers self-exit when their queue drains, the control plane adds pods on
+  backlog and reaps dead ones. On-demand RunPod inference is no longer a Release-stage item.
 - **Deferred risks (fix before public beta):** single-GPU DoS (unbounded build queue, no per-user
   in-flight cap), 30-day session TTL, public `/docs`, and the new codegen surface: the generated
   `game.js` runs in the player's browser — sandbox it (served from a null-origin/sandboxed iframe,

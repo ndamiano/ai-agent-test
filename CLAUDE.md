@@ -155,7 +155,7 @@ src/
     run_control.py       cross-thread pause/resume signal channel.
     templating.py        render_template ({{include}} partials + {key} subst) — engine-neutral.
   agents/                MainAgent (chat persona) + agent_store, config/agents/chat.json
-  auth/                  identity + access (sqlite at <working_dir>/private/auth.db): store.py
+  auth/                  identity + access (sqlite at <data_dir>/auth.db): store.py
                          (users + bearer sessions + credit ledger, pbkdf2, token stored as a hash +
                          TTL), deps.py (header-only bearer gate on /api + /auth; static SPA served
                          in the clear), ratelimit.py (per-handle login throttle), router.py (login/
@@ -167,14 +167,19 @@ src/
                          which also grants seconds_granted = credits × SECONDS_PER_CREDIT), never
                          re-deducted, never auto-refunded (refunds are a manual admin action). No
                          self-serve signup.
-  db/                    platform datastore (sqlite at <working_dir>/private/platform.db, WAL):
+  db/                    platform datastore (sqlite at <data_dir>/platform.db, WAL — data_dir is
+                         control-plane state, deliberately NOT under working_directory):
                          store.py — games (ownership, title/mode/status mirror of spec.json,
                          credits_spent + seconds_granted/used compute budget), builds (one row per
                          build/fix/assets attempt: status, steps, queued/started/finished), events
                          (append-only build/spec lifecycle log; GET /games/{id}/events replays it),
                          jobs + workers (the worker-pull inference queue: atomic claim w/ lease,
                          complete debits games.seconds_used + worker busy_seconds in one txn;
-                         lapsed lease ⇒ silent requeue, stale completion dropped). Plain
+                         lapsed lease ⇒ silent requeue, stale completion dropped; workers carry
+                         pod_id + terminated_at for the scaler, and queue_stats/live_workers/
+                         stale_workers feed it; a result's glb_b64 never lands in the row — the
+                         workqueue router decodes it to <data_dir>/blobs/<job_id>.glb and stores
+                         a glb_file path, today local disk, the S3 seam later). Plain
                          parameterized SQL, short-lived connections — the run dir stays the source
                          of truth for spec + artifacts; rows index, never duplicate.
                          queue_client.py — the enqueue side every producer shares (run_job: land a
@@ -183,16 +188,41 @@ src/
   worker/                agent.py — the pull-side worker (python -m worker.agent): long-poll
                          /worker/claim → run the payload through handlers.py → /worker/complete
                          with the result + measured exec_seconds; heartbeats during long jobs,
-                         SIGTERM finishes in-flight then exits. Dials OUT only — identical on the
+                         SIGTERM finishes in-flight then exits. Completions ship on a background
+                         uploader thread (order-preserving) so the GPU claims the next job while
+                         the previous result (a 20MB GLB) is still uploading; the drain runs
+                         before deregister so the reaper can't kill a pod mid-upload. Dials OUT only — identical on the
                          home box and a RunPod pod. Auth: the shared workqueue token (never
                          forwarded to the inference target). handlers.py = one handler per payload
                          `kind`, ONE worker process per queue: llm (verbatim forward to llama.cpp),
                          image (the ComfyUI submit → poll /history → fetch /view flow, images back
                          inline as base64), mesh (one TRELLIS POST → glb base64, retry-once).
-                         A queue owns its GPU.
+                         A queue owns its GPU. --idle-exit-seconds (env IDLE_EXIT_SECONDS) is the
+                         worker's scale-down decision: the value rides the claim body as the
+                         long-poll window, so a null claim MEANS "queue empty that long" →
+                         deregister + exit 0 (0 = never, the home-box default). Exit alone never
+                         ends a pod — RunPod restarts exited containers and keeps billing — so the
+                         entrypoints follow a clean exit with a best-effort in-pod pod DELETE, and
+                         the scaler's reaper is the billing guarantee.
+  scaler/                the RunPod autoscaler (started by api/app.py when runpod.enabled +
+                         api_key + workqueue.enabled). OWNERSHIP SPLIT: workers own scale-DOWN
+                         (the idle self-exit above — queue-agnostic, ports to SQS unchanged); the
+                         control plane owns scale-UP + pod reaping. stats.py is the SQS seam:
+                         QueueStats/WorkerInfo + a StatsSource Protocol, the ONLY scaler module
+                         importing db.store — a later SQS move swaps this one source. policy.py =
+                         pure decide(), no I/O no clock: reap first (deregistered/stale-worker
+                         pods, never-registered pods past boot_deadline), then at most one
+                         StartPod per tick — scale-from-zero on ANY pending job (no cooldown),
+                         depth ÷ effective workers with booting pods counted (a slow boot can't
+                         add-forever), an oldest-pending-age starvation trigger, cooldown +
+                         max_workers cap. Only ever touches maestro-<queue>-* pods.
+                         runpod_client.py = plain-requests REST (create/list/terminate pod, 404 =
+                         success); autoscaler.py = the daemon-thread tick loop (pod age via
+                         first-seen tracking; errors logged, never fatal).
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
                          workqueue) + build_queue.py (single-GPU FIFO build serializer). The
-                         workqueue router (/worker/claim|heartbeat|complete, mounted OUTSIDE the
+                         workqueue router (/worker/claim|heartbeat|complete|deregister, mounted
+                         OUTSIDE the
                          user gate) is the pull side of the inference queue — token-gated
                          (settings workqueue.token, fail-closed when unset). WS events route
                          per-user server-side (event_bus resolves run → owner). The games router is
@@ -247,6 +277,12 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
   (defaults: server localhost:8000, target localhost:1234, queue llm). With the queue on, the
   control plane touches no GPU at all. exec_seconds are debited to the owning game via the
   run_scope contextvar set around run_build/fix_from_note.
+- `data_dir` (env `MAESTRO_DATA_DIR`, default `<repo>/data`) — where platform.db + auth.db live;
+  control-plane state, deliberately not under `working_directory`.
+- `runpod.*` — the autoscaler (see `src/scaler/` + docs/DEPLOY.md): `enabled`, `api_key`,
+  `network_volume_id`, `cp_url` (the pod-reachable control-plane URL) and per-queue `queues.<name>`
+  scaling blocks (template_id, gpu_type_ids, max_workers, thresholds, idle_exit_seconds). The
+  `queues` dict in settings.json replaces the default wholesale — carry complete blocks.
 - **Model categories** `large`/`medium`/`small` control `message_budget_chars`, `max_iterations`,
   `use_json_mode`. Use `small` for local models.
 

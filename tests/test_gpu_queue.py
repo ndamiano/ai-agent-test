@@ -82,7 +82,10 @@ def test_trellis_batch_queues_one_job_per_sprite(monkeypatch, tmp_path):
     def run_job(queue, payload, **kw):
         queues.append((queue, payload["kind"]))
         assert base64.b64decode(payload["image_b64"]) == PNG
-        return {"status": "done", "result": {"glb_b64": base64.b64encode(GLB).decode()}}
+        # The control plane offloads the GLB at completion; consumers get a path.
+        blob = tmp_path / f"{len(queues)}.glb"
+        blob.write_bytes(GLB)
+        return {"status": "done", "result": {"glb_file": str(blob)}}
 
     monkeypatch.setattr(queue_client, "enabled", lambda: True)
     monkeypatch.setattr(queue_client, "run_job", run_job)
@@ -175,6 +178,7 @@ def test_agent_dispatches_on_payload_kind(monkeypatch):
                         lambda agent, payload: ({"images": []}, None))
     a.session.post.side_effect = lambda url, **kw: _Resp(200, {"ok": True})
     a.execute({"id": "j1", "payload": {"kind": "comfy_image", "workflow": {}}})
+    a._drain_uploads()
 
     body = a.session.post.call_args_list[-1].kwargs["json"]
     assert body["job_id"] == "j1" and body["result"] == {"images": []}

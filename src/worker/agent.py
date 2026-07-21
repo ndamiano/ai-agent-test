@@ -18,6 +18,7 @@ job requeues).
 import argparse
 import logging
 import os
+import queue as queue_mod
 import signal
 import socket
 import threading
@@ -35,16 +36,24 @@ HEARTBEAT_INTERVAL = 45.0
 
 class Agent:
     def __init__(self, server: str, target: str, queue: str, token: str,
-                 worker_id: str = None, gpu_type: str = None, source: str = "local"):
+                 worker_id: str = None, gpu_type: str = None, source: str = "local",
+                 idle_exit_seconds: float = 0.0):
         self.server = server.rstrip("/")
         self.target = target.rstrip("/")
         self.queue = queue
         self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.gpu_type = gpu_type
         self.source = source
+        self.idle_exit_seconds = idle_exit_seconds
+        self.pod_id = os.environ.get("RUNPOD_POD_ID")
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
         self.stopping = False
+        # Completions ship in the background so the GPU claims the next job while the previous
+        # result (a 20MB+ GLB) is still uploading. One thread, order-preserving.
+        self._uploads = queue_mod.Queue()
+        self._uploader = threading.Thread(target=self._upload_loop, daemon=True)
+        self._uploader.start()
 
     # ── server API ────────────────────────────────────────────────────────────
     def _post(self, path: str, body: dict, timeout: float) -> dict:
@@ -54,16 +63,50 @@ class Agent:
 
     def claim(self) -> dict | None:
         body = {"queue": self.queue, "worker_id": self.worker_id,
-                "gpu_type": self.gpu_type, "source": self.source}
+                "gpu_type": self.gpu_type, "source": self.source, "pod_id": self.pod_id}
+        if self.idle_exit_seconds:
+            # The server long-polls for this window, so a null claim IS the idle verdict —
+            # the queue stayed empty for idle_exit_seconds straight. No client-side timer.
+            body["wait_seconds"] = self.idle_exit_seconds
         return self._post("/worker/claim", body, timeout=35).get("job")
+
+    def deregister(self) -> None:
+        """Best-effort: the control-plane reaper also terminates pods behind stale worker rows,
+        so a lost deregister only delays the pod kill, never leaks it."""
+        try:
+            self._post("/worker/deregister", {"worker_id": self.worker_id}, timeout=10)
+        except requests.RequestException as e:
+            logger.warning("deregister failed: %s", e)
 
     def complete(self, job_id: str, result=None, error=None, exec_seconds=0.0) -> None:
         ok = self._post("/worker/complete", {
             "job_id": job_id, "worker_id": self.worker_id, "result": result,
             "error": error, "exec_seconds": exec_seconds, "gpu_type": self.gpu_type,
-        }, timeout=30).get("ok")
+        }, timeout=120).get("ok")
         if not ok:
             logger.warning("job %s: lease lapsed before completion — result dropped", job_id)
+
+    def _upload_loop(self) -> None:
+        while True:
+            item = self._uploads.get()
+            if item is None:
+                return
+            job_id, kw = item
+            for attempt in (1, 2):
+                try:
+                    self.complete(job_id, **kw)
+                    break
+                except requests.RequestException as e:
+                    logger.warning("job %s: complete failed (attempt %d/2): %s",
+                                   job_id, attempt, e)
+                    time.sleep(2)
+            # Still failing after the retry: dropped — the lease lapses and the job requeues.
+
+    def _drain_uploads(self) -> None:
+        """Flush pending completions and stop the uploader — results must land before
+        deregister, or the reaper could kill the pod with a GLB still in flight."""
+        self._uploads.put(None)
+        self._uploader.join()
 
     def _heartbeat_until(self, job_id: str, done: threading.Event) -> None:
         while not done.wait(HEARTBEAT_INTERVAL):
@@ -87,14 +130,17 @@ class Agent:
         try:
             result, error = handler(self, payload)
             elapsed = time.perf_counter() - t0
-            self.complete(job["id"], result=result, error=error, exec_seconds=elapsed)
+            # Enqueued, not sent: the upload rides the remaining lease (the heartbeat stops
+            # here), which is plenty — lease_seconds dwarfs one result POST.
+            self._uploads.put((job["id"], dict(result=result, error=error,
+                                               exec_seconds=elapsed)))
             if error:
                 logger.warning("job %s failed: %s", job["id"], error)
             else:
                 logger.info("job %s done in %.1fs", job["id"], elapsed)
         except requests.RequestException as e:
-            self.complete(job["id"], error=f"Connection error: {e}",
-                          exec_seconds=time.perf_counter() - t0)
+            self._uploads.put((job["id"], dict(error=f"Connection error: {e}",
+                                               exec_seconds=time.perf_counter() - t0)))
             logger.warning("job %s target unreachable: %s", job["id"], e)
         finally:
             done.set()
@@ -110,8 +156,14 @@ class Agent:
                 time.sleep(5)
                 continue
             if job is None:
+                if self.idle_exit_seconds and not self.stopping:
+                    logger.info("worker %s idle for %.0fs — exiting",
+                                self.worker_id, self.idle_exit_seconds)
+                    break
                 continue
             self.execute(job)
+        self._drain_uploads()
+        self.deregister()
         logger.info("worker %s stopped", self.worker_id)
 
 
@@ -124,13 +176,18 @@ def main(argv=None) -> int:
     parser.add_argument("--worker-id", default=None)
     parser.add_argument("--gpu-type", default=None)
     parser.add_argument("--source", default="local")
+    parser.add_argument("--idle-exit-seconds", type=float,
+                        default=float(os.environ.get("IDLE_EXIT_SECONDS", "0")),
+                        help="Exit 0 after the queue stays empty this long (0 = never, the "
+                             "home-box default; autoscaled pods set this to die when drained)")
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("--token (or WORKER_TOKEN) is required")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     agent = Agent(args.server, args.target, args.queue, args.token,
-                  worker_id=args.worker_id, gpu_type=args.gpu_type, source=args.source)
+                  worker_id=args.worker_id, gpu_type=args.gpu_type, source=args.source,
+                  idle_exit_seconds=args.idle_exit_seconds)
 
     def _stop(signum, frame):
         logger.info("signal %s — finishing current job then exiting", signum)

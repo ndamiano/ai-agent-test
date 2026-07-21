@@ -54,6 +54,21 @@ async def startup_event():
         import tools.chat_tools  # noqa: F401
         logging.info("Tools registered successfully")
 
+        # RunPod autoscaler — only when the worker-pull queue is on and RunPod is configured.
+        from config.settings_manager import settings_manager
+        _settings = settings_manager.get_settings()
+        _rp = _settings.get("runpod") or {}
+        if _rp.get("enabled") and _rp.get("api_key") \
+                and (_settings.get("workqueue") or {}).get("enabled"):
+            from scaler.autoscaler import Autoscaler
+            from scaler.runpod_client import RunPodClient
+            from scaler.stats import SqliteStatsSource
+            app.state.autoscaler = Autoscaler(
+                SqliteStatsSource(), RunPodClient(_rp["api_key"]),
+                settings_manager.get_settings)
+            app.state.autoscaler.start()
+            logging.info("RunPod autoscaler started")
+
     except Exception as e:
         logging.error(f"Startup error: {str(e)}")
         raise HTTPException(status_code=500, detail="Server startup failed")
@@ -62,6 +77,8 @@ async def startup_event():
 async def shutdown_event():
     """Shutdown event handler to clean up resources."""
     try:
+        if getattr(app.state, "autoscaler", None):
+            app.state.autoscaler.stop()
         from api.build_queue import build_queue
         build_queue.stop()
         from api.websocket.event_bus import event_bus

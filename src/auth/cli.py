@@ -6,8 +6,8 @@
     python -m auth.cli refund <handle> <n>               # return credits (manual refund)
     python -m auth.cli list
 
-The store lives at <working_directory>/private/auth.db — a `private/` subtree that no
-file-serving route is rooted in, kept out of the run dirs.
+The store lives at <data_dir>/auth.db — apart from working_directory, so no file-serving
+route can reach it and it is kept out of the run dirs.
 """
 
 import argparse

@@ -33,9 +33,16 @@ class SettingsManager:
         if not Path(default_working_dir).is_absolute():
             default_working_dir = str((project_root / default_working_dir).resolve())
 
+        # Control-plane state (the sqlite dbs), resolved against the repo root — deliberately
+        # apart from working_directory, which holds generated artifacts.
+        default_data_dir = os.getenv("MAESTRO_DATA_DIR", "data")
+        if not Path(default_data_dir).is_absolute():
+            default_data_dir = str((project_root.parent / default_data_dir).resolve())
+
         self.defaults = {
             "connector_type": os.getenv("CONNECTOR_TYPE", "lmstudio"),
             "working_directory": default_working_dir,
+            "data_dir": default_data_dir,
             "model_category": os.getenv("MODEL_CATEGORY", "large"),
             "lmstudio": {
                 "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
@@ -64,6 +71,18 @@ class SettingsManager:
                 "token": os.getenv("WORKQUEUE_TOKEN", ""),
                 "job_timeout_seconds": int(os.getenv("WORKQUEUE_JOB_TIMEOUT", "900")),
                 "lease_seconds": int(os.getenv("WORKQUEUE_LEASE", "120"))
+            },
+            # _merge is one level deep, so a settings.json "runpod" block merges over these keys —
+            # EXCEPT "queues", which it replaces wholesale: the file must carry complete queue blocks.
+            "runpod": {
+                "enabled": os.getenv("RUNPOD_ENABLED", "false").lower() == "true",
+                "api_key": os.getenv("RUNPOD_API_KEY", ""),
+                "network_volume_id": os.getenv("RUNPOD_NETWORK_VOLUME_ID", ""),
+                "cloud_type": "SECURE",
+                "cp_url": os.getenv("RUNPOD_CP_URL", ""),
+                "tick_seconds": 15,
+                "stale_worker_seconds": 180,
+                "queues": {}
             }
         }
 

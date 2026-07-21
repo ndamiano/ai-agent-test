@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS workers (
     queue         TEXT,
     gpu_type      TEXT,
     source        TEXT,
+    pod_id        TEXT,
     busy_seconds  REAL NOT NULL DEFAULT 0,
     started_at    REAL NOT NULL,
     last_seen_at  REAL,
@@ -93,9 +94,10 @@ CREATE TABLE IF NOT EXISTS workers (
 def _db_path() -> Path:
     # Not resolve_base_path(): tools repoint the execution_context working dir (the reskin points it
     # at game/assets/ for ComfyUI), which would fork an empty db there — an enqueued job would land
-    # where no worker is looking.
+    # where no worker is looking. data_dir, not working_directory: control-plane state does not
+    # belong in the artifact output tree.
     from config.settings_manager import settings_manager
-    return Path(settings_manager.get_settings()["working_directory"]).resolve() / "private" / "platform.db"
+    return Path(settings_manager.get_settings()["data_dir"]).resolve() / "platform.db"
 
 
 # Paths whose WAL mode + schema this process has already applied. Doing that per connection is
@@ -117,6 +119,10 @@ def _db():
         if str(path) not in _INITIALIZED:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            # No migration mechanism exists; a db created before the pod_id column needs it added.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(workers)")}
+            if "pod_id" not in cols:
+                conn.execute("ALTER TABLE workers ADD COLUMN pod_id TEXT")
             _INITIALIZED.add(str(path))
     try:
         yield conn
@@ -326,17 +332,76 @@ def get_job(job_id: str) -> Optional[Dict]:
 
 # ── workers (fleet + utilization facts) ───────────────────────────────────────
 def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
-                source: Optional[str] = None) -> None:
+                source: Optional[str] = None, pod_id: Optional[str] = None) -> None:
     now = time.time()
     with _db() as conn:
+        # terminated_at is cleared on re-register: RunPod restarts an exited container, and a
+        # restarted worker that still looked terminated would be reaped mid-work.
         cur = conn.execute(
-            "UPDATE workers SET queue = ?, last_seen_at = ? WHERE id = ?",
-            (queue, now, worker_id))
+            "UPDATE workers SET queue = ?, last_seen_at = ?, pod_id = COALESCE(?, pod_id), "
+            "terminated_at = NULL WHERE id = ?",
+            (queue, now, pod_id, worker_id))
         if cur.rowcount == 0:
             conn.execute(
-                "INSERT INTO workers (id, queue, gpu_type, source, started_at, last_seen_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (worker_id, queue, gpu_type, source, now, now))
+                "INSERT INTO workers (id, queue, gpu_type, source, pod_id, started_at, last_seen_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (worker_id, queue, gpu_type, source, pod_id, now, now))
+
+
+def touch_worker(worker_id: str) -> None:
+    with _db() as conn:
+        conn.execute("UPDATE workers SET last_seen_at = ? WHERE id = ?",
+                     (time.time(), worker_id))
+
+
+def set_worker_terminated(worker_id: str) -> None:
+    with _db() as conn:
+        conn.execute("UPDATE workers SET terminated_at = ? WHERE id = ?",
+                     (time.time(), worker_id))
+
+
+def live_workers(queue: str, freshness_seconds: float) -> List[Dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM workers WHERE queue = ? AND terminated_at IS NULL "
+            "AND last_seen_at >= ?",
+            (queue, time.time() - freshness_seconds)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def stale_workers(queue: str, staleness_seconds: float) -> List[Dict]:
+    """Pod-backed workers that stopped checking in without deregistering (crashed or wedged).
+    Home-box workers (pod_id NULL) are never anyone's to reap."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM workers WHERE queue = ? AND terminated_at IS NULL "
+            "AND pod_id IS NOT NULL AND last_seen_at < ?",
+            (queue, time.time() - staleness_seconds)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def terminated_workers_with_pods(queue: str) -> List[Dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM workers WHERE queue = ? AND terminated_at IS NOT NULL "
+            "AND pod_id IS NOT NULL", (queue,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def queue_stats(queue: str) -> Dict:
+    now = time.time()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending, "
+            "SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed, "
+            "MIN(CASE WHEN status = 'pending' THEN created_at END) AS oldest "
+            "FROM jobs WHERE queue = ? AND status IN ('pending', 'claimed')",
+            (queue,)).fetchone()
+    return {
+        "pending": row["pending"] or 0,
+        "claimed": row["claimed"] or 0,
+        "oldest_pending_age_seconds": (now - row["oldest"]) if row["oldest"] else None,
+    }
 
 
 # ── events (append-only build/spec lifecycle log) ─────────────────────────────

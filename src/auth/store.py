@@ -37,12 +37,12 @@ class User:
 
 
 def _db_path() -> Path:
-    # The credential store lives in a `private/` subtree, never under `runs/` — no file-serving
-    # route is rooted there, so the auth db can't be reached as if it were a game artifact.
+    # data_dir, never the working_directory: no file-serving route is rooted there, so the auth
+    # db can't be reached as if it were a game artifact.
     # Not resolve_base_path(): a tool that repoints the execution_context working dir would fork an
     # empty credential store under it — accounts and the credit ledger silently absent.
     from config.settings_manager import settings_manager
-    return Path(settings_manager.get_settings()["working_directory"]).resolve() / "private" / "auth.db"
+    return Path(settings_manager.get_settings()["data_dir"]).resolve() / "auth.db"
 
 
 @contextmanager

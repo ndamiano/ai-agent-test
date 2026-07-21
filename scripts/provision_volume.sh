@@ -81,6 +81,24 @@ for dest, repo, name, want, rev in FILES:
 print("downloading   TRELLIS.2-4B weights (~16 GB)")
 snapshot_download("microsoft/TRELLIS.2-4B", local_dir=f"{VOL}/trellis2-weights")
 
+# The worker image runs HF_HUB_OFFLINE=1 — after provisioning, a pod NEVER talks to HF. Stock
+# pipeline configs reference encoders by HUB NAME (facebook/dinov3-*: gated; briaai/RMBG-2.0:
+# restrictive license), which both violates that and can break under someone else's gating
+# decision. So: pull open-licensed equivalents into plain dirs on the volume (camenduru mirror =
+# same dinov3 weights, public; ZhengPeng7/BiRefNet = the permissive rembg the home box uses) and
+# rewrite the configs to those paths. Paths are the POD's mount point (/workspace) verbatim.
+print("downloading   encoders (dinov3 mirror + BiRefNet)")
+snapshot_download("camenduru/dinov3-vitl16-pretrain-lvd1689m",
+                  local_dir=f"{VOL}/encoders/dinov3-vitl16")
+snapshot_download("ZhengPeng7/BiRefNet", local_dir=f"{VOL}/encoders/BiRefNet")
+for cfg in ("pipeline.json", "texturing_pipeline.json"):
+    p = f"{VOL}/trellis2-weights/{cfg}"
+    s = open(p).read() \
+        .replace("facebook/dinov3-vitl16-pretrain-lvd1689m", "/workspace/encoders/dinov3-vitl16") \
+        .replace("briaai/RMBG-2.0", "/workspace/encoders/BiRefNet")
+    open(p, "w").write(s)
+    print(f"patched       {cfg}: hub names -> /workspace/encoders/*")
+
 # local_dir downloads leave a .cache/huggingface staging dir beside the weights. The volume holds
 # weights and nothing else, so drop them — a re-run re-downloads whole rather than resuming, which
 # is the trade this rule buys.

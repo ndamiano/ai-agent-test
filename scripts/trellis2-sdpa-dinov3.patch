@@ -1,0 +1,99 @@
+diff --git a/trellis2/modules/image_feature_extractor.py b/trellis2/modules/image_feature_extractor.py
+index c3cb515..987a60c 100644
+--- a/trellis2/modules/image_feature_extractor.py
++++ b/trellis2/modules/image_feature_extractor.py
+@@ -83,7 +83,7 @@ class DinoV3FeatureExtractor:
+         hidden_states = self.model.embeddings(image, bool_masked_pos=None)
+         position_embeddings = self.model.rope_embeddings(image)
+ 
+-        for i, layer_module in enumerate(self.model.layer):
++        for i, layer_module in enumerate(self.model.model.layer):
+             hidden_states = layer_module(
+                 hidden_states,
+                 position_embeddings=position_embeddings,
+diff --git a/trellis2/modules/sparse/attention/full_attn.py b/trellis2/modules/sparse/attention/full_attn.py
+index 4eb74d2..931eda4 100644
+--- a/trellis2/modules/sparse/attention/full_attn.py
++++ b/trellis2/modules/sparse/attention/full_attn.py
+@@ -211,6 +211,29 @@ def sparse_scaled_dot_product_attention(*args, **kwargs):
+             max_q_seqlen = max(q_seqlen)
+             max_kv_seqlen = max(kv_seqlen)
+         out = flash_attn_3.flash_attn_varlen_func(q, k, v, cu_seqlens_q, cu_seqlens_kv, max_q_seqlen, max_kv_seqlen)
++    elif config.ATTN == 'sdpa':
++        from torch.nn.functional import scaled_dot_product_attention as _sdpa
++        if num_all_args == 1:
++            q_, k_, v_ = qkv.unbind(dim=1)
++        elif num_all_args == 2:
++            k_, v_ = kv.unbind(dim=1)
++            q_ = q
++        else:
++            q_, k_, v_ = q, k, v
++        outs = []
++        q_off = 0
++        kv_off = 0
++        for i in range(len(q_seqlen)):
++            ql = q_seqlen[i]
++            kl = kv_seqlen[i]
++            qi = q_[q_off:q_off + ql].transpose(0, 1).unsqueeze(0)
++            ki = k_[kv_off:kv_off + kl].transpose(0, 1).unsqueeze(0)
++            vi = v_[kv_off:kv_off + kl].transpose(0, 1).unsqueeze(0)
++            oi = _sdpa(qi, ki, vi)
++            outs.append(oi.squeeze(0).transpose(0, 1))
++            q_off += ql
++            kv_off += kl
++        out = torch.cat(outs, dim=0)
+     else:
+         raise ValueError(f"Unknown attention module: {config.ATTN}")
+     
+diff --git a/trellis2/modules/sparse/attention/windowed_attn.py b/trellis2/modules/sparse/attention/windowed_attn.py
+index 0430788..8b90c30 100644
+--- a/trellis2/modules/sparse/attention/windowed_attn.py
++++ b/trellis2/modules/sparse/attention/windowed_attn.py
+@@ -49,6 +49,7 @@ def calc_window_partition(
+     mask = seq_lens != 0
+     seq_lens = seq_lens[mask]
+     
++    attn_func_args = {}
+     if config.ATTN == 'xformers':
+         if 'xops' not in globals():
+             import xformers.ops as xops
+@@ -113,6 +114,18 @@ def sparse_windowed_scaled_dot_product_self_attention(
+         if 'flash_attn' not in globals():
+             import flash_attn
+         out = flash_attn.flash_attn_varlen_qkvpacked_func(qkv_feats, **attn_func_args)  # [M, H, C]
++    elif config.ATTN == 'sdpa':
++        from torch.nn.functional import scaled_dot_product_attention as _sdpa
++        q_, k_, v_ = qkv_feats.unbind(dim=1)  # [M, H, C]
++        outs = []
++        off = 0
++        for sl in seq_lens.tolist():
++            qi = q_[off:off + sl].transpose(0, 1).unsqueeze(0)
++            ki = k_[off:off + sl].transpose(0, 1).unsqueeze(0)
++            vi = v_[off:off + sl].transpose(0, 1).unsqueeze(0)
++            outs.append(_sdpa(qi, ki, vi).squeeze(0).transpose(0, 1))
++            off += sl
++        out = torch.cat(outs, dim=0)
+ 
+     out = out[bwd_indices]      # [T, H, C]
+ 
+@@ -184,6 +197,20 @@ def sparse_windowed_scaled_dot_product_cross_attention(
+             cu_seqlens_q=q_attn_func_args['cu_seqlens'], cu_seqlens_k=kv_attn_func_args['cu_seqlens'],
+             max_seqlen_q=q_attn_func_args['max_seqlen'], max_seqlen_k=kv_attn_func_args['max_seqlen'],
+         )  # [M, H, C]
++    elif config.ATTN == 'sdpa':
++        from torch.nn.functional import scaled_dot_product_attention as _sdpa
++        k_, v_ = kv_feats.unbind(dim=1)  # [M, H, C]
++        outs = []
++        qoff = 0
++        kvoff = 0
++        for ql, kl in zip(q_seq_lens.tolist(), kv_seq_lens.tolist()):
++            qi = q_feats[qoff:qoff + ql].transpose(0, 1).unsqueeze(0)
++            ki = k_[kvoff:kvoff + kl].transpose(0, 1).unsqueeze(0)
++            vi = v_[kvoff:kvoff + kl].transpose(0, 1).unsqueeze(0)
++            outs.append(_sdpa(qi, ki, vi).squeeze(0).transpose(0, 1))
++            qoff += ql
++            kvoff += kl
++        out = torch.cat(outs, dim=0)
+ 
+     out = out[q_bwd_indices]      # [T, H, C]
+ 

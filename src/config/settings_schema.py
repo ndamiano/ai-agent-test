@@ -1,7 +1,7 @@
 """Pydantic schemas for settings validation"""
 
 from pydantic import BaseModel, Field
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 # Reasoning-effort knob for reasoning models, sent as reasoning.effort on the Responses API
 # (the only endpoint this connector speaks). "none" disables reasoning — the lever that stops
@@ -57,6 +57,41 @@ class WorkQueueSettings(BaseModel):
         "A claimed job returns to pending if the worker misses heartbeats for this long."))
 
 
+class RunPodQueueScaling(BaseModel):
+    """Per-queue autoscaling policy. Workers own scale-DOWN (idle self-exit via the claim
+    long-poll window); the control plane owns scale-UP + pod reaping (scaler/)."""
+    template_id: str = Field(..., min_length=1)
+    gpu_type_ids: List[str] = Field(..., min_length=1)
+    max_workers: int = Field(2, ge=1)
+    scale_up_depth_per_worker: int = Field(10, ge=1, description=(
+        "Add a pod when pending jobs ÷ effective workers (live + still booting) reaches this."))
+    scale_up_max_age_seconds: int = Field(300, ge=1, description=(
+        "Also add a pod when the oldest pending job has waited this long — catches every worker "
+        "busy on long jobs with queue depth under the threshold."))
+    cooldown_seconds: int = Field(90, ge=0)
+    idle_exit_seconds: int = Field(10, ge=0, description=(
+        "Delivered to pods as IDLE_EXIT_SECONDS: the worker's claim long-poll window, after "
+        "which a null claim means exit. 0 = never exit (the home-box default)."))
+    boot_deadline_seconds: int = Field(900, ge=1, description=(
+        "A pod this old with no worker row counts as wedged and is reaped; younger, it counts "
+        "as starting capacity so scale-up can't add-forever during a boot."))
+
+
+class RunPodSettings(BaseModel):
+    enabled: bool = Field(False)
+    api_key: str = Field("")
+    network_volume_id: str = Field("")
+    cloud_type: str = Field("SECURE")
+    cp_url: str = Field("", description=(
+        "The control-plane base URL delivered to pods as CP_URL — must be reachable from "
+        "RunPod's network, so a public/tailnet-funnel URL, never localhost."))
+    tick_seconds: int = Field(15, ge=1)
+    stale_worker_seconds: int = Field(180, ge=1, description=(
+        "A pod-backed worker unseen this long is presumed dead: its row is terminated and its "
+        "pod reaped. Must exceed the claim window + heartbeat interval with margin."))
+    queues: Dict[str, RunPodQueueScaling] = Field(default_factory=dict)
+
+
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
     max_iterations: int = Field(10, ge=1)
@@ -73,6 +108,9 @@ DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
 class AppSettings(BaseModel):
     connector_type: Literal["lmstudio", "cline", "openrouter"]
     working_directory: Optional[str] = "outputs"
+    # Control-plane state (platform.db + auth.db) — NOT under working_directory: artifact output
+    # is the wrong home for the datastore.
+    data_dir: Optional[str] = "data"
     # Concurrent build fixes (parallel LLM calls per loop step). >1 needs an inference server that
     # batches concurrent requests (LM Studio does); tool writes stay serialized either way.
     parallel_fixes: int = Field(1, ge=1, le=8)
@@ -82,3 +120,4 @@ class AppSettings(BaseModel):
     comfyui: Optional[ComfyUISettings] = None
     trellis: Optional[TrellisSettings] = None
     workqueue: Optional[WorkQueueSettings] = None
+    runpod: Optional[RunPodSettings] = None

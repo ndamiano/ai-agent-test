@@ -110,6 +110,7 @@ def _run_trellis_batch_queued(sprite_dir: str, out_dir: str) -> set:
     import base64
     import glob
     import os
+    import shutil
     from db import queue_client
 
     done: set = set()
@@ -117,13 +118,17 @@ def _run_trellis_batch_queued(sprite_dir: str, out_dir: str) -> set:
         slug = os.path.splitext(os.path.basename(png))[0]
         with open(png, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode("ascii")
-        job = queue_client.run_job("mesh", {"kind": "trellis_mesh", "image_b64": img_b64})
+        # Cold start on an autoscaled pod (boot + image pull + pipeline lazy-load) plus the
+        # generate itself can exceed the 900s queue default.
+        job = queue_client.run_job("mesh", {"kind": "trellis_mesh", "image_b64": img_b64},
+                                   timeout_seconds=1800)
         if job["status"] != "done":
             logger.error(f"trellis {slug} failed: {job.get('error')}")
             continue
         glb_path = os.path.join(out_dir, f"{slug}.glb")
-        with open(glb_path, "wb") as g:
-            g.write(base64.b64decode(job["result"]["glb_b64"]))
+        # The control plane offloaded the GLB to <data_dir>/blobs at completion (workqueue
+        # router); the jobs row carries only the path — same disk as this process.
+        shutil.copyfile(job["result"]["glb_file"], glb_path)
         _decimate_glb(glb_path)
         done.add(slug)
     return done

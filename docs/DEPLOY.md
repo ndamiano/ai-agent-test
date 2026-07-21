@@ -36,12 +36,14 @@ bound to localhost. `COMFYUI_ENDPOINT`/`TRELLIS_ENDPOINT` only matter with the q
 ### The data invariant (critical)
 
 Durable state lives on **two named Docker volumes**, both outside the rsync'd source tree:
-- `maestro-data` → `/data`: `runs/` + `private/auth.db` (accounts, credit ledger) +
-  `private/platform.db` (games, builds, jobs, events).
+- `maestro-data` → `/data`: `runs/` (via `WORKING_DIRECTORY=/data`) + `auth.db` (accounts, credit
+  ledger) + `platform.db` (games, builds, jobs, events) (via `MAESTRO_DATA_DIR=/data`, set in
+  docker-compose.yml).
 - `maestro-games` → `/app/runtime/games`: staged playable bundles served at `/play`.
 
-Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY` off `/data`, and
-never `docker volume rm` either volume — that wipes accounts and games.
+Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY` or
+`MAESTRO_DATA_DIR` off `/data`, and never `docker volume rm` either volume — that wipes accounts
+and games.
 
 ### Build toolchain
 
@@ -108,14 +110,71 @@ weights), so a pod boots without re-downloading 60 GB.
 # 1. one-time: populate the volume. Any cheap pod with it mounted; no GPU used.
 VOL=/workspace bash scripts/provision_volume.sh
 
-# 2. build + push the two worker images
-docker build -f Dockerfile.worker-llm   -t <registry>/maestro-worker-llm .
-docker build -f Dockerfile.worker-image -t <registry>/maestro-worker-image .
+# 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v2 .
+docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v2 .
+docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v6 .
+docker push ndamiano100/maestro-worker:mesh-v6   # etc.
 ```
 
+Current tags: `llm-v2`, `image-v2`, `mesh-v6`. Bump the tag on every push — RunPod caches images
+per host, so re-pushing a tag leaves stale copies serving on warm hosts.
+
+The mesh image is the fussy one; its runtime deps are the home-verified TRELLIS stack exactly
+(see Dockerfile.worker-mesh): pinned transformers/timm/einops/kornia, the local TRELLIS.2 patch
+set (`scripts/trellis2-sdpa-dinov3.patch` — sdpa attention backends + the DINOv3 module layout),
+gcc for triton's first-use JIT of the flex_gemm kernels, and `TRITON_CACHE_DIR` on the network
+volume so that JIT is paid once per volume, not per pod.
+
+Make one RunPod **template** per image (container image + volume mount at `/workspace`; no ports).
 Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (`WORKER_TOKEN` must
-match `workqueue.token` on the control plane). Neither pod exposes a port: the inference server binds
+match `workqueue.token` on the control plane). No pod exposes a port: the inference server binds
 `127.0.0.1`, since a reachable one is an unauthenticated GPU.
+
+**Container restart caveat:** RunPod restarts an exited container and keeps billing — even exit 0.
+A worker deciding to die is therefore not enough to stop the meter. Two layers handle it:
+- **In-pod self-terminate** (fast path): clean agent exit → `DELETE /pods/$RUNPOD_POD_ID`, retried
+  ×3, result logged. RunPod injects `RUNPOD_POD_ID` but **no API key** (verified live 2026-07-21),
+  so this only fires if `RUNPOD_API_KEY` is in the pod env — which we deliberately do NOT pass to
+  autoscaled pods (an account-wide key inside every pod is a bad trade). Without it the entrypoint
+  logs "self-terminate skipped" and exits; expect the restart loop until the reaper acts.
+- **The reaper** (the guarantee): the worker deregistered on exit, so the autoscaler terminates the
+  pod on its next tick (≤`tick_seconds`).
+
+A **nonzero** exit deliberately skips self-terminate: RunPod's restart is free crash recovery.
+For a manual pod test with the autoscaler off, either put `RUNPOD_API_KEY` in the template env
+(watch for "self-terminate accepted") or kill the pod in the console when done.
+
+### Autoscaler (queue-driven pods)
+
+With `runpod.enabled` + `runpod.api_key` set and the workqueue on, the control plane runs a scaling
+loop (`src/scaler/`): per tick it reaps dead pods and adds at most one pod per queue when the queue
+is backed up. Workers own scale-DOWN: `IDLE_EXIT_SECONDS` (delivered at pod create) becomes the
+claim long-poll window, and a null claim means "queue stayed empty that long" → the worker
+deregisters and exits 0.
+
+Settings block (`settings.json` → `runpod`; env: `RUNPOD_ENABLED`, `RUNPOD_API_KEY`,
+`RUNPOD_NETWORK_VOLUME_ID`, `RUNPOD_CP_URL`):
+
+- `cp_url` — the control-plane URL pods dial back to; must be reachable from RunPod (funnel URL,
+  not localhost).
+- `queues.<name>` — per-queue policy: `template_id`, `gpu_type_ids` (a list),
+  `max_workers`, `scale_up_depth_per_worker` (add when pending ÷ effective workers hits this),
+  `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`, `idle_exit_seconds`
+  (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this
+  old with no worker row is reaped as wedged). The `queues` dict in `settings.json` replaces the
+  default wholesale — carry complete blocks.
+- Scale-from-zero fires on ANY pending job with no cooldown; a booting pod counts as capacity, so
+  a 5-minute boot can't trigger add-forever.
+
+**One-time manual check (unverified RunPod detail):** whether create-time `env` *merges with* or
+*replaces* the template's env. The scaler passes the full worker env at create either way, but on
+the first autoscaled pod confirm `CP_URL`/`WORKER_TOKEN`/`IDLE_EXIT_SECONDS` actually landed:
+pod console → `printenv`.
+
+First full cycle to watch (mesh, `max_workers: 1`): enqueue a mesh job → pod appears in the RunPod
+console → worker row registers → job done → queue drains → worker exits + deregisters → pod
+disappears (self-terminate or reaper within `stale_worker_seconds`).
 
 ### Enable the git hook (optional)
 

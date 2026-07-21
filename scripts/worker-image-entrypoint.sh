@@ -24,9 +24,42 @@ curl -sf "http://127.0.0.1:$COMFY_PORT/system_stats" >/dev/null || {
     echo "ComfyUI did not answer /system_stats within 180s" >&2; exit 1; }
 echo "ComfyUI up: $(curl -s "http://127.0.0.1:$COMFY_PORT/system_stats" | head -c 300)"
 
-exec python -m worker.agent \
+# No `exec`: RunPod restarts an exited container and keeps billing (even exit 0), so a clean
+# agent exit must be followed by an API pod kill. Best-effort here (fires only when the pod env
+# carries RUNPOD_API_KEY — RunPod injects no key on its own); the
+# control-plane reaper is the billing guarantee. Nonzero exits pass through — RunPod's restart
+# is free crash recovery.
+python -m worker.agent \
     --server "$CP_URL" \
     --queue image \
     --target "http://127.0.0.1:$COMFY_PORT" \
     --source runpod \
-    ${GPU_TYPE:+--gpu-type "$GPU_TYPE"}
+    ${GPU_TYPE:+--gpu-type "$GPU_TYPE"} \
+    ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &
+agent_pid=$!
+
+trap 'kill -TERM "$agent_pid" 2>/dev/null || true' TERM INT
+set +e
+wait "$agent_pid"; rc=$?
+# A trapped signal interrupts wait before the agent is reaped — wait again for the real status.
+if [ "$rc" -gt 128 ]; then wait "$agent_pid"; rc=$?; fi
+set -e
+
+if [ "$rc" -eq 0 ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
+    if [ -z "${RUNPOD_API_KEY:-}" ]; then
+        echo "self-terminate skipped: RUNPOD_API_KEY not set — the reaper must collect this pod" >&2
+    else
+        echo "clean exit — self-terminating pod $RUNPOD_POD_ID"
+        for _ in 1 2 3; do
+            code=$(curl -s -o /tmp/selfterm.out -w '%{http_code}' -X DELETE \
+                "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
+                -H "Authorization: Bearer $RUNPOD_API_KEY")
+            case "$code" in
+                2*|404) echo "self-terminate accepted (HTTP $code)"; break ;;
+            esac
+            echo "self-terminate failed: HTTP $code $(head -c 200 /tmp/selfterm.out)" >&2
+            sleep 2
+        done
+    fi
+fi
+exit "$rc"

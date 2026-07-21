@@ -80,9 +80,14 @@ class TrellisEngine:
         print("[trellis] loading pipeline…", flush=True)
         t0 = time.time()
         pipe = Trellis2ImageTo3DPipeline.from_pretrained(self.weights)
+        t1 = time.time()
         pipe.cuda()
+        t2 = time.time()
         self._pipe = pipe
-        print(f"[trellis] loaded in {time.time() - t0:.1f}s", flush=True)
+        # The split says WHERE a slow cold start goes: from_pretrained = reading weights off the
+        # volume (mmap page faults may defer some of that into cuda()); cuda() = host->device copy.
+        print(f"[trellis] loaded in {t2 - t0:.1f}s "
+              f"(from_pretrained {t1 - t0:.1f}s, cuda {t2 - t1:.1f}s)", flush=True)
 
     def generate(self, png_bytes: bytes, ptype: str, texture: int) -> bytes:
         from PIL import Image

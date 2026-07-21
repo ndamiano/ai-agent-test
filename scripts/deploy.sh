@@ -35,6 +35,7 @@ rsync -az --delete \
   --exclude 'src/logs/' \
   --exclude 'tasks/nicknotes.md' \
   --exclude 'outputs/' \
+  --exclude 'data/' \
   --exclude '.env' \
   --exclude 'src/config/settings.json' \
   "${REPO_ROOT}/" "${PROD_HOST}:${REMOTE_DIR}/"

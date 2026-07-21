@@ -61,7 +61,9 @@ def test_bad_token_is_rejected(app_client):
 def test_no_signup_route_exists_on_the_app(app_client):
     paths = {getattr(r, "path", "") for r in app_client.app.routes}
     assert "/auth/login" in paths
-    assert not any("signup" in p or "register" in p for p in paths)
+    # /worker/deregister is worker-fleet plumbing, not a signup surface.
+    assert not any("signup" in p or ("register" in p and not p.endswith("/deregister"))
+                   for p in paths)
 
 
 def test_websocket_requires_a_token(app_client):

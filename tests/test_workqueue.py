@@ -126,9 +126,103 @@ def test_claim_execute_complete_over_http(client):
     assert store.game("g1")["seconds_used"] == 4.5
 
 
+def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch):
+    import base64
+    from api.routers import workqueue as wq
+    monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
+
+    jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
+    client.post("/worker/claim", json={"queue": "mesh", "worker_id": "w1"}, headers=_hdr())
+    glb = b"glTF-binary-bytes"
+    r = client.post("/worker/complete", json={
+        "job_id": jid, "worker_id": "w1",
+        "result": {"glb_b64": base64.b64encode(glb).decode("ascii")}}, headers=_hdr())
+    assert r.json()["ok"] is True
+
+    job = store.get_job(jid)
+    assert "glb_b64" not in job["result"]
+    blob = Path(job["result"]["glb_file"])
+    assert blob == tmp_path / "blobs" / f"{jid}.glb"
+    assert blob.read_bytes() == glb
+
+
+def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
+    import base64
+    from api.routers import workqueue as wq
+    monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
+
+    jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
+    client.post("/worker/claim", json={"queue": "mesh", "worker_id": "w1"}, headers=_hdr())
+    r = client.post("/worker/complete", json={
+        "job_id": jid, "worker_id": "not-the-claimant",
+        "result": {"glb_b64": base64.b64encode(b"x").decode("ascii")}}, headers=_hdr())
+    assert r.json()["ok"] is False
+    assert list((tmp_path / "blobs").glob("*")) == []
+
+
+def test_glb_completion_refuses_a_path_shaped_job_id(client, tmp_path, monkeypatch):
+    import base64
+    from api.routers import workqueue as wq
+    monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
+    r = client.post("/worker/complete", json={
+        "job_id": "../../etc/passwd", "worker_id": "w1",
+        "result": {"glb_b64": base64.b64encode(b"x").decode("ascii")}}, headers=_hdr())
+    assert r.status_code == 400
+
+
 def test_empty_claim_long_polls_then_returns_null(client):
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     assert r.json() == {"job": None}
+
+
+def test_wait_seconds_shortens_the_long_poll_window(client, monkeypatch):
+    from api.routers import workqueue as wq
+    monkeypatch.setattr(wq, "CLAIM_LONG_POLL_SECONDS", 30.0)
+    t0 = time.time()
+    r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
+                                           "wait_seconds": 0.1}, headers=_hdr())
+    assert r.json() == {"job": None}
+    assert time.time() - t0 < 5   # honored the request, not the 30s server max
+
+
+def test_wait_seconds_is_capped_at_the_server_max(client):
+    # server max is 0.2 in this fixture; asking for 60 must not hold the request for 60s
+    t0 = time.time()
+    r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
+                                           "wait_seconds": 60}, headers=_hdr())
+    assert r.json() == {"job": None}
+    assert time.time() - t0 < 5
+
+
+def test_claim_records_the_pod_id(client):
+    client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
+                                       "pod_id": "pod-1"}, headers=_hdr())
+    assert store.live_workers("llm", 60)[0]["pod_id"] == "pod-1"
+
+
+def test_heartbeat_bumps_worker_last_seen(client):
+    store.enqueue_job("llm", {})
+    r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
+    job = r.json()["job"]
+    with store._db() as conn:
+        conn.execute("UPDATE workers SET last_seen_at = last_seen_at - 999 WHERE id = 'w1'")
+    assert store.live_workers("llm", 60) == []
+    client.post("/worker/heartbeat", json={"job_id": job["id"], "worker_id": "w1"},
+                headers=_hdr())
+    assert [w["id"] for w in store.live_workers("llm", 60)] == ["w1"]
+
+
+def test_deregister_terminates_the_worker_row(client):
+    client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
+                                       "pod_id": "pod-1"}, headers=_hdr())
+    r = client.post("/worker/deregister", json={"worker_id": "w1"}, headers=_hdr())
+    assert r.json() == {"ok": True}
+    assert store.live_workers("llm", 60) == []
+    assert store.terminated_workers_with_pods("llm")[0]["id"] == "w1"
+
+
+def test_deregister_requires_the_token(client):
+    assert client.post("/worker/deregister", json={"worker_id": "w1"}).status_code == 403
 
 
 # ── QueueConnector end-to-end with a fake worker ──────────────────────────────

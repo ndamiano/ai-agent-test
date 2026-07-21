@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Start the TRELLIS server, wait for it, run the worker agent, and on a CLEAN agent exit
+# best-effort self-terminate the pod.
+#
+# No `exec`: RunPod RESTARTS an exited container and keeps billing (even exit 0), so the agent's
+# self-exit is only the *decision* — the pod must be killed by API. The in-pod DELETE fires only
+# when the env carries RUNPOD_API_KEY (RunPod injects no key on its own); the control-plane
+# reaper is the billing guarantee.
+# A NONZERO exit passes through without self-terminate: RunPod's restart is free crash recovery.
+#
+# The TRELLIS server binds 127.0.0.1 and no port is exposed: a reachable inference server is an
+# unauthenticated GPU. The worker dials OUT to the control plane.
+set -euo pipefail
+
+: "${CP_URL:?CP_URL (control plane base URL) is required}"
+: "${WORKER_TOKEN:?WORKER_TOKEN is required}"
+
+test -d "$TRELLIS_WEIGHTS" || {
+    echo "network volume not mounted: $TRELLIS_WEIGHTS is missing" >&2; exit 1; }
+
+# Volume throughput probe: one sequential GiB off the biggest ckpt. Cold-start diagnosis — if
+# this rate ≈ the pipeline load rate, the volume is the bottleneck and pre-copying to local disk
+# buys nothing; if it's much faster, the loader's read pattern (mmap page faults) is the problem.
+probe=$(ls -S "$TRELLIS_WEIGHTS"/ckpts/*.safetensors 2>/dev/null | head -1)
+if [ -n "$probe" ]; then
+    dd if="$probe" of=/dev/null bs=64M count=16 2>&1 | tail -1 | sed 's/^/[probe] volume seq read: /'
+fi
+
+python /opt/maestro/src/tools/trellis_server.py \
+    --repo "$TRELLIS_REPO" --weights "$TRELLIS_WEIGHTS" \
+    --host 127.0.0.1 --port "$TRELLIS_PORT" &
+trellis_pid=$!
+
+# The pipeline lazy-loads on first generate, so /health answers as soon as uvicorn binds.
+for _ in $(seq 1 60); do
+    if curl -sf "http://127.0.0.1:$TRELLIS_PORT/health" >/dev/null; then break; fi
+    kill -0 "$trellis_pid" 2>/dev/null || { echo "trellis server died during startup" >&2; exit 1; }
+    sleep 2
+done
+curl -sf "http://127.0.0.1:$TRELLIS_PORT/health" >/dev/null || {
+    echo "trellis server did not answer /health within 120s" >&2; exit 1; }
+echo "trellis up: $(curl -s "http://127.0.0.1:$TRELLIS_PORT/health")"
+
+python -m worker.agent \
+    --server "$CP_URL" \
+    --queue mesh \
+    --target "http://127.0.0.1:$TRELLIS_PORT" \
+    --source runpod \
+    ${GPU_TYPE:+--gpu-type "$GPU_TYPE"} \
+    ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &
+agent_pid=$!
+
+trap 'kill -TERM "$agent_pid" 2>/dev/null || true' TERM INT
+set +e
+wait "$agent_pid"; rc=$?
+# A trapped signal interrupts wait before the agent is reaped — wait again for the real status.
+if [ "$rc" -gt 128 ]; then wait "$agent_pid"; rc=$?; fi
+set -e
+
+if [ "$rc" -eq 0 ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
+    if [ -z "${RUNPOD_API_KEY:-}" ]; then
+        echo "self-terminate skipped: RUNPOD_API_KEY not set — the reaper must collect this pod" >&2
+    else
+        echo "clean exit — self-terminating pod $RUNPOD_POD_ID"
+        for _ in 1 2 3; do
+            code=$(curl -s -o /tmp/selfterm.out -w '%{http_code}' -X DELETE \
+                "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
+                -H "Authorization: Bearer $RUNPOD_API_KEY")
+            case "$code" in
+                2*|404) echo "self-terminate accepted (HTTP $code)"; break ;;
+            esac
+            echo "self-terminate failed: HTTP $code $(head -c 200 /tmp/selfterm.out)" >&2
+            sleep 2
+        done
+    fi
+fi
+exit "$rc"

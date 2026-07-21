@@ -5,12 +5,15 @@ services:
       dockerfile: Dockerfile
     image: maestro:latest
     env_file: .env
+    environment:
+      # Control-plane dbs live on the maestro-data volume, beside runs/.
+      MAESTRO_DATA_DIR: /data
     ports:
       - "${PORT:-8000}:8000"
     restart: unless-stopped
 
     volumes:
-      # Durable state (runs/ + private/auth.db + private/platform.db). Named volume => survives
+      # Durable state (runs/ + auth.db + platform.db). Named volume => survives
       # image rebuilds. THIS is the critical invariant: losing it wipes accounts + games.
       - maestro-data:/data
       # Staged playable bundles (runtime/games/<id>, served at /play) — also rebuild-durable.

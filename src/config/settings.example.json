@@ -27,5 +27,29 @@
     "token": "",
     "job_timeout_seconds": 900,
     "lease_seconds": 120
+  },
+  "runpod": {
+    "enabled": false,
+    "api_key": "",
+    "network_volume_id": "",
+    "cloud_type": "SECURE",
+    "cp_url": "",
+    "tick_seconds": 15,
+    "stale_worker_seconds": 180,
+    "queues": {
+      "mesh": {
+        "template_id": "your-mesh-template-id",
+        "gpu_type_ids": [
+          "NVIDIA GeForce RTX 5090",
+          "NVIDIA RTX PRO 4500 Blackwell"
+        ],
+        "max_workers": 2,
+        "scale_up_depth_per_worker": 10,
+        "scale_up_max_age_seconds": 300,
+        "cooldown_seconds": 90,
+        "idle_exit_seconds": 10,
+        "boot_deadline_seconds": 900
+      }
+    }
   }
 }

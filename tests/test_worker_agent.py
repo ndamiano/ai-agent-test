@@ -2,6 +2,7 @@
 token, and lands result/error with measured exec time."""
 
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -41,6 +42,7 @@ def test_execute_forwards_body_and_strips_the_worker_token():
 
     a.session.post.side_effect = post
     a.execute({"id": "j1", "payload": {"path": "/v1/responses", "body": {"model": "m"}}})
+    a._drain_uploads()   # completions ship in the background — flush before asserting
 
     (gpu_url, gpu_kw) = calls[0]
     assert gpu_url == "http://gpu/v1/responses"
@@ -64,7 +66,113 @@ def test_execute_reports_upstream_errors():
 
     a.session.post.side_effect = post
     a.execute({"id": "j1", "payload": {"body": {}}})
+    a._drain_uploads()
 
     body = a.session.post.call_args_list[-1].kwargs["json"]
     assert body["result"] is None
     assert "failed to load" in body["error"]
+
+
+def test_execute_returns_while_the_result_is_still_uploading():
+    """The pipelining contract: the GPU is free to claim the next job the moment the handler
+    returns — the completion POST happens on the uploader thread."""
+    a = _agent()
+    gate = threading.Event()
+    completed = threading.Event()
+
+    def post(url, **kw):
+        if url.startswith("http://gpu"):
+            return _Resp(200, {"output": ["ok"]})
+        gate.wait(5)   # a slow /worker/complete (big GLB on a thin uplink)
+        completed.set()
+        return _Resp(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.execute({"id": "j1", "payload": {"path": "/x", "body": {}}})
+    assert not completed.is_set()   # execute returned; the upload is still in flight
+    gate.set()
+    a._drain_uploads()
+    assert completed.is_set()
+
+
+def test_run_drains_uploads_before_deregister():
+    a = _agent()
+    order = []
+
+    def post(url, **kw):
+        if url.startswith("http://gpu"):
+            return _Resp(200, {"output": ["ok"]})
+        if url.endswith("/worker/claim"):
+            a.stopping = True
+            return _Resp(200, {"job": {"id": "j1", "payload": {"path": "/x", "body": {}}}})
+        order.append(url.rsplit("/", 1)[-1])
+        return _Resp(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.run()
+    assert order == ["complete", "deregister"]
+
+
+# ── idle self-exit (the scale-down decision) ─────────────────────────────────
+def _posts_to(a, path):
+    return sum(1 for c in a.session.post.call_args_list if c.args[0].endswith(path))
+
+
+def test_claim_body_carries_pod_id_and_wait_seconds(monkeypatch):
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-abc")
+    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
+              idle_exit_seconds=10)
+    a.session = MagicMock()
+    a.session.post.return_value = _Resp(200, {"job": None})
+    a.claim()
+    body = a.session.post.call_args.kwargs["json"]
+    assert body["pod_id"] == "pod-abc"
+    assert body["wait_seconds"] == 10
+
+
+def test_idle_exit_zero_sends_no_wait_seconds():
+    a = _agent()
+    a.session.post.return_value = _Resp(200, {"job": None})
+    a.claim()
+    assert "wait_seconds" not in a.session.post.call_args.kwargs["json"]
+
+
+def test_null_claim_with_idle_exit_deregisters_and_stops():
+    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
+              idle_exit_seconds=5)
+    a.session = MagicMock()
+    a.session.post.return_value = _Resp(200, {"job": None})
+    a.run()   # returns instead of looping forever
+    assert _posts_to(a, "/worker/deregister") == 1
+
+
+def test_idle_exit_zero_never_exits_on_a_null_claim():
+    a = _agent()
+    calls = {"n": 0}
+
+    def post(url, **kw):
+        if url.endswith("/worker/claim"):
+            calls["n"] += 1
+            if calls["n"] >= 3:
+                a.stopping = True
+            return _Resp(200, {"job": None})
+        return _Resp(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.run()
+    assert calls["n"] >= 3   # null claims did not stop it; only stopping did
+
+
+def test_sigterm_drain_deregisters():
+    a = _agent()
+    a.session.post.return_value = _Resp(200, {"ok": True})
+    a.stopping = True
+    a.run()
+    assert _posts_to(a, "/worker/deregister") == 1
+
+
+def test_deregister_is_best_effort():
+    import requests
+    a = _agent()
+    a.session.post.side_effect = requests.ConnectionError("cp down")
+    a.deregister()   # swallowed, not raised

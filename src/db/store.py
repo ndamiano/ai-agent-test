@@ -120,10 +120,6 @@ def _db():
         if str(path) not in _INITIALIZED:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
-            # No migration mechanism exists; a db created before the pod_id column needs it added.
-            cols = {r["name"] for r in conn.execute("PRAGMA table_info(workers)")}
-            if "pod_id" not in cols:
-                conn.execute("ALTER TABLE workers ADD COLUMN pod_id TEXT")
             _INITIALIZED.add(str(path))
     try:
         yield conn

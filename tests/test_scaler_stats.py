@@ -1,9 +1,7 @@
-"""SqliteStatsSource over db.store: queue stats, live/stale worker filtering, terminated-clear
-on re-register, and the pod_id column shim for a pre-existing db."""
+"""SqliteStatsSource over db.store: queue stats, live/stale worker filtering, and terminated-clear
+on re-register."""
 
-import sqlite3
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -82,21 +80,3 @@ def test_worker_seen_keeps_pod_id_when_not_resent():
     store.worker_seen("w1", "mesh", pod_id="p1")
     store.worker_seen("w1", "mesh")
     assert SqliteStatsSource().live_workers("mesh", 60) == [("w1", "p1")]
-
-
-def test_pod_id_shim_on_a_pre_existing_db(tmp_path, monkeypatch):
-    old = tmp_path / "old.db"
-    conn = sqlite3.connect(str(old))
-    conn.execute(
-        "CREATE TABLE workers (id TEXT PRIMARY KEY, queue TEXT, gpu_type TEXT, source TEXT, "
-        "busy_seconds REAL NOT NULL DEFAULT 0, started_at REAL NOT NULL, last_seen_at REAL, "
-        "terminated_at REAL)")
-    conn.execute("INSERT INTO workers (id, queue, started_at, last_seen_at) VALUES (?, ?, ?, ?)",
-                 ("veteran", "llm", time.time(), time.time()))
-    conn.commit()
-    conn.close()
-
-    monkeypatch.setattr(store, "_db_path", lambda: old)
-    store.worker_seen("w1", "mesh", pod_id="p1")   # would fail without the ALTER shim
-    assert SqliteStatsSource().live_workers("mesh", 60) == [("w1", "p1")]
-    assert store.live_workers("llm", 60)[0]["pod_id"] is None

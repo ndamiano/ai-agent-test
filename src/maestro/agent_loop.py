@@ -49,16 +49,8 @@ def collect_errors(modules: List[Module], context) -> List[Tuple[Module, Error]]
             out.append((m, e))
     return out
 
-
-def _waived_idkeys(state) -> set:
-    """Idkeys a human has waived (accepted as-is) — read straight from the durable waivers file. No
-    module owns this in the codegen world; the loop reads it directly."""
-    return {w.get("idkey") for w in (state.read_waivers() or []) if w.get("idkey")}
-
-
 def effective_pairs(modules: List[Module], context) -> List[Tuple[Module, Error]]:
-    waived = _waived_idkeys(context.state)
-    return [(m, e) for m, e in collect_errors(modules, context) if idkey(e) not in waived]
+    return [(m, e) for m, e in collect_errors(modules, context)]
 
 
 def prioritize(pairs: List[Tuple[Module, Error]]) -> Tuple[Module, Error]:

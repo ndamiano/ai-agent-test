@@ -275,7 +275,7 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
     from llm_clients.connector_selector import get_connector
     from llm_clients.message_builder import MessageBuilder
 
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no run {run_id!r}")

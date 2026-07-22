@@ -32,7 +32,7 @@ def _make_game(user_id, spec):
     from maestro.codegen.run import create_run
     from maestro.state import RunState
     run_id = create_run(user_id)
-    RunState.for_run(run_id).write_spec(spec)
+    RunState(run_id).write_spec(spec)
     db_store.update_spec_meta(run_id, spec.get("title", ""), spec.get("mode", ""),
                               bool(spec.get("frozen")))
     return run_id

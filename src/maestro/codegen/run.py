@@ -79,7 +79,7 @@ def create_run(user_id: str) -> str:
     from db import store as db_store
 
     run_id = uuid.uuid4().hex[:12]
-    RunState.for_run(run_id)   # materialize the run dir
+    RunState(run_id)
     db_store.create_game(run_id, user_id)
     return run_id
 
@@ -123,7 +123,7 @@ def propose_spec(request: str, run_id: str) -> dict:
     from tools.build_events import _emit
 
     spec = draft_spec(request)
-    RunState.for_run(run_id).write_spec(spec)
+    RunState(run_id).write_spec(spec)
     _mirror_spec_meta(run_id, spec)
     _emit("spec_proposed", run_id, title=spec["title"], mode=spec["mode"])
     return spec
@@ -134,7 +134,7 @@ def amend_spec(run_id: str, note: str) -> dict:
     build refuses until the human re-freezes."""
     from tools.build_events import _emit
 
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no run {run_id!r}")
@@ -155,7 +155,7 @@ def freeze_spec(run_id: str) -> dict:
     """The human's out-of-band approval: freeze the spec so the build may run."""
     from tools.build_events import _emit
 
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     spec = state.read_spec()
     spec["frozen"] = True
     state.write_spec(spec)
@@ -188,7 +188,7 @@ def run_build(run_id: str, max_steps: int = 60):
 
     from db import store as db_store
 
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no spec for run {run_id!r} — draft one first")
@@ -235,7 +235,7 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     from llm_clients.connector_selector import get_connector
     from tools.execution_context import run_scope
 
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no run {run_id!r}")
@@ -257,6 +257,8 @@ def _cli(request: str, *, yes: bool = False) -> int:
     from auth import store
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
+    # TODO Think through this. The CLI is only used by employees.
+    # We should probably require an account
     users = store.list_users()
     if not users:
         print("no accounts yet — create one first: python -m auth.cli create <handle>")
@@ -266,7 +268,7 @@ def _cli(request: str, *, yes: bool = False) -> int:
     run_id = create_run(owner)
     print(f"run: {run_id}\ndrafting spec for: {request!r}\n")
     spec = draft_spec(request)
-    RunState.for_run(run_id).write_spec(spec)
+    RunState(run_id).write_spec(spec)
     print(json.dumps(spec["design"], indent=2, ensure_ascii=False))
 
     if not yes and input("\nFreeze this spec and build? [y/N] ").strip().lower() != "y":
@@ -282,7 +284,7 @@ def _cli(request: str, *, yes: bool = False) -> int:
     if not result.ok:
         for e in result.failures:
             print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     from maestro.codegen.gates import entry_src_path
     print(f"game: {entry_src_path(state.run_dir).resolve()}")
     if result.ok:

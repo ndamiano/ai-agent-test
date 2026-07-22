@@ -51,7 +51,7 @@ def _require_state(run_id: str, user: User):
     from maestro.state import RunState
 
     owner = db_store.owner_of(run_id)
-    state = RunState.for_run(run_id)
+    state = RunState(run_id)
     if owner is None or state.read_spec() is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
     if owner != user.id:

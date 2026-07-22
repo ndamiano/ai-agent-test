@@ -774,7 +774,7 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
 
     conn = _FakeToolConn([{"old_string": "kit.V.clamp(this.state.p.x, 0, 190)",
                            "new_string": "kit.V.clamp(this.state.p.x, 0, 180)"}])
-    monkeypatch.setattr(run_mod.RunState, "for_run", classmethod(lambda cls, rid: state))
+    monkeypatch.setattr(run_mod, "RunState", lambda rid: state)
     monkeypatch.setattr("llm_clients.connector_selector.get_connector", lambda: conn)
     regated = {}
     monkeypatch.setattr(run_mod, "run_build",

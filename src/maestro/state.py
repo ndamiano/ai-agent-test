@@ -21,21 +21,16 @@ from typing import Dict, List, Optional
 
 SPEC_FILE = "spec.json"
 STORY_STATE_FILE = "story_state.json"
-WAIVERS_FILE = "waivers.json"
-# Files that live in the run dir but are NOT artifact components. Ownership and charge state
-# live in db.store, not the run dir.
-_RESERVED = {SPEC_FILE, STORY_STATE_FILE, WAIVERS_FILE}
+# Files that live in the run dir but are NOT artifact components.
+_RESERVED = {SPEC_FILE, STORY_STATE_FILE}
 
 
 class RunState:
-    def __init__(self, run_dir):
-        self.run_dir = Path(run_dir)
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-
-    @classmethod
-    def for_run(cls, run_id: str) -> "RunState":
+    def __init__(self, run_id):
         from tools.execution_context import resolve_base_path
-        return cls(resolve_base_path() / "runs" / run_id)
+        self.run_id = run_id
+        self.run_dir = resolve_base_path() / "runs" / run_id
+        self.run_dir.mkdir(parents=True, exist_ok=True)
 
     # ── components ──────────────────────────────────────────────────────────
     def write_component(self, component_id: str, content) -> None:
@@ -71,9 +66,6 @@ class RunState:
 
     def read_story_state(self) -> Optional[Dict]:
         return self._read(STORY_STATE_FILE)
-
-    def read_waivers(self) -> List[Dict]:
-        return self._read(WAIVERS_FILE) or []
 
     # ── io ────────────────────────────────────────────────────────────────────
     def _write(self, filename: str, data) -> None:

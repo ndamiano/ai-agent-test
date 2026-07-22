@@ -38,7 +38,7 @@ def test_propose_spec_persists_and_emits(tmp_path, events, stub_draft):
         spec = run_mod.propose_spec("a maze game", run_id)
 
         assert spec["title"] == "Stub Game"
-        assert RunState.for_run(run_id).read_spec() == spec
+        assert RunState(run_id).read_spec() == spec
         assert spec["frozen"] is False
     assert ("spec_proposed", run_id, {"title": "Stub Game", "mode": "2d"}) in events
 
@@ -54,7 +54,7 @@ def test_amend_spec_rewrites_unfrozen_and_emits(tmp_path, events, stub_draft):
         assert amended["frozen"] is False
         assert amended["request"] == "a maze game"       # original request preserved
         assert "add a boss" in amended["design"]["seen"]  # note reached the draft call
-        assert RunState.for_run(run_id).read_spec()["frozen"] is False
+        assert RunState(run_id).read_spec()["frozen"] is False
     assert ("spec_amend_requested", run_id, {"note": "add a boss"}) in events
 
 
@@ -66,5 +66,5 @@ def test_freeze_spec_roundtrips_frozen_flag(tmp_path, events, stub_draft):
         result = run_mod.freeze_spec(run_id)
 
         assert result == {"ok": True, "frozen": True}
-        assert RunState.for_run(run_id).read_spec()["frozen"] is True
+        assert RunState(run_id).read_spec()["frozen"] is True
     assert ("spec_frozen", run_id, {"title": "Stub Game"}) in events

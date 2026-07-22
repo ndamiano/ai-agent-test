@@ -63,7 +63,7 @@ def test_main_purpose_is_spec_driven_not_hardcoded_village():
 def test_maybe_seed_writes_world_and_forces_single_file_manifest(tmp_path, stub_bridge):
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
-        st = RunState.for_run(rid)
+        st = RunState(rid)
         run_mod._maybe_seed_worldgen(rid, st, _world_spec())
 
         gd = game_dir(st.run_dir)
@@ -78,7 +78,7 @@ def test_maybe_seed_writes_world_and_forces_single_file_manifest(tmp_path, stub_
 def test_maybe_seed_is_idempotent(tmp_path, stub_bridge):
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
-        st = RunState.for_run(rid)
+        st = RunState(rid)
         run_mod._maybe_seed_worldgen(rid, st, _world_spec())
         (game_dir(st.run_dir) / "world.ts").write_text("edited", encoding="utf-8")
         stub_bridge.clear()
@@ -90,7 +90,7 @@ def test_maybe_seed_is_idempotent(tmp_path, stub_bridge):
 def test_maybe_seed_noop_when_not_world_flagged(tmp_path, stub_bridge):
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
-        st = RunState.for_run(rid)
+        st = RunState(rid)
         spec = _world_spec()
         spec["world"] = None
         run_mod._maybe_seed_worldgen(rid, st, spec)
@@ -106,7 +106,7 @@ def test_run_build_seeds_world_before_loop(tmp_path, stub_bridge, monkeypatch):
 
     class _FakeLoop:
         def __init__(self, *a, **k):
-            _FakeLoop.seen_world = (game_dir(RunState.for_run(rid).run_dir) / "world.ts").exists()
+            _FakeLoop.seen_world = (game_dir(RunState(rid).run_dir) / "world.ts").exists()
 
         def run(self):
             return _Result()
@@ -116,7 +116,7 @@ def test_run_build_seeds_world_before_loop(tmp_path, stub_bridge, monkeypatch):
 
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
-        st = RunState.for_run(rid)
+        st = RunState(rid)
         st.write_spec(_world_spec())
         result = run_mod.run_build(rid, max_steps=1)
 

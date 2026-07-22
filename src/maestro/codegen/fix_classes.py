@@ -18,12 +18,24 @@ quo, never worse. Add a class = one entry here; the map stays small and closed b
 label failures need it (tsc's self-describing logic bugs are handled by `default` reading the site).
 """
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from maestro.codegen.gates import dedupe_decls, game_files, reconcile_types
+from maestro.codegen.gates import (
+    dedupe_decls,
+    game_dir,
+    game_files,
+    reconcile_types,
+)
+from maestro.codegen.scaffold import (
+    ENTRY_HOOK,
+    contract_assert_line,
+    has_contract_assert,
+    reexport_hooks,
+)
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts" / "fix_kinds"
 
@@ -197,8 +209,6 @@ def _matches_phantom(error) -> bool:
 
 
 def _strip_phantom_imports(run_dir, error) -> Optional[dict]:
-    from maestro.codegen.gates import game_dir
-
     changes, count = [], 0
     modules = set(_PHANTOM.findall(error.message or ""))
     missing = {m for m in modules
@@ -300,7 +310,6 @@ def _matches_hook(error) -> bool:
 
 
 def _reexport_hooks(run_dir, error) -> Optional[dict]:
-    from maestro.codegen.scaffold import reexport_hooks
     res = reexport_hooks(run_dir)
     return res if res.get("count") else None
 
@@ -344,9 +353,6 @@ def _matches_contract_assert(error) -> bool:
 
 
 def _append_contract_assert(run_dir, error) -> Optional[dict]:
-    import json
-    from maestro.codegen.gates import game_dir
-    from maestro.codegen.scaffold import ENTRY_HOOK, contract_assert_line, has_contract_assert
     if has_contract_assert(run_dir):
         return None
     p = Path(game_dir(run_dir)) / ENTRY_HOOK

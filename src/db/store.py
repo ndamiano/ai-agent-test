@@ -18,6 +18,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from config.settings_manager import settings_manager
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (
     id              TEXT PRIMARY KEY,
@@ -96,7 +98,6 @@ def _db_path() -> Path:
     # at game/assets/ for ComfyUI), which would fork an empty db there — an enqueued job would land
     # where no worker is looking. data_dir, not working_directory: control-plane state does not
     # belong in the artifact output tree.
-    from config.settings_manager import settings_manager
     return Path(settings_manager.get_settings()["data_dir"]).resolve() / "platform.db"
 
 

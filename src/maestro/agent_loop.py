@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from llm_clients.connector_selector import get_connector
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType, Module, idkey
 from maestro.services import BudgetExhausted, Services
@@ -81,7 +82,6 @@ class AgentLoop:
     def __init__(self, spec: dict, state, modules: List[Module], tools: dict, *, connector=None,
                  max_steps: int = 1000, on_event=None, on_milestone=None, control=None,
                  parallel: int = 1):
-        from llm_clients.connector_selector import get_connector
         self.spec = spec
         self.state = state
         self.modules = modules

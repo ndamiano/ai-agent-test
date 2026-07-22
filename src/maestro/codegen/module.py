@@ -20,13 +20,35 @@ import json
 import re
 from pathlib import Path
 
+from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import data_files
-from maestro.codegen.gates import (
-    ENTRY_SRC, RUNTIME_DIR, extract_code, game_files, manifest_path, read_manifest,
-    run_headless, run_probe, run_render, run_scroll, typecheck,
+from maestro.codegen.fix_classes import (
+    classify,
+    strip_dead_creategame,
+    strip_unplanned_imports,
 )
-from maestro.codegen.scaffold import ENTRY_HOOK, is_scaffolded, scheme_of
+from maestro.codegen.gates import (
+    ENTRY_SRC,
+    RUNTIME_DIR,
+    extract_code,
+    game_files,
+    manifest_path,
+    read_manifest,
+    run_headless,
+    run_probe,
+    run_render,
+    run_scroll,
+    typecheck,
+)
+from maestro.codegen.scaffold import (
+    ENTRY_HOOK,
+    contract_assert_line,
+    has_contract_assert,
+    is_scaffolded,
+    scheme_of,
+)
 from maestro.modules.module import Check, Error, ErrorType, Module
+from maestro.services import parse_args, salvage_tool_call
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _CODE_MAX_TOKENS = 16000
@@ -93,7 +115,6 @@ def _design_block(spec: dict) -> str:
 
 
 def _infer(services, system: str, user: str, max_tokens: int) -> str:
-    from llm_clients.message_builder import MessageBuilder
     msgs = MessageBuilder(system).add_user(user).build()
     resp = services.infer(msgs, [], max_tokens=max_tokens)
     return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
@@ -105,8 +126,6 @@ def _author_via_write(services, system: str, user: str, dispatch, file: str, max
     the block as a scratchpad (chatter comments, a second "rewritten" copy of a function): the payload
     is a single `code` arg for one named file, not free-form markdown. Falls back to salvaging a tool
     call, then to a fenced block, from the content — a local model that ignores the tool still lands."""
-    from llm_clients.message_builder import MessageBuilder
-    from maestro.services import parse_args, salvage_tool_call
     msgs = MessageBuilder(system).add_user(user).build()
     # The model thinks in-content (the reasoning knob is a no-op on it) and a long think can eat the
     # whole token budget, truncating the tool call mid-arg → unparseable → no code. That's a per-call
@@ -233,7 +252,6 @@ def _detect_contracted(check, module, context):
     error at the GENERATED scaffold's import site. Its absence is silent to tsc, so this gate
     demands it; the MODEL appends it via the edit subloop (a prompting fix — the pipeline never
     edits game.ts)."""
-    from maestro.codegen.scaffold import contract_assert_line, has_contract_assert
     run_dir = context.state.run_dir
     if not is_scaffolded(run_dir):
         return []
@@ -525,7 +543,6 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     result = _author_via_write(services, system, "\n\n".join(parts), dispatch, me["name"], _CODE_MAX_TOKENS)
     detail = result.get("error") or f"{result.get('chars')} chars"
     if not result.get("error"):
-        from maestro.codegen.fix_classes import strip_dead_creategame, strip_unplanned_imports
         if strip_unplanned_imports(run_dir, {f["name"] for f in files}):
             detail += " (stripped unplanned import)"
         if is_scaffolded(run_dir) and strip_dead_creategame(run_dir):
@@ -619,9 +636,6 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
     `fix_class` (see fix_classes.py) supplies the error-class-specific steering: an AUTHORITY block (the
     on-disk context that biases toward the correct root cause, e.g. a type's real members) and a
     DIRECTIVE (root-cause framing). `default`/None adds neither — the generic loop, unchanged."""
-    from llm_clients.message_builder import MessageBuilder
-    from maestro.services import parse_args, salvage_tool_call
-
     spec = context.spec
     run_dir = context.state.run_dir
     files = _manifest_files(run_dir)
@@ -728,7 +742,6 @@ def dispatch_fix(module, context, error, slot, services, dispatch):
     `dead_controls` and a tsc contract error can share the same machinery without the gate knowing.
     `default` matches everything and adds no steering, so any unclassified failure is exactly today's
     generic loop — never worse."""
-    from maestro.codegen.fix_classes import classify
     cls = classify(error)
     if cls.deterministic is not None:
         res = cls.deterministic(context.state.run_dir, error) or {}

@@ -5,6 +5,9 @@ import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+from config.settings_manager import settings_manager
+from llm_clients.connector_selector import get_connector
+
 logger = logging.getLogger(__name__)
 
 # Tools whose result carries the full current file body — deduped by file, so the newest body of a
@@ -30,10 +33,8 @@ class MessageBuilder:
     TOOL_RESULT_MAX_CHARS: int = 32_000
 
     def __init__(self, system_prompt: str) -> None:
-        from config.settings_manager import settings_manager
         budget = settings_manager.get_category_settings().message_budget_chars
         try:
-            from llm_clients.connector_selector import get_connector
             ctx_len = get_connector().get_context_length()
             if ctx_len:
                 # Input budget = (window − reserved output) × chars/token. Measured on live

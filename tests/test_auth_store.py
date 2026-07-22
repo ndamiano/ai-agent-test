@@ -5,6 +5,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import sqlite3
+
+import auth.store as s
 from auth import store
 
 
@@ -15,7 +18,6 @@ def _tmp_db(tmp_path, monkeypatch):
 
 def test_password_is_hashed_not_stored_plaintext(tmp_path):
     user = store.create_user("alice", "hunter2")
-    import sqlite3
     conn = sqlite3.connect(str(tmp_path / "auth.db"))
     stored = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,)).fetchone()[0]
     conn.close()
@@ -71,7 +73,6 @@ def test_token_stops_resolving_after_its_ttl(monkeypatch):
     assert store.resolve_token(token) is not None
 
     # Age the session past the TTL by shifting "now" forward — the token no longer resolves.
-    import auth.store as s
     real_time = s.time.time
     monkeypatch.setattr(s.time, "time",
                         lambda: real_time() + store.SESSION_TTL_SECONDS + 1)
@@ -81,7 +82,6 @@ def test_token_stops_resolving_after_its_ttl(monkeypatch):
 def test_token_stored_only_as_hash(tmp_path):
     user = store.create_user("alice", "pw")
     token = store.issue_token(user.id)
-    import sqlite3
     conn = sqlite3.connect(str(tmp_path / "auth.db"))
     rows = [r[0] for r in conn.execute("SELECT token_hash FROM sessions").fetchall()]
     conn.close()

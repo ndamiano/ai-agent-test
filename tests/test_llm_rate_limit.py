@@ -1,6 +1,6 @@
 """Test LLM API rate limiting"""
 
-from llm_clients.rate_limiter import LLMRateLimiter
+from llm_clients.rate_limiter import LLMRateLimiter, get_llm_rate_limiter
 
 
 class FakeClock:
@@ -97,8 +97,6 @@ class TestLLMRateLimiterIntegration:
         # Contract: the shared singleton is sized so a full parallel-fix batch (8) bursts
         # through, then the rate gates until tokens refill. Driven on a fake clock so the
         # singleton's real capacity/rate wiring is verified without wall-clock waits.
-        from llm_clients.rate_limiter import get_llm_rate_limiter
-
         clock = FakeClock()
         limiter = get_llm_rate_limiter()
         monkeypatch.setattr(limiter, "_clock", clock.time)

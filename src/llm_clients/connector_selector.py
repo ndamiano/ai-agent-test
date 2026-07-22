@@ -1,8 +1,10 @@
-from typing import Optional, Dict, Any
 import hashlib
 import json
-from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
+from typing import Any, Dict, Optional
+
 from config.settings_manager import settings_manager
+from llm_clients.openai_compatible_connector import OpenAICompatibleConnector
+from llm_clients.queue_connector import QueueConnector
 
 # Singleton cache
 _cached_connector: Optional[OpenAICompatibleConnector] = None
@@ -46,7 +48,6 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
         reasoning=settings.get("reasoning"),
     )
     if workqueue.get("enabled"):
-        from llm_clients.queue_connector import QueueConnector
         _cached_connector = QueueConnector(
             **kwargs, queue="llm",
             job_timeout_seconds=workqueue.get("job_timeout_seconds", 900))

@@ -10,13 +10,16 @@ import logging
 import time
 from typing import Dict, Optional
 
+from config.settings_manager import settings_manager
+from db import store as db_store
+from tools.execution_context import get_run_id
+
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 0.25
 
 
 def _settings() -> Dict:
-    from config.settings_manager import settings_manager
     return settings_manager.get_settings().get("workqueue") or {}
 
 
@@ -28,9 +31,6 @@ def run_job(queue: str, payload: Dict, model: Optional[str] = None,
             timeout_seconds: Optional[float] = None) -> Dict:
     """Enqueue one job and wait for it. Returns the job row; a timeout comes back as
     {"status": "failed", "error": ...} so callers have one shape to branch on."""
-    from db import store as db_store
-    from tools.execution_context import get_run_id
-
     timeout = timeout_seconds or float(_settings().get("job_timeout_seconds", 900))
     job_id = db_store.enqueue_job(queue, payload, game_id=get_run_id(), model=model)
     deadline = time.time() + timeout

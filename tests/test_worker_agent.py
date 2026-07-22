@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import requests
+
 from worker.agent import Agent
 
 
@@ -172,7 +174,6 @@ def test_sigterm_drain_deregisters():
 
 
 def test_deregister_is_best_effort():
-    import requests
     a = _agent()
     a.session.post.side_effect = requests.ConnectionError("cp down")
     a.deregister()   # swallowed, not raised

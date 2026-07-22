@@ -3,9 +3,9 @@
 
 from pathlib import Path
 
-from tools.execution_context import execution_context, resolve_base_path
-from db import store as db_store
 from auth import store as auth_store
+from db import store as db_store
+from tools.execution_context import execution_context, resolve_base_path
 
 
 def test_platform_db_path_ignores_execution_context(tmp_path):

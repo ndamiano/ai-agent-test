@@ -3,11 +3,16 @@ detection, the draw rewrite extraction, manifest emission, soft-fail when the im
 and staging carrying the skin across."""
 
 import json
+import shutil
+import struct
 
 import pytest
+from PIL import Image
 
+import tools.comfyui_tools as ct
+from db import queue_client
 from maestro.codegen import reskin
-from maestro.codegen.gates import game_dir, stage_for_play, RUNTIME_DIR
+from maestro.codegen.gates import RUNTIME_DIR, game_dir, stage_for_play
 
 
 def _write_game(tmp_path):
@@ -67,15 +72,13 @@ def test_write_manifest_shape(tmp_path):
 
 def test_generate_sprites_soft_fails_when_server_down(tmp_path, monkeypatch):
     _write_game(tmp_path)
-    import tools.comfyui_tools as ct
-    monkeypatch.setattr(ct, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
+    monkeypatch.setattr(reskin, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
     got = reskin.generate_sprites(tmp_path, [{"id": "player", "prompt": "p", "w": 24, "h": 24}])
     assert got == set()                        # no crash, no files
     assert (game_dir(tmp_path) / "assets").exists()
 
 
 def test_autocrop_tightens_to_opaque_subject(tmp_path):
-    from PIL import Image
     im = Image.new("RGBA", (100, 100), (0, 0, 0, 0))          # fully transparent
     for x in range(40, 60):
         for y in range(40, 60):
@@ -87,7 +90,6 @@ def test_autocrop_tightens_to_opaque_subject(tmp_path):
 
 
 def test_autocrop_noop_on_fully_transparent(tmp_path):
-    from PIL import Image
     p = tmp_path / "blank.png"
     Image.new("RGBA", (64, 64), (0, 0, 0, 0)).save(p)
     reskin._autocrop(p)                                       # no bbox → left as is, no crash
@@ -107,7 +109,6 @@ def test_stage_copies_skin_when_present(tmp_path):
         assert (dst / "assets.json").exists()
         assert (dst / "assets" / "player.png").read_bytes() == b"\x89PNG"
     finally:
-        import shutil
         shutil.rmtree(RUNTIME_DIR / "games" / slug, ignore_errors=True)
 
 
@@ -197,8 +198,7 @@ def test_write_mesh_manifest_shape(tmp_path):
 
 def test_generate_meshes_soft_fails_when_backend_down(tmp_path, monkeypatch):
     _write_3d_game(tmp_path)
-    import tools.comfyui_tools as ct
-    monkeypatch.setattr(ct, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
+    monkeypatch.setattr(reskin, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
     got = reskin.generate_meshes(tmp_path, [{"id": "player", "prompt": "p", "w": 1, "h": 2, "d": 1}])
     assert got == set()                        # no crash, no files
     assert (game_dir(tmp_path) / "assets").exists()
@@ -217,15 +217,12 @@ def test_stage_copies_mesh_skin_when_present(tmp_path):
         assert json.loads((dst / "assets.json").read_text())["meshes"][0]["file"] == "assets/player.glb"
         assert (dst / "assets" / "player.glb").read_bytes() == b"glTF"
     finally:
-        import shutil
         shutil.rmtree(RUNTIME_DIR / "games" / slug, ignore_errors=True)
 
 
 def test_trellis_batch_retries_once(tmp_path, monkeypatch):
     """A 500 mid-batch is usually the degraded pipeline — one retry must recover the mesh instead
     of leaving a bare slab."""
-    import tools.comfyui_tools as ct
-    from db import queue_client
 
     monkeypatch.setattr(queue_client, "enabled", lambda: False)   # the direct transport
 
@@ -252,10 +249,6 @@ def test_trellis_batch_retries_once(tmp_path, monkeypatch):
 def test_decimate_glb_end_to_end(tmp_path):
     """The decimation hook must run the real node script on a real (tiny) GLB and leave a valid,
     no-larger file — and keep the original untouched when the script fails."""
-    import json
-    import struct
-
-    import tools.comfyui_tools as ct
 
     def tri_glb() -> bytes:
         buf = struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0) + struct.pack("<3I", 0, 1, 2)

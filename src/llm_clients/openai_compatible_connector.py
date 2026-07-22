@@ -1,21 +1,24 @@
 """OpenAI-compatible API connector"""
 
-import logging
-import requests
 import json
+import logging
+import os
 import time
 import uuid
-from typing import Any, Dict, Optional
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+import requests
+
+from config.settings_manager import settings_manager
 from llm_clients.base_connector import BaseConnector
+from llm_clients.log_context import get_log_dir
 from llm_clients.rate_limiter import get_llm_rate_limiter
 
 logger = logging.getLogger(__name__)
 
 
 def _get_log_path(filename: str) -> str:
-    from llm_clients.log_context import get_log_dir
-    import os
     log_dir = get_log_dir() or "logs"
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, filename)
@@ -241,7 +244,6 @@ class OpenAICompatibleConnector(BaseConnector):
         # (lmstudio.n_ctx, the launch `-c`). Without this the budget defaults to a value larger than
         # the real window and the transcript is never trimmed → the prompt overflows the context.
         try:
-            from config.settings_manager import settings_manager
             n_ctx = (settings_manager.get_settings().get("lmstudio") or {}).get("n_ctx")
             if n_ctx:
                 self._context_length = int(n_ctx)

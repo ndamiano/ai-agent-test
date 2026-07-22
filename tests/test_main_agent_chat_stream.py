@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from agents.main_agent import MainAgent
+from tools.execution_context import get_user_id
 
 
 class _FakeStreamConnector:
@@ -79,8 +80,6 @@ def test_tool_runs_under_the_agents_user_context(monkeypatch):
     """The run-creating tool reads the authed user via get_user_id(); the agent must
     re-establish it around the tool call (the contextvar does not survive the streaming
     boundary, so binding it on the agent is what makes ownership attribution work)."""
-    from tools.execution_context import get_user_id
-
     first_call = [
         {"choices": [{"index": 0, "delta": {"tool_calls": [{
             "index": 0, "id": "call1", "type": "function",

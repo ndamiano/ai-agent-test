@@ -7,6 +7,7 @@ Freeze, build (queued on the single GPU), pause/resume, fix-from-note, and asset
 live here.
 """
 
+import asyncio
 import logging
 import threading
 from typing import Dict, List
@@ -14,11 +15,18 @@ from typing import Dict, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.build_queue import build_queue, AlreadyQueued
+from api.build_queue import AlreadyQueued, build_queue
+from auth import store
+from auth.billing import SECONDS_PER_CREDIT, cost
 from auth.deps import get_current_user
 from auth.store import User
 from db import store as db_store
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
+from maestro.codegen.reskin import add_assets
+from maestro.codegen.run import fix_from_note, freeze_spec
+from maestro.run_control import get as get_control
+from maestro.state import RunState
+from tools.build_events import _emit
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,8 +56,6 @@ def _built(run_id: str) -> bool:
 
 def _require_state(run_id: str, user: User):
     """The run's state, scoped to its owner: 404 if there's no spec, 403 if it isn't this user's."""
-    from maestro.state import RunState
-
     owner = db_store.owner_of(run_id)
     state = RunState(run_id)
     if owner is None or state.read_spec() is None:
@@ -83,8 +89,6 @@ async def list_games(user: User = Depends(get_current_user)):
 @router.get("/{run_id}", response_model=Dict)
 async def get_game(run_id: str, user: User = Depends(get_current_user)):
     """Full detail for one game: the freeform spec, built/building state, and live status."""
-    from maestro.run_control import get as get_control
-
     state = _require_state(run_id, user)
     spec_data = state.read_spec()
     row = db_store.game(run_id) or {}
@@ -126,9 +130,6 @@ async def game_events(run_id: str, after: int = 0, user: User = Depends(get_curr
 @router.post("/{run_id}/freeze", response_model=Dict)
 async def freeze_game(run_id: str, user: User = Depends(get_current_user)):
     """Human approval action — freeze the spec so the build can run."""
-    import asyncio
-    from maestro.codegen.run import freeze_spec
-
     _require_state(run_id, user)
     return await asyncio.to_thread(freeze_spec, run_id)
 
@@ -148,9 +149,6 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
-    from auth import store
-    from auth.billing import cost, SECONDS_PER_CREDIT
-
     if not db_store.is_charged(run_id):
         price = cost(spec_data)
         if not store.deduct(user.id, price, "build", run_id):
@@ -169,9 +167,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
 
 def _control(run_id: str):
     """The live control for an in-flight build, or 409 if nothing is building."""
-    from maestro.run_control import get
-
-    ctrl = get(run_id)
+    ctrl = get_control(run_id)
     if ctrl is None:
         raise HTTPException(status_code=409, detail="no build in progress for this run")
     return ctrl
@@ -191,8 +187,6 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     not (the build thread died — container restart, redeploy), RE-ENQUEUE the build from durable
     on-disk state so it rebuilds where it left off. The run is already `charged`, so re-enqueue
     never re-charges."""
-    from maestro.run_control import get as get_control
-
     _require_state(run_id, user)
     ctrl = get_control(run_id)
     if ctrl is not None:
@@ -221,8 +215,6 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
     """Patch a built game from a free-text note ('the player falls through the floor'), on a
     background thread. Progress + completion stream over the websocket (build_*)."""
     _require_state(run_id, user)
-    from maestro.codegen.run import fix_from_note
-
     key = f"fix:{run_id}"
     with _active_lock:
         if key in _active:
@@ -253,9 +245,6 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     """Skin the built game's placeholder shapes with generated sprites/meshes, on a background
     thread. Emits assets_started / assets_done over the websocket."""
     _require_state(run_id, user)
-    from maestro.codegen.reskin import add_assets
-    from tools.build_events import _emit
-
     key = f"assets:{run_id}"
     with _active_lock:
         if key in _active:

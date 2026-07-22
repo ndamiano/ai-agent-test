@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from tools.execution_context import get_user_id
+
 logger = logging.getLogger("maestro.safety")
 
 _TERMS_PATH = Path(__file__).parent / "safety_terms.json"
@@ -98,7 +100,6 @@ def log_violation(violation: SafetyViolation, *, user_id: Optional[str] = None,
     full input text — only the matched term(s), to avoid persisting the flagged content."""
     if user_id is None:
         try:
-            from tools.execution_context import get_user_id
             user_id = get_user_id()
         except Exception:
             user_id = None

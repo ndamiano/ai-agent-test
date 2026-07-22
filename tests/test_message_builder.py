@@ -9,6 +9,7 @@ Each test feeds a real message list and asserts the transformed output.
 
 import pytest
 
+import llm_clients.message_builder as mod
 from llm_clients.message_builder import MessageBuilder
 
 
@@ -20,13 +21,8 @@ def mb(monkeypatch):
     except-path so no test depends on a network endpoint. Tests then set the
     two knobs (`MESSAGE_BUDGET_CHARS`, `TOOL_RESULT_MAX_CHARS`) they exercise.
     """
-    import llm_clients.message_builder as mod
-    monkeypatch.setattr(
-        mod, "get_connector", None, raising=False
-    )
-    # get_connector is imported inside __init__; patch the source module too.
-    import llm_clients.connector_selector as cs
-    monkeypatch.setattr(cs, "get_connector", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
+    monkeypatch.setattr(mod, "get_connector",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
     return MessageBuilder("SYSTEM")
 
 
@@ -278,13 +274,11 @@ def test_budget_derives_from_context_window(monkeypatch):
     # overflows. When the connector reports n_ctx, the budget is (window - 16K reserved output
     # tokens) x 3.5 chars/token — the ratio MEASURED on live code-heavy payloads (median 3.67),
     # floored at a third of the window for small-context models.
-    import llm_clients.connector_selector as cs
-
     class _FakeConn:
         def get_context_length(self):
             return 32768
 
-    monkeypatch.setattr(cs, "get_connector", lambda *a, **k: _FakeConn())
+    monkeypatch.setattr(mod, "get_connector", lambda *a, **k: _FakeConn())
     b = MessageBuilder("SYS")
     assert b.MESSAGE_BUDGET_CHARS == int(max(32768 - 16_000, 32768 // 3) * 3.5) == 58688
 
@@ -293,8 +287,7 @@ def test_budget_charges_system_prompt_against_input_half(monkeypatch):
     # WHY: MESSAGE_BUDGET_CHARS is the INPUT half of the window (system + messages share it). A fat
     # system prompt (e.g. the fix loop's 9-16KB kit doc) must eat into the budget, else the real prompt
     # silently overflows the window. Same messages fit with a small system, get trimmed with a big one.
-    import llm_clients.connector_selector as cs
-    monkeypatch.setattr(cs, "get_connector",
+    monkeypatch.setattr(mod, "get_connector",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no net")))
     msgs = [
         {"role": "user", "content": "task"},

@@ -9,15 +9,14 @@ observable behaviour (return values + which tool actually ran), never on private
 
 import pytest
 
+from maestro.modules.module import CorrectionPrompt
 from maestro.services import (
     BudgetExhausted,
     Services,
-    salvage_tool_call,
-    parse_action,
     _create_guard,
+    parse_action,
+    salvage_tool_call,
 )
-from maestro.modules.module import CorrectionPrompt
-
 
 # ── boundary fakes: no live LLM, ever ─────────────────────────────────────────
 

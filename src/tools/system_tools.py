@@ -16,7 +16,7 @@ def web_search(
 ) -> str:
     logger.info(f"web_search called: {query}")
     try:
-        from ddgs import DDGS
+        from ddgs import DDGS  # noqa: PLC0415
 
         with DDGS() as ddgs:
             raw_results = list(ddgs.text(query, max_results=num_results))
@@ -56,8 +56,10 @@ def web_fetch(
 ) -> str:
     logger.info(f"web_fetch called: {url}")
     try:
-        import requests
-        from bs4 import BeautifulSoup
+        # ddgs/bs4 are not in requirements.txt — importing them at module scope would make
+        # `import tools.system_tools` (api/app.py, at startup) hard-fail without them.
+        import requests  # noqa: PLC0415
+        from bs4 import BeautifulSoup  # noqa: PLC0415
 
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'

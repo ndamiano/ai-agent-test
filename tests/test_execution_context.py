@@ -1,10 +1,12 @@
 """Tests for execution context and automatic task_id injection"""
 
+import contextvars
+
 from tools.execution_context import (
     execution_context,
-    get_task_id,
-    get_subtask_id,
     get_execution_context,
+    get_subtask_id,
+    get_task_id,
 )
 from tools.tool_manager import ToolManager
 
@@ -223,8 +225,6 @@ class TestAutoInjection:
         """The manager wraps async streaming generators that yield across context boundaries, so
         __enter__ and the finally can run in different Contexts. reset(token) raised 'Token was
         created in a different Context'; value-restore must not."""
-        import contextvars
-
         cm = execution_context(task_id="x")
         contextvars.copy_context().run(cm.__enter__)   # set() runs in a copied Context
         cm.__exit__(None, None, None)                  # finally runs here — must not raise

@@ -2,6 +2,9 @@ import asyncio
 import logging
 from typing import Optional
 
+from api.websocket.manager import manager
+from db import store as db_store
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +28,6 @@ class EventBus:
     def _owner_of(self, run_id: str) -> Optional[str]:
         owner = self._owner_cache.get(run_id)
         if owner is None:
-            from db import store as db_store
             try:
                 owner = db_store.owner_of(run_id)
             except Exception:
@@ -79,8 +81,6 @@ class EventBus:
 
     async def _consume_events(self) -> None:
         """Background task that consumes events from queue and broadcasts to WebSockets."""
-        from api.websocket.manager import manager
-
         self.logger.info("Event consumer started")
 
         try:

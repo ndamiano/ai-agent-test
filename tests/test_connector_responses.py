@@ -4,8 +4,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from llm_clients.openai_compatible_connector import (
-    _chat_tools_to_responses, _chat_messages_to_responses_input, _responses_to_chat,
-    _responses_stream_to_chat_chunks, OpenAICompatibleConnector,
+    OpenAICompatibleConnector,
+    _chat_messages_to_responses_input,
+    _chat_tools_to_responses,
+    _responses_stream_to_chat_chunks,
+    _responses_to_chat,
 )
 
 

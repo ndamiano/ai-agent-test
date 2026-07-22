@@ -5,14 +5,21 @@ stubbed."""
 
 import json
 import os
+import re
 from pathlib import Path
 
 from maestro.codegen import data_files, reskin
 from maestro.codegen.data_files import (
-    data_dir, data_manifest_path, data_summary, generate_data_ts, sprite_plan_from_data,
-    validate_data, write_design,
+    data_dir,
+    data_manifest_path,
+    data_summary,
+    generate_data_ts,
+    sprite_plan_from_data,
+    validate_data,
+    write_design,
 )
 from maestro.codegen.module import CodegenModule, _design_data_fix
+from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
 
@@ -63,7 +70,6 @@ def _write_planned_game(tmp_path, code=GOOD_GAME):
 
 
 def _ctx(tmp_path):
-    from maestro.modules.context import build_context
     return build_context({"mode": "2d", "design": {}}, RunState(tmp_path))
 
 
@@ -304,7 +310,6 @@ def test_write_design_survives_the_run2_local_model_design(tmp_path):
     """Regression: the full raw design a local Qwen produced on 2026-07-21 (run 2) — nulls for
     absent values, `?` on field NAMES, one-level object fields — previously dropped ALL datasets.
     Must land all three, flattened + typed."""
-    import re
     (tmp_path / "game").mkdir()
     raw = (Path(__file__).parent / "fixtures" / "design_local_qwen_run2.txt").read_text()
     design = json.loads(re.search(r"```(?:json)?\s*\n(.*?)```", raw, re.S).group(1))

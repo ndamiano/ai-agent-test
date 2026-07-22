@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from api.routers import websocket as websocket_module
 from api.websocket.manager import ConnectionManager
+from auth.store import User
 
 
 class TestConnectionManagerBroadcast(unittest.IsolatedAsyncioTestCase):
@@ -70,8 +72,6 @@ class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
     """Tests that websocket_endpoint logs errors in its catch block."""
 
     async def _run_endpoint(self, receive_raise=None):
-        from api.routers import websocket as websocket_module
-        from auth.store import User
 
         websocket = AsyncMock(spec=WebSocket)
         websocket.query_params = {"token": "valid"}
@@ -88,8 +88,8 @@ class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(websocket_module, "manager", manager_mock), \
              patch.object(websocket_module, "logger", logger_mock), \
-             patch("auth.store.resolve_token",
-                   return_value=User(id="u1", handle="alice", role="user")):
+             patch.object(websocket_module, "resolve_token",
+                          return_value=User(id="u1", handle="alice", role="user")):
             await websocket_module.websocket_endpoint(websocket)
 
         return websocket, logger_mock, manager_mock

@@ -10,16 +10,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from tools.execution_context import execution_context
-from maestro.state import RunState
 import maestro.codegen.run as run_mod
-import tools.build_events as build_events
+from maestro.state import RunState
+from tools.execution_context import execution_context
 
 
 @pytest.fixture
 def events(monkeypatch):
     captured = []
-    monkeypatch.setattr(build_events, "_emit",
+    monkeypatch.setattr(run_mod, "_emit",
                         lambda et, rid, **p: captured.append((et, rid, p)))
     return captured
 

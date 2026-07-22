@@ -16,8 +16,30 @@ import time
 import uuid
 from pathlib import Path
 
+from auth import store
+from db import store as db_store
+from llm_clients.connector_selector import get_connector
+from llm_clients.log_context import set_log_dir
+from llm_clients.message_builder import MessageBuilder
+from maestro.agent_loop import AgentLoop
+from maestro.codegen import worldgen_bridge
+from maestro.codegen.fix_classes import classify
+from maestro.codegen.gates import RUNTIME_DIR, entry_src_path, game_dir, stage_for_play
+from maestro.codegen.module import (
+    _FIX_LOOP_MAX_TURNS,
+    CodegenModule,
+    _read_write_loop_fix,
+)
+from maestro.codegen.scaffold import seed_scaffold
+from maestro.codegen.tools import build_codegen_tools
+from maestro.modules.context import build_context
+from maestro.modules.module import Error, ErrorType
+from maestro.run_control import get_or_create, remove
+from maestro.services import BudgetExhausted, Services
 from maestro.state import RunState
 from maestro.templating import render_template
+from tools.build_events import _emit
+from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +80,6 @@ def _maybe_seed_worldgen(run_id: str, state: RunState, spec: dict) -> None:
     (main.ts only) so the planner is bypassed and the model authors gameplay ON TOP. Idempotent — on
     re-entry (re-gate after ok, reskin, note-fix) world.ts already exists and this is a no-op, so the
     town is never regenerated under a half-built game."""
-    from maestro.codegen import worldgen_bridge
-    from maestro.codegen.gates import game_dir
 
     if not spec.get("world"):
         return
@@ -76,8 +96,6 @@ def _maybe_seed_worldgen(run_id: str, state: RunState, spec: dict) -> None:
 
 
 def create_run(user_id: str) -> str:
-    from db import store as db_store
-
     run_id = uuid.uuid4().hex[:12]
     RunState(run_id)
     db_store.create_game(run_id, user_id)
@@ -91,10 +109,6 @@ def _content(resp) -> str:
 def draft_spec(request: str) -> dict:
     """Stage 1: prose request → design SPEC JSON. Prose-in, JSON-out — the easy half. Retries on a
     bad JSON parse (local models occasionally emit a trailing comma / stray token)."""
-    from llm_clients.connector_selector import get_connector
-    from llm_clients.message_builder import MessageBuilder
-
-    from maestro.codegen.gates import RUNTIME_DIR
 
     conn = get_connector()
     catalog = (RUNTIME_DIR / "kit_catalog.md").read_text(encoding="utf-8")
@@ -120,7 +134,6 @@ def draft_spec(request: str) -> dict:
 
 def propose_spec(request: str, run_id: str) -> dict:
     """Draft a spec from the request, persist it to the run, and announce it for human review."""
-    from tools.build_events import _emit
 
     spec = draft_spec(request)
     RunState(run_id).write_spec(spec)
@@ -132,7 +145,6 @@ def propose_spec(request: str, run_id: str) -> dict:
 def amend_spec(run_id: str, note: str) -> dict:
     """Re-draft an existing spec's design from a free-text revision note. Writes it UNFROZEN so the
     build refuses until the human re-freezes."""
-    from tools.build_events import _emit
 
     state = RunState(run_id)
     spec = state.read_spec()
@@ -153,7 +165,6 @@ def amend_spec(run_id: str, note: str) -> dict:
 
 def freeze_spec(run_id: str) -> dict:
     """The human's out-of-band approval: freeze the spec so the build may run."""
-    from tools.build_events import _emit
 
     state = RunState(run_id)
     spec = state.read_spec()
@@ -166,8 +177,6 @@ def freeze_spec(run_id: str) -> dict:
 
 def _mirror_spec_meta(run_id: str, spec: dict) -> None:
     """spec.json is the source of truth; the games row mirrors its identity fields for listing."""
-    from db import store as db_store
-
     db_store.update_spec_meta(run_id, spec.get("title", ""), spec.get("mode", ""),
                               bool(spec.get("frozen")))
 
@@ -175,18 +184,6 @@ def _mirror_spec_meta(run_id: str, spec: dict) -> None:
 def run_build(run_id: str, max_steps: int = 60):
     """Stage 2: drive CodegenModule until game.js passes the local gates. The surviving AgentLoop
     does the driving — collect errors (authored/runs/plays), fix the top one, repeat."""
-    from maestro.agent_loop import AgentLoop
-    from maestro.codegen.gates import stage_for_play
-    from maestro.codegen.module import CodegenModule
-    from maestro.codegen.scaffold import seed_scaffold
-    from maestro.codegen.tools import build_codegen_tools
-    from maestro.run_control import get_or_create, remove
-    from llm_clients.connector_selector import get_connector
-    from llm_clients.log_context import set_log_dir
-    from tools.build_events import _emit
-    from tools.execution_context import run_scope
-
-    from db import store as db_store
 
     state = RunState(run_id)
     spec = state.read_spec()
@@ -226,14 +223,6 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     note is the failing-gate text, a synthetic Error whose neutral code ("human") classifies to the
     `default` fix class — so a human fix gets grounded hunk edits, never a whole-file rewrite. Then
     re-run the loop so any gate the patch regresses is re-fixed before shipping."""
-    from maestro.codegen.fix_classes import classify
-    from maestro.codegen.module import _FIX_LOOP_MAX_TURNS, _read_write_loop_fix
-    from maestro.codegen.tools import build_codegen_tools
-    from maestro.modules.context import build_context
-    from maestro.modules.module import Error, ErrorType
-    from maestro.services import BudgetExhausted, Services
-    from llm_clients.connector_selector import get_connector
-    from tools.execution_context import run_scope
 
     state = RunState(run_id)
     spec = state.read_spec()
@@ -254,7 +243,6 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
 
 
 def _cli(request: str) -> int:
-    from auth import store
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
     # TODO Think through this. The CLI is only used by employees.
@@ -268,7 +256,8 @@ def _cli(request: str) -> int:
     run_id = create_run(owner)
     print(f"run: {run_id}\ndrafting spec for: {request!r}\n")
     spec = draft_spec(request)
-    RunState(run_id).write_spec(spec)
+    state = RunState(run_id)
+    state.write_spec(spec)
     print(json.dumps(spec["design"], indent=2, ensure_ascii=False))
 
     freeze_spec(run_id)
@@ -280,8 +269,6 @@ def _cli(request: str) -> int:
     if not result.ok:
         for e in result.failures:
             print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
-    state = RunState(run_id)
-    from maestro.codegen.gates import entry_src_path
     print(f"game: {entry_src_path(state.run_dir).resolve()}")
     if result.ok:
         print(f"play: runtime/index.html?game={run_id}")
@@ -302,7 +289,9 @@ def _cli_fix(run_id: str, note: str) -> int:
 
 
 def _cli_assets(run_id: str) -> int:
-    from maestro.codegen.reskin import add_assets
+    # Lazy on purpose: reskin imports run_build from here. One side of the cycle must stay
+    # deferred, and this CLI entry is the cheaper side to defer.
+    from maestro.codegen.reskin import add_assets  # noqa: PLC0415
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     print(f"skinning {run_id} with generated assets\n")
     out = add_assets(run_id)

@@ -5,17 +5,40 @@ loop test is deterministic and needs no live model.
 """
 
 import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from maestro.agent_loop import AgentLoop
+from maestro.codegen import run as run_mod
+from maestro.codegen.fix_classes import DEFAULT, classify
 from maestro.codegen.gates import (
-    RUNTIME_DIR, extract_code, run_headless, run_probe, run_render, run_scroll,
+    RUNTIME_DIR,
+    dedupe_functions,
+    extract_code,
+    run_headless,
+    run_probe,
+    run_render,
+    run_scroll,
 )
-from maestro.codegen.module import CodegenModule
+from maestro.codegen.module import (
+    _READS_BEFORE_FORCE_ACT,
+    CodegenModule,
+    _author_via_write,
+    _authoring_order,
+    _detect_typechecks,
+    _fix_schemas,
+    _is_contract,
+    _is_stub,
+    _kit_context,
+    _manifest_files,
+    _sibling_lines,
+)
 from maestro.codegen.tools import build_codegen_tools
-from maestro.modules.module import ErrorType
+from maestro.modules.context import build_context
+from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
 
 # Typed TS fixtures — the games are .ts now (typecheck gate). `state` is `as any` so dynamic props
@@ -158,7 +181,6 @@ def _write_game(tmp_path, code, extra=None):
 def _node_eval(js: str) -> dict:
     """Run an inline ES-module snippet against the kit and parse its JSON stdout. Used to unit-test
     kit primitives that need driven input a self-contained headless game can't produce."""
-    import subprocess
     p = subprocess.run(["node", "--input-type=module", "-e", js],
                        cwd=RUNTIME_DIR, capture_output=True, text=True, timeout=30)
     assert p.returncode == 0, p.stderr
@@ -589,7 +611,6 @@ def test_write_rejects_empty(tmp_path):
 
 # ── module checks ─────────────────────────────────────────────────────────────
 def _ctx(state):
-    from maestro.modules.context import build_context
     return build_context({"mode": "2d", "design": {}}, state)
 
 
@@ -604,7 +625,6 @@ def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
     # authoring is ONE file at a time in DEPENDENCY order: the shared-types file FIRST (consumers
     # author against real types), the entry main.ts LAST (it wires every system, so it binds against
     # its siblings' real on-disk signatures) — even though the manifest lists main.ts second.
-    from maestro.codegen.module import _authoring_order
     d = tmp_path / "game"
     d.mkdir()
     (d / "manifest.json").write_text(json.dumps({"files": [
@@ -766,8 +786,6 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
     """A human playtest note runs through the SAME read→edit subloop as a gate failure (no whole-file
     rewrite shape left): the note rides as the failing-gate text, the fix lands as a grounded edit,
     then the build re-gates."""
-    from maestro.codegen import run as run_mod
-
     state = _run_dir(tmp_path)
     _write_game(tmp_path, GOOD)
     state.write_spec({"frozen": True, "mode": "2d", "title": "T", "design": {"title": "T"}})
@@ -775,7 +793,7 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
     conn = _FakeToolConn([{"old_string": "kit.V.clamp(this.state.p.x, 0, 190)",
                            "new_string": "kit.V.clamp(this.state.p.x, 0, 180)"}])
     monkeypatch.setattr(run_mod, "RunState", lambda rid: state)
-    monkeypatch.setattr("llm_clients.connector_selector.get_connector", lambda: conn)
+    monkeypatch.setattr(run_mod, "get_connector", lambda: conn)
     regated = {}
     monkeypatch.setattr(run_mod, "run_build",
                         lambda rid, max_steps=40: regated.update(rid=rid, max_steps=max_steps) or "REGATED")
@@ -791,8 +809,6 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
 def test_human_note_error_classifies_to_default():
     """The synthetic note Error (code='human') must fall through fix_classes to `default` — no TS-code
     or gate-kind matcher may claim a prose note."""
-    from maestro.codegen.fix_classes import DEFAULT, classify
-    from maestro.modules.module import Error, ErrorType
     e = Error(type=ErrorType.HUMAN, code="human", component="game",
               message="HUMAN PLAYTEST FEEDBACK — the paddle moves the wrong way")
     assert classify(e) is DEFAULT
@@ -816,7 +832,6 @@ def test_fix_schemas_ladder():
     grounded in reads, so an escalated fix that cannot read can only guess anchors (measured death
     spiral in a live run). WRITE stays offered for the create-a-missing-planned-file case; the
     tool itself refuses an overwrite."""
-    from maestro.codegen.module import _fix_schemas, _READS_BEFORE_FORCE_ACT
 
     def names(schemas):
         return {s["function"]["name"] for s in schemas}
@@ -838,7 +853,6 @@ def test_author_via_write_uses_the_write_tool():
     raw fenced-block completion — the tool boundary is what stops the model chattering / duplicating a
     function inside a free-form block. The write schema is offered to the model, and the tool call's
     `code` is what lands."""
-    from maestro.codegen.module import _author_via_write
 
     offered = {}
 
@@ -860,7 +874,6 @@ def test_author_via_write_uses_the_write_tool():
 def test_author_via_write_falls_back_to_fence_when_no_tool_call():
     """A local model that ignores the tool and emits a ```ts block still lands — the fence is scraped as
     a last resort so authoring never silently writes nothing."""
-    from maestro.codegen.module import _author_via_write
 
     class Svc:
         def infer(self, msgs, schemas, max_tokens=None):
@@ -875,7 +888,6 @@ def test_author_via_write_falls_back_to_fence_when_no_tool_call():
 def test_is_stub_rejects_placeholder_and_empty_bodies():
     """A reserve-the-file placeholder or an essentially-empty body is not a fix — writing it bricks
     the file. Real source passes."""
-    from maestro.codegen.module import _is_stub
     assert _is_stub("// This is a placeholder to allow reading the actual file first.\n"
                     "// DO NOT USE - will be replaced with proper fix.\n")
     assert _is_stub("")
@@ -889,7 +901,6 @@ def test_is_stub_rejects_placeholder_and_empty_bodies():
 def test_fix_loop_injects_contract_invariant_only_for_multifile(tmp_path):
     """A game with a shared contract file gets the contract-invariant reminder in its fix context (so a
     fix rewriting types.ts can't re-declare Entity / any-out a field); a single-file game does not."""
-    from maestro.codegen.module import _is_contract, _manifest_files
     multi = [{"name": "types.ts", "purpose": "shared interfaces", "exports": ["GameState"]},
              {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]}]
     assert any(_is_contract(f) for f in multi)
@@ -903,7 +914,6 @@ def test_fix_loop_injects_contract_invariant_only_for_multifile(tmp_path):
 def test_sibling_sigs_capture_full_multiline_params(tmp_path):
     """A multi-line function signature must expose ALL its parameters — truncating at the first line
     drops the arg list, and a caller can't match the arg count (the arg-count oscillation bug)."""
-    from maestro.codegen.module import _sibling_lines
     combat = ("import { Entity, GameState } from './types';\n"
               "export function applyDamage(\n  target: Entity,\n  amount: number,\n"
               "  state: GameState,\n  kit: any\n): void {\n  target.hp -= amount;\n}\n")
@@ -917,8 +927,6 @@ def test_sibling_sigs_capture_full_multiline_params(tmp_path):
 def test_kit_context_dropped_for_pure_typecheck_fix():
     """A type/contract typecheck fix gets NO kit doc (noise); a runtime gate gets the full doc; an
     arg-count typecheck fix gets just the signatures."""
-    from maestro.codegen.module import _kit_context
-    from maestro.modules.module import Error, ErrorType
     spec = {"mode": "3d"}
     pure = Error(type=ErrorType.FIX, code="typechecks", component="game",
                  message="types.ts has 1 type error(s):\n  - line 3: error TS2305: no exported member 'X'")
@@ -937,8 +945,6 @@ def test_kit_surface_errors_get_the_ambient_dts():
     """A hallucinated kit name/member (TS2304/TS2552, TS2339 on a kit type) gets the ambient
     engine.d.ts — the model can't fix misuse of an API it can't see (the churn class from the
     first prod build). A TS2339 on a GAME type stays lean (that's the contract reconciler's job)."""
-    from maestro.codegen.module import _kit_context
-    from maestro.modules.module import Error, ErrorType
     spec = {"mode": "2d"}
 
     def err(msg):
@@ -965,8 +971,7 @@ def test_generated_file_tsc_errors_reattribute_to_hook(tmp_path):
     """tsc blames the GENERATED scaffold when game.ts breaks the hook contract; the tools refuse to
     edit generated files, so the error must route to game.ts (measured: a capped run burned ~130
     calls on main.ts errors it was forbidden from touching)."""
-    from types import SimpleNamespace
-    from maestro.codegen.module import _detect_typechecks
+
     d = tmp_path / "game"
     d.mkdir()
     (d / "main.ts").write_text(
@@ -989,7 +994,6 @@ def test_generated_file_tsc_errors_reattribute_to_hook(tmp_path):
 
 
 def test_dedupe_functions_keeps_last_and_skips_overloads():
-    from maestro.codegen.gates import dedupe_functions
     src = (
         'export function init(state: any): void { state.v = "old { brace in string"; }\n'
         'function helper(n: number): number; // overload signature — legal, untouched\n'
@@ -1003,8 +1007,6 @@ def test_dedupe_functions_keeps_last_and_skips_overloads():
 
 
 def test_dedupe_decls_routes_and_rewrites(tmp_path):
-    from maestro.codegen.fix_classes import classify
-    from maestro.modules.module import Error, ErrorType
     d = tmp_path / "game"
     d.mkdir()
     (d / "game.ts").write_text(

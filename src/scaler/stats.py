@@ -6,6 +6,8 @@ The ONLY scaler module that imports db.store. A later move to SQS-like infra swa
 
 from typing import List, NamedTuple, Optional, Protocol
 
+from db import store
+
 
 class QueueStats(NamedTuple):
     pending: int
@@ -28,25 +30,20 @@ class StatsSource(Protocol):
 
 class SqliteStatsSource:
     def queue_stats(self, queue: str) -> QueueStats:
-        from db import store
         s = store.queue_stats(queue)
         return QueueStats(s["pending"], s["claimed"], s["oldest_pending_age_seconds"])
 
     def live_workers(self, queue: str, freshness_seconds: float) -> List[WorkerInfo]:
-        from db import store
         return [WorkerInfo(w["id"], w["pod_id"])
                 for w in store.live_workers(queue, freshness_seconds)]
 
     def stale_workers(self, queue: str, staleness_seconds: float) -> List[WorkerInfo]:
-        from db import store
         return [WorkerInfo(w["id"], w["pod_id"])
                 for w in store.stale_workers(queue, staleness_seconds)]
 
     def terminated_workers_with_pods(self, queue: str) -> List[WorkerInfo]:
-        from db import store
         return [WorkerInfo(w["id"], w["pod_id"])
                 for w in store.terminated_workers_with_pods(queue)]
 
     def mark_worker_terminated(self, worker_id: str) -> None:
-        from db import store
         store.set_worker_terminated(worker_id)

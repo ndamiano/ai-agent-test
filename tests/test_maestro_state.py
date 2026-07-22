@@ -5,6 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import maestro.state
 from maestro.state import RunState
 
 
@@ -45,8 +46,7 @@ def test_spec_roundtrip(tmp_path):
 
 
 def test_run_dir_under_working_directory(tmp_path, monkeypatch):
-    import tools.execution_context as ec
-    monkeypatch.setattr(ec, "resolve_base_path", lambda p=None: tmp_path)
+    monkeypatch.setattr(maestro.state, "resolve_base_path", lambda p=None: tmp_path)
     state = RunState("abc123")
     assert state.run_dir == tmp_path / "runs" / "abc123"
     assert state.run_dir.is_dir()

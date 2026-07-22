@@ -12,13 +12,15 @@ call so run-creating tools attribute new runs to their owner.
 
 import json
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from agents.main_agent import MainAgent
 from auth.deps import get_current_user
 from auth.store import User
-from tools.safety import screen_text, log_violation
+from tools.safety import log_violation, screen_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +37,6 @@ _REFUSAL_MESSAGE = (
 
 def _get_or_create_session(user_id: str):
     if user_id not in _sessions:
-        from agents.main_agent import MainAgent
         _sessions[user_id] = MainAgent(agent_id="chat", user_id=user_id)
     return _sessions[user_id]
 

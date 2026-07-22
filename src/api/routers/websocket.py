@@ -1,6 +1,9 @@
 import logging
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
 from api.websocket.manager import manager
+from auth.store import resolve_token
 from config.time_utils import get_utc_timestamp
 
 logger = logging.getLogger(__name__)
@@ -17,8 +20,6 @@ async def websocket_endpoint(websocket: WebSocket):
     HTTP middleware never sees the WebSocket scope, so the socket authenticates itself: a valid
     bearer token must ride on the `token` query param (browsers can't set headers on a WS upgrade).
     """
-    from auth.store import resolve_token
-
     user = resolve_token(websocket.query_params.get("token"))
     if user is None:
         await websocket.close(code=1008)  # policy violation

@@ -9,13 +9,13 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from api.app import app
 from auth import store
 
 
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
-    from api.app import app
     return TestClient(app)
 
 

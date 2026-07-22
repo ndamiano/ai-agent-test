@@ -10,8 +10,8 @@ from fastapi import WebSocket
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from api.websocket.event_bus import EventBus
 from api.websocket import manager as manager_mod
+from api.websocket.event_bus import EventBus
 from db import store as db_store
 
 

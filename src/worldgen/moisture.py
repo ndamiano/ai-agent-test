@@ -1,3 +1,5 @@
+from collections import deque
+
 from . import noise
 
 _WATER_KEYWORDS = ("shallow", "shallows", "reef", "ocean", "lagoon", "tide", "tidal", "lake", "water", "sea")
@@ -58,7 +60,6 @@ def _has_keyword(name, keywords):
 
 
 def _dist_from(w, h, sources_mask):
-    from collections import deque
     dist = [[-1] * w for _ in range(h)]
     q = deque()
     for y in range(h):

@@ -10,9 +10,17 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from api.app import app
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import base64
+
+from api.routers import workqueue as wq
 from db import store
+from llm_clients.queue_connector import QueueConnector
+from llm_clients.rate_limiter import get_llm_rate_limiter
+from tools.execution_context import run_scope
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +28,6 @@ def _tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
     # The global LLM rate limiter is a shared token bucket — earlier suite tests can drain it,
     # turning connector calls into rate-limit errors here. Refill it.
-    from llm_clients.rate_limiter import get_llm_rate_limiter
     get_llm_rate_limiter().reset()
 
 
@@ -81,11 +88,9 @@ def test_failed_job_carries_the_error():
 # ── /worker endpoints ─────────────────────────────────────────────────────────
 @pytest.fixture
 def client(monkeypatch):
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "_queue_settings",
                         lambda: {"token": "wsecret", "lease_seconds": 60})
     monkeypatch.setattr(wq, "CLAIM_LONG_POLL_SECONDS", 0.2)
-    from api.app import app
     return TestClient(app)
 
 
@@ -100,7 +105,6 @@ def test_worker_endpoints_refuse_without_the_token(client):
 
 
 def test_unconfigured_token_fails_closed(client, monkeypatch):
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "_queue_settings", lambda: {"token": ""})
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"},
                     headers=_hdr(""))
@@ -127,8 +131,6 @@ def test_claim_execute_complete_over_http(client):
 
 
 def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch):
-    import base64
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
     jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
@@ -147,8 +149,6 @@ def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch
 
 
 def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
-    import base64
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
     jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
@@ -161,8 +161,6 @@ def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
 
 
 def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypatch):
-    import base64
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
     jid = store.enqueue_job("image", {"kind": "comfy_image"})
@@ -183,8 +181,6 @@ def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypa
 
 
 def test_glb_completion_refuses_a_path_shaped_job_id(client, tmp_path, monkeypatch):
-    import base64
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
     r = client.post("/worker/complete", json={
         "job_id": "../../etc/passwd", "worker_id": "w1",
@@ -198,7 +194,6 @@ def test_empty_claim_long_polls_then_returns_null(client):
 
 
 def test_wait_seconds_shortens_the_long_poll_window(client, monkeypatch):
-    from api.routers import workqueue as wq
     monkeypatch.setattr(wq, "CLAIM_LONG_POLL_SECONDS", 30.0)
     t0 = time.time()
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
@@ -260,7 +255,6 @@ def _fake_worker(stop, respond):
 
 
 def _connector(timeout=10):
-    from llm_clients.queue_connector import QueueConnector
     return QueueConnector(base_url="http://unused", model="test-model",
                           job_timeout_seconds=timeout)
 
@@ -297,7 +291,6 @@ def test_queue_connector_round_trip(fake_worker):
 
 
 def test_queue_connector_attributes_jobs_to_the_run_scope(fake_worker):
-    from tools.execution_context import run_scope
     store.create_game("g9", "u1")
     fake_worker(lambda p: ({"output": []}, None))
     with run_scope("g9"):

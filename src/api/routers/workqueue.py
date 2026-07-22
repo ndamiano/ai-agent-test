@@ -16,6 +16,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from config.settings_manager import settings_manager
 from db import store as db_store
 
 router = APIRouter()
@@ -25,7 +26,6 @@ _CLAIM_POLL_INTERVAL = 0.5
 
 
 def _queue_settings() -> Dict:
-    from config.settings_manager import settings_manager
     return settings_manager.get_settings().get("workqueue") or {}
 
 
@@ -111,7 +111,6 @@ async def deregister(body: DeregisterBody, request: Request):
 
 
 def _blob_dir() -> Path:
-    from config.settings_manager import settings_manager
     return Path(settings_manager.get_settings()["data_dir"]).resolve() / "blobs"
 
 

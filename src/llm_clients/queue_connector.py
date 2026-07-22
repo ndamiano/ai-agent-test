@@ -12,8 +12,13 @@ import time
 import uuid
 from typing import Optional
 
+from config.settings_manager import settings_manager
+from db import queue_client
 from llm_clients.openai_compatible_connector import (
-    OpenAICompatibleConnector, _responses_to_chat, _log_call, _REASONING_UNSET,
+    _REASONING_UNSET,
+    OpenAICompatibleConnector,
+    _log_call,
+    _responses_to_chat,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +35,6 @@ class QueueConnector(OpenAICompatibleConnector):
     def get_context_length(self) -> Optional[int]:
         """No base_url to ask — the configured server window (lmstudio.n_ctx) is the answer."""
         if self._context_length is None:
-            from config.settings_manager import settings_manager
             n_ctx = (settings_manager.get_settings().get("lmstudio") or {}).get("n_ctx")
             self._context_length = int(n_ctx) if n_ctx else None
         return self._context_length
@@ -68,8 +72,6 @@ class QueueConnector(OpenAICompatibleConnector):
     def _run_job(self, payload: dict) -> dict:
         """Enqueue one Responses request and wait for a worker to land it. Returns the job row;
         status 'failed' with an error on timeout, so callers have one shape to branch on."""
-        from db import queue_client
-
         return queue_client.run_job(
             self.queue, {"path": "/v1/responses", "body": payload},
             model=payload.get("model"), timeout_seconds=self.job_timeout_seconds)

@@ -72,7 +72,7 @@ def test_session_is_created_bound_to_the_authed_user(monkeypatch):
         def chat_stream(self, message):
             yield {"type": "done"}
 
-    monkeypatch.setattr("agents.main_agent.MainAgent", _Stub)
+    monkeypatch.setattr(chat_router, "MainAgent", _Stub)
     chat_router._sessions.pop("u1", None)
     response = asyncio.run(chat_router.chat(chat_router.ChatRequest(message="hi"), user=U))
     _drain(response)

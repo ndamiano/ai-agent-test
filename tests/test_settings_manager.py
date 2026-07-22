@@ -1,12 +1,14 @@
 """Tests for SettingsManager validation with Pydantic schema"""
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
-from config.settings_manager import _merge, settings_manager
-from config.settings_schema import AppSettings
 from pydantic import ValidationError
 
+from config.settings_manager import _merge, settings_manager
+from config.settings_schema import AppSettings
 
 # --- The loaded file layers OVER the defaults ---
 #
@@ -29,8 +31,6 @@ def test_merge_lets_the_file_win():
 def test_example_settings_yield_every_key_callers_subscript():
     """CI bootstraps from settings.example.json; the example omits working_directory and every
     caller that subscripts it would KeyError."""
-    import json
-    from pathlib import Path
     example = json.loads(
         (Path(__file__).parent.parent / "src" / "config" / "settings.example.json").read_text())
     merged = _merge(settings_manager.defaults, example)

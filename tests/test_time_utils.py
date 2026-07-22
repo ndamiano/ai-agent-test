@@ -1,5 +1,7 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, UTC
+
 from config.time_utils import format_relative_time
 
 

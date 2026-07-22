@@ -13,8 +13,10 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from api.app import app
 from auth import cli, credits, store
 from auth.credits import CreditProvider, PurchaseEvent
+from db import store as db_store
 
 
 @pytest.fixture(autouse=True)
@@ -62,8 +64,6 @@ class _StubProvider(CreditProvider):
 
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
-    from api.app import app
-    from db import store as db_store
     monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
     return TestClient(app)
 

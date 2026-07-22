@@ -1,7 +1,19 @@
 import random
 
-from . import heightmap, hydrology, manifest, moisture, poi, recipe, roads, settlements, water
+from . import (
+    heightmap,
+    hydrology,
+    manifest,
+    moisture,
+    poi,
+    recipe,
+    roads,
+    settlements,
+    water,
+)
 from .context import WorldCtx
+from .errors import PlacementError
+from .score import score
 
 
 def generate(recipe_doc: dict, seed: int) -> dict:
@@ -67,9 +79,6 @@ def generate(recipe_doc: dict, seed: int) -> dict:
 def generate_best(recipe_doc: dict, seeds) -> tuple:
     """Generate over `seeds`, skipping ones that raise PlacementError.
     Returns (best_world, best_seed) by score(). Raises PlacementError if every seed fails."""
-    from .errors import PlacementError
-    from .score import score
-
     best_world = None
     best_seed = None
     best_score = None

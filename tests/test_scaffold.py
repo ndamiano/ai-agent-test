@@ -4,12 +4,35 @@ world exclusion, the state.player contract throw, the planned/authoring integrat
 scheme-aware probe (dead_movement) — the invariant the two shipped dead-control games motivated."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from maestro.codegen.gates import run_headless, run_probe, run_render, run_scroll, typecheck
-from maestro.codegen.module import CodegenModule, _authoring_order, _plan_entry
-from maestro.codegen.scaffold import ENTRY_HOOK, is_scaffolded, seed_scaffold
+from maestro.agent_loop import AgentLoop
+from maestro.codegen.fix_classes import classify
+from maestro.codegen.gates import (
+    run_headless,
+    run_probe,
+    run_render,
+    run_scroll,
+    typecheck,
+)
+from maestro.codegen.module import (
+    CodegenModule,
+    _authoring_order,
+    _detect_contracted,
+    _plan_entry,
+    _plan_fix,
+)
+from maestro.codegen.scaffold import (
+    ENTRY_HOOK,
+    is_scaffolded,
+    reexport_hooks,
+    seed_scaffold,
+)
+from maestro.codegen.tools import build_codegen_tools
+from maestro.modules.context import build_context
+from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
 
 # A working top-down hook module: player spawned into state.world in init (the scaffold contract),
@@ -318,7 +341,6 @@ def test_scaffold_dialogue_interact_satisfies_spec_key_and_probe(tmp_path):
 
 # ── planned / authoring integration ───────────────────────────────────────────
 def _ctx(tmp_path, spec):
-    from maestro.modules.context import build_context
     return build_context(spec, RunState(tmp_path))
 
 
@@ -363,7 +385,6 @@ def test_authoring_order_puts_game_ts_last_when_scaffolded(tmp_path):
 def test_plan_fix_fallback_and_main_ts_drop(tmp_path):
     """An unparseable plan falls back to a game.ts-only manifest for a scaffolded spec, and a plan
     that lists main.ts anyway gets it dropped (the scaffold owns main.ts)."""
-    from maestro.codegen.module import _plan_fix
 
     class Svc:
         def __init__(self, reply):
@@ -393,8 +414,6 @@ def test_loop_builds_scaffolded_game_to_green(tmp_path):
     """The production shape end-to-end through the AgentLoop: scaffold seeded first (as run_build
     does), then the loop plans game.ts (fallback), authors it from the model, and every gate —
     including the scheme-aware probe — passes with main.ts never model-written."""
-    from maestro.agent_loop import AgentLoop
-    from maestro.codegen.tools import build_codegen_tools
 
     class FakeConn:
         def generate_with_tools(self, messages, tools=None, **kw):
@@ -414,7 +433,6 @@ def test_loop_builds_scaffolded_game_to_green(tmp_path):
 
 
 def test_plan_fix_fallback_3d_omits_draw_hook(tmp_path):
-    from maestro.codegen.module import _plan_fix
 
     class Svc:
         def infer(self, msgs, tools, max_tokens=None):
@@ -432,7 +450,6 @@ def test_plan_fix_fallback_3d_omits_draw_hook(tmp_path):
 
 # ── hook re-export bridge (run-7 regression) ────────────────────────────────────
 def test_reexport_hooks_bridges_sibling_owned_hook(tmp_path):
-    from maestro.codegen.scaffold import reexport_hooks
     d = tmp_path / "game"
     d.mkdir()
     (d / "main.ts").write_text("// GENERATED control scaffold — never edit\n", encoding="utf-8")
@@ -450,7 +467,6 @@ def test_reexport_hooks_bridges_sibling_owned_hook(tmp_path):
 
 
 def test_reexport_hooks_skips_ambiguous_owner(tmp_path):
-    from maestro.codegen.scaffold import reexport_hooks
     d = tmp_path / "game"
     d.mkdir()
     (d / "main.ts").write_text("// GENERATED control scaffold — never edit\n", encoding="utf-8")
@@ -462,8 +478,6 @@ def test_reexport_hooks_skips_ambiguous_owner(tmp_path):
 
 
 def test_missing_hook_classifies_and_bridges(tmp_path):
-    from maestro.codegen.fix_classes import classify
-    from maestro.modules.module import Error, ErrorType
     d = tmp_path / "game"
     d.mkdir()
     (d / "main.ts").write_text("// GENERATED control scaffold — never edit\n", encoding="utf-8")
@@ -512,7 +526,6 @@ _HOOKS_OK = (
 def test_contract_assertion_localizes_signature_drift_to_game_ts(tmp_path):
     """The run-7 terminal failure: draw's params in the wrong ORDER surfaced as an error at the
     GENERATED scaffold's call site. With the assertion, tsc reports it INSIDE game.ts."""
-    from maestro.codegen.gates import typecheck
     bad = _HOOKS_OK.replace(
         "export function draw(g: DrawApi, state: GameState, kit: Kit): void",
         "export function draw(g: DrawApi, kit: Kit, state: GameState): void")
@@ -524,14 +537,11 @@ def test_contract_assertion_localizes_signature_drift_to_game_ts(tmp_path):
 
 
 def test_contract_assertion_clean_hooks_typecheck_green(tmp_path):
-    from maestro.codegen.gates import typecheck
     _assert_run(tmp_path, _HOOKS_OK)
     assert typecheck(tmp_path) == []
 
 
 def test_contracted_check_demands_the_assertion_line(tmp_path):
-    from types import SimpleNamespace
-    from maestro.codegen.module import _detect_contracted
     _assert_run(tmp_path, _HOOKS_OK.replace(
         "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };\n", ""))
     ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path),

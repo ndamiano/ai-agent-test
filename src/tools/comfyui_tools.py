@@ -1,18 +1,26 @@
 """ComfyUI tools for image generation"""
 
+import base64
+import copy
+import glob
 import json
-import uuid
-import time
 import logging
-from pathlib import Path
-from typing import Dict, Any, List, Optional
-
-import urllib.request
-import urllib.parse
+import os
+import shutil
+import subprocess
+import time
 import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+from config.settings_manager import settings_manager
+from db import queue_client
+from tools.execution_context import resolve_base_path
+from tools.safety import log_violation, screen_image_prompt
 from tools.tool_manager import tool_manager
-from tools.safety import screen_image_prompt, log_violation
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +34,6 @@ _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
 
 def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
-    import copy
     wf = copy.deepcopy(base_workflow)
     wf["6"]["inputs"]["text"] = positive
     wf["7"]["inputs"]["text"] = negative
@@ -61,7 +68,6 @@ def build_item_job(description: str) -> dict:
 
 
 def _get_trellis_settings() -> dict:
-    from config.settings_manager import settings_manager
     return settings_manager.get_settings().get("trellis") or {}
 
 
@@ -77,9 +83,6 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
 
     On the queue transport each sprite is one mesh job instead: the worker holds the retry,
     this side only lands the bytes."""
-    import glob
-    import os
-    from db import queue_client
     if queue_client.enabled():
         return _run_trellis_batch_queued(sprite_dir, out_dir)
 
@@ -107,12 +110,6 @@ def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
 
 
 def _run_trellis_batch_queued(sprite_dir: str, out_dir: str) -> set:
-    import base64
-    import glob
-    import os
-    import shutil
-    from db import queue_client
-
     done: set = set()
     for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
         slug = os.path.splitext(os.path.basename(png))[0]
@@ -137,8 +134,6 @@ def _run_trellis_batch_queued(sprite_dir: str, out_dir: str) -> set:
 def _decimate_glb(glb_path: str) -> bool:
     """Shrink a raw TRELLIS GLB to game weight (~16MB → ~1MB; runtime/decimate.mjs). Soft — a
     failure keeps the fat original (heavy but playable), never a broken file."""
-    import os
-    import subprocess
     runtime = Path(__file__).resolve().parents[2] / "runtime"
     tmp = f"{glb_path}.dec.glb"
     try:
@@ -163,7 +158,6 @@ def _load_workflow(path: Path) -> dict:
 
 
 def _get_comfyui_settings() -> dict:
-    from config.settings_manager import settings_manager
     settings = settings_manager.get_settings()
     return settings.get("comfyui", {})
 
@@ -209,9 +203,6 @@ def _poll_until_done(endpoint: str, prompt_id: str, timeout: int = 300) -> dict:
 
 def _save_images_to_working_dir(images: list, endpoint: str) -> list:
     """Download ComfyUI output images into the task working directory. Returns list of saved absolute paths."""
-    from tools.execution_context import resolve_base_path
-    import shutil
-
     saved = []
     base_dir = resolve_base_path()
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -233,7 +224,6 @@ def _save_images_to_working_dir(images: list, endpoint: str) -> list:
 
 
 def _save_image_bytes(filename: str, data: bytes) -> str:
-    from tools.execution_context import resolve_base_path
     base_dir = resolve_base_path()
     base_dir.mkdir(parents=True, exist_ok=True)
     dest = base_dir / filename
@@ -245,17 +235,13 @@ def _save_image_bytes(filename: str, data: bytes) -> str:
 def _run_comfyui_job_queued(prompt: str, workflow: dict) -> Dict[str, Any]:
     """Hand the resolved workflow to an image worker; it owns the GPU and returns the outputs
     inline, which we land in the working directory exactly like the direct path."""
-    from pathlib import Path as _Path
-
-    from db import queue_client
-
     job = queue_client.run_job("image", {"kind": "comfy_image", "workflow": workflow})
     if job["status"] != "done":
         return {"success": False, "error": job.get("error") or "image job lost"}
     images = (job["result"] or {}).get("images") or []
     # The control plane offloaded each image to <data_dir>/blobs at completion; the row
     # carries paths — same disk as this process.
-    saved_paths = [_save_image_bytes(img["filename"], _Path(img["file"]).read_bytes())
+    saved_paths = [_save_image_bytes(img["filename"], Path(img["file"]).read_bytes())
                    for img in images]
     saved_str = ", ".join(saved_paths) if saved_paths else "(none saved)"
     return {
@@ -278,7 +264,6 @@ def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dic
         workflow["11"]["inputs"]["text"] = prompt
         workflow["19"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
 
-    from db import queue_client
     if queue_client.enabled():
         return _run_comfyui_job_queued(prompt, workflow)
 

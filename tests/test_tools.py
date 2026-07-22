@@ -1,6 +1,7 @@
 """Tests for ToolManager"""
 
 import pytest
+
 from tools.tool_manager import ToolManager, tool_manager
 
 

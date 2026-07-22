@@ -1,7 +1,9 @@
-from contextvars import ContextVar
-from typing import Optional, Dict
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Dict, Optional
+
+from config.settings_manager import settings_manager
 
 _task_id_var: ContextVar[Optional[str]] = ContextVar('task_id', default=None)
 _subtask_id_var: ContextVar[Optional[str]] = ContextVar('subtask_id', default=None)
@@ -88,7 +90,6 @@ def resolve_base_path(input_path: Optional[str] = None) -> Path:
     if context_wd:
         base_dir = Path(context_wd).resolve()
     else:
-        from config.settings_manager import settings_manager
         base_dir = Path(settings_manager.get_settings()['working_directory']).resolve()
 
     if input_path is None:

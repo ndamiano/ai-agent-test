@@ -4,9 +4,23 @@ instead of being laundered into types.ts). classify/authority are pure (no toolc
 opt-out runs real tsc via the gates."""
 
 import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-from maestro.codegen.fix_classes import CONTRACT, DEFAULT, _contract_authority, classify
+from maestro.codegen import fix_classes
+from maestro.codegen import module as module_mod
+from maestro.codegen.fix_classes import (
+    CONTRACT,
+    DEFAULT,
+    _contract_authority,
+    _strip_kit_shadow,
+    _strip_phantom_imports,
+    classify,
+    strip_dead_creategame,
+    strip_unplanned_imports,
+)
 from maestro.codegen.gates import game_dir, reconcile_types, typecheck
+from maestro.codegen.module import _detect_single_mover, dispatch_fix
 from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
 
@@ -146,18 +160,16 @@ def test_does_not_declare_export_that_a_sibling_owns(tmp_path):
     # add a second consumer that mis-imports movePlayer from types.ts
     (game_dir(rd) / "hud.ts").write_text("import { movePlayer } from './types.ts';\n"
                                          "export function draw(): void { movePlayer(); }\n", encoding="utf-8")
-    import json as _json
     mpath = game_dir(rd) / "manifest.json"
-    man = _json.loads(mpath.read_text())
+    man = json.loads(mpath.read_text())
     man["files"].append({"name": "hud.ts", "purpose": "hud", "exports": ["draw"]})
-    mpath.write_text(_json.dumps(man), encoding="utf-8")
+    mpath.write_text(json.dumps(man), encoding="utf-8")
     res = reconcile_types(rd, include_fields=False)
     assert not any(k == "export" and v == "movePlayer" for k, v in res["changes"])
     assert "export type movePlayer = any;" not in (game_dir(rd) / "types.ts").read_text()
 
 
 def test_ambient_shadow_class_matches_and_strips(tmp_path):
-    from maestro.codegen.fix_classes import classify, _strip_kit_shadow
     e = _err("types.ts: error TS2459: Module '\"./types\"' declares 'Kit' locally, but it is not exported.")
     assert classify(e).id == "ambient-shadow"
     e2 = _err("main.ts: error TS2708: Cannot use namespace 'Kit' as a value.")
@@ -183,8 +195,6 @@ def test_ambient_shadow_class_matches_and_strips(tmp_path):
 def test_phantom_import_class_strips_imports_of_nonexistent_modules(tmp_path):
     """An import of a local module that isn't on disk (and can't be authored — off-plan) is
     stripped deterministically; an import of a module that EXISTS is untouched and no-ops."""
-    from maestro.codegen.fix_classes import classify, _strip_phantom_imports
-
     e = _err("main.ts: error TS2307: Cannot find module './types' or its corresponding type declarations.")
     assert classify(e).id == "phantom-import"
     # './kit' stays with ambient-shadow (ordering).
@@ -213,10 +223,6 @@ def test_phantom_import_class_strips_imports_of_nonexistent_modules(tmp_path):
 def test_dispatch_fix_reports_every_deterministic_change_shape(tmp_path):
     """The summary line must format both change shapes — reconcile's (kind, (a, b)) tuples and
     ambient-shadow's (kind, filename) — a bare-string change once crashed the whole build here."""
-    from unittest.mock import MagicMock, patch
-    from maestro.codegen.module import dispatch_fix
-    from maestro.codegen import fix_classes
-
     for changes in ([("strip", "main.ts")], [("field", ("Hero", "stamina"))]):
         cls = fix_classes.FixClass(
             id="stub", matches=lambda e: True,
@@ -224,14 +230,17 @@ def test_dispatch_fix_reports_every_deterministic_change_shape(tmp_path):
         services = MagicMock()
         context = MagicMock()
         context.state.run_dir = tmp_path
-        with patch.object(fix_classes, "classify", lambda e: cls):
+        with patch.object(module_mod, "classify", lambda e: cls):
             dispatch_fix(None, context, _err("boom"), 0, services, lambda n, a: None)
         assert services._report.called
 
 
 # ── contract-assert: deterministic append of the known line ───────────────────
 from maestro.codegen.fix_classes import (
-    CONTRACT_ASSERT, SINGLE_MOVER, _append_contract_assert, _strip_redundant_movers,
+    CONTRACT_ASSERT,
+    SINGLE_MOVER,
+    _append_contract_assert,
+    _strip_redundant_movers,
 )
 
 
@@ -290,8 +299,6 @@ def test_strip_leaves_generated_and_expression_calls(tmp_path):
 
 
 def test_detect_single_mover_flags_input_driven_call_in_scaffolded_game(tmp_path):
-    from types import SimpleNamespace
-    from maestro.codegen.module import _detect_single_mover
     _write_files(tmp_path, {
         "main.ts": "// GENERATED control scaffold\nkit.drive(state.player, input, dt, 8);\n",
         "game.ts": "export function update(state, dt, input, kit) {\n"
@@ -307,7 +314,6 @@ def test_detect_single_mover_flags_input_driven_call_in_scaffolded_game(tmp_path
 
 # ── write-time strip of unplanned imports ─────────────────────────────────────
 def test_strip_unplanned_imports_removes_phantom_keeps_planned(tmp_path):
-    from maestro.codegen.fix_classes import strip_unplanned_imports
     _write_files(tmp_path, {
         "game.ts": 'import type { GameState } from "./types.ts";\n'
                    'import { ENEMIES } from "./data.ts";\n'
@@ -323,7 +329,6 @@ def test_strip_unplanned_imports_removes_phantom_keeps_planned(tmp_path):
 
 
 def test_strip_dead_creategame_removes_block_keeps_hooks(tmp_path):
-    from maestro.codegen.fix_classes import strip_dead_creategame
     src = ("export function createState(kit: Kit) { return { world: [] }; }\n"
            "export function createGame(kit: Kit): Kit.GameObject {\n"
            "  const s = createState(kit);\n"

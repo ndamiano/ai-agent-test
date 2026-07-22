@@ -13,11 +13,27 @@ game plays as shapes; re-running with the server up fills in the pngs.
 import json
 import logging
 import re
+import struct
+import tempfile
 from pathlib import Path
 
-from maestro.state import RunState
+from PIL import Image
+
+from llm_clients.connector_selector import get_connector
+from llm_clients.message_builder import MessageBuilder
 from maestro.codegen.data_files import sprite_plan_from_data
-from maestro.codegen.gates import game_files, game_dir
+from maestro.codegen.gates import (
+    build_bundle,
+    extract_code,
+    game_dir,
+    game_files,
+    stage_for_play,
+)
+from maestro.codegen.run import run_build
+from maestro.codegen.worldgen_bridge import _write_world_ts
+from maestro.state import RunState
+from tools.comfyui_tools import build_item_job, run_jobs, run_trellis_batch
+from tools.execution_context import execution_context
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +68,6 @@ def _json_block(text: str) -> dict:
 
 
 def _ts_block(text: str) -> str:
-    from maestro.codegen.gates import extract_code
     return extract_code(text)
 
 
@@ -177,7 +192,6 @@ def _autocrop(path: Path, pad_frac: float = 0.06) -> None:
     """Tighten a matted sprite to its opaque subject. ComfyUI renders on a 1024 frame with wide
     transparent margins, so a sprite drawn at the entity's box size shows the subject at a fraction of
     the box — cropping to the alpha bbox (plus a small margin) makes it fill the box like a real sprite."""
-    from PIL import Image
     im = Image.open(path).convert("RGBA")
     bbox = im.split()[-1].getbbox()
     if not bbox:
@@ -191,9 +205,6 @@ def _autocrop(path: Path, pad_frac: float = 0.06) -> None:
 def generate_sprites(run_dir, sprites: list) -> set:
     """Render each sprite prompt to game/assets/<id>.png via ComfyUI. Soft-fails per sprite (and
     wholesale if the server is down) — returns the set of ids that produced a file."""
-    from tools.comfyui_tools import build_item_job, run_jobs
-    from tools.execution_context import execution_context
-
     assets_dir = game_dir(run_dir) / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     jobs = [build_item_job(s["prompt"]) for s in sprites]
@@ -233,10 +244,6 @@ def generate_meshes(run_dir, meshes: list) -> set:
     (TRELLIS) at game/assets/<id>.glb. Soft-fails wholesale if either backend is down (returns the
     empty set) — the mesh tags + manifest still land and the game renders its primitive shapes, so a
     re-run with the servers up fills the GLBs. Mirrors the 2D sprite soft-degrade."""
-    import tempfile
-    from tools.comfyui_tools import build_item_job, run_jobs, run_trellis_batch
-    from tools.execution_context import execution_context
-
     assets_dir = game_dir(run_dir) / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -272,9 +279,6 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
     rewrite), 3D games get meshes (entity `mesh` tags → TRELLIS GLBs). Both are additive — the
     reskin + manifest always land and the game still renders as shapes if the image/mesh backend
     is down."""
-    from llm_clients.connector_selector import get_connector
-    from llm_clients.message_builder import MessageBuilder
-
     state = RunState(run_id)
     spec = state.read_spec()
     if spec is None:
@@ -297,7 +301,6 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
     Written straight to disk: the tool-side `write` is create-only (the fix loop's no-overwrite
     guarantee), and this deterministic stage replaces files by design — `name` comes from
     game_files(), so it is already an on-disk game filename."""
-    from maestro.codegen.run import run_build
     for name, src in files.items():
         if not detect(src):
             continue
@@ -317,7 +320,6 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
 
 
 def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
-    from maestro.codegen.gates import stage_for_play
     # The data rows' `look` prompts ARE the plan when a run has them — deterministic, no LLM call.
     sprites = sprite_plan_from_data(state.run_dir, "2d") or plan_assets(infer, spec, files)
     if not sprites:
@@ -340,7 +342,6 @@ def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
 def _glb_dims(path: Path):
     """A GLB's model-space size [sx, sy, sz] from its POSITION accessors' min/max (the JSON chunk;
     node transforms ignored — TRELLIS emits a single untransformed mesh). None when unparseable."""
-    import struct
     try:
         raw = path.read_bytes()
         if raw[:4] != b"glTF":
@@ -371,8 +372,6 @@ def fit_building_boxes(run_dir) -> int:
     which is both the render bound and the avoidRects hitbox — becomes the fitted mesh size, so
     walls sit exactly where the model shows them. No-mesh buildings keep the parcel box (the
     primitive slab fills it exactly). Returns how many buildings were fitted."""
-    from maestro.codegen.worldgen_bridge import _write_world_ts
-
     world_path = game_dir(run_dir) / "world.ts"
     if not world_path.exists():
         return 0
@@ -397,7 +396,6 @@ def fit_building_boxes(run_dir) -> int:
 
 
 def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
-    from maestro.codegen.gates import build_bundle, stage_for_play
     # Data-planned meshes still union the source's `mesh:` tags — a tagged entity MUST get a mesh.
     meshes = sprite_plan_from_data(state.run_dir, "3d")
     meshes = _add_required(meshes, _existing_mesh_ids(files)) if meshes \

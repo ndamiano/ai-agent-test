@@ -19,6 +19,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from tools.execution_context import resolve_base_path
+
 SPEC_FILE = "spec.json"
 STORY_STATE_FILE = "story_state.json"
 # Files that live in the run dir but are NOT artifact components.
@@ -27,7 +29,6 @@ _RESERVED = {SPEC_FILE, STORY_STATE_FILE}
 
 class RunState:
     def __init__(self, run_id):
-        from tools.execution_context import resolve_base_path
         self.run_id = run_id
         self.run_dir = resolve_base_path() / "runs" / run_id
         self.run_dir.mkdir(parents=True, exist_ok=True)

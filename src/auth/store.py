@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from config.settings_manager import settings_manager
+
 _PBKDF2_ROUNDS = 200_000
 
 # Credits seeded on account creation (grant-on-create, deduct-per-build).
@@ -41,7 +43,6 @@ def _db_path() -> Path:
     # db can't be reached as if it were a game artifact.
     # Not resolve_base_path(): a tool that repoints the execution_context working dir would fork an
     # empty credential store under it — accounts and the credit ledger silently absent.
-    from config.settings_manager import settings_manager
     return Path(settings_manager.get_settings()["data_dir"]).resolve() / "auth.db"
 
 

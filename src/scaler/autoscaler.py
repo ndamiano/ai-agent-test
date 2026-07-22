@@ -12,8 +12,14 @@ import time
 import uuid
 from typing import Callable, Dict
 
-from scaler.policy import (MarkWorkerTerminated, PodInfo, ScalingPolicy, StartPod,
-                           TerminatePod, decide)
+from scaler.policy import (
+    MarkWorkerTerminated,
+    PodInfo,
+    ScalingPolicy,
+    StartPod,
+    TerminatePod,
+    decide,
+)
 from scaler.runpod_client import RunPodClient, RunPodError
 from scaler.stats import StatsSource
 

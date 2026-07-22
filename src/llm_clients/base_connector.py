@@ -1,9 +1,10 @@
 """Shared base connector with common utility methods"""
 
 import logging
-import requests
-from typing import Any, Optional
 from threading import Lock
+from typing import Any, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 

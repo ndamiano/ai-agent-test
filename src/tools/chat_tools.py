@@ -5,8 +5,10 @@ can draft and amend specs in conversation. The build itself runs via the executo
 
 from typing import Dict
 
+from maestro.codegen.run import amend_spec, create_run, propose_spec
+from tools.execution_context import get_user_id
+from tools.safety import log_violation, screen_text
 from tools.tool_manager import tool_manager
-from tools.safety import screen_text, log_violation
 
 
 @tool_manager.tool(
@@ -16,9 +18,6 @@ from tools.safety import screen_text, log_violation
     auto_inject_context=False,
 )
 def propose_game_spec(request: str) -> Dict:
-    from tools.execution_context import get_user_id
-    from maestro.codegen.run import create_run, propose_spec
-
     user_id = get_user_id()
     if not user_id:
         raise RuntimeError("no authenticated user in context — cannot create a run")
@@ -42,6 +41,4 @@ def propose_game_spec(request: str) -> Dict:
     auto_inject_context=False,
 )
 def amend_game_spec(run_id: str, note: str) -> Dict:
-    from maestro.codegen.run import amend_spec
-
     return amend_spec(run_id, note)

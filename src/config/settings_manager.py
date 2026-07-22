@@ -1,9 +1,11 @@
 import json
+import logging
 import os
 from pathlib import Path
-from typing import Dict, Any
 from threading import Lock
-import logging
+from typing import Any, Dict
+
+from config.settings_schema import DEFAULT_MODEL_CATEGORIES, ModelCategorySettings
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +133,6 @@ class SettingsManager:
             return self._settings.get(connector_type, {}).copy()
 
     def get_category_settings(self):
-        from config.settings_schema import DEFAULT_MODEL_CATEGORIES, ModelCategorySettings
         with self._settings_lock:
             category = self._settings.get("model_category", "large")
         return DEFAULT_MODEL_CATEGORIES.get(category, ModelCategorySettings())

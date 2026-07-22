@@ -7,8 +7,8 @@ from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from auth import store
 from auth import router as auth_router
+from auth import store
 
 
 @pytest.fixture(autouse=True)

@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from api.app import app
 from auth import store
 from db import store as db_store
 
@@ -17,7 +19,6 @@ from db import store as db_store
 def app_client(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
     monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    from api.app import app
     # No `with` — we don't want the app's startup handlers (tool registration) in a unit test.
     return TestClient(app)
 
@@ -67,7 +68,6 @@ def test_no_signup_route_exists_on_the_app(app_client):
 
 
 def test_websocket_requires_a_token(app_client):
-    from starlette.websockets import WebSocketDisconnect
     with pytest.raises(WebSocketDisconnect):
         with app_client.websocket_connect("/api/ws"):
             pass

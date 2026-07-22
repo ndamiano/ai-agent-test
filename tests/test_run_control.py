@@ -5,10 +5,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.state import RunState
-from maestro.run_control import RunControl, get_or_create, get, remove
-from maestro.modules.module import CorrectionPrompt, Error, ErrorType, Module
 from maestro.agent_loop import AgentLoop
+from maestro.modules.module import CorrectionPrompt, Error, ErrorType, Module
+from maestro.run_control import RunControl, get, get_or_create, remove
+from maestro.state import RunState
 
 
 class _WritePremise(Module):

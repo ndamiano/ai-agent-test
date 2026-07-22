@@ -9,17 +9,21 @@ from starlette.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import maestro.state
+from api import build_queue as bq_mod
+from api.app import app
 from auth import store as auth_store
+from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
+from maestro.codegen.run import create_run
+from maestro.state import RunState
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
     monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    monkeypatch.setattr("tools.execution_context.resolve_base_path",
-                        lambda input_path=None: tmp_path)
-    from api.app import app
+    monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
     return TestClient(app)
 
 
@@ -29,8 +33,6 @@ def _user(handle="alice"):
 
 
 def _make_game(user_id, spec):
-    from maestro.codegen.run import create_run
-    from maestro.state import RunState
     run_id = create_run(user_id)
     RunState(run_id).write_spec(spec)
     db_store.update_spec_meta(run_id, spec.get("title", ""), spec.get("mode", ""),
@@ -60,8 +62,6 @@ def test_cross_user_access_is_403(client):
 
 
 def test_build_charges_once_and_grants_seconds(client, monkeypatch):
-    from api import build_queue as bq_mod
-    from auth.billing import SECONDS_PER_CREDIT
 
     user, headers = _user()
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})

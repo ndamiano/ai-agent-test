@@ -5,8 +5,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from scaler.policy import (MarkWorkerTerminated, PodInfo, ScalingPolicy, StartPod,
-                           TerminatePod, decide)
+from scaler.policy import (
+    MarkWorkerTerminated,
+    PodInfo,
+    ScalingPolicy,
+    StartPod,
+    TerminatePod,
+    decide,
+)
 from scaler.stats import QueueStats, WorkerInfo
 
 CFG = ScalingPolicy(max_workers=2, scale_up_depth_per_worker=10,

@@ -12,10 +12,15 @@ and the authoring attrs; it overrides no method.
 from __future__ import annotations
 
 import functools
+import json
 from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Tuple
+
+from maestro.modules.context import render_dict
+from maestro.services import _create_guard
+
 
 class ErrorType(Enum):
     HUMAN = "human"
@@ -44,7 +49,6 @@ class Error:
 def idkey(error: "Error") -> str:
     """A JSON-serializable form of `Error.identity()` — the durable key a human waiver is stored
     and matched under (survives process restarts and message rewordings)."""
-    import json
     return json.dumps([error.type.value, error.code, error.component, error.path, error.ref],
                       ensure_ascii=False)
 
@@ -160,7 +164,6 @@ class Module(ABC):
         chk = self._check_for(error.code)
         if chk and chk.build_prompt:
             return chk.build_prompt(self, context, error)
-        from maestro.modules.context import render_dict
         tools = chk.tools if (chk and chk.tools is not None) else self.mode_tools
         prompt = chk.prompt if chk else None
         skel = chk.skeleton if chk else None
@@ -197,7 +200,6 @@ class Module(ABC):
         CRAFTS exactly the upstream its call needs from `ctx['artifact']`; the base default is a
         minimal target line (a module that owns a multi-call fix body via `Check.run` — the codegen
         path — never reaches this)."""
-        import json
         target = ctx.get("target")
         head = f"Address this to-do: {target.message}" if getattr(target, "message", None) else \
             "Address the first to-do item."
@@ -228,7 +230,6 @@ class Module(ABC):
         guard = chk.guard if chk else None
         dispatch = None
         if guard:
-            from maestro.services import _create_guard
             # The guard's slot policy is the MODULE's: `assign` picks this worker's slot from the
             # prompt-time view, `prepare` finishes the write args (e.g. scenes stamps the beat).
             assign = guard.get("assign")

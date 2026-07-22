@@ -13,6 +13,13 @@ import threading
 from collections import deque
 from typing import Dict, Optional
 
+from db import store as db_store
+from maestro.codegen import (
+    run as codegen_run,  # module ref so tests can monkeypatch run_build
+)
+from maestro.run_control import get_or_create
+from tools.build_events import _emit as emit
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,9 +63,6 @@ class BuildQueue:
     def enqueue(self, run_id: str, user_id: str, auto_pause: bool = False) -> int:
         """Register the run's control and queue its build. Returns the queue position
         (0 = builds immediately). Raises AlreadyQueued if it's already building/waiting."""
-        from db import store as db_store
-        from maestro.run_control import get_or_create
-
         with self._not_empty:
             if run_id == self._current or run_id in self._queued_ids:
                 raise AlreadyQueued(run_id)
@@ -97,9 +101,6 @@ class BuildQueue:
 
     # ── worker ────────────────────────────────────────────────────────────────
     def _drain(self) -> None:
-        from db import store as db_store
-        from maestro.codegen import run as codegen_run  # module ref so tests can monkeypatch run_build
-
         while True:
             with self._not_empty:
                 while self._running and not self._pending:
@@ -131,7 +132,6 @@ class BuildQueue:
 
     # ── events ────────────────────────────────────────────────────────────────
     def _emit(self, event_type: str, run_id: str, **fields) -> None:
-        from tools.build_events import _emit as emit
         emit(event_type, run_id, **fields)
 
     def _emit_positions(self) -> None:

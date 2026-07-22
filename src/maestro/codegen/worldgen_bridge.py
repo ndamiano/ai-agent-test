@@ -7,6 +7,8 @@ import random
 import sys
 from pathlib import Path
 
+from PIL import Image, ImageDraw, ImageFilter
+
 import worldgen
 from worldgen import noise, towns
 
@@ -442,7 +444,6 @@ _MATERIAL_TILE = {"grass": "grass", "path": "dirt_path", "stone": "stone_tile"}
 
 def _tiled(name: str, W: int, H: int, tile_px: int):
     """A seamless tile texture repeated to fill WxH — continuous ground, no per-cell grid."""
-    from PIL import Image
     t = Image.open(TILES_DIR / f"{name}.png").convert("RGB").resize((tile_px, tile_px))
     base = Image.new("RGB", (W, H))
     for y in range(0, H, tile_px):
@@ -456,7 +457,6 @@ def _bake_terrain(material_grid, path: Path, cell_px: int = 22):
     set (assets/tiles). Grass fills everything continuously; dirt paths and the stone plaza are laid in
     with FEATHERED masks (blurred cell masks → organic edges, not axis-aligned tile squares). This reads
     like a hand-painted village ground and matches the buildings, instead of a flat-color checkerboard."""
-    from PIL import Image, ImageFilter
     gh, gw = len(material_grid), len(material_grid[0])
     W, H = gw * cell_px, gh * cell_px
     tile_px = cell_px * 5                                   # one tile spans ~5 cells → visible detail, few repeats
@@ -484,7 +484,6 @@ def _bake_terrain(material_grid, path: Path, cell_px: int = 22):
 
 
 def _write_preview(path: Path, data):
-    from PIL import Image, ImageDraw
     gw, gh, cell = data["gw"], data["gh"], data["cell"]
     S = 14
     img = Image.new("RGB", (gw * S, gh * S), "#20252b")

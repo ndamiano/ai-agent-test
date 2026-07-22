@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from maestro.codegen.tools import build_codegen_tools
+from maestro.codegen.tools import MAX_READ_CHARS, build_codegen_tools
 from maestro.state import RunState
 
 SRC = 'export const A = 1;\nexport const B = 2;\nexport const A2 = 1;\n'
@@ -248,7 +248,6 @@ def test_read_elides_giant_inline_line(tmp_path):
 
 
 def test_read_caps_over_long_result(tmp_path):
-    from maestro.codegen.tools import MAX_READ_CHARS
     body = "\n".join(f"const v{i} = {i};" for i in range(4_000))  # many short lines, no giant line
     _game(tmp_path, {"main.ts": SRC, "big.ts": body})
     tools = build_codegen_tools(RunState(tmp_path))

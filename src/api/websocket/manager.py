@@ -1,7 +1,9 @@
 import asyncio
-from typing import Dict, Iterable, Optional, Set
-from fastapi import WebSocket
 import logging
+from typing import Dict, Iterable, Optional, Set
+
+from fastapi import WebSocket
+
 
 class ConnectionManager:
     """Tracks live sockets keyed to the owning user, so an event routes only to that user's

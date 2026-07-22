@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Any
 import logging
 import os
+from typing import Any, Dict
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 # Create FastAPI app
 app = FastAPI(
@@ -27,9 +28,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import system, agents, websocket, chat, games, billing, workqueue
-from auth.router import router as auth_router
+import tools.chat_tools  # noqa: F401  — the @tool decorators register on import
+import tools.comfyui_tools  # noqa: F401
+import tools.system_tools  # noqa: F401
+from api.build_queue import build_queue
+from api.routers import agents, billing, chat, games, system, websocket, workqueue
+from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
+from auth.router import router as auth_router
+from config.settings_manager import settings_manager
+from scaler.autoscaler import Autoscaler
+from scaler.runpod_client import RunPodClient
+from scaler.stats import SqliteStatsSource
 
 # Gate every route behind a valid bearer token (public paths + the WebSocket handle themselves).
 install_auth(app)
@@ -38,31 +48,18 @@ install_auth(app)
 async def startup_event():
     """Startup event handler to register tools and start the event bus."""
     try:
-        # Start event bus
-        from api.websocket.event_bus import event_bus
         await event_bus.start()
         logging.info("Event bus started")
 
         # Start the single-GPU build worker (serializes builds; extras queue with a position).
-        from api.build_queue import build_queue
         build_queue.start()
         logging.info("Build queue started")
 
-        # Import tool modules — decorators register tools at import time
-        import tools.system_tools  # noqa: F401
-        import tools.comfyui_tools  # noqa: F401
-        import tools.chat_tools  # noqa: F401
-        logging.info("Tools registered successfully")
-
         # RunPod autoscaler — only when the worker-pull queue is on and RunPod is configured.
-        from config.settings_manager import settings_manager
         _settings = settings_manager.get_settings()
         _rp = _settings.get("runpod") or {}
         if _rp.get("enabled") and _rp.get("api_key") \
                 and (_settings.get("workqueue") or {}).get("enabled"):
-            from scaler.autoscaler import Autoscaler
-            from scaler.runpod_client import RunPodClient
-            from scaler.stats import SqliteStatsSource
             app.state.autoscaler = Autoscaler(
                 SqliteStatsSource(), RunPodClient(_rp["api_key"]),
                 settings_manager.get_settings)
@@ -79,9 +76,7 @@ async def shutdown_event():
     try:
         if getattr(app.state, "autoscaler", None):
             app.state.autoscaler.stop()
-        from api.build_queue import build_queue
         build_queue.stop()
-        from api.websocket.event_bus import event_bus
         await event_bus.shutdown()
         logging.info("Event bus stopped")
     except Exception as e:
@@ -106,6 +101,7 @@ app.include_router(workqueue.router, prefix="/worker", tags=["workqueue"])
 # Serve the built frontend same-origin (one process, one Funnel port, no CORS). Mounted LAST so
 # the API routers above win; skipped when dist/ is absent (dev runs the Vite server instead).
 from pathlib import Path
+
 from fastapi.staticfiles import StaticFiles
 
 # Serve the runtime harness so the SPA can open a built game (mounted before the SPA catch-all).

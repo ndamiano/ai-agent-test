@@ -16,6 +16,9 @@ API:
   POST /generate          body = PNG bytes (image/png); query ?ptype=&texture= override defaults
                           -> 200 model/gltf-binary (the .glb bytes) | 500 on failure
 """
+# ruff: noqa: PLC0415 — every heavy import here is deliberately deferred: this module runs under
+# the TRELLIS venv (torch / trellis2 / o_voxel / flex_gemm are absent from maestro's), and the
+# Blackwell patches must be applied around the torch import, not at module scope.
 import argparse
 import io
 import os
@@ -49,8 +52,8 @@ def _blackwell_patches():
         _fgk.indice_weighed_sum_bwd_input = _bwd
     except Exception as e:
         print(f"[trellis] flex_gemm patch skipped: {e}", flush=True)
-    import trellis2.modules.sparse.config as sc
     import trellis2.modules.attention.config as ac
+    import trellis2.modules.sparse.config as sc
     sc.ATTN = "sdpa"
     ac.BACKEND = "sdpa"
 
@@ -107,8 +110,9 @@ class TrellisEngine:
 
     def _generate(self, img, ptype: str, texture: int, decimation: int) -> bytes:
         import gc
-        import torch
+
         import o_voxel
+        import torch
         mesh = glb = None
         try:
             with torch.inference_mode():
@@ -139,7 +143,7 @@ class TrellisEngine:
 
 
 def build_app(engine: TrellisEngine):
-    from fastapi import FastAPI, Request, Response, HTTPException
+    from fastapi import FastAPI, HTTPException, Request, Response
 
     app = FastAPI(title="trellis2")
 

@@ -1,7 +1,8 @@
 """Pydantic schemas for settings validation"""
 
-from pydantic import BaseModel, Field
 from typing import Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field
 
 # Reasoning-effort knob for reasoning models, sent as reasoning.effort on the Responses API
 # (the only endpoint this connector speaks). "none" disables reasoning — the lever that stops

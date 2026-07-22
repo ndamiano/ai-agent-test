@@ -15,6 +15,8 @@ import json
 import logging
 from typing import Dict, Optional
 
+from llm_clients.message_builder import MessageBuilder
+
 logger = logging.getLogger(__name__)
 
 _READ_TOOLS = {"read_file"}
@@ -235,7 +237,6 @@ class Services:
     def run(self, prompt, *, dispatch=None) -> None:
         """A stateless single step: infer one tool call from `prompt` and dispatch it. `dispatch`
         overrides self.dispatch — a create fix installs its slot guard this way."""
-        from llm_clients.message_builder import MessageBuilder
         dispatch = dispatch or self.dispatch
         allowed = frozenset(prompt.allowed_tools) or None
         if self.escalate and allowed:

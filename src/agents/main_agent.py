@@ -1,14 +1,23 @@
-from typing import List, Dict, Any, Optional
 import json
 import logging
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+from api.websocket.event_bus import event_bus
+from config.settings_manager import settings_manager
+from config.time_utils import get_utc_timestamp
 from llm_clients.connector_selector import get_connector
 from llm_clients.message_builder import MessageBuilder
-from tools.tool_manager import tool_manager
-from tools.execution_context import execution_context, user_id_scope
-from config.time_utils import get_utc_timestamp
-from api.websocket.event_bus import event_bus
+from llm_clients.openai_compatible_connector import _log_response_to_file
+from tools.execution_context import (
+    execution_context,
+    get_subtask_id,
+    get_task_id,
+    resolve_base_path,
+    user_id_scope,
+)
+from tools.tool_manager import build_openai_tool_schema, tool_manager
+
 from .agent_store import get_agent
 
 
@@ -32,8 +41,6 @@ class MainAgent:
             self.system_context = system_prompt
 
     def _build_tools_schema(self, allowed_tools: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        from tools.tool_manager import build_openai_tool_schema
-
         tools = tool_manager.getTools()
         openai_tools = []
 
@@ -129,7 +136,6 @@ class MainAgent:
 
         assembled = {**envelope, "choices": choices}
 
-        from llm_clients.openai_compatible_connector import _log_response_to_file
         _log_response_to_file(
             assembled,
             getattr(self.connector, 'api_endpoint', 'unknown'),
@@ -160,8 +166,6 @@ class MainAgent:
         return sanitized
 
     def _broadcast_tool_usage(self, tool_name: str, arguments: Dict, status: str):
-        # Get task_id and subtask_id from execution context
-        from tools.execution_context import get_task_id, get_subtask_id
         task_id = get_task_id()
         if task_id:
             sanitized = self._sanitize_tool_arguments(tool_name, arguments)
@@ -206,14 +210,12 @@ class MainAgent:
             yield {"type": "error", "message": error_response}
 
     def _agentic_loop_stream(self):
-        from config.settings_manager import settings_manager
         max_iterations = settings_manager.get_category_settings().max_iterations
         iteration = 0
         content = ""
 
         while iteration < max_iterations:
             system_content = self.system_context
-            from tools.execution_context import resolve_base_path
             path = resolve_base_path()
             if path:
                 system_content = f"{system_content}\n\nWorking Directory: {path}\nAll file operations use paths relative to this working directory unless you use absolute paths."
@@ -270,7 +272,6 @@ class MainAgent:
                 yield {"type": "done", "message": content}
                 return
 
-            from tools.execution_context import get_task_id, get_subtask_id
             ctx_task_id = get_task_id()
             ctx_subtask_id = get_subtask_id()
 

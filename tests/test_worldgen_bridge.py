@@ -1,9 +1,14 @@
 """worldgen bridge: the generated world.ts must carry the whole world — village + wilderness ring
 (forest trees, POIs, roads, regions) — with every coordinate on the heightfield."""
 
+import json
+import re
+import struct
+
 import pytest
 
-from maestro.codegen import worldgen_bridge
+from maestro.codegen import reskin, worldgen_bridge
+from maestro.codegen.worldgen_bridge import _write_world_ts
 
 RECIPE = {"archetype": "continent", "size": "small",
           "palette": {"biomes": ["grassland", "forest", "hill"]},
@@ -74,10 +79,6 @@ def test_world_ts_exports_the_new_surface(world):
 def test_fit_building_boxes_shrinks_to_glb(tmp_path):
     """A skinned building's box (render bound AND hitbox) must shrink to its GLB's fitted dims —
     a slender mesh in a fat parcel otherwise leaves invisible collision air."""
-    import json
-    import struct
-
-    from maestro.codegen import reskin
 
     game = tmp_path / "game"
     assets = game / "assets"
@@ -93,11 +94,9 @@ def test_fit_building_boxes_shrinks_to_glb(tmp_path):
         {"id": "b0", "label": "market stall", "mesh": "stall", "x": 0, "z": 0, "w": 4.0, "d": 4.0, "h": 3.0, "hx": 0, "color": "#fff"},
         {"id": "b1", "label": "granary", "mesh": "granary", "x": 9, "z": 0, "w": 6.0, "d": 6.0, "h": 6.0, "hx": 0, "color": "#fff"},
     ]}
-    from maestro.codegen.worldgen_bridge import _write_world_ts
     _write_world_ts(game / "world.ts", data)
 
     assert reskin.fit_building_boxes(tmp_path) == 1
-    import re
     src = (game / "world.ts").read_text()
     out = json.loads(re.search(r"export const WORLD: any = (\{.*?\});\n", src, re.S).group(1))
     b0, b1 = out["buildings"]

@@ -23,7 +23,7 @@ import logging
 import re
 from pathlib import Path
 
-from maestro.codegen.gates import entry_src_path, game_dir
+from maestro.codegen.gates import entry_src_path, game_dir, game_files
 from maestro.templating import render_template
 
 logger = logging.getLogger(__name__)
@@ -60,8 +60,6 @@ def reexport_hooks(run_dir) -> dict:
     scaffold's import path is the only thing that's law — bridge them instead of making the model
     move code (measured: a capped run diagnosed this exact split correctly and still couldn't land
     the move by hand). Returns {changes, count}."""
-    import re
-    from maestro.codegen.gates import game_files
     if not is_scaffolded(run_dir):
         return {"changes": [], "count": 0}
     files = game_files(run_dir)

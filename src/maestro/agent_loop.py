@@ -152,11 +152,15 @@ class AgentLoop:
             self.step += 1
             step = self.step
             self.last_result = summary
+            todo = _todo_from_pairs(self._pairs)
             self._emit("build_step", step=step, max_steps=self.max_steps,
                        summary=summary, n_failing=self._n_failing,
-                       todo=_todo_from_pairs(self._pairs),
+                       todo=todo,
                        elapsed=time.time() - self._t0)
         print(f"  step {step}: {summary}", flush=True)
+        if todo:
+            first = (todo[0].get("detail") or "").split("\n")[0][:150]
+            print(f"          fixing [{todo[0].get('code')}] {first}", flush=True)
 
     def _batch(self, ctx, pairs, module: Module, error: Error) -> List[Tuple[Module, Error, int]]:
         """The fixes to run this step: the top error alone, or — when its check is a slot-guarded

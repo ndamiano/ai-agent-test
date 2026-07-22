@@ -227,3 +227,114 @@ def test_dispatch_fix_reports_every_deterministic_change_shape(tmp_path):
         with patch.object(fix_classes, "classify", lambda e: cls):
             dispatch_fix(None, context, _err("boom"), 0, services, lambda n, a: None)
         assert services._report.called
+
+
+# ── contract-assert: deterministic append of the known line ───────────────────
+from maestro.codegen.fix_classes import (
+    CONTRACT_ASSERT, SINGLE_MOVER, _append_contract_assert, _strip_redundant_movers,
+)
+
+
+def _spec_3d(tmp_path, scheme="follow-3d"):
+    (tmp_path / "spec.json").write_text(json.dumps(
+        {"mode": "3d", "design": {"control": {"scheme": scheme}}}), encoding="utf-8")
+
+
+def test_contracted_error_routes_to_contract_assert():
+    assert classify(_err("game.ts is missing the scaffold contract assertion", code="contracted")) \
+        is CONTRACT_ASSERT
+
+
+def test_single_mover_error_routes_to_its_class():
+    assert classify(_err("game.ts line 74: kit.moveTopDown3(..., input, ...)", code="single_mover")) \
+        is SINGLE_MOVER
+
+
+def test_append_contract_assert_writes_the_3d_line(tmp_path):
+    _spec_3d(tmp_path)
+    _write_files(tmp_path, {"game.ts": "export function update() {}\n"})
+    res = _append_contract_assert(tmp_path, None)
+    assert res["count"] == 1
+    body = (tmp_path / "game" / "game.ts").read_text(encoding="utf-8")
+    assert "_scaffoldContract" in body
+    assert "draw" not in body.splitlines()[-1]   # 3D contract has no draw
+
+
+def test_append_contract_assert_idempotent(tmp_path):
+    _spec_3d(tmp_path)
+    _write_files(tmp_path, {"game.ts": "const _scaffoldContract: GameHooks<S> = { };\n"})
+    assert _append_contract_assert(tmp_path, None) is None
+
+
+# ── single-mover: deterministic strip of a standalone redundant movement line ─
+def test_strip_redundant_mover_line(tmp_path):
+    src = ("export function update(state, dt, input, kit) {\n"
+           "  kit.moveTopDown3(p as Kit.Entity, input, dt, 8);\n"
+           "  state.t += dt;\n"
+           "}\n")
+    _write_files(tmp_path, {"game.ts": src})
+    res = _strip_redundant_movers(tmp_path, None)
+    assert res["count"] == 1
+    body = (tmp_path / "game" / "game.ts").read_text(encoding="utf-8")
+    assert "moveTopDown3" not in body and "state.t += dt;" in body
+
+
+def test_strip_leaves_generated_and_expression_calls(tmp_path):
+    _write_files(tmp_path, {
+        "main.ts": "// GENERATED control scaffold\nkit.drive(state.player, input, dt, 8);\n",
+        "game.ts": "const moved = kit.drive(state.player, input, dt, 8) ?? 0;\n",
+    })
+    # main.ts is GENERATED (skipped); game.ts's call is inside an expression (not a standalone
+    # statement line) — neither is stripped, so the pass reports nothing and the LLM path runs.
+    assert _strip_redundant_movers(tmp_path, None) is None
+
+
+def test_detect_single_mover_flags_input_driven_call_in_scaffolded_game(tmp_path):
+    from types import SimpleNamespace
+    from maestro.codegen.module import _detect_single_mover
+    _write_files(tmp_path, {
+        "main.ts": "// GENERATED control scaffold\nkit.drive(state.player, input, dt, 8);\n",
+        "game.ts": "export function update(state, dt, input, kit) {\n"
+                   "  kit.moveTopDown3(state.player, input, dt, 8);\n}\n",
+    })
+    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path))
+    errs = _detect_single_mover(None, None, ctx)
+    assert len(errs) == 1 and errs[0].code == "single_mover" and "moveTopDown3" in errs[0].message
+    # seek3/AI movers and non-input calls don't trigger
+    _write_files(tmp_path, {"game.ts": "kit.seek3(e, target, 4, dt);\nkit.drive(p, fakeInput, dt);\n"})
+    assert _detect_single_mover(None, None, ctx) == []
+
+
+# ── write-time strip of unplanned imports ─────────────────────────────────────
+def test_strip_unplanned_imports_removes_phantom_keeps_planned(tmp_path):
+    from maestro.codegen.fix_classes import strip_unplanned_imports
+    _write_files(tmp_path, {
+        "game.ts": 'import type { GameState } from "./types.ts";\n'
+                   'import { ENEMIES } from "./data.ts";\n'
+                   'import { stepCombat } from "./combat.ts";\n'
+                   "export function update() {}\n",
+        "data.ts": "export const ENEMIES = [];\n",
+    })
+    # combat.ts is planned (not yet authored) — kept; data.ts on disk — kept; types.ts neither — stripped.
+    changed = strip_unplanned_imports(tmp_path, {"game.ts", "combat.ts"})
+    body = (tmp_path / "game" / "game.ts").read_text(encoding="utf-8")
+    assert changed == 1
+    assert "./types.ts" not in body and "./data.ts" in body and "./combat.ts" in body
+
+
+def test_strip_dead_creategame_removes_block_keeps_hooks(tmp_path):
+    from maestro.codegen.fix_classes import strip_dead_creategame
+    src = ("export function createState(kit: Kit) { return { world: [] }; }\n"
+           "export function createGame(kit: Kit): Kit.GameObject {\n"
+           "  const s = createState(kit);\n"
+           "  return { config: { mode: \"3d\" }, state: s, update(dt, i, k) { step(s); } };\n"
+           "}\n"
+           "export function update(state, dt, input, kit) { step(state); }\n")
+    _write_files(tmp_path, {"game.ts": src,
+                            "main.ts": "// GENERATED\nfunction createGame() {}\n"})
+    assert strip_dead_creategame(tmp_path) == 1
+    body = (tmp_path / "game" / "game.ts").read_text(encoding="utf-8")
+    assert "createGame" not in body
+    assert "export function createState" in body and "export function update" in body
+    main = (tmp_path / "game" / "main.ts").read_text(encoding="utf-8")
+    assert "createGame" in main   # GENERATED file untouched

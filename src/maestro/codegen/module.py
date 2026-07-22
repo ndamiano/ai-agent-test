@@ -36,7 +36,14 @@ _DATA_MAX_TOKENS = 8000
 
 def _kit_doc(spec: dict) -> str:
     doc = "kit_api_3d.md" if spec.get("mode") == "3d" else "kit_api.md"
-    return (RUNTIME_DIR / doc).read_text(encoding="utf-8")
+    text = (RUNTIME_DIR / doc).read_text(encoding="utf-8")
+    # The worldgen sections (heightAt/WORLD/spawnWorld) only exist when world.ts is seeded. Injected
+    # into a NON-world game they are hallucination bait: a measured build oscillated 10+ steps because
+    # a probe fix obediently added `heightAt(...)` (per the doc) and the typecheck fix then stripped
+    # the undefined name — two fixers undoing each other.
+    if not spec.get("world"):
+        text = re.sub(r"<!-- world -->.*?<!-- /world -->\n?", "", text, flags=re.S)
+    return text
 
 
 def _kit_sig_block() -> str:
@@ -101,14 +108,21 @@ def _author_via_write(services, system: str, user: str, dispatch, file: str, max
     from llm_clients.message_builder import MessageBuilder
     from maestro.services import parse_args, salvage_tool_call
     msgs = MessageBuilder(system).add_user(user).build()
-    resp = services.infer(msgs, [_WRITE_SCHEMA], max_tokens=max_tokens)
-    message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
-    content = message.get("content", "") or ""
-    tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name") == "write"]
-    if not tcs:
-        salvaged = salvage_tool_call(content, [_WRITE_SCHEMA])
-        tcs = [salvaged] if salvaged else []
-    code = parse_args(tcs[0]["function"].get("arguments")).get("code", "") if tcs else extract_code(content)
+    # The model thinks in-content (the reasoning knob is a no-op on it) and a long think can eat the
+    # whole token budget, truncating the tool call mid-arg → unparseable → no code. That's a per-call
+    # coin flip, so one immediate retry usually lands — without it the whole outer step (re-detect,
+    # rebuilt context) is spent to do the same retry.
+    for _ in range(2):
+        resp = services.infer(msgs, [_WRITE_SCHEMA], max_tokens=max_tokens)
+        message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
+        content = message.get("content", "") or ""
+        tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name") == "write"]
+        if not tcs:
+            salvaged = salvage_tool_call(content, [_WRITE_SCHEMA])
+            tcs = [salvaged] if salvaged else []
+        code = parse_args(tcs[0]["function"].get("arguments")).get("code", "") if tcs else extract_code(content)
+        if code.strip():
+            break
     return dispatch("write", {"code": code, "file": file})
 
 
@@ -230,6 +244,40 @@ def _detect_contracted(check, module, context):
                   message=f"{ENTRY_HOOK} is missing the scaffold contract assertion — read the file, "
                           f"then append EXACTLY this line at the end (ONE edit hunk with an EMPTY "
                           f"old_string appends):\n{line}")]
+
+
+_MOVER_RE = re.compile(r"kit\s*\.\s*(drive|moveTopDown3?|moveTank3|moveRelative|moveFP|walk|gridMove)\s*\(")
+
+
+def _detect_single_mover(check, module, context):
+    """A scaffolded game's movement is wired ONCE, in the GENERATED main.ts. A model file calling an
+    input-driven kit mover AGAIN double-moves the player (2x speed) or fights the scaffold — one
+    measured build shipped a knight at double speed (game.ts ran moveTopDown3 on top of the
+    scaffold's kit.drive) and no runtime gate can see it (the probe only checks that movement
+    exists). Static and cheap, so it runs between typecheck and the runtime gates."""
+    run_dir = context.state.run_dir
+    if not is_scaffolded(run_dir):
+        return []
+    errors = []
+    for name, src in game_files(run_dir).items():
+        if src.lstrip().startswith("// GENERATED"):
+            continue
+        for m in _MOVER_RE.finditer(src):
+            window = src[m.end():m.end() + 150]
+            if not re.search(r"\binput\b", window.split(";")[0]):
+                continue
+            ln = src[:m.start()].count("\n") + 1
+            errors.append(Error(
+                type=ErrorType.FIX, code="single_mover", component="game", path=name,
+                message=f"{name} line {ln}: `kit.{m.group(1)}(..., input, ...)` — but this is a "
+                        f"SCAFFOLDED game: the GENERATED main.ts already applies the spec's control "
+                        f"scheme to state.player EVERY frame, before your update runs. A second "
+                        f"input-driven movement call double-moves the player (or fights the "
+                        f"scaffold's move). DELETE the whole call statement; keep any bounds/ground "
+                        f"clamps that run after it. Movement speed is tuned via state.player.speed, "
+                        f"never by re-wiring input."))
+            break   # one per file — the fix strips every occurrence anyway
+    return errors
 
 
 def _contract_block(run_dir, exclude: str) -> str:
@@ -476,6 +524,12 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     parts.append(f"Call write to create ./{me['name']} now — the whole file as the `code` arg.")
     result = _author_via_write(services, system, "\n\n".join(parts), dispatch, me["name"], _CODE_MAX_TOKENS)
     detail = result.get("error") or f"{result.get('chars')} chars"
+    if not result.get("error"):
+        from maestro.codegen.fix_classes import strip_dead_creategame, strip_unplanned_imports
+        if strip_unplanned_imports(run_dir, {f["name"] for f in files}):
+            detail += " (stripped unplanned import)"
+        if is_scaffolded(run_dir) and strip_dead_creategame(run_dir):
+            detail += " (stripped dead createGame)"
     services._report(f"authored {me['name']}: {detail}")
 
 
@@ -613,6 +667,12 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
         if not tcs:
             salvaged = salvage_tool_call(content, schemas)
             tcs = [salvaged] if salvaged else []
+        # The model thinks in-content (the reasoning knob is a no-op on it); a hard fix can emit a
+        # 16K-token analysis with no tool call. Appended verbatim it dominates the char budget and
+        # MessageBuilder drops the file reads to fit — starving the very turn that must act. Keep the
+        # TAIL (the conclusion lives at the end); the full text was never load-bearing.
+        if len(content) > 2000:
+            content = "[…analysis truncated…]\n" + content[-2000:]
         if not tcs:
             history.append({"role": "assistant", "content": content})
             history.append({"role": "user",
@@ -692,6 +752,7 @@ class CodegenModule(Module):
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
         Check(code="contracted", detect=_detect_contracted, job="fix", blocking=True, run=dispatch_fix),
         Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=dispatch_fix),
+        Check(code="single_mover", detect=_detect_single_mover, job="fix", run=dispatch_fix),
         Check(code="runs", detect=_detect_runs, job="fix", run=dispatch_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=dispatch_fix),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=dispatch_fix),

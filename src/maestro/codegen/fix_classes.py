@@ -224,6 +224,62 @@ PHANTOM = FixClass(
     deterministic=_strip_phantom_imports,
 )
 
+_LOCAL_IMPORT = re.compile(
+    r"^[ \t]*import[^\n]*from\s+[\"']\./([\w.-]+?)(?:\.ts)?[\"'];?[^\n]*\n", re.M)
+
+
+def strip_unplanned_imports(run_dir, planned) -> int:
+    """Strip imports of local modules that are neither on disk nor in the plan — the model's
+    favorite phantom is `./types` in a single-file game (3/3 measured builds authored it despite
+    the prompt). Running this at WRITE time saves the phantom-import gate round; planned-but-not-
+    yet-authored siblings are legal and left alone. Returns files changed."""
+    allowed = set(planned) | set(game_files(run_dir))
+    changed = 0
+    for name, src in game_files(run_dir).items():
+        if src.lstrip().startswith("// GENERATED"):
+            continue
+        new = _LOCAL_IMPORT.sub(
+            lambda m: "" if f"{m.group(1)}.ts" not in allowed else m.group(0), src)
+        if new != src:
+            (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
+            changed += 1
+    return changed
+
+
+_CREATEGAME = re.compile(r"^(?:export\s+)?function\s+createGame\s*\(", re.M)
+
+
+def strip_dead_creategame(run_dir) -> int:
+    """Delete a `createGame` block from a scaffolded game's model files. The GENERATED main.ts owns
+    createGame; a model-authored copy is dead code that MISDIRECTS the fix loop — measured: a build
+    ping-ponged 10+ steps because every edit landed in the dead createGame.update instead of the
+    exported update hook the scaffold actually calls. Brace-matched removal; returns files changed."""
+    changed = 0
+    for name, src in game_files(run_dir).items():
+        if src.lstrip().startswith("// GENERATED"):
+            continue
+        m = _CREATEGAME.search(src)
+        if not m:
+            continue
+        brace = src.find("{", m.end() - 1)
+        if brace == -1:
+            continue
+        depth, j = 0, brace
+        for j in range(brace, len(src)):
+            if src[j] == "{":
+                depth += 1
+            elif src[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+        else:
+            continue
+        new = src[:m.start()] + src[j + 1:]
+        (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
+        changed += 1
+    return changed
+
+
 # ── missing-hook ──────────────────────────────────────────────────────────────
 # The scaffold imports its hooks from ./game.ts; the model authored one in a SIBLING file instead
 # (createState beside the world builder is a reasonable placement). The deterministic pass bridges
@@ -276,12 +332,77 @@ DUPLICATE = FixClass(
     deterministic=dedupe_decls,
 )
 
+# ── contract-assert ───────────────────────────────────────────────────────────
+# The scaffold contract assertion is a KNOWN exact line the pipeline computes (scaffold.
+# contract_assert_line) — asking the model to append it burned 4 steps in one measured build
+# (3 attempts + a regression re-add after a tail rewrite). Append it deterministically; the
+# gate re-runs after, so a wrong-signature hook still surfaces as a local tsc error in game.ts.
+
+
+def _matches_contract_assert(error) -> bool:
+    return getattr(error, "code", "") == "contracted"
+
+
+def _append_contract_assert(run_dir, error) -> Optional[dict]:
+    import json
+    from maestro.codegen.gates import game_dir
+    from maestro.codegen.scaffold import ENTRY_HOOK, contract_assert_line, has_contract_assert
+    if has_contract_assert(run_dir):
+        return None
+    p = Path(game_dir(run_dir)) / ENTRY_HOOK
+    if not p.exists():
+        return None
+    spec = json.loads((Path(run_dir) / "spec.json").read_text(encoding="utf-8"))
+    src = p.read_text(encoding="utf-8")
+    p.write_text(src.rstrip("\n") + "\n\n" + contract_assert_line(spec) + "\n", encoding="utf-8")
+    return {"changes": [("append-assert", ENTRY_HOOK)], "count": 1}
+
+
+CONTRACT_ASSERT = FixClass(
+    id="contract-assert",
+    matches=_matches_contract_assert,
+    deterministic=_append_contract_assert,
+)
+
+
+# ── single-mover ──────────────────────────────────────────────────────────────
+# A scaffolded game re-running an input-driven kit mover (double movement). A standalone-line call is
+# mechanically removable; a call woven into an expression falls to the LLM with the detector's
+# message (which names file/line and says exactly what to delete).
+_MOVER_LINE = re.compile(
+    r"^[ \t]*kit\s*\.\s*(?:drive|moveTopDown3?|moveTank3|moveRelative|moveFP|walk|gridMove)"
+    r"\s*\([^;\n]*\binput\b[^;\n]*\)\s*;?[ \t]*\n", re.M)
+
+
+def _matches_single_mover(error) -> bool:
+    return getattr(error, "code", "") == "single_mover"
+
+
+def _strip_redundant_movers(run_dir, error) -> Optional[dict]:
+    changes, count = [], 0
+    for name, src in game_files(run_dir).items():
+        if src.lstrip().startswith("// GENERATED"):
+            continue
+        new = _MOVER_LINE.sub("", src)
+        if new != src:
+            (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
+            changes.append(("strip-mover", name))
+            count += 1
+    return {"changes": changes, "count": count} if count else None
+
+
+SINGLE_MOVER = FixClass(
+    id="single-mover",
+    matches=_matches_single_mover,
+    deterministic=_strip_redundant_movers,
+)
+
 DEFAULT = FixClass(id="default", matches=lambda e: True)
 
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE, CONTRACT, DEFAULT]
+FIX_CLASSES = [CONTRACT_ASSERT, SINGLE_MOVER, AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE, CONTRACT, DEFAULT]
 
 
 def classify(error) -> FixClass:

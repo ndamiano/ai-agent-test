@@ -45,7 +45,12 @@ with no change to the gradient. Never violate it.
   MOVEMENT scheme, dead_movement additionally requires the held movement keys to DISPLACE an entity —
   an action key mutating state can't green a game the player can't steer; every kit.register binding
   must ACT when pressed (dead_action) and every non-movement spec control must BE registered
-  (unbound_control — the spec's controls map rides into the probe); no entity rests in a solid
+  (unbound_control — the spec's controls map rides into the probe; mouse-shaped spec keys are
+  exempt — there are no mouse keys to bind); a no-input run must not RESOLVE (premature_end: a win
+  from the initial state, or a loss inside 120 frames — the per-frame-contact-damage classic);
+  state.player must BE a member of state.world at init and STAY one over the first frames
+  (player_not_in_world — a field-presence "enemy" filter that matches the player despawns it);
+  no entity rests in a solid
   tile; no two solid entities interpenetrate at rest (solid_overlap); no Math.random/Date.now —
   determinism is what makes the gates' diffs meaningful), each
   violation an actionable, units-aware diagnosis.
@@ -79,7 +84,9 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          simulate() (headless sim), probe() (invariants + dead-mouse-in-non-fp +
                          dead_action/unbound_control/solid_overlap).
                          integrate3 + z for 3D; 3D steering (seek3/flee3/wander3/patrol3 +
-                         avoidRects building collision). DEPTH primitives: talkOpen/talkStep/talkHud
+                         avoidRects building collision); wallsFromTilemap (a walled 3D level —
+                         ground + wall boxes + the collision rects — in ONE call, so a dungeon is
+                         never half-built). DEPTH primitives: talkOpen/talkStep/talkHud
                          (the whole dialogue/shop loop), kit.quest (add/complete/log — milestones
                          that do NOT end the game; win/lose reserved for the spec's ending),
                          kit.notify (engine-drawn toasts). run() preloads the game's assets.json
@@ -119,8 +126,10 @@ src/
                          scaffold, data.ts, worldgen's world.ts), pointing at the owning source. The
                          9-16KB kit doc rides in the fix loop's SYSTEM prompt (uncounted by the char
                          budget), not a user turn, so file reads aren't demolished to fit.
-      module.py          CodegenModule = planned → data → authored → typechecks → runs → plays →
-                         renders → scrolls (blocking where noted). For a SCAFFOLDED run (every
+      module.py          CodegenModule = planned → data → authored → typechecks → single_mover →
+                         runs → plays → renders → scrolls (blocking where noted; single_mover is a
+                         STATIC check — a scaffolded game re-driving the player from input double-
+                         moves it, and no runtime gate can see that). For a SCAFFOLDED run (every
                          non-world game) `planned` requires the hook module game.ts — main.ts is the
                          GENERATED control scaffold, never planned/authored, and authoring order
                          keys entry-last on game.ts. DATA = the model designs per-game
@@ -143,6 +152,9 @@ src/
                          contract-mismatch (field/export/shape) reconciles the CALLER to what exists
                          (its deterministic pass runs reconcile_types include_fields=False, so a field
                          mismatch is NOT laundered into types.ts — it goes to the authority LLM).
+                         contract-assert (append the pipeline's own known assertion line) and
+                         single-mover (strip the redundant input-driven mover) are deterministic-only
+                         — a class whose repair the pipeline can compute spends no LLM call.
                          `default` matches everything + adds no steering = today's generic loop, so an
                          unclassified failure degrades to the status quo, never worse.
       data_files.py      the DATA-FILE substrate: game/data/manifest.json declares per-game

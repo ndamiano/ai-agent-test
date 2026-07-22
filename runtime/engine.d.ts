@@ -135,6 +135,10 @@ interface Kit {
   // push an entity out of centered footprint rects (e.g. WORLD.buildings) — call AFTER moving it,
   // so walkers (player included) slide around buildings instead of through them.
   avoidRects(e: Entity, rects: { x: number; z: number; w: number; d: number }[], pad?: number): void;
+  wallsFromTilemap(target: World | { world: World; walls?: unknown }, rows: string[], opts?: {
+    tile?: number; height?: number; solid?: string; color?: string; ground?: string;
+  }): { rects: { x: number; z: number; w: number; d: number }[];
+        at(c: number, r: number): { x: number; z: number }; w: number; h: number; tile: number };
   // grid / pathfinding
   astar(start: Vec2, goal: Vec2, passable: (x: number, y: number) => boolean, opts?: AstarOpts): Vec2[];
   cellCenter(cx: number, cy: number, cell: number): Vec2;

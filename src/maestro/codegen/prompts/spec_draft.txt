@@ -37,6 +37,9 @@ HARD RULES — the spec describes WHAT the game does, never HOW to code it:
 - In "controls", bind actions (attack/use/jump) to KEYBOARD keys unless the scheme is
   first-person-3d — the mouse belongs to the camera in every other scheme, so "click to attack"
   is unbuildable there.
+- NEVER list a Mouse entry in "controls" for follow-3d, vehicle-3d, or any 2D scheme — those
+  schemes have no mouse input at all (the camera is automatic). Only orbital-3d (camera orbit)
+  and first-person-3d (aim/look) own the mouse.
 - NEVER write implementation: no per-frame or per-tick numbers ("4px/frame", "decay 10% each frame"),
   no physics math ("add velocity in facing direction", "rotate yaw", "vertex displacement"), no
   velocities or accelerations. Those are the implementer's job. Describe momentum as "has momentum,

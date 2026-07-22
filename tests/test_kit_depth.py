@@ -238,3 +238,123 @@ def test_render_requires_draw_in_2d():
       draw(g, k) { g.rect(0, 0, 10, 10, "#fff"); },
     })"""
     assert _render_kinds(with_draw) == []
+
+
+# ── premature_end: a game that resolves with no input is broken, not "dead controls" ──
+_INSTANT_WIN_GAME = """(kit) => ({
+  state: { world: [], kills: 0 },
+  update(dt, input, k) { if (this.state.kills >= 0) k.win("done"); },
+})"""
+
+_FAST_LOSE_GAME = """(kit) => ({
+  state: { world: [], hp: 5, t: 0 },
+  update(dt, input, k) { this.state.hp -= 1; if (this.state.hp <= 0) k.lose("dead"); },
+})"""
+
+_LATE_LOSE_GAME = """(kit) => ({
+  state: { world: [], t: 0 },
+  update(dt, input, k) { this.state.t += dt; if (this.state.t > 3.5) k.lose("starved"); },
+})"""
+
+
+def test_probe_flags_no_input_win_as_premature_end_only():
+    kinds = _probe_game(_INSTANT_WIN_GAME)
+    assert kinds == ["premature_end"]   # dead_controls/dead_action artifacts suppressed
+
+
+def test_probe_flags_near_instant_no_input_loss():
+    assert _probe_game(_FAST_LOSE_GAME) == ["premature_end"]
+
+
+def test_probe_allows_late_idle_death():
+    assert "premature_end" not in _probe_game(_LATE_LOSE_GAME)
+
+
+def _probe_scheme(game_js: str, scheme: str) -> list:
+    r = _node_eval("""
+import { probe } from "./engine.js";
+const game = %s;
+const res = probe(game, { scheme: %s });
+console.log(JSON.stringify(res.violations.map(v => v.kind)));
+""" % (game_js, json.dumps(scheme)))
+    return r
+
+
+# Player kept OUTSIDE state.world: mover works, but renderer/probe can't see it — must be named
+# precisely, not reported as dead movement.
+_PLAYER_OUTSIDE_GAME = """(kit) => {
+  const world = [];
+  const player = { shape: "box", x: 0, y: 0, z: 0, w: 1, h: 1, d: 1, color: "#fff" };
+  return {
+    config: { mode: "3d", controls: "follow" },
+    state: { world, player },
+    init(k) { k.spawn(world, { shape: "ground", size: 40, color: "#333" }); },
+    update(dt, input, k) { k.drive(this.state.player, input, dt, 8); },
+  };
+}"""
+
+
+def test_probe_names_player_not_in_world_precisely():
+    kinds = _probe_scheme(_PLAYER_OUTSIDE_GAME, "follow-3d")
+    assert kinds == ["player_not_in_world"]
+
+
+# Continuous spawning must not blind the dead_movement measurement (the net-spawn skip bug).
+_SPAWNING_MOVER_GAME = """(kit) => {
+  const world = [];
+  let player;
+  return {
+    config: { mode: "3d", controls: "follow" },
+    state: { world, player: null, t: 0 },
+    init(k) {
+      player = k.spawn(world, { shape: "box", x: 0, y: 0.5, z: 0, w: 1, h: 1, d: 1, color: "#fff" });
+      this.state.player = player;
+    },
+    update(dt, input, k) {
+      this.state.t += dt;
+      if (world.length < 200) k.spawn(world, { shape: "sphere", x: 5 + world.length, y: 0.2, z: 5, r: 0.2, color: "#f00" });
+      k.drive(this.state.player, input, dt, 8);
+    },
+  };
+}"""
+
+
+def test_probe_measures_movement_despite_continuous_spawns():
+    assert "dead_movement" not in _probe_scheme(_SPAWNING_MOVER_GAME, "follow-3d")
+
+
+# ── no_ground: a 3D scene with no ground plane is a void ─────────────────────
+_VOID_3D_GAME = """(kit) => {
+  const world = [];
+  return {
+    config: { mode: "3d", controls: "fp" },
+    state: { world, player: null },
+    init(k) { this.state.player = k.spawn(world, { shape: "box", x: 0, y: 1, z: 0, w: 1, h: 2, d: 1, color: "#3af" }); },
+    update(dt, input, k) { k.drive(this.state.player, input, dt, 6); },
+  };
+}"""
+
+
+def test_probe_flags_3d_game_with_no_ground():
+    assert "no_ground" in _probe_scheme(_VOID_3D_GAME, "first-person-3d")
+
+
+def test_probe_allows_3d_game_with_ground():
+    assert "no_ground" not in _probe_scheme(_PLAYER_OUTSIDE_GAME.replace("follow", "follow"), "follow-3d")
+
+
+def test_walls_from_tilemap_builds_level():
+    r = _node_eval("""
+import { makeKit, makeRng } from "./engine.js";
+const kit = makeKit({}, makeRng(1));
+const world = [];
+const level = kit.wallsFromTilemap(world, ["####", "#..#", "####"], { tile: 4, height: 3 });
+const grounds = world.filter(e => e.shape === "ground").length;
+const boxes = world.filter(e => e.shape === "box").length;
+const c = level.at(1, 1);
+console.log(JSON.stringify({ grounds, boxes, rects: level.rects.length, cx: c.x, cz: c.z, w: level.w, h: level.h }));
+""")
+    assert r["grounds"] == 1 and r["boxes"] == 10 and r["rects"] == 10
+    assert r["w"] == 4 and r["h"] == 3
+    # corner-origin like cellCenter: tile (1,1) center = ((1+.5)*4, (1+.5)*4)
+    assert r["cx"] == 6.0 and r["cz"] == 6.0

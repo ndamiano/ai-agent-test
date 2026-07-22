@@ -26,9 +26,11 @@ Put these fields on a world entity and it renders automatically at (x,y,z):
 - **box:**    `{ shape:"box",    x,y,z, w,h,d, color, ry? }`  — ry = yaw in radians (optional)
 - **sphere:** `{ shape:"sphere", x,y,z, r,     color }`
 - **ground:** `{ shape:"ground", size, color, y? }`          — a flat plane; y defaults to 0
+<!-- world -->
 - **heightfield / grassfield:** the terrain + grass that `spawnWorld` seeds into a generated village.
   You do NOT author these — `spawnWorld` pushes them. They are FULLY renderable; NEVER filter or
   remove entities from `state.world` after `spawnWorld` (a `shape`-allowlist filter deletes the ground).
+<!-- /world -->
 `color` is a CSS string and MUST include the leading `#` (`"#c33"`, `"#33cc55"`) — a bare hex like
 `"cc3333"` renders as the wrong color. `y` is the entity's CENTER. Entities with no `shape` are
 invisible (pure logic markers).
@@ -42,6 +44,7 @@ long body box (`w:1, h:1.2, d:2.6`) plus a small head box than as one slab.
 `state.player = { x, y, z, … }` kept OUTSIDE `state.world` is invisible AND the movement gate can't see
 it move (dead-controls). One object, in the world, referenced by `state.player`.
 
+<!-- world -->
 **If a `world.ts` file is provided (a generated world), BUILD ON IT — do not author terrain/town
 yourself.** Import it and use its API; the town, streets, terrain, forest, roads, and outlying sites
 already exist:
@@ -70,6 +73,7 @@ meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground
 third-person town, `"fp"` for a first-person walk-through — see Control scheme below), no camera hook.
 Spread the GAME across the world: town = talk/trade/quests, wilderness = danger/objectives (put a
 goal at a POI so the player travels), and mark the current objective with a `marker` HUD item.
+<!-- /world -->
 
 **Two hard rules that shape how you build a 3D game — internalize these:**
 1. **A 3D game has NO `draw()`. The HUD is DATA you RETURN from `hud(kit)`.** The scene renders from
@@ -209,19 +213,38 @@ they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the
 - `kit.wander3(e, speed, dt, kit.rng)` — amble around, slowly turning (a villager mooching about).
   Leash it home: `if (Math.hypot(v.x-v.homeX, v.z-v.homeZ) > 6) kit.seek3(v, {x:v.homeX, z:v.homeZ}, 2, dt); else kit.wander3(v, 1.2, dt, kit.rng);`
 - `kit.patrol3(e, points, speed, dt)` — walk a looping route of `{x,z}` (or `[x,z]`) points (a guard).
-- After ANY steering (and after `kit.drive` on the player): keep it on the terrain —
+- After ANY steering, keep the entity's `y` on the ground: on FLAT ground (no world.ts) that is a
+  CONSTANT — `e.y = halfHeight` — never a function call.
+<!-- world -->
+- In a WORLD game (a world.ts exists): after any steering (and after `kit.drive` on the player) —
   `e.y = heightAt(e.x, e.z) + halfHeight` — and `kit.avoidRects(e, WORLD.buildings)` so walkers
   slide around buildings instead of through them.
+<!-- /world -->
 
 ## Effects, collision & bounds  (3D-specific — READ THIS, the 2D kit misleads here)
 - **NO particles in 3D.** `kit.burst` / `kit.stepParticles` are 2D-only — they spawn shape-less x/y
   particles the 3D renderer can't draw, and a wrong arg count spawns millions and OOMs. For a 3D
   "pop"/"poof", spawn a few short-lived `sphere` entities yourself with an upward `vy`, `integrate3`
   them, and `kit.cull` when a `life` counter expires — or just skip the effect. Do NOT call `kit.burst`.
+- **A walled level (dungeon/maze/crypt/rooms) = `kit.wallsFromTilemap`, ONE call.** It spawns the
+  ground AND every wall box and hands back the collision rects — never hand-assemble walls from a
+  char map (the classic half-build spawns nothing and the level is an empty void):
+  ```js
+  const level = kit.wallsFromTilemap(state, ["########", "#..#...#", "#......#", "########"],
+                                     { tile: 4, height: 3, color: "#665", ground: "#332" });
+  // passing STATE spawns ground+walls into state.world AND sets state.walls — the scaffold then
+  // keeps the player out of walls every frame; nothing else to wire.
+  const start = level.at(1, 1);                    // tile → world center; place things with at()
+  state.player = kit.spawn(state.world, { shape: "box", x: start.x, y: 0.9, z: start.z, w: 0.8, h: 1.8, d: 0.8, color: "#28303a" });
+  ```
+  In first-person keep the player SHORTER than the walls (h ≤ 1.8 under height 3) — a tall body
+  puts the eye camera above the walls and the maze reads as a field of stubs. Push NPCs out of
+  walls yourself with `kit.avoidRects(npc, state.walls)` after steering them.
 - **Solid collision = `kit.avoidRects`, nothing else.** Do NOT hand-roll an AABB loop against the
   world — a town's road/ground slabs are huge boxes the player overlaps every frame, which pins the
   player in place (the #1 broken-3D-movement bug). For buildings/obstacles call
-  `kit.avoidRects(e, WORLD.buildings)` AFTER moving; to keep the player inside the map clamp with
+  `kit.avoidRects(e, rects)` AFTER moving (`rects` = `WORLD.buildings` in a world game, else your own
+  `[{x,z,w,d}]` obstacle list); to keep the player inside the map clamp with
   `player.x = kit.V.clamp(player.x, -HALF, HALF)` (same for z). Collect/trigger on DISTANCE only:
   `if (Math.hypot(px-e.x, py-e.y, pz-e.z) < R) { ...collect... }`.
 - **Animate decoration/pickups by MUTATING position** (allowed live; color/size bake). A floating
@@ -328,6 +351,12 @@ The engine fires the handler on the PRESSED edge of any bound key, after update 
 re-register with the same name replaces. `kit.bindings()` → `[{name, keys}]`. The probe presses
 every registered action and requires an effect — a bare `input.pressed(...)` in update is invisible
 to it (held mechanics may still read `input.down` per frame; this rule targets EDGE actions).
+Register ONLY real state-mutating actions, bound to REAL `KeyboardEvent.key` values (`" "`, `"e"`,
+`"1"`, `"Enter"`). There are NO mouse keys — `"LEFT_CLICK"`/`"MOUSE_MOVE"`/`"mouse0"` do not exist,
+and a registration whose handler is a no-op (a "documentation" binding for the camera/aim) FAILS the
+probe (dead_action). In "fp" a click-to-shoot is `if (input.pointer.down)` in update, never a
+registration. EVERY action needs an effect that is observable even when it misses — a shot with no
+target in range must still cost ammo / spawn a muzzle flash / set a cooldown, or it reads as dead.
 ```js
 init(kit) {
   kit.register("attack", [" "], () => {           // spec: "SPACE: attack" — keyboard, never mouse

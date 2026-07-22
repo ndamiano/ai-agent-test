@@ -37,6 +37,9 @@ export function createGame(kit: Kit): GameObject {
       if (!state.talk)   // movement pauses while a kit dialogue is open
         kit.drive(state.player, input, dt, state.player.speed ?? 8);
       updateGame(state, dt, input, kit);
+      // a walled level: game.ts sets state.walls (kit.wallsFromTilemap rects) and the scaffold
+      // keeps the player out of them — movement → gameplay → collide, like the 2D solid pass.
+      if (state.walls) kit.avoidRects(state.player, state.walls);
     },
     hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },
   };

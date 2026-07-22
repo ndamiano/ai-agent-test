@@ -8,10 +8,10 @@ internally — name it and describe the player's experience; the implementer wir
 - `platformer` (2D): run left/right and jump; gravity pulls down; lands on platforms. (runner, Mario-like)
 - `top-down` (2D): move freely in all directions on a flat field. (twin-stick, top-down shooter, arena)
 - `grid-turn` (2D): step exactly one tile per key press on a grid. (sokoban, roguelike, tile puzzle)
-- `orbital-3d` (3D): move relative to the camera; the player drags to orbit the view. (3D platformer, marble, collectathon)
-- `vehicle-3d` (3D): turn to steer and drive along the facing; momentum, can't stop instantly. (boat, car, tank, plane)
+- `orbital-3d` (3D): THIRD-PERSON hero — the mouse orbits the camera around the character. Any "third-person" request is this. (action RPG, melee arena, 3D platformer, collectathon)
+- `vehicle-3d` (3D): turn to steer and drive along the facing; momentum, can't stop instantly. Anything piloted or driven. (car, tank, boat, plane, hovercraft)
 - `first-person-3d` (3D): mouse aims/looks, WASD walks and strafes; camera at the eyes. (FPS, explorer)
-- `follow-3d` (3D): move on the ground in any direction, camera trails behind your heading. (3D top-down / hero)
+- `follow-3d` (3D): keyboard-only ground movement, camera auto-trails behind; NO mouse at all. (3D snake, runner, herder)
 
 The CAMERA comes WITH the control scheme — never design a camera separately.
 

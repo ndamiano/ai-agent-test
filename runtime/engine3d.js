@@ -153,7 +153,8 @@ function buildMesh(e, meshes, assetBase) {
   if (e.shape === "sphere") geo = new THREE.SphereGeometry(e.r || 1, 20, 16);
   else if (e.shape === "ground") {
     geo = new THREE.PlaneGeometry(e.size || 100, e.size || 100);
-    const m = new THREE.Mesh(geo, mat); m.rotation.x = -Math.PI / 2; m.position.y = e.y || 0;
+    const m = new THREE.Mesh(geo, mat); m.rotation.x = -Math.PI / 2;
+    m.position.set(e.x || 0, e.y || 0, e.z || 0);   // honor x/z so a level can sit off-origin
     return m;
   } else geo = new THREE.BoxGeometry(e.w || 1, e.h || 1, e.d || 1);
   return new THREE.Mesh(geo, mat);
@@ -240,6 +241,9 @@ export async function run3d(game, canvas, assetBase) {
     const live = new Set();
     for (const e of worldOf(g)) {
       if (!e.shape) continue;
+      // First-person: never render the player's own body — the eye camera sits INSIDE it, so its
+      // mesh fills the bottom of every frame (shipped: a blue wall across half the screen).
+      if (config.controls === "fp" && g.state && e === g.state.player) continue;
       // Skin-aware substitution (a tree/rock is pretty primitives OR one GLB, never both):
       // skinOnly entities exist only for their mesh (skip while unskinned); hideIfSkinned
       // primitives are the fallback look (skip once the named mesh is loaded).

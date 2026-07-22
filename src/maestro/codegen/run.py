@@ -19,7 +19,6 @@ from pathlib import Path
 from auth import store
 from db import store as db_store
 from llm_clients.connector import get_connector
-from llm_clients.log_context import set_log_dir
 from llm_clients.message_builder import MessageBuilder
 from maestro.agent_loop import AgentLoop
 from maestro.codegen import worldgen_bridge
@@ -189,7 +188,6 @@ def run_build(run_id: str, max_steps: int = 60):
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no spec for run {run_id!r} — draft one first")
-    set_log_dir(str(state.run_dir / "logs"))
     _maybe_seed_worldgen(run_id, state, spec)
     seed_scaffold(state, spec)   # non-world: the pipeline, not the model, wires the controls
     tools = build_codegen_tools(state)

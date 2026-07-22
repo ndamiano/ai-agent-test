@@ -15,7 +15,6 @@ class _FakeStreamConnector:
 
     def __init__(self, batches):
         self._batches = list(batches)
-        self._streaming_works = True
         self.calls = 0
 
     def generate_with_tools_stream(self, messages, tools):

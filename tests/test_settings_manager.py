@@ -43,7 +43,6 @@ def _valid():
     return copy.deepcopy(
         {
             "llm": {
-                "base_url": "http://localhost:1234",
                 "model": "local-model",
                 "max_tokens": 50000,
             },
@@ -57,15 +56,14 @@ def _valid():
 def test_valid_settings_load():
     # A fully-specified settings dict loads and round-trips its fields.
     settings = AppSettings(**_valid())
-    assert settings.llm.base_url == "http://localhost:1234"
     assert settings.llm.model == "local-model"
+    assert settings.llm.max_tokens == 50000
 
 
 def test_defaults_applied():
     # An omitted optional (max_tokens) falls back to the schema default, not an error.
     minimal = {
         "llm": {
-            "base_url": "http://localhost:1234",
             "model": "local-model",
         },
     }
@@ -115,9 +113,7 @@ def _set(value, *path):
     "mutation",
     [
         pytest.param(_del("llm"), id="missing_llm_section"),
-        pytest.param(_del("llm", "base_url"), id="missing_llm_base_url"),
         pytest.param(_del("llm", "model"), id="missing_llm_model"),
-        pytest.param(_set("", "llm", "base_url"), id="empty_llm_base_url"),
         pytest.param(_set("", "llm", "model"), id="empty_llm_model"),
         pytest.param(_set(0, "llm", "max_tokens"), id="llm_max_tokens_zero"),
         pytest.param(_set(-1, "llm", "max_tokens"), id="llm_max_tokens_negative"),

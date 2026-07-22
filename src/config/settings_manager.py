@@ -46,7 +46,6 @@ class SettingsManager:
             "data_dir": default_data_dir,
             "model_category": os.getenv("MODEL_CATEGORY", "large"),
             "llm": {
-                "base_url": os.getenv("LLM_BASE_URL", "http://localhost:1234"),
                 "model": os.getenv("LLM_MODEL", "local-model"),
                 # "none" is the floor the fix loop escalates FROM. Absent this key an env-configured
                 # deployment sends no reasoning field, and a thinking model spends a small token

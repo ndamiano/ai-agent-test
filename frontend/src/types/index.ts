@@ -44,7 +44,7 @@ export interface GameDetail {
 export interface SystemStatus {
     status: string
     llm_connected: boolean
-    llm_url: string
+    llm_model: string
     agent_count: number
 }
 

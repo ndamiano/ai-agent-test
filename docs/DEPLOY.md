@@ -88,7 +88,7 @@ docker compose up -d --force-recreate
 ```
 
 Then confirm the value actually landed: `docker compose exec app printenv <VAR>`. (This bites the
-inference endpoints in particular — a stale `LLM_BASE_URL`/`COMFYUI_ENDPOINT` yields connection
+inference endpoints in particular — a stale `COMFYUI_ENDPOINT`/`TRELLIS_ENDPOINT` yields connection
 -refused against the old host/port while `.env` on disk looks correct.)
 
 ### Accounts (no signup — manual only)
@@ -206,7 +206,8 @@ Everything below is parameterized by env vars — no code edits to deploy.
    pip install -r requirements.txt        # if not already
    cp src/config/settings.example.json src/config/settings.json   # then edit
    ```
-   Point `llm.base_url` / `comfyui.endpoint` at the local inference services.
+   Point `comfyui.endpoint` at the local inference service. The LLM has no endpoint setting —
+   the worker's `--target` names its server.
 
 2. **Lock the inference services to localhost.** The app calls the LLM server (`:1234`) and ComfyUI
    (`:8188`) as a client and never re-exposes them — but if *those* services bind `0.0.0.0`, opening

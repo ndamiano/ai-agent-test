@@ -102,7 +102,8 @@ Next steps:
        - set RENPY_SDK_HOST=${RENPY_SDK_HOST}
        - set GODOT_BIN_HOST=${GODOT_BIN_HOST}
        - set GODOT_TEMPLATES_HOST=${GODOT_TEMPLATES_HOST}
-       - point LLM_BASE_URL / COMFYUI_ENDPOINT at the host GPU services.
+       - point COMFYUI_ENDPOINT at the host GPU services (the LLM has no URL here — the
+         worker's --target names its server).
   3. docker compose build && docker compose up -d
   4. Create an account:  docker compose exec app python -m auth.cli create <handle>
 EOF

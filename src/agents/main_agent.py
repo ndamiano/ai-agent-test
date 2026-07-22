@@ -8,7 +8,6 @@ from config.settings_manager import settings_manager
 from config.time_utils import get_utc_timestamp
 from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
-from llm_clients.openai_compatible_connector import _log_response_to_file
 from tools.execution_context import (
     execution_context,
     get_subtask_id,
@@ -56,11 +55,6 @@ class MainAgent:
         ('response', dict) in the same shape `generate_with_tools` returns (so callers that
         only want the finished message can drain this without caring how it arrived).
         """
-        if not (hasattr(self.connector, 'generate_with_tools_stream')
-                and getattr(self.connector, '_streaming_works', True)):
-            yield ('response', self.connector.generate_with_tools(messages, tools))
-            return
-
         try:
             # Envelope fields from the first chunk (id, model, etc.)
             envelope: Dict[str, Any] = {}
@@ -135,13 +129,6 @@ class MainAgent:
             })
 
         assembled = {**envelope, "choices": choices}
-
-        _log_response_to_file(
-            assembled,
-            getattr(self.connector, 'api_endpoint', 'unknown'),
-            {"method": "generate_with_tools_stream", "model": getattr(self.connector, 'model_name', 'unknown')},
-        )
-
         yield ('response', assembled)
 
     def _get_response_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]]) -> Dict:

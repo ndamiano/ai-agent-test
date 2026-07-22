@@ -12,7 +12,6 @@ ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 
 class LLMSettings(BaseModel):
-    base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
     max_tokens: int = Field(50000, ge=1)
     n_ctx: int = Field(32768, ge=1, description=(
@@ -36,9 +35,9 @@ class TrellisSettings(BaseModel):
 
 
 class WorkQueueSettings(BaseModel):
-    """The worker-pull inference queue. When enabled, LLM inference is enqueued as jobs rows and
-    executed by worker agents (worker/agent.py) that claim over HTTP — the same shape whether the
-    worker is the local 5090 or a RunPod pod. Disabled = the connector calls its base_url directly."""
+    """The worker-pull inference queue: jobs rows executed by worker agents (worker/agent.py) that
+    claim over HTTP — the same shape whether the worker is the local 5090 or a RunPod pod. LLM
+    inference always rides it; `enabled` gates the image/mesh stages and the autoscaler."""
     enabled: bool = Field(False)
     token: str = Field("", description=(
         "Shared bearer token worker agents present on /worker endpoints. Empty = every worker "

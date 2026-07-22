@@ -1,9 +1,7 @@
 {
   "parallel_fixes": 4,
   "llm": {
-    "base_url": "http://localhost:1234",
     "model": "local-model",
-    "temperature": 0.7,
     "max_tokens": 50000,
     "reasoning": "low",
     "n_ctx": 32768

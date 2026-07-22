@@ -305,20 +305,19 @@ src/
                          tools/build_events.py (_emit → db events log + event_bus). A built run is staged to
                          runtime/games/<id>/ and served at /play (StaticFiles mount) for the SPA.
   config/                settings_schema.py (Pydantic), settings_manager.py (singleton)
-  llm_clients/           connector.py, openai_compatible_connector.py, queue_connector.py,
-                         message_builder.py. The
-                         connector speaks ONLY the OpenAI-compatible Responses API (/v1/responses) —
-                         the one local endpoint that honors reasoning.effort. It translates the
-                         chat-shaped messages/tools callers pass into Responses input/tools and
-                         normalizes the response back to chat shape. `get_connector()` builds the
-                         cached singleton from the `llm` block: QueueConnector when
-                         workqueue.enabled, else a direct OpenAICompatibleConnector.
+  llm_clients/           connector.py, message_builder.py. LLMConnector translates the
+                         chat-shaped messages/tools callers pass into Responses input/tools
+                         (/v1/responses — the one local endpoint that honors reasoning.effort),
+                         enqueues the payload on the `llm` queue and normalizes the worker's reply
+                         back to chat shape. The worker owns the inference server address
+                         (`--target`), so there is no llm.base_url. `get_connector()` is the
+                         cached singleton.
   tools/                 tool_manager, system_tools, comfyui_tools (image backend), file_tools,
                          execution_context (resolve_base_path → the run root).
 ```
 
 **Inference path (chat / spec draft):** `MainAgent` / `draft_spec` → `MessageBuilder` →
-`get_connector()` → `OpenAICompatibleConnector`.
+`get_connector()` → `LLMConnector` → the `llm` queue.
 **Inference path (build):** `AgentLoop` → `Module.get_fix` → `Services.infer` → connector. AUTHORING
 goes THROUGH the `write` tool (`_author_via_write`, one whole file per call as the `code` arg) — the
 tool boundary is what keeps the model from treating the block as a scratchpad (chatter comments, a
@@ -343,9 +342,10 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 ## Settings & running
 
 **Settings:** `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
-- `llm.base_url` (the local llama.cpp router), `llm.model`.
-- `workqueue.enabled` routes ALL GPU work through the worker-pull queue (enqueue a jobs row, wait
-  for a worker) instead of calling a backend directly: LLM inference (QueueConnector), sprite/mesh
+- `llm.model`, `llm.n_ctx`, `llm.reasoning`. No endpoint: LLM inference rides the queue, so an
+  `llm` worker must be running or every call times out.
+- `workqueue.enabled` routes the remaining GPU work through the worker-pull queue (enqueue a jobs
+  row, wait for a worker) instead of calling a backend directly: sprite/mesh
   images (queue `image`) and TRELLIS meshes (queue `mesh`). `workqueue.token` is the worker bearer
   secret. One worker per queue, and a queue owns its card:
   `python -m worker.agent --server <cp>:8000 --token <token> --queue image --target localhost:8188`

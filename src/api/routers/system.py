@@ -22,6 +22,6 @@ async def get_status(request: Request) -> Dict[str, Any]:
         "status": "healthy",
         "llm_connected": True,
         "embedding_connected": False,
-        "llm_url": client.base_url,
+        "llm_model": client.model_name,
         "agent_count": len(list_agents()),
     }

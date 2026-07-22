@@ -1,5 +1,5 @@
 """The worker-pull queue: store-level claim/lease/complete semantics, the /worker HTTP
-endpoints (token-gated, outside the user auth gate), and the QueueConnector transport
+endpoints (token-gated, outside the user auth gate), and the LLMConnector transport
 end-to-end against a fake in-process worker."""
 
 import sys
@@ -18,7 +18,7 @@ import base64
 
 from api.routers import workqueue as wq
 from db import store
-from llm_clients.queue_connector import QueueConnector
+from llm_clients.connector import LLMConnector
 from llm_clients.rate_limiter import get_llm_rate_limiter
 from tools.execution_context import run_scope
 
@@ -242,7 +242,7 @@ def test_deregister_requires_the_token(client):
     assert client.post("/worker/deregister", json={"worker_id": "w1"}).status_code == 403
 
 
-# ── QueueConnector end-to-end with a fake worker ──────────────────────────────
+# ── LLMConnector end-to-end with a fake worker ────────────────────────────────
 def _fake_worker(stop, respond):
     """Claim from the store directly and complete with `respond(payload)`."""
     while not stop.is_set():
@@ -255,8 +255,7 @@ def _fake_worker(stop, respond):
 
 
 def _connector(timeout=10):
-    return QueueConnector(base_url="http://unused", model="test-model",
-                          job_timeout_seconds=timeout)
+    return LLMConnector(model="test-model", job_timeout_seconds=timeout)
 
 
 @pytest.fixture
@@ -275,7 +274,7 @@ def fake_worker():
         holder["t"].join(timeout=2)
 
 
-def test_queue_connector_round_trip(fake_worker):
+def test_connector_round_trip(fake_worker):
     def respond(payload):
         assert payload["path"] == "/v1/responses"
         assert payload["body"]["model"] == "test-model"
@@ -290,7 +289,7 @@ def test_queue_connector_round_trip(fake_worker):
     assert result["usage"]["completion_tokens"] == 1
 
 
-def test_queue_connector_attributes_jobs_to_the_run_scope(fake_worker):
+def test_connector_attributes_jobs_to_the_run_scope(fake_worker):
     store.create_game("g9", "u1")
     fake_worker(lambda p: ({"output": []}, None))
     with run_scope("g9"):
@@ -298,13 +297,13 @@ def test_queue_connector_attributes_jobs_to_the_run_scope(fake_worker):
     assert store.game("g9")["seconds_used"] == 1.0
 
 
-def test_queue_connector_surfaces_worker_errors(fake_worker):
+def test_connector_surfaces_worker_errors(fake_worker):
     fake_worker(lambda p: (None, "Status 500: model exploded"))
     result = _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])
     assert "model exploded" in result["error"]
 
 
-def test_queue_connector_times_out_without_a_worker():
+def test_connector_times_out_without_a_worker():
     result = _connector(timeout=0.3).generate_with_tools(
         [{"role": "user", "content": "hi"}], [])
     assert "timed out" in result["error"]

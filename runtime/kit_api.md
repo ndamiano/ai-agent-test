@@ -41,6 +41,8 @@ it makes things effectively motionless.)
 - `kit.resolveAabb(a, b)` → "left"|"right"|"top"|"bottom". Push `a` out of solid `b`, zero that
   velocity component, return the side hit.
 - `kit.makeTilemap(rows, tile=32, solid="#")` → `{ at(cx,cy), solidAt(cx,cy), solidsNear(e), w, h }`.
+  `rows` is an array of equal-length STRINGS, one per map row — `kit.makeTilemap(["#####","#...#","#####"])`
+  — never a 2D char array (`string[][]` is a type error).
   `solidsNear(e)` returns the solid tile rects overlapping entity `e` (feed each to resolveAabb).
 
 ## Top-down movement  (USE THIS for WASD steering — don't hand-roll it)

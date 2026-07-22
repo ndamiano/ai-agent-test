@@ -110,8 +110,8 @@ interface Kit {
   physics3(e: Entity, dt: number, gravity?: number, ground?: number): void;
   heading3(yaw: number, pitch: number): Vec3;
   flyer(e: Entity, input: Input, dt: number, opts?: FlyerOpts): Entity;
-  aabb(a: Rect, b: Rect): boolean;
-  resolveAabb(a: Entity, b: Rect): "left" | "right" | "top" | "bottom";
+  aabb(a: Rect | Entity, b: Rect | Entity): boolean;
+  resolveAabb(a: Entity, b: Rect | Entity): "left" | "right" | "top" | "bottom";
   makeTilemap(rows: string[], tile?: number, solid?: string): Tilemap;
   physics(e: Entity, dt: number, solids?: Rect[], gravity?: number): void;
   walk(e: Entity, dir: number, speed: number): void;

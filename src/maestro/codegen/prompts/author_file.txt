@@ -19,10 +19,14 @@ Rules:
   already has an open index signature, so `e.type`/`e.hp` also work without extending. Either is fine.
 - When a GAME DATA block is present, import its typed consts from "./data.ts"
   (`import { ENEMIES } from "./data.ts"`) and read them — NEVER re-declare those tables inline or
-  invent your own rows. Balance/content changes belong in data/*.json, not code.
+  invent your own rows. Balance/content changes belong in data/*.json, not code. The schema in the
+  block lists EVERY field a row has — reading any other field is a type error (a `speed` on enemies
+  does not put a `speed` on the hero). Need a stat the schema lacks? Use a local const, don't invent
+  the field.
 - Import shared shapes + sibling exports from their files: `import type { GameState } from "./types.ts"`,
   `import { movePlayer } from "./player.ts"` (relative paths, `.ts` extension, ONLY the listed
-  exports). Do NOT invent exports.
+  exports). Do NOT invent exports, and NEVER import from a file that is not in the plan's file list —
+  if the plan has no `types.ts` (a single-file game), define every type LOCALLY in this file.
 - If this is `types.ts`: export the shared game types — a `GameState` interface (it MUST declare
   EVERY field any file reads/writes on state), tile/item/entity shapes (extend `Kit.Entity` for typed
   entities). Be concrete: a map of `"#"|"."` chars is `export type Tile = "#" | ".";
@@ -81,9 +85,10 @@ Rules:
   back to fake collision. There is NO 3D solid-collision primitive: in 3D never write an AABB loop
   over the world to block the player (it pins them against road/ground slabs); leave the town open
   or clamp bounds with kit.V.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
-- ACTIONS: every NON-movement key in the spec's `controls` map is wired in init via
-  `kit.register(name, keys, fn)` — e.g. kit.register("attack", [" "], () => { ... }) for
-  "SPACE: attack". Never a bare `input.pressed(...)` scattered in update for a spec-bound action
+- ACTIONS: before writing init, list the spec's `controls` map entries that are NOT movement — init
+  MUST call `kit.register(name, keys, fn)` for EACH one, e.g. kit.register("attack", [" "], () =>
+  { ... }) for "SPACE: attack". A spec control with no register call fails the probe (unbound_control).
+  Never a bare `input.pressed(...)` scattered in update for a spec-bound action
   (the probe presses registered actions and rejects unregistered spec keys). Held mechanics
   (charging, sprint) may still read input.down per frame — the rule targets EDGE actions. Movement
   keys stay with the control scheme; never register them. If the scaffold wires dialogue, "interact"

@@ -140,8 +140,9 @@ def _run_dir(tmp_path) -> RunState:
 
 
 def _write_game(tmp_path, code, extra=None):
-    """Write a game folder (game/main.ts + a manifest naming it) so `planned`/`authored` pass and the
-    gate checks run. `extra` = {name: src} for extra system files."""
+    """Write a game folder (game/main.ts + a manifest naming it + an empty data design) so
+    `planned`/`data`/`authored` pass and the gate checks run. `extra` = {name: src} for extra
+    system files."""
     d = tmp_path / "game"
     d.mkdir(exist_ok=True)
     (d / "main.ts").write_text(code, encoding="utf-8")
@@ -150,6 +151,8 @@ def _write_game(tmp_path, code, extra=None):
         (d / name).write_text(src, encoding="utf-8")
         files.append({"name": name, "purpose": "", "exports": []})
     (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
+    (d / "data").mkdir(exist_ok=True)
+    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
 
 
 def _node_eval(js: str) -> dict:
@@ -275,6 +278,198 @@ def test_move_relative_follows_camera_yaw():
     """)
     assert r["ax"] == 0 and r["az"] == -10           # yaw 0: W -> into screen (-z)
     assert r["bx"] == 10 and abs(r["bz"]) < 0.001     # yaw 90deg: same W -> +x
+
+
+# ── collideWorld: the ONE 2D solid pass (tile pushout + pair separation) ──────
+def test_collide_world_pushes_solid_entity_out_of_solid_tile():
+    r = _node_eval("""
+      import {makeKit, makeRng} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const solidAt = (cx, cy) => cx === 2 && cy === 1;      // one wall cell: x 64..96, y 32..64
+      const e = { x: 60, y: 40, w: 20, h: 20, vx: 50, solid: true };
+      kit.collideWorld([e], solidAt, 32);
+      const inside = e.x + e.w > 64 && e.x < 96 && e.y + e.h > 32 && e.y < 64;
+      console.log(JSON.stringify({x: e.x, vx: e.vx, inside}));
+    """)
+    assert r["inside"] is False
+    assert r["x"] == 44 and r["vx"] == 0   # minimal-axis pushout; blocked velocity zeroed
+
+
+def test_collide_world_separates_solid_pair_symmetrically():
+    r = _node_eval("""
+      import {collideWorld} from "./engine.js";
+      const a = { x: 100, y: 100, w: 20, h: 20, solid: true };
+      const b = { x: 110, y: 100, w: 20, h: 20, solid: true };
+      collideWorld([a, b]);
+      console.log(JSON.stringify({ax: a.x, bx: b.x, ay: a.y, by: b.y}));
+    """)
+    assert r["ax"] == 95 and r["bx"] == 115   # 10px x-overlap split half-and-half
+    assert r["ay"] == 100 and r["by"] == 100  # minimal axis only
+
+
+def test_collide_world_leaves_non_solid_untouched():
+    r = _node_eval("""
+      import {collideWorld} from "./engine.js";
+      const a = { x: 100, y: 100, w: 20, h: 20, solid: true };
+      const bullet = { x: 105, y: 100, w: 6, h: 6 };          // overlaps a; not solid
+      const ghost = { x: 40, y: 40, w: 10, h: 10 };           // rests in a solid cell; not solid
+      collideWorld([a, bullet, ghost], (cx, cy) => cx === 1 && cy === 1, 32);
+      console.log(JSON.stringify({bx: bullet.x, gx: ghost.x, ax: a.x}));
+    """)
+    assert r["bx"] == 105 and r["gx"] == 40 and r["ax"] == 100
+
+
+def test_collide_world_is_deterministic():
+    r = _node_eval("""
+      import {collideWorld, makeRng} from "./engine.js";
+      const build = () => {
+        const rng = makeRng(7), w = [];
+        for (let i = 0; i < 30; i++)
+          w.push({ x: rng.int(0, 300), y: rng.int(0, 300), w: 20, h: 20, solid: true });
+        return w;
+      };
+      const solidAt = (cx, cy) => (cx + cy) % 7 === 0;
+      const a = build(), b = build();
+      for (let i = 0; i < 5; i++) { collideWorld(a, solidAt, 32); collideWorld(b, solidAt, 32); }
+      console.log(JSON.stringify({same: JSON.stringify(a) === JSON.stringify(b)}));
+    """)
+    assert r["same"] is True
+
+
+# ── action registry: register / bindings / edge-fire ──────────────────────────
+def test_register_edge_fires_once_per_press_and_rereg_replaces():
+    r = _node_eval("""
+      import {makeKit, makeRng, makeInput} from "./engine.js";
+      const kit = makeKit({}, makeRng(1));
+      const input = makeInput();
+      let hits = 0, other = 0;
+      kit.register("attack", ["F"], () => { hits++; });      // "F" normalizes like the key listener
+      input._set("f", true); kit._fireActions(input); input._endFrame();   // press: ONE edge
+      kit._fireActions(input); input._endFrame();                          // held: no edge
+      kit._fireActions(input); input._endFrame();
+      input._set("f", false); input._endFrame();
+      input._set("f", true); kit._fireActions(input); input._endFrame();   // second press
+      const afterTwoPresses = hits;
+      kit.register("attack", ["f"], () => { other++; });     // re-register REPLACES (no double-fire)
+      input._set("f", false); input._endFrame();
+      input._set("f", true); kit._fireActions(input); input._endFrame();
+      console.log(JSON.stringify({afterTwoPresses, hits, other, bindings: kit.bindings()}));
+    """)
+    assert r["afterTwoPresses"] == 2 and r["hits"] == 2 and r["other"] == 1
+    assert r["bindings"] == [{"name": "attack", "keys": ["f"]}]
+
+
+def test_simulate_fires_registered_actions():
+    r = _node_eval("""
+      import {simulate} from "./engine.js";
+      const game = (kit) => ({
+        config: { width: 100, height: 100, seed: 1 },
+        state: { world: [], score: 0 },
+        init(kit) {
+          kit.register("attack", [" "], () => {
+            this.state.score += 1;
+            if (this.state.score >= 2) kit.win("done");
+          });
+        },
+        update(dt, input, kit) {},
+      });
+      const res = simulate(game, { frames: 120, script: [
+        { frame: 5, key: " ", down: true }, { frame: 8, key: " ", down: false },
+        { frame: 20, key: " ", down: true } ] });
+      console.log(JSON.stringify({ok: res.ok, resolved: res.resolved, frame: res.frame}));
+    """)
+    assert r["ok"] is True and r["resolved"] == "win"   # both presses fired exactly once each
+    assert r["frame"] >= 20
+
+
+# ── probe: dead_action / unbound_control / solid invariants ───────────────────
+def test_probe_dead_action_flags_noop_and_passes_real():
+    r = _node_eval("""
+      import {probe} from "./engine.js";
+      const mk = (fn) => (kit) => ({
+        config: { width: 100, height: 100, seed: 1 },
+        state: { world: [], score: 0 },
+        init(kit) { const s = this.state; kit.register("attack", ["f"], () => fn(s)); },
+        update(dt, input, kit) {},
+      });
+      const dead = probe(mk((s) => {}), {});
+      const live = probe(mk((s) => { s.score += 1; }), {});
+      console.log(JSON.stringify({
+        deadKinds: dead.violations.map(v => v.kind),
+        deadDetail: (dead.violations.find(v => v.kind === "dead_action") || {}).detail || "",
+        liveOk: live.ok,
+      }));
+    """)
+    assert "dead_action" in r["deadKinds"]
+    assert '"attack"' in r["deadDetail"] and "kit.register" in r["deadDetail"]
+    assert r["liveOk"] is True   # registered keys also count toward controls-live
+
+
+def test_probe_unbound_control_names_unregistered_spec_key():
+    r = _node_eval("""
+      import {probe} from "./engine.js";
+      const game = (kit) => ({
+        config: { width: 100, height: 100, seed: 1 },
+        state: { world: [], score: 0 },
+        init(kit) { const s = this.state; kit.register("attack", [" "], () => { s.score += 1; }); },
+        update(dt, input, kit) {},
+      });
+      // SPACE is registered; F is not; WASD (movement), CLICK (mouse), 1-9/ESC (kit-owned menu
+      // digits + talk close) all ride the explicit skip lists.
+      const bad = probe(game, { controlKeys: { "SPACE": "attack", "F": "parry", "WASD": "move", "CLICK": "aim" } });
+      const good = probe(game, { controlKeys: { "SPACE": "attack", "WASD": "move", "1-9": "choose option", "ESC": "close menu" } });
+      console.log(JSON.stringify({
+        badUnbound: bad.violations.filter(v => v.kind === "unbound_control").length,
+        badDetail: (bad.violations.find(v => v.kind === "unbound_control") || {}).detail || "",
+        goodOk: good.ok,
+      }));
+    """)
+    assert r["badUnbound"] == 1
+    assert '"F"' in r["badDetail"] and "kit.register" in r["badDetail"]
+    assert r["goodOk"] is True
+
+
+def test_probe_solid_overlap_fires_stacked_and_collide_world_fixes():
+    r = _node_eval("""
+      import {probe} from "./engine.js";
+      const mk = (collide) => (kit) => ({
+        config: { width: 200, height: 200, seed: 1 },
+        state: { world: [], p: null },
+        init(kit) {
+          this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 16, h: 16, solid: true });
+          kit.spawn(this.state.world, { x: 54, y: 50, w: 16, h: 16, solid: true, type: "enemy" });
+        },
+        update(dt, input, kit) {
+          if (input.down("d")) this.state.p.x += 150 * dt;
+          if (collide) kit.collideWorld(this.state.world);
+        },
+      });
+      const stacked = probe(mk(false), {});
+      const fixed = probe(mk(true), {});
+      console.log(JSON.stringify({stackedKinds: stacked.violations.map(v => v.kind), fixedOk: fixed.ok}));
+    """)
+    assert "solid_overlap" in r["stackedKinds"]
+    assert r["fixedOk"] is True
+
+
+def test_probe_wall_clip_sees_state_solid_at():
+    # The teeth the incident demanded: a solidAt lookup reachable from state now holds SOLID
+    # entities to it even without a state.tilemap.
+    r = _node_eval("""
+      import {probe} from "./engine.js";
+      const game = (kit) => ({
+        config: { width: 200, height: 200, seed: 1 },
+        state: { world: [], p: null, solidAt: (cx, cy) => cx === 3 && cy === 1, cell: 32 },
+        init(kit) {
+          this.state.p = kit.spawn(this.state.world, { x: 10, y: 10, w: 8, h: 8, solid: true });
+          kit.spawn(this.state.world, { x: 100, y: 40, w: 8, h: 8, solid: true, type: "ghost" });
+        },
+        update(dt, input, kit) { if (input.down("d")) this.state.p.x += 150 * dt; },
+      });
+      const pr = probe(game, {});
+      console.log(JSON.stringify({kinds: pr.violations.map(v => v.kind)}));
+    """)
+    assert "wall_clip" in r["kinds"]
 
 
 def test_run_headless_green_on_pong(tmp_path):
@@ -416,6 +611,8 @@ def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
         {"name": "types.ts", "purpose": "shared interfaces", "exports": ["GameState"]},
         {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]},
         {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]}]}))
+    (d / "data").mkdir()
+    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}))
     order = [f["name"] for f in _authoring_order(_run_dir(tmp_path).run_dir)]
     assert order == ["types.ts", "combat.ts", "main.ts"]   # contract first, systems, entry LAST
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
@@ -520,48 +717,85 @@ def test_multi_file_game_loads_and_gates(tmp_path):
 
 
 class _FakeToolConn:
-    """Scripts the read→write subloop: call 1 reads a file, call 2 overwrites main.ts — both are real
-    tool calls (a quote-heavy file round-trips fine as a write `code` arg). Records the actions
-    so a test can assert the fix READ before it WROTE."""
-    def __init__(self, code, target="main.ts"):
-        self.code = code
+    """Scripts the read→edit subloop: call 1 reads a file, call 2 lands an atomic multi-hunk edit —
+    both are real tool calls. Records the actions so a test can assert the fix READ before it EDITED."""
+    def __init__(self, edits, target="main.ts"):
+        self.edits = edits
         self.target = target
         self.calls = []
         self.reasonings = []
+        self.user_msgs = []
 
     def generate_with_tools(self, messages, tools=None, **kw):
         self.reasonings.append(kw.get("reasoning"))
+        self.user_msgs += [m.get("content", "") for m in messages if m.get("role") == "user"]
         step = len(self.calls)
         if step == 0:
             self.calls.append("read_file")
             tc = {"id": "c0", "type": "function",
                   "function": {"name": "read_file", "arguments": json.dumps({"file": self.target})}}
             return {"choices": [{"message": {"content": "", "tool_calls": [tc]}}]}
-        self.calls.append("write")
+        self.calls.append("edit")
         tc = {"id": "c1", "type": "function",
-              "function": {"name": "write",
-                           "arguments": json.dumps({"file": self.target, "code": self.code})}}
+              "function": {"name": "edit",
+                           "arguments": json.dumps({"file": self.target, "edits": self.edits})}}
         return {"choices": [{"message": {"content": "Fixed it.", "tool_calls": [tc]}}]}
 
 
-def test_fix_subloop_reads_then_writes_to_green(tmp_path):
-    # A game that crashes headless (init throws). The fix subloop must read, then write a good file;
-    # the outer loop re-gates to green.
+def test_fix_subloop_reads_then_edits_to_green(tmp_path):
+    # A game that crashes headless (init throws). The fix subloop must read, then land a grounded
+    # edit (write refuses overwrites now); the outer loop re-gates to green.
     state = _run_dir(tmp_path)
     _write_game(tmp_path, BROKEN)
     spec = {"frozen": True, "mode": "2d", "title": "T", "design": {"title": "T"}}
     state.write_spec(spec)
-    conn = _FakeToolConn(GOOD)
+    conn = _FakeToolConn([{"old_string": BROKEN, "new_string": GOOD}])
     loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
                      connector=conn, max_steps=15)
     result = loop.run()
     assert result.ok is True
-    assert "read_file" in conn.calls and "write" in conn.calls
-    assert conn.calls.index("read_file") < conn.calls.index("write")
+    assert "read_file" in conn.calls and "edit" in conn.calls
+    assert conn.calls.index("read_file") < conn.calls.index("edit")
     assert (tmp_path / "game" / "main.ts").read_text().strip() == GOOD.strip()
     # the fix loop forces reasoning OFF — a thinking model burns the whole budget reasoning and starves
     # the tool call.
     assert conn.reasonings and all(r == "none" for r in conn.reasonings)
+
+
+def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypatch):
+    """A human playtest note runs through the SAME read→edit subloop as a gate failure (no whole-file
+    rewrite shape left): the note rides as the failing-gate text, the fix lands as a grounded edit,
+    then the build re-gates."""
+    from maestro.codegen import run as run_mod
+
+    state = _run_dir(tmp_path)
+    _write_game(tmp_path, GOOD)
+    state.write_spec({"frozen": True, "mode": "2d", "title": "T", "design": {"title": "T"}})
+
+    conn = _FakeToolConn([{"old_string": "kit.V.clamp(this.state.p.x, 0, 190)",
+                           "new_string": "kit.V.clamp(this.state.p.x, 0, 180)"}])
+    monkeypatch.setattr(run_mod.RunState, "for_run", classmethod(lambda cls, rid: state))
+    monkeypatch.setattr("llm_clients.connector_selector.get_connector", lambda: conn)
+    regated = {}
+    monkeypatch.setattr(run_mod, "run_build",
+                        lambda rid, max_steps=40: regated.update(rid=rid, max_steps=max_steps) or "REGATED")
+
+    out = run_mod.fix_from_note("rid1", "the player can leave the screen on the right")
+    assert out == "REGATED"
+    assert regated == {"rid": "rid1", "max_steps": 40}   # re-gate always runs after the patch
+    assert conn.calls == ["read_file", "edit"]           # the subloop shape: grounded read, then edit
+    assert any("HUMAN PLAYTEST FEEDBACK" in m and "leave the screen" in m for m in conn.user_msgs)
+    assert "kit.V.clamp(this.state.p.x, 0, 180)" in (tmp_path / "game" / "main.ts").read_text()
+
+
+def test_human_note_error_classifies_to_default():
+    """The synthetic note Error (code='human') must fall through fix_classes to `default` — no TS-code
+    or gate-kind matcher may claim a prose note."""
+    from maestro.codegen.fix_classes import DEFAULT, classify
+    from maestro.modules.module import Error, ErrorType
+    e = Error(type=ErrorType.HUMAN, code="human", component="game",
+              message="HUMAN PLAYTEST FEEDBACK — the paddle moves the wrong way")
+    assert classify(e) is DEFAULT
 
 
 def test_loop_refuses_unfrozen_spec(tmp_path):
@@ -576,10 +810,12 @@ def test_loop_refuses_unfrozen_spec(tmp_path):
 
 # ── context assembly (the fixes that converge multi-file builds) ────────────────
 def test_fix_schemas_ladder():
-    """read · edit · write are all real tool calls. On an outer STALL (escalate) or enough failed edits,
-    EDIT is dropped to force a decisive overwrite — READ is kept so that overwrite is grounded. But once
-    the fix has READ enough without writing, READ is dropped too so a big/corrupt file can't eat every
-    turn in reads while none writes. WRITE is always offered so a fix can always land."""
+    """read · edit · write are all real tool calls. EDIT is ALWAYS offered — it is the only way to
+    change an existing file (write refuses overwrites), so no ladder step may drop it. READ drops
+    ONLY on within-fix read-thrash (_READS_BEFORE_FORCE_ACT) — never on the outer stall: edits are
+    grounded in reads, so an escalated fix that cannot read can only guess anchors (measured death
+    spiral in a live run). WRITE stays offered for the create-a-missing-planned-file case; the
+    tool itself refuses an overwrite."""
     from maestro.codegen.module import _fix_schemas, _READS_BEFORE_FORCE_ACT
 
     def names(schemas):
@@ -587,16 +823,14 @@ def test_fix_schemas_ladder():
 
     lo = _READS_BEFORE_FORCE_ACT - 1
     hi = _READS_BEFORE_FORCE_ACT
-    assert names(_fix_schemas(escalate=False, edit_fails=0, nreads=0)) == {"read_file", "edit", "write"}
-    assert names(_fix_schemas(escalate=True, edit_fails=0, nreads=0)) == {"read_file", "write"}   # edit dropped, read kept
-    assert names(_fix_schemas(escalate=False, edit_fails=3, nreads=0)) == {"read_file", "write"}  # same on edit-fail
-    assert names(_fix_schemas(escalate=True, edit_fails=3, nreads=0)) == {"read_file", "write"}
+    assert names(_fix_schemas(escalate=False, nreads=0)) == {"read_file", "edit", "write"}
+    assert names(_fix_schemas(escalate=True, nreads=0)) == {"read_file", "edit", "write"}   # stall keeps grounding
     # read is still offered right up to the threshold, then dropped so the fix must ACT
-    assert "read_file" in names(_fix_schemas(escalate=False, edit_fails=0, nreads=lo))
-    assert names(_fix_schemas(escalate=False, edit_fails=0, nreads=hi)) == {"edit", "write"}
-    assert names(_fix_schemas(escalate=True, edit_fails=0, nreads=hi)) == {"write"}   # both edit+read gone → must overwrite
-    assert all("write" in names(_fix_schemas(e, f, r))                                # write always available
-               for e in (True, False) for f in (0, 3) for r in (0, hi))
+    assert "read_file" in names(_fix_schemas(escalate=False, nreads=lo))
+    assert names(_fix_schemas(escalate=False, nreads=hi)) == {"edit", "write"}
+    # edit is never dropped — an existing file can only be changed through it
+    assert all({"edit", "write"} <= names(_fix_schemas(e, r))
+               for e in (True, False) for r in (0, hi))
 
 
 def test_author_via_write_uses_the_write_tool():
@@ -724,3 +958,63 @@ def test_kit_surface_errors_get_the_ambient_dts():
 
     game_member = err("main.ts: error TS2339: Property 'hp' does not exist on type 'Enemy'.")
     assert _kit_context(spec, game_member) == ""
+
+
+# ── run-7 regressions: scaffold error attribution + duplicate-decl dedupe ───────
+def test_generated_file_tsc_errors_reattribute_to_hook(tmp_path):
+    """tsc blames the GENERATED scaffold when game.ts breaks the hook contract; the tools refuse to
+    edit generated files, so the error must route to game.ts (measured: a capped run burned ~130
+    calls on main.ts errors it was forbidden from touching)."""
+    from types import SimpleNamespace
+    from maestro.codegen.module import _detect_typechecks
+    d = tmp_path / "game"
+    d.mkdir()
+    (d / "main.ts").write_text(
+        '// GENERATED control scaffold — never edit; gameplay lives in game.ts and its siblings.\n'
+        'import { createState, init } from "./game.ts";\n'
+        'export function createGame(kit: Kit): GameObject {\n'
+        '  const state: any = createState(kit);\n'
+        '  return { config: {}, state, init(kit) { init(state, kit); }, update(dt, input, kit) {} };\n'
+        '}\n', encoding="utf-8")
+    (d / "game.ts").write_text(  # exports init but NOT createState — breaks the scaffold's import
+        'export function init(state: any, kit: Kit): void {}\n', encoding="utf-8")
+    (d / "manifest.json").write_text(json.dumps({"files": [
+        {"name": "game.ts", "purpose": "hooks", "exports": ["createState", "init"]}]}), encoding="utf-8")
+    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path), spec={"design": {}})
+    errs = _detect_typechecks(None, None, ctx)
+    assert errs, "expected type errors"
+    assert all(e.path == "game.ts" for e in errs), [e.path for e in errs]
+    joined = " ".join(e.message for e in errs)
+    assert "GENERATED" in joined and "game.ts" in joined
+
+
+def test_dedupe_functions_keeps_last_and_skips_overloads():
+    from maestro.codegen.gates import dedupe_functions
+    src = (
+        'export function init(state: any): void { state.v = "old { brace in string"; }\n'
+        'function helper(n: number): number; // overload signature — legal, untouched\n'
+        'function helper(n: any): any { return n; }\n'
+        'export function init(state: any): void { state.v = 2; }\n')
+    out, removed = dedupe_functions(src)
+    assert removed == ["init"]
+    assert out.count("function init") == 1
+    assert "state.v = 2" in out and "old { brace" not in out
+    assert out.count("function helper") == 2   # overload pair intact
+
+
+def test_dedupe_decls_routes_and_rewrites(tmp_path):
+    from maestro.codegen.fix_classes import classify
+    from maestro.modules.module import Error, ErrorType
+    d = tmp_path / "game"
+    d.mkdir()
+    (d / "game.ts").write_text(
+        "export function init(s: any): void { s.a = 1; }\n"
+        "export function init(s: any): void { s.a = 2; }\n", encoding="utf-8")
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", path="game.ts",
+                message="game.ts has 2 type error(s):\n  - line 1: error TS2393: Duplicate function implementation.")
+    cls = classify(err)
+    assert cls.id == "duplicate-decl"
+    res = cls.deterministic(tmp_path, err)
+    assert res["count"] == 1
+    body = (d / "game.ts").read_text()
+    assert body.count("function init") == 1 and "s.a = 2" in body

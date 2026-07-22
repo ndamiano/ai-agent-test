@@ -321,6 +321,26 @@ camera(cam, kit) {                                          // chase-cam behind 
 There is NO `"mouse0"`/`"click"` key, and `input.pointer` only works under `controls:"fp"` — every
 action in the other schemes is a keyboard key.
 
+## Actions (register key presses)
+**Rule: EVERY non-movement control in the spec's `controls` map gets a `kit.register` in init.**
+Movement keys stay with the control scheme (`config.controls` + `kit.drive`) — never registered.
+The engine fires the handler on the PRESSED edge of any bound key, after update each frame; a
+re-register with the same name replaces. `kit.bindings()` → `[{name, keys}]`. The probe presses
+every registered action and requires an effect — a bare `input.pressed(...)` in update is invisible
+to it (held mechanics may still read `input.down` per frame; this rule targets EDGE actions).
+```js
+init(kit) {
+  kit.register("attack", [" "], () => {           // spec: "SPACE: attack" — keyboard, never mouse
+    const foe = nearestEnemy(this.state);         // handlers may read state for range/aim
+    if (foe && Math.hypot(foe.x - this.state.player.x, foe.z - this.state.player.z) < 3) foe.hp -= 1;
+  });
+  kit.register("interact", ["e"], () => {         // spec: "E: talk" (skip if the scaffold wires dialogue)
+    const near = this.state.npcs.find((n) => Math.hypot(n.x - this.state.player.x, n.z - this.state.player.z) < 3);
+    if (!this.state.talk && near) kit.talkOpen(this.state, near);
+  });
+}
+```
+
 ## Law
 `update` mutates state and never renders; the runtime handles all drawing. Keep the sim pure so it
 runs headless. Randomness only via `kit.rng`. `kit.win`/`kit.lose` END the game — milestones along

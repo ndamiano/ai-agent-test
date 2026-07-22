@@ -1,0 +1,6 @@
+# ROOT CAUSE — a scaffold hook is missing from game.ts
+The GENERATED main.ts imports createState/init/update/draw/hud from ./game.ts — that import list is
+law. The named hook is not exported there. Either it lives in a SIBLING file (then add ONE line to
+game.ts: `export { theHook } from "./that-file.ts";` — do not move the code) or it was never
+written (then write it in game.ts with the exact signature the scaffold's header comment states).
+Never edit main.ts; never rename the hook.

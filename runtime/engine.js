@@ -149,6 +149,59 @@ export function physics(e, dt, solids = [], gravity = 2000) {
   }
 }
 
+// ── solid collision (top-down/2D): ONE pass resolves both response cases ─────
+// Live-run evidence for why this is a kit primitive: a shipped game had a solidAt() lookup that was
+// never applied to movement (the knight walked through walls), and another let enemies stack under
+// the player (no pair separation). Both are the same missing pass. The scaffold calls this AFTER
+// gameplay each frame; game code composes it for free by tagging entities `solid: true`.
+// Participants: entities with `e.solid` truthy, not `e.dead`, with a real AABB (w,h > 0).
+//   1. entity-vs-entity: each overlapping solid pair gets a symmetric half-and-half push apart on
+//      the minimal axis (no masses). Broadphase = sort by x + sweep (stable, worlds are tens of
+//      entities). Velocities untouched — steering re-sets them each frame anyway.
+//   2. entity-vs-tile (when solidAt given): full pushout of the entity's AABB from solid cells via
+//      resolveAabb (minimal axis, zeroes the blocked velocity component — same resolution as the
+//      platformer physics). Tiles resolve LAST so walls win: a pair push can't leave anyone inside
+//      a wall this frame. Deterministic: stable order, no randomness.
+// Iterated to convergence: one pass fully separates a pair, but a chain push can re-overlap an
+// already-processed neighbor, and steering re-compresses clusters every frame — a single pass
+// leaves steady-state residuals above the probe's solid_overlap epsilon (a parked live build).
+export function collideWorld(world, solidAt = null, cell = 32) {
+  const solids = world.filter((e) => e.solid && !e.dead && e.w > 0 && e.h > 0);
+  for (let pass = 0; pass < 8; pass++) {
+    let moved = false;
+    const order = [...solids].sort((a, b) => a.x - b.x);
+    for (let i = 0; i < order.length; i++) {
+      const a = order[i];
+      for (let j = i + 1; j < order.length; j++) {
+        const b = order[j];
+        if (b.x >= a.x + a.w) break;               // sweep: no later entity can overlap a
+        if (!aabb(a, b)) continue;
+        const px = Math.min(a.x + a.w - b.x, b.x + b.w - a.x);
+        const py = Math.min(a.y + a.h - b.y, b.y + b.h - a.y);
+        if (px < py) {
+          const s = a.x + a.w / 2 <= b.x + b.w / 2 ? 1 : -1;
+          a.x -= s * px / 2; b.x += s * px / 2;
+        } else {
+          const s = a.y + a.h / 2 <= b.y + b.h / 2 ? 1 : -1;
+          a.y -= s * py / 2; b.y += s * py / 2;
+        }
+        moved = true;
+      }
+    }
+    if (solidAt) for (const e of solids) {
+      const x0 = Math.floor(e.x / cell), x1 = Math.floor((e.x + e.w) / cell);
+      const y0 = Math.floor(e.y / cell), y1 = Math.floor((e.y + e.h) / cell);
+      for (let cy = y0; cy <= y1; cy++)
+        for (let cx = x0; cx <= x1; cx++)
+          if (solidAt(cx, cy)) {
+            const t = { x: cx * cell, y: cy * cell, w: cell, h: cell };
+            if (aabb(e, t)) { resolveAabb(e, t); moved = true; }
+          }
+    }
+    if (!moved) break;
+  }
+}
+
 // ── steering (px/SECOND; sets velocity toward/away a target — chase AI, creeps, patrols) ──
 // A `target` is anything with x,y (an entity or a bare point). center() uses w,h when present so a
 // sized chaser aims at a sized quarry's middle, not its corner. Set velocity here, then integrate.
@@ -695,6 +748,15 @@ export function makeKit(config, rng) {
   let over = null; // null | {won:bool, msg}
   let sprites = {}; // id -> loaded Image; empty headless (kit.sprite always null -> game falls to shapes)
   let toasts = []; // transient notify() messages; stepped+drawn by the frame loop, inert headless
+  // Registered ACTIONS (name -> {keys, fn}). Registration makes the spec's key bindings
+  // machine-readable: the probe can press every registered action's keys and require an effect
+  // (a shipped game had a full melee implementation behind a key read that never fired), and a
+  // future frontend remap becomes a key→action indirection with no game-code change. Handlers
+  // mutate state (sim/render law), so every runner fires them update-side — on the PRESSED edge
+  // of any bound key, once per action per frame, AFTER the game's update for the frame. A Map
+  // keyed by name means a re-register REPLACES (a re-init must not double-fire); keys normalize
+  // exactly like the browser key listener (single chars lowercased, else event.key verbatim).
+  const actions = new Map();
   const notify = (msg, secs = 3) => {
     toasts.push({ msg: String(msg), ttl: secs });
     if (toasts.length > 4) toasts.shift();
@@ -704,7 +766,7 @@ export function makeKit(config, rng) {
     rng,
     V,
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
-    physics, walk, jump, seek, flee, arrive, pursue, wander, astar, cellCenter,
+    physics, walk, jump, collideWorld, seek, flee, arrive, pursue, wander, astar, cellCenter,
     seek3, flee3, wander3, patrol3, avoidRects,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
@@ -712,6 +774,14 @@ export function makeKit(config, rng) {
     menuPick, talkOpen, talkStep, talkHud,
     quest: makeQuestApi(notify),
     notify,
+    register(name, keys, fn) {
+      actions.set(String(name), {
+        keys: (keys || []).map((k) => (k.length === 1 ? k.toLowerCase() : k)), fn });
+    },
+    bindings: () => [...actions].map(([name, a]) => ({ name, keys: [...a.keys] })),
+    _fireActions(input) {
+      for (const [, a] of actions) if (a.keys.some((k) => input.pressed(k))) a.fn();
+    },
     audio: { play: () => {} }, // stub; real backend wired later
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },
@@ -800,7 +870,7 @@ export async function run(game, canvas, assetBase) {
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000); // clamp dt so a tab-switch can't explode the sim
     last = now;
-    if (!kit.over) g.update(dt, input, kit);
+    if (!kit.over) { g.update(dt, input, kit); kit._fireActions(input); }
     input._endFrame();
     kit._stepToasts(dt);
     draw.clear(config.background);
@@ -830,7 +900,7 @@ export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [
     // apply scripted input for this frame: [{frame, key, down}] or {down:[keys]}
     for (const cmd of script) if (cmd.frame === f) input._set(cmd.key, cmd.down !== false);
     try {
-      if (!kit.over) g.update(dt, input, kit);
+      if (!kit.over) { g.update(dt, input, kit); kit._fireActions(input); }
     } catch (e) {
       return { ok: false, frame: f, phase: "update", error: String(e && e.stack || e) };
     }
@@ -860,11 +930,14 @@ export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [
 }
 
 // ── probe: correctness gate beyond "didn't crash" ────────────────────────────
-// Two GENERIC invariants no genre-specific knowledge is needed for:
+// GENERIC invariants no genre-specific knowledge is needed for:
 //   1. CONTROLS LIVE — run the sim with no input and with every direction key
 //      mashed; if the two final worlds are identical, input does nothing.
-//   2. NO WALL-CLIP — if the game keeps a tilemap in state (anything with
-//      solidAt+tile), no colliding entity's center may rest in a solid cell.
+//   2. NO WALL-CLIP — if a solid-cell lookup is reachable from state (a tilemap,
+//      or the scaffold's state.solidAt), no colliding entity may rest in a solid cell.
+//   3. NO SOLID OVERLAP — solid entities must not interpenetrate at rest.
+//   4. ACTIONS LIVE — every kit.register binding must change something when pressed
+//      (dead_action), and every non-movement spec control must be registered (unbound_control).
 // Returns { ok, violations:[{kind, detail}] } — each violation is a fix prompt.
 function worldOf(g) {
   return g.state && (Array.isArray(g.state.world) ? g.state.world
@@ -877,12 +950,19 @@ function runSnapshot(gameFactory, { frames, dt, seed, script }) {
   for (let f = 0; f < frames && !kit.over; f++) {
     for (const c of script) if (c.frame === f) input._set(c.key, c.down !== false);
     g.update(dt, input, kit);
+    kit._fireActions(input);
     input._endFrame();
   }
-  return g;
+  return { g, kit };
 }
-export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = "" } = {}) {
+export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = "", scheme = "",
+                                      controlKeys = null } = {}) {
   const violations = [];
+  // The spec's control scheme, when it is a MOVEMENT scheme, makes displacement itself an
+  // invariant (dead_movement below): dead_controls alone let a shipped game pass with dead movement
+  // because a space-attack mutated state — "some key changed something" is not "the player can move".
+  const movementScheme = /^(top-down|platformer|grid-turn)$/.test(scheme) || /-3d$/.test(scheme);
+  const DIR_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s"]);
 
   // CODE that reads the mouse outside the "fp" scheme: in a 3D orbital/follow/vehicle game the mouse
   // is the camera (input.pointer is never fed; there is no "mouse0" key), so a mouse-gated action can
@@ -912,21 +992,23 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
       }
     }
   }
-  // Base movement keys, plus every key literal the game ITSELF reads (a turn game's controls may be
-  // Enter/e/r/1-9 — keys the base mash never touches, so a fully-working game read as dead). Capped:
-  // each key costs a full sim run.
-  const declared = src
-    ? [...src.matchAll(/input\s*\.\s*(?:pressed|down)\(\s*["'`]([^"'`]{1,12})["'`]/g)].map((m) => m[1])
-    : [];
-  const DIRS = [...new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " ",
-                            ...declared])].slice(0, 20);
   const MIN_MOVE = 4; // px; below this over the whole window a "control" is effectively dead
   const snap = (script) => runSnapshot(gameFactory, { frames, dt, seed, script });
 
-  let baseline;
-  try { baseline = snap([]); }
+  let baseline, baseKit;
+  try { ({ g: baseline, kit: baseKit } = snap([])); }
   catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
   const baseW = worldOf(baseline);
+  // Base movement keys, plus every key literal the game ITSELF reads (a turn game's controls may be
+  // Enter/e/r/1-9 — keys the base mash never touches, so a fully-working game read as dead), plus
+  // every registered binding's keys (a register-wired action has no input.pressed literal for the
+  // regex to find). Capped: each key costs a full sim run.
+  const declared = src
+    ? [...src.matchAll(/input\s*\.\s*(?:pressed|down)\(\s*["'`]([^"'`]{1,12})["'`]/g)].map((m) => m[1])
+    : [];
+  const boundKeys = (baseKit.bindings ? baseKit.bindings() : []).flatMap((b) => b.keys);
+  const DIRS = [...new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " ",
+                            ...declared, ...boundKeys])].slice(0, 20);
 
   // Per-key SUSTAINED hold (one key at a time, so left/right can't cancel). Measure the biggest
   // input-caused displacement of any entity vs the no-input baseline (deterministic → the diff
@@ -948,23 +1030,29 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
   // The digest signal is only meaningful if a no-input run reproduces itself: a nondeterministic
   // init (random deck, Date-seeded anything) makes every digest differ, input or not.
   let digestReliable;
-  try { digestReliable = digest(snap([]).state) === baseDigest; }
+  try { digestReliable = digest(snap([]).g.state) === baseDigest; }
   catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
   let best = { key: null, disp: 0, spawned: false }, drivenForClip = baseline, stateChanged = false;
+  let dirBest = { key: null, disp: 0 };   // strongest DIRECTIONAL displacement (dead_movement's signal)
   for (const key of DIRS) {
     let g;
-    try { g = snap([{ frame: 0, key, down: true }]); }
+    try { g = snap([{ frame: 0, key, down: true }]).g; }
     catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
     const w = worldOf(g);
     // Only a NET SPAWN counts as "input did something" (a bullet/particle appears). A DECREASE
     // (a brick smashed, a pellet eaten) happens under gameplay regardless of input, so it must NOT
     // read as a live control — that false-green let a breakout with a dead paddle pass.
-    if (w.length > baseW.length) { best = { key, disp: Infinity, spawned: true }; drivenForClip = g; break; }
+    if (w.length > baseW.length) {
+      best = { key, disp: Infinity, spawned: true }; drivenForClip = g;
+      if (!movementScheme) break;   // a movement scheme still needs every directional key measured
+      continue;
+    }
     if (digestReliable && !stateChanged && digest(g.state) !== baseDigest) stateChanged = true;
     let m = 0;
     for (let i = 0; i < w.length; i++)
       m = Math.max(m, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),
                                  (w[i].z || 0) - (baseW[i].z || 0)));
+    if (DIR_KEYS.has(key) && m > dirBest.disp) dirBest = { key, disp: m };
     if (m > best.disp) { best = { key, disp: m, spawned: false }; drivenForClip = g; }
   }
   if (!best.spawned && !stateChanged && best.disp < MIN_MOVE) {
@@ -992,17 +1080,133 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
         + `gravity) so dt is handled.`;
     violations.push({ kind: "dead_controls", detail });
   }
-  // wall-clip on the most-moving run (only meaningful when the game keeps a tilemap)
-  const tm = drivenForClip.state && drivenForClip.state.tilemap;
-  if (tm && typeof tm.solidAt === "function" && tm.tile) {
-    const stuck = worldOf(drivenForClip).filter((e) => e.w > 0 && e.h > 0
-      && tm.solidAt(Math.floor(e.x / tm.tile), Math.floor(e.y / tm.tile)));
+  // dead_movement: the spec names a movement scheme, so the movement keys must DISPLACE something —
+  // a live action key (state mutation, a spawn) cannot green a game the player can't steer.
+  if (movementScheme && dirBest.disp < MIN_MOVE) {
+    const alive = (stateChanged || best.spawned)
+      ? " Other keys DO act (state changed / something spawned), so input is read — movement specifically is dead."
+      : "";
+    violations.push({ kind: "dead_movement",
+      detail: `the spec's "${scheme}" control scheme requires the movement keys (WASD/arrows, held) to `
+        + `displace the steered entity, but the strongest one (${dirBest.key || "none"}) moved nothing — max `
+        + `${dirBest.disp.toFixed(2)} over ${frames} frames.${alive} Check that the scheme's movement `
+        + `call runs EVERY frame off HELD keys (input.down) and that nothing undoes it afterwards — a `
+        + `collision/clamp loop that zeroes the velocities or snaps the position back each frame is `
+        + `the classic cause (resolve a collision by pushing OUT of the overlap, never by resetting `
+        + `the move).` });
+  }
+  // wall-clip on the most-moving run — checked wherever a solid-cell lookup is reachable from
+  // state: a tilemap (every sized entity is held to it, the original check), or the scaffold-read
+  // `state.solidAt` contract (only `solid` entities — non-solid decor may legitimately sit in walls).
+  const st = drivenForClip.state || {};
+  const tm = st.tilemap && typeof st.tilemap.solidAt === "function" && st.tilemap.tile ? st.tilemap : null;
+  const solidAtFn = tm ? (cx, cy) => tm.solidAt(cx, cy)
+    : typeof st.solidAt === "function" ? st.solidAt : null;
+  if (solidAtFn) {
+    const cellPx = tm ? tm.tile : typeof st.cell === "number" ? st.cell : 32;
+    const stuck = worldOf(drivenForClip).filter((e) => e.w > 0 && e.h > 0 && (tm || e.solid)
+      && solidAtFn(Math.floor(e.x / cellPx), Math.floor(e.y / cellPx)));
     if (stuck.length) {
       violations.push({ kind: "wall_clip",
         detail: `${stuck.length} moving entit${stuck.length > 1 ? "ies rest" : "y rests"} INSIDE a `
           + `solid wall tile (e.g. ${stuck.slice(0, 3).map((e) => (e.type || e.tag || "entity")
           + `@${e.x?.toFixed(0)},${e.y?.toFixed(0)}`).join("; ")}). Block movement BEFORE an entity `
           + `enters a wall; never snap it to the wall tile's own center.` });
+    }
+  }
+  // SOLID INTERPENETRATION: solid entities must not rest inside each other. After the settle run
+  // (no input, `frames` frames) no two solid AABBs may overlap beyond a small epsilon — the shipped
+  // enemies-stack-under-the-player failure. The fix is ONE pass: tag participants `solid: true` and
+  // let kit.collideWorld separate them (the scaffold already calls it), never gameplay-side nudges.
+  // 2D only: the pass and this check are x/y AABBs, and no 3D solid primitive exists (two 3D
+  // entities apart in z would false-read as overlapping).
+  const OVERLAP_EPS = 0.5;
+  const mode3d = realize(gameFactory, { gravity: 0 }, seed).config.mode === "3d";
+  const solidsAtRest = mode3d ? [] : baseW.filter((e) => e.solid && !e.dead && e.w > 0 && e.h > 0);
+  const pairs = [];
+  for (let i = 0; i < solidsAtRest.length; i++)
+    for (let j = i + 1; j < solidsAtRest.length; j++) {
+      const a = solidsAtRest[i], b = solidsAtRest[j];
+      if (!aabb(a, b)) continue;
+      const depth = Math.min(a.x + a.w - b.x, b.x + b.w - a.x, a.y + a.h - b.y, b.y + b.h - a.y);
+      if (depth > OVERLAP_EPS) pairs.push(`${a.type || a.tag || "entity"}@${a.x?.toFixed(0)},${a.y?.toFixed(0)}`
+        + ` into ${b.type || b.tag || "entity"}@${b.x?.toFixed(0)},${b.y?.toFixed(0)} by ${depth.toFixed(0)}px`);
+    }
+  if (pairs.length) {
+    violations.push({ kind: "solid_overlap",
+      detail: `${pairs.length} solid entity pair(s) interpenetrate at rest (e.g. ${pairs.slice(0, 3).join("; ")}). `
+        + `Solid entities must stay separated by the collision pass: keep them tagged solid:true and let `
+        + `kit.collideWorld(state.world, state.solidAt, state.cell) run every frame (the scaffold calls it) — `
+        + `do NOT spawn them on top of each other, and never undo the separation in update().` });
+  }
+  // DEAD ACTION: every registered binding must DO something. A pulsed press of its keys (settle
+  // frames between presses) must produce a state delta vs the no-input baseline — a non-positional
+  // state mutation, a spawn/despawn, or an entity displacement. This is the incident invariant: a
+  // shipped game had a full melee implementation behind a key read that never fired. Skip list is
+  // EXPLICIT: "interact" is scaffold/kit-owned wiring whose effect is proximity-gated (no talker
+  // near spawn ⇒ legitimately no delta), so a spawn-position probe cannot assert it.
+  const DEAD_ACTION_SKIP = new Set(["interact"]);
+  const allBindings = baseKit.bindings ? baseKit.bindings() : [];
+  for (const b of allBindings.filter((x) => !DEAD_ACTION_SKIP.has(x.name)).slice(0, 8)) {
+    const script = [];
+    let presses = 0;
+    for (let f = 10; f + 13 < frames; f += 30) {
+      presses++;
+      for (const k of b.keys) script.push({ frame: f, key: k, down: true }, { frame: f + 3, key: k, down: false });
+    }
+    if (!b.keys.length || !presses) continue;
+    let run, runKit;
+    try { ({ g: run, kit: runKit } = snap(script)); }
+    catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
+    const w = worldOf(run);
+    let disp = 0;
+    for (let i = 0; i < Math.min(w.length, baseW.length); i++)
+      disp = Math.max(disp, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),
+                                       (w[i].z || 0) - (baseW[i].z || 0)));
+    const acted = w.length !== baseW.length || disp > 0.5 || !!runKit.over !== !!baseKit.over
+      || (digestReliable && digest(run.state) !== baseDigest);
+    if (!acted) {
+      violations.push({ kind: "dead_action",
+        detail: `registered action "${b.name}" (keys ${JSON.stringify(b.keys)}) was pressed ${presses} `
+          + `time(s) over ${frames} frames and changed NOTHING — no state mutation, no spawn/despawn, `
+          + `no entity moved. Its handler is a no-op or its effect is gated off from the initial state `
+          + `(a flag never set, a cost never payable, a target never in range). Wire the real mechanic `
+          + `into the kit.register handler so the action ACTS.` });
+    }
+  }
+  // UNBOUND CONTROL: the frozen spec promised each key in its `controls` map does something; a
+  // NON-movement spec key with no registered action is unverifiable wiring (the same shipped
+  // incident, seen from the spec side). Skip lists are EXPLICIT, not inferred: the scheme's own
+  // movement keys (movement liveness is dead_movement's job; platformer's space-jump is
+  // scaffold-owned movement too) and mouse tokens (the mouse is the camera outside "fp" —
+  // dead_mouse_control owns that failure).
+  if (controlKeys && typeof controlKeys === "object") {
+    const ALIAS = { space: " ", spacebar: " ", esc: "Escape", escape: "Escape", enter: "Enter",
+      return: "Enter", tab: "Tab", shift: "Shift", ctrl: "Control", control: "Control",
+      up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
+      arrowup: "ArrowUp", arrowdown: "ArrowDown", arrowleft: "ArrowLeft", arrowright: "ArrowRight" };
+    const MOVEMENT = new Set(["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright",
+      "wasd", "arrows", "arrowkeys", "arrow"]);
+    if (scheme === "platformer") MOVEMENT.add(" ");
+    const MOUSE = new Set(["mouse", "click", "mouse0", "mouse1", "lmb", "rmb", "pointer", "drag", "wheel"]);
+    // Kit-owned reads: menu digits (kit.menuPick / talkStep choices) and Escape (talkStep close)
+    // are consumed by kit loops the game never registers — a spec "1-9: choose" is already wired.
+    const KIT_OWNED = /^(\d(-\d)?|Escape)$/;
+    const bound = new Set();
+    for (const b of allBindings) for (const k of b.keys) bound.add(k);
+    for (const [rawKey, what] of Object.entries(controlKeys)) {
+      const tokens = String(rawKey).split(/[\s/+,|]+/).filter(Boolean)
+        .map((t) => { const lc = t.toLowerCase(); return ALIAS[lc] ?? (t.length === 1 ? lc : t); });
+      const actionable = tokens.filter((k) => !MOVEMENT.has(k.toLowerCase()) && !MOUSE.has(k.toLowerCase())
+        && !KIT_OWNED.test(k));
+      if (!actionable.length || actionable.some((k) => bound.has(k))) continue;
+      violations.push({ kind: "unbound_control",
+        detail: `the spec binds ${JSON.stringify(rawKey)} to "${what}" but no registered action listens `
+          + `to ${actionable.map((k) => JSON.stringify(k)).join("/")}. Every non-movement spec control `
+          + `must be wired in init via kit.register — e.g. kit.register("action", `
+          + `[${actionable.map((k) => JSON.stringify(k)).join(", ")}], () => { /* mutate state */ }). A bare `
+          + `input.pressed(...) scattered in update is invisible to this gate (held mechanics may still `
+          + `read input.down each frame — this rule targets EDGE actions).` });
     }
   }
   return { ok: violations.length === 0, violations };
@@ -1046,7 +1250,7 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
   try {
     if (g.init) g.init(kit);
     for (let f = 0; f < frames; f++) {
-      if (!kit.over) g.update(dt, input, kit);
+      if (!kit.over) { g.update(dt, input, kit); kit._fireActions(input); }
       input._endFrame();
       if (has2dScene) g.draw(rec, kit);
       if (hasHud) {
@@ -1097,6 +1301,7 @@ export function scrollSmoke(gameFactory, { frames = 300, dt = 1 / 60, seed = 1 }
       for (let f = 0; f < frames && !kit.over; f++) {
         input._set(key, true);
         g.update(dt, input, kit);
+        kit._fireActions(input);
         input._endFrame();
         for (const e of worldOf(g)) if (typeof e.x === "number") { minX = Math.min(minX, e.x); maxX = Math.max(maxX, e.x); }
         if (typeof g.draw === "function") g.draw(rec, kit);

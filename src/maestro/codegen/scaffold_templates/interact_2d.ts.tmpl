@@ -1,0 +1,4 @@
+      // Dialogue (scaffold-owned): the kit talk loop advances/chooses/closes every frame; a
+      // completed choice lands in state.talkPick ({npc, pick} | null) for the hook update to act
+      // on. The OPEN half is the registered "interact" action (see init).
+      state.talkPick = kit.talkStep(state, input);

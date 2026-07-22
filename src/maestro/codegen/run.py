@@ -178,6 +178,7 @@ def run_build(run_id: str, max_steps: int = 60):
     from maestro.agent_loop import AgentLoop
     from maestro.codegen.gates import stage_for_play
     from maestro.codegen.module import CodegenModule
+    from maestro.codegen.scaffold import seed_scaffold
     from maestro.codegen.tools import build_codegen_tools
     from maestro.run_control import get_or_create, remove
     from llm_clients.connector_selector import get_connector
@@ -193,6 +194,7 @@ def run_build(run_id: str, max_steps: int = 60):
         raise ValueError(f"no spec for run {run_id!r} — draft one first")
     set_log_dir(str(state.run_dir / "logs"))
     _maybe_seed_worldgen(run_id, state, spec)
+    seed_scaffold(state, spec)   # non-world: the pipeline, not the model, wires the controls
     tools = build_codegen_tools(state)
     control = get_or_create(run_id)
     loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),
@@ -220,31 +222,34 @@ def run_build(run_id: str, max_steps: int = 60):
 
 def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     """Patch a built game from a HUMAN playtest note (the local play-critic: the human is the eye the
-    headless gates aren't). One targeted patch from the note, then re-run the loop so any gate the
-    patch regresses is re-fixed before shipping."""
-    from maestro.codegen.module import _triage_file, _focused_fix
+    headless gates aren't). The note runs through the SAME read→edit subloop as a gate failure — the
+    note is the failing-gate text, a synthetic Error whose neutral code ("human") classifies to the
+    `default` fix class — so a human fix gets grounded hunk edits, never a whole-file rewrite. Then
+    re-run the loop so any gate the patch regresses is re-fixed before shipping."""
+    from maestro.codegen.fix_classes import classify
+    from maestro.codegen.module import _FIX_LOOP_MAX_TURNS, _read_write_loop_fix
     from maestro.codegen.tools import build_codegen_tools
-    from llm_clients.message_builder import MessageBuilder
+    from maestro.modules.context import build_context
+    from maestro.modules.module import Error, ErrorType
+    from maestro.services import BudgetExhausted, Services
     from llm_clients.connector_selector import get_connector
+    from tools.execution_context import run_scope
 
     state = RunState.for_run(run_id)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no run {run_id!r}")
-    conn = get_connector()
-
-    def infer(system, user, mt):
-        msgs = MessageBuilder(system).add_user(user).build()
-        return _content(conn.generate_with_tools(msgs, [], max_tokens=mt))
-
-    failure = ("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is WRONG when a "
-               f"person plays it. Fix exactly this:\n{note}")
-    tools = build_codegen_tools(state)
-    dispatch = lambda name, args: tools[name](**args)   # _focused_fix calls dispatch(name, args)
-    from tools.execution_context import run_scope
-    with run_scope(run_id):
-        target = _triage_file(infer, state.run_dir, failure, use_stack=False)   # a prose note isn't a stack trace
-        _focused_fix(infer, spec, state.run_dir, target, failure, dispatch)
+    error = Error(type=ErrorType.HUMAN, code="human", component="game",
+                  message=("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is "
+                           f"WRONG when a person plays it. Fix exactly this:\n{note}"))
+    services = Services(get_connector(), build_codegen_tools(state), spec, state,
+                        budget=_FIX_LOOP_MAX_TURNS)
+    try:
+        with run_scope(run_id):
+            _read_write_loop_fix(None, build_context(spec, state), error, 0, services,
+                                 services.dispatch, fix_class=classify(error))
+    except BudgetExhausted:
+        pass   # the subloop spent its cap — the re-gate below still runs and re-fixes
     return run_build(run_id, max_steps=max_steps)   # re-gate (stages on ok) + auto-fix any regression the patch caused
 
 

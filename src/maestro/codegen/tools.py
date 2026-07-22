@@ -1,9 +1,14 @@
 """The bounded write/read/edit tools a codegen Fix dispatches through Services.
 
-A game is a folder of ES modules. A fix prefers `edit` — a grounded anchor edit (exact
-old→new, unique-or-fail) that CANNOT gut a file to a stub — and falls back to `write`
-(whole-file overwrite, the escape hatch) only when edits can't land. `read_file` pulls a file back —
-whole by default, or a line window (offset/limit) for a big file you only need a slice of.
+A game is a folder of ES modules. `write` is CREATE-ONLY (authoring a file that doesn't exist yet);
+every change to an existing file goes through `edit` — grounded anchor hunks (exact old→new,
+unique-or-fail), applied ATOMICALLY as a batch. Overwrites after creation are banned because forensic
+analysis of live builds showed whole-file rewrites are the fix loop's dominant failure mode: they
+destabilize previously-correct code — reintroducing fixed bugs (Math.random came back after being
+cleared), re-rolling exported signatures siblings depend on (arg-count oscillation), re-inventing
+forbidden patterns per rewrite. Edits are grounded and local; they can't do any of that. `read_file`
+pulls a file back — whole by default, or a line window (offset/limit) for a big file you only need a
+slice of.
 
 A read is bounded IN THE TOOL, not downstream: any physical line longer than MAX_LINE_CHARS is
 collapsed to its head + an elision marker (a worldgen pre-seed bakes a 100KB heightfield onto ONE
@@ -104,28 +109,72 @@ def build_codegen_tools(state) -> dict:
                 "offset": start, "shown_lines": end - start, "total_lines": len(lines),
                 "elided": elided, "truncated": truncated, "content": content}
 
-    def edit(file: str = "main.ts", old_string: str = "", new_string: str = "", **_) -> dict:
+    def edit(file: str = "main.ts", edits: list = None, **_) -> dict:
+        """Atomic multi-hunk edit: every hunk validates against the CURRENT content (non-empty,
+        found, unique — uniqueness judged on the original for all hunks, and no two hunks may
+        overlap the same span), then all apply and the version bumps ONCE. Any failure applies
+        NOTHING and returns the current body, naming the offending hunk."""
         name = _safe(file)
         cur = versions.get(name, 0)
         content = _read(name)
+
+        def fail(error: str) -> dict:
+            return {"ok": False, "file": name, "version": cur, "content": content, "error": error}
+
+        if content.lstrip().startswith("// GENERATED"):
+            # Pipeline-owned file (control-scaffold main.ts, data.ts, worldgen's world.ts). Its
+            # header line names where the change belongs; no content back — there is nothing to
+            # re-anchor on.
+            hint = content.lstrip().splitlines()[0].lstrip("/ ").strip()
+            return {"ok": False, "file": name,
+                    "error": f"{name} is a GENERATED file — never edit it. {hint} Make the change "
+                             "in the file that owns the behavior instead."}
         if seen.get(name) != cur:
             seen[name] = cur
-            return {"ok": False, "file": name, "version": cur, "content": content,
-                    "error": "you didn't read before trying to edit. The read is now included in "
-                             "this response — re-anchor old_string against it and retry."}
-        if not old_string:
-            return {"ok": False, "file": name, "version": cur, "content": content,
-                    "error": "old_string was empty — copy the exact current text to replace."}
-        n = content.count(old_string)
-        if n == 0:
-            return {"ok": False, "file": name, "version": cur, "content": content,
-                    "error": "old_string not found — re-anchor on the current content below."}
-        if n > 1:
-            return {"ok": False, "file": name, "version": cur, "content": content,
-                    "error": f"old_string matched {n} places — add surrounding lines to make it unique."}
-        new_body = content.replace(old_string, new_string)
+            return fail("you didn't read before trying to edit. The read is now included in "
+                        "this response — re-anchor your hunks against it and retry.")
+        hunks = edits or []
+        if not hunks:
+            return fail('no edits — pass edits=[{"old_string": ..., "new_string": ...}, ...].')
+        spans = []
+        appends = []
+        for i, h in enumerate(hunks, 1):
+            old = (h or {}).get("old_string", "")
+            if not old:
+                # Empty old_string = APPEND at end of file. A one-line append via anchor-replace
+                # needs the file's exact tail as the anchor — the flimsiest anchor there is, and a
+                # measured full fix budget failed to land one line that way. Still read-grounded
+                # (the seen-version gate above) and atomic with the batch.
+                if not (h or {}).get("new_string", "").strip():
+                    return fail(f"hunk {i}/{len(hunks)}: both strings empty — an append hunk needs "
+                                "new_string.")
+                appends.append(h)
+                continue
+            n = content.count(old)
+            if n == 0:
+                return fail(f"hunk {i}/{len(hunks)}: old_string not found — re-anchor on the "
+                            "current content below. Nothing was applied.")
+            if n > 1:
+                return fail(f"hunk {i}/{len(hunks)}: old_string matched {n} places — add "
+                            "surrounding lines to make it unique. Nothing was applied.")
+            start = content.index(old)
+            end = start + len(old)
+            for j, (s2, e2) in enumerate(spans, 1):
+                if start < e2 and s2 < end:
+                    return fail(f"hunk {i}/{len(hunks)} overlaps hunk {j}'s text — merge them into "
+                                "one hunk. Nothing was applied.")
+            spans.append((start, end))
+        # Splice by the spans validated on the ORIGINAL content (right-to-left so offsets hold) —
+        # sequential replace() could land inside an earlier hunk's replacement text.
+        new_body = content
+        replace_hunks = [h for h in hunks if (h or {}).get("old_string", "")]
+        for (start, end), h in sorted(zip(spans, replace_hunks), key=lambda p: p[0], reverse=True):
+            new_body = new_body[:start] + h.get("new_string", "") + new_body[end:]
+        for h in appends:
+            sep = "" if (not new_body or new_body.endswith("\n")) else "\n"
+            new_body = new_body + sep + h["new_string"]
         v = _bump(name, new_body)
-        return {"ok": True, "file": name, "version": v, "content": new_body}
+        return {"ok": True, "file": name, "version": v, "applied": len(hunks), "content": new_body}
 
     def write(code: str = "", file: str = "main.ts", **_) -> dict:
         if not code or not code.strip():
@@ -137,6 +186,14 @@ def build_codegen_tools(state) -> dict:
                     f"off-plan filename {name!r} — you can ONLY write: {', '.join(sorted(planned))}. "
                     f"Never import from {name!r}: define its contents (types, helpers) inside a "
                     "planned file instead."}
+        existing = _read(name)
+        if existing.strip():
+            # Same re-anchor convention as an edit miss: hand back the body + stamp seen, so the
+            # refused turn converts straight into a grounded edit.
+            seen[name] = versions.get(name, 0)
+            return {"ok": False, "file": name, "version": versions.get(name, 0), "content": existing,
+                    "error": f"{name} already exists — overwrites are not allowed; use edit "
+                             "(you can pass several hunks in one call)"}
         v = _bump(name, code)
         return {"ok": True, "file": name, "version": v, "chars": len(code)}
 

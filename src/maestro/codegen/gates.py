@@ -296,6 +296,114 @@ def reconcile_types(run_dir, include_fields: bool = True) -> dict:
     return {"changes": changes, "count": len(changes)}
 
 
+# ── duplicate-declaration dedupe ──────────────────────────────────────────────
+# Two complete implementations of the same top-level function (TS2323/TS2393) are trivial under a
+# whole-file rewrite but EDIT-HOSTILE: deleting a whole duplicate body needs one giant exact hunk,
+# which small models fumble (measured: ~70 calls churned on one duplicate `init`). Deterministic
+# collapse instead: keep the LAST complete implementation (latest intent), delete the earlier ones.
+_FN_DECL = re.compile(r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(", re.M)
+
+
+def _code_scan_end(src: str, start: int) -> int:
+    """Index just past the balanced {...} body opening at/after `start`, skipping string literals
+    (' " `), template interpolations, and comments — a brace inside a draw() string must not end
+    the body early."""
+    i, n = src.find("{", start), len(src)
+    depth = 0
+    while i < n:
+        c = src[i]
+        if c in "'\"`":
+            q = c
+            i += 1
+            while i < n and src[i] != q:
+                i += 2 if src[i] == "\\" else 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            i = src.find("\n", i)
+            i = n if i == -1 else i
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            i = src.find("*/", i + 2)
+            i = n if i == -1 else i + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def dedupe_functions(src: str):
+    """Remove all but the LAST complete implementation of any duplicated top-level function.
+    Overload SIGNATURES (no body before `;`) are legal and never touched — only decls whose next
+    token opens a body count. Returns (new_src, removed_names)."""
+    decls = []
+    for m in _FN_DECL.finditer(src):
+        paren_end = _code_scan_paren_end(src, m.end() - 1)
+        rest = src[paren_end:len(src)]
+        body_at = re.match(r"\s*(?::\s*[^;{=]*)?\{", rest)
+        if not body_at:
+            continue   # an overload signature — no body, legal to repeat
+        # anchor the balance scan on the regex's OWN brace; if the balanced span turns out to be an
+        # inline object RETURN TYPE (`): { w: number } {`), the body brace follows immediately —
+        # hop once more so the deletion span covers the real body
+        end = _code_scan_end(src, paren_end + body_at.end() - 1)
+        after = re.match(r"\s*\{", src[end:])
+        if after:
+            end = _code_scan_end(src, end + after.end() - 1)
+        decls.append((m.group(1), m.start(), end))
+    by_name = {}
+    for name, s, e in decls:
+        by_name.setdefault(name, []).append((s, e))
+    doomed = sorted((span for spans in by_name.values() if len(spans) > 1
+                     for span in spans[:-1]), reverse=True)
+    removed = sorted({name for name, spans in by_name.items() if len(spans) > 1})
+    out = src
+    for s, e in doomed:
+        while e < len(out) and out[e] in "\r\n":
+            e += 1
+        out = out[:s] + out[e:]
+    return out, removed
+
+
+def _code_scan_paren_end(src: str, start: int) -> int:
+    """Index just past the balanced (...) parameter list opening at `start` (same skip rules)."""
+    i, n, depth = start, len(src), 0
+    while i < n:
+        c = src[i]
+        if c in "'\"`":
+            q = c
+            i += 1
+            while i < n and src[i] != q:
+                i += 2 if src[i] == "\\" else 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def dedupe_decls(run_dir, error) -> dict:
+    """Deterministic pre-pass for duplicate-declaration errors: collapse duplicated top-level
+    functions in the blamed file to their last implementation. Returns {changes, count}."""
+    name = getattr(error, "path", None)
+    targets = [name] if name else list(game_files(run_dir))
+    changes = []
+    for fname in targets:
+        p = game_dir(run_dir) / fname if fname else None
+        if not p or not p.exists():
+            continue
+        src = p.read_text(encoding="utf-8")
+        new, removed = dedupe_functions(src)
+        if removed:
+            p.write_text(new, encoding="utf-8")
+            changes += [("dedupe", f"{fname}:{n}") for n in removed]
+    return {"changes": changes, "count": len(changes)}
+
+
 def build_bundle(run_dir) -> dict:
     """esbuild main.ts (+ its imports) → main.js with a sourcemap. Returns {ok} or {ok:False,error}.
     Cheap (~1ms); the run gates call it so they always execute the current source."""
@@ -366,9 +474,18 @@ def _run_violation_gate(run_dir, runner: str, hint: str, extra_args: list | None
         return {"ok": False, "violations": [{"kind": "runner", "detail": (p.stdout + p.stderr)[-400:]}]}
 
 
-def run_probe(run_dir) -> dict:
+def run_probe(run_dir, scheme: str = None, control_keys: dict = None) -> dict:
+    """`scheme` = the frozen spec's control scheme; when it names a movement scheme the probe also
+    enforces dead_movement (movement keys must displace the steered entity). `control_keys` = the
+    spec's `controls` map ({key: what it does}); when present the probe also enforces dead_action
+    (every registered binding must act) and unbound_control (every non-movement spec key must have
+    a registered action) — the probe itself skips movement/mouse entries."""
+    extra = [scheme or ""] if (scheme or control_keys) else None
+    if control_keys:
+        extra.append(json.dumps(control_keys))
     return _run_violation_gate(run_dir, "probe.mjs",
-                               "probe did not finish (likely an infinite loop in update)")
+                               "probe did not finish (likely an infinite loop in update)",
+                               extra_args=extra)
 
 
 def run_render(run_dir) -> dict:

@@ -1,0 +1,54 @@
+// GENERATED control scaffold — never edit; gameplay lives in game.ts and its siblings.
+//
+// The pipeline owns this file because the frozen spec's control scheme has exactly ONE correct
+// wiring — movement here is generated, never model-authored. Movement runs BEFORE the hook update
+// each frame: gameplay may adjust/clamp the result afterwards (push OUT of a collision overlap),
+// but must never re-wire input or undo the move wholesale.
+//
+// HOOK CONTRACT — game.ts must export exactly:
+//   createState(kit: Kit): GameState                                   build the initial state
+//   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
+//   update(state: GameState, dt: number, input: Input, kit: Kit): void gameplay, runs AFTER movement
+//   draw(g: DrawApi, state: GameState, kit: Kit): void                 paint the scene
+//   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
+// Scaffold-read state fields: state.player (required), state.player.speed? (px/s, default 150),
+// state.player.jump? (px/s, default 600), state.gravity? (px/s^2, default 2000), and the solids the
+// player stands on: state.tilemap (kit.makeTilemap) or state.solids (Rect[] platform list). For the
+// solid pass: state.solidAt?(cx, cy) (defaults to state.tilemap.solidAt) + state.cell? (defaults to
+// tilemap.tile or 32) — absent ⇒ pair separation only. Tag blocking entities `solid: true`.
+import { createState, init as initGame, update as updateGame, draw as drawGame, hud as hudGame } from "./game.ts";
+
+export function createGame(kit: Kit): GameObject {
+  const state: any = createState(kit);
+  return {
+    config: { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 },
+    state,
+    init(kit: Kit) {
+      initGame(state, kit);
+      if (!state.player) throw new Error(
+        "game.ts init(state, kit) must create state.player (spawn it into state.world) — " +
+        "the control scaffold steers state.player.");
+{interact_init}
+    },
+    update(dt: number, input: Input, kit: Kit) {
+{interact}
+      if (!state.talk) {   // movement pauses while a kit dialogue is open
+        const speed: number = state.player.speed ?? 150;
+        if (input.down("ArrowLeft") || input.down("a")) kit.walk(state.player, -1, speed);
+        else if (input.down("ArrowRight") || input.down("d")) kit.walk(state.player, 1, speed);
+        else kit.walk(state.player, 0, speed);
+        if (input.pressed(" ")) kit.jump(state.player, state.player.jump ?? 600);   // jumps only if grounded
+        const solids = state.tilemap ? state.tilemap.solidsNear(state.player) : (state.solids ?? []);
+        kit.physics(state.player, dt, solids, state.gravity ?? 2000);
+      }
+      updateGame(state, dt, input, kit);
+      // Order is LAW: movement → hook update → collide. Gameplay adjusts the move first; the solid
+      // pass then resolves walls + solid pairs LAST (the player is already tile-resolved by
+      // kit.physics — this holds every OTHER solid entity to the same walls and unstacks pairs).
+      kit.collideWorld(state.world ?? [], state.solidAt ?? state.tilemap?.solidAt,
+                       state.cell ?? state.tilemap?.tile ?? 32);
+    },
+    draw(g: DrawApi, kit: Kit) { drawGame(g, state, kit); },
+    hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },
+  };
+}

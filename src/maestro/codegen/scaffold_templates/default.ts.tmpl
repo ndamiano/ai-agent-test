@@ -1,0 +1,35 @@
+// GENERATED control scaffold — never edit; gameplay lives in game.ts and its siblings.
+//
+// This spec names no kit movement scheme (a turn/card/menu/pointer game), so the scaffold wires no
+// movement — it still owns config and the frame loop so every game shares one pipeline-owned entry.
+// The hook update owns ALL input handling for this game.
+//
+// HOOK CONTRACT — game.ts must export exactly:
+//   createState(kit: Kit): GameState                                   build the initial state
+//   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
+//   update(state: GameState, dt: number, input: Input, kit: Kit): void the whole per-frame game step
+//   draw(g: DrawApi, state: GameState, kit: Kit): void                 paint the scene
+//   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
+// state.player is still required (the probe and the renderer key on it) — for a game with no
+// avatar, spawn the "cursor"/protagonist entity and reference it as state.player.
+import { createState, init as initGame, update as updateGame, draw as drawGame, hud as hudGame } from "./game.ts";
+
+export function createGame(kit: Kit): GameObject {
+  const state: any = createState(kit);
+  return {
+    config: { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 },
+    state,
+    init(kit: Kit) {
+      initGame(state, kit);
+      if (!state.player) throw new Error(
+        "game.ts init(state, kit) must create state.player (spawn it into state.world).");
+{interact_init}
+    },
+    update(dt: number, input: Input, kit: Kit) {
+{interact}
+      updateGame(state, dt, input, kit);
+    },
+    draw(g: DrawApi, kit: Kit) { drawGame(g, state, kit); },
+    hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },
+  };
+}

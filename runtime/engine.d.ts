@@ -11,6 +11,7 @@ interface Entity {
   vx?: number; vy?: number; vz?: number;
   w?: number; h?: number; d?: number;
   dead?: boolean; grounded?: boolean;
+  solid?: boolean;   // participates in kit.collideWorld (tile pushout + pair separation)
   yaw?: number; pitch?: number; ry?: number;
   color?: string; shape?: "box" | "sphere" | "ground" | "heightfield" | "grassfield";
   [k: string]: any;
@@ -115,6 +116,10 @@ interface Kit {
   physics(e: Entity, dt: number, solids?: Rect[], gravity?: number): void;
   walk(e: Entity, dir: number, speed: number): void;
   jump(e: Entity, speed: number): void;
+  // ONE solid-collision pass (2D): pushes `solid` entities out of solid cells (when solidAt is
+  // given) and separates overlapping solid pairs. The scaffold calls it — game code just tags
+  // entities `solid: true` and never zeroes velocities to fake collision.
+  collideWorld(world: World, solidAt?: (cx: number, cy: number) => boolean, cell?: number): void;
   // steering
   seek(e: Entity, target: Vec2, speed: number): number;
   flee(e: Entity, target: Vec2, speed: number): void;
@@ -173,6 +178,12 @@ interface Kit {
   // transient on-screen toast ("Got 10 gold", "The gate opens") — drawn by the engine for a few
   // seconds, never blocks play, never ends the game. NOT for dialogue (use talk) or endings (win/lose).
   notify(msg: string, secs?: number): void;
+  // ── actions: register EVERY non-movement spec control in init. The engine fires fn on the
+  // PRESSED edge of any bound key, update-side, after the game's update for the frame; a
+  // re-register with the same name replaces (a re-init never double-fires). Movement keys stay
+  // with the control scheme — never registered.
+  register(name: string, keys: string[], fn: () => void): void;
+  bindings(): { name: string; keys: string[] }[];
   // movement controllers — the individual movers kit.drive dispatches to. Prefer kit.drive; reach for
   // these only for a bespoke rig. input → motion, dt-correct, no key latching. Call one per controlled
   // entity in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on
@@ -208,6 +219,20 @@ interface Config {
 
 // The object `createGame(kit)` returns. Give `state` a concrete type (declare it in types.ts and
 // use it here) to get cross-file state access checked; `any` is allowed but unchecked.
+// The control scaffold's hook contract. A scaffolded game.ts declares
+// `const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };`
+// (draw omitted in 3D) so any signature drift is a tsc error INSIDE game.ts at that line, naming
+// the member — local and precise, instead of surfacing at the GENERATED scaffold's import site.
+// GENERIC in the state type: with `any` a swapped param order is silently assignable (any absorbs
+// both directions); binding the game's own GameState makes drift visible.
+interface GameHooks<S> {
+  createState(kit: Kit): S;
+  init(state: S, kit: Kit): void;
+  update(state: S, dt: number, input: Input, kit: Kit): void;
+  draw?(g: DrawApi, state: S, kit: Kit): void;
+  hud(state: S, kit: Kit): HudItem[];
+}
+
 interface GameObject {
   config: Config;
   state: any;

@@ -69,13 +69,14 @@ def test_dedup_collapses_duplicate_call_keeping_latest(mb):
 
 def test_dedup_edit_supersedes_earlier_read_of_same_file(mb):
     # WHY: read_file and edit both return the file's full body. They are keyed by
-    # FILE, not name+args (old_string/new_string differ per edit) — so a later edit's body must
+    # FILE, not name+args (the edits hunks differ per edit) — so a later edit's body must
     # supersede the earlier read body of the same file, leaving only the newest copy in context.
     msgs = [
         _assistant_call("c1", "read_file", '{"file": "types.ts"}', content="r"),
         _tool_result("c1", "OLD BODY"),
         _assistant_call("c2", "edit",
-                        '{"file": "types.ts", "old_string": "a", "new_string": "b"}', content="e"),
+                        '{"file": "types.ts", "edits": [{"old_string": "a", "new_string": "b"}]}',
+                        content="e"),
         _tool_result("c2", "NEW BODY"),
     ]
     out = mb._deduplicate_tool_results(msgs)
@@ -90,7 +91,8 @@ def test_dedup_file_body_keeps_distinct_files(mb):
         _assistant_call("c1", "read_file", '{"file": "a.ts"}', content="r"),
         _tool_result("c1", "A BODY"),
         _assistant_call("c2", "edit",
-                        '{"file": "b.ts", "old_string": "x", "new_string": "y"}', content="e"),
+                        '{"file": "b.ts", "edits": [{"old_string": "x", "new_string": "y"}]}',
+                        content="e"),
         _tool_result("c2", "B BODY"),
     ]
     out = mb._deduplicate_tool_results(msgs)
@@ -273,8 +275,9 @@ def test_budget_drops_toolcall_and_result_together(mb):
 
 def test_budget_derives_from_context_window(monkeypatch):
     # WHY: the budget MUST track the server's real context window, else it never trims and the prompt
-    # overflows. When the connector reports n_ctx (via /v1/models or the lmstudio.n_ctx fallback), the
-    # budget is 50% of the window in chars (~4 chars/token) — half for input, half reserved for output.
+    # overflows. When the connector reports n_ctx, the budget is (window - 16K reserved output
+    # tokens) x 3.5 chars/token — the ratio MEASURED on live code-heavy payloads (median 3.67),
+    # floored at a third of the window for small-context models.
     import llm_clients.connector_selector as cs
 
     class _FakeConn:
@@ -283,7 +286,7 @@ def test_budget_derives_from_context_window(monkeypatch):
 
     monkeypatch.setattr(cs, "get_connector", lambda *a, **k: _FakeConn())
     b = MessageBuilder("SYS")
-    assert b.MESSAGE_BUDGET_CHARS == 32768 * 4 // 2 == 65536
+    assert b.MESSAGE_BUDGET_CHARS == int(max(32768 - 16_000, 32768 // 3) * 3.5) == 58688
 
 
 def test_budget_charges_system_prompt_against_input_half(monkeypatch):

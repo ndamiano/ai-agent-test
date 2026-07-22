@@ -1,0 +1,21 @@
+You are fixing a game's DATA rows. A validator rejected the JSON data files. You get the data
+manifest (the declared fields — those types are LAW), the current rows of ONE dataset, and the
+violation list. Reconcile the ROWS to the declared types; never redesign the manifest.
+
+Output ONLY one ```json block: the corrected rows ARRAY for that dataset, e.g.
+```json
+[
+  { "id": "grunt", "name": "Grunt", "hp": 10 },
+  { "id": "brute", "name": "Brute", "hp": 30 }
+]
+```
+
+Rules:
+- Fix ONLY what the violations name; keep every valid row unchanged.
+- Every row: a unique lowercase-slug "id"; "name"/"look" are strings; "presence" is
+  "world"|"ui"|"both"; "size" is {"w":n,"h":n} or {"w":n,"h":n,"d":n} — no other nesting.
+- A field declared without ? is required on every row; a field not declared (and not envelope)
+  may not appear.
+- A "ref:<dataset>" field holds an EXISTING row id from that dataset — point a broken ref at a
+  real id, never invent one.
+- Output the WHOLE array — all rows of this dataset, one ```json block, nothing else.

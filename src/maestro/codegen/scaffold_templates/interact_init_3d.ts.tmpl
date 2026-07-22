@@ -1,0 +1,14 @@
+      // Interact is a REGISTERED action (machine-readable: kit.bindings names it, a future remap
+      // can rebind it). It fires on the E edge AFTER update — talkStep (update-side) owns
+      // advance/choose/close, so the two halves share the key without double-handling. E opens the
+      // nearest entity carrying a `talk` field ({name, lines, options?} — or the entity as talker).
+      kit.register("interact", ["e"], () => {
+        if (state.talk) return;
+        let near: any = null, nd = 3;
+        for (const e of state.world ?? []) {
+          if (!e.talk || e === state.player) continue;
+          const d = Math.hypot(e.x - state.player.x, e.z - state.player.z);
+          if (d < nd) { nd = d; near = e; }
+        }
+        if (near) kit.talkOpen(state, (near.talk && near.talk.lines) ? near.talk : near);
+      });

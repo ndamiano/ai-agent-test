@@ -63,6 +63,27 @@ Reads HELD keys — never drive movement off `input.pressed` or a key-set you fo
   kit.physics(player, dt, this.state.platforms, 2000);   // platforms: [{x,y,w,h}, ...]
   ```
 
+## Solid collision (top-down/2D)
+ONE call resolves all solid collision — entities vs walls AND entities vs each other. Tag every
+entity that should block/be blocked with `solid: true` (the player, monsters, crates); leave
+bullets, pickups and particles untagged. The scaffold calls
+`kit.collideWorld(state.world, state.solidAt, state.cell)` after your update every frame — game
+code normally NEVER calls it, it just tags entities and (optionally) provides the wall lookup:
+- `state.solidAt(cx, cy)` → bool — solid cells (a tilemap game can omit it: the scaffold uses
+  `state.tilemap.solidAt`). Absent ⇒ pair separation only.
+- `state.cell` — px per cell (default 32; a tilemap game inherits `tilemap.tile`).
+- `kit.collideWorld(world, solidAt?, cell?)` — the pass itself: solid entities are pushed out of
+  solid cells (minimal axis, blocked velocity zeroed) and overlapping solid pairs are pushed apart
+  half-and-half. Only for the rare unscaffolded game.
+```js
+state.player = kit.spawn(state.world, { x: 64, y: 64, w: 24, h: 24, solid: true });
+kit.spawn(state.world, { x: 200, y: 64, w: 24, h: 24, solid: true, type: "monster" });
+kit.spawn(state.world, { x: 90, y: 64, w: 6, h: 6, vx: 400, type: "arrow" });   // NOT solid — flies through
+state.solidAt = (cx, cy) => state.tilemap.solidAt(cx, cy);   // or omit and keep state.tilemap
+```
+**Law: gameplay must never zero velocities or snap positions back to fake collision** — the pass
+resolves overlap by pushing OUT; a hand-rolled undo kills movement (the probe rejects it).
+
 ## Steering  (enemy/NPC movement — chase, flee, patrol; velocities in px/SECOND)
 Set an entity's velocity toward or away from a target, then `kit.integrate` it. A `target` is any
 `{x,y}` (an entity or a point); sized entities aim at each other's centres automatically.
@@ -133,6 +154,26 @@ kit.stepParticles(this.state.world, dt);
 - Keys: single chars are lowercase (`"w"`, `"s"`, `" "` for space); arrows are
   `"ArrowUp"`, `"ArrowDown"`, `"ArrowLeft"`, `"ArrowRight"`.
 - Colors passed to entities/draw are CSS strings and MUST include the leading `#` (`"#f00"`).
+
+## Actions (register key presses)
+**Rule: EVERY non-movement control in the spec's `controls` map gets a `kit.register` in init.**
+Movement keys stay with the control scheme (the scaffold wires them) — never registered. The engine
+fires the handler on the PRESSED edge of any bound key, after update each frame; a re-register with
+the same name replaces (safe on re-init). `kit.bindings()` → `[{name, keys}]`. The probe presses
+every registered action and requires an effect — a bare `input.pressed(...)` in update is invisible
+to it (held mechanics like charging may still read `input.down` per frame; this rule targets EDGE
+actions).
+```js
+init(state, kit) {
+  kit.register("attack", [" "], () => {           // spec: "SPACE: attack"
+    const foe = nearestEnemy(state);              // handlers may read state for range/aim
+    if (foe) { foe.hp -= 1; kit.burst(state.world, foe.x, foe.y, 10, { rng: kit.rng }); }
+  });
+  kit.register("interact", ["e"], () => {         // spec: "E: talk" (skip if the scaffold wires dialogue)
+    if (!state.talk && state.nearNpc) kit.talkOpen(state, state.nearNpc);
+  });
+}
+```
 
 ## Randomness
 - `kit.rng.next()` 0..1 · `.range(lo,hi)` FLOAT (never an array index) · `.int(lo,hi)` inclusive ints

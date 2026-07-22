@@ -41,21 +41,29 @@ with no change to the gradient. Never violate it.
   for a whole class of silent cross-file bugs that no runtime gate can see.
 - **headless** — bundle (esbuild) then step the sim N frames, catch crashes/divergence.
 - **probe** — generic correctness invariants (controls actually DO something — move an entity, spawn
-  one, or mutate non-positional state, so turn/card games count; no entity rests in a solid tile; no
-  Math.random/Date.now — determinism is what makes the gates' diffs meaningful), each violation an
-  actionable, units-aware diagnosis.
+  one, or mutate non-positional state, so turn/card games count; when the frozen spec names a
+  MOVEMENT scheme, dead_movement additionally requires the held movement keys to DISPLACE an entity —
+  an action key mutating state can't green a game the player can't steer; every kit.register binding
+  must ACT when pressed (dead_action) and every non-movement spec control must BE registered
+  (unbound_control — the spec's controls map rides into the probe); no entity rests in a solid
+  tile; no two solid entities interpenetrate at rest (solid_overlap); no Math.random/Date.now —
+  determinism is what makes the gates' diffs meaningful), each
+  violation an actionable, units-aware diagnosis.
 - **render** — call `draw()` against a recording mock: catch draw-time crashes + blank screens.
 - **scroll** — a world bigger than the screen must be followed by a panning camera.
 
 "Done" = the artifact passes the gates, never the model claiming done. Each loop step rebuilds a
 minimal context from durable on-disk state (the frozen spec + the failing file + the failing check's
 message), so context stays ~constant and the transcript is never used as memory. A gate fix is a
-bounded read→write **subloop** (the sanctioned multi-call Check.run): the model reads whatever sibling
+bounded read→edit **subloop** (the sanctioned multi-call Check.run): the model reads whatever sibling
 bodies it needs on demand — exposing a CROSS-FILE mismatch the signatures can't show (e.g. main.ts
-assumes world.ts spawns the player but none does) — then writes ONE complete file it self-selects.
-The reads live in an EPHEMERAL transcript confined to that one fix; the outer loop stays stateless and
-re-gates after. Bounded by the Services budget + a turn cap; on cross-fix stall the read tool is
-dropped so the fix must ACT. Still ONE file out (bounded output), so fixing one system can't drop another.
+assumes world.ts spawns the player but none does) — then lands atomic multi-hunk `edit`s it
+self-selects (a signature change ships with its call-site hunks in the same completion). The reads
+live in an EPHEMERAL transcript confined to that one fix; the outer loop stays stateless and re-gates
+after. Bounded by the Services budget + a turn cap; on cross-fix stall the read tool is dropped so the
+fix must ACT. Overwrites after creation are refused (`write` is create-only): whole-file rewrites were
+the fix loop's dominant failure mode — destabilizing previously-correct code — so a fix is grounded
+and local by construction.
 
 ---
 
@@ -64,8 +72,12 @@ dropped so the fix must ACT. Still ONE file out (bounded output), so fixing one 
 ```
 runtime/                 The primitive KIT (hand/frontier-authored offline, run local)
   engine.js              kit v1: rng, vec math, entities/spawn/cull, integrate(+3), aabb,
-                         tilemap, walk/jump/physics, camera, input, run() (browser 2D),
-                         simulate() (headless sim), probe() (invariants + dead-mouse-in-non-fp).
+                         tilemap, walk/jump/physics, collideWorld (the ONE 2D solid pass: tile
+                         pushout + solid-pair separation; entities tag `solid: true`),
+                         register/bindings (named key-press actions — fired on the pressed edge
+                         after update; the probe presses them), camera, input, run() (browser 2D),
+                         simulate() (headless sim), probe() (invariants + dead-mouse-in-non-fp +
+                         dead_action/unbound_control/solid_overlap).
                          integrate3 + z for 3D; 3D steering (seek3/flee3/wander3/patrol3 +
                          avoidRects building collision). DEPTH primitives: talkOpen/talkStep/talkHud
                          (the whole dialogue/shop loop), kit.quest (add/complete/log — milestones
@@ -95,17 +107,31 @@ src/
     codegen/             THE build path (replaces the deleted IR):
       gates.py           typecheck (tsc → per-file errors) · build_bundle (esbuild main.ts → main.js
                          + inline sourcemap) · run_headless/probe/render/scroll (build then run the
-                         bundle with --enable-source-maps, so a crash stack names the .ts source).
-      tools.py           write(code, file) / edit(file, old, new) / read_file (whole file, or
-                         offset/limit line window; per-file .ts, path-safe — a slice does NOT ground
-                         an edit). The 9-16KB kit doc rides in the fix loop's SYSTEM prompt (uncounted
-                         by the char budget), not a user turn, so file reads aren't demolished to fit.
-      module.py          CodegenModule = planned → authored → typechecks → runs → plays → renders →
-                         scrolls (blocking where noted). AUTHORING = a whole-body Check.run: ONE raw
+                         bundle with --enable-source-maps, so a crash stack names the .ts source;
+                         run_probe rides the spec's control scheme + controls map so the probe
+                         enforces dead_movement and dead_action/unbound_control).
+      tools.py           write(code, file — CREATE-ONLY, an existing non-empty file refuses with its
+                         body so the turn converts to an edit) / edit(file, edits) — ATOMIC multi-hunk
+                         (every hunk validated against the original body: found, unique, no overlap —
+                         all land or none, one version bump) / read_file (whole file, or offset/limit
+                         line window; per-file .ts, path-safe — a slice does NOT ground an edit).
+                         edit refuses any file whose first line starts `// GENERATED` (the control
+                         scaffold, data.ts, worldgen's world.ts), pointing at the owning source. The
+                         9-16KB kit doc rides in the fix loop's SYSTEM prompt (uncounted by the char
+                         budget), not a user turn, so file reads aren't demolished to fit.
+      module.py          CodegenModule = planned → data → authored → typechecks → runs → plays →
+                         renders → scrolls (blocking where noted). For a SCAFFOLDED run (every
+                         non-world game) `planned` requires the hook module game.ts — main.ts is the
+                         GENERATED control scaffold, never planned/authored, and authoring order
+                         keys entry-last on game.ts. DATA = the model designs per-game
+                         datasets ONCE (design_data.txt; {"datasets":[]} legal — arcade games opt
+                         out), then deterministic row validation + typed data.ts regeneration
+                         (data_files.py); authoring/fix prompts carry a GAME DATA summary (schema +
+                         ONE example row), never the rows. AUTHORING = a whole-body Check.run: ONE raw
                          fenced-```ts completion per file. GATE FIXES route through dispatch_fix →
-                         a FIX CLASS (fix_classes.py), then a read→write subloop (_read_write_loop_fix):
+                         a FIX CLASS (fix_classes.py), then a read→edit subloop (_read_write_loop_fix):
                          read_file any sibling on demand (tool-calls via MessageBuilder, which
-                         dedups superseded reads), then write/edit ONE self-selected file.
+                         dedups superseded reads), then atomic hunk edits on the self-selected file(s).
                          Ephemeral per-fix transcript; outer loop re-gates.
       fix_classes.py     the error-class → fixer MAP (codegen analog of IR's per-check owner). A GATE
                          detects a raw failure; a FIX CLASS resolves it — chosen by matching the Error
@@ -119,13 +145,45 @@ src/
                          mismatch is NOT laundered into types.ts — it goes to the authority LLM).
                          `default` matches everything + adds no steering = today's generic loop, so an
                          unclassified failure degrades to the status quo, never worse.
-      prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix .txt +
+      data_files.py      the DATA-FILE substrate: game/data/manifest.json declares per-game
+                         datasets (field vocab number/string/boolean/arrays/ref:<dataset>, "?" =
+                         optional; every row carries an implicit envelope id/name?/look?/presence?/
+                         size? — pipeline fields, nullable so no-asset still renders as shapes),
+                         game/data/<name>.json holds flat rows. Owns validate_data (type/id/ref/
+                         envelope violations as FIX errors → one-shot rows rewrite via fix_data.txt),
+                         the GENERATED typed game/data.ts (marker-protected like world.ts; games
+                         import it, tsc typechecks content natively), the GAME DATA prompt summary,
+                         and the deterministic sprite/mesh plan from rows.
+      prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix ·
+                         design_data · fix_data .txt +
                          fix_kinds/<class>.txt (per-fix-class root-cause directives)
       reskin.py          the ASSETS stage (skin the shapes), mode-dispatched: 2D → plan sprites →
                          rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
-                         (TRELLIS). Both re-gate then write game/assets/ + assets.json. Additive: no
-                         asset ⇒ still passes gates, renders as shapes. CLI `--assets <run_id>`.
+                         (TRELLIS). The plan is DETERMINISTIC whenever any data row carries `look`
+                         (sprite_plan_from_data: 2D all look rows, 3D look + presence world/both;
+                         prompts from look, sizes from size — no 3-8 sprite cap); the LLM plan is
+                         the data-less fallback. Both re-gate then write game/assets/ + assets.json.
+                         Additive: no asset ⇒ still passes gates, renders as shapes. CLI
+                         `--assets <run_id>`.
+      scaffold.py        the CONTROL SCAFFOLD pre-seed: for every NON-world game, run_build seeds a
+                         GENERATED game/main.ts from scaffold_templates/<scheme>.ts.tmpl before the
+                         loop. The scaffold owns config (2D size defaults; 3D controls: name), the
+                         scheme's ONE-correct-realization movement (moveTopDown / walk+jump+physics /
+                         gridMove-on-pressed w/ state.passable / kit.drive — run BEFORE the hook
+                         update so gameplay adjusts after, never re-wires), the state.player init
+                         assert, the solid-collision pass (kit.collideWorld AFTER the hook update:
+                         movement → gameplay → collide; 2D templates only), and — when the spec uses
+                         dialogue — the whole kit talk loop (talkStep update-side, the OPEN half a
+                         registered "interact" action; choice → state.talkPick). The model authors
+                         the hooks in game.ts
+                         (createState/init/update/draw(2D)/hud). WHY: two live builds shipped dead
+                         controls out of model-authored glue (one never read a movement key, one
+                         zeroed the wired movement every frame). Idempotent; world games keep the
+                         worldgen flow (v1).
+      scaffold_templates/ the per-scheme scaffold sources (top-down/platformer/grid-turn/
+                         orbital-3d/vehicle-3d/first-person-3d/follow-3d + default + interact
+                         partials) — real TypeScript we own, hill-climbable like prompts.
       worldgen_bridge.py the WORLD pre-seed: when the frozen spec sets `world`, run_build seeds
                          world.ts from src/worldgen before authoring — the town (heightfield +
                          buildings) inside a WILDERNESS RING (forest trees, 3 POIs w/ set dressing,
@@ -252,10 +310,12 @@ goes THROUGH the `write` tool (`_author_via_write`, one whole file per call as t
 tool boundary is what keeps the model from treating the block as a scratchpad (chatter comments, a
 second "rewritten" copy of a function that redeclares an export); it falls back to salvaging a tool
 call, then a fenced block, so a model that ignores the tool still lands. GATE FIXES run the
-read→edit/write subloop where read/edit/write are all real tool calls — a whole quote-heavy file
-round-trips fine as a `write` `code` arg (verified). The fix loop drops EDIT once edits keep missing
-(force a decisive overwrite) and drops READ once it has read enough without writing
-(`_READS_BEFORE_FORCE_ACT`) so a big/corrupt file can't eat every turn in reads while none writes.
+read→edit subloop where read/edit/write are all real tool calls; `write` is create-only there (a
+planned file missing from disk), so every change to existing code is an atomic multi-hunk `edit` —
+EDIT is never dropped. The fix loop drops READ on a cross-fix stall or once it has read enough without
+writing (`_READS_BEFORE_FORCE_ACT`) so a big/corrupt file can't eat every turn in reads while none
+writes. The human-note fix (`fix_from_note`) runs the same subloop — the note as the failing-gate
+text, a synthetic `code="human"` Error that classifies to `default`.
 
 **Adding a mechanic:** widen the KIT (`runtime/engine.js` + a `kit_api*.md` section + a worked
 example in the prompt + a probe invariant). Generation just composes the new primitive. Adding a

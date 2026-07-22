@@ -283,6 +283,7 @@ export async function run3d(game, canvas, assetBase) {
     input.lookDX = lookDX; input.lookDY = lookDY; lookDX = 0; lookDY = 0;   // hand this frame's mouse-look to the game
     if (!kit.over) {
       g.update(dt, input, kit);
+      kit._fireActions(input);
       if (g.camera) g.camera(cam, kit);                                    // explicit hook wins
       else if (config.controls) schemeCamera(config.controls, cam, g.state && g.state.player);  // scheme-wired
       else if (g.state && g.state.player) chaseCam(cam, g.state.player);  // sane default follow

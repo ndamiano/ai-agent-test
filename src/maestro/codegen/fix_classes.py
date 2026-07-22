@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from maestro.codegen.gates import game_files, reconcile_types
+from maestro.codegen.gates import dedupe_decls, game_files, reconcile_types
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts" / "fix_kinds"
 
@@ -224,12 +224,64 @@ PHANTOM = FixClass(
     deterministic=_strip_phantom_imports,
 )
 
+# ── missing-hook ──────────────────────────────────────────────────────────────
+# The scaffold imports its hooks from ./game.ts; the model authored one in a SIBLING file instead
+# (createState beside the world builder is a reasonable placement). The deterministic pass bridges
+# with a one-line re-export when exactly one sibling owns the hook; the LLM fallback handles the
+# ambiguous/absent cases.
+_HOOK_MISSING = re.compile(r"has no exported member '(createState|init|update|draw|hud)'")
+
+
+def _matches_hook(error) -> bool:
+    msg = error.message or ""
+    if "game.ts" in msg and _HOOK_MISSING.search(msg):
+        return True
+    # The re-attribution marker: tsc blamed the GENERATED scaffold, so the failure IS a hook-contract
+    # violation. The directive steers the model (signatures are law, fix them in game.ts); the only
+    # deterministic act is the re-export bridge for a hook parked in a sibling file — signature
+    # repairs stay with the model, which fixes local precise type errors reliably.
+    return "GENERATED file whose contract is law" in msg
+
+
+def _reexport_hooks(run_dir, error) -> Optional[dict]:
+    from maestro.codegen.scaffold import reexport_hooks
+    res = reexport_hooks(run_dir)
+    return res if res.get("count") else None
+
+
+MISSING_HOOK = FixClass(
+    id="missing-hook",
+    matches=_matches_hook,
+    directive=_directive("missing_hook.txt"),
+    deterministic=_reexport_hooks,
+)
+
+
+# ── duplicate-decl ────────────────────────────────────────────────────────────
+# The file defines the same top-level symbol twice — two complete implementations (TS2323/TS2393,
+# TS2300). Trivial under a whole-file rewrite, EDIT-HOSTILE under grounded hunks (deleting an entire
+# duplicate body is one giant exact old_string — measured ~70 churned calls on one duplicate `init`).
+# The deterministic pass keeps the LAST implementation (latest intent) and deletes the earlier ones.
+_DUP_CODES = ("TS2323", "TS2393", "TS2300")
+
+
+def _matches_duplicate(error) -> bool:
+    return any(c in (error.message or "") for c in _DUP_CODES)
+
+
+DUPLICATE = FixClass(
+    id="duplicate-decl",
+    matches=_matches_duplicate,
+    directive=_directive("duplicate_decl.txt"),
+    deterministic=dedupe_decls,
+)
+
 DEFAULT = FixClass(id="default", matches=lambda e: True)
 
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [AMBIENT, PHANTOM, CONTRACT, DEFAULT]
+FIX_CLASSES = [AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE, CONTRACT, DEFAULT]
 
 
 def classify(error) -> FixClass:

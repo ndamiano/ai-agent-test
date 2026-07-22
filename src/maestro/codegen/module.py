@@ -9,26 +9,29 @@ A game is a FOLDER of TypeScript modules (`game/main.ts` + system files) describ
   - `typechecks` (blocking): `tsc --noEmit` against the kit types — catches cross-file/type/contract
                            bugs (missing exports, wrong data shapes, bad arg counts) before the game
                            runs, with file:line attribution. Fix = the one file tsc blames.
-  - `runs` / `plays` / `renders` / `scrolls`: the runtime gates on the bundle. Fix = the throw-site
-                           file (sourcemapped stack) or a triaged pick — rewrite ONE file, bounded.
+  - `runs` / `plays` / `renders` / `scrolls`: the runtime gates on the bundle. Fix = grounded hunk
+                           edits landed by the read→edit subloop, bounded.
 
-Every fix is a whole-body `Check.run`: one raw completion, then a write. Context is rebuilt from the
-durable folder each step — no transcript memory.
+Every fix is a whole-body `Check.run`. Context is rebuilt from the durable folder each step — no
+transcript memory.
 """
 
 import json
 import re
 from pathlib import Path
 
+from maestro.codegen import data_files
 from maestro.codegen.gates import (
     ENTRY_SRC, RUNTIME_DIR, extract_code, game_files, manifest_path, read_manifest,
     run_headless, run_probe, run_render, run_scroll, typecheck,
 )
+from maestro.codegen.scaffold import ENTRY_HOOK, is_scaffolded, scheme_of
 from maestro.modules.module import Check, Error, ErrorType, Module
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _CODE_MAX_TOKENS = 16000
 _PLAN_MAX_TOKENS = 2000
+_DATA_MAX_TOKENS = 8000
 
 
 def _kit_doc(spec: dict) -> str:
@@ -146,12 +149,34 @@ def _sibling_lines(run_dir, exclude: str) -> str:
 
 
 # ── detectors ─────────────────────────────────────────────────────────────────
+def _plan_entry(run_dir) -> str:
+    """The file a valid plan must contain. When the control scaffold owns main.ts (every non-world
+    game — run_build seeds it before the loop ever detects), the model's entry is the hook module
+    game.ts; otherwise (a world game's forced manifest, a hand-assembled run) it is main.ts itself."""
+    return ENTRY_HOOK if is_scaffolded(run_dir) else ENTRY_SRC
+
+
 def _detect_planned(check, module, context):
     files = _manifest_files(context.state.run_dir)
-    if files and any(f["name"] == ENTRY_SRC for f in files):
+    if files and any(f["name"] == _plan_entry(context.state.run_dir) for f in files):
         return []
     return [Error(type=ErrorType.BUILD, code="planned", component="game",
                   message="no manifest yet — plan the game's files from the spec")]
+
+
+def _detect_data(check, module, context):
+    """The DATA gate: a planned game must have its data files DESIGNED (even if the design is
+    empty), then valid — and a valid design keeps data.ts in sync before typecheck sees it."""
+    run_dir = context.state.run_dir
+    if not data_files.data_manifest_path(run_dir).exists():
+        return [Error(type=ErrorType.BUILD, code="data", component="game",
+                      message="no data design yet — decide this game's data files from the spec")]
+    violations = data_files.validate_data(run_dir)
+    if violations:
+        return [Error(type=ErrorType.FIX, code="data", component="game",
+                      message="data files invalid:\n" + "\n".join(f"  - {v}" for v in violations))]
+    data_files.generate_data_ts(run_dir)
+    return []
 
 
 def _is_contract(f) -> bool:
@@ -164,13 +189,15 @@ def _is_contract(f) -> bool:
 
 
 def _authoring_order(run_dir) -> list:
-    """Files in DEPENDENCY order: the shared contract first (consumers author against real types), the
-    ENTRY file (main.ts) LAST. main.ts is the one file that depends on ALL the others — it imports and
-    wires every system — so authoring it last lets it bind against its siblings' REAL on-disk
-    signatures instead of guessing an API that doesn't exist yet (the source of phantom calls and
-    missing imports). Everything else keeps its manifest order."""
+    """Files in DEPENDENCY order: the shared contract first (consumers author against real types),
+    the ENTRY-HOOK file LAST — game.ts when a control scaffold owns main.ts, else main.ts. The hook
+    file is the one that depends on ALL the others — it imports and wires every system — so
+    authoring it last lets it bind against its siblings' REAL on-disk signatures instead of
+    guessing an API that doesn't exist yet (the source of phantom calls and missing imports).
+    Everything else keeps its manifest order."""
     files = _manifest_files(run_dir)
-    return sorted(files, key=lambda f: (f["name"] == ENTRY_SRC, _is_contract(f) is False))
+    hook = ENTRY_HOOK if is_scaffolded(run_dir) else ENTRY_SRC
+    return sorted(files, key=lambda f: (f["name"] == hook, _is_contract(f) is False))
 
 
 def _detect_authored(check, module, context):
@@ -184,6 +211,25 @@ def _detect_authored(check, module, context):
             return [Error(type=ErrorType.BUILD, code="authored", component="game",
                           path=name, message=f"{name} not written yet — author it ({f.get('purpose','')})")]
     return []
+
+
+def _detect_contracted(check, module, context):
+    """A scaffolded game.ts must carry the contract assertion — the line that makes every hook
+    signature drift a LOCAL tsc error in game.ts (the shape the model fixes reliably) instead of an
+    error at the GENERATED scaffold's import site. Its absence is silent to tsc, so this gate
+    demands it; the MODEL appends it via the edit subloop (a prompting fix — the pipeline never
+    edits game.ts)."""
+    from maestro.codegen.scaffold import contract_assert_line, has_contract_assert
+    run_dir = context.state.run_dir
+    if not is_scaffolded(run_dir):
+        return []
+    if not (game_files(run_dir).get(ENTRY_HOOK) or "").strip() or has_contract_assert(run_dir):
+        return []
+    line = contract_assert_line(context.spec)
+    return [Error(type=ErrorType.FIX, code="contracted", component="game", path=ENTRY_HOOK,
+                  message=f"{ENTRY_HOOK} is missing the scaffold contract assertion — read the file, "
+                          f"then append EXACTLY this line at the end (ONE edit hunk with an EMPTY "
+                          f"old_string appends):\n{line}")]
 
 
 def _contract_block(run_dir, exclude: str) -> str:
@@ -204,9 +250,22 @@ def _contract_block(run_dir, exclude: str) -> str:
 def _detect_typechecks(check, module, context):
     """`tsc --noEmit` against the kit types — the contract gate. Errors are GROUPED BY FILE and each
     file's errors handed over together (path=file), so one rewrite fixes all of a file's type errors
-    at once instead of thrashing one line at a time. Routes to the exact file, before the game runs."""
+    at once instead of thrashing one line at a time. Routes to the exact file, before the game runs.
+
+    An error tsc blames on a GENERATED file (the control scaffold's import of a hook that game.ts
+    fails to export, a hud whose items don't typecheck at the scaffold's call site) is RE-ATTRIBUTED
+    to the hook file: the generated side is law and the tools refuse to edit it, so routing the
+    error there strands the fix (measured: a capped run spent ~130 calls on main.ts errors it was
+    forbidden from touching)."""
+    run_dir = context.state.run_dir
+    files = game_files(run_dir)
+    hook = ENTRY_HOOK if is_scaffolded(run_dir) else None
     by_file = {}
-    for f, msg in typecheck(context.state.run_dir):
+    for f, msg in typecheck(run_dir):
+        if hook and f != hook and files.get(f, "").startswith("// GENERATED"):
+            msg = (f"(reported in {f}, a GENERATED file whose contract is law — the real fix is "
+                   f"making {hook}'s exports/signatures satisfy it) {msg}")
+            f = hook
         by_file.setdefault(f, []).append(msg)
     return [Error(type=ErrorType.FIX, code="typechecks", component="game", path=f,
                   message=f"{f} has {len(msgs)} type error(s):\n" + "\n".join(f"  - {m}" for m in msgs))
@@ -252,7 +311,15 @@ def _detect_runs(check, module, context):
 
 
 def _detect_plays(check, module, context):
-    pr = run_probe(context.state.run_dir)
+    # The spec's control scheme rides along so the probe can hold a movement scheme to actual
+    # displacement (dead_movement), not just "some key changed something" — and the spec's whole
+    # `controls` map rides too, so the probe can press every registered action (dead_action) and
+    # flag spec-bound keys nothing registered (unbound_control). ALL entries are passed; the probe
+    # owns the explicit movement/mouse skip lists (it already knows the scheme's keys).
+    design = (context.spec or {}).get("design") or {}
+    controls = design.get("controls")
+    pr = run_probe(context.state.run_dir, scheme=scheme_of(context.spec),
+                   control_keys=controls if isinstance(controls, dict) and controls else None)
     return [] if pr.get("ok") else [_gate_error("plays", "PROBE FAILED", _violations(pr),
                                                 context.state.run_dir, kind=_first_kind(pr))]
 
@@ -271,11 +338,21 @@ def _detect_scrolls(check, module, context):
 
 
 # ── fixes ─────────────────────────────────────────────────────────────────────
+def _hook_exports(spec: dict) -> list:
+    hooks = ["createState", "init", "update", "draw", "hud"]
+    if spec.get("mode") == "3d":
+        hooks.remove("draw")   # a 3D game has no draw — the scene renders from entity shape tags
+    return hooks
+
+
 def _plan_fix(module, context, error, slot, services, dispatch):
-    """Author the manifest: the spec's systems → a small set of files (main.ts + one per system),
-    each with its exports. On unparseable output, fall back to a single-file manifest so the build
-    proceeds rather than thrashing on the plan."""
+    """Author the manifest: the spec's systems → a small set of files (the entry-hook game.ts + one
+    per system), each with its exports. main.ts is the GENERATED control scaffold, never planned —
+    if the model lists it anyway it is dropped (a world game, which has no scaffold, keeps main.ts).
+    On unparseable output, fall back to a single-file manifest so the build proceeds rather than
+    thrashing on the plan."""
     spec = context.spec
+    entry = _plan_entry(context.state.run_dir)
     system = (_PROMPTS / "plan_game.txt").read_text(encoding="utf-8")
     user = f"{_design_block(spec)}\n\nPlan the files. Output ONLY one ```json block."
     text = _infer(services, system, user, _PLAN_MAX_TOKENS)
@@ -283,12 +360,94 @@ def _plan_fix(module, context, error, slot, services, dispatch):
     try:
         manifest = json.loads(m.group(1) if m else text)
         files = [f for f in (manifest.get("files") or []) if f.get("name")]
-        assert any(f["name"] == "main.ts" for f in files)
+        if entry == ENTRY_HOOK:
+            files = [f for f in files if f["name"] != ENTRY_SRC]
+        assert any(f["name"] == entry for f in files)
+        manifest = {"files": files}
     except Exception:
-        manifest = {"files": [{"name": "main.ts", "purpose": "the whole game", "exports": ["createGame"]}]}
+        manifest = {"files": [{"name": entry,
+                               "purpose": ("the whole game" if entry == ENTRY_SRC
+                                           else "the whole game behind the scaffold hooks"),
+                               "exports": (["createGame"] if entry == ENTRY_SRC
+                                           else _hook_exports(spec))}]}
     manifest_path(context.state.run_dir).parent.mkdir(parents=True, exist_ok=True)
     manifest_path(context.state.run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     services._report(f"planned {len(manifest['files'])} file(s): {', '.join(f['name'] for f in manifest['files'])}")
+
+
+def _json_from(text: str):
+    m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.S)
+    return json.loads(m.group(1) if m else text)
+
+
+def _design_data_fix(module, context, error, slot, services, dispatch):
+    """One-shot design of the game's data files from the frozen spec (the analog of _plan_fix).
+    Unparseable output falls back to the EMPTY design so the build proceeds; a dataset the
+    validator still rejects after landing is dropped wholesale (write_design)."""
+    run_dir = context.state.run_dir
+    system = (_PROMPTS / "design_data.txt").read_text(encoding="utf-8")
+    filelist = "\n".join(f"- {f['name']}: {f.get('purpose', '')}" for f in _manifest_files(run_dir)) \
+        or "(none planned yet)"
+    user = (f"{_design_block(context.spec)}\n\n# PLANNED FILES\n{filelist}\n\n"
+            "Design the data files. Output ONLY one ```json block.")
+    text = _infer(services, system, user, _DATA_MAX_TOKENS)
+    try:
+        design = _json_from(text)
+        datasets = design.get("datasets")
+        assert isinstance(datasets, list)
+    except Exception:
+        datasets = []
+    dropped = data_files.write_design(run_dir, datasets)
+    data_files.generate_data_ts(run_dir)
+    kept = [d["name"] for d in data_files.read_data_manifest(run_dir).get("datasets", [])]
+    msg = f"designed {len(kept)} dataset(s): {', '.join(kept) or '(none)'}"
+    if dropped:
+        msg += f" — dropped invalid: {', '.join(dropped)}"
+    services._report(msg)
+
+
+def _fix_data_rows_fix(module, context, error, slot, services, dispatch):
+    """One-shot rewrite of ONE offending dataset's rows from the violation list. The manifest's
+    declared types are law — the rows reconcile to them, never the other way."""
+    run_dir = context.state.run_dir
+    manifest = data_files.read_data_manifest(run_dir)
+    violations = data_files.validate_data(run_dir)
+    declared = {d.get("name") for d in (manifest.get("datasets") or []) if isinstance(d, dict)}
+    offending = data_files.offending_datasets(violations, declared)
+    if not offending:
+        services._report("data invalid but no dataset attributable — regenerate the design")
+        return
+    target = offending[0]
+    rows_path = data_files.data_dir(run_dir) / f"{target}.json"
+    raw = rows_path.read_text(encoding="utf-8") if rows_path.exists() else "[]"
+    system = (_PROMPTS / "fix_data.txt").read_text(encoding="utf-8")
+    user = "\n\n".join([
+        f"# DATA MANIFEST (declared fields — the types are law)\n```json\n"
+        f"{json.dumps(manifest, indent=1, ensure_ascii=False)}\n```",
+        f"# CURRENT ROWS: data/{target}.json\n```json\n{raw}\n```",
+        "# VIOLATIONS\n" + "\n".join(f"- {v}" for v in violations),
+        f"Fix dataset '{target}'. Output ONLY one ```json block: the corrected rows array.",
+    ])
+    text = _infer(services, system, user, _DATA_MAX_TOKENS)
+    try:
+        rows = _json_from(text)
+        assert isinstance(rows, list)
+    except Exception:
+        services._report(f"data fix for '{target}' returned no rows array")
+        return
+    rows_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+    remaining = data_files.validate_data(run_dir)
+    if not remaining:
+        data_files.generate_data_ts(run_dir)
+    services._report(f"rewrote data/{target}.json ({len(rows)} rows), "
+                     f"{len(remaining)} violation(s) remain")
+
+
+def _data_fix(module, context, error, slot, services, dispatch):
+    if error.type is ErrorType.BUILD:
+        _design_data_fix(module, context, error, slot, services, dispatch)
+    else:
+        _fix_data_rows_fix(module, context, error, slot, services, dispatch)
 
 
 def _author_file_fix(module, context, error, slot, services, dispatch):
@@ -308,6 +467,9 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     if contract:
         parts.append("# SHARED TYPES — author against these EXACT shapes; do NOT invent fields that "
                      f"aren't here (import the types you need from their file)\n{contract}")
+    data = data_files.data_summary(run_dir)
+    if data:
+        parts.append(data)
     parts.append(f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}")
     if _is_contract(me):
         parts.append((_PROMPTS / "contract_rules.txt").read_text(encoding="utf-8"))
@@ -315,64 +477,6 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     result = _author_via_write(services, system, "\n\n".join(parts), dispatch, me["name"], _CODE_MAX_TOKENS)
     detail = result.get("error") or f"{result.get('chars')} chars"
     services._report(f"authored {me['name']}: {detail}")
-
-
-_FILE_RE = re.compile(r"FILE:\s*([A-Za-z0-9_.-]+\.ts)", re.I)
-
-
-def _triage_file(infer, run_dir, failure: str, use_stack: bool = True) -> str:
-    """Pick the ONE file to fix. For a single-file game there's no choice; otherwise a cheap call
-    over the manifest SIGNATURES (never the bodies) locates the culprit — so the heavy fix call only
-    ever loads one file, and a big game can't overflow the context into an empty response.
-    `use_stack` trusts a crash STACK naming exactly one non-main file (propagated frames name main
-    too); a prose human note is NOT a stack — pass False so the LLM reads the note and can pick
-    main.ts (where wiring/input usually lives)."""
-    files = game_files(run_dir)
-    if len(files) <= 1:
-        return next(iter(files), "main.ts")
-    if use_stack:
-        # A crash/stack trace usually names the file it threw in — trust that over a guess.
-        named = [n for n in files if n != "main.ts" and re.search(rf"\b{re.escape(n)}\b", failure)]
-        if len(named) == 1:
-            return named[0]
-    sigs = "\n".join(f"- {f['name']}: {f.get('purpose','')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
-                     for f in _manifest_files(run_dir)) or "\n".join(f"- {n}" for n in files)
-    system = (_PROMPTS / "triage_fix.txt").read_text(encoding="utf-8")
-    user = f"# FILES\n{sigs}\n\n# FAILURE\n{failure}\n\nWhich single file must change? Reply ONLY `FILE: <name.ts>`."
-    m = _FILE_RE.search(infer(system, user, 200))
-    return m.group(1) if (m and m.group(1) in files) else ("main.ts" if "main.ts" in files else next(iter(files)))
-
-
-def _focused_fix(infer, spec, run_dir, target: str, failure: str, dispatch, include_kit: bool = True) -> dict:
-    """Rewrite one file with a SMALL context: that file's body + the siblings' signatures + the
-    failure. `main.ts` owns config+state+wiring, so most cross-file bugs are a contract mismatch
-    against it — when fixing a SYSTEM file, include main.ts's body too (bounded: one extra file) so
-    the fixer can see the state shape / call sites it must agree with. `include_kit=False` (an
-    import/export link fix) drops the kit doc, which the fix doesn't need — less context, less
-    truncation on a big file. Bounded input AND output, so the model returns a complete file."""
-    files = game_files(run_dir)
-    body = files.get(target, "")
-    siblings = _sibling_lines(run_dir, target)
-    parts = [f"# KIT API\n{_kit_doc(spec)}"] if include_kit else []
-    parts.append(f"# FILE TO FIX: {target}\n```ts\n{body}\n```")
-    # main.ts owns state+wiring; types.ts owns the shared shapes — most cross-file bugs are a
-    # mismatch against one of them, and a "property missing on GameState" error reported in one file
-    # is often FIXED in types.ts. Show both (read-only) so the fixer can align to them.
-    for ctx_file in ("main.ts", "types.ts"):
-        if ctx_file != target and ctx_file in files:
-            parts.append(f"# {ctx_file} (read-only context — agree with it; do NOT rewrite it)\n"
-                         f"```ts\n{files[ctx_file]}\n```")
-    parts += [
-        f"# OTHER FILES you may import (signatures only — do NOT rewrite these)\n{siblings}",
-        f"# FAILURE\n{failure}",
-        f"Rewrite ./{target} completely. Output ONLY one ```ts block.",
-    ]
-    return dispatch("write",
-                    {"code": extract_code(infer(system_prompt(), "\n\n".join(parts), _CODE_MAX_TOKENS)), "file": target})
-
-
-def system_prompt() -> str:
-    return (_PROMPTS / "fix_file.txt").read_text(encoding="utf-8")
 
 
 _READ_SCHEMA = {"type": "function", "function": {
@@ -388,26 +492,34 @@ _READ_SCHEMA = {"type": "function", "function": {
                    "required": ["file"]}}}
 _EDIT_SCHEMA = {"type": "function", "function": {
     "name": "edit",
-    "description": "The PREFERRED fix: replace an exact snippet in a file you have read. old_string must "
-                   "match the current source verbatim and be unique — copy it exactly, including "
-                   "indentation. Prefer this over rewriting the whole file; make the smallest edit that "
-                   "fixes the failure. If it fails it returns the current file body — re-anchor and retry.",
+    "description": "THE fix tool: apply one or more exact-snippet hunks to a file you have read, "
+                   "atomically — all hunks land or none do. Each hunk's old_string must match the "
+                   "current source verbatim (copy it exactly, including indentation) and be unique. "
+                   "Pass the SMALLEST hunks that fix the failure, and batch every hunk the fix needs "
+                   "into one call. A signature change MUST ship with its call-site updates in the same "
+                   "turn: same file = extra hunks in this call; other files = additional edit calls in "
+                   "the same completion. To APPEND at the end of the file, pass a hunk with an EMPTY "
+                   "old_string. On failure nothing is applied and the current body is returned — "
+                   "re-anchor and retry.",
     "parameters": {"type": "object",
                    "properties": {"file": {"type": "string"},
-                                  "old_string": {"type": "string", "description": "exact current text to replace"},
-                                  "new_string": {"type": "string", "description": "replacement text"}},
-                   "required": ["file", "old_string", "new_string"]}}}
+                                  "edits": {"type": "array",
+                                            "description": "the hunks to apply atomically",
+                                            "items": {"type": "object",
+                                                      "properties": {"old_string": {"type": "string", "description": "exact current text to replace; empty = append new_string at end of file"},
+                                                                     "new_string": {"type": "string", "description": "replacement text"}},
+                                                      "required": ["old_string", "new_string"]}}},
+                   "required": ["file", "edits"]}}}
 _WRITE_SCHEMA = {"type": "function", "function": {
     "name": "write",
-    "description": "Overwrite a file with its COMPLETE new source — use when an edit can't express the "
-                   "fix and the whole file must be rebuilt. Pass the ENTIRE working file in `code`, never "
-                   "a stub/placeholder/partial. Read the file first so the rewrite is grounded.",
+    "description": "Create a NEW file with its complete source (authoring a planned file missing from "
+                   "disk). Overwriting an existing file is refused — changes to existing code always go "
+                   "through edit.",
     "parameters": {"type": "object",
                    "properties": {"file": {"type": "string"},
                                   "code": {"type": "string", "description": "the complete file source"}},
                    "required": ["file", "code"]}}}
 _FIX_LOOP_MAX_TURNS = 8
-_EDIT_FAILS_BEFORE_OVERWRITE = 3  # after N failed edits, drop edit so the fix must overwrite
 _READS_BEFORE_FORCE_ACT = 4  # after N reads with no write, drop read so the fix must ACT (kills the
                              # read-thrash where a big/corrupt file eats every turn and none writes
 
@@ -423,32 +535,32 @@ def _is_stub(code: str) -> bool:
     return len(real.strip()) < 30 or bool(_STUB_RE.search(code))
 
 
-def _fix_schemas(escalate: bool, edit_fails: int, nreads: int) -> list:
-    """The fix-loop TOOLSET — read (inspect a sibling) · edit (grounded snippet fix) · write (full-file
-    overwrite). All three are real tool calls; a whole quote-heavy file round-trips fine as a JSON `code`
-    arg (verified against the live server). Ladder: on an outer STALL (escalate) or enough failed edits,
-    drop EDIT to force a decisive OVERWRITE. Once the fix has READ enough without writing
-    (`_READS_BEFORE_FORCE_ACT`), drop READ too so a big/corrupt file can't eat every turn in reads while
-    none writes — the model has its grounding in history and must now ACT. WRITE is always offered so a
-    fix can always land."""
+def _fix_schemas(escalate: bool, nreads: int) -> list:
+    """The fix-loop TOOLSET — read (inspect a sibling) · edit (atomic grounded hunks) · write (create a
+    missing planned file). All three are real tool calls. EDIT is always offered — it is the only way to
+    change an existing file, so dropping it would strand the fix. WRITE is always offered for the one
+    legitimate case (a planned file absent from disk); the tool itself refuses an overwrite. READ drops
+    only once THIS fix has read enough without writing (`_READS_BEFORE_FORCE_ACT`) — never on the outer
+    stall: edits are grounded in reads, and an escalated fix that cannot read can only guess anchors
+    (measured: a stalled target spiraled — blind edit-misses, nothing ever landed, stall persisted).
+    Escalation's lever is the Services reasoning bump, not the toolset."""
     schemas = [_READ_SCHEMA, _EDIT_SCHEMA, _WRITE_SCHEMA]
-    if escalate or edit_fails >= _EDIT_FAILS_BEFORE_OVERWRITE:
-        schemas = [s for s in schemas if s is not _EDIT_SCHEMA]
     if nreads >= _READS_BEFORE_FORCE_ACT:
         schemas = [s for s in schemas if s is not _READ_SCHEMA]
     return schemas
 
 
 def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_class=None):
-    """Fix a gate failure as a bounded read→edit/write subloop: the model reads whatever siblings it
-    needs (full bodies, on demand) to locate a CROSS-FILE mismatch the signatures can't show, then edits
-    or overwrites the file — every action a real tool call (read/edit/write). This is the sanctioned
-    multi-call fix shape (Check.run) — the reads live in an EPHEMERAL transcript confined to this one fix
-    (the outer loop stays stateless and re-gates after). A single-shot fix that only sees main.ts +
-    sibling signatures parks on bugs like 'a file assumes another spawns the player but none does';
-    reading the body exposes it. Bounded by the Services budget (each infer counts) + a turn cap; on
-    cross-fix stall (escalate) the EDIT tool is dropped so the fix must decisively OVERWRITE (read kept
-    so it's grounded). Context is rebuilt each turn via MessageBuilder, which dedups superseded reads.
+    """Fix a gate failure as a bounded read→edit subloop: the model reads whatever siblings it needs
+    (full bodies, on demand) to locate a CROSS-FILE mismatch the signatures can't show, then lands
+    atomic hunk edits — every action a real tool call (read/edit/write, write create-only). This is the
+    sanctioned multi-call fix shape (Check.run) — the reads live in an EPHEMERAL transcript confined to
+    this one fix (the outer loop stays stateless and re-gates after). A single-shot fix that only sees
+    main.ts + sibling signatures parks on bugs like 'a file assumes another spawns the player but none
+    does'; reading the body exposes it. Bounded by the Services budget (each infer counts) + a turn cap;
+    on cross-fix stall (escalate) the READ tool is dropped so the fix must ACT on the grounding it has
+    (and Services escalates reasoning for the rest of the target). Context is rebuilt each turn via
+    MessageBuilder, which dedups superseded reads.
 
     `fix_class` (see fix_classes.py) supplies the error-class-specific steering: an AUTHORITY block (the
     on-disk context that biases toward the correct root cause, e.g. a type's real members) and a
@@ -477,16 +589,19 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
         _design_block(spec),
         contract,
         f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
+        data_files.data_summary(run_dir),
         f"# FAILING GATE\n{error.message}",
         authority,
         directive,
-        "Read whatever files you need to find the root cause, then write ONE file to fix it.",
+        "Read whatever files you need to find the root cause, then fix it with edit — the smallest "
+        "hunks that fix the failure, every needed hunk (definition + call sites) in the same "
+        "completion.",
     ] if p)
     history = [{"role": "user", "content": user}]
     wrote = mode = None
-    nreads = edit_fails = 0
+    nreads = edit_fails = 0   # edit_fails is reporting-only — misses no longer change the toolset
     for _ in range(_FIX_LOOP_MAX_TURNS):
-        schemas = _fix_schemas(services.escalate, edit_fails, nreads)
+        schemas = _fix_schemas(services.escalate, nreads)
         msgs = MessageBuilder(system).extend(history).build()
         # reasoning OFF: local models honor only on/off, and the fix is a bounded read→act loop where
         # thinking-on burns the token budget on reasoning and starves the tool call. The reads do the
@@ -501,8 +616,8 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
         if not tcs:
             history.append({"role": "assistant", "content": content})
             history.append({"role": "user",
-                            "content": "Call a tool: read_file to inspect a file, edit "
-                                       "for a snippet fix, or write to overwrite a whole file."})
+                            "content": "Call a tool: read_file to inspect a file, edit to apply "
+                                       "hunks, or write to create a missing file."})
             continue
         history.append({"role": "assistant", "content": content, "tool_calls": tcs})
         for tc in tcs:
@@ -520,8 +635,7 @@ def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_c
                 history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
             elif name == "edit":
                 result = dispatch("edit", {"file": args.get("file", "main.ts"),
-                                                     "old_string": args.get("old_string", ""),
-                                                     "new_string": args.get("new_string", "")})
+                                           "edits": args.get("edits") or []})
                 if result.get("ok"):
                     wrote, mode = result.get("file"), "edit"
                 else:
@@ -574,7 +688,9 @@ class CodegenModule(Module):
 
     checks = [
         Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
+        Check(code="data", detect=_detect_data, job="author", blocking=True, run=_data_fix),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
+        Check(code="contracted", detect=_detect_contracted, job="fix", blocking=True, run=dispatch_fix),
         Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=dispatch_fix),
         Check(code="runs", detect=_detect_runs, job="fix", run=dispatch_fix),
         Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=dispatch_fix),

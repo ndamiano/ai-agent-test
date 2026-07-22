@@ -36,8 +36,15 @@ class MessageBuilder:
             from llm_clients.connector_selector import get_connector
             ctx_len = get_connector().get_context_length()
             if ctx_len:
-                # 50% of context window in characters (~4 chars/token)
-                budget = (ctx_len * 4) // 2
+                # Input budget = (window − reserved output) × chars/token. Measured on live
+                # code-heavy payloads (120 jobs, 2026-07-21): 3.5–3.9 chars/token, median 3.67 —
+                # NOT the 4:1 prose heuristic. Output reservation matches the largest completion
+                # the build path requests (16K, module._CODE_MAX_TOKENS); without it the biggest
+                # fix calls could only truncate their OUTPUT, which is how a long tool-call write
+                # comes back cut off mid-arg.
+                # Floor at a third of the window: a small-context model can't reserve 16K of
+                # output, but must still get a usable input slice.
+                budget = int(max(ctx_len - 16_000, ctx_len // 3) * 3.5)
         except Exception:
             pass
         self.MESSAGE_BUDGET_CHARS: int = budget

@@ -1,0 +1,218 @@
+```json
+{
+  "datasets": [
+    {
+      "name": "enemies",
+      "fields": {
+        "hp": "number",
+        "speed": "number",
+        "damage": "number",
+        "behavior": "string",
+        "phases_attacks": "boolean?",
+        "drops_coins": {
+          "min": "number",
+          "max": "number"
+        },
+        "drops_potion_chance": "number?",
+        "inflicts_status": {
+          "ref_status_id?": "string?"
+        },
+        "status_duration": "number?"
+      },
+      "rows": [
+        {
+          "id": "slime",
+          "name": "Slime",
+          "look": "a small translucent green gelatinous blob, side view, glossy surface, plain black background",
+          "presence": "world",
+          "size": {
+            "w": 24,
+            "h": 24
+          },
+          "hp": 10,
+          "speed": 30,
+          "damage": 2,
+          "behavior": "wander",
+          "drops_coins": {
+            "min": 1,
+            "max": 3
+          },
+          "drops_potion_chance": 0.1,
+          "inflicts_status": null,
+          "status_duration": null
+        },
+        {
+          "id": "skeleton",
+          "name": "Skeleton",
+          "look": "a bony humanoid figure with glowing red eyes, white bone texture, side view, plain black background",
+          "presence": "world",
+          "size": {
+            "w": 28,
+            "h": 40
+          },
+          "hp": 20,
+          "speed": 60,
+          "damage": 5,
+          "behavior": "chase",
+          "drops_coins": {
+            "min": 3,
+            "max": 6
+          },
+          "drops_potion_chance": 0.15,
+          "inflicts_status": null,
+          "status_duration": null
+        },
+        {
+          "id": "golem",
+          "name": "Stone Golem",
+          "look": "a large grey stone construct with glowing orange cracks in the rock, bulky shape, side view, plain black background",
+          "presence": "world",
+          "size": {
+            "w": 48,
+            "h": 64
+          },
+          "hp": 60,
+          "speed": 20,
+          "damage": 10,
+          "behavior": "chase",
+          "drops_coins": {
+            "min": 10,
+            "max": 20
+          },
+          "drops_potion_chance": 0.2,
+          "inflicts_status": null,
+          "status_duration": null
+        },
+        {
+          "id": "bat",
+          "name": "Cave Bat",
+          "look": "a small black bat with spread wings, flying posture, plain black background",
+          "presence": "world",
+          "size": {
+            "w": 20,
+            "h": 20
+          },
+          "hp": 8,
+          "speed": 100,
+          "damage": 3,
+          "behavior": "chase",
+          "drops_coins": {
+            "min": 1,
+            "max": 2
+          },
+          "drops_potion_chance": null,
+          "inflicts_status": null,
+          "status_duration": null
+        },
+        {
+          "id": "ghost",
+          "name": "Spectral Ghost",
+          "look": "a translucent pale blue spectral figure with fading edges, floating pose, plain black background",
+          "presence": "world",
+          "size": {
+            "w": 32,
+            "h": 48
+          },
+          "hp": 25,
+          "speed": 70,
+          "damage": 6,
+          "behavior": "chase",
+          "phases_attacks": true,
+          "drops_coins": {
+            "min": 5,
+            "max": 10
+          },
+          "drops_potion_chance": 0.25,
+          "inflicts_status": null,
+          "status_duration": null
+        },
+        {
+          "id": "dragon",
+          "name": "Wandering Dragon",
+          "look": "a massive serpentine red dragon with horns and glowing eyes, coiled posture, plain black background",
+          "presence": "world",
+          "size": {
+            "w": 80,
+            "h": 80
+          },
+          "hp": 200,
+          "speed": 50,
+          "damage": 15,
+          "behavior": "chase",
+          "drops_coins": {
+            "min": 100,
+            "max": 100
+          },
+          "drops_potion_chance": null,
+          "inflicts_status": null,
+          "status_duration": null
+        }
+      ]
+    },
+    {
+      "name": "status_effects",
+      "fields": {
+        "color_hex": "string",
+        "dps": "number?",
+        "speed_multiplier": "number?"
+      },
+      "rows": [
+        {
+          "id": "poison",
+          "name": "Poison",
+          "look": null,
+          "presence": null,
+          "color_hex": "#00FF00",
+          "dps": 2,
+          "speed_multiplier": 1.0
+        },
+        {
+          "id": "slow",
+          "name": "Slow",
+          "look": null,
+          "presence": null,
+          "color_hex": "#0000FF",
+          "dps": 0,
+          "speed_multiplier": 0.5
+        }
+      ]
+    },
+    {
+      "name": "items",
+      "fields": {
+        "type": "string",
+        "value": "number",
+        "look": null,
+        "presence": null,
+        "size": null,
+        "effect_type?": "string?",
+        "effect_value?": "number?"
+      },
+      "rows": [
+        {
+          "id": "coin",
+          "name": "Gold Coin",
+          "look": null,
+          "presence": null,
+          "size": null,
+          "type": "currency",
+          "value": 1,
+          "effect_type": null,
+          "effect_value": null
+        },
+        {
+          "id": "health_potion",
+          "name": "Health Potion",
+          "look": null,
+          "presence": null,
+          "size": null,
+          "type": "consumable",
+          "value": 0,
+          "effect_type": "heal",
+          "effect_value": 50
+        }
+      ]
+    }
+  ]
+}
+```

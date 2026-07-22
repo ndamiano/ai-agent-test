@@ -17,6 +17,9 @@ Rules:
 - To add typed gameplay fields, EXTEND the kit type in types.ts — do NOT redefine it from scratch:
   `export interface Enemy extends Kit.Entity { hp: number; kind: "goblin" | "orc" }`. `Entity`
   already has an open index signature, so `e.type`/`e.hp` also work without extending. Either is fine.
+- When a GAME DATA block is present, import its typed consts from "./data.ts"
+  (`import { ENEMIES } from "./data.ts"`) and read them — NEVER re-declare those tables inline or
+  invent your own rows. Balance/content changes belong in data/*.json, not code.
 - Import shared shapes + sibling exports from their files: `import type { GameState } from "./types.ts"`,
   `import { movePlayer } from "./player.ts"` (relative paths, `.ts` extension, ONLY the listed
   exports). Do NOT invent exports.
@@ -24,7 +27,29 @@ Rules:
   EVERY field any file reads/writes on state), tile/item/entity shapes (extend `Kit.Entity` for typed
   entities). Be concrete: a map of `"#"|"."` chars is `export type Tile = "#" | ".";
   export type TileMap = Tile[][]` — NOT `any`. Do not re-declare an ambient type from scratch; extend it.
-- If this is `main.ts`: `export function createGame(kit: Kit): GameObject` (GameObject is NOT
+- The game is SCAFFOLDED when the plan has `game.ts`: a GENERATED `main.ts` (off-limits — never
+  write or edit it) already owns config, the control scheme, and the frame loop, and calls your
+  hooks. If this is `game.ts`, export EXACTLY these hooks with EXACT signatures (a 3D game exports
+  NO draw):
+    `export function createState(kit: Kit): GameState`
+    `export function init(state: GameState, kit: Kit): void`  — spawn entities; it MUST set
+      `state.player` to an entity spawned into `state.world` (the scaffold steers state.player)
+    `export function update(state: GameState, dt: number, input: Input, kit: Kit): void`
+    `export function draw(g: DrawApi, state: GameState, kit: Kit): void`  — 2D only
+    `export function hud(state: GameState, kit: Kit): HudItem[]`  — return [] if no overlay
+  END game.ts with the contract assertion (it turns any signature drift into a type error HERE,
+  where you can fix it): 2D `const _scaffoldContract: GameHooks<GameState> = { createState, init,
+  update, draw, hud };` — 3D the same WITHOUT draw. Param ORDER matters exactly as written above.
+  Movement, camera and the control scheme are ALREADY HANDLED and run BEFORE your update: NEVER
+  wire input for movement, NEVER zero the player's velocity wholesale or snap its position back —
+  resolve a collision by pushing OUT of the overlap (kit.resolveAabb / adjust position AFTER), so
+  the scaffold's move survives. Optional state the scaffold reads: `state.player.speed`
+  (px/s or units/s); platformer: `state.tilemap` or `state.solids` (Rect[]) + `state.gravity`;
+  grid-turn: `state.cell` + `state.passable(cx, cy)` (absent = all passable). If the scaffold wires
+  dialogue (the spec uses it), give each talker entity a `talk` field ({name, lines: [...],
+  options?}); the scaffold opens/advances the talk loop and stores a completed choice in
+  `state.talkPick` — act on state.talkPick in update, never call talkOpen/talkStep yourself.
+- If this is `main.ts` (a WORLD game — no scaffold): `export function createGame(kit: Kit): GameObject` (GameObject is NOT
   generic — never write `GameObject<...>`) returning { config, state, init, update, and draw and/or
   hud }. ANNOTATE the hook methods too — they are the kit contract: `init(kit: Kit)`, `update(dt:
   number, input: Input, kit: Kit)`, `draw(g: DrawApi, kit: Kit)`, `hud(kit: Kit): HudItem[]`,
@@ -50,9 +75,19 @@ Rules:
   kit primitive too (chase → seek, tilemap → makeTilemap, particles → burst — but burst is 2D ONLY;
   a 3D game has no particles and must NOT call kit.burst, see the 3D kit surface). NEVER hand-roll
   movement, camera, physics, or grid math when a kit primitive exists — that is the #1 defect.
-- COLLISION: there is no 3D solid-collision primitive. In 3D never write an AABB loop over the world
-  to block the player (it pins them against road/ground slabs); leave the town open or clamp bounds
-  with kit.V.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
+- COLLISION: in 2D, solid blocking is ONE tag — give the player/monsters/crates `solid: true` (and
+  set state.solidAt or keep state.tilemap for walls); the scaffold's kit.collideWorld pass resolves
+  walls and entity pairs every frame. NEVER hand-roll blocking, zero velocities, or snap positions
+  back to fake collision. There is NO 3D solid-collision primitive: in 3D never write an AABB loop
+  over the world to block the player (it pins them against road/ground slabs); leave the town open
+  or clamp bounds with kit.V.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
+- ACTIONS: every NON-movement key in the spec's `controls` map is wired in init via
+  `kit.register(name, keys, fn)` — e.g. kit.register("attack", [" "], () => { ... }) for
+  "SPACE: attack". Never a bare `input.pressed(...)` scattered in update for a spec-bound action
+  (the probe presses registered actions and rejects unregistered spec keys). Held mechanics
+  (charging, sprint) may still read input.down per frame — the rule targets EDGE actions. Movement
+  keys stay with the control scheme; never register them. If the scaffold wires dialogue, "interact"
+  is already registered — do not re-register it.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates; velocities are
   pixels per SECOND (integrate/physics apply dt); randomness only via `kit.rng`.
 - Prefer real types over `any` — the whole point is that the compiler catches a file disagreeing

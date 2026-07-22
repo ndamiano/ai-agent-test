@@ -39,8 +39,31 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   render to 16:9 HD filling the window. Styled-prompt stage pending.
   *(Swapped ahead of frontend: a skinned game validates via the runtime harness; in-app UX is
   scaffolding.)*
-- **Next:** Phase 3 harden the probe → Phase 4 widen the kit → finish Phase 5 assets (styled-prompt
-  stage) → Phase 7 the "good" tier (deferred cloud play-critic).
+- **Data-file stage (IN PROGRESS):** content out of code. The model designs per-game datasets
+  (`game/data/manifest.json` + rows; every row carries an implicit id/name/look/presence/size
+  envelope), a deterministic gate validates them and generates a typed `game/data.ts` games import
+  (a new blocking `data` check between plan and authoring). Fixes three things at once: content
+  edits become row edits, the fix loop sees schema + one example row instead of inline stat blocks,
+  and asset planning becomes deterministic enumeration from `look` rows (kills the 3–8 sprite
+  ceiling). Design + task breakdown: `docs/codegen_rebuild_plan.md` § Data files.
+- **Control-scaffold stage (landed):** the pipeline, not the model, wires controls. Every non-world
+  build seeds a GENERATED `game/main.ts` from a per-scheme template (config + movement + frame
+  loop + the dialogue loop when the spec uses it); the model authors gameplay behind the `game.ts`
+  hooks (createState/init/update/draw/hud), and the probe gains a scheme-aware `dead_movement`
+  invariant (movement keys must displace the steered entity — an action key mutating state can no
+  longer green a game the player can't steer, the failure two live builds shipped). Design +
+  breakdown: `docs/codegen_rebuild_plan.md` § Control scaffold.
+- **Collision + actions (landed):** two kit widenings behind the scaffold. `kit.collideWorld` is
+  the ONE 2D solid pass (tile pushout + solid-pair separation; entities tag `solid: true`; the 2D
+  scaffold templates call it after the hook update) — the shipped walk-through-walls and
+  enemies-stack incidents were both this missing pass. `kit.register`/`kit.bindings` make spec key
+  bindings machine-readable: every runner fires registered handlers on the pressed edge, and the
+  probe gains `dead_action` (every binding must act), `unbound_control` (every non-movement spec
+  control must be registered — the spec's controls map now rides into the probe) and
+  `solid_overlap` (no solid entities interpenetrate at rest). Design:
+  `docs/codegen_rebuild_plan.md` § Collision + actions.
+- **Next:** finish the data-file stage → Phase 3 harden the probe → Phase 4 widen the kit → finish
+  Phase 5 assets (styled-prompt stage) → Phase 7 the "good" tier (deferred cloud play-critic).
 
 ---
 

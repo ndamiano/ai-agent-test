@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from maestro.state import RunState
+from maestro.codegen.data_files import sprite_plan_from_data
 from maestro.codegen.gates import game_files, game_dir
 
 logger = logging.getLogger(__name__)
@@ -148,14 +149,19 @@ def plan_meshes(infer, spec: dict, files: dict) -> list:
         seen.add(mid)
         out.append({"id": mid, "prompt": str(m["prompt"]),
                     "w": int(m.get("w", 1)), "h": int(m.get("h", 1)), "d": int(m.get("d", 1))})
-    # safety net: a required id the planner dropped still gets a mesh (prompt derived from the id)
+    return _add_required(out, required)
+
+
+def _add_required(meshes: list, required: list) -> list:
+    """Safety net: a required id the plan dropped still gets a mesh (prompt derived from the id)."""
+    seen = {m["id"] for m in meshes}
     for mid in required:
         if mid not in seen:
             label = mid.replace("_", " ")
-            out.append({"id": mid, "prompt": f"a single {label}, medieval village style, one clean "
-                        f"3/4 view of the whole object, centered on a plain neutral background",
-                        "w": 4, "h": 4, "d": 4})
-    return out
+            meshes.append({"id": mid, "prompt": f"a single {label}, medieval village style, one clean "
+                           f"3/4 view of the whole object, centered on a plain neutral background",
+                           "w": 4, "h": 4, "d": 4})
+    return meshes
 
 
 def reskin_mesh_file(infer, name: str, src: str, ids: list) -> str:
@@ -287,10 +293,11 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
 
 
 def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps) -> object:
-    """Rewrite each matching file (detect → reskin), then re-gate and auto-fix any regression."""
+    """Rewrite each matching file (detect → reskin), then re-gate and auto-fix any regression.
+    Written straight to disk: the tool-side `write` is create-only (the fix loop's no-overwrite
+    guarantee), and this deterministic stage replaces files by design — `name` comes from
+    game_files(), so it is already an on-disk game filename."""
     from maestro.codegen.run import run_build
-    from maestro.codegen.tools import build_codegen_tools
-    write = build_codegen_tools(state)["write"]
     for name, src in files.items():
         if not detect(src):
             continue
@@ -301,7 +308,7 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
             logger.warning("assets %s: reskin of %s came back truncated (%d chars from %d) — file "
                            "left untouched", run_id, name, len(new), len(src))
         elif new.strip() and new.strip() != src.strip():
-            write(code=new, file=name)
+            (game_dir(state.run_dir) / name).write_text(new, encoding="utf-8")
             logger.info("assets %s: reskinned %s", run_id, name)
         else:
             logger.warning("assets %s: reskin of %s produced %s — file left untouched (assets will "
@@ -311,7 +318,8 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
 
 def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
     from maestro.codegen.gates import stage_for_play
-    sprites = plan_assets(infer, spec, files)
+    # The data rows' `look` prompts ARE the plan when a run has them — deterministic, no LLM call.
+    sprites = sprite_plan_from_data(state.run_dir, "2d") or plan_assets(infer, spec, files)
     if not sprites:
         raise ValueError("asset plan produced no sprites")
     ids = [s["id"] for s in sprites]
@@ -390,7 +398,10 @@ def fit_building_boxes(run_dir) -> int:
 
 def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
     from maestro.codegen.gates import build_bundle, stage_for_play
-    meshes = plan_meshes(infer, spec, files)
+    # Data-planned meshes still union the source's `mesh:` tags — a tagged entity MUST get a mesh.
+    meshes = sprite_plan_from_data(state.run_dir, "3d")
+    meshes = _add_required(meshes, _existing_mesh_ids(files)) if meshes \
+        else plan_meshes(infer, spec, files)
     if not meshes:
         raise ValueError("mesh plan produced no meshes")
     ids = [m["id"] for m in meshes]

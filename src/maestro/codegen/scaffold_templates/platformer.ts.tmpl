@@ -18,10 +18,14 @@
 // tilemap.tile or 32) — absent ⇒ pair separation only. Tag blocking entities `solid: true`.
 import { createState, init as initGame, update as updateGame, draw as drawGame, hud as hudGame } from "./game.ts";
 
+const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 };
+
 export function createGame(kit: Kit): GameObject {
+  // realize() peeks config via createGame(null) before the kit exists — createState must not run then.
+  if (!kit) return { config: CONFIG } as unknown as GameObject;
   const state: any = createState(kit);
   return {
-    config: { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 },
+    config: CONFIG,
     state,
     init(kit: Kit) {
       initGame(state, kit);

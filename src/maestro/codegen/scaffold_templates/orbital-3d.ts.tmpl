@@ -16,10 +16,14 @@
 // state.player.speed? (units/s, default 8).
 import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
 
+const CONFIG: Config = { width: 1280, height: 720, mode: "3d", background: "#101018", seed: 1, controls: "orbital" };
+
 export function createGame(kit: Kit): GameObject {
+  // realize() peeks config via createGame(null) before the kit exists — createState must not run then.
+  if (!kit) return { config: CONFIG } as unknown as GameObject;
   const state: any = createState(kit);
   return {
-    config: { width: 1280, height: 720, mode: "3d", background: "#101018", seed: 1, controls: "orbital" },
+    config: CONFIG,
     state,
     init(kit: Kit) {
       initGame(state, kit);

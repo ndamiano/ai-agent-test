@@ -357,9 +357,16 @@ export function chaseCam(cam, target, opts = {}) {
   const back = opts.back ?? 16, up = opts.up ?? 12;
   const yaw = opts.faceYaw ? (target.ry || 0) : 0;  // follow the entity's heading, or a fixed rear view
   const tx = target.x || 0, ty = target.y || 0, tz = target.z || 0;
-  cam.x = tx - Math.sin(yaw) * back;
-  cam.y = ty + up;
-  cam.z = tz + Math.cos(yaw) * back;
+  // Behind the entity = MINUS its forward (-sin ry, -cos ry), i.e. (+sin, +cos) — a -sin x here
+  // mirrors the camera's swing against the turn direction (correct at yaw 0, backwards everywhere else).
+  const px = tx + Math.sin(yaw) * back, py = ty + up, pz = tz + Math.cos(yaw) * back;
+  // Ease toward the desired position instead of snapping: a heading change would otherwise teleport
+  // the camera 90°+ in one frame. Look-at stays exact so the player never leaves center.
+  const k = opts.lerp ?? 0.12;
+  const seeded = cam.x || cam.y || cam.z;
+  cam.x = seeded ? cam.x + (px - cam.x) * k : px;
+  cam.y = seeded ? cam.y + (py - cam.y) * k : py;
+  cam.z = seeded ? cam.z + (pz - cam.z) * k : pz;
   cam.tx = tx; cam.ty = ty + (opts.lookUp ?? 1.5); cam.tz = tz;
 }
 
@@ -470,7 +477,10 @@ export const CONTROL_SCHEMES = ["orbital", "follow", "vehicle", "fp"];
 
 export function driveScheme(scheme, e, input, dt, speed = 8) {
   switch (scheme) {
-    case "follow":  return moveTopDown3(e, input, dt, speed);   // WASD in world axes; camera trails travel
+    // Heading-relative, NOT world axes: under a behind-the-player camera, W must always mean "away
+    // from the camera" and A/D must turn — world-axis WASD walks the player at the camera the moment
+    // the chase cam swings to a new heading (shipped failure).
+    case "follow":  return moveTank3(e, input, dt, { speed, back: 1, turn: 3 });
     case "vehicle": return moveTank3(e, input, dt, { speed });  // W/S drive along facing, A/D turn
     case "fp":      mouseLook(e, input); return moveFP(e, input, dt, speed);  // mouse aims, WASD relative
     case "orbital":                                              // WASD relative to the orbited camera

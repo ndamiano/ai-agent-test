@@ -258,7 +258,7 @@ schemes can NEVER fire (the game becomes unwinnable) and the probe gate rejects 
 | `config.controls` | Feel | What you get |
 |-------------------|------|--------------|
 | `"orbital"` | third-person hero / platformer / RPG (Skyrim-ish) | drag orbits the view; WASD moves relative to it; chase cam |
-| `"follow"` | top-down-ish hero | WASD in world axes; camera trails your travel |
+| `"follow"` | third-person hero | W/S forward/back along facing, A/D turn; chase camera eases behind the heading |
 | `"vehicle"` | ship / car / shark | W/S drive along facing, A/D turn; chase cam behind heading |
 | `"fp"` | **first person** (shooter / explorer / walking-sim) | mouse-look aims; WASD relative to aim; eye-level camera. Captures the pointer itself — no `pointerLock` needed |
 

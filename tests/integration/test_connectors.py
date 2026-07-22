@@ -1,7 +1,7 @@
 # tests/test_connectors.py
 import unittest
 
-from llm_clients.connector_selector import get_connector
+from llm_clients.connector import get_connector
 
 
 class TestConnectors(unittest.TestCase):
@@ -10,7 +10,7 @@ class TestConnectors(unittest.TestCase):
         self.connector = get_connector()
     
     def test_function_calling(self):
-        """Test that function calling works with LMStudio"""
+        """Test that function calling works against the live LLM server"""
         tools = [{
             "type": "function",
             "function": {

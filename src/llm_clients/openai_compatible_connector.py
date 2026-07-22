@@ -6,12 +6,12 @@ import os
 import time
 import uuid
 from datetime import datetime
+from threading import Lock
 from typing import Any, Dict, Optional
 
 import requests
 
 from config.settings_manager import settings_manager
-from llm_clients.base_connector import BaseConnector
 from llm_clients.log_context import get_log_dir
 from llm_clients.rate_limiter import get_llm_rate_limiter
 
@@ -187,16 +187,16 @@ def _responses_stream_to_chat_chunks(events):
                    "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
 
 
-class OpenAICompatibleConnector(BaseConnector):
+class OpenAICompatibleConnector:
     connector_name = "openai_compatible"
 
-    def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "default",
+    def __init__(self, base_url: str, model: str = "default",
                  max_tokens: int = 50000, frequency_penalty: float = 0.5,
                  reasoning: Optional[str] = None):
-        super().__init__()
+        self._session = None
+        self._session_lock = Lock()
 
         self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
         self.model_name = model
         self.max_tokens = max_tokens
         self.frequency_penalty = frequency_penalty
@@ -241,16 +241,36 @@ class OpenAICompatibleConnector(BaseConnector):
         except Exception:
             pass
         # The local router doesn't report context_length — fall back to the configured server window
-        # (lmstudio.n_ctx, the launch `-c`). Without this the budget defaults to a value larger than
+        # (llm.n_ctx, the launch `-c`). Without this the budget defaults to a value larger than
         # the real window and the transcript is never trimmed → the prompt overflows the context.
         try:
-            n_ctx = (settings_manager.get_settings().get("lmstudio") or {}).get("n_ctx")
+            n_ctx = (settings_manager.get_settings().get("llm") or {}).get("n_ctx")
             if n_ctx:
                 self._context_length = int(n_ctx)
                 return self._context_length
         except Exception:
             pass
         return None
+
+    def _get_session(self) -> requests.Session:
+        """Get or create a connection-pooled session for better performance."""
+        with self._session_lock:
+            if self._session is None:
+                self._session = requests.Session()
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=10,
+                    pool_maxsize=10,
+                    max_retries=3
+                )
+                self._session.mount('http://', adapter)
+                self._session.mount('https://', adapter)
+            return self._session
+
+    def _log_llm(self, prompt: Any, response: Any, error: Optional[str] = None):
+        if error:
+            logger.error(f"LLM call to {self.connector_name} ({self.model_name}) failed: {error}")
+        else:
+            logger.debug(f"LLM call to {self.connector_name} ({self.model_name}) completed")
 
     def _is_versioned_path(self, url: str) -> bool:
         path = url.split('?')[0]
@@ -259,10 +279,7 @@ class OpenAICompatibleConnector(BaseConnector):
         return last_part.startswith('v') and last_part[1:].isdigit()
 
     def _prepare_headers(self) -> Dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+        return {"Content-Type": "application/json"}
 
     def _unwrap_response(self, result: Dict[str, Any]) -> Dict[str, Any]:
         if "data" in result and "choices" not in result:

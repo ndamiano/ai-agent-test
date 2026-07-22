@@ -33,9 +33,9 @@ class QueueConnector(OpenAICompatibleConnector):
         self.job_timeout_seconds = job_timeout_seconds
 
     def get_context_length(self) -> Optional[int]:
-        """No base_url to ask — the configured server window (lmstudio.n_ctx) is the answer."""
+        """No base_url to ask — the configured server window (llm.n_ctx) is the answer."""
         if self._context_length is None:
-            n_ctx = (settings_manager.get_settings().get("lmstudio") or {}).get("n_ctx")
+            n_ctx = (settings_manager.get_settings().get("llm") or {}).get("n_ctx")
             self._context_length = int(n_ctx) if n_ctx else None
         return self._context_length
 

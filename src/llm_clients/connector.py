@@ -16,16 +16,11 @@ def _hash_settings(settings: Dict[str, Any]) -> str:
     return hashlib.md5(json.dumps(settings, sort_keys=True).encode()).hexdigest()
 
 
-def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[str, Any]] = None) -> OpenAICompatibleConnector:
+def get_connector() -> OpenAICompatibleConnector:
     global _cached_connector, _cached_settings_hash
 
     global_settings = settings_manager.get_settings()
-
-    if connector_type not in ("lmstudio", "cline", "openrouter"):
-        connector_type = global_settings.get("connector_type", "lmstudio")
-
-    if settings is None:
-        settings = settings_manager.get_connector_settings(connector_type)
+    settings = global_settings.get("llm") or {}
 
     # workqueue.enabled swaps the transport (jobs table + worker agents) while keeping the
     # provider settings (model, budgets, reasoning) — so it participates in cache invalidation.
@@ -34,14 +29,8 @@ def get_connector(connector_type: Optional[str] = None, settings: Optional[Dict[
     if _cached_connector is not None and _cached_settings_hash == settings_hash:
         return _cached_connector
 
-    api_key = settings.get("api_key")
-    base_url = settings.get("base_url")
-    if not base_url:
-        base_url = "https://api.cline.bot/api" if connector_type == "cline" else "http://localhost:1234"
-
     kwargs = dict(
-        base_url=base_url,
-        api_key=api_key,
+        base_url=settings.get("base_url", "http://localhost:1234"),
         model=settings.get("model", "default"),
         max_tokens=settings.get("max_tokens", 50000),
         frequency_penalty=settings.get("frequency_penalty", 0.5),

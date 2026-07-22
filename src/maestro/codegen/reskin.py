@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from llm_clients.connector_selector import get_connector
+from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
 from maestro.codegen.data_files import sprite_plan_from_data
 from maestro.codegen.gates import (

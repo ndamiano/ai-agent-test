@@ -27,8 +27,8 @@ capacity), so design the spine now, fill it later.
 
 **Collision points at concurrency (the work):**
 - **LLM connector is a process-wide singleton** — `get_connector()` returns one shared instance
-  (`src/llm_clients/connector_selector.py:7-9,24-53`); `reset_connector_cache()` mutates globals
-  unlocked (`:17-21`).
+  (`src/llm_clients/connector.py:11-13,19-47`), rebuilt in place on a settings change with no lock
+  around the module globals.
 - **Global LLM rate limiter** — `_llm_rate_limiter = LLMRateLimiter(rate=2.0, capacity=8)`
   (`src/llm_clients/rate_limiter.py:60-64`). One 2 req/s bucket shared across ALL builds → global
   starvation.
@@ -72,8 +72,8 @@ Turn "raw threads against globals" into a bounded job/worker model with isolated
       + a `build_queued` event). A queued run holds its RunControl so pause/cancel land before it
       starts; a cancel-while-queued skips the build. Pool>1 is deferred (single GPU).
 - [ ] **Per-run inference handle, not a shared singleton.** Give each build its own connector /
-      inference route (or a pooled lease) so `reset_connector_cache` and settings swaps can't yank
-      a running build's connector. Decouple from the process-global (`connector_selector.py`).
+      inference route (or a pooled lease) so a settings swap can't yank a running build's
+      connector. Decouple from the process-global (`connector.py`).
 - [ ] **Rate-limit / capacity per backend, not one global 2 req/s bucket** (`rate_limiter.py:60`).
       Size the limiter to actual backend capacity; scale it with the worker pool.
 - [x] **Per-run (and per-user) WS routing.** Server-side filter: `manager.py` keys sockets by the
@@ -107,7 +107,7 @@ Capacity is the ceiling for both S1 and S2. Move from one fixed local server to 
 - [ ] **Inference backend abstraction.** A backend registry / router that maps a build (or asset
       job) to an inference endpoint, so "localhost single server" becomes one backend among many.
       Generalize the single-endpoint assumptions (`comfyui_tools.py:672,452,447-449`,
-      `connector_selector.py:42`) behind it.
+      `connector.py:34`) behind it.
 - [ ] **Runpod spin-up/tear-down.** Provision GPU instances on demand (LLM + ComfyUI + Trellis/TTS
       stacks), register their endpoints with the router, tear down when idle. Warm-pool vs cold-start
       tradeoff is a design decision (note it).

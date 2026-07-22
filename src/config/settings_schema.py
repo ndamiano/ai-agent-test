@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 
-class LLMStudioSettings(BaseModel):
+class LLMSettings(BaseModel):
     base_url: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
     max_tokens: int = Field(50000, ge=1)
@@ -19,15 +19,6 @@ class LLMStudioSettings(BaseModel):
         "The server's runtime context window in tokens (llama-server `-c`). The local router does not "
         "report it, so set it to match your launch flag. MessageBuilder budgets input against this so "
         "it trims the transcript BEFORE the prompt overflows the window; too-large a value = no trim."))
-    frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
-    reasoning: Optional[ReasoningLevel] = None
-
-
-class ClineSettings(BaseModel):
-    api_key: str
-    base_url: str = Field("https://api.cline.bot/api")
-    model: str = Field(..., min_length=1)
-    max_tokens: int = Field(50000, ge=1)
     frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
     reasoning: Optional[ReasoningLevel] = None
 
@@ -107,7 +98,6 @@ DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
 
 
 class AppSettings(BaseModel):
-    connector_type: Literal["lmstudio", "cline", "openrouter"]
     working_directory: Optional[str] = "outputs"
     # Control-plane state (platform.db + auth.db) — NOT under working_directory: artifact output
     # is the wrong home for the datastore.
@@ -116,8 +106,7 @@ class AppSettings(BaseModel):
     # batches concurrent requests (LM Studio does); tool writes stay serialized either way.
     parallel_fixes: int = Field(1, ge=1, le=8)
     model_category: Literal["large", "medium", "small"] = "large"
-    lmstudio: LLMStudioSettings
-    cline: Optional[ClineSettings] = None
+    llm: LLMSettings
     comfyui: Optional[ComfyUISettings] = None
     trellis: Optional[TrellisSettings] = None
     workqueue: Optional[WorkQueueSettings] = None

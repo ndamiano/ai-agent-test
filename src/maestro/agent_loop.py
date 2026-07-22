@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from llm_clients.connector_selector import get_connector
+from llm_clients.connector import get_connector
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType, Module, idkey
 from maestro.services import BudgetExhausted, Services

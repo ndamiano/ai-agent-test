@@ -305,12 +305,14 @@ src/
                          tools/build_events.py (_emit → db events log + event_bus). A built run is staged to
                          runtime/games/<id>/ and served at /play (StaticFiles mount) for the SPA.
   config/                settings_schema.py (Pydantic), settings_manager.py (singleton)
-  llm_clients/           connector_selector.py, openai_compatible_connector.py, message_builder.py,
-                         inference.py (strip_fences). The
+  llm_clients/           connector.py, openai_compatible_connector.py, queue_connector.py,
+                         message_builder.py. The
                          connector speaks ONLY the OpenAI-compatible Responses API (/v1/responses) —
                          the one local endpoint that honors reasoning.effort. It translates the
                          chat-shaped messages/tools callers pass into Responses input/tools and
-                         normalizes the response back to chat shape.
+                         normalizes the response back to chat shape. `get_connector()` builds the
+                         cached singleton from the `llm` block: QueueConnector when
+                         workqueue.enabled, else a direct OpenAICompatibleConnector.
   tools/                 tool_manager, system_tools, comfyui_tools (image backend), file_tools,
                          execution_context (resolve_base_path → the run root).
 ```
@@ -341,7 +343,7 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 ## Settings & running
 
 **Settings:** `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
-- `connector_type: lmstudio`, `lmstudio.base_url` (the local llama.cpp router), `lmstudio.model`.
+- `llm.base_url` (the local llama.cpp router), `llm.model`.
 - `workqueue.enabled` routes ALL GPU work through the worker-pull queue (enqueue a jobs row, wait
   for a worker) instead of calling a backend directly: LLM inference (QueueConnector), sprite/mesh
   images (queue `image`) and TRELLIS meshes (queue `mesh`). `workqueue.token` is the worker bearer

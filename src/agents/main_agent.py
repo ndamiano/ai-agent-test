@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 from api.websocket.event_bus import event_bus
 from config.settings_manager import settings_manager
 from config.time_utils import get_utc_timestamp
-from llm_clients.connector_selector import get_connector
+from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
 from llm_clients.openai_compatible_connector import _log_response_to_file
 from tools.execution_context import (

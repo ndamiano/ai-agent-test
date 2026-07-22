@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from config.settings_manager import settings_manager
-from llm_clients.connector_selector import get_connector
+from llm_clients.connector import get_connector
 
 logger = logging.getLogger(__name__)
 

@@ -17,10 +17,10 @@ from config.settings_schema import AppSettings
 
 
 def test_merge_fills_keys_the_file_omits():
-    defaults = {"working_directory": "outputs", "lmstudio": {"model": "m", "n_ctx": 32768}}
-    merged = _merge(defaults, {"lmstudio": {"model": "other"}})
+    defaults = {"working_directory": "outputs", "llm": {"model": "m", "n_ctx": 32768}}
+    merged = _merge(defaults, {"llm": {"model": "other"}})
     assert merged["working_directory"] == "outputs"
-    assert merged["lmstudio"] == {"model": "other", "n_ctx": 32768}   # block merged, not replaced
+    assert merged["llm"] == {"model": "other", "n_ctx": 32768}   # block merged, not replaced
 
 
 def test_merge_lets_the_file_win():
@@ -35,23 +35,16 @@ def test_example_settings_yield_every_key_callers_subscript():
         (Path(__file__).parent.parent / "src" / "config" / "settings.example.json").read_text())
     merged = _merge(settings_manager.defaults, example)
     assert merged["working_directory"]
-    assert merged["lmstudio"]["n_ctx"]
+    assert merged["llm"]["n_ctx"]
 
 
 def _valid():
-    # Fresh, deep-copied valid settings per call so a row mutating a nested
-    # section (lmstudio/cline) can't bleed into another row.
+    # Deep-copied per call: the negative rows below mutate nested keys in place.
     return copy.deepcopy(
         {
-            "connector_type": "lmstudio",
-            "lmstudio": {
+            "llm": {
                 "base_url": "http://localhost:1234",
                 "model": "local-model",
-                "max_tokens": 50000,
-            },
-            "cline": {
-                "api_key": "",
-                "model": "claude-sonnet-4-5",
                 "max_tokens": 50000,
             },
         }
@@ -64,43 +57,27 @@ def _valid():
 def test_valid_settings_load():
     # A fully-specified settings dict loads and round-trips its fields.
     settings = AppSettings(**_valid())
-    assert settings.connector_type == "lmstudio"
-    assert settings.lmstudio.base_url == "http://localhost:1234"
-    assert settings.cline.model == "claude-sonnet-4-5"
+    assert settings.llm.base_url == "http://localhost:1234"
+    assert settings.llm.model == "local-model"
 
 
 def test_defaults_applied():
     # An omitted optional (max_tokens) falls back to the schema default, not an error.
     minimal = {
-        "connector_type": "lmstudio",
-        "lmstudio": {
+        "llm": {
             "base_url": "http://localhost:1234",
             "model": "local-model",
         },
     }
     settings = AppSettings(**minimal)
-    assert settings.lmstudio.max_tokens == 50000
+    assert settings.llm.max_tokens == 50000
 
 
-def test_cline_optional():
-    # The whole cline section is optional; absent it stays None rather than failing.
-    settings = {
-        "connector_type": "lmstudio",
-        "lmstudio": {
-            "base_url": "http://localhost:1234",
-            "model": "local-model",
-        },
-    }
-    result = AppSettings(**settings)
-    assert result.cline is None
-
-
-def test_cline_connector_type():
-    # "cline" is an accepted connector_type value alongside "lmstudio".
-    settings = _valid()
-    settings["connector_type"] = "cline"
-    result = AppSettings(**settings)
-    assert result.connector_type == "cline"
+def test_optional_sections_absent():
+    # Every section but llm is optional; absent, it stays None rather than failing.
+    result = AppSettings(**_valid())
+    assert result.comfyui is None
+    assert result.workqueue is None
 
 
 def test_extra_fields_ignored_by_default():
@@ -137,19 +114,13 @@ def _set(value, *path):
 @pytest.mark.parametrize(
     "mutation",
     [
-        pytest.param(_del("connector_type"), id="missing_connector_type"),
-        pytest.param(_set("invalid", "connector_type"), id="invalid_connector_type"),
-        pytest.param(_del("lmstudio"), id="missing_lmstudio_section"),
-        pytest.param(_del("lmstudio", "base_url"), id="missing_lmstudio_base_url"),
-        pytest.param(_del("lmstudio", "model"), id="missing_lmstudio_model"),
-        pytest.param(_set("", "lmstudio", "base_url"), id="empty_lmstudio_base_url"),
-        pytest.param(_set("", "lmstudio", "model"), id="empty_lmstudio_model"),
-        pytest.param(_set(0, "lmstudio", "max_tokens"), id="lmstudio_max_tokens_zero"),
-        pytest.param(_set(-1, "lmstudio", "max_tokens"), id="lmstudio_max_tokens_negative"),
-        pytest.param(_del("cline", "api_key"), id="missing_cline_api_key"),
-        pytest.param(_del("cline", "model"), id="missing_cline_model"),
-        pytest.param(_set("", "cline", "model"), id="empty_cline_model"),
-        pytest.param(_set(0, "cline", "max_tokens"), id="cline_max_tokens_zero"),
+        pytest.param(_del("llm"), id="missing_llm_section"),
+        pytest.param(_del("llm", "base_url"), id="missing_llm_base_url"),
+        pytest.param(_del("llm", "model"), id="missing_llm_model"),
+        pytest.param(_set("", "llm", "base_url"), id="empty_llm_base_url"),
+        pytest.param(_set("", "llm", "model"), id="empty_llm_model"),
+        pytest.param(_set(0, "llm", "max_tokens"), id="llm_max_tokens_zero"),
+        pytest.param(_set(-1, "llm", "max_tokens"), id="llm_max_tokens_negative"),
     ],
 )
 def test_invalid_settings_rejected(mutation):

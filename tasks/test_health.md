@@ -15,7 +15,7 @@ fixtures + conventions + fixing a small weak fraction + filling load-bearing gap
 - Fix implementation-coupled tests toward observable behaviour; don't add more of them.
 
 ## Background (VERIFIED — audit findings)
-- **Scale:** 582 unit tests / 40 files; `tests/integration/test_connectors.py` (1, live LMStudio) is
+- **Scale:** 536 unit tests / 46 files; `tests/integration/test_connectors.py` (1, live LLM server) is
   correctly isolated. Run: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`.
 - **`conftest.py` is a 4-line `sys.path` shim with ZERO fixtures.** Exactly **one** `@pytest.fixture`
   in the whole suite (`tests/test_vram_management.py:19`). **No `parametrize` anywhere.**

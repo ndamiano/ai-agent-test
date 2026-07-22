@@ -30,9 +30,9 @@ Settings live in `src/config/settings.json` (gitignored) and can also be edited 
 
 ### Local model server
 
-Maestro speaks the OpenAI-compatible `/v1/responses` API. Two known-good local servers; the `lmstudio` settings block is just that label — it points at either.
+Maestro speaks the OpenAI-compatible `/v1/responses` API. The `llm` settings block points at whichever server serves it. Two known-good ones:
 
-**LM Studio** — load a model, start its local server, point `lmstudio.base_url` at it (default `http://localhost:1234`).
+**LM Studio** — load a model, start its local server, point `llm.base_url` at it (default `http://localhost:1234`).
 
 **llama.cpp** (`llama-server`) — run in **router mode**, so the model id is a filename stem rather than baked into the launch flags.
 
@@ -49,7 +49,7 @@ llama-server \
 The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). Set the block to:
 
 ```json
-"lmstudio": {
+"llm": {
   "base_url": "http://localhost:8080",
   "model": "Qwen3.6-35B-A3B-UD-Q4_K_XL",
   "reasoning": "none"

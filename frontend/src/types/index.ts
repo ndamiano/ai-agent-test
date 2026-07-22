@@ -43,8 +43,8 @@ export interface GameDetail {
 
 export interface SystemStatus {
     status: string
-    lmstudio_connected: boolean
-    lmstudio_url: string
+    llm_connected: boolean
+    llm_url: string
     agent_count: number
 }
 

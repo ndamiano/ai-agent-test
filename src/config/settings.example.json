@@ -1,20 +1,12 @@
 {
-  "connector_type": "lmstudio",
   "parallel_fixes": 4,
-  "lmstudio": {
+  "llm": {
     "base_url": "http://localhost:1234",
     "model": "local-model",
     "temperature": 0.7,
     "max_tokens": 50000,
     "reasoning": "low",
     "n_ctx": 32768
-  },
-  "cline": {
-    "api_key": "",
-    "base_url": "https://api.cline.bot/api",
-    "model": "claude-sonnet-4-5",
-    "temperature": 0.7,
-    "max_tokens": 50000
   },
   "comfyui": {
     "endpoint": "http://localhost:8188"

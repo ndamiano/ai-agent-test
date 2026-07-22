@@ -18,7 +18,7 @@ from pathlib import Path
 
 from auth import store
 from db import store as db_store
-from llm_clients.connector_selector import get_connector
+from llm_clients.connector import get_connector
 from llm_clients.log_context import set_log_dir
 from llm_clients.message_builder import MessageBuilder
 from maestro.agent_loop import AgentLoop

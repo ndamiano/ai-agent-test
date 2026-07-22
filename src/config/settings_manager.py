@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def _merge(defaults: Dict[str, Any], loaded: Dict[str, Any]) -> Dict[str, Any]:
-    """`loaded` over `defaults`, one level deep — the settings blocks (lmstudio, comfyui, …) are
+    """`loaded` over `defaults`, one level deep — the settings blocks (llm, comfyui, …) are
     flat dicts, so a file that names a block need not repeat every key in it."""
     out = dict(defaults)
     for k, v in loaded.items():
@@ -42,25 +42,18 @@ class SettingsManager:
             default_data_dir = str((project_root.parent / default_data_dir).resolve())
 
         self.defaults = {
-            "connector_type": os.getenv("CONNECTOR_TYPE", "lmstudio"),
             "working_directory": default_working_dir,
             "data_dir": default_data_dir,
             "model_category": os.getenv("MODEL_CATEGORY", "large"),
-            "lmstudio": {
-                "base_url": os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234"),
-                "model": os.getenv("LMSTUDIO_MODEL", "local-model"),
+            "llm": {
+                "base_url": os.getenv("LLM_BASE_URL", "http://localhost:1234"),
+                "model": os.getenv("LLM_MODEL", "local-model"),
                 # "none" is the floor the fix loop escalates FROM. Absent this key an env-configured
                 # deployment sends no reasoning field, and a thinking model spends a small token
                 # budget entirely on reasoning.
-                "reasoning": os.getenv("LMSTUDIO_REASONING", "none"),
+                "reasoning": os.getenv("LLM_REASONING", "none"),
                 "max_tokens": 50000,
-                "n_ctx": int(os.getenv("LMSTUDIO_N_CTX", "32768"))
-            },
-            "cline": {
-                "api_key": os.getenv("CLINE_API_KEY", ""),
-                "base_url": os.getenv("CLINE_BASE_URL", "https://api.cline.bot/api"),
-                "model": os.getenv("CLINE_MODEL", "claude-sonnet-4-5"),
-                "max_tokens": 50000
+                "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
             },
             "comfyui": {
                 "endpoint": os.getenv("COMFYUI_ENDPOINT", "http://localhost:8188")
@@ -127,10 +120,6 @@ class SettingsManager:
     def get_settings(self) -> Dict[str, Any]:
         with self._settings_lock:
             return self._settings.copy()
-
-    def get_connector_settings(self, connector_type: str) -> Dict[str, Any]:
-        with self._settings_lock:
-            return self._settings.get(connector_type, {}).copy()
 
     def get_category_settings(self):
         with self._settings_lock:

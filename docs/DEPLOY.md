@@ -88,7 +88,7 @@ docker compose up -d --force-recreate
 ```
 
 Then confirm the value actually landed: `docker compose exec app printenv <VAR>`. (This bites the
-inference endpoints in particular — a stale `LMSTUDIO_BASE_URL`/`COMFYUI_ENDPOINT` yields connection
+inference endpoints in particular — a stale `LLM_BASE_URL`/`COMFYUI_ENDPOINT` yields connection
 -refused against the old host/port while `.env` on disk looks correct.)
 
 ### Accounts (no signup — manual only)
@@ -191,7 +191,7 @@ It only prints a ship reminder after each commit — it never builds or deploys.
 
 The private-alpha deploy: the app runs on the owner's GPU box as a **single uvicorn worker** that
 serves both the API and the built frontend (same origin), fronted by **Tailscale Funnel** for public
-HTTPS. Manual accounts only. Inference (LM Studio) + assets (ComfyUI) stay on the same box.
+HTTPS. Manual accounts only. Inference (the LLM server) + assets (ComfyUI) stay on the same box.
 
 Everything below is parameterized by env vars — no code edits to deploy.
 
@@ -206,9 +206,9 @@ Everything below is parameterized by env vars — no code edits to deploy.
    pip install -r requirements.txt        # if not already
    cp src/config/settings.example.json src/config/settings.json   # then edit
    ```
-   Point `lmstudio.base_url` / `comfyui.endpoint` at the local inference services.
+   Point `llm.base_url` / `comfyui.endpoint` at the local inference services.
 
-2. **Lock the inference services to localhost.** The app calls LM Studio (`:1234`) and ComfyUI
+2. **Lock the inference services to localhost.** The app calls the LLM server (`:1234`) and ComfyUI
    (`:8188`) as a client and never re-exposes them — but if *those* services bind `0.0.0.0`, opening
    the box exposes an unauthenticated GPU. Bind them to `127.0.0.1`, or firewall the ports:
    ```bash

@@ -3,7 +3,7 @@
   create_run(user_id)          → a fresh run dir
   draft_spec(request)          → the local model drafts a design SPEC (stage 1)
   run_build(run_id)            → the AgentLoop drives CodegenModule to a passing game.js (stage 2)
-  python -m maestro.codegen.run [--yes] "<request>"  → draft → freeze (your ok) → build → play path
+  python -m maestro.codegen.run "<request>"  → draft → freeze (your ok) → build → play path
 
 The build refuses until the spec is frozen. One game per run: runs/<id>/game.js.
 """
@@ -253,7 +253,7 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40):
     return run_build(run_id, max_steps=max_steps)   # re-gate (stages on ok) + auto-fix any regression the patch caused
 
 
-def _cli(request: str, *, yes: bool = False) -> int:
+def _cli(request: str) -> int:
     from auth import store
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
 
@@ -270,10 +270,6 @@ def _cli(request: str, *, yes: bool = False) -> int:
     spec = draft_spec(request)
     RunState(run_id).write_spec(spec)
     print(json.dumps(spec["design"], indent=2, ensure_ascii=False))
-
-    if not yes and input("\nFreeze this spec and build? [y/N] ").strip().lower() != "y":
-        print("Not frozen. Edit spec.json and re-run, or freeze later.")
-        return 0
 
     freeze_spec(run_id)
     print("\nfrozen — building...\n")
@@ -325,13 +321,10 @@ def _cli_assets(run_id: str) -> int:
 _HELP = """maestro codegen — draft a spec, build a game, skin it with assets.
 
 usage:
-  python -m maestro.codegen.run [--yes] "<request>"   draft → freeze → build → play
+  python -m maestro.codegen.run "<request>"   draft → freeze → build → play
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
   python -m maestro.codegen.run --assets <run_id>         run the asset (reskin) stage on a built run
   python -m maestro.codegen.run --help | -h              show this help
-
-flags:
-  --yes    skip the interactive spec-freeze gate (auto-freeze the drafted spec)
 """
 
 
@@ -347,7 +340,6 @@ if __name__ == "__main__":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')
         sys.exit(_cli_assets(sys.argv[2]))
-    args = [a for a in sys.argv[1:] if a != "--yes"]
-    if not args:
-        sys.exit('usage: python -m maestro.codegen.run [--yes] "<request>"   |   --fix <run_id> "<note>"')
-    sys.exit(_cli(" ".join(args), yes="--yes" in sys.argv[1:]))
+    if len(sys.argv) < 2:
+        sys.exit('usage: python -m maestro.codegen.run "<request>"   |   --fix <run_id> "<note>"')
+    sys.exit(_cli(" ".join(sys.argv[1:])))

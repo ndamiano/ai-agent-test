@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatElapsed, stageFor, computeRemaining } from './GamesPanel'
+import { formatElapsed, stageFor, budgetFraction } from './GamesPanel'
 
 describe('formatElapsed', () => {
     it('renders m:ss, zero-padding seconds', () => {
@@ -35,15 +35,21 @@ describe('stageFor', () => {
     })
 })
 
-describe('computeRemaining', () => {
-    it('is the remaining fraction of the granted budget', () => {
-        expect(computeRemaining(14400, 0)).toBe(1)
-        expect(computeRemaining(14400, 7200)).toBe(0.5)
-        expect(computeRemaining(14400, 14400)).toBe(0)
+describe('budgetFraction', () => {
+    it('falls back to remaining/granted when no percentage is given', () => {
+        expect(budgetFraction(null, 14400, 14400)).toBe(1)
+        expect(budgetFraction(undefined, 7200, 14400)).toBe(0.5)
+        expect(budgetFraction(null, 0, 14400)).toBe(0)
     })
 
-    it('clamps overdraw to zero and an uncharged game to zero', () => {
-        expect(computeRemaining(14400, 20000)).toBe(0)
-        expect(computeRemaining(0, 0)).toBe(0)
+    it('prefers the backend percentage, accepting either 0..1 or 0..100', () => {
+        expect(budgetFraction(0.25, 999, 14400)).toBe(0.25)
+        expect(budgetFraction(40, 999, 14400)).toBe(0.4)
+    })
+
+    it('clamps overdraw and an uncharged game to zero', () => {
+        expect(budgetFraction(null, -100, 14400)).toBe(0)
+        expect(budgetFraction(null, 0, 0)).toBe(0)
+        expect(budgetFraction(150, 0, 14400)).toBe(1)
     })
 })

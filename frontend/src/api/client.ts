@@ -1,4 +1,4 @@
-import type { AdminQueues, Game, GameDetail, SystemStatus } from '../types'
+import type { AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, SystemStatus } from '../types'
 import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
@@ -181,6 +181,28 @@ export const api = {
         request<Game[]>('/games'),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
+    // The durable build/spec event log — catch-up after a reload or a websocket gap. `after` is an
+    // event-id cursor (0 = from the start); the rows carry `id` for incremental follow-up.
+    getGameEvents: (runId: string, after = 0) =>
+        request<DurableEventRow[]>(`/games/${runId}/events?after=${after}`),
+    // The built game's asset manifest, read straight off the static /play mount. Returns [] when the
+    // game hasn't been skinned yet (no assets.json → 404). NOTE: /play is currently unauthenticated;
+    // when the backend gates it, this fetch needs the bearer token (see getGameAssets below).
+    getGameAssets: (runId: string): Promise<GameAsset[]> =>
+        fetch(`/play/games/${runId}/assets.json`)
+            .then(res => (res.ok ? res.json() : null))
+            .then((m: any): GameAsset[] => {
+                if (!m) return []
+                const at = (file: string) => `/play/games/${runId}/${file}`
+                const sprites: GameAsset[] = (m.sprites ?? []).map((s: any) => ({
+                    id: s.id, kind: 'sprite', url: at(s.file), w: s.w, h: s.h,
+                }))
+                const meshes: GameAsset[] = (m.meshes ?? []).map((mesh: any) => ({
+                    id: mesh.id, kind: 'mesh', url: at(mesh.file),
+                }))
+                return [...sprites, ...meshes]
+            })
+            .catch(() => []),
     freezeGame: (runId: string) =>
         request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
     buildGame: (runId: string, autoPause = false) =>

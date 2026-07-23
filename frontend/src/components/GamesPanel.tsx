@@ -3,6 +3,11 @@ import { api, ApiError } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import { useAuth } from '../contexts/AuthContext'
 import type { Game, GameDetail, WebSocketMessage } from '../types'
+import { useRunBuildStream } from '../hooks/useRunBuildStream'
+import { Badge } from './cockpit/Badge'
+import { SpecCard } from './cockpit/SpecCard'
+import { AssetGallery } from './cockpit/AssetGallery'
+import { BuildFeed, ParkedCard } from './cockpit/BuildFeed'
 
 export const formatElapsed = (secs: number): string => {
     const s = Math.max(0, Math.floor(secs))
@@ -31,110 +36,47 @@ const BuildProgressHeader: React.FC<{
     </div>
 )
 
-// The compute budget as an obfuscated draining bar — remaining/granted, no numbers (the plan's
-// contract: users see a bar, never seconds). Green while healthy, amber under a third, red under
-// a tenth. Hidden until the game has been charged (granted > 0).
-export const computeRemaining = (granted: number, used: number): number =>
-    granted > 0 ? Math.max(0, Math.min(1, (granted - used) / granted)) : 0
+// The compute budget as an obfuscated draining bar, 0..1 — users see a bar, never seconds (the
+// plan's contract). Prefer the backend's pre-computed percentage; fall back to remaining/granted.
+// NEVER derived from seconds_used — that value is deliberately not surfaced to the client.
+export const budgetFraction = (
+    pct: number | null | undefined, remaining: number, granted: number,
+): number => {
+    const clamp = (x: number) => Math.max(0, Math.min(1, x))
+    if (pct != null) return clamp(pct > 1 ? pct / 100 : pct)
+    return granted > 0 ? clamp(remaining / granted) : 0
+}
 
-const ComputeBar: React.FC<{ granted: number; used: number }> = ({ granted, used }) => {
-    if (granted <= 0) return null
-    const remaining = computeRemaining(granted, used)
-    const color = remaining < 0.1 ? 'bg-red-500' : remaining < 0.34 ? 'bg-amber-500' : 'bg-green-500'
+const ComputeBar: React.FC<{ detail: GameDetail }> = ({ detail }) => {
+    if (detail.seconds_granted <= 0) return null
+    const frac = budgetFraction(detail.budget_pct_remaining, detail.seconds_remaining ?? 0, detail.seconds_granted)
+    const color = frac < 0.1 ? 'bg-red-500' : frac < 0.34 ? 'bg-amber-500' : 'bg-green-500'
     return (
         <div className="flex items-center gap-2" title="compute remaining for this game">
             <span className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide">Compute</span>
             <div className="flex-1 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
-                <div className={`h-full ${color} transition-[width] duration-700`}
-                    style={{ width: `${remaining * 100}%` }} />
+                <div className={`h-full ${color} transition-[width] duration-700`} style={{ width: `${frac * 100}%` }} />
             </div>
         </div>
-    )
-}
-
-const Badge: React.FC<{ label: string; tone: 'green' | 'blue' | 'gray' | 'amber' }> = ({ label, tone }) => {
-    const tones = {
-        green: 'bg-green-500/15 text-green-400',
-        blue: 'bg-blue-500/15 text-blue-400',
-        amber: 'bg-amber-500/15 text-amber-400',
-        gray: 'bg-white/[0.06] text-gray-400',
-    }
-    return <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${tones[tone]}`}>{label}</span>
-}
-
-// `design` is freeform JSON (genre/entities/controls/mechanics/win-lose/...) — render it read-only,
-// recursing into nested objects/arrays so any shape the model drafted is still legible.
-const DesignValue: React.FC<{ value: any }> = ({ value }) => {
-    if (value == null) return <span className="text-gray-600 italic">—</span>
-    if (Array.isArray(value)) {
-        if (value.length === 0) return <span className="text-gray-600 italic">—</span>
-        return (
-            <ul className="list-disc list-inside space-y-0.5">
-                {value.map((v, i) => (
-                    <li key={i} className="text-gray-300">
-                        {typeof v === 'object' && v !== null ? <DesignValue value={v} /> : String(v)}
-                    </li>
-                ))}
-            </ul>
-        )
-    }
-    if (typeof value === 'object') {
-        const entries = Object.entries(value)
-        if (entries.length === 0) return <span className="text-gray-600 italic">—</span>
-        return (
-            <div className="pl-3 border-l border-white/[0.06] space-y-1">
-                {entries.map(([k, v]) => (
-                    <div key={k}>
-                        <span className="text-gray-500 text-[11px] font-semibold">{k}: </span>
-                        <DesignValue value={v} />
-                    </div>
-                ))}
-            </div>
-        )
-    }
-    return <span className="text-gray-300">{String(value)}</span>
-}
-
-const SpecReview: React.FC<{ spec: GameDetail['spec'] }> = ({ spec }) => {
-    const entries = Object.entries(spec.design ?? {})
-    return (
-        <section className="space-y-2">
-            <div className="flex items-center gap-2">
-                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Spec</h3>
-                <Badge label={spec.mode.toUpperCase()} tone="blue" />
-            </div>
-            {spec.request && <p className="text-gray-400 text-sm">{spec.request}</p>}
-            <div className="bg-[#1a1a1a] border border-white/[0.06] rounded-lg px-3 py-2 space-y-2">
-                {entries.length === 0
-                    ? <div className="text-gray-600 text-xs italic">no design detail yet</div>
-                    : entries.map(([key, value]) => (
-                        <div key={key}>
-                            <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-0.5">{key}</div>
-                            <DesignValue value={value} />
-                        </div>
-                    ))}
-            </div>
-            <p className="text-gray-600 text-[11px]">Read-only — ask Maestro in chat to amend the spec before freezing.</p>
-        </section>
     )
 }
 
 const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ runId, onChanged }) => {
     const { subscribe } = useWebSocket()
     const { refreshBalance } = useAuth()
+    const stream = useRunBuildStream(runId)
     const [detail, setDetail] = useState<GameDetail | null>(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [building, setBuilding] = useState(false)
     const [status, setStatus] = useState<string>('idle')
-    const [feed, setFeed] = useState<string[]>([])
     const [acting, setActing] = useState(false)
-    const [skinning, setSkinning] = useState(false)
+    const [skinPending, setSkinPending] = useState(false)
     const [fixNote, setFixNote] = useState('')
     const [autoPause, setAutoPause] = useState(false)
-    const [progress, setProgress] = useState<{ step: number; nFailing: number } | null>(null)
-    const [startedAt, setStartedAt] = useState<number | null>(null)
     const [elapsedSec, setElapsedSec] = useState(0)
+    // Bumped on assets_done so the gallery re-reads its manifest off the static mount.
+    const [assetsVersion, setAssetsVersion] = useState(0)
 
     const load = useCallback(() => {
         let cancelled = false
@@ -147,89 +89,56 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         return () => { cancelled = true }
     }, [runId])
 
-    useEffect(() => {
-        setFeed([])
-        setProgress(null); setStartedAt(null); setElapsedSec(0); setSkinning(false)
-        return load()
-    }, [load])
+    // Detail (built/status/budget) reloads on run change; feed/progress now come from the persistent
+    // stream, so they survive tab switches and reloads with no local reset here.
+    useEffect(() => { setSkinPending(false); return load() }, [load])
 
-    // A running elapsed timer while the build is live — ticks locally between build_step events
-    // (which only fire per LLM call, i.e. irregularly) rather than sitting frozen between them.
+    // A running elapsed timer while building — ticks locally off the stream's authoritative start.
     useEffect(() => {
-        if (!building || startedAt == null) return
-        const id = setInterval(() => setElapsedSec(Date.now() / 1000 - startedAt), 1000)
+        if (!building || stream.startedAt == null) { setElapsedSec(0); return }
+        const start = stream.startedAt
+        const tick = () => setElapsedSec(Date.now() / 1000 - start)
+        tick()
+        const id = setInterval(tick, 1000)
         return () => clearInterval(id)
-    }, [building, startedAt])
+    }, [building, stream.startedAt])
 
-    // While building, re-pull the detail on a slow tick so the compute bar drains live —
-    // seconds_used moves on job completions, which no websocket event carries.
+    // While building, re-pull the detail on a slow tick so the compute bar drains — the budget
+    // moves on job completions, which no websocket event carries.
     useEffect(() => {
         if (!building) return
         const id = setInterval(load, 10000)
         return () => clearInterval(id)
     }, [building, load])
 
-    // Live build + spec + asset events for this run.
+    // A slim handler for the few events that change durable state (building/status/detail). The
+    // feed/progress/parked display is derived by the stream hook, not mutated here.
     useEffect(() => {
         const unsub = subscribe(runId, (msg: WebSocketMessage) => {
             switch (msg.type) {
                 case 'spec_proposed':
                 case 'spec_frozen':
-                    load()
-                    break
+                    load(); break
                 case 'fix_started':
-                    setBuilding(true); setStatus('fixing')
-                    setFeed(prev => [...prev.slice(-60), `⚒ fixing — ${msg.note ?? ''}`])
-                    break
+                    setBuilding(true); setStatus('fixing'); break
                 case 'build_started':
-                    setBuilding(true); setStatus('running')
-                    setFeed(prev => [...prev.slice(-60), `build started — ${msg.n_failing} checks failing`])
-                    setProgress({ step: 0, nFailing: msg.n_failing ?? 0 })
-                    if (msg.started_at != null) { setStartedAt(msg.started_at); setElapsedSec(0) }
-                    break
-                case 'build_step':
-                    setFeed(prev => [...prev.slice(-60), `step ${msg.step}: ${msg.summary} — ${msg.n_failing} failing`])
-                    setProgress({ step: msg.step ?? 0, nFailing: msg.n_failing ?? 0 })
-                    // Re-sync the local timer to the backend's authoritative elapsed so drift
-                    // between build_step events (which fire irregularly) never compounds.
-                    if (msg.elapsed != null) { setStartedAt(Date.now() / 1000 - msg.elapsed); setElapsedSec(msg.elapsed) }
-                    break
-                case 'error_parked':
-                    setFeed(prev => [...prev.slice(-60), `⚑ parked — needs a fix note: ${msg.message ?? ''}`])
-                    break
+                    setBuilding(true); setStatus('running'); break
                 case 'build_paused':
-                    setStatus('paused'); setFeed(prev => [...prev.slice(-60), '⏸ paused'])
-                    break
                 case 'auto_paused':
-                    setFeed(prev => [...prev.slice(-60), `⏸ auto-paused after ${msg.component_id}`])
-                    break
+                    setStatus('paused'); break
                 case 'build_resumed':
-                    setStatus('running'); setFeed(prev => [...prev.slice(-60), '▶ resumed'])
-                    break
-                case 'component_complete':
-                    setFeed(prev => [...prev.slice(-60), `✓ ${msg.component_id} complete`])
-                    break
+                    setStatus('running'); break
                 case 'build_done':
-                    setBuilding(false); setStatus('built')
-                    setFeed(prev => [...prev.slice(-60), msg.ok ? '✓ build complete' : '✗ build ended with failures'])
-                    load(); onChanged()
-                    break
-                case 'assets_started':
-                    setSkinning(true)
-                    setFeed(prev => [...prev.slice(-60), '⏳ skinning assets…'])
-                    break
+                    setBuilding(false); setStatus('built'); load(); onChanged(); break
                 case 'assets_done':
-                    setSkinning(false)
-                    setFeed(prev => [...prev.slice(-60), msg.ok ? `✓ assets rendered (${msg.rendered ?? 0})` : '✗ asset skin failed'])
-                    load(); onChanged()
-                    break
+                    setSkinPending(false); setAssetsVersion(v => v + 1); load(); onChanged(); break
             }
         })
         return unsub
     }, [runId, subscribe, load, onChanged])
 
-    const feedRef = useRef<HTMLDivElement>(null)
-    useEffect(() => { feedRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed])
+    // Once the real skin signal is live, drop the optimistic pending flag.
+    useEffect(() => { if (stream.skinning) setSkinPending(false) }, [stream.skinning])
 
     const act = async (fn: () => Promise<unknown>, errMsg: string, reload = true) => {
         setActing(true); setError(null)
@@ -259,7 +168,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     }
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
-    const skin = () => act(async () => { setSkinning(true); await api.skinAssets(runId) }, 'Skin failed', false)
+    const skin = () => act(async () => { setSkinPending(true); await api.skinAssets(runId) }, 'Skin failed', false)
     const submitFix = () => {
         const note = fixNote.trim()
         if (!note) return
@@ -271,9 +180,10 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     if (error && !detail) return <div className="p-6 text-red-400 text-sm">Error: {error}</div>
     if (!detail) return null
 
-    const statusTone = (status === 'paused' || building) ? 'amber' : 'gray'
     const stage = stageFor(detail.frozen, building, detail.built)
-    const showBuildArea = stage === 'building' || stage === 'built'
+    const statusTone: 'amber' | 'gray' = (status === 'paused' || building) ? 'amber' : 'gray'
+    const skinning = stream.skinning || skinPending
+    const showBuildArea = stage === 'building' || stage === 'built' || stream.feed.length > 0
 
     return (
         <div className="h-full flex flex-col">
@@ -283,7 +193,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     <Badge label={detail.mode.toUpperCase()} tone="blue" />
                     {detail.frozen ? <Badge label="frozen" tone="blue" /> : <Badge label="draft" tone="gray" />}
                     {detail.built ? <Badge label="built" tone="green" /> : null}
-                    {building ? <Badge label={status === 'paused' ? 'paused' : status === 'fixing' ? 'fixing…' : 'building…'} tone={statusTone as any} /> : null}
+                    {stream.parked ? <Badge label="parked" tone="red" /> : null}
+                    {building ? <Badge label={status === 'paused' ? 'paused' : status === 'fixing' ? 'fixing…' : 'building…'} tone={statusTone} /> : null}
                     <span className="text-gray-600 text-[11px] font-mono ml-auto">{detail.run_id}</span>
                 </div>
 
@@ -309,12 +220,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                             pause after each step
                         </label>
                     )}
-                    {stage === 'built' && (
-                        <button onClick={skin} disabled={acting || skinning} title="plan + render assets for this game"
-                            className="bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-3 py-1.5 rounded text-xs font-medium">
-                            {skinning ? 'Skinning…' : 'Skin assets'}
-                        </button>
-                    )}
                     {stage === 'built' && detail.play_url && (
                         <a href={detail.play_url} target="_blank" rel="noreferrer"
                             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-medium ml-auto">Play</a>
@@ -325,17 +230,22 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     <div className="text-gray-500 text-xs">Review the spec below, then freeze to start building.</div>
                 )}
 
-                <ComputeBar granted={detail.seconds_granted} used={detail.seconds_used} />
+                <ComputeBar detail={detail} />
 
                 {error && <p className="text-red-400 text-xs">{error}</p>}
 
+                {stream.parked && (
+                    <ParkedCard message={stream.parked.message} note={fixNote} setNote={setFixNote}
+                        onSubmit={submitFix} busy={acting} />
+                )}
+
                 {showBuildArea && <>
-                    {progress && (
-                        <BuildProgressHeader step={progress.step} nFailing={progress.nFailing}
+                    {building && stream.progress && (
+                        <BuildProgressHeader step={stream.progress.step} nFailing={stream.progress.nFailing}
                             elapsedSec={elapsedSec} />
                     )}
 
-                    {stage === 'built' && (
+                    {stage === 'built' && !stream.parked && (
                         <div className="flex gap-2">
                             <input value={fixNote} onChange={e => setFixNote(e.target.value)}
                                 onKeyDown={e => { if (e.key === 'Enter' && fixNote.trim()) submitFix() }}
@@ -346,19 +256,17 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                         </div>
                     )}
 
-                    <div className="flex flex-col">
-                        <div className="text-gray-400 text-[10px] font-semibold uppercase tracking-wide mb-1">Build feed</div>
-                        <div className="bg-black/40 border border-white/[0.06] rounded h-36 overflow-y-auto px-2.5 py-1.5 font-mono text-[11px] text-gray-400 space-y-0.5">
-                            {feed.length === 0 ? <div className="text-gray-600">no activity yet</div> : feed.map((line, i) => <div key={i}>{line}</div>)}
-                            <div ref={feedRef} />
-                        </div>
-                    </div>
+                    <BuildFeed feed={stream.feed} />
                 </>}
             </div>
 
             <div className="flex-1 flex flex-col min-h-0">
-                <div className="flex-1 overflow-y-auto px-5 py-4">
-                    <SpecReview spec={detail.spec} />
+                <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+                    {(stage === 'built' || detail.assets_exist) && (
+                        <AssetGallery runId={runId} version={assetsVersion} skinning={skinning}
+                            canSkin={stage === 'built'} onSkin={skin} acting={acting} />
+                    )}
+                    <SpecCard spec={detail.spec} />
                 </div>
             </div>
         </div>

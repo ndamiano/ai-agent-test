@@ -37,8 +37,36 @@ export interface GameDetail {
     assets_exist: boolean
     play_url: string | null
     credits_spent: number
+    // Compute budget for the numberless bar. `seconds_used` is deliberately NOT surfaced (the plan
+    // obfuscates raw GPU-seconds); the frontend renders only a fraction. `budget_pct_remaining` is
+    // the backend's pre-computed 0..1 (or 0..100) percentage — preferred once it ships; until then
+    // the bar falls back to seconds_remaining/seconds_granted.
     seconds_granted: number
-    seconds_used: number
+    seconds_remaining?: number
+    budget_pct_remaining?: number | null
+}
+
+// One row of the durable build/spec event log (GET /api/games/:id/events). Written by the backend's
+// _emit: the event name is in `kind` and the fields live in `payload` (flattened) — a different
+// shape from the live websocket copy, so both are normalized to a common event before folding.
+export interface DurableEventRow {
+    id: number
+    game_id: string
+    build_id: string | null
+    kind: string
+    payload: Record<string, any>
+    created_at: number
+}
+
+// An asset the built game uses, read from the static manifest at /play/games/<id>/assets.json.
+// 2D → {sprites:[{id,file,w,h}]}, 3D → {meshes:[{id,file}]}.
+export type AssetKind = 'sprite' | 'mesh'
+export interface GameAsset {
+    id: string
+    kind: AssetKind
+    url: string
+    w?: number
+    h?: number
 }
 
 export interface SystemStatus {

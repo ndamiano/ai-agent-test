@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Loader2, Check, X } from 'lucide-react'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { ToolProgressEvent } from '../types/chat'
 
 interface Message {
@@ -80,8 +80,13 @@ const ChatPanel: React.FC = () => {
                     finalText = event.message || 'Something went wrong. Try again.'
                 }
             }
-        } catch {
-            finalText = finalText || 'Something went wrong. Try again.'
+        } catch (e) {
+            if (e instanceof ApiError && e.status === 402) {
+                finalText = "You're out of credits. Chat is free, but it needs a balance to spend — "
+                    + 'top up and the conversation picks up where it left off.'
+            } else {
+                finalText = finalText || 'Something went wrong. Try again.'
+            }
         }
 
         setMessages(prev => [...prev, { role: 'assistant', content: finalText }])

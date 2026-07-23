@@ -22,23 +22,11 @@ class LLMSettings(BaseModel):
     reasoning: Optional[ReasoningLevel] = None
 
 
-class ComfyUISettings(BaseModel):
-    endpoint: str = Field("http://localhost:8188", min_length=1)
-
-
-class TrellisSettings(BaseModel):
-    """TRELLIS.2-4B runs as a standalone HTTP server (tools/trellis_server.py, launched by its own
-    cu128 venv + prebuilt Blackwell CUDA wheels); maestro POSTs sprites to it. It is THE mesh
-    backend for the reskin 3D path: when this endpoint is down the mesh render is skipped and the
-    entity falls back to its primitive shape. The repo/weights paths live on the server's launch args."""
-    endpoint: str = Field("http://localhost:8189", min_length=1)
-
-
 class WorkQueueSettings(BaseModel):
     """The worker-pull inference queue: jobs rows executed by worker agents (worker/agent.py) that
-    claim over HTTP — the same shape whether the worker is the local 5090 or a RunPod pod. LLM
-    inference always rides it; `enabled` gates the image/mesh stages and the autoscaler."""
-    enabled: bool = Field(False)
+    claim over HTTP — the same shape whether the worker is the local 5090 or a RunPod pod. It is
+    the ONLY transport to a GPU (llm, image and mesh alike), so a worker per queue is mandatory,
+    not an opt-in. The worker owns its backend address (`--target`); no endpoint lives here."""
     token: str = Field("", description=(
         "Shared bearer token worker agents present on /worker endpoints. Empty = every worker "
         "request is refused, even when enabled."))
@@ -106,7 +94,5 @@ class AppSettings(BaseModel):
     parallel_fixes: int = Field(1, ge=1, le=8)
     model_category: Literal["large", "medium", "small"] = "large"
     llm: LLMSettings
-    comfyui: Optional[ComfyUISettings] = None
-    trellis: Optional[TrellisSettings] = None
     workqueue: Optional[WorkQueueSettings] = None
     runpod: Optional[RunPodSettings] = None

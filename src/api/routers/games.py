@@ -21,6 +21,7 @@ from auth.billing import SECONDS_PER_CREDIT, cost
 from auth.deps import get_current_user
 from auth.store import User
 from db import store as db_store
+from db.estimates import cheapest_seconds
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
 from maestro.codegen.reskin import add_assets
 from maestro.codegen.run import freeze_spec
@@ -63,6 +64,17 @@ def _require_state(run_id: str, user: User):
     if owner != user.id:
         raise HTTPException(status_code=403, detail="not your game")
     return state
+
+
+def _require_compute(run_id: str) -> None:
+    """Refuse work a game can't pay for, BEFORE it occupies the build queue. Enqueue enforces the
+    same budget per job, so this is the fast, legible failure rather than the safety net: without
+    it a broke run wins the GPU slot and then thrashes on refused jobs until its step cap."""
+    remaining = db_store.compute_remaining(run_id)
+    if remaining < cheapest_seconds():
+        raise HTTPException(status_code=402, detail={
+            "reason": "compute_exhausted", "run_id": run_id,
+            "seconds_remaining": max(0.0, remaining)})
 
 
 @router.get("", response_model=List[Dict])
@@ -117,6 +129,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "credits_spent": row.get("credits_spent", 0),
         "seconds_granted": row.get("seconds_granted", 0),
         "seconds_used": row.get("seconds_used", 0),
+        "seconds_remaining": db_store.compute_remaining(run_id),
     }
 
 
@@ -156,6 +169,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
             raise HTTPException(status_code=402, detail={
                 "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
         db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
+    _require_compute(run_id)
 
     try:
         position = build_queue.enqueue(run_id, user.id, body.auto_pause)
@@ -195,6 +209,7 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
         return {"run_id": run_id, "status": "running"}
     if not db_store.is_charged(run_id):
         raise HTTPException(status_code=409, detail="no build to resume for this run")
+    _require_compute(run_id)
     try:
         position = build_queue.enqueue(run_id, user.id)
     except AlreadyQueued:
@@ -217,6 +232,7 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
     the same single-GPU queue as a build — a fix ends in its own re-gating build loop, so the two
     can't run at once. Progress + completion stream over the websocket (fix_started, build_*)."""
     _require_state(run_id, user)
+    _require_compute(run_id)
     try:
         position = build_queue.enqueue(run_id, user.id, kind="fix", note=body.note)
     except AlreadyQueued:
@@ -231,6 +247,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     """Skin the built game's placeholder shapes with generated sprites/meshes, on a background
     thread. Emits assets_started / assets_done over the websocket."""
     _require_state(run_id, user)
+    _require_compute(run_id)
     key = f"assets:{run_id}"
     with _active_lock:
         if key in _active:

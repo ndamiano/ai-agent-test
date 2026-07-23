@@ -262,15 +262,21 @@ src/
   auth/                  identity + access (sqlite at <data_dir>/auth.db): store.py
                          (users + bearer sessions + credit ledger, pbkdf2, token stored as a hash +
                          TTL), deps.py (header-only bearer gate on /api + /auth; static SPA served
-                         in the clear), ratelimit.py (per-handle login throttle), router.py (login/
+                         in the clear; require_credits = that gate PLUS a positive balance, for
+                         inference that is never charged but must not be free to everyone),
+                         ratelimit.py (per-handle login throttle), router.py (login/
                          logout, NO signup), billing.py (cost(spec), flat 1), credits.py (provider-
                          agnostic top-up seam; default refuses every event), cli.py (manual
                          create/grant/refund). Games are owned (games.user_id in db/; cross-user =
                          403); the WS authenticates via token query param. Credits gate builds: a
                          game is charged ONCE on first enqueue (credits_spent on its games row,
                          which also grants seconds_granted = credits × SECONDS_PER_CREDIT), never
-                         re-deducted, never auto-refunded (refunds are a manual admin action). No
-                         self-serve signup.
+                         re-deducted, never auto-refunded (refunds are a manual admin action).
+                         CHAT is charged NOTHING — it runs before a game exists to bill, and
+                         metering it would make an abandoned conversation cost real money — but
+                         POST /api/chat rides require_credits, so a zero balance can't draft specs
+                         it could never build. DELETE (clear session) stays ungated: housekeeping
+                         must work when broke. No self-serve signup.
   db/                    platform datastore (sqlite at <data_dir>/platform.db, WAL — data_dir is
                          control-plane state, deliberately NOT under working_directory):
                          store.py — games (ownership, title/mode/status mirror of spec.json,
@@ -279,17 +285,38 @@ src/
                          (append-only build/spec lifecycle log; GET /games/{id}/events replays it),
                          jobs + workers (the worker-pull inference queue: atomic claim w/ lease,
                          complete debits games.seconds_used + worker busy_seconds in one txn;
+                         ONLY DELIVERED WORK IS BILLED — a failed job, a lapsed-lease duplicate and
+                         an abandoned job all leave seconds_used untouched, while busy_seconds
+                         moves in every case (it measures the GPU time WE pay for, real whether or
+                         not the user got anything);
                          lapsed lease ⇒ silent requeue, stale completion dropped; workers carry
                          pod_id + terminated_at for the scaler, and queue_stats/live_workers/
                          stale_workers feed it; result binaries never land in the row — the
                          workqueue router decodes a mesh's glb_b64 and each image entry's b64
                          to <data_dir>/blobs/ and stores paths (glb_file / file), today local
-                         disk, the S3 seam later). Plain
+                         disk, the S3 seam later). THE COMPUTE BUDGET lives on enqueue_job: a job
+                         with a game_id is ADMITTED against grant − seconds_used − the est_seconds
+                         of that game's pending/claimed jobs, all in ONE write txn (BEGIN
+                         IMMEDIATE), else InsufficientCompute. Reserving the estimate is the whole
+                         point — a build enqueues far faster than workers finish, so measured spend
+                         alone reads near-zero right up to the moment a hundred queued jobs land.
+                         abandon_job releases a reservation the enqueuer stopped waiting on (a
+                         late completion is then dropped like a lapsed lease). Overdraw is possible
+                         by design: a job that runs longer than its estimate is never killed
+                         mid-flight, the reservation only bounds how far. Plain
                          parameterized SQL, short-lived connections — the run dir stays the source
                          of truth for spec + artifacts; rows index, never duplicate.
+                         estimates.py — per-queue estimated seconds, the admission input (a
+                         hill-climbable constant, not a measurement).
                          queue_client.py — the enqueue side every producer shares (run_job: land a
-                         jobs row, wait for a worker, hand back the row; a timeout comes back as a
-                         failed job). LLM, image and mesh all go through it.
+                         jobs row, wait for a worker, hand back the row; a refused budget or a
+                         timeout comes back as a failed job, so callers branch on one shape). LLM,
+                         image and mesh all go through it — it is the ONLY transport to a GPU, with
+                         no direct-call fallback, which is what makes one gate sufficient. A job's
+                         game comes from the run_scope contextvar; jobs with no game (chat, spec
+                         drafting) are platform cost — neither metered nor budget-gated here, so
+                         the balance check that fronts them lives at the API edge instead
+                         (auth.deps.require_credits on POST /api/chat).
   worker/                agent.py — the pull-side worker (python -m worker.agent): long-poll
                          /worker/claim → run the payload through handlers.py → /worker/complete
                          with the result + measured exec_seconds; heartbeats during long jobs,
@@ -310,7 +337,7 @@ src/
                          entrypoints follow a clean exit with a best-effort in-pod pod DELETE, and
                          the scaler's reaper is the billing guarantee.
   scaler/                the RunPod autoscaler (started by api/app.py when runpod.enabled +
-                         api_key + workqueue.enabled). OWNERSHIP SPLIT: workers own scale-DOWN
+                         api_key). OWNERSHIP SPLIT: workers own scale-DOWN
                          (the idle self-exit above — queue-agnostic, ports to SQS unchanged); the
                          control plane owns scale-UP + pod reaping. stats.py is the SQS seam:
                          QueueStats/WorkerInfo + a StatsSource Protocol, the ONLY scaler module
@@ -337,7 +364,11 @@ src/
                          codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets,
                          all against maestro.codegen.run; freeze→freeze_spec, build/fix→build_queue→
                          codegen run_build / fix_from_note, assets→reskin.add_assets (still its own
-                         thread — the image/mesh queues, not the build GPU). Chat drafts
+                         thread — the image/mesh queues, not the build GPU). build/resume/fix/assets
+                         all pass _require_compute FIRST: enqueue enforces the same budget per job,
+                         but a broke run must not win the GPU slot and then thrash on refused jobs
+                         until its step cap. build charges before checking, since charging grants.
+                         Chat drafts
                          specs via tools/chat_tools.py (propose_game_spec/amend_game_spec →
                          codegen.propose_spec/amend_spec). Build progress + spec events emit through
                          tools/build_events.py (_emit → db events log + event_bus). A built run is staged to
@@ -382,14 +413,15 @@ whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3
 **Settings:** `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
 - `llm.model`, `llm.n_ctx`, `llm.reasoning`. No endpoint: LLM inference rides the queue, so an
   `llm` worker must be running or every call times out.
-- `workqueue.enabled` routes the remaining GPU work through the worker-pull queue (enqueue a jobs
-  row, wait for a worker) instead of calling a backend directly: sprite/mesh
-  images (queue `image`) and TRELLIS meshes (queue `mesh`). `workqueue.token` is the worker bearer
-  secret. One worker per queue, and a queue owns its card:
+- The worker-pull queue is the ONLY transport to a GPU — llm, sprite/mesh images (queue `image`)
+  and TRELLIS meshes (queue `mesh`) alike. There is no `enabled` flag and no endpoint setting on
+  this side: the control plane touches no GPU at all, and a queue with no worker means every job on
+  it times out. `workqueue.token` is the worker bearer secret. One worker per queue, and a queue
+  owns its card:
   `python -m worker.agent --server <cp>:8000 --token <token> --queue image --target localhost:8188`
-  (defaults: server localhost:8000, target localhost:1234, queue llm). With the queue on, the
-  control plane touches no GPU at all. exec_seconds are debited to the owning game via the
-  run_scope contextvar set around run_build/fix_from_note.
+  (defaults: server localhost:8000, target localhost:1234, queue llm). exec_seconds are debited to
+  the owning game via the run_scope contextvar, set around run_build / fix_from_note / add_assets —
+  a stage outside that scope enqueues with no game_id and so is neither metered nor gated.
 - `data_dir` (env `MAESTRO_DATA_DIR`, default `<repo>/data`) — where platform.db + auth.db live;
   control-plane state, deliberately not under `working_directory`.
 - `runpod.*` — the autoscaler (see `src/scaler/` + docs/DEPLOY.md): `enabled`, `api_key`,

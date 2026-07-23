@@ -53,11 +53,10 @@ def test_comfy_image_job_saves_returned_bytes(monkeypatch, tmp_path):
             "prompt_id": "p1",
             "images": [{"filename": "out.png", "file": str(blob)}]}}
 
-    monkeypatch.setattr(queue_client, "enabled", lambda: True)
     monkeypatch.setattr(queue_client, "run_job", run_job)
 
     with execution_context(working_directory=str(tmp_path)):
-        result = ct._run_comfyui_job("http://unused", "a cat", {"1": {"inputs": {}}})
+        result = ct._run_comfyui_job("a cat", {"1": {"inputs": {}}})
 
     assert seen["queue"] == "image"
     assert seen["payload"] == {"kind": "comfy_image", "workflow": {"1": {"inputs": {}}}}
@@ -66,11 +65,10 @@ def test_comfy_image_job_saves_returned_bytes(monkeypatch, tmp_path):
 
 
 def test_comfy_image_job_failure_degrades(monkeypatch, tmp_path):
-    monkeypatch.setattr(queue_client, "enabled", lambda: True)
     monkeypatch.setattr(queue_client, "run_job",
                         lambda *a, **kw: {"status": "failed", "error": "no worker"})
     with execution_context(working_directory=str(tmp_path)):
-        result = ct._run_comfyui_job("http://unused", "a cat", {"1": {}})
+        result = ct._run_comfyui_job("a cat", {"1": {}})
     assert result == {"success": False, "error": "no worker"}
 
 
@@ -89,7 +87,6 @@ def test_trellis_batch_queues_one_job_per_sprite(monkeypatch, tmp_path):
         blob.write_bytes(GLB)
         return {"status": "done", "result": {"glb_file": str(blob)}}
 
-    monkeypatch.setattr(queue_client, "enabled", lambda: True)
     monkeypatch.setattr(queue_client, "run_job", run_job)
     monkeypatch.setattr(ct, "_decimate_glb", lambda p: True)
 
@@ -102,7 +99,6 @@ def test_trellis_batch_skips_failed_meshes(monkeypatch, tmp_path):
     sprites, out = tmp_path / "in", tmp_path / "out"
     sprites.mkdir(), out.mkdir()
     (sprites / "barrel.png").write_bytes(PNG)
-    monkeypatch.setattr(queue_client, "enabled", lambda: True)
     monkeypatch.setattr(queue_client, "run_job",
                         lambda *a, **kw: {"status": "failed", "error": "OOM"})
     assert ct.run_trellis_batch(str(sprites), str(out)) == set()

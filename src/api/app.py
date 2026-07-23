@@ -55,11 +55,10 @@ async def startup_event():
         build_queue.start()
         logging.info("Build queue started")
 
-        # RunPod autoscaler — only when the worker-pull queue is on and RunPod is configured.
+        # RunPod autoscaler — only when RunPod is configured.
         _settings = settings_manager.get_settings()
         _rp = _settings.get("runpod") or {}
-        if _rp.get("enabled") and _rp.get("api_key") \
-                and (_settings.get("workqueue") or {}).get("enabled"):
+        if _rp.get("enabled") and _rp.get("api_key"):
             app.state.autoscaler = Autoscaler(
                 SqliteStatsSource(), RunPodClient(_rp["api_key"]),
                 settings_manager.get_settings)

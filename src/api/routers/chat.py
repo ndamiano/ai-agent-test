@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agents.main_agent import MainAgent
-from auth.deps import get_current_user
+from auth.deps import get_current_user, require_credits
 from auth.store import User
 from tools.safety import log_violation, screen_text
 
@@ -62,7 +62,9 @@ def _chat_event_stream(agent, message: str):
 
 
 @router.post("")
-async def chat(request: ChatRequest, user: User = Depends(get_current_user)):
+async def chat(request: ChatRequest, user: User = Depends(require_credits)):
+    """A chat turn is free — no credits deducted, no seconds metered — but it requires a balance
+    to spend. Drafting a spec the user could never afford to build is pure cost."""
     violation = screen_text(request.message)
     if violation is not None:
         log_violation(violation, user_id=user.id, source="chat")

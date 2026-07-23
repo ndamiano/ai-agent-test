@@ -54,14 +54,7 @@ class SettingsManager:
                 "max_tokens": 50000,
                 "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
             },
-            "comfyui": {
-                "endpoint": os.getenv("COMFYUI_ENDPOINT", "http://localhost:8188")
-            },
-            "trellis": {
-                "endpoint": os.getenv("TRELLIS_ENDPOINT", "http://localhost:8189")
-            },
             "workqueue": {
-                "enabled": os.getenv("WORKQUEUE_ENABLED", "false").lower() == "true",
                 "token": os.getenv("WORKQUEUE_TOKEN", ""),
                 "job_timeout_seconds": int(os.getenv("WORKQUEUE_JOB_TIMEOUT", "900")),
                 "lease_seconds": int(os.getenv("WORKQUEUE_LEASE", "120"))

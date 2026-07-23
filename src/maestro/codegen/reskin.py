@@ -33,7 +33,7 @@ from maestro.codegen.run import run_build
 from maestro.codegen.worldgen_bridge import _write_world_ts
 from maestro.state import RunState
 from tools.comfyui_tools import build_item_job, run_jobs, run_trellis_batch
-from tools.execution_context import execution_context
+from tools.execution_context import execution_context, run_scope
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +307,11 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
 
     files = game_files(state.run_dir)
     skin = _skin_3d if _is_3d(files) else _skin_2d
-    return skin(run_id, state, spec, infer, files, max_steps)
+    # The image and mesh queues are the most expensive GPU work the platform runs. Without the
+    # scope their jobs enqueue with no game_id, so nothing is metered and nothing is gated —
+    # this stage ran entirely off the books.
+    with run_scope(run_id):
+        return skin(run_id, state, spec, infer, files, max_steps)
 
 
 def _regate(run_id, state, max_steps) -> object:

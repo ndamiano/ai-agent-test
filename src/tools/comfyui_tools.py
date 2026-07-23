@@ -1,4 +1,8 @@
-"""ComfyUI tools for image generation"""
+"""Image + mesh generation. Both are worker-pull queue jobs: this side builds the workflow and
+lands the returned bytes, the worker next to the GPU runs ComfyUI and TRELLIS. There is no
+direct-call path — every producer of GPU work goes through db.queue_client so it can be metered
+and budget-gated in one place.
+"""
 
 import base64
 import copy
@@ -8,15 +12,10 @@ import logging
 import os
 import shutil
 import subprocess
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from config.settings_manager import settings_manager
 from db import queue_client
 from tools.execution_context import resolve_base_path
 from tools.safety import log_violation, screen_image_prompt
@@ -67,49 +66,11 @@ def build_item_job(description: str) -> dict:
     return {"prompt": positive, "workflow_override": wf}
 
 
-def _get_trellis_settings() -> dict:
-    return settings_manager.get_settings().get("trellis") or {}
-
-
-def _trellis_endpoint() -> str:
-    return _get_trellis_settings().get("endpoint", "http://localhost:8189").rstrip("/")
-
-
 def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
-    """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir.
-    POSTs each sprite to the standalone TRELLIS HTTP server (trellis_server.py — the 4B pipeline
-    is already resident there). Returns the set of slugs that produced a .glb. Never raises — a
-    failure leaves billboards.
-
-    On the queue transport each sprite is one mesh job instead: the worker holds the retry,
-    this side only lands the bytes."""
-    if queue_client.enabled():
-        return _run_trellis_batch_queued(sprite_dir, out_dir)
-
-    ep = _trellis_endpoint()
-    done: set = set()
-    for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
-        slug = os.path.splitext(os.path.basename(png))[0]
-        with open(png, "rb") as f:
-            img = f.read()
-        # The pipeline degrades across generates (observed live: 7/14 intermittent 500s with
-        # successes in between), so a failure is almost always that, not the image. Retry once —
-        # a missing GLB renders as a bare slab.
-        for attempt in (1, 2):
-            try:
-                glb = _http_post_raw(f"{ep}/generate", img, "image/png")
-                glb_path = os.path.join(out_dir, f"{slug}.glb")
-                with open(glb_path, "wb") as g:
-                    g.write(glb)
-                _decimate_glb(glb_path)
-                done.add(slug)
-                break
-            except Exception as e:
-                logger.error(f"trellis {slug} failed (attempt {attempt}): {e}")
-    return done
-
-
-def _run_trellis_batch_queued(sprite_dir: str, out_dir: str) -> set:
+    """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir. Each
+    sprite is one `mesh` job: the worker owns the GPU and the retry, this side only lands the
+    bytes. Returns the set of slugs that produced a .glb. Never raises — a failure leaves
+    billboards."""
     done: set = set()
     for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
         slug = os.path.splitext(os.path.basename(png))[0]
@@ -157,72 +118,6 @@ def _load_workflow(path: Path) -> dict:
         return json.load(f)
 
 
-def _get_comfyui_settings() -> dict:
-    settings = settings_manager.get_settings()
-    return settings.get("comfyui", {})
-
-
-def _get_comfyui_endpoint() -> str:
-    return _get_comfyui_settings().get("endpoint", "http://localhost:8188").rstrip("/")
-
-
-def _http_post(url: str, data: dict) -> dict:
-    payload = json.dumps(data).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = resp.read()
-        return json.loads(body) if body else {}
-
-
-def _http_get(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=30) as resp:
-        return json.loads(resp.read())
-
-
-def _http_post_raw(url: str, body: bytes, content_type: str, timeout: int = 1200) -> bytes:
-    req = urllib.request.Request(
-        url, data=body, headers={"Content-Type": content_type}, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
-
-
-def _poll_until_done(endpoint: str, prompt_id: str, timeout: int = 300) -> dict:
-    """Poll /history/{prompt_id} until job appears (ComfyUI removes it from queue when done)."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        history = _http_get(f"{endpoint}/history/{prompt_id}")
-        if prompt_id in history:
-            return history[prompt_id]
-        time.sleep(1)
-    raise TimeoutError(f"ComfyUI job {prompt_id} did not complete within {timeout}s")
-
-
-def _save_images_to_working_dir(images: list, endpoint: str) -> list:
-    """Download ComfyUI output images into the task working directory. Returns list of saved absolute paths."""
-    saved = []
-    base_dir = resolve_base_path()
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    for img in images:
-        url = img["url"]
-        filename = img["filename"]
-        dest = base_dir / filename
-        try:
-            with urllib.request.urlopen(url, timeout=60) as resp:
-                with open(dest, "wb") as f:
-                    shutil.copyfileobj(resp, f)
-            saved.append(str(dest))
-            logger.info(f"Saved image: {dest}")
-        except Exception as e:
-            logger.warning(f"Failed to save image {filename}: {e}")
-
-    return saved
-
-
 def _save_image_bytes(filename: str, data: bytes) -> str:
     base_dir = resolve_base_path()
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -232,9 +127,16 @@ def _save_image_bytes(filename: str, data: bytes) -> str:
     return str(dest)
 
 
-def _run_comfyui_job_queued(prompt: str, workflow: dict) -> Dict[str, Any]:
-    """Hand the resolved workflow to an image worker; it owns the GPU and returns the outputs
-    inline, which we land in the working directory exactly like the direct path."""
+def _run_comfyui_job(prompt: str, workflow_override: Optional[dict]) -> Dict[str, Any]:
+    """Resolve the workflow and hand it to an image worker; the worker owns the GPU and the
+    submit/poll/fetch flow, this side only lands the bytes in the working directory."""
+    if workflow_override is not None:
+        workflow = workflow_override
+    else:
+        workflow = _load_workflow(_TXT2IMG_WORKFLOW_PATH)
+        workflow["11"]["inputs"]["text"] = prompt
+        workflow["19"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
+
     job = queue_client.run_job("image", {"kind": "comfy_image", "workflow": workflow})
     if job["status"] != "done":
         return {"success": False, "error": job.get("error") or "image job lost"}
@@ -255,56 +157,6 @@ def _run_comfyui_job_queued(prompt: str, workflow: dict) -> Dict[str, Any]:
     }
 
 
-def _run_comfyui_job(endpoint: str, prompt: str, workflow_override: Optional[dict]) -> Dict[str, Any]:
-    """Submit one job to ComfyUI and wait for result."""
-    if workflow_override is not None:
-        workflow = workflow_override
-    else:
-        workflow = _load_workflow(_TXT2IMG_WORKFLOW_PATH)
-        workflow["11"]["inputs"]["text"] = prompt
-        workflow["19"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
-
-    if queue_client.enabled():
-        return _run_comfyui_job_queued(prompt, workflow)
-
-    client_id = str(uuid.uuid4())
-    queue_resp = _http_post(f"{endpoint}/prompt", {"prompt": workflow, "client_id": client_id})
-    prompt_id = queue_resp.get("prompt_id")
-    if not prompt_id:
-        return {"success": False, "error": f"No prompt_id in response: {queue_resp}"}
-
-    logger.info(f"ComfyUI job queued: {prompt_id}")
-    result = _poll_until_done(endpoint, prompt_id)
-
-    outputs = result.get("outputs", {})
-    images = []
-    for node_output in outputs.values():
-        for img in node_output.get("images", []):
-            images.append({
-                "filename": img["filename"],
-                "subfolder": img.get("subfolder", ""),
-                "type": img.get("type", "output"),
-                "url": (
-                    f"{endpoint}/view"
-                    f"?filename={urllib.parse.quote(img['filename'])}"
-                    f"&subfolder={urllib.parse.quote(img.get('subfolder', ''))}"
-                    f"&type={img.get('type', 'output')}"
-                ),
-            })
-
-    saved_paths = _save_images_to_working_dir(images, endpoint)
-    saved_str = ", ".join(saved_paths) if saved_paths else "(none saved)"
-    return {
-        "success": True,
-        "prompt_id": prompt_id,
-        "prompt": prompt,
-        "images": images,
-        "image_count": len(images),
-        "saved_paths": saved_paths,
-        "message": f"Image generated successfully. Saved to: {saved_str}",
-    }
-
-
 def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Run image jobs sequentially. Each job: {"prompt": str, "workflow_override": dict | None}.
 
@@ -312,7 +164,6 @@ def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     prompt is screened here before it reaches the model — the one chokepoint every image job
     funnels through. A flagged prompt is skipped (never sent) and degrades like any other failed
     job (placeholder/fallback in the caller); it never crashes the build."""
-    endpoint = _get_comfyui_endpoint()
     results = []
     for job in jobs:
         violation = screen_image_prompt(job.get("prompt"))
@@ -321,8 +172,7 @@ def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             results.append({"success": False, "error": "blocked by safety filter"})
             continue
         try:
-            result = _run_comfyui_job(endpoint, job["prompt"],
-                                      job.get("workflow_override"))
+            result = _run_comfyui_job(job["prompt"], job.get("workflow_override"))
         except Exception as e:
             logger.error(f"run_jobs job failed: {e}")
             result = {"success": False, "error": str(e)}
@@ -340,13 +190,8 @@ def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dic
         log_violation(violation, source="generate_image_tool")
         return {"success": False, "error": "blocked by safety filter"}
 
-    endpoint = _get_comfyui_endpoint()
     try:
-        return _run_comfyui_job(endpoint, prompt, workflow_override)
-    except urllib.error.URLError as e:
-        return {"success": False, "error": f"Cannot reach ComfyUI at {endpoint}: {e.reason}. Is ComfyUI running with --listen?"}
-    except TimeoutError as e:
-        return {"success": False, "error": str(e)}
+        return _run_comfyui_job(prompt, workflow_override)
     except Exception as e:
         logger.error(f"generate_image failed: {e}")
         return {"success": False, "error": str(e)}

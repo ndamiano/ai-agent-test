@@ -74,7 +74,6 @@ def test_defaults_applied():
 def test_optional_sections_absent():
     # Every section but llm is optional; absent, it stays None rather than failing.
     result = AppSettings(**_valid())
-    assert result.comfyui is None
     assert result.workqueue is None
 
 

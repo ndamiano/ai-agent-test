@@ -68,6 +68,7 @@ def test_heartbeat_extends_only_the_owners_lease():
 
 def test_complete_debits_the_games_budget_and_worker_busy():
     store.create_game("g1", "u1")
+    store.charge_game("g1", 1, 1000.0)   # enqueue admits against the grant
     store.worker_seen("w1", "llm")
     job_id = store.enqueue_job("llm", {}, game_id="g1")
     store.claim_job("llm", "w1", lease_seconds=60)
@@ -113,6 +114,7 @@ def test_unconfigured_token_fails_closed(client, monkeypatch):
 
 def test_claim_execute_complete_over_http(client):
     store.create_game("g1", "u1")
+    store.charge_game("g1", 1, 1000.0)
     store.enqueue_job("llm", {"path": "/v1/responses", "body": {"model": "m"}}, game_id="g1")
 
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
@@ -291,6 +293,7 @@ def test_connector_round_trip(fake_worker):
 
 def test_connector_attributes_jobs_to_the_run_scope(fake_worker):
     store.create_game("g9", "u1")
+    store.charge_game("g9", 1, 1000.0)
     fake_worker(lambda p: ({"output": []}, None))
     with run_scope("g9"):
         _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])

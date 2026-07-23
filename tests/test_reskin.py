@@ -10,7 +10,6 @@ import pytest
 from PIL import Image
 
 import tools.comfyui_tools as ct
-from db import queue_client
 from maestro.codegen import reskin
 from maestro.codegen.gates import RUNTIME_DIR, game_dir, stage_for_play
 
@@ -218,32 +217,6 @@ def test_stage_copies_mesh_skin_when_present(tmp_path):
         assert (dst / "assets" / "player.glb").read_bytes() == b"glTF"
     finally:
         shutil.rmtree(RUNTIME_DIR / "games" / slug, ignore_errors=True)
-
-
-def test_trellis_batch_retries_once(tmp_path, monkeypatch):
-    """A 500 mid-batch is usually the degraded pipeline — one retry must recover the mesh instead
-    of leaving a bare slab."""
-
-    monkeypatch.setattr(queue_client, "enabled", lambda: False)   # the direct transport
-
-    (tmp_path / "beast.png").write_bytes(b"png")
-    out = tmp_path / "out"
-    out.mkdir()
-
-    calls = []
-
-    def fake_post(url, body, ctype, timeout=None):
-        calls.append(url)
-        if len(calls) == 1:
-            raise ConnectionError("HTTP Error 500")
-        return b"glb-bytes"
-
-    monkeypatch.setattr(ct, "_http_post_raw", fake_post)
-
-    done = ct.run_trellis_batch(str(tmp_path), str(out))
-    assert done == {"beast"}
-    assert (out / "beast.glb").read_bytes() == b"glb-bytes"
-    assert len([c for c in calls if c.endswith("/generate")]) == 2
 
 
 def test_decimate_glb_end_to_end(tmp_path):

@@ -17,6 +17,7 @@ from api import build_queue as bq_mod
 from api.app import app
 from api.routers import games as games_router
 from auth import store as auth_store
+from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
 from maestro.codegen.run import create_run
 from maestro.state import RunState
@@ -55,6 +56,9 @@ def _make_game(user_id, frozen=True):
     spec = {"title": "Moon Miner", "mode": "2d", "frozen": frozen}
     RunState(run_id).write_spec(spec)
     db_store.update_spec_meta(run_id, spec["title"], spec["mode"], frozen)
+    # Charged, as any game that has reached fix/assets is: those endpoints refuse a run with no
+    # compute left, and an ungranted game has none.
+    db_store.charge_game(run_id, 1, SECONDS_PER_CREDIT)
     return run_id
 
 

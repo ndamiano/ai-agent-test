@@ -23,15 +23,27 @@ describe('client auth', () => {
     })
 
     it('parses a 402 body into a surfaceable ApiError instead of swallowing it', async () => {
+        // The real wire shape: FastAPI nests the gate payload under `detail`. Asserting the flat
+        // object here is what let the UI ship "costs undefined, balance undefined".
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
             ok: false, status: 402,
-            json: async () => ({ reason: 'insufficient_credits', balance: 0, cost: 1 }),
+            json: async () => ({ detail: { reason: 'insufficient_credits', balance: 0, cost: 1 } }),
         }))
 
         const err = await api.buildGame('run1').catch(e => e)
         expect(err).toBeInstanceOf(ApiError)
         expect(err.status).toBe(402)
         expect(err.body).toEqual({ reason: 'insufficient_credits', balance: 0, cost: 1 })
+        expect(err.message).toBe('insufficient_credits')
+    })
+
+    it('surfaces a plain-string detail as the error message', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+            ok: false, status: 409, json: async () => ({ detail: 'build already in progress' }),
+        }))
+
+        const err = await api.buildGame('run1').catch(e => e)
+        expect(err.message).toBe('build already in progress')
     })
 
     it('clears the token and fires the unauthorized handler on a 401', async () => {

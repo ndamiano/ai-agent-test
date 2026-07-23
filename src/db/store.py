@@ -19,6 +19,20 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.settings_manager import settings_manager
+from db.estimates import estimate_seconds
+
+
+class InsufficientCompute(Exception):
+    """A game's compute grant can't cover another job of this size. Carries the numbers so the
+    caller can tell the user how short they are."""
+
+    def __init__(self, game_id: str, remaining: float, needed: float):
+        super().__init__(f"game {game_id} has {remaining:.0f}s of compute left, "
+                         f"needs {needed:.0f}s")
+        self.game_id = game_id
+        self.remaining = remaining
+        self.needed = needed
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (
@@ -60,6 +74,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     worker_id        TEXT,
     model            TEXT,
     gpu_type         TEXT,
+    est_seconds      REAL NOT NULL DEFAULT 0,
     exec_seconds     REAL,
     lease_expires_at REAL,
     created_at       REAL NOT NULL,
@@ -110,7 +125,7 @@ _INIT_LOCK = threading.Lock()
 
 
 @contextmanager
-def _db():
+def _db(immediate: bool = False):
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=10.0)
@@ -121,6 +136,11 @@ def _db():
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
             _INITIALIZED.add(str(path))
+    if immediate:
+        # A read-then-write decision needs the write lock held across BOTH halves. sqlite's
+        # implicit transaction only starts at the INSERT, which would let two enqueues read the
+        # same headroom and each take it.
+        conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
         conn.commit()
@@ -203,6 +223,26 @@ def add_seconds_used(game_id: str, seconds: float) -> None:
         )
 
 
+def _remaining_locked(conn, game_id: str) -> float:
+    row = conn.execute(
+        "SELECT seconds_granted, seconds_used FROM games WHERE id = ?", (game_id,)).fetchone()
+    if row is None:
+        return 0.0
+    reserved = conn.execute(
+        "SELECT COALESCE(SUM(est_seconds), 0) AS s FROM jobs "
+        "WHERE game_id = ? AND status IN ('pending', 'claimed')", (game_id,)).fetchone()["s"]
+    return row["seconds_granted"] - row["seconds_used"] - reserved
+
+
+def compute_remaining(game_id: str) -> float:
+    """The game's grant minus its measured spend minus the ESTIMATES of everything it already has
+    in flight. Reservations are what make this a budget rather than a rear-view mirror: a build
+    enqueues far faster than workers complete, so seconds_used alone reads near-zero right up to
+    the moment a hundred queued jobs land."""
+    with _db() as conn:
+        return _remaining_locked(conn, game_id)
+
+
 # ── builds ────────────────────────────────────────────────────────────────────
 def create_build(game_id: str, kind: str = "build") -> str:
     build_id = uuid.uuid4().hex[:12]
@@ -243,15 +283,39 @@ def builds_for(game_id: str) -> List[Dict]:
 # enqueuer just keeps waiting and the retry is invisible to it.
 def enqueue_job(queue: str, payload: Dict, game_id: Optional[str] = None,
                 build_id: Optional[str] = None, model: Optional[str] = None) -> str:
+    """Land a job as pending, ADMITTING it against its game's compute budget first. The check and
+    the insert share one write transaction, so concurrent enqueues (parallel_fixes) can't each see
+    the same headroom and all take it. Raises InsufficientCompute when the queue's estimate does
+    not fit in what's left.
+
+    A job with no game — chat, spec drafting — is platform cost rather than a game's, so it is
+    attributed to nobody and gated by nothing."""
+    est = estimate_seconds(queue)
     job_id = uuid.uuid4().hex[:16]
-    with _db() as conn:
+    with _db(immediate=game_id is not None) as conn:
+        if game_id is not None:
+            remaining = _remaining_locked(conn, game_id)
+            if remaining < est:
+                raise InsufficientCompute(game_id, remaining, est)
         conn.execute(
-            "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, created_at) "
-            "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+            "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, "
+            "est_seconds, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
             (job_id, queue, game_id, build_id,
-             json.dumps(payload, ensure_ascii=False), model, time.time()),
+             json.dumps(payload, ensure_ascii=False), model, est, time.time()),
         )
     return job_id
+
+
+def abandon_job(job_id: str, error: str) -> bool:
+    """Give up on a job whose enqueuer stopped waiting. Releases its reservation — a row left
+    pending forever would hold estimate seconds against the game that nothing will ever spend or
+    refund. A worker that completes it afterwards is dropped, exactly like a lapsed lease."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'claimed')",
+            (error, time.time(), job_id))
+    return cur.rowcount == 1
 
 
 def claim_job(queue: str, worker_id: str, lease_seconds: float) -> Optional[Dict]:
@@ -293,7 +357,12 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
                  exec_seconds: float, gpu_type: Optional[str] = None) -> bool:
     """Land a job's outcome and debit its game's compute budget. One transaction: the job row,
     the games seconds_used debit, and the worker's busy-seconds all move together. False if the
-    job isn't this worker's claim (lease lapsed — the retry's result wins, this one is dropped)."""
+    job isn't this worker's claim (lease lapsed — the retry's result wins, this one is dropped).
+
+    ONLY DELIVERED WORK IS BILLED. A game is debited when it got a result and never otherwise: a
+    failed job, a lapsed-lease duplicate, and a job whose enqueuer abandoned it all leave
+    seconds_used untouched. The worker's busy_seconds still moves in every case — that measures
+    the GPU time WE pay for, which is real whether or not the user got anything for it."""
     now = time.time()
     status = "failed" if error else "done"
     with _db() as conn:
@@ -306,7 +375,7 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
         if cur.rowcount != 1:
             return False
         row = conn.execute("SELECT game_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if row and row["game_id"]:
+        if error is None and row and row["game_id"]:
             conn.execute(
                 "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
                 (exec_seconds, now, row["game_id"]))

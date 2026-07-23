@@ -32,16 +32,25 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 // Carries the HTTP status + parsed body so callers can react to a specific failure — notably a
-// 402 build gate ({reason, balance, cost}) — instead of a bare status string.
+// 402 build gate ({reason, balance, cost}) — instead of a bare status string. `body` is FastAPI's
+// unwrapped `detail`: an object for the structured gates, a plain string for everything else.
 export class ApiError extends Error {
     status: number
     body: any
     constructor(status: number, body: any) {
-        super(body?.reason ?? String(status))
+        super(typeof body === 'string' ? body : (body?.reason ?? String(status)))
         this.name = 'ApiError'
         this.status = status
         this.body = body
     }
+}
+
+// FastAPI wraps every error payload in `detail` — the structured gates (402 credits, 402 compute)
+// live one level down, so read through it or every field on the parsed body is undefined.
+async function errorBody(res: Response): Promise<any> {
+    let body: any = null
+    try { body = await res.json() } catch { /* no/empty body */ }
+    return (body && typeof body === 'object' && 'detail' in body) ? body.detail : body
 }
 
 function handleUnauthorized(): void {
@@ -73,10 +82,8 @@ async function request<T>(path: string, init?: RequestInit, retries = 2): Promis
             if (res.status === 429) {
                 throw new Error('Rate limit exceeded. Please try again in a moment.')
             }
-            let body: any = null
-            try { body = await res.json() } catch { /* no/empty body */ }
             if (res.status === 401) handleUnauthorized()
-            throw new ApiError(res.status, body)
+            throw new ApiError(res.status, await errorBody(res))
         }
 
         return res.json() as Promise<T>
@@ -116,7 +123,9 @@ export async function* streamChatMessage(
     })
     if (res.status === 401) handleUnauthorized()
     if (!res.ok || !res.body) {
-        throw new ApiError(res.status, null)
+        // Chat is free but gated on a balance, so a 402 lands here with the numbers to explain
+        // itself — dropping the body would surface it as a bare "402".
+        throw new ApiError(res.status, res.ok ? null : await errorBody(res))
     }
 
     const reader = res.body.getReader()

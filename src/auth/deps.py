@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from starlette.responses import JSONResponse
 
-from auth.store import User, resolve_token
+from auth.store import User, balance, resolve_token
 
 # Reachable without a token: the health probe, the login endpoint, the API docs, and the
 # payment webhook (server-to-server — no user token; authed by the provider's signature,
@@ -30,6 +30,21 @@ def get_current_user(request: Request) -> User:
     user = getattr(request.state, "user", None)
     if user is None:
         raise HTTPException(status_code=401, detail="authentication required")
+    return user
+
+
+def require_credits(request: Request) -> User:
+    """`get_current_user` plus a positive credit balance.
+
+    For inference that is never CHARGED but must not be free to everyone: chat and spec drafting
+    run before a game exists to bill, and metering them would make an abandoned conversation cost
+    the user real money. Free is not the same as open, though — at a zero balance nothing that
+    conversation could produce is buildable, so the GPU time behind it has no path to revenue."""
+    user = get_current_user(request)
+    remaining = balance(user.id)
+    if remaining <= 0:
+        raise HTTPException(status_code=402, detail={
+            "reason": "insufficient_credits", "balance": remaining, "cost": 0})
     return user
 
 

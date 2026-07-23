@@ -1,11 +1,11 @@
 """Auth endpoints. Login only — accounts are provisioned by an admin (`python -m auth.cli`),
 so there is deliberately NO signup route here."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from auth import store
-from auth.deps import bearer_token, get_current_user
+from auth.deps import PLAY_COOKIE, bearer_token, get_current_user
 from auth.ratelimit import login_throttle
 from auth.store import User
 
@@ -17,8 +17,23 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _set_play_cookie(request: Request, response: Response, token: str) -> None:
+    """Mirror the session token into the /play-scoped cookie. Path=/play keeps it off every /api and
+    /auth request (the API stays header-only); HttpOnly hides it from scripts; SameSite=Strict blocks
+    cross-site sends. Secure is gated on https so the cookie still works over plain http on localhost
+    dev — behind a TLS-terminating proxy, forward the scheme (X-Forwarded-Proto) or it won't set."""
+    response.set_cookie(
+        key=PLAY_COOKIE,
+        value=token,
+        path="/play",
+        httponly=True,
+        samesite="strict",
+        secure=request.url.scheme == "https",
+    )
+
+
 @router.post("/login")
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, request: Request, response: Response):
     key = body.handle.strip().lower()
     wait = login_throttle.retry_after(key)
     if wait:
@@ -33,6 +48,7 @@ async def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="invalid handle or password")
     login_throttle.clear(key)
     token = store.issue_token(user.id)
+    _set_play_cookie(request, response, token)
     return {
         "token": token,
         "user": {"id": user.id, "handle": user.handle, "role": user.role},
@@ -40,12 +56,13 @@ async def login(body: LoginRequest):
 
 
 @router.post("/logout")
-async def logout(request: Request, user: User = Depends(get_current_user)):
+async def logout(request: Request, response: Response, user: User = Depends(get_current_user)):
     """Revoke the presented session token server-side, so it can't be reused after logout
     (dropping it client-side alone would leave it live until its TTL)."""
     token = bearer_token(request)
     if token:
         store.revoke_token(token)
+    response.delete_cookie(PLAY_COOKIE, path="/play")
     return {"ok": True}
 
 

@@ -5,6 +5,7 @@ that isn't explicitly public). The WebSocket path lives in a different ASGI scop
 middleware never sees, so it authenticates itself in the endpoint (see routers/websocket.py).
 """
 
+import os
 from typing import Optional
 
 from fastapi import HTTPException, Request
@@ -13,10 +14,13 @@ from starlette.responses import JSONResponse
 from auth.store import User, balance, resolve_token
 from db import store as db_store
 
-# Reachable without a token: the health probe, the login endpoint, the API docs, and the
-# payment webhook (server-to-server — no user token; authed by the provider's signature,
-# verified inside the CreditProvider, never by this gate).
-PUBLIC_PATHS = {"/", "/auth/login", "/docs", "/redoc", "/openapi.json", "/api/billing/webhook"}
+# Reachable without a token: the health probe, the login endpoint, and the payment webhook
+# (server-to-server — no user token; authed by the provider's signature, verified inside the
+# CreditProvider, never by this gate). The API docs exist only in dev (see api/app.py), so
+# they're public only there.
+PUBLIC_PATHS = {"/", "/auth/login", "/api/billing/webhook"}
+if os.getenv("MAESTRO_DEV") == "1":
+    PUBLIC_PATHS |= {"/docs", "/redoc", "/openapi.json"}
 
 # The /play game harness is static HTML/JS the browser loads with plain <script>/<img>/fetch — no
 # way to attach a Bearer header to those sub-resource requests. So /play alone authenticates by a

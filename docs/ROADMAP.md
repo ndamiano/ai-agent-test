@@ -105,13 +105,13 @@ good with refund-on-fail. Measure real cost/time/failure per game.
   three RunPod worker images + the provisioned network volume, and a queue-driven autoscaler
   (`src/scaler/`) — workers self-exit when their queue drains, the control plane adds pods on
   backlog and reaps dead ones. On-demand RunPod inference is no longer a Release-stage item.
-- **Deferred risks (fix before public beta):** the generated `game.js` runs same-origin in the
-  player's browser — sandbox it (isolated origin / sandboxed iframe + CSP) so a malicious/broken
-  generation can't read the SPA's token or touch the API; uncharged chat inference needs a per-user
-  rate limit; 30-day session TTL; public `/docs`. (The old build-flood DoS is retired: builds
-  charge credits before enqueue, jobs admit against the compute budget, the autoscaler absorbs
-  depth, and accounts start at 0 credits.) Detail + tasks: `DEPLOY.md` § Known deferred risks and
-  `tasks/production_hardening.md`.
+- **Hardening (landed 2026-07-23):** chat rate-limited (uncharged inference, 30 turns/hour),
+  `/docs` dev-only, session TTL 7d, `/play` responses carry a no-exfiltration CSP. Still open:
+  TRUE origin isolation for generated `game.js` — required before any game-sharing feature, not
+  before beta (ownership-gating means a game only runs in its owner's browser). (The old
+  build-flood DoS is retired: builds charge credits before enqueue, jobs admit against the
+  compute budget, the autoscaler absorbs depth, accounts start at 0 credits.) Detail:
+  `DEPLOY.md` § Known deferred risks and `tasks/production_hardening.md`.
 
 ### Public beta (paid) — *first dollar*
 Real payments + pricing, safety filter proper, legal set, concurrency for N users.

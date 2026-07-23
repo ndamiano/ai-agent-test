@@ -28,28 +28,35 @@ that's revenue plus a latency blip, not denial of service. What remains is small
 
 ## Tasks
 
-### H1 — Sandbox the generated game (the real one)
-Model-authored `game.js` runs on the app origin; the SPA's bearer token lives in web storage on
-that origin. A malicious or merely broken generation can read it and call the API as the user.
-- [ ] Serve `/play` from an isolated origin (subdomain or sandboxed iframe with `sandbox=`
-      no-same-origin + CSP; pick one — iframe is deployable without DNS work).
-- [ ] Keep the `maestro_play` cookie auth working across the isolation boundary (it was built
-      header-free for exactly this kind of embed).
-- [ ] Test: a script inside a staged game cannot read the SPA's token storage or reach `/api/*`
-      with ambient credentials.
+### H1 — Sandbox the generated game — CONTAINMENT LANDED, isolation gates SHARING
+Model-authored `game.js` runs on the app origin. Assessed 2026-07-23: the ownership gate means a
+game only ever runs in its OWNER's browser, and stealing your own token gains nothing — so full
+origin isolation blocks the SHARING feature (Stage 2 resale/public games), not paid beta.
+- [x] Containment CSP on every `/play` response (`api/app.py _PLAY_CSP`): all loads + network
+      pinned to this origin — generated code cannot exfiltrate anywhere or pull external
+      scripts, eval blocked. Test: `test_play_auth.py`.
+- [ ] TRUE origin isolation — required BEFORE any game is viewable by a non-owner. Verified
+      constraint (recon 2026-07-23): a bare `CSP: sandbox allow-scripts` breaks /play entirely —
+      the harness boots via dynamic ES-module imports (CORS-gated, `Origin: null` fails against
+      the header-less static mount) and the `SameSite=Strict` play cookie is not sent from an
+      opaque-origin document's subresources. Workable shapes: a separate origin (subdomain via
+      DNS/proxy), or an SPA-seeded `srcdoc` sandbox with an import map over authed blob URLs
+      (needs the engine's `assetBase` fetches virtualized). Don't ship `ACAO: null` +
+      `SameSite=None` — that opens cross-site asset reads from any sandboxed context.
 
-### H2 — Chat abuse cap (the surviving DoS)
-Chat requires a positive balance but never spends it: one $5 account can loop `POST /api/chat`
-and burn llm-worker GPU forever at zero marginal cost. Platform pays per second; attacker pays once.
-- [ ] Per-user rate limit on `/api/chat` (reuse the `auth/ratelimit.py` shape; N turns/hour is
-      enough — real users draft a spec in a handful of turns).
-- [ ] Same cap on any other uncharged inference path that appears later (spec drafting rides chat).
-- [ ] Test: turn N+1 inside the window 429s; a build job is unaffected.
+### H2 — Chat abuse cap (the surviving DoS) — DONE
+Chat requires a positive balance but never spends it: one $5 account could loop `POST /api/chat`
+and burn llm-worker GPU forever at zero marginal cost.
+- [x] Per-user sliding-window limit on `/api/chat`: 30 turns/hour, 429 + Retry-After
+      (`auth/ratelimit.py RequestThrottle`, wired in `api/routers/chat.py`).
+- [ ] Same cap on any other uncharged inference path that appears later (spec drafting rides
+      chat today, so it's covered).
 
-### H3 — Close the API surface
-- [ ] Drop `/docs`, `/redoc`, `/openapi.json` from `PUBLIC_PATHS` and disable in the app
-      constructor for prod (`docs_url=None`) — schema enumeration for free is a gift to attackers.
-- [ ] Session TTL 30d → 7d + rotate token on login. (Cheap; do with H2.)
+### H3 — Close the API surface — DONE
+- [x] `/docs`, `/redoc`, `/openapi.json` exist only when `MAESTRO_DEV=1` (app constructor +
+      `PUBLIC_PATHS`); prod serves 404.
+- [x] Session TTL 30d → 7d (`auth/store.py`). Login already mints a fresh token per session;
+      revoking a user's other sessions on login was skipped on purpose (multi-device).
 
 ### H4 — Queue fairness polish (latency, not security — okay to defer past beta)
 A legitimate burst (one user builds 20 games) raises everyone's latency until the scaler catches

@@ -5,11 +5,17 @@ from typing import Any, Dict
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-# Create FastAPI app
+# Interactive API docs are a dev convenience; in prod they hand an attacker the full route +
+# schema map, so they only exist when MAESTRO_DEV=1 (same switch run.py keys reload on).
+_dev = os.getenv("MAESTRO_DEV") == "1"
+
 app = FastAPI(
     title="AI Agent API",
     description="API for AI agent management and task execution",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs" if _dev else None,
+    redoc_url="/redoc" if _dev else None,
+    openapi_url="/openapi.json" if _dev else None,
 )
 
 # Allowed browser origins come from MAESTRO_CORS_ORIGINS (comma-separated); default to the local
@@ -110,6 +116,25 @@ from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
 # Serve the runtime harness so the SPA can open a built game (mounted before the SPA catch-all).
+# /play runs MODEL-AUTHORED JS, so every response carries a CSP that pins all loads and network
+# to this origin: generated code cannot exfiltrate anywhere or pull external scripts. It shares
+# the app origin (ownership-gated — a game only ever runs in its owner's browser), so this is
+# containment, not isolation; SHARING games requires true origin isolation first — see
+# tasks/production_hardening.md H1. 'unsafe-inline' is for index.html's own bootstrap script;
+# eval stays blocked.
+_PLAY_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+             "connect-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; "
+             "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+
+
+@app.middleware("http")
+async def _play_csp(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/play" or request.url.path.startswith("/play/"):
+        response.headers["Content-Security-Policy"] = _PLAY_CSP
+    return response
+
+
 _runtime = Path(__file__).resolve().parents[2] / "runtime"
 if _runtime.is_dir():
     app.mount("/play", StaticFiles(directory=_runtime, html=True), name="play")

@@ -74,9 +74,12 @@ the app dir (default `/opt/maestro`):
 cp .env.example .env      # then edit: engine host paths, host.docker.internal endpoints
 ```
 
-then re-run `deploy.sh` from dev. `deploy.sh` `rsync`s the source (excluding `venv/`, node_modules,
-`.git/`, the working dir, `.env`, `settings.json`), runs `docker compose build && docker compose up
--d`, and curls prod `/healthz` — failing loudly if any step errors.
+then re-run `deploy.sh` from dev. `deploy.sh` `rsync`s only what the box needs to build + run
+(source, runtime, frontend, compose/Docker files, scripts — repo paperwork like docs/tasks/tests
+and the pod-side worker Dockerfiles stay home), runs `docker compose build && docker compose up
+-d`, and curls prod `/healthz` — failing loudly if any step errors. The control-plane image build
+uses `Dockerfile.dockerignore`, which additionally drops `src/worker/` + `src/tools/
+trellis_server.py` — pod-side code that never runs on the control plane.
 
 ### Editing `.env` after the first boot
 
@@ -320,18 +323,18 @@ WantedBy=multi-user.target
 
 ## Known deferred risks (accepted for private alpha — trusted testers)
 
-These were flagged in the pre-open security audit and consciously deferred. Fix before public beta.
-Task breakdown: `tasks/production_hardening.md`.
+Flagged in the pre-open security audit; hardened 2026-07-23. Task breakdown + status:
+`tasks/production_hardening.md`.
 
-- **Untrusted generated JS in the browser** (the big one). A build ships model-authored TypeScript
-  bundled to JS and served at `/play` on the app's own origin — the same origin holding the SPA's
-  bearer token in web storage. A crafted (or merely broken) generation can read it and call the API
-  as the user. Trusted testers who only play their own builds → low risk today. Fix = sandbox the
-  player (isolated origin / sandboxed iframe + CSP).
-- **Chat is uncharged inference.** `POST /api/chat` requires a positive balance but never deducts
-  or meters — one funded account can loop chat turns and burn llm-worker GPU at zero marginal cost.
-  Fix = per-user rate limit on chat. (The former "build-flood DoS" is retired: builds charge
+- **Untrusted generated JS in the browser** — CONTAINED, not isolated. Every `/play` response
+  carries a CSP pinning all loads + network to this origin (`api/app.py _PLAY_CSP`): generated
+  code can't exfiltrate or pull external scripts. It still shares the app origin — safe today
+  because `/play/games/<id>` is ownership-gated, so a game only runs in its owner's browser.
+  TRUE origin isolation (separate origin or SPA-seeded sandbox) is REQUIRED before any
+  game-sharing feature ships — see production_hardening H1 for the verified constraints.
+- **Chat rate-limited.** `POST /api/chat` is uncharged inference, so it's capped at 30
+  turns/hour/user (429 + Retry-After). (The former "build-flood DoS" is retired: builds charge
   credits before enqueue, every GPU job admits against the game's compute budget, the autoscaler
-  absorbs depth, and accounts start at 0 credits — a build flood is now paid load, not an attack.)
-- **Session TTL 30 days, no rotation** (`auth/store.py`); **`/docs` + `/openapi.json` public**
-  (`auth/deps.py` PUBLIC_PATHS) expose the API surface. Both hardening, not blockers.
+  absorbs depth, and accounts start at 0 credits — a build flood is paid load, not an attack.)
+- **API surface closed.** `/docs`/`/redoc`/`/openapi.json` exist only under `MAESTRO_DEV=1`;
+  session TTL is 7 days.

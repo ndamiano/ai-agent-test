@@ -59,6 +59,15 @@ def test_bad_token_is_rejected(app_client):
     assert r.status_code == 401
 
 
+def test_api_docs_do_not_exist_outside_dev(app_client):
+    """MAESTRO_DEV is unset in tests, so this asserts the PROD shape: the docs routes are never
+    registered (schema enumeration for free) and their paths aren't whitelisted by the gate."""
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert app_client.get(path).status_code == 404, path
+    paths = {getattr(r, "path", "") for r in app_client.app.routes}
+    assert not paths & {"/docs", "/redoc", "/openapi.json"}
+
+
 def test_no_signup_route_exists_on_the_app(app_client):
     paths = {getattr(r, "path", "") for r in app_client.app.routes}
     assert "/auth/login" in paths

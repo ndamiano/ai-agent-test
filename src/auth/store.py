@@ -26,7 +26,7 @@ _PBKDF2_ROUNDS = 200_000
 
 # A session token stops resolving this long after it was issued, so a leaked token can't be
 # used forever — a re-login mints a fresh one.
-SESSION_TTL_SECONDS = 30 * 24 * 3600
+SESSION_TTL_SECONDS = 7 * 24 * 3600
 
 
 @dataclass(frozen=True)

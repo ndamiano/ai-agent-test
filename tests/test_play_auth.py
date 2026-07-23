@@ -100,3 +100,19 @@ def test_play_shared_harness_needs_session_not_ownership(client):
     # Any valid session serves the shared harness (no ownership check — it's not a per-game path).
     r = client.get("/play/index.html", cookies={"maestro_play": tok})
     assert r.status_code == 200
+
+
+def test_play_responses_carry_the_no_exfil_csp(client):
+    """/play runs model-authored JS: every response (including a 401) pins loads + network to this
+    origin so generated code can't exfiltrate or pull external scripts. /api stays CSP-free —
+    the policy is containment for the game surface only."""
+    _, tok = _user("alice")
+
+    csp = client.get("/play/index.html", cookies={"maestro_play": tok}).headers.get(
+        "content-security-policy", "")
+    assert "default-src 'self'" in csp
+    assert "connect-src 'self'" in csp
+    assert "object-src 'none'" in csp
+
+    assert "content-security-policy" in client.get("/play/index.html").headers  # 401 too
+    assert "content-security-policy" not in client.get("/api/games").headers

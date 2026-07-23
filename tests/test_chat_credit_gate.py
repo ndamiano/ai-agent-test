@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from api.app import app
 from api.routers import chat as chat_router
 from auth import store as auth_store
+from auth.ratelimit import RequestThrottle
 from db import store as db_store
 
 
@@ -19,9 +20,11 @@ from db import store as db_store
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
     monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    # The turn itself is not under test — only the gate in front of it.
+    # The turn itself is not under test — only the gates in front of it. A fresh throttle per
+    # test keeps the module-global's state from leaking across tests.
     monkeypatch.setattr(chat_router, "_get_or_create_session",
                         lambda user_id: _StubAgent())
+    monkeypatch.setattr(chat_router, "chat_throttle", RequestThrottle(3600, 30))
     return TestClient(app)
 
 
@@ -74,3 +77,21 @@ def test_clearing_a_session_is_not_gated(client):
 
 def test_the_gate_still_requires_a_token(client):
     assert client.post("/api/chat", json={"message": "hi"}).status_code == 401
+
+
+def test_chat_turns_are_rate_limited_per_user(client, monkeypatch):
+    """Chat is uncharged inference — without a cap one funded account could loop turns and burn
+    llm-worker GPU at zero marginal cost. Over the cap → 429 with Retry-After; other users are
+    unaffected."""
+    monkeypatch.setattr(chat_router, "chat_throttle", RequestThrottle(3600, 2))
+    user, headers = _user(credits=5)
+
+    assert client.post("/api/chat", headers=headers, json={"message": "a"}).status_code == 200
+    assert client.post("/api/chat", headers=headers, json={"message": "b"}).status_code == 200
+    r = client.post("/api/chat", headers=headers, json={"message": "c"})
+    assert r.status_code == 429
+    assert "retry-after" in {k.lower() for k in r.headers}
+
+    _, other_headers = _user("bob", credits=5)
+    assert client.post("/api/chat", headers=other_headers,
+                       json={"message": "hi"}).status_code == 200

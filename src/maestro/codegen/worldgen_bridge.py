@@ -5,6 +5,7 @@ game.ts imports; its API (spawnWorld/heightAt/WORLD) is stable so authored games
 This is the CONTENT seed — it owns the PLACE and nothing else. The control layer (config, the
 scheme's movement, the frame loop) is the scaffold's, exactly as for a world-less game: a world spec
 gets both seeds, and the model authors gameplay hooks on top of the pair."""
+import hashlib
 import json
 import math
 import random
@@ -19,6 +20,7 @@ from worldgen import noise, towns
 
 CELL = 2.0  # world units per town cell
 RING = 22   # wilderness cells beyond the town on every side — the "leave the village" space
+CANDIDATES = 30   # seeds generate_best scores per world; it keeps the best, first-wins on a tie
 BIOMES = ["ocean", "beach", "grassland", "forest", "hill", "mountain"]
 
 THEME_COLOR = {
@@ -62,14 +64,25 @@ def _recipe_from_spec(spec: dict) -> dict:
             "locations": [{"id": slug, "type": "settlement", "name": name}]}
 
 
-def seed_world(out_dir: Path, spec: dict) -> dict:
+def seed_world(out_dir: Path, spec: dict, run_id: str = "") -> dict:
     """Generate this spec's world into `out_dir/world.ts`. The caller seeds only when world.ts is
-    absent, so a rebuild/fix never regenerates the town under a half-built game."""
-    return build(_recipe_from_spec(spec), out_dir)
+    absent, so a rebuild/fix never regenerates the town under a half-built game.
+
+    `run_id` picks WHICH world. generate_best scores a fixed candidate list and keeps the first of
+    any tie, so a fixed list hands every game with the same size/biomes the SAME village — two live
+    runs produced a byte-identical world.ts. Offsetting the candidates by the run makes each build
+    its own place, and keying on run_id (not a clock) keeps it reproducible from the run dir.
+    """
+    return build(_recipe_from_spec(spec), out_dir, seeds=_candidate_seeds(run_id))
 
 
-def build(recipe, out_dir: Path):
-    world, seed = worldgen.generate_best(recipe, range(30))
+def _candidate_seeds(run_id: str) -> range:
+    base = int(hashlib.sha256(run_id.encode()).hexdigest()[:8], 16) % 1_000_000 if run_id else 0
+    return range(base, base + CANDIDATES)
+
+
+def build(recipe, out_dir: Path, seeds=None):
+    world, seed = worldgen.generate_best(recipe, seeds if seeds is not None else range(CANDIDATES))
     sett = next(s for s in world["sites"] if s["type"] == "settlement")
     town = towns.build_town(sett, [], world, seed)
     rows, legend = town["tiles"]["rows"], town["tiles"]["legend"]

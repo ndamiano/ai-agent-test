@@ -57,7 +57,7 @@ def _seed(run_id: str, state: RunState, spec: dict) -> None:
     gd = game_dir(state.run_dir)
     gd.mkdir(parents=True, exist_ok=True)
     if spec.get("world") and not (gd / "world.ts").exists():
-        info = worldgen_bridge.seed_world(gd, spec)
+        info = worldgen_bridge.seed_world(gd, spec, run_id)
         logger.info("worldgen seed %s: %sx%s town, %d buildings",
                     run_id, info["gw"], info["gh"], len(info["buildings"]))
     if not entry_src_path(state.run_dir).exists():

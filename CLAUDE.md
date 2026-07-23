@@ -212,6 +212,10 @@ src/
                          buildings) inside a WILDERNESS RING (forest trees, 3 POIs w/ set dressing,
                          roads out of the gate, named regions) so the game is a place, not a room.
                          WORLD exports buildings/plaza/gate/grass/pois/regions/road + heightAt.
+                         generate_best's candidate seeds are OFFSET BY run_id — it keeps the first
+                         of any scoring tie, so a fixed candidate list handed every same-size/biomes
+                         game the identical village (two live runs: byte-identical world.ts).
+                         Keyed on the run, not a clock, so it stays reproducible from the run dir.
                          CONTENT only: it owns the PLACE, the scaffold owns the CONTROLS, and the
                          model authors game.ts on top of both. Seeded only when world.ts is absent.
       controls.py        the spec's CONTROL VOCABULARY: normalize_controls maps a gamepad name onto

@@ -39,7 +39,7 @@ def stub_bridge(monkeypatch):
     """Fake worldgen_bridge.build: record the recipe, write a minimal generated world.ts."""
     calls = {}
 
-    def fake_build(recipe, out_dir: Path):
+    def fake_build(recipe, out_dir: Path, seeds=None):
         calls["recipe"] = recipe
         calls["out_dir"] = Path(out_dir)
         (Path(out_dir)).mkdir(parents=True, exist_ok=True)
@@ -57,6 +57,25 @@ def test_recipe_from_spec_reflects_requested_setting():
     assert recipe["palette"]["biomes"] == ["grassland", "forest", "hill"]
     loc = recipe["locations"][0]
     assert loc["type"] == "settlement" and loc["name"] == "Willowmere" and loc["id"] == "willowmere"
+
+
+def test_each_run_gets_its_own_world():
+    """generate_best scores a fixed candidate list and keeps the first of any tie, so a fixed list
+    handed every same-size/biomes game the SAME village — two live runs produced a byte-identical
+    world.ts. The candidates are offset by run_id: different run, different place; same run, same
+    place (reproducible from the run dir, and a re-seed can never shift the town under a build)."""
+    a, b = wb._candidate_seeds("0e4522c6f8a9"), wb._candidate_seeds("4da856e619ff")
+    assert a != b
+    assert a == wb._candidate_seeds("0e4522c6f8a9")     # keyed on the run, not a clock
+    assert len(a) == wb.CANDIDATES                      # still scores a full candidate field
+    assert wb._candidate_seeds("") == range(0, wb.CANDIDATES)
+
+
+def test_seed_world_passes_the_run_s_candidates_to_worldgen(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(wb, "build", lambda recipe, out, seeds=None: seen.update(seeds=seeds) or {})
+    wb.seed_world(tmp_path, _world_spec(), "4da856e619ff")
+    assert seen["seeds"] == wb._candidate_seeds("4da856e619ff")
 
 
 def test_seed_writes_both_the_world_and_the_control_scaffold(tmp_path, stub_bridge):

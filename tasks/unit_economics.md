@@ -26,6 +26,19 @@ demand first), but the number that decides whether this is a business at all and
 ## Rough margin sketch (base game, sanity check only)
 - Price $5.00 − compute $0.99 − payment fees (~2.9% + $0.30 ≈ $0.45) ≈ **~$3.56 gross** before
   storage/egress, any API asset costs, and overhead. Healthy on compute alone.
+- **Minimum pack size (decision 2026-07-23): never sell $5 one-offs.** The FIXED per-transaction
+  fee (30-50¢) is what kills small tickets: on a $5 sale an MoR (5% + 50¢) takes 75¢ — 15% of
+  revenue; on a $20 pack the same fee is $1.50 — 7.5%. Minimum top-up $10, prefer $20 — credits
+  are already the unit, nothing implies one-game purchases. Exact pack sizes set with the launch
+  price below.
+- **Processor: MoR (Paddle / Lemon Squeezy) vs Stripe.** MoR = they are the legal seller: all
+  international tax registration/remittance, invoicing, disputes are theirs, for ~5% + 50¢. Stripe
+  (~2.9% + 30¢) is ~2% cheaper but WE are merchant of record: EU VAT owed from the FIRST sale,
+  US state tax after nexus thresholds (~$100k — irrelevant in beta). Viable cheap path: **Stripe +
+  US-only at launch** (under every state threshold, no EU exposure), move to / add MoR when
+  foreign demand shows. Note the VAT on an EU sale exists under either model — MoR just makes it
+  visible in the fee line. All mainstream options ban adult content (consistent with the
+  no-sexual-content ToS posture).
 - **Reliability IS margin.** A failed/thrashed build that must retry doubles the $0.99. At a 1-in-3
   retry rate effective compute ≈ $1.30–2.00. A refund-on-fail (auth T3) protects the user but eats the
   compute. → the quality/failure-rate bar (`quality_backlog.md` §1) is also an economics lever.
@@ -92,5 +105,6 @@ pricing). Do the measurement DURING the alpha (real builds = real cost/failure d
 before the paid stage.
 
 ## Parked
-- Credit pack sizing + any subscription vs one-off.
+- Exact credit pack sizes + any subscription vs one-off (floor is decided: $10 minimum, see the
+  margin sketch).
 - Whether the 100-credit resale tier is the right number (`legal_ops.md`).

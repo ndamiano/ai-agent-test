@@ -86,6 +86,11 @@ per-user ownership, and a credit ledger that gates builds.
 - [x] **Webhook auth** — the path is registered **public** (`auth.deps.PUBLIC_PATHS`): a provider
       posts server-to-server with no user token, so it's authed by its signature (verified inside the
       `CreditProvider`), never by the user-token gate.
+- [ ] **Dispute/refund clawback** (with the concrete provider integration): on a chargeback or
+      provider-side refund event, revoke the purchased credits (negative ledger entry — balance may
+      go negative as the fraud marker) and suspend the account pending review. Credits being
+      OUR ledger is the digital-goods advantage: a stolen-card purchase is reversible in-system
+      even after the money is clawed back.
 - [x] **Tests** (`test_billing_seam.py`): CLI grant increments balance + logs a txn; CLI grant on an
       unknown handle exits cleanly; the webhook credits on a stubbed verified event, rejects an
       unverified one (400, credits nothing), and is not blocked by the user-auth middleware.

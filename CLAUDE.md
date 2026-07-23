@@ -355,7 +355,10 @@ src/
                          forwarded to the inference target). handlers.py = one handler per payload
                          `kind`, ONE worker process per queue: llm (verbatim forward to llama.cpp),
                          image (the ComfyUI submit → poll /history → fetch /view flow, images back
-                         inline as base64), mesh (one TRELLIS POST → glb base64, retry-once).
+                         inline as base64), mesh (one TRELLIS POST → glb base64, retry-once; the
+                         reply's stage/load/warmup/generate headers ride back on the job row,
+                         since a pod's stdout is unreachable and cold starts would otherwise only
+                         ever be inferred).
                          A queue owns its GPU. --idle-exit-seconds (env IDLE_EXIT_SECONDS) is the
                          worker's scale-down decision: the value rides the claim body as the
                          long-poll window, so a null claim MEANS "queue empty that long" →
@@ -420,6 +423,24 @@ src/
                          cached singleton.
   tools/                 tool_manager, system_tools, comfyui_tools (image backend), file_tools,
                          execution_context (resolve_base_path → the run root).
+    trellis_server.py    the mesh backend: the 4B pipeline resident behind /generate. Owns the
+                         COLD START (measured: ~330s → a pod WARM in ~116s, docs/DEPLOY.md has
+                         the phase table). Boot does three things before the worker may register:
+                         STAGE the tier's checkpoints to /dev/shm (the volume streams at 2.7GB/s
+                         but does not retain page cache, so only loading from RAM holds — falls
+                         back to the volume when it will not fit), LOAD with default init
+                         suppressed (37s of a 43s load, every weight overwritten by the
+                         checkpoint microseconds later) and only the models the tier asserts
+                         (`models_for`, not all 8), then WARM UP on a throwaway mesh (lazy
+                         DINOv3/BiRefNet + first-use kernel compile — 53s vs 13s for the job
+                         that would otherwise pay it). /health reports `warm` + the timing split;
+                         the entrypoint gates registration on it, so a claimed job never pays
+                         boot and a pod that cannot generate dies at boot instead. STEADY-STATE:
+                         to_glb decimates to 50k, not 500k — the game bundles a 20k-tri mesh
+                         (decimate.mjs), so 500k was ~25x waste that starved that simplifier into
+                         its sloppy/off-budget path; 50k cut postprocess 4-13s → ~2s and uploads
+                         ~8x with equal-or-better final meshes (validated across char/foliage/
+                         building).
 ```
 
 **Inference path (chat / spec draft):** `MainAgent` / `draft_spec` → `MessageBuilder` →

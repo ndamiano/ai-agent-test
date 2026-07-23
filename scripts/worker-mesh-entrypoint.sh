@@ -31,14 +31,21 @@ python /opt/maestro/src/tools/trellis_server.py \
     --host 127.0.0.1 --port "$TRELLIS_PORT" &
 trellis_pid=$!
 
-# The pipeline lazy-loads on first generate, so /health answers as soon as uvicorn binds.
-for _ in $(seq 1 60); do
-    if curl -sf "http://127.0.0.1:$TRELLIS_PORT/health" >/dev/null; then break; fi
+# The server stages its checkpoints, loads the pipeline and runs one throwaway mesh in the
+# background, so /health answers as soon as uvicorn binds and reports readiness separately. Wait
+# for WARM, not the bind: a worker that registers first claims a job that then eats the whole
+# cold start — the load, the lazy encoders and the first-use kernel compile (53s vs 13s,
+# measured) — wall-clock the same, but debited to the user's grant as if it were work. Nothing
+# can generate before that finishes, so waiting costs nothing and a pod that cannot generate at
+# all is caught here rather than by failing a claimed job.
+for _ in $(seq 1 150); do
+    curl -sf "http://127.0.0.1:$TRELLIS_PORT/health" 2>/dev/null | grep -q '"warm": *true' && break
     kill -0 "$trellis_pid" 2>/dev/null || { echo "trellis server died during startup" >&2; exit 1; }
     sleep 2
 done
 curl -sf "http://127.0.0.1:$TRELLIS_PORT/health" >/dev/null || {
-    echo "trellis server did not answer /health within 120s" >&2; exit 1; }
+    echo "trellis server did not answer /health within 300s" >&2; exit 1; }
+# Past the deadline but alive: serve anyway rather than burn the pod — the first job pays.
 echo "trellis up: $(curl -s "http://127.0.0.1:$TRELLIS_PORT/health")"
 
 python -m worker.agent \

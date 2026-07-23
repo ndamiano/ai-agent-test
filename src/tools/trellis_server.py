@@ -12,7 +12,9 @@ Launch (from the TRELLIS venv):
                                      [--ptype 1024_cascade] [--texture 2048]
 
 API:
-  GET  /health            -> {"status": "ok", "loaded": <bool>}
+  GET  /health            -> {"status": "ok", "loaded": <bool>, "warm": <bool>, + the boot
+                             timing split (stage / load / warmup seconds). The entrypoint gates
+                             worker registration on `warm`, so a claimed job never pays boot.
   POST /generate          body = PNG bytes (image/png); query ?ptype=&texture= override defaults
                           -> 200 model/gltf-binary (the .glb bytes) | 500 on failure
 """
@@ -20,11 +22,26 @@ API:
 # the TRELLIS venv (torch / trellis2 / o_voxel / flex_gemm are absent from maestro's), and the
 # Blackwell patches must be applied around the torch import, not at module scope.
 import argparse
+import contextlib
 import io
 import os
 import sys
 import tempfile
+import threading
 import time
+
+# What run() asserts each pipeline type needs (trellis2_image_to_3d.py). Loading the whole set
+# costs a 1.3B DiT of construct + 2.6GB of read per unused tier.
+_ALWAYS_LOAD = ("sparse_structure_flow_model", "sparse_structure_decoder",
+                "shape_slat_decoder", "tex_slat_decoder")
+_TIER_MODELS = {
+    "512": ("shape_slat_flow_model_512", "tex_slat_flow_model_512"),
+    "1024": ("shape_slat_flow_model_1024", "tex_slat_flow_model_1024"),
+    "1024_cascade": ("shape_slat_flow_model_512", "shape_slat_flow_model_1024",
+                     "tex_slat_flow_model_1024"),
+    "1536_cascade": ("shape_slat_flow_model_512", "shape_slat_flow_model_1024",
+                     "tex_slat_flow_model_1024"),
+}
 
 
 def _blackwell_patches():
@@ -58,6 +75,123 @@ def _blackwell_patches():
     ac.BACKEND = "sdpa"
 
 
+def weight_files(weights: str, names) -> list:
+    """The checkpoint file behind each pipeline model name, via pipeline.json's own mapping."""
+    import json
+    with open(os.path.join(weights, "pipeline.json")) as f:
+        models = json.load(f)["args"]["models"]
+    paths = []
+    for name in names:
+        rel = models.get(name)
+        if not rel:
+            continue
+        path = os.path.join(weights, f"{rel}.safetensors")
+        if os.path.exists(path):
+            paths.append(path)
+    return paths
+
+
+def stage_weights(weights: str, names, stage_root: str, streams: int = 8):
+    """Copy the checkpoints this tier needs onto tmpfs and load from THERE.
+
+    Measured on a pod: bulk-reading the same files streams at 2.7GB/s, yet the load right after
+    still took 47.8s — the FUSE mount does not keep the pages, so safetensors' mmap re-reads
+    every byte at ~200MB/s. Reading once into RAM and loading from RAM is the only version of
+    this that the filesystem cannot undo.
+
+    Returns (path_to_load_from, seconds). Falls back to the volume when the copy will not fit or
+    fails: a slow pod beats a dead one.
+    """
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor
+
+    paths = weight_files(weights, names)
+    need = sum(os.path.getsize(p) for p in paths)
+    t0 = time.time()
+    try:
+        os.makedirs(os.path.join(stage_root, "ckpts"), exist_ok=True)
+        free = shutil.disk_usage(stage_root).free
+        # Headroom: the loader also builds fp32 tensors while these files are resident.
+        if free < need * 1.15:
+            print(f"[trellis] staging skipped: {free / 1e9:.1f} GB free at {stage_root}, "
+                  f"need {need * 1.15 / 1e9:.1f} GB — loading off the volume", flush=True)
+            return weights, 0.0
+
+        def copy(src):
+            rel = os.path.relpath(src, weights)
+            shutil.copyfile(src, os.path.join(stage_root, rel))
+            # Each checkpoint's sidecar config is what names its class — tiny, and the loader
+            # refuses the file without it.
+            cfg = f"{os.path.splitext(src)[0]}.json"
+            if os.path.exists(cfg):
+                shutil.copyfile(cfg, os.path.join(
+                    stage_root, os.path.relpath(cfg, weights)))
+
+        with ThreadPoolExecutor(max_workers=streams) as pool:
+            list(pool.map(copy, paths))
+        for top in ("pipeline.json", "texturing_pipeline.json"):
+            src = os.path.join(weights, top)
+            if os.path.exists(src):
+                shutil.copyfile(src, os.path.join(stage_root, top))
+    except OSError as e:
+        print(f"[trellis] staging failed ({e}) — loading off the volume", flush=True)
+        return weights, 0.0
+
+    dt = time.time() - t0
+    print(f"[trellis] staged {need / 1e9:.1f} GB to {stage_root} in {dt:.1f}s "
+          f"({need / dt / 1e6:.0f} MB/s, {streams} streams)", flush=True)
+    return stage_root, dt
+
+
+def models_for(tiers) -> list:
+    """The model names a process serving `tiers` must load — everything else is a 1.3B DiT's
+    worth of construct and 2.6GB of read for a tier no request can ask for."""
+    names = set(_ALWAYS_LOAD)
+    for tier in tiers:
+        names.update(_TIER_MODELS[tier])
+    return sorted(names)
+
+
+@contextlib.contextmanager
+def _skip_default_init():
+    """Constructing the pipeline default-inits every weight the checkpoint overwrites
+    microseconds later: measured 37s of a 43s load, and it scales with the pod's CPU, not its
+    GPU — the single largest term in a cold start. Allocation and structure are untouched. The
+    one tensor no checkpoint carries (ss_flow's rope_phases) is computed in __init__ rather than
+    initialised, so it comes out bit-identical."""
+    import torch.nn as nn
+    inits = [n for n in dir(nn.init) if n.endswith("_") and not n.startswith("_")]
+    resettable = [c for c in vars(nn).values()
+                  if isinstance(c, type) and issubclass(c, nn.Module)
+                  and "reset_parameters" in vars(c)]
+    saved_init = {n: getattr(nn.init, n) for n in inits}
+    saved_reset = {c: c.reset_parameters for c in resettable}
+    for n in inits:
+        setattr(nn.init, n, lambda t, *a, **k: t)
+    for c in resettable:
+        c.reset_parameters = lambda self: None
+    try:
+        yield
+    finally:
+        for n, fn in saved_init.items():
+            setattr(nn.init, n, fn)
+        for c, fn in saved_reset.items():
+            c.reset_parameters = fn
+
+
+def _patch_model_loader():
+    """Wrap TRELLIS's own checkpoint loader only — transformers models (DINOv3, BiRefNet) build
+    through their own path and keep stock init."""
+    import trellis2.models as tmodels
+    original = tmodels.from_pretrained
+
+    def from_pretrained(path, **kwargs):
+        with _skip_default_init():
+            return original(path, **kwargs)
+
+    tmodels.from_pretrained = from_pretrained
+
+
 class TrellisEngine:
     """Holds the 4B pipeline, lazy-loaded on first generate and resident for the process lifetime —
     this server owns its GPU."""
@@ -66,38 +200,96 @@ class TrellisEngine:
         self.repo, self.weights = repo, weights
         self.ptype, self.texture = ptype, texture
         self._pipe = None
+        self._lock = threading.Lock()
+        # Ride out on every generate: a pod's stdout is not reachable, so this is the only way
+        # cold-start attribution survives into the jobs table.
+        self.load_seconds = None
+        self.stage_seconds = None
+        self.warmup_seconds = None
+        self.warmup_error = None
+        self.warmed = False
+        # Where the checkpoints are read from: the volume, or the tmpfs copy staged at boot.
+        self.load_from = weights
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
         os.environ.setdefault("SPCONV_ALGO", "native")
         sys.path.insert(0, repo)
         _blackwell_patches()
+        _patch_model_loader()
 
     @property
     def loaded(self) -> bool:
         return self._pipe is not None
 
+    @property
+    def tiers(self) -> set:
+        """The pipeline types this process can serve: the configured one plus 512, which the OOM
+        path degrades to."""
+        return {self.ptype, "512"}
+
     def _ensure(self):
-        if self._pipe is not None:
-            return
-        from trellis2.pipelines import Trellis2ImageTo3DPipeline
-        print("[trellis] loading pipeline…", flush=True)
+        with self._lock:
+            if self._pipe is not None:
+                return
+            from trellis2.pipelines import Trellis2ImageTo3DPipeline
+            names = models_for(self.tiers)
+            Trellis2ImageTo3DPipeline.model_names_to_load = names
+            print(f"[trellis] loading pipeline… ({len(names)} models for {sorted(self.tiers)})",
+                  flush=True)
+            t0 = time.time()
+            pipe = Trellis2ImageTo3DPipeline.from_pretrained(self.load_from)
+            t1 = time.time()
+            pipe.cuda()
+            t2 = time.time()
+            self._pipe = pipe
+            self.load_seconds = round(t2 - t0, 1)
+            # The split says WHERE a slow cold start goes: from_pretrained = construct + read off
+            # the volume; cuda() is ~0 because this pipeline moves models per stage.
+            print(f"[trellis] loaded in {t2 - t0:.1f}s "
+                  f"(from_pretrained {t1 - t0:.1f}s, cuda {t2 - t1:.1f}s)", flush=True)
+
+    def warmup(self):
+        """Run one throwaway mesh before the worker registers.
+
+        Measured on a pod: the first real generate cost 53s against 13s for every one after it —
+        the encoders (DINOv3, BiRefNet) load lazily and CuMesh/triton compile their kernels on
+        first use. Paying that here means no user's job is the one that pays it, and a pod that
+        cannot generate at all dies at boot instead of failing a claimed job."""
+        from PIL import Image, ImageDraw
+        img = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+        ImageDraw.Draw(img).ellipse((96, 96, 416, 416), fill=(180, 140, 90, 255))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
         t0 = time.time()
-        pipe = Trellis2ImageTo3DPipeline.from_pretrained(self.weights)
-        t1 = time.time()
-        pipe.cuda()
-        t2 = time.time()
-        self._pipe = pipe
-        # The split says WHERE a slow cold start goes: from_pretrained = reading weights off the
-        # volume (mmap page faults may defer some of that into cuda()); cuda() = host->device copy.
-        print(f"[trellis] loaded in {t2 - t0:.1f}s "
-              f"(from_pretrained {t1 - t0:.1f}s, cuda {t2 - t1:.1f}s)", flush=True)
+        try:
+            # Walk the exact path a real job takes so the first-use costs it pays are the ones we
+            # pay here: same ptype and texture size the /generate defaults use (a first-use cost
+            # keyed on texture resolution would otherwise go unwarmed). Only decimation is dropped
+            # — it bounds output size, not which kernels compile.
+            self._ensure()
+            self._generate(img, self.ptype, texture=self.texture, decimation=20000)
+            self.warmup_seconds = round(time.time() - t0, 1)
+            print(f"[trellis] warmed in {self.warmup_seconds:.1f}s", flush=True)
+        except Exception as e:
+            self.warmup_error = str(e)[:300]
+            print(f"[trellis] warmup FAILED after {time.time() - t0:.1f}s: {self.warmup_error}",
+                  flush=True)
+        finally:
+            # Ready either way: a warmup that failed must not strand the pod short of the
+            # entrypoint's gate, where it would serve nothing and bill anyway.
+            self.warmed = True
 
     def generate(self, png_bytes: bytes, ptype: str, texture: int) -> bytes:
         from PIL import Image
         self._ensure()
         img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+        # decimation 50k, not 500k: the game bundles a 20k-triangle mesh (runtime/decimate.mjs),
+        # so o_voxel emitting 500k was ~25x waste that also STARVED that downstream simplifier —
+        # from 500k it fell back to a topology-ignoring sloppy pass (and on dense meshes stalled
+        # off-budget entirely). 50k gives it a clean source: measured across character/foliage/
+        # building, postprocess 4-13s -> ~2s, upload 17-22MB -> 2-3MB, final mesh equal-or-better.
         try:
-            return self._generate(img, ptype, texture, decimation=500000)
+            return self._generate(img, ptype, texture, decimation=50000)
         except Exception as e:
             if "out of memory" not in str(e).lower():
                 raise
@@ -106,7 +298,7 @@ class TrellisEngine:
             # small texture — instead of failing it outright.
             print(f"[trellis] OOM at ptype={ptype} texture={texture}; retrying degraded",
                   flush=True)
-            return self._generate(img, "512", min(texture, 512), decimation=250000)
+            return self._generate(img, "512", min(texture, 512), decimation=25000)
 
     def _generate(self, img, ptype: str, texture: int, decimation: int) -> bytes:
         import gc
@@ -116,14 +308,21 @@ class TrellisEngine:
         mesh = glb = None
         try:
             with torch.inference_mode():
+                t0 = time.time()
                 mesh = self._pipe.run(img, pipeline_type=ptype)[0]
                 mesh.simplify(16777216)
+                t1 = time.time()
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
                     coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
                     aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], decimation_target=decimation,
                     texture_size=texture, remesh=True, remesh_band=1, remesh_project=0,
                     verbose=False)
+                # The diffusion sampling is already fast (~4.5s); to_glb's remesh + decimate +
+                # texture bake is the rest. Log the split so the postprocess lever stays visible.
+                print(f"[trellis] sample {t1 - t0:.1f}s  postprocess "
+                      f"{time.time() - t1:.1f}s (decimation {decimation}, texture {texture})",
+                      flush=True)
             with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
                 tmp = f.name
             try:
@@ -149,7 +348,9 @@ def build_app(engine: TrellisEngine):
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "loaded": engine.loaded}
+        return {"status": "ok", "loaded": engine.loaded, "warm": engine.warmed,
+                "stage_seconds": engine.stage_seconds, "load_seconds": engine.load_seconds,
+                "warmup_seconds": engine.warmup_seconds, "warmup_error": engine.warmup_error}
 
     @app.post("/generate")
     async def generate(request: Request):
@@ -157,12 +358,21 @@ def build_app(engine: TrellisEngine):
         if not png:
             raise HTTPException(status_code=400, detail="empty body (expected PNG bytes)")
         ptype = request.query_params.get("ptype", engine.ptype)
+        if ptype not in engine.tiers:
+            raise HTTPException(status_code=400,
+                                detail=f"ptype {ptype} is not loaded by this process "
+                                       f"(serving {sorted(engine.tiers)})")
         texture = int(request.query_params.get("texture", engine.texture))
         try:
             t = time.time()
             glb = engine.generate(png, ptype, texture)
-            print(f"[trellis] ok {len(glb)} bytes {time.time() - t:.1f}s", flush=True)
-            return Response(content=glb, media_type="model/gltf-binary")
+            gen = time.time() - t
+            print(f"[trellis] ok {len(glb)} bytes {gen:.1f}s", flush=True)
+            return Response(content=glb, media_type="model/gltf-binary",
+                            headers={"X-Load-Seconds": str(engine.load_seconds),
+                                     "X-Stage-Seconds": str(engine.stage_seconds),
+                                     "X-Warmup-Seconds": str(engine.warmup_seconds),
+                                     "X-Generate-Seconds": f"{gen:.1f}"})
         except Exception as e:
             print(f"[trellis] FAIL: {str(e)[:200]}", flush=True)
             raise HTTPException(status_code=500, detail=str(e)[:200])
@@ -181,10 +391,41 @@ def main():
     # post-processing beside the resident pipeline (1024_cascade + 2K OOM'd a 32GB card).
     ap.add_argument("--ptype", default="512")
     ap.add_argument("--texture", type=int, default=1024)
+    # tmpfs by default: RAM the pod already has, and the one place the network filesystem cannot
+    # decide to drop our pages. Point it at a disk path (or a dir that won't fit) to opt out.
+    ap.add_argument("--stage-dir", default="/dev/shm/trellis-weights")
+    ap.add_argument("--no-warmup", dest="warmup", action="store_false",
+                    help="skip the throwaway boot mesh (the first real job then pays ~40s of "
+                         "lazy encoder load + kernel compile)")
     args = ap.parse_args()
 
     import uvicorn
+    # Warm the checkpoints while torch imports (~10s of pure CPU) rather than after it: the two
+    # cost nothing together, and only the files this tier will actually load are touched.
+    names = models_for({args.ptype, "512"})
+    staged = {}
+    warming = threading.Thread(
+        target=lambda: staged.update(zip(
+            ("path", "seconds"), stage_weights(args.weights, names, args.stage_dir))),
+        name="stage", daemon=True)
+    warming.start()
+
     engine = TrellisEngine(args.repo, args.weights, args.ptype, args.texture)
+
+    # Load ahead of the first request instead of inside it: on a pod the load would otherwise
+    # land in a claimed job, where it is wall-clock the user waits for AND exec_seconds debited
+    # to their grant. /health answers immediately either way (it reports `loaded`).
+    def preload():
+        warming.join()
+        engine.load_from = staged.get("path", args.weights)
+        engine.stage_seconds = round(staged.get("seconds", 0.0), 1)
+        engine._ensure()
+        if args.warmup:
+            engine.warmup()
+        else:
+            engine.warmed = True
+
+    threading.Thread(target=preload, name="preload", daemon=True).start()
     print(f"[trellis] serving on {args.host}:{args.port}", flush=True)
     uvicorn.run(build_app(engine), host=args.host, port=args.port)
 

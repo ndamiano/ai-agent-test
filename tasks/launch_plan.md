@@ -42,7 +42,8 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       a basic fail-closed CSAM-adjacent block landed (chat/spec input + the image-generation
       seam, `src/tools/safety.py`). Still pre-alpha tier (keyword/pattern only, no classifier/
       hash-matching) — don't hand it to anyone outside a trusted circle without Phase 2.
-- [ ] **Minimal legal** — `legal_ops.md` alpha tier (short ToS + privacy note).
+- [x] **Minimal legal** — alpha-tier ToS + privacy note live (`frontend/public/terms.html` +
+      `privacy.html`, linked from login with 18+ acceptance). Counsel review before paid.
 - [ ] **Measure** — real cost/time/failure per game (`unit_economics.md`) during these builds.
 
 **Exit:** people use it, want it, and you have real COGS/failure data.

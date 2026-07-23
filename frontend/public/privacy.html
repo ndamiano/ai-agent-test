@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestro — Privacy Note</title>
+<style>
+  body { background:#0f0f0f; color:#ddd; font:15px/1.6 system-ui,sans-serif;
+         max-width:44rem; margin:0 auto; padding:3rem 1.25rem; }
+  h1 { color:#fff; font-size:1.4rem; } h2 { color:#fff; font-size:1.05rem; margin-top:2rem; }
+  a { color:#7ab3ff; } .muted { color:#888; font-size:.85rem; }
+</style>
+</head>
+<body>
+<h1>Maestro — Privacy Note</h1>
+<p class="muted">Effective 2026-07-23 · Private alpha</p>
+
+<h2>What we store</h2>
+<ul>
+  <li><strong>Account:</strong> your handle and a salted hash of your password (never the
+      password itself), session tokens (stored hashed), and your credit ledger.</li>
+  <li><strong>What you create:</strong> your chat messages and game requests, the game
+      specifications drafted from them, the generated games and their assets, and build
+      logs/events.</li>
+  <li><strong>Usage:</strong> per-build GPU time (that's how compute budgets are metered) and
+      standard server logs (including IP addresses) kept by our hosting.</li>
+  <li><strong>Safety:</strong> if a request trips the illegal-content filter we log which
+      term matched and your account id — never the full text of the request.</li>
+</ul>
+
+<h2>What we don't do</h2>
+<ul>
+  <li>No analytics, tracking pixels, or advertising of any kind.</li>
+  <li>No selling or sharing of your data, except the infrastructure that runs the Service
+      (our host, and cloud GPU workers that process generation jobs) and where the law
+      requires it.</li>
+  <li>No third-party AI services: generation runs on models we operate ourselves. Your
+      prompts are not sent to outside AI providers.</li>
+  <li>No payment data — the alpha has no payments. (When payments arrive they'll be handled
+      by a payment provider; card details will never touch our servers.)</li>
+</ul>
+
+<h2>Cookies</h2>
+<p>One essential cookie (<code>maestro_play</code>) signs your browser into the game player.
+No tracking cookies. Your session token is kept in your browser's storage.</p>
+
+<h2>Retention and deletion</h2>
+<p>Data is kept while your account exists. Email us to delete your account and its data —
+generated games included. Backups may lag deletion by a short period.</p>
+
+<h2>Contact</h2>
+<p><a href="mailto:ndamiano100@gmail.com">ndamiano100@gmail.com</a></p>
+
+<p class="muted">See also the <a href="/terms.html">terms of service</a>.</p>
+</body>
+</html>

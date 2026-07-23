@@ -52,6 +52,12 @@ const LoginScreen: React.FC = () => {
                 >
                     {busy ? 'Signing in…' : 'Sign in'}
                 </button>
+                <div className="text-xs text-white/40 text-center">
+                    By signing in you confirm you are 18+ and accept the{' '}
+                    <a href="/terms.html" target="_blank" rel="noreferrer" className="underline hover:text-white/70">terms</a>
+                    {' '}and{' '}
+                    <a href="/privacy.html" target="_blank" rel="noreferrer" className="underline hover:text-white/70">privacy note</a>.
+                </div>
             </form>
         </div>
     )

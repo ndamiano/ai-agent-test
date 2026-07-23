@@ -6,9 +6,13 @@ alpha** (few trusted users, manual/free access) — but still important, and **m
 or paid access.** Capture it now so it's not a scramble at launch.
 
 ## Guardrail / phasing
-- **Private alpha** (trusted handful, manual accounts, no real payments): minimal — a short ToS /
-  "this is an alpha, no guarantees, don't misuse it" + a basic privacy note. Lower risk because users
-  are known.
+- **Private alpha** — DONE 2026-07-23: `frontend/public/terms.html` + `privacy.html` (served in
+  the clear, linked from the login screen with an 18+ / acceptance line). Covers: alpha
+  disclaimers, 18+, acceptable use (no CSAM in any form, no sexually explicit content, no
+  real-person likeness), credits no-cash-value + discretionary refunds, personal-use-only rights
+  in generated games (resale reserved to the later tier), liability cap, honest privacy
+  inventory (incl. the safety log's matched-terms-only detail; no analytics, no third-party AI).
+  Drafted in-house — **get counsel review before paid/public.**
 - **Paid / public:** the full set below is required before the first real dollar or public signup.
 
 ## Owner's direction — content ownership (Background)

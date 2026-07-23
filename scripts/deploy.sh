@@ -23,8 +23,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> Syncing source to ${PROD_HOST}:${REMOTE_DIR}"
 ssh "${PROD_HOST}" "mkdir -p '${REMOTE_DIR}'"
+# Ship only what the box needs to `docker compose build` + operate: source, runtime, frontend,
+# compose/Docker files, scripts. Repo paperwork (docs/tasks/tests/.github) and the pod-side
+# worker images stay home — the prod tree is a build context, not a mirror. (rsync --delete
+# never removes excluded paths, so leftovers from older deploys need a one-time manual sweep.)
 rsync -az --delete \
   --exclude '.git/' \
+  --exclude '.github/' \
+  --exclude 'docs/' \
+  --exclude 'tasks/' \
+  --exclude 'tests/' \
+  --exclude 'Dockerfile.worker-*' \
   --exclude 'venv/' \
   --exclude 'frontend/node_modules/' \
   --exclude 'frontend/dist/' \
@@ -33,7 +42,6 @@ rsync -az --delete \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
   --exclude 'src/logs/' \
-  --exclude 'tasks/nicknotes.md' \
   --exclude 'outputs/' \
   --exclude 'data/' \
   --exclude '.env' \

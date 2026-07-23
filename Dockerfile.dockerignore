@@ -1,0 +1,44 @@
+# Context excludes for the CONTROL-PLANE image only (BuildKit per-Dockerfile ignore: this file
+# REPLACES .dockerignore for builds of `Dockerfile`, so it repeats those rules). The worker
+# images (Dockerfile.worker-*) keep using .dockerignore — they COPY src/worker and
+# src/tools/trellis_server.py, which are excluded here: pod-side code that never runs on the
+# control plane and shouldn't ship in its image.
+.git/
+.githooks/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Frontend (source is copied for the node build stage; these are rebuilt/ignored)
+frontend/node_modules/
+frontend/dist/
+
+# Runtime: the toolchain is npm-ci'd in its own stage (platform binaries), and games/ is local
+# staged build output (gigabytes) — the container gets a named volume there instead.
+runtime/node_modules/
+runtime/games/
+
+# Local state + secrets — must never enter the image (durable state lives on the /data volume)
+outputs/
+src/config/settings.json
+src/logs/
+
+# Scratch / editor / OS
+*.log
+.env
+.DS_Store
+scratchpad/
+tmp/
+
+# Personal notes — never ship
+tasks/nicknotes.md
+
+# Pod-side code — runs on GPU workers, not the control plane
+src/worker/
+src/tools/trellis_server.py

@@ -36,7 +36,7 @@ def _ledger_rows(user_id, reason):
 def test_cli_grant_increments_balance_and_logs_a_transaction(capsys):
     user = store.create_user("alice", "pw")
     assert cli.main(["grant", "alice", "50"]) == 0
-    assert store.balance(user.id) == store.INITIAL_CREDITS + 50
+    assert store.balance(user.id) == 50
     rows = _ledger_rows(user.id, "admin_grant")
     assert [r["delta"] for r in rows] == [50]
     assert "balance=" in capsys.readouterr().out
@@ -74,8 +74,8 @@ def test_webhook_credits_the_ledger_on_a_verified_event(app_client, monkeypatch)
 
     r = app_client.post("/api/billing/webhook", content=b"ok")
     assert r.status_code == 200
-    assert r.json() == {"credited": 25, "balance": store.INITIAL_CREDITS + 25}
-    assert store.balance(user.id) == store.INITIAL_CREDITS + 25
+    assert r.json() == {"credited": 25, "balance": 25}
+    assert store.balance(user.id) == 25
     assert [row["delta"] for row in _ledger_rows(user.id, "purchase")] == [25]
 
 
@@ -85,7 +85,7 @@ def test_webhook_rejects_an_unverified_event_and_credits_nothing(app_client, mon
 
     r = app_client.post("/api/billing/webhook", content=b"tampered")
     assert r.status_code == 400
-    assert store.balance(user.id) == store.INITIAL_CREDITS
+    assert store.balance(user.id) == 0
     assert _ledger_rows(user.id, "purchase") == []
 
 

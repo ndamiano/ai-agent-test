@@ -30,8 +30,10 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def _user(handle="alice"):
+def _user(handle="alice", credits=10):
     u = auth_store.create_user(handle, "pw")
+    if credits:
+        auth_store.grant(u.id, credits, "admin_grant")
     return u, {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
 
 
@@ -74,21 +76,20 @@ def test_build_charges_once_and_grants_seconds(client, monkeypatch):
 
     r = client.post(f"/api/games/{run_id}/build", headers=headers)
     assert r.status_code == 200
-    assert auth_store.balance(user.id) == auth_store.INITIAL_CREDITS - 1
+    assert auth_store.balance(user.id) == 9
     row = db_store.game(run_id)
     assert row["credits_spent"] == 1
     assert row["seconds_granted"] == SECONDS_PER_CREDIT
 
     # Second enqueue: already charged — no second deduction, no second grant.
     client.post(f"/api/games/{run_id}/build", headers=headers)
-    assert auth_store.balance(user.id) == auth_store.INITIAL_CREDITS - 1
+    assert auth_store.balance(user.id) == 9
     assert db_store.game(run_id)["seconds_granted"] == SECONDS_PER_CREDIT
 
 
 def test_build_with_no_credits_is_402_and_uncharged(client, monkeypatch):
-    user, headers = _user()
+    user, headers = _user(credits=0)
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
-    auth_store.deduct(user.id, auth_store.INITIAL_CREDITS, "drain")
 
     r = client.post(f"/api/games/{run_id}/build", headers=headers)
     assert r.status_code == 402
@@ -111,7 +112,7 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
         assert r.json()["detail"]["reason"] == "compute_exhausted"
 
     # Still charged — a refusal is not a refund, and credits are not re-deducted on retry.
-    assert auth_store.balance(user.id) == auth_store.INITIAL_CREDITS - 1
+    assert auth_store.balance(user.id) == 9
     assert db_store.game(run_id)["credits_spent"] == 1
 
 

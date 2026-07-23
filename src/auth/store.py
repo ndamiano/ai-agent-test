@@ -23,8 +23,6 @@ from config.settings_manager import settings_manager
 
 _PBKDF2_ROUNDS = 200_000
 
-# Credits seeded on account creation (grant-on-create, deduct-per-build).
-INITIAL_CREDITS = 100
 
 # A session token stops resolving this long after it was issued, so a leaked token can't be
 # used forever — a re-login mints a fresh one.
@@ -123,9 +121,8 @@ def create_user(handle: str, password: str, role: str = "user") -> User:
         conn.execute(
             "INSERT INTO users (id, handle, password_hash, role, credits, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (user.id, user.handle, _hash_password(password), role, INITIAL_CREDITS, time.time()),
+            (user.id, user.handle, _hash_password(password), role, 0, time.time()),
         )
-        _log_txn(conn, user.id, INITIAL_CREDITS, "initial_grant", None)
     return user
 
 

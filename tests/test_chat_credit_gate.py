@@ -30,23 +30,24 @@ class _StubAgent:
         yield {"type": "done", "message": "ok"}
 
 
-def _user(handle="alice"):
+def _user(handle="alice", credits=0):
     u = auth_store.create_user(handle, "pw")
+    if credits:
+        auth_store.grant(u.id, credits, "admin_grant")
     return u, {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
 
 
 def test_a_turn_costs_nothing(client):
-    user, headers = _user()
-    before = auth_store.balance(user.id)
+    user, headers = _user(credits=5)
 
     r = client.post("/api/chat", headers=headers, json={"message": "make me a game"})
     assert r.status_code == 200
-    assert auth_store.balance(user.id) == before
+    assert auth_store.balance(user.id) == 5
 
 
 def test_zero_balance_is_refused(client):
+    # Accounts start broke — no grant, no chat.
     user, headers = _user()
-    auth_store.deduct(user.id, auth_store.INITIAL_CREDITS, "drain")
 
     r = client.post("/api/chat", headers=headers, json={"message": "make me a game"})
     assert r.status_code == 402
@@ -57,9 +58,7 @@ def test_zero_balance_is_refused(client):
 def test_one_credit_is_enough(client):
     """The gate is 'has a balance', not 'can afford a build' — a user mid-conversation must not be
     cut off the moment their last credit is committed to a build."""
-    user, headers = _user()
-    auth_store.deduct(user.id, auth_store.INITIAL_CREDITS - 1, "drain")
-    assert auth_store.balance(user.id) == 1
+    user, headers = _user(credits=1)
 
     assert client.post("/api/chat", headers=headers,
                        json={"message": "hi"}).status_code == 200
@@ -69,7 +68,6 @@ def test_clearing_a_session_is_not_gated(client):
     """Housekeeping must stay reachable at a zero balance — otherwise a broke user is stuck with
     whatever context their session already holds."""
     user, headers = _user()
-    auth_store.deduct(user.id, auth_store.INITIAL_CREDITS, "drain")
 
     assert client.delete("/api/chat", headers=headers).status_code == 200
 

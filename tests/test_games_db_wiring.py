@@ -186,3 +186,56 @@ def test_asset_blob_streams_and_guards(client):
     _, other = _user("bob")
     assert client.get(f"/api/games/{run_id}/assets/hero", headers=other).status_code == 403
     assert client.get(f"/api/games/{run_id}/assets", headers=other).status_code == 403
+
+
+def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
+    """A single-asset regen puts ONE image job on the queue carrying the new prompt (in the comfy
+    workflow) + the asset_id/mode/gate_ok/then in metadata — the batch's `skin` finalize saves and
+    re-stages it. No whole-game re-skin."""
+    user, headers = _user()
+    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    db_store.charge_game(run_id, 1, 10_000.0)   # grant compute so the enqueue is admitted
+
+    r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
+                    json={"prompt": "a brave knight, pixel art"})
+    assert r.status_code == 200
+    assert r.json() == {"status": "regenerating", "run_id": run_id, "asset_id": "hero"}
+
+    job = db_store.claim_job("image", "w1", 60)
+    assert job is not None and job["game_id"] == run_id and job["batch_id"]
+    assert job["payload"]["workflow"]["6"]["inputs"]["text"] == "a brave knight, pixel art"
+    meta = json.loads(job["metadata"])
+    assert meta["asset_id"] == "hero"
+    assert meta["mode"] == "2d"
+    assert meta["gate_ok"] is True
+    assert meta["then"] == {"operations": ["save_sprite"], "finalize": "skin"}
+
+
+def test_regenerate_cross_user_is_403(client):
+    user, _ = _user("alice")
+    _, other = _user("bob")
+    run_id = _make_game(user.id, {"title": "Mine", "mode": "2d", "frozen": True})
+    db_store.charge_game(run_id, 1, 10_000.0)
+    r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=other,
+                    json={"prompt": "x"})
+    assert r.status_code == 403
+
+
+def test_regenerate_bad_asset_id_is_400(client):
+    user, headers = _user()
+    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    db_store.charge_game(run_id, 1, 10_000.0)
+    r = client.post(f"/api/games/{run_id}/assets/bad!id/regenerate", headers=headers,
+                    json={"prompt": "x"})
+    assert r.status_code == 400
+
+
+def test_regenerate_out_of_compute_is_402(client):
+    user, headers = _user()
+    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    db_store.charge_game(run_id, 1, SECONDS_PER_CREDIT)
+    db_store.add_seconds_used(run_id, SECONDS_PER_CREDIT)   # burn the whole grant
+    r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
+                    json={"prompt": "x"})
+    assert r.status_code == 402
+    assert r.json()["detail"]["reason"] == "compute_exhausted"

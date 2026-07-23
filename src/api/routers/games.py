@@ -26,7 +26,7 @@ from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
-from maestro.codegen.reskin import add_assets
+from maestro.codegen.reskin import add_assets, regenerate_asset
 from maestro.codegen.run import freeze_spec
 from maestro.run_control import get as get_control
 from maestro.state import RunState
@@ -46,6 +46,10 @@ class AutoPauseBody(BaseModel):
 
 class FixBody(BaseModel):
     note: str = ""
+
+
+class RegenerateBody(BaseModel):
+    prompt: str
 
 
 # Asset skins in flight (one per run) — they run on the image/mesh queues, not the build GPU, so
@@ -188,6 +192,29 @@ async def game_asset_blob(run_id: str, asset_id: str, user: User = Depends(get_c
         if path.exists():
             return FileResponse(path, media_type=media)
     raise HTTPException(status_code=404, detail="no such asset")
+
+
+@router.post("/{run_id}/assets/{asset_id}/regenerate", response_model=Dict)
+async def regenerate_game_asset(run_id: str, asset_id: str, body: RegenerateBody,
+                                user: User = Depends(get_current_user)):
+    """Re-render ONE asset of a built game with a new prompt, without re-skinning the whole game.
+    Enqueues a single image job that saves the new png/glb and re-stages it through the same `skin`
+    finalize a full re-skin uses — so assets_done fires and the gallery refetches. A build row of
+    kind 'assets' tracks it (the finalize closes it out)."""
+    _require_state(run_id, user)
+    if not _ASSET_ID.match(asset_id):
+        raise HTTPException(status_code=400, detail="bad asset id")
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="a prompt is required")
+    _require_compute(run_id)
+    build_id = db_store.create_build(run_id, kind="assets")
+    db_store.build_started(build_id)
+    batch_id = await asyncio.to_thread(regenerate_asset, run_id, asset_id, prompt, build_id)
+    if batch_id is None:
+        db_store.build_finished(build_id, "failed")
+        raise HTTPException(status_code=400, detail="prompt blocked by the safety filter")
+    return {"status": "regenerating", "run_id": run_id, "asset_id": asset_id}
 
 
 @router.get("/{run_id}/events", response_model=List[Dict])

@@ -23,7 +23,7 @@ from auth.store import User
 from db import store as db_store
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
 from maestro.codegen.reskin import add_assets
-from maestro.codegen.run import fix_from_note, freeze_spec
+from maestro.codegen.run import freeze_spec
 from maestro.run_control import get as get_control
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -44,8 +44,8 @@ class FixBody(BaseModel):
     note: str = ""
 
 
-# Fix / asset jobs in flight (one per run), so the endpoints double-fire guard without racing the
-# build queue (which serializes builds). A daemon thread runs each; the set gates re-entry.
+# Asset skins in flight (one per run) — they run on the image/mesh queues, not the build GPU, so
+# they don't ride the build queue. A daemon thread runs each; the set gates re-entry.
 _active_lock = threading.Lock()
 _active: set = set()
 
@@ -98,7 +98,8 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     if qstate and qstate["status"] == "queued":
         status, queue_position = "queued", qstate["position"]
     elif qstate:
-        status, queue_position = ("paused" if ctrl and ctrl.paused else "building"), None
+        live = "fixing" if qstate["kind"] == "fix" else "building"
+        status, queue_position = ("paused" if ctrl and ctrl.paused else live), None
     else:
         status, queue_position = ("built" if built else "idle"), None
     return {
@@ -212,32 +213,17 @@ async def auto_pause_game(run_id: str, body: AutoPauseBody, user: User = Depends
 
 @router.post("/{run_id}/fix", response_model=Dict)
 async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_user)):
-    """Patch a built game from a free-text note ('the player falls through the floor'), on a
-    background thread. Progress + completion stream over the websocket (build_*)."""
+    """Patch a built game from a free-text note ('the player falls through the floor'). Queued on
+    the same single-GPU queue as a build — a fix ends in its own re-gating build loop, so the two
+    can't run at once. Progress + completion stream over the websocket (fix_started, build_*)."""
     _require_state(run_id, user)
-    key = f"fix:{run_id}"
-    with _active_lock:
-        if key in _active:
-            raise HTTPException(status_code=409, detail="a fix is already running for this run")
-        _active.add(key)
+    try:
+        position = build_queue.enqueue(run_id, user.id, kind="fix", note=body.note)
+    except AlreadyQueued:
+        raise HTTPException(status_code=409, detail="a build or fix is already running for this run")
 
-    build_id = db_store.create_build(run_id, kind="fix")
-
-    def _run():
-        db_store.build_started(build_id)
-        try:
-            result = fix_from_note(run_id, body.note)
-            db_store.build_finished(build_id, "succeeded" if result.ok else "failed",
-                                    steps=result.steps)
-        except Exception:
-            logger.exception("fix failed for %s", run_id)
-            db_store.build_finished(build_id, "failed")
-        finally:
-            with _active_lock:
-                _active.discard(key)
-
-    threading.Thread(target=_run, daemon=True, name=f"fix-{run_id}").start()
-    return {"status": "fixing", "run_id": run_id}
+    return {"status": "fixing" if position == 0 else "queued",
+            "run_id": run_id, "queue_position": position}
 
 
 @router.post("/{run_id}/assets", response_model=Dict)
@@ -251,9 +237,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             raise HTTPException(status_code=409, detail="assets are already being skinned for this run")
         _active.add(key)
 
-    build_id = db_store.create_build(run_id, kind="assets")
-
-    def _run():
+    def _run(build_id: str):
         db_store.build_started(build_id)
         _emit("assets_started", run_id)
         try:
@@ -270,5 +254,13 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             with _active_lock:
                 _active.discard(key)
 
-    threading.Thread(target=_run, daemon=True, name=f"assets-{run_id}").start()
+    # Anything that throws before the thread owns the key has to hand it back, or every later
+    # skin of this run 409s until the process restarts.
+    try:
+        build_id = db_store.create_build(run_id, kind="assets")
+        threading.Thread(target=_run, args=(build_id,), daemon=True, name=f"assets-{run_id}").start()
+    except Exception:
+        with _active_lock:
+            _active.discard(key)
+        raise
     return {"status": "skinning", "run_id": run_id}

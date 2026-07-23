@@ -22,7 +22,7 @@ export interface Spec {
     frozen: boolean
 }
 
-export type GameStatus = 'idle' | 'queued' | 'building' | 'paused' | 'built'
+export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 'built'
 
 export interface GameDetail {
     run_id: string
@@ -56,8 +56,11 @@ export type WebSocketMessage = {
     run_id?: string
     task_id?: string
     timestamp?: string
-    // build_queued
+    // build_queued — kind is 'build' | 'fix'
     position?: number
+    kind?: string
+    // fix_started
+    note?: string
     // build_started / build_step
     n_failing?: number
     step?: number

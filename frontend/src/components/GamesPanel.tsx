@@ -177,6 +177,10 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'spec_frozen':
                     load()
                     break
+                case 'fix_started':
+                    setBuilding(true); setStatus('fixing')
+                    setFeed(prev => [...prev.slice(-60), `⚒ fixing — ${msg.note ?? ''}`])
+                    break
                 case 'build_started':
                     setBuilding(true); setStatus('running')
                     setFeed(prev => [...prev.slice(-60), `build started — ${msg.n_failing} checks failing`])
@@ -260,7 +264,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         const note = fixNote.trim()
         if (!note) return
         setFixNote('')
-        act(async () => { await api.fixGame(runId, note); setBuilding(true); setStatus('running') }, 'Fix failed', false)
+        act(async () => { await api.fixGame(runId, note); setBuilding(true); setStatus('fixing') }, 'Fix failed', false)
     }
 
     if (loading && !detail) return <div className="p-6 text-gray-500 text-sm">Loading…</div>
@@ -279,7 +283,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     <Badge label={detail.mode.toUpperCase()} tone="blue" />
                     {detail.frozen ? <Badge label="frozen" tone="blue" /> : <Badge label="draft" tone="gray" />}
                     {detail.built ? <Badge label="built" tone="green" /> : null}
-                    {building ? <Badge label={status === 'paused' ? 'paused' : 'building…'} tone={statusTone as any} /> : null}
+                    {building ? <Badge label={status === 'paused' ? 'paused' : status === 'fixing' ? 'fixing…' : 'building…'} tone={statusTone as any} /> : null}
                     <span className="text-gray-600 text-[11px] font-mono ml-auto">{detail.run_id}</span>
                 </div>
 
@@ -293,7 +297,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                             {detail.built ? 'Rebuild' : 'Build'}
                         </button>
                     )}
-                    {building && status === 'running' && (
+                    {building && (status === 'running' || status === 'fixing') && (
                         <button onClick={pause} disabled={acting} className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Pause</button>
                     )}
                     {building && status === 'paused' && (

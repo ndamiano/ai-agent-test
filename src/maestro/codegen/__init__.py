@@ -1,6 +1,9 @@
-"""Codegen build path: the local model writes real JS game code against the primitive kit.
+"""Codegen build path: the local model writes real TS game code against the primitive kit.
 
 Replaces the IR path. The chat model drafts a design SPEC (stage 1), the human freezes it, then the
-surviving `AgentLoop` drives ONE `CodegenModule` (stage 2) that authors/patches `game.js` against the
-kit until the local gradient (headless smoke + probe invariants) passes. No engine backend, no IR.
+build (stage 2) drives ONE `CodegenModule`'s gates to green. The build is a CHAIN of `llm` jobs:
+`build_chain` seeds the scaffolds, sweeps the gates, and enqueues one llm turn; the control-plane's
+`/worker/complete` reloads the durable cursor (`build_state.json`), applies the turn, and enqueues the
+next — no resident loop. `build_steps` holds the per-shape fix machines (plan/data/author/read→edit).
+The gate gradient (headless smoke + probe invariants) decides "done", never the model.
 """

@@ -16,6 +16,7 @@ logger = logging.getLogger("reaper")
 TICK_SECONDS = 5.0
 STALE_PENDING_SECONDS = 1800.0
 FINALIZE_GRACE_SECONDS = 60.0
+STUCK_BUILD_GRACE_SECONDS = 60.0
 
 
 class Reaper:
@@ -51,7 +52,14 @@ class Reaper:
         if failed:
             logger.warning("failed %d stale pending job(s)", len(failed))
 
-        from maestro.codegen import asset_chain   # module-level would cycle through db.store
+        from maestro.codegen import asset_chain, build_chain   # module-level would cycle via db.store
         for batch_id in db_store.batches_awaiting_finalize(FINALIZE_GRACE_SECONDS):
             if asset_chain.run_finalize(batch_id):
                 logger.warning("finalized batch %s — its live completion was lost", batch_id)
+
+        # A build whose driver died mid-turn has no in-flight llm job and won't advance itself.
+        # Re-drive it from the durable cursor; advance's per-run lock makes this a no-op if a live
+        # completion is already advancing it.
+        for run_id in db_store.stuck_builds(STUCK_BUILD_GRACE_SECONDS):
+            logger.warning("re-advancing stuck build %s — its driver was lost mid-turn", run_id)
+            build_chain.advance(run_id)

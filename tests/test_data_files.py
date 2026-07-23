@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 
-from maestro.codegen import data_files, reskin
+from maestro.codegen import reskin
 from maestro.codegen.data_files import (
     data_dir,
     data_manifest_path,
@@ -18,9 +18,11 @@ from maestro.codegen.data_files import (
     validate_data,
     write_design,
 )
-from maestro.codegen.module import CodegenModule, _design_data_fix
+from maestro.codegen import build_steps
+from maestro.codegen.build_state import FixCursor
+from maestro.codegen.module import CodegenModule
 from maestro.modules.context import build_context
-from maestro.modules.module import Error, ErrorType
+from maestro.modules.module import ErrorType
 from maestro.codegen.scaffold import seed_scaffold
 from maestro.state import RunState
 
@@ -480,26 +482,17 @@ def test_game_importing_data_ts_passes_every_gate(tmp_path):
     assert CodegenModule().get_errors(_ctx(tmp_path)) == []
 
 
-class _Svc:
-    def __init__(self, content):
-        self.content = content
-        self.reports = []
-
-    def infer(self, msgs, schemas, **kw):
-        return {"choices": [{"message": {"content": self.content}}]}
-
-    def _report(self, s):
-        self.reports.append(s)
-
-
-def _design_error():
-    return Error(type=ErrorType.BUILD, code="data", component="game", message="no data design yet")
+def _design_apply(tmp_path, content):
+    """Drive the data shape's design apply over one model reply (no infer)."""
+    fc = FixCursor(shape="data", error={"type": "build", "code": "data", "component": "game",
+                                        "message": ""}, started=True)
+    return build_steps.data_step({}, tmp_path, {}, fc,
+                                 {"choices": [{"message": {"content": content}}]})
 
 
 def test_design_fix_fallback_writes_empty_design_on_garbage(tmp_path):
     _write_planned_game(tmp_path)
-    svc = _Svc("I think the game needs, hmm, ```ts\nconst x = 1;\n```")
-    _design_data_fix(CodegenModule(), _ctx(tmp_path), _design_error(), 0, svc, None)
+    _design_apply(tmp_path, "I think the game needs, hmm, ```ts\nconst x = 1;\n```")
     assert json.loads(data_manifest_path(tmp_path).read_text()) == {"datasets": []}
     assert not (tmp_path / "game" / "data.ts").exists()
     assert CodegenModule().get_errors(_ctx(tmp_path)) == []   # build proceeds on the empty design
@@ -509,12 +502,11 @@ def test_design_fix_lands_a_valid_design(tmp_path):
     _write_planned_game(tmp_path)
     design = {"datasets": [{"name": "waves", "fields": {"count": "number"},
                             "rows": [{"id": "wave_1", "count": 3}]}]}
-    svc = _Svc(f"```json\n{json.dumps(design)}\n```")
-    _design_data_fix(CodegenModule(), _ctx(tmp_path), _design_error(), 0, svc, None)
+    out = _design_apply(tmp_path, f"```json\n{json.dumps(design)}\n```")
     assert validate_data(tmp_path) == []
     src = (tmp_path / "game" / "data.ts").read_text()
     assert "export const WAVES: readonly WavesRow[]" in src
-    assert any("designed 1 dataset(s): waves" in r for r in svc.reports)
+    assert "designed 1 dataset(s): waves" in out.report
 
 
 # ── reskin wiring ─────────────────────────────────────────────────────────────

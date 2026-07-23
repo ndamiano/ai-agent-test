@@ -223,6 +223,19 @@ class LLMConnector:
             self.queue, {"path": "/v1/responses", "body": payload},
             model=payload.get("model"), timeout_seconds=self.job_timeout_seconds)
 
+    def build_llm_job(self, messages: list, tools: list = None, max_tokens: int = None,
+                      reasoning=_REASONING_UNSET) -> tuple:
+        """Build the (queue payload, model) for one Responses request WITHOUT enqueuing or waiting —
+        the fire-and-forget seam the build chain uses: it lands the job itself (with build metadata)
+        and drives the next turn from the completion, rather than blocking on run_job."""
+        body = self._responses_payload(messages, tools, None, max_tokens, reasoning=reasoning)
+        return {"path": "/v1/responses", "body": body}, body.get("model")
+
+    def to_chat(self, result: dict) -> dict:
+        """Normalize a worker's Responses result back to chat shape — the build chain applies the
+        completion's raw result, which arrives in Responses form off the queue."""
+        return _responses_to_chat(result)
+
 
 _cached_connector: Optional[LLMConnector] = None
 

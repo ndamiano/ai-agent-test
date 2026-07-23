@@ -123,31 +123,34 @@ def test_seed_skips_worldgen_when_not_world_flagged(tmp_path, stub_bridge):
         assert (game_dir(st.run_dir) / "main.ts").exists()       # ...but the scaffold still lands
 
 
-def test_run_build_seeds_both_before_loop(tmp_path, stub_bridge, monkeypatch):
-    """run_build on a world-flagged frozen spec has world.ts AND the control scaffold on disk before
-    the driving loop runs. AgentLoop and the connector are stubbed so no model is called."""
-    class _Result:
-        ok, steps, failures, elapsed = False, 0, [], 0.0
+def test_run_build_seeds_both_before_the_first_turn(tmp_path, stub_bridge, monkeypatch):
+    """kickoff on a world-flagged frozen spec has world.ts AND the control scaffold on disk before the
+    first llm turn is enqueued (start_build seeds, THEN advances). The connector + enqueue are stubbed
+    so no model is called; the enqueue records whether both seeds already exist."""
+    from db import store as db_store
+    from maestro.codegen import build_chain
 
-    class _FakeLoop:
-        def __init__(self, *a, **k):
-            gd = game_dir(RunState(rid).run_dir)
-            _FakeLoop.seen = ((gd / "world.ts").exists(), (gd / "main.ts").exists())
+    class _FakeConn:
+        def build_llm_job(self, messages, schemas=None, max_tokens=None, reasoning=None):
+            return {"messages": messages}, "model"
 
-        def run(self):
-            return _Result()
+    seen = {}
 
-    monkeypatch.setattr(run_mod, "AgentLoop", _FakeLoop)
-    monkeypatch.setattr(run_mod, "get_connector", lambda: object())
+    def capture_then_stop(queue, payload, **kw):
+        gd = game_dir(RunState(rid).run_dir)
+        seen["at_enqueue"] = ((gd / "world.ts").exists(), (gd / "main.ts").exists())
+        raise db_store.InsufficientCompute(rid, 0.0, 1.0)   # end the build right after capturing
+
+    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
+    monkeypatch.setattr(build_chain, "get_connector", lambda: _FakeConn())
+    monkeypatch.setattr(db_store, "enqueue_job", capture_then_stop)
 
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
-        st = RunState(rid)
-        st.write_spec(_world_spec())
-        result = run_mod.run_build(rid, max_steps=1)
+        RunState(rid).write_spec(_world_spec())
+        build_chain.kickoff(rid, kind="build")
 
-        assert result.ok is False
-        assert _FakeLoop.seen == (True, True)                   # both seeds landed before the loop built
+    assert seen["at_enqueue"] == (True, True)                  # both seeds landed before the first turn
 
 
 def test_world_ts_carries_schema_header_surviving_read_elision():

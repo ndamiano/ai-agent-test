@@ -5,10 +5,9 @@ opt-out runs real tsc via the gates."""
 
 import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from maestro.codegen import fix_classes
-from maestro.codegen import module as module_mod
 from maestro.codegen.fix_classes import (
     CONTRACT,
     DEFAULT,
@@ -20,7 +19,7 @@ from maestro.codegen.fix_classes import (
     strip_unplanned_imports,
 )
 from maestro.codegen.gates import game_dir, reconcile_types, typecheck
-from maestro.codegen.module import _detect_single_mover, dispatch_fix
+from maestro.codegen.module import _detect_single_mover
 from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
 
@@ -220,19 +219,23 @@ def test_phantom_import_class_strips_imports_of_nonexistent_modules(tmp_path):
     assert _strip_phantom_imports(tmp_path, exists) is None   # module exists — a real bug, not phantom
 
 
-def test_dispatch_fix_reports_every_deterministic_change_shape(tmp_path):
+def test_start_fix_reports_every_deterministic_change_shape(tmp_path):
     """The summary line must format both change shapes — reconcile's (kind, (a, b)) tuples and
-    ambient-shadow's (kind, filename) — a bare-string change once crashed the whole build here."""
+    ambient-shadow's (kind, filename) — a bare-string change once crashed the whole build here. The
+    deterministic pass now runs when the driver STARTS a read→edit fix: a change resolves it with no
+    llm turn (returns False, stays in the outer sweep)."""
+    from maestro.codegen import build_chain
+    from maestro.codegen.build_state import BuildCursor
+    from maestro.state import RunState
+    rs = RunState(str(tmp_path))
+    cursor = BuildCursor(build_id="b", t0=0.0)
     for changes in ([("strip", "main.ts")], [("field", ("Hero", "stamina"))]):
         cls = fix_classes.FixClass(
             id="stub", matches=lambda e: True,
             deterministic=lambda rd, e, c=changes: {"changes": c, "count": len(c)})
-        services = MagicMock()
-        context = MagicMock()
-        context.state.run_dir = tmp_path
-        with patch.object(module_mod, "classify", lambda e: cls):
-            dispatch_fix(None, context, _err("boom"), 0, services, lambda n, a: None)
-        assert services._report.called
+        with patch.object(build_chain, "classify", lambda e: cls):
+            started = build_chain._start_fix(str(tmp_path), rs, cursor, _err("boom"), False)
+        assert started is False   # deterministic resolved it — no llm turn
 
 
 # ── contract-assert: deterministic append of the known line ───────────────────

@@ -2,10 +2,13 @@
 
   create_run(user_id)          → a fresh run dir
   draft_spec(request)          → the local model drafts a design SPEC (stage 1)
-  run_build(run_id)            → the AgentLoop drives CodegenModule to a passing game.js (stage 2)
+  run_build(run_id)            → kick the build off + BLOCK-poll the cursor to done (CLI only; the web
+                                 path is fire-and-forget via build_chain.kickoff — stage 2)
   python -m maestro.codegen.run "<request>"  → draft → freeze (your ok) → build → play path
 
-The build refuses until the spec is frozen. One game per run: runs/<id>/game.js.
+The build refuses until the spec is frozen. The build itself is a chain of llm jobs driven by
+build_chain's completion handler, so `run_build`/`fix_from_note` only START it and wait — the API
+server (where worker completions land) must be up, same as every other queue stage.
 """
 
 import json
@@ -20,27 +23,29 @@ from auth import store
 from db import store as db_store
 from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
-from maestro.agent_loop import AgentLoop
-from maestro.codegen import worldgen_bridge
+from maestro.codegen import build_chain, build_state, worldgen_bridge
 from maestro.codegen.controls import normalize_controls
-from maestro.codegen.fix_classes import classify
-from maestro.codegen.gates import RUNTIME_DIR, entry_src_path, game_dir, stage_for_play
-from maestro.codegen.module import (
-    _FIX_LOOP_MAX_TURNS,
-    CodegenModule,
-    _read_write_loop_fix,
-)
+from maestro.codegen.gates import RUNTIME_DIR, entry_src_path, game_dir
+from maestro.codegen.module import CodegenModule
 from maestro.codegen.scaffold import seed_scaffold
-from maestro.codegen.tools import build_codegen_tools
 from maestro.modules.context import build_context
-from maestro.modules.module import Error, ErrorType
-from maestro.run_control import get_or_create, remove
-from maestro.services import BudgetExhausted, Services
 from maestro.state import RunState
 from tools.build_events import _emit
-from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
+
+_POLL_INTERVAL = 1.0
+
+
+class BuildResult:
+    """The CLI's view of a finished build (the web path is fire-and-forget and reads status/events
+    instead). ok/steps come off the durable cursor; failures are recomputed from the gates."""
+
+    def __init__(self, ok: bool, steps: int, elapsed: float, failures: list):
+        self.ok = ok
+        self.steps = steps
+        self.elapsed = elapsed
+        self.failures = failures
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
@@ -152,64 +157,42 @@ def _mirror_spec_meta(run_id: str, spec: dict) -> None:
                               bool(spec.get("frozen")))
 
 
-def run_build(run_id: str, max_steps: int = 60):
-    """Stage 2: drive CodegenModule until game.js passes the local gates. The surviving AgentLoop
-    does the driving — collect errors (authored/runs/plays), fix the top one, repeat."""
+def run_build(run_id: str, max_steps: int = 60) -> BuildResult:
+    """Stage 2 (CLI/blocking): kick the build off, then poll the durable cursor to completion. The
+    build itself is fire-and-forget — build_chain enqueues each llm turn and the control-plane's
+    completion handler drives the next — so this only WAITS. The API server must be up (that is where
+    worker completions land and the chain advances), same as every other queue stage."""
+    build_chain.kickoff(run_id, kind="build", max_steps=max_steps)
+    return _await_build(run_id)
 
+
+def fix_from_note(run_id: str, note: str, max_steps: int = 40) -> BuildResult:
+    """Patch a built game from a HUMAN playtest note (the local play-critic). The note seeds the
+    build's FIRST fix — a read→edit subloop over a synthetic HUMAN error (neutral code "human" →
+    `default` fix class, so grounded hunk edits, never a whole-file rewrite) — after which the outer
+    loop re-gates and repairs any regression the patch caused, exactly like a build."""
+    build_chain.kickoff(run_id, kind="fix", note=note, max_steps=max_steps)
+    return _await_build(run_id)
+
+
+def _await_build(run_id: str) -> BuildResult:
+    """Block until the build's cursor reports done, then summarize it. CLI-only — the web path never
+    waits."""
     state = RunState(run_id)
-    spec = state.read_spec()
-    if spec is None:
-        raise ValueError(f"no spec for run {run_id!r} — draft one first")
-
-    _seed(run_id, state, spec)
-    tools = build_codegen_tools(state)
-    control = get_or_create(run_id)
-    loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),
-                     max_steps=max_steps, control=control,
-                     on_event=lambda ev: _emit(ev.pop("type"), run_id, **ev),
-                     on_milestone=lambda cid: _emit("component_complete", run_id, component_id=cid))
-    db_store.set_status(run_id, "building")
-    t0 = time.perf_counter()
-    try:
-        with run_scope(run_id):
-            result = loop.run()
-    except BaseException:
-        db_store.set_status(run_id, "failed")
-        raise
-    finally:
-        remove(run_id)
-    result.elapsed = time.perf_counter() - t0
-    if result.ok:
-        stage_for_play(state.run_dir, run_id)
-    db_store.set_status(run_id, "built" if result.ok else "failed")
+    while True:
+        cursor = build_state.load(state.run_dir)
+        if cursor is not None and cursor.phase == "done":
+            break
+        time.sleep(_POLL_INTERVAL)
+    elapsed = time.time() - cursor.t0
+    failures = []
+    if not cursor.ok:
+        spec = state.read_spec()
+        ctx = build_context(spec, state)
+        failures = [e for _, e in build_chain.collect_errors(CodegenModule(), ctx)]
     logger.info("codegen build %s: ok=%s steps=%d elapsed=%.1fs",
-                run_id, result.ok, result.steps, result.elapsed)
-    return result
-
-
-def fix_from_note(run_id: str, note: str, max_steps: int = 40):
-    """Patch a built game from a HUMAN playtest note (the local play-critic: the human is the eye the
-    headless gates aren't). The note runs through the SAME read→edit subloop as a gate failure — the
-    note is the failing-gate text, a synthetic Error whose neutral code ("human") classifies to the
-    `default` fix class — so a human fix gets grounded hunk edits, never a whole-file rewrite. Then
-    re-run the loop so any gate the patch regresses is re-fixed before shipping."""
-
-    state = RunState(run_id)
-    spec = state.read_spec()
-    if spec is None:
-        raise ValueError(f"no run {run_id!r}")
-    error = Error(type=ErrorType.HUMAN, code="human", component="game",
-                  message=("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is "
-                           f"WRONG when a person plays it. Fix exactly this:\n{note}"))
-    services = Services(get_connector(), build_codegen_tools(state), spec, state,
-                        budget=_FIX_LOOP_MAX_TURNS)
-    try:
-        with run_scope(run_id):
-            _read_write_loop_fix(None, build_context(spec, state), error, 0, services,
-                                 services.dispatch, fix_class=classify(error))
-    except BudgetExhausted:
-        pass   # the subloop spent its cap — the re-gate below still runs and re-fixes
-    return run_build(run_id, max_steps=max_steps)   # re-gate (stages on ok) + auto-fix any regression the patch caused
+                run_id, cursor.ok, cursor.step, elapsed)
+    return BuildResult(bool(cursor.ok), cursor.step, elapsed, failures)
 
 
 def _cli(request: str) -> int:

@@ -20,18 +20,10 @@ import json
 import re
 from pathlib import Path
 
-from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import data_files
-from maestro.codegen.fix_classes import (
-    classify,
-    strip_dead_creategame,
-    strip_unplanned_imports,
-)
 from maestro.codegen.gates import (
     RUNTIME_DIR,
-    extract_code,
     game_files,
-    manifest_path,
     read_manifest,
     run_headless,
     run_probe,
@@ -46,7 +38,6 @@ from maestro.codegen.scaffold import (
     scheme_of,
 )
 from maestro.modules.module import Check, Error, ErrorType, Module
-from maestro.services import parse_args, salvage_tool_call
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _CODE_MAX_TOKENS = 16000
@@ -122,37 +113,6 @@ def _seeded_block(run_dir) -> str:
                      "forest and outlying sites (exports WORLD / spawnWorld / heightAt). The game is "
                      "built ON it — never plan a terrain/worldgen/map file, the world exists.")
     return "\n\n# ALREADY ON DISK — build on these, never plan them\n" + "\n".join(lines)
-
-
-def _infer(services, system: str, user: str, max_tokens: int) -> str:
-    msgs = MessageBuilder(system).add_user(user).build()
-    resp = services.infer(msgs, [], max_tokens=max_tokens)
-    return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
-
-
-def _author_via_write(services, system: str, user: str, dispatch, file: str, max_tokens: int) -> dict:
-    """Author ONE file THROUGH the write tool — the same real tool call the fix loop uses, not a raw
-    fenced-block completion scraped by extract_code. The tool boundary is what stops the model treating
-    the block as a scratchpad (chatter comments, a second "rewritten" copy of a function): the payload
-    is a single `code` arg for one named file, not free-form markdown. Falls back to salvaging a tool
-    call, then to a fenced block, from the content — a local model that ignores the tool still lands."""
-    msgs = MessageBuilder(system).add_user(user).build()
-    # The model thinks in-content (the reasoning knob is a no-op on it) and a long think can eat the
-    # whole token budget, truncating the tool call mid-arg → unparseable → no code. That's a per-call
-    # coin flip, so one immediate retry usually lands — without it the whole outer step (re-detect,
-    # rebuilt context) is spent to do the same retry.
-    for _ in range(2):
-        resp = services.infer(msgs, [_WRITE_SCHEMA], max_tokens=max_tokens)
-        message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
-        content = message.get("content", "") or ""
-        tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name") == "write"]
-        if not tcs:
-            salvaged = salvage_tool_call(content, [_WRITE_SCHEMA])
-            tcs = [salvaged] if salvaged else []
-        code = parse_args(tcs[0]["function"].get("arguments")).get("code", "") if tcs else extract_code(content)
-        if code.strip():
-            break
-    return dispatch("write", {"code": code, "file": file})
 
 
 def _manifest_files(run_dir) -> list:
@@ -407,141 +367,9 @@ def _hook_exports(spec: dict) -> list:
     return hooks
 
 
-def _plan_fix(module, context, error, slot, services, dispatch):
-    """Author the manifest: the spec's systems → a small set of files (the entry-hook game.ts + one
-    per system), each with its exports. A file the pipeline already GENERATED (main.ts's control
-    scaffold, a world game's world.ts) is never planned — the model can't author or edit it, so
-    listing it would strand an authoring step. On unparseable output, fall back to a single-file
-    manifest so the build proceeds rather than thrashing on the plan."""
-    spec = context.spec
-    run_dir = context.state.run_dir
-    system = (_PROMPTS / "plan_game.txt").read_text(encoding="utf-8")
-    user = f"{_design_block(spec)}{_seeded_block(run_dir)}\n\nPlan the files. Output ONLY one ```json block."
-    text = _infer(services, system, user, _PLAN_MAX_TOKENS)
-    m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.S)
-    generated = {n for n, src in game_files(run_dir).items() if src.lstrip().startswith("// GENERATED")}
-    try:
-        manifest = json.loads(m.group(1) if m else text)
-        files = [f for f in (manifest.get("files") or []) if f.get("name")]
-        files = [f for f in files if f["name"] not in generated]
-        assert any(f["name"] == ENTRY_HOOK for f in files)
-        manifest = {"files": files}
-    except Exception:
-        manifest = {"files": [{"name": ENTRY_HOOK,
-                               "purpose": "the whole game behind the scaffold hooks",
-                               "exports": _hook_exports(spec)}]}
-    manifest_path(context.state.run_dir).parent.mkdir(parents=True, exist_ok=True)
-    manifest_path(context.state.run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    services._report(f"planned {len(manifest['files'])} file(s): {', '.join(f['name'] for f in manifest['files'])}")
-
-
 def _json_from(text: str):
     m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.S)
     return json.loads(m.group(1) if m else text)
-
-
-def _design_data_fix(module, context, error, slot, services, dispatch):
-    """One-shot design of the game's data files from the frozen spec (the analog of _plan_fix).
-    Unparseable output falls back to the EMPTY design so the build proceeds; a dataset the
-    validator still rejects after landing is dropped wholesale (write_design)."""
-    run_dir = context.state.run_dir
-    system = (_PROMPTS / "design_data.txt").read_text(encoding="utf-8")
-    filelist = "\n".join(f"- {f['name']}: {f.get('purpose', '')}" for f in _manifest_files(run_dir)) \
-        or "(none planned yet)"
-    user = (f"{_design_block(context.spec)}\n\n# PLANNED FILES\n{filelist}\n\n"
-            "Design the data files. Output ONLY one ```json block.")
-    text = _infer(services, system, user, _DATA_MAX_TOKENS)
-    try:
-        design = _json_from(text)
-        datasets = design.get("datasets")
-        assert isinstance(datasets, list)
-    except Exception:
-        datasets = []
-    dropped = data_files.write_design(run_dir, datasets)
-    data_files.generate_data_ts(run_dir)
-    kept = [d["name"] for d in data_files.read_data_manifest(run_dir).get("datasets", [])]
-    msg = f"designed {len(kept)} dataset(s): {', '.join(kept) or '(none)'}"
-    if dropped:
-        msg += f" — dropped invalid: {', '.join(dropped)}"
-    services._report(msg)
-
-
-def _fix_data_rows_fix(module, context, error, slot, services, dispatch):
-    """One-shot rewrite of ONE offending dataset's rows from the violation list. The manifest's
-    declared types are law — the rows reconcile to them, never the other way."""
-    run_dir = context.state.run_dir
-    manifest = data_files.read_data_manifest(run_dir)
-    violations = data_files.validate_data(run_dir)
-    declared = {d.get("name") for d in (manifest.get("datasets") or []) if isinstance(d, dict)}
-    offending = data_files.offending_datasets(violations, declared)
-    if not offending:
-        services._report("data invalid but no dataset attributable — regenerate the design")
-        return
-    target = offending[0]
-    rows_path = data_files.data_dir(run_dir) / f"{target}.json"
-    raw = rows_path.read_text(encoding="utf-8") if rows_path.exists() else "[]"
-    system = (_PROMPTS / "fix_data.txt").read_text(encoding="utf-8")
-    user = "\n\n".join([
-        f"# DATA MANIFEST (declared fields — the types are law)\n```json\n"
-        f"{json.dumps(manifest, indent=1, ensure_ascii=False)}\n```",
-        f"# CURRENT ROWS: data/{target}.json\n```json\n{raw}\n```",
-        "# VIOLATIONS\n" + "\n".join(f"- {v}" for v in violations),
-        f"Fix dataset '{target}'. Output ONLY one ```json block: the corrected rows array.",
-    ])
-    text = _infer(services, system, user, _DATA_MAX_TOKENS)
-    try:
-        rows = _json_from(text)
-        assert isinstance(rows, list)
-    except Exception:
-        services._report(f"data fix for '{target}' returned no rows array")
-        return
-    rows_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
-    remaining = data_files.validate_data(run_dir)
-    if not remaining:
-        data_files.generate_data_ts(run_dir)
-    services._report(f"rewrote data/{target}.json ({len(rows)} rows), "
-                     f"{len(remaining)} violation(s) remain")
-
-
-def _data_fix(module, context, error, slot, services, dispatch):
-    if error.type is ErrorType.BUILD:
-        _design_data_fix(module, context, error, slot, services, dispatch)
-    else:
-        _fix_data_rows_fix(module, context, error, slot, services, dispatch)
-
-
-def _author_file_fix(module, context, error, slot, services, dispatch):
-    """Author ONE file (error.path) against the manifest: its own purpose + exports, the siblings'
-    importable signatures, the kit, and the design. Bounded output = one file."""
-    spec = context.spec
-    run_dir = context.state.run_dir
-    files = _manifest_files(run_dir)
-    me = next((f for f in files if f["name"] == error.path), {"name": error.path, "purpose": "", "exports": []})
-    system = (_PROMPTS / "author_file.txt").read_text(encoding="utf-8")
-    parts = [
-        f"# KIT API\n{_kit_doc(spec)}",
-        _design_block(spec),
-        f"# THIS FILE: {me['name']}\npurpose: {me.get('purpose','')}\nmust export: {', '.join(me.get('exports') or []) or '(none)'}",
-    ]
-    contract = _contract_block(run_dir, me["name"])
-    if contract:
-        parts.append("# SHARED TYPES — author against these EXACT shapes; do NOT invent fields that "
-                     f"aren't here (import the types you need from their file)\n{contract}")
-    data = data_files.data_summary(run_dir)
-    if data:
-        parts.append(data)
-    parts.append(f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}")
-    if _is_contract(me):
-        parts.append((_PROMPTS / "contract_rules.txt").read_text(encoding="utf-8"))
-    parts.append(f"Call write to create ./{me['name']} now — the whole file as the `code` arg.")
-    result = _author_via_write(services, system, "\n\n".join(parts), dispatch, me["name"], _CODE_MAX_TOKENS)
-    detail = result.get("error") or f"{result.get('chars')} chars"
-    if not result.get("error"):
-        if strip_unplanned_imports(run_dir, {f["name"] for f in files}):
-            detail += " (stripped unplanned import)"
-        if strip_dead_creategame(run_dir):
-            detail += " (stripped dead createGame)"
-    services._report(f"authored {me['name']}: {detail}")
 
 
 _READ_SCHEMA = {"type": "function", "function": {
@@ -615,155 +443,24 @@ def _fix_schemas(escalate: bool, nreads: int) -> list:
     return schemas
 
 
-def _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_class=None):
-    """Fix a gate failure as a bounded read→edit subloop: the model reads whatever siblings it needs
-    (full bodies, on demand) to locate a CROSS-FILE mismatch the signatures can't show, then lands
-    atomic hunk edits — every action a real tool call (read/edit/write, write create-only). This is the
-    sanctioned multi-call fix shape (Check.run) — the reads live in an EPHEMERAL transcript confined to
-    this one fix (the outer loop stays stateless and re-gates after). A single-shot fix that only sees
-    main.ts + sibling signatures parks on bugs like 'a file assumes another spawns the player but none
-    does'; reading the body exposes it. Bounded by the Services budget (each infer counts) + a turn cap;
-    on cross-fix stall (escalate) the READ tool is dropped so the fix must ACT on the grounding it has
-    (and Services escalates reasoning for the rest of the target). Context is rebuilt each turn via
-    MessageBuilder, which dedups superseded reads.
-
-    `fix_class` (see fix_classes.py) supplies the error-class-specific steering: an AUTHORITY block (the
-    on-disk context that biases toward the correct root cause, e.g. a type's real members) and a
-    DIRECTIVE (root-cause framing). `default`/None adds neither — the generic loop, unchanged."""
-    spec = context.spec
-    run_dir = context.state.run_dir
-    files = _manifest_files(run_dir)
-    filelist = "\n".join(
-        f"- {f['name']}: {f.get('purpose', '')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
-        for f in files) or "\n".join(f"- {n}" for n in game_files(run_dir))
-    # The kit doc is 9-16KB of STATIC reference. It rides in the system prompt (never dropped, never
-    # counted against MESSAGE_BUDGET_CHARS) — not the user turn, where it would crowd out the model's
-    # own file reads and force the budget to demolish them, starving the fix of the bodies it just read.
-    system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
-    kit = _kit_context(spec, error)
-    if kit:
-        system = f"{system}\n\n{kit}"
-    contract = ((_PROMPTS / "contract_invariant.txt").read_text(encoding="utf-8")
-                if any(_is_contract(f) for f in files) else "")
-    authority = fix_class.authority(spec, run_dir, error) if (fix_class and fix_class.authority) else ""
-    directive = fix_class.directive if fix_class else ""
-    user = "\n\n".join(p for p in [
-        _design_block(spec),
-        contract,
-        f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
-        data_files.data_summary(run_dir),
-        f"# FAILING GATE\n{error.message}",
-        authority,
-        directive,
-        "Read whatever files you need to find the root cause, then fix it with edit — the smallest "
-        "hunks that fix the failure, every needed hunk (definition + call sites) in the same "
-        "completion.",
-    ] if p)
-    history = [{"role": "user", "content": user}]
-    wrote = mode = None
-    nreads = edit_fails = 0   # edit_fails is reporting-only — misses no longer change the toolset
-    for _ in range(_FIX_LOOP_MAX_TURNS):
-        schemas = _fix_schemas(services.escalate, nreads)
-        msgs = MessageBuilder(system).extend(history).build()
-        # reasoning OFF: local models honor only on/off, and the fix is a bounded read→act loop where
-        # thinking-on burns the token budget on reasoning and starves the tool call. The reads do the
-        # diagnosis empirically.
-        resp = services.infer(msgs, schemas, reasoning="none", max_tokens=_CODE_MAX_TOKENS)
-        message = (resp.get("choices") or [{}])[0].get("message", {}) or {}
-        content = message.get("content", "") or ""
-        tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
-        if not tcs:
-            salvaged = salvage_tool_call(content, schemas)
-            tcs = [salvaged] if salvaged else []
-        # The model thinks in-content (the reasoning knob is a no-op on it); a hard fix can emit a
-        # 16K-token analysis with no tool call. Appended verbatim it dominates the char budget and
-        # MessageBuilder drops the file reads to fit — starving the very turn that must act. Keep the
-        # TAIL (the conclusion lives at the end); the full text was never load-bearing.
-        if len(content) > 2000:
-            content = "[…analysis truncated…]\n" + content[-2000:]
-        if not tcs:
-            history.append({"role": "assistant", "content": content})
-            history.append({"role": "user",
-                            "content": "Call a tool: read_file to inspect a file, edit to apply "
-                                       "hunks, or write to create a missing file."})
-            continue
-        history.append({"role": "assistant", "content": content, "tool_calls": tcs})
-        for tc in tcs:
-            name = tc["function"]["name"]
-            args = parse_args(tc["function"].get("arguments"))
-            if name == "write":
-                code = args.get("code", "")
-                if _is_stub(code):
-                    result = {"ok": False, "error": "that is a stub/placeholder, not the complete file — "
-                              "resend the ENTIRE working source in `code`."}
-                else:
-                    result = dispatch("write", {"code": code, "file": args.get("file", "main.ts")})
-                    if result.get("ok"):
-                        wrote, mode = result.get("file"), "write"
-                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
-            elif name == "edit":
-                result = dispatch("edit", {"file": args.get("file", "main.ts"),
-                                           "edits": args.get("edits") or []})
-                if result.get("ok"):
-                    wrote, mode = result.get("file"), "edit"
-                else:
-                    edit_fails += 1
-                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
-            elif name == "read_file":
-                read_args = {"file": args.get("file", "main.ts")}
-                if args.get("offset") is not None:
-                    read_args["offset"] = args["offset"]
-                if args.get("limit") is not None:
-                    read_args["limit"] = args["limit"]
-                result = dispatch("read_file", read_args)
-                nreads += 1
-                history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(result)})
-            else:
-                history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                "content": f"unknown tool: {name!r}"})
-        if wrote:
-            services._report(f"patched {wrote} via {mode} (read {nreads}, edit-miss {edit_fails})")
-            return
-    services._report(f"fix loop ended without a write (read {nreads}, edit-miss {edit_fails})")
-
-
-def dispatch_fix(module, context, error, slot, services, dispatch):
-    """Route a gate failure to its FIX CLASS (fix_classes.classify), then run that class's fix: its
-    optional DETERMINISTIC pre-pass first (a safe bulk collapse — e.g. the contract reconciler heals
-    all consumers at once and converges where an unguided LLM rewrite oscillates), and only if that
-    made no change, the read→write loop steered by the class's authority + directive. The class is the
-    codegen analog of IR's per-check owner: it decides WHICH authority resolves the error, so a probe
-    `dead_controls` and a tsc contract error can share the same machinery without the gate knowing.
-    `default` matches everything and adds no steering, so any unclassified failure is exactly today's
-    generic loop — never worse."""
-    cls = classify(error)
-    if cls.deterministic is not None:
-        res = cls.deterministic(context.state.run_dir, error) or {}
-        if res.get("count"):
-            summary = ", ".join(f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
-                                for k, v in res.get("changes", [])[:8])
-            services._report(f"[{cls.id}] deterministic pass ({res['count']} edit(s): {summary})")
-            return
-    _read_write_loop_fix(module, context, error, slot, services, dispatch, fix_class=cls)
-
-
 class CodegenModule(Module):
+    """The gate list a game is swept against. Detection only — each error's FIX is owned by the build
+    driver (build_chain → build_steps), routed by `Error.code`, so the checks carry no `run`."""
+
     id = "codegen"
-    layer = "engine"
-    selectable = False
     component = "game"
 
     checks = [
-        Check(code="planned", detect=_detect_planned, job="author", blocking=True, run=_plan_fix),
-        Check(code="data", detect=_detect_data, job="author", blocking=True, run=_data_fix),
-        Check(code="authored", detect=_detect_authored, job="author", blocking=True, run=_author_file_fix),
-        Check(code="contracted", detect=_detect_contracted, job="fix", blocking=True, run=dispatch_fix),
-        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True, run=dispatch_fix),
-        Check(code="single_mover", detect=_detect_single_mover, job="fix", run=dispatch_fix),
-        Check(code="runs", detect=_detect_runs, job="fix", run=dispatch_fix),
-        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True, run=dispatch_fix),
-        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True, run=dispatch_fix),
-        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True, run=dispatch_fix),
+        Check(code="planned", detect=_detect_planned, job="author", blocking=True),
+        Check(code="data", detect=_detect_data, job="author", blocking=True),
+        Check(code="authored", detect=_detect_authored, job="author", blocking=True),
+        Check(code="contracted", detect=_detect_contracted, job="fix", blocking=True),
+        Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True),
+        Check(code="single_mover", detect=_detect_single_mover, job="fix"),
+        Check(code="runs", detect=_detect_runs, job="fix"),
+        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True),
+        Check(code="renders", detect=_detect_renders, job="fix", when_clean=True),
+        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True),
     ]
 
     def affected_components(self):

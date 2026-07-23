@@ -6,7 +6,6 @@ The old IR mechanic-modules are gone. What remains is the behavior contract (`Mo
 
 from maestro.modules.module import (  # noqa: F401
     Check,
-    CorrectionPrompt,
     Error,
     ErrorType,
     Module,

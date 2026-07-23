@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from maestro.agent_loop import AgentLoop
+from build_harness import run_build_to_completion
+from maestro.codegen import build_steps
+from maestro.codegen.build_state import FixCursor
 from maestro.codegen.fix_classes import classify
 from maestro.codegen.gates import (
     run_headless,
@@ -21,13 +23,11 @@ from maestro.codegen.module import (
     CodegenModule,
     _authoring_order,
     _detect_contracted,
-    _plan_fix,
 )
 from maestro.codegen.scaffold import (
     reexport_hooks,
     seed_scaffold,
 )
-from maestro.codegen.tools import build_codegen_tools
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
@@ -488,37 +488,34 @@ def test_authoring_order_puts_game_ts_last(tmp_path):
     assert order == ["types.ts", "combat.ts", "game.ts"]   # contract first, hook entry LAST
 
 
+def _plan_apply(spec, run_dir, reply_content):
+    """Drive the plan shape's apply step over one model reply (no infer)."""
+    fc = FixCursor(shape="plan", error={"type": "build", "code": "planned", "component": "game",
+                                        "message": ""}, started=True)
+    return build_steps.plan_step(spec, run_dir, {}, fc,
+                                 {"choices": [{"message": {"content": reply_content}}]})
+
+
 def test_plan_fix_fallback_and_main_ts_drop(tmp_path):
     """An unparseable plan falls back to a game.ts-only manifest for a scaffolded spec, and a plan
     that lists main.ts anyway gets it dropped (the scaffold owns main.ts)."""
-
-    class Svc:
-        def __init__(self, reply):
-            self.reply = reply
-
-        def infer(self, msgs, tools, max_tokens=None):
-            return {"choices": [{"message": {"content": self.reply}}]}
-
-        def _report(self, msg):
-            pass
-
     spec = _spec("top-down")
     _seed(tmp_path, spec)
-    _plan_fix(None, _ctx(tmp_path, spec), None, 0, Svc("not json at all"), None)
+    _plan_apply(spec, tmp_path, "not json at all")
     manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
     assert [f["name"] for f in manifest["files"]] == ["game.ts"]
     assert manifest["files"][0]["exports"] == ["createState", "init", "update", "draw", "hud"]
 
     reply = '```json\n{"files": [{"name": "main.ts", "purpose": "entry", "exports": ["createGame"]},' \
             ' {"name": "game.ts", "purpose": "hooks", "exports": ["createState"]}]}\n```'
-    _plan_fix(None, _ctx(tmp_path, spec), None, 0, Svc(reply), None)
+    _plan_apply(spec, tmp_path, reply)
     manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
     assert [f["name"] for f in manifest["files"]] == ["game.ts"]
 
 
-def test_loop_builds_scaffolded_game_to_green(tmp_path):
-    """The production shape end-to-end through the AgentLoop: scaffold seeded first (as run_build
-    does), then the loop plans game.ts (fallback), authors it from the model, and every gate —
+def test_loop_builds_scaffolded_game_to_green(tmp_path, monkeypatch):
+    """The production shape end-to-end through the build chain: scaffold seeded first (as kickoff
+    does), then the driver plans game.ts (fallback), authors it from the model, and every gate —
     including the scheme-aware probe — passes with main.ts never model-written."""
 
     class FakeConn:
@@ -528,28 +525,18 @@ def test_loop_builds_scaffolded_game_to_green(tmp_path):
     state = RunState(tmp_path)
     spec = _spec("top-down")
     state.write_spec(spec)
-    seed_scaffold(state, spec)
+    seed_scaffold(state, spec)                       # kickoff's _seed will then skip (main.ts exists)
     scaffold_src = (tmp_path / "game" / "main.ts").read_text()
-    loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
-                     connector=FakeConn(), max_steps=15)
-    result = loop.run()
-    assert result.ok is True
+    cursor = run_build_to_completion(str(tmp_path), FakeConn(), monkeypatch)
+    assert cursor.ok is True
     assert (tmp_path / "game" / "game.ts").read_text().strip() == GAME_TS.strip()
     assert (tmp_path / "game" / "main.ts").read_text() == scaffold_src   # scaffold untouched
 
 
 def test_plan_fix_fallback_3d_omits_draw_hook(tmp_path):
-
-    class Svc:
-        def infer(self, msgs, tools, max_tokens=None):
-            return {"choices": [{"message": {"content": "garbage"}}]}
-
-        def _report(self, msg):
-            pass
-
     spec = _spec("orbital-3d", mode="3d")
     _seed(tmp_path, spec)
-    _plan_fix(None, _ctx(tmp_path, spec), None, 0, Svc(), None)
+    _plan_apply(spec, tmp_path, "garbage")
     manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
     assert manifest["files"][0]["exports"] == ["createState", "init", "update", "hud"]
 

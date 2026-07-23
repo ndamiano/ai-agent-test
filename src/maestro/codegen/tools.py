@@ -74,9 +74,13 @@ def _planned_names(state) -> set:
     return {_safe(f["name"]) for f in (read_manifest(state.run_dir).get("files") or []) if f.get("name")}
 
 
-def build_codegen_tools(state) -> dict:
-    versions: dict = {}   # filename -> current on-disk version (bumped every write/edit)
-    seen: dict = {}       # filename -> version the model was last shown (via read or edit result)
+def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict:
+    # versions: filename -> current on-disk version (bumped every write/edit)
+    # seen:     filename -> version the model was last shown (via read or edit result)
+    # Passed in (by reference) when the fix subloop spans process deaths — the build cursor owns
+    # them so a resumed `edit` still knows the file was read. Fresh dicts otherwise.
+    versions = versions if versions is not None else {}
+    seen = seen if seen is not None else {}
 
     def _read(name: str) -> str:
         p = game_dir(state.run_dir) / name

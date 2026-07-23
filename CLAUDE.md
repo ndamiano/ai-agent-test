@@ -19,10 +19,12 @@ The model writes **real TypeScript game code**, not an intermediate representati
 
 1. **Spec (stage 1, human-gated):** the chat model drafts a small design SPEC from the request
    (title / genre / entities / controls / mechanics / win-lose). The human reviews and **freezes** it.
-2. **Build (stage 2):** a non-LLM **executor** (`maestro/agent_loop.py`) drives the local model to
+2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) drives the local model to
    author and patch a **folder of TypeScript modules** (`game/main.ts` + system files, a `manifest.json`
    contract) **against the primitive kit** until the local gates pass. Simple games are one file;
-   complex ones decompose by system (the model plans the file list first, authors one per step).
+   complex ones decompose by system (the model plans the file list first, authors one per step). The
+   build is not a resident loop: each llm turn is a job on the `llm` queue, and its completion drives
+   the next turn (see **build-as-jobs** below), so the executor holds no state between turns.
 
 **The fat-kit thesis:** breadth comes from the model COMPOSING primitives, not from N per-genre
 generators. Every hard/ambiguous mechanic (physics, collision, tilemaps, pathfinding, 3D) is a kit
@@ -57,16 +59,16 @@ with no change to the gradient. Never violate it.
 - **render** — call `draw()` against a recording mock: catch draw-time crashes + blank screens.
 - **scroll** — a world bigger than the screen must be followed by a panning camera.
 
-"Done" = the artifact passes the gates, never the model claiming done. Each loop step rebuilds a
+"Done" = the artifact passes the gates, never the model claiming done. Each gate sweep rebuilds a
 minimal context from durable on-disk state (the frozen spec + the failing file + the failing check's
 message), so context stays ~constant and the transcript is never used as memory. A gate fix is a
-bounded read→edit **subloop** (the sanctioned multi-call Check.run): the model reads whatever sibling
-bodies it needs on demand — exposing a CROSS-FILE mismatch the signatures can't show (e.g. main.ts
-assumes world.ts spawns the player but none does) — then lands atomic multi-hunk `edit`s it
+bounded read→edit **subloop** (a `build_steps` shape, one turn per llm job): the model reads whatever
+sibling bodies it needs on demand — exposing a CROSS-FILE mismatch the signatures can't show (e.g.
+main.ts assumes world.ts spawns the player but none does) — then lands atomic multi-hunk `edit`s it
 self-selects (a signature change ships with its call-site hunks in the same completion). The reads
-live in an EPHEMERAL transcript confined to that one fix; the outer loop stays stateless and re-gates
-after. Bounded by the Services budget + a turn cap; on cross-fix stall the read tool is dropped so the
-fix must ACT. Overwrites after creation are refused (`write` is create-only): whole-file rewrites were
+live in the fix's transcript (in the durable cursor, confined to that one fix); the outer loop
+re-gates after. Bounded by a per-shape turn cap + the global step cap; on cross-fix stall the read
+tool is dropped so the fix must ACT. Overwrites after creation are refused (`write` is create-only): whole-file rewrites were
 the fix loop's dominant failure mode — destabilizing previously-correct code — so a fix is grounded
 and local by construction.
 
@@ -126,24 +128,48 @@ src/
                          scaffold, data.ts, worldgen's world.ts), pointing at the owning source. The
                          9-16KB kit doc rides in the fix loop's SYSTEM prompt (uncounted by the char
                          budget), not a user turn, so file reads aren't demolished to fit.
-      module.py          CodegenModule = planned → data → authored → typechecks → single_mover →
-                         runs → plays → renders → scrolls (blocking where noted; single_mover is a
-                         STATIC check — a scaffolded game re-driving the player from input double-
-                         moves it, and no runtime gate can see that). `planned` requires the hook
-                         module game.ts and drops every already-GENERATED file the model lists
-                         (main.ts's control scaffold, a world game's world.ts — unauthorable, so
-                         planning one would strand an authoring step); the plan prompt carries an
-                         ALREADY ON DISK block naming them. Authoring order keys entry-last on
-                         game.ts. DATA = the model designs per-game
-                         datasets ONCE (design_data.txt; {"datasets":[]} legal — arcade games opt
-                         out), then deterministic row validation + typed data.ts regeneration
-                         (data_files.py); authoring/fix prompts carry a GAME DATA summary (schema +
-                         ONE example row), never the rows. AUTHORING = a whole-body Check.run: ONE raw
-                         fenced-```ts completion per file. GATE FIXES route through dispatch_fix →
-                         a FIX CLASS (fix_classes.py), then a read→edit subloop (_read_write_loop_fix):
-                         read_file any sibling on demand (tool-calls via MessageBuilder, which
-                         dedups superseded reads), then atomic hunk edits on the self-selected file(s).
-                         Ephemeral per-fix transcript; outer loop re-gates.
+      module.py          CodegenModule = the GATE LIST (detection only): planned → data → authored →
+                         typechecks → single_mover → runs → plays → renders → scrolls (blocking where
+                         noted; single_mover is a STATIC check — a scaffolded game re-driving the
+                         player from input double-moves it, and no runtime gate can see that).
+                         `planned` requires the hook module game.ts and drops every already-GENERATED
+                         file the model lists (main.ts's control scaffold, a world game's world.ts —
+                         unauthorable, so planning one would strand an authoring step). Authoring order
+                         keys entry-last on game.ts. Each error's FIX is owned by the DRIVER, routed by
+                         `Error.code` — the checks carry no `run`. Also holds the shared prompt-building
+                         helpers + tool schemas build_steps imports.
+      build_chain.py     THE build DRIVER — what a finished build llm turn does next (codegen analog of
+                         asset_chain). A build is a linear chain of `llm` jobs, each tagged
+                         metadata.stage="build"; /worker/complete routes here. Owns the two-level state
+                         machine the old resident AgentLoop was: OUTER (rebuild context from disk, sweep
+                         CodegenModule's gates, cross-fix stall/park bookkeeping, pick the top error,
+                         START its fix) and FIX (a build_steps shape; apply the turn, enqueue the next
+                         or return to outer). advance() runs ALL local work — gates, tool dispatch,
+                         deterministic fix passes — synchronously and SUSPENDS only at a real inference
+                         (enqueue one llm job + return; the process is free to die). Never more than one
+                         build turn in flight per run, and advance runs only in the control-plane
+                         process (completion handler + reaper), so an in-process lock serializes them.
+                         kickoff/start_build/resume/is_active/status_of are the API/CLI entry points;
+                         a refused compute budget or the step cap finalizes (stage_for_play + build_done).
+      build_state.py     the durable build CURSOR (runs/<id>/build_state.json) — everything AgentLoop
+                         held in memory, on disk: phase (outer|fix|done), step count, the cross-fix
+                         stall/park snapshots, the current fix's shape + growing transcript, and the
+                         read→edit tool grounding (versions/seen) rehydrated into build_codegen_tools
+                         each completion (a fresh process would else refuse a resumed edit). Job
+                         metadata carries only {stage,run_id,build_id}; this file is the single source
+                         the completion reloads, advances, rewrites.
+      build_steps.py     the per-shape fix MACHINES — the old synchronous fix bodies re-expressed as
+                         resumable steps: step(spec, run_dir, tools, fix_cursor, result) -> Infer|Done.
+                         plan / data / author / read_write (the ≤8-turn read→edit subloop). Faithful
+                         port of module.py's old _plan_fix/_data_fix/_author_via_write/
+                         _read_write_loop_fix — same prompts, parsing, break-out conditions — only the
+                         control flow is inverted from "call infer + use the return" to "return the
+                         request, resume with the result". The read_write shape runs the fix class's
+                         DETERMINISTIC pre-pass (via build_chain) before its first turn.
+                         DATA = the model designs per-game datasets ONCE (design_data.txt;
+                         {"datasets":[]} legal — arcade games opt out), then deterministic row
+                         validation + typed data.ts regeneration (data_files.py); authoring/fix prompts
+                         carry a GAME DATA summary (schema + ONE example row), never the rows.
       fix_classes.py     the error-class → fixer MAP (codegen analog of IR's per-check owner). A GATE
                          detects a raw failure; a FIX CLASS resolves it — chosen by matching the Error
                          (its `kind` for our gates, the TS code in its message for tsc). A class owns
@@ -246,24 +272,22 @@ src/
                          does the same for mouse/Spacebar/Up tokens). Called at the SPEC boundary
                          (draft + freeze) so the human review, the prompts, the scaffold and the
                          probe all read the same key.
-      run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
-                         `python -m maestro.codegen.run [--yes] "<request>"` and
-                         `--fix <run_id> "<what's wrong>"` (the human-note fix path)
-    agent_loop.py        AgentLoop — the non-LLM executor that DRIVES the module(s): collect each
-                         module's get_errors, subtract human waivers, pick the most urgent (error
-                         TYPE human>build>fix, then priority, then check rank), ask the module for a
-                         Fix, run it through a per-fix Services budget. Keeps completion + cross-fix
-                         stall/parking. Engine-agnostic — survived the IR removal verbatim.
-    services.py          Services — the bounded gateway a Fix calls through (connector + tool
-                         dispatch + pause checkpoint + per-fix step budget; BudgetExhausted is a
-                         BaseException so a fix can't churn past its cap). A Check.run fix must call
-                         services._report(...) so the loop step counter advances (max_steps bound).
+      run.py             create_run / draft_spec / freeze / run_build (CLI: kickoff + block-poll the
+                         cursor) / fix_from_note + CLI `python -m maestro.codegen.run "<request>"`
+                         and `--fix <run_id> "<what's wrong>"` (the human-note fix path). The web
+                         build/fix path is fire-and-forget through build_chain.kickoff, not run.py.
+    services.py          the two LLM tool-call PARSERS the fix shapes share: parse_args (any argument
+                         shape → dict) + salvage_tool_call (rebuild a call from content JSON when it
+                         uniquely fits one offered tool). The old Services gateway + AgentLoop that
+                         owned the synchronous fix loop are gone — the build is a chain of llm jobs
+                         driven by build_chain, so nothing dispatches "through Services" any more.
     modules/
-      module.py          the Module / Check / Error / ErrorType / CorrectionPrompt ABC (behavior,
-                         not a data bag): a module IS a list of Checks (detect → fix); the base
-                         sweeps them (get_errors), builds the fix (get_fix / get_correction_prompt).
-                         No registry/engine/projection machinery — a module is instantiated directly.
-      context.py         Context (durable per-step snapshot) + build_context + render_dict.
+      module.py          the Module / Check / Error / ErrorType ABC (DETECTION contract): a module IS
+                         a list of Checks; the base sweeps them (get_errors), honouring blocking + a
+                         when_clean terminal tier. The FIX for each error is owned by the build driver
+                         (build_chain → build_steps), keyed off Error.code — the Check carries only
+                         detect + sweep flags. No registry/engine/projection machinery.
+      context.py         Context (durable per-sweep snapshot) + build_context.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
                          game/ folder, waivers); the source of truth each step rebuilds from.
                          Ownership + charge state live in db/, not the run dir.
@@ -331,10 +355,14 @@ src/
                          api/app.py): requeue lapsed leases even when no claim arrives to trigger
                          it, fail never-claimed pending jobs to release their reservations (this
                          replaces the enqueuer timeout for chained jobs — no clock starts until a
-                         job is real work), and finalize any batch whose live completion was lost
-                         to a restart. NOT in the scaler: that only exists when runpod is
-                         configured, and scaler/stats.py is deliberately the only scaler module
-                         touching db.store (the SQS seam).
+                         job is real work), finalize any batch whose live completion was lost
+                         to a restart, and RE-ADVANCE any stuck build (status building, no build llm
+                         turn pending/claimed, its last turn terminal past a grace) — the backstop for
+                         a build driver that died between a completion and the next enqueue, or a turn
+                         that failed as stale-pending so no /worker/complete ever advanced the chain
+                         (advance's per-run lock makes the re-drive a no-op if a live completion beat
+                         it). NOT in the scaler: that only exists when runpod is configured, and
+                         scaler/stats.py is deliberately the only scaler module touching db.store.
                          queue_client.py — the enqueue side every producer shares (run_job: land a
                          jobs row, wait for a worker, hand back the row; a refused budget or a
                          timeout comes back as a failed job, so callers branch on one shape). LLM,
@@ -382,24 +410,27 @@ src/
                          success); autoscaler.py = the daemon-thread tick loop (pod age via
                          first-seen tracking; errors logged, never fatal).
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
-                         workqueue) + build_queue.py (single-GPU FIFO serializer for BOTH kinds of
-                         run job — `build` → run_build and `fix` → fix_from_note; a fix off-queue
-                         was invisible to the status endpoints, so a run being fixed read "built"
-                         and the next fix hit a bare 409). The
+                         workqueue). There is NO build queue any more — a build is a chain of llm
+                         jobs on the shared `llm` queue (build_chain), so builds no longer serialize
+                         behind one another on a single thread; they only contend for llm workers,
+                         which autoscale. The
                          workqueue router (/worker/claim|heartbeat|complete|deregister, mounted
                          OUTSIDE the
                          user gate) is the pull side of the inference queue — token-gated
-                         (settings workqueue.token, fail-closed when unset). /complete is also
-                         where a CHAIN advances: it offloads the blobs, builds the follow-up job
-                         from the parent's `then`, lands both in one txn, emits job_done, and
-                         fires the ops + any batch finalize FORGOTTEN (to_thread — bounded CPU, and
-                         the worker's response must not wait on it; a bare create_task would run
-                         sync work on the event loop and stall every other completion). WS events
+                         (settings workqueue.token, fail-closed when unset). /complete is
+                         where every CHAIN advances, dispatched on metadata.stage: an ASSET job
+                         offloads its blobs, builds the follow-up from the parent's `then`, lands both
+                         in one txn, and fires the ops + batch finalize; a BUILD turn hands off to
+                         build_chain.on_completion (reload cursor → advance → enqueue the next turn or
+                         finalize). Both run FORGOTTEN off the event loop (to_thread — bounded CPU for
+                         assets, the whole next gate-sweep for a build; the worker's response must not
+                         wait, and a bare create_task would stall every other completion). WS events
                          route
                          per-user server-side (event_bus resolves run → owner). The games router is
-                         codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets,
-                         all against maestro.codegen.run; freeze→freeze_spec, build/fix→build_queue→
-                         codegen run_build / fix_from_note, assets→reskin.add_assets (its own
+                         codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets;
+                         freeze→freeze_spec, build/fix→build_chain.kickoff (fire-and-forget, off the
+                         event loop), resume→build_chain.resume (re-drive the durable cursor),
+                         assets→reskin.add_assets (its own
                          thread, now only for the plan+gate half — the render outlives it on the
                          queue, so assets_done and build_finished are the FINALIZE's job, and a
                          second skin is refused by has_active_batch as well as the in-process key,
@@ -445,24 +476,32 @@ src/
 
 **Inference path (chat / spec draft):** `MainAgent` / `draft_spec` → `MessageBuilder` →
 `get_connector()` → `LLMConnector` → the `llm` queue.
-**Inference path (build):** `AgentLoop` → `Module.get_fix` → `Services.infer` → connector. AUTHORING
-goes THROUGH the `write` tool (`_author_via_write`, one whole file per call as the `code` arg) — the
-tool boundary is what keeps the model from treating the block as a scratchpad (chatter comments, a
-second "rewritten" copy of a function that redeclares an export); it falls back to salvaging a tool
-call, then a fenced block, so a model that ignores the tool still lands. GATE FIXES run the
-read→edit subloop where read/edit/write are all real tool calls; `write` is create-only there (a
-planned file missing from disk), so every change to existing code is an atomic multi-hunk `edit` —
-EDIT is never dropped. The fix loop drops READ on a cross-fix stall or once it has read enough without
-writing (`_READS_BEFORE_FORCE_ACT`) so a big/corrupt file can't eat every turn in reads while none
-writes. The human-note fix (`fix_from_note`) runs the same subloop — the note as the failing-gate
-text, a synthetic `code="human"` Error that classifies to `default`.
+**Inference path (build) — build-as-jobs:** the build is a CHAIN of `llm` jobs, not a resident loop.
+`build_chain.advance` sweeps `CodegenModule`'s gates, picks the top error, builds one `build_steps`
+turn, enqueues it on the `llm` queue tagged `metadata.stage="build"`, and RETURNS (the process may
+die). A worker runs the turn; `/worker/complete` → `build_chain.on_completion` reloads the durable
+cursor (`build_state.json`), applies the result, and advances to the next turn or finalizes. Local
+work (gates, tool dispatch, deterministic fix passes) runs synchronously inside `advance`; only a real
+inference suspends. So the whole state the old `AgentLoop` held — step count, cross-fix stall/park,
+the fix's growing transcript, the read→edit tool grounding — lives in the cursor and is rehydrated
+each completion. AUTHORING extracts the `write` tool call's `code` (falls back to salvage, then a
+fenced block, so a model that ignores the tool still lands). GATE FIXES are the read→edit subloop with
+read/edit/write as real tool calls; `write` is create-only, so every change to existing code is an
+atomic multi-hunk `edit` (never dropped), and READ drops once the fix has read enough without writing
+(`_READS_BEFORE_FORCE_ACT`). The human-note fix (`fix_from_note` / `kickoff(kind="fix")`) seeds the
+build's FIRST fix with a synthetic `code="human"` Error (classifies to `default`); the outer loop then
+re-gates and repairs any regression, exactly like a build. Crash recovery: a build with no turn in
+flight and not done is re-advanced by the reaper (the per-run advance lock prevents a double-drive).
 
 **Adding a mechanic:** widen the KIT (`runtime/engine.js` + a `kit_api*.md` section + a worked
 example in the prompt + a probe invariant). Generation just composes the new primitive. Adding a
 whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3D physics).
 
 **Adding a build capability that isn't a kit primitive:** a new tool in `maestro/codegen/tools.py`
-(the fix dispatches it) and/or a new `Check` on `CodegenModule` (a new gate + how to fix it).
+and/or a new `Check` on `CodegenModule` (detection) — then route its `Error.code` to a fix shape in
+`build_chain._SHAPE_BY_CODE` (defaults to the read→edit subloop), adding a new `build_steps` shape
+only if the fix isn't a read→edit. **Adding a build STAGE** (beyond build/asset): register a driver
+keyed on `metadata.stage` in the `/worker/complete` dispatch — the queue stays a generic transport.
 
 ---
 

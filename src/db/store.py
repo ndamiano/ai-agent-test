@@ -516,6 +516,25 @@ def fail_stale_pending(max_age_seconds: float) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
+def stuck_builds(grace_seconds: float) -> List[str]:
+    """Games still marked 'building' that have NO build llm turn in flight — their driver process
+    died between a completion and the next enqueue, or the turn failed as stale-pending so no
+    /worker/complete ever fired to advance the chain. The reaper re-advances them from the durable
+    cursor. Grace-delayed off the newest terminal build turn so a live (slow) advance — which holds
+    the per-run advance lock anyway — is never mistaken for a dead one."""
+    cutoff = time.time() - grace_seconds
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT g.id FROM games g WHERE g.status = 'building' "
+            "AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.game_id = g.id "
+            "  AND j.status IN ('pending', 'claimed') "
+            "  AND json_extract(j.metadata, '$.stage') = 'build') "
+            "AND (SELECT MAX(j2.finished_at) FROM jobs j2 WHERE j2.game_id = g.id "
+            "     AND json_extract(j2.metadata, '$.stage') = 'build') < ?",
+            (cutoff,)).fetchall()
+    return [r["id"] for r in rows]
+
+
 def batches_awaiting_finalize(grace_seconds: float) -> List[str]:
     """Batches whose jobs are all terminal but whose finalize never ran — the live completion was
     lost to a restart. Grace-delayed so a finalize in flight is not duplicated."""

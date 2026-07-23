@@ -10,8 +10,8 @@ from starlette.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import maestro.state
-from api import build_queue as bq_mod
 from api.app import app
+from maestro.codegen import build_chain
 from auth import store as auth_store
 from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
@@ -67,9 +67,8 @@ def test_build_charges_once_and_grants_seconds(client, monkeypatch):
     user, headers = _user()
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
 
-    # Enqueue without running a real build (no worker thread in tests).
-    monkeypatch.setattr(bq_mod.build_queue, "enqueue",
-                        lambda rid, uid, auto_pause=False: 0)
+    # Kick off without running a real build (no worker to drive completions in tests).
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
 
     r = client.post(f"/api/games/{run_id}/build", headers=headers)
     assert r.status_code == 200
@@ -99,8 +98,7 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
     has burned it must be refused before it takes the GPU slot, not after."""
     user, headers = _user()
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
-    monkeypatch.setattr(bq_mod.build_queue, "enqueue",
-                        lambda rid, uid, auto_pause=False, **kw: 0)
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
 
     assert client.post(f"/api/games/{run_id}/build", headers=headers).status_code == 200
     db_store.add_seconds_used(run_id, SECONDS_PER_CREDIT)

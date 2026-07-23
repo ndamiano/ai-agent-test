@@ -1,0 +1,320 @@
+"""The build driver — what a finished build LLM turn does next.
+
+A build is a linear chain of `llm`-queue jobs. Each job carries `metadata.stage="build"`; when a
+worker completes it, `/worker/complete` routes here (the codegen analog of asset_chain). This module
+owns the two-level state machine the old resident `AgentLoop` was:
+
+  outer  — rebuild context from disk, sweep CodegenModule's gates, do the cross-fix stall/park
+           bookkeeping, pick the most urgent error, and START a fix.
+  fix    — a build_steps shape (plan/data/author/read_write); apply the completed turn's result and
+           either enqueue the next turn or return to `outer`.
+
+`advance()` runs all local work — gates, tool dispatch, deterministic fix passes — synchronously and
+SUSPENDS only at a real inference: it enqueues one `llm` job and returns; the process is free to die.
+The next completion reloads build_state.json and calls `advance` again. There is never more than one
+build llm job in flight per run, so the chain is strictly linear and advance is only ever driven from
+the control-plane process (the completion handler + the reaper) — an in-process lock serializes those.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from typing import Dict, List, Optional, Tuple
+
+from db import store as db_store
+from llm_clients.connector import get_connector
+from maestro.codegen import build_state, build_steps
+from maestro.codegen.build_state import BuildCursor, FixCursor, error_to_dict
+from maestro.codegen.fix_classes import classify
+from maestro.codegen.gates import stage_for_play
+from maestro.codegen.module import CodegenModule
+from maestro.codegen.tools import build_codegen_tools
+from maestro.modules.context import build_context
+from maestro.modules.module import Error, ErrorType, Module, idkey
+from maestro.state import RunState
+from tools.build_events import _emit
+
+logger = logging.getLogger(__name__)
+
+_TYPE_RANK = {ErrorType.HUMAN: 0, ErrorType.BUILD: 1, ErrorType.FIX: 2}
+_STUCK_WINDOW = 40
+_STUCK_REPEATS = 20
+
+# error.code -> fix shape (build_steps). Everything else is a read→edit subloop.
+_SHAPE_BY_CODE = {"planned": "plan", "data": "data", "authored": "author"}
+
+# One advance at a time per run — the completion handler and the reaper both call advance, and only
+# the control-plane process ever does, so an in-process lock is sufficient mutual exclusion.
+_locks: Dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(run_id: str) -> threading.Lock:
+    with _locks_guard:
+        lk = _locks.get(run_id)
+        if lk is None:
+            lk = _locks[run_id] = threading.Lock()
+        return lk
+
+
+# ── pure helpers (ported from agent_loop) ─────────────────────────────────────
+def collect_errors(module: Module, ctx) -> List[Tuple[Module, Error]]:
+    return [(module, e) for e in module.get_errors(ctx)]
+
+
+def prioritize(pairs: List[Tuple[Module, Error]]) -> Tuple[Module, Error]:
+    return min(pairs, key=lambda p: (_TYPE_RANK[p[1].type], p[0].priority,
+                                     p[0].check_rank(p[1].code), p[1].identity()))
+
+
+def _todo_from_pairs(pairs: List[Tuple[Module, Error]]) -> List[dict]:
+    return [{"component": e.component, "code": e.code, "type": e.type.value,
+             "detail": e.message, "idkey": idkey(e), "path": e.path}
+            for _, e in pairs]
+
+
+# ── lifecycle ─────────────────────────────────────────────────────────────────
+def kickoff(run_id: str, *, kind: str = "build", note: str = "", auto_pause: bool = False,
+            max_steps: Optional[int] = None) -> str:
+    """Create the build attempt row and start the build. Returns the build_id. The single entry the
+    API and the CLI both call; `start_build` does the actual seeding + first advance."""
+    if max_steps is None:
+        max_steps = 40 if kind == "fix" else 60
+    build_id = db_store.create_build(run_id, kind=kind)
+    db_store.build_started(build_id)
+    start_build(run_id, build_id, kind=kind, note=note, auto_pause=auto_pause, max_steps=max_steps)
+    return build_id
+
+
+def resume(run_id: str) -> None:
+    """Re-drive a mid-flight build — a paused one (clear the pause first) or one whose driver process
+    died (the cursor is on disk, no llm turn in flight). A no-op once the cursor is done."""
+    from maestro.run_control import get as get_control
+    ctrl = get_control(run_id)
+    if ctrl is not None:
+        ctrl.request_resume()
+    advance(run_id)
+
+
+def is_active(run_id: str) -> bool:
+    cursor = build_state.load(RunState(run_id).run_dir)
+    return cursor is not None and cursor.phase != "done"
+
+
+def status_of(run_id: str) -> Optional[Dict]:
+    """The live build state for the status endpoints, or None when nothing is building. There is no
+    build-level queue any more, so no position — a build's llm turns ride the shared `llm` queue."""
+    cursor = build_state.load(RunState(run_id).run_dir)
+    if cursor is None or cursor.phase == "done":
+        return None
+    return {"kind": cursor.kind}
+
+
+def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = "",
+                auto_pause: bool = False, max_steps: int = 60) -> None:
+    """Kick a build off: seed the scaffolds, write the initial cursor, and advance once (which
+    collects the gates, picks the first fix, and enqueues its first llm turn — then returns). A
+    human-note fix seeds the cursor straight into a read→edit fix on the note, after which the outer
+    loop re-gates and repairs any regression exactly as a build does."""
+    from maestro.codegen.run import _seed   # local: run.py imports build_chain
+    rs = RunState(run_id)
+    spec = rs.read_spec()
+    if spec is None:
+        raise ValueError(f"no spec for run {run_id!r}")
+    if kind == "build" and not spec.get("frozen"):
+        raise RuntimeError("build refuses to run until the spec is frozen")
+    _seed(run_id, rs, spec)
+
+    cursor = BuildCursor(build_id=build_id, kind=kind, max_steps=max_steps, t0=time.time())
+    if kind == "fix":
+        # The note is the failing gate; a synthetic HUMAN error classifies to `default` (grounded
+        # hunk edits, no whole-file rewrite), exactly as the old fix_from_note.
+        error = Error(type=ErrorType.HUMAN, code="human", component="game",
+                      message=("HUMAN PLAYTEST FEEDBACK — the game passed the automated gates but is "
+                               f"WRONG when a person plays it. Fix exactly this:\n{note}"))
+        cursor.phase = "fix"
+        cursor.prev = []   # so the post-fix bookkeeping runs when this fix returns to outer
+        cursor.set_fix(FixCursor(shape="read_write", error=error_to_dict(error)))
+    build_state.save(rs.run_dir, cursor)
+    # Register the control so pause/auto-pause endpoints find this run (in-memory, like the old
+    # build; it does not survive a restart, and resume re-drives from the durable cursor either way).
+    from maestro.run_control import get_or_create
+    get_or_create(run_id).set_auto_pause(auto_pause)
+    db_store.set_status(run_id, "building")
+    _emit("build_started", run_id, n_failing=0, max_steps=max_steps, todo=[], started_at=cursor.t0)
+    advance(run_id)
+
+
+def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Optional[str]) -> None:
+    """Drive the next step after a build llm turn lands. The result arrives in raw Responses shape off
+    the queue — normalize it to chat before the fix shape applies it. A worker-reported error (or a
+    lost result) becomes an empty turn the shape handles (retry/advance) rather than a stall."""
+    raw = result if (error is None and result) else {}
+    advance(run_id, get_connector().to_chat(raw))
+
+
+def advance(run_id: str, result: Optional[Dict] = None) -> None:
+    """Run the state machine forward until it must infer (enqueue + return) or the build finishes.
+    Serialized per run; a stale call whose cursor is already done/absent is a no-op."""
+    lock = _lock_for(run_id)
+    if not lock.acquire(blocking=False):
+        return   # another advance (completion or reaper) is already driving this run
+    try:
+        _advance_locked(run_id, result)
+    finally:
+        lock.release()
+
+
+def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
+    from maestro.run_control import get as get_control
+    rs = RunState(run_id)
+    spec = rs.read_spec()
+    cursor = build_state.load(rs.run_dir)
+    if cursor is None or cursor.phase == "done":
+        return
+    control = get_control(run_id)
+    tools = build_codegen_tools(rs, versions=cursor.tool_versions, seen=cursor.tool_seen)
+    module = CodegenModule()
+
+    while True:
+        if control is not None and control.paused:
+            control.set_status("paused")
+            build_state.save(rs.run_dir, cursor)
+            _emit("build_paused", run_id, step=cursor.step)
+            return
+
+        if cursor.phase == "outer":
+            ctx = build_context(spec, rs)
+            pairs = collect_errors(module, ctx)
+            if cursor.prev is not None:
+                _post_fix_bookkeeping(run_id, cursor, pairs)
+            cursor.todo = _todo_from_pairs(pairs)
+            if not pairs:
+                _finalize(run_id, rs, cursor, ok=True)
+                return
+            # The step cap bounds the NUMBER of fixes, checked here (after the clean-check, so a fix
+            # that greens everything exactly at the cap still finalizes ok). Each fix is itself
+            # bounded by its per-shape turn cap, so the fix branch below needs no cap check.
+            if cursor.step >= cursor.max_steps:
+                _finalize(run_id, rs, cursor, ok=False)
+                return
+            active = [(m, e) for m, e in pairs if idkey(e) not in cursor.parked]
+            if not active:
+                _finalize(run_id, rs, cursor, ok=False)
+                return
+            snap = build_state.snapshot(pairs)
+            stalled = cursor.prev is not None and set(cursor.prev) == set(snap)
+            _, error = prioritize(active)
+            cursor.prev = snap
+            started = _start_fix(run_id, rs, cursor, error, stalled)
+            if not started:
+                # A deterministic pass resolved it — no llm turn. Advance the step so a pathological
+                # deterministic loop is still bounded by max_steps (mirrors AgentLoop's no-LLM batch).
+                cursor.step += 1
+                continue
+            # phase is now "fix"; fall through with result=None
+
+        # phase == "fix"
+        fc = cursor.fix_cursor()
+        # result is None when the reaper (or resume) re-drives a build whose completion was lost:
+        # the fix shape applies an EMPTY turn (retry) rather than crashing on None, exactly as
+        # on_completion coerces a lost/errored result to {}.
+        outcome = build_steps.step(fc.shape, spec, rs.run_dir, tools, fc, result or {})
+        result = None
+        cursor.set_fix(fc)
+        if isinstance(outcome, build_steps.Infer):
+            cursor.step += 1
+            build_state.save(rs.run_dir, cursor)
+            _enqueue_turn(run_id, cursor, outcome)
+            if cursor.phase != "done":   # a refused budget finalizes inside _enqueue_turn
+                _emit_step(run_id, cursor, outcome.report)
+            return
+        # Done: the fix finished — back to the outer gate sweep.
+        cursor.set_fix(None)
+        cursor.phase = "outer"
+        build_state.save(rs.run_dir, cursor)
+        _emit_step(run_id, cursor, outcome.report)
+
+
+def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, stalled: bool) -> bool:
+    """Enter the fix for `error`: pick its shape, and for a read→edit fix run the fix class's
+    DETERMINISTIC pre-pass first. If that pass changes files, the fix is resolved with no llm turn
+    (returns False, stays in `outer`). Otherwise arm the fix cursor and switch to `fix` (True)."""
+    shape = _SHAPE_BY_CODE.get(error.code, "read_write")
+    if shape == "read_write":
+        cls = classify(error)
+        if cls.deterministic is not None:
+            res = cls.deterministic(rs.run_dir, error) or {}
+            if res.get("count"):
+                summary = ", ".join(
+                    f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
+                    for k, v in res.get("changes", [])[:8])
+                _emit_step(run_id, cursor, f"[{cls.id}] deterministic pass ({res['count']} edit(s): {summary})")
+                return False
+    cursor.set_fix(FixCursor(shape=shape, error=error_to_dict(error), escalate=stalled))
+    cursor.phase = "fix"
+    return True
+
+
+def _post_fix_bookkeeping(run_id: str, cursor: BuildCursor, pairs) -> None:
+    """After a fix returns to outer: record the to-do snapshot, and if the SAME snapshot has recurred
+    across the window, PARK the top error so the loop moves on (ported from AgentLoop's stuck
+    detector). Parking is paced — one per stuck stretch, then the window resets."""
+    snap = build_state.snapshot(pairs)
+    cursor.recent.append(snap)
+    if len(cursor.recent) > _STUCK_WINDOW:
+        cursor.recent = cursor.recent[-_STUCK_WINDOW:]
+    if snap and cursor.recent.count(snap) >= _STUCK_REPEATS:
+        spinning = [(m, e) for m, e in pairs if idkey(e) not in cursor.parked]
+        if spinning:
+            _, e = prioritize(spinning)
+            cursor.parked.append(idkey(e))
+            _emit("error_parked", run_id, identity=list(e.identity()), message=e.message)
+            logger.info("parked (build spun): [%s] %s: %s", e.component, e.code, e.message[:120])
+        cursor.recent = []
+
+
+def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
+    cursor.phase = "done"
+    cursor.ok = ok
+    build_state.save(rs.run_dir, cursor)
+    if ok:
+        stage_for_play(rs.run_dir, run_id)
+    db_store.set_status(run_id, "built" if ok else "failed")
+    if cursor.build_id:
+        db_store.build_finished(cursor.build_id, "succeeded" if ok else "failed", steps=cursor.step)
+    from maestro.run_control import remove as remove_control
+    remove_control(run_id)
+    logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
+    _emit("build_done", run_id, ok=ok, steps=cursor.step)
+
+
+# ── enqueue + events ──────────────────────────────────────────────────────────
+def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:
+    """Land one build llm turn as a pending `llm` job. Its completion re-enters advance. A refused
+    compute budget ends the build — a broke run can't spin on refused turns."""
+    conn = get_connector()
+    payload, model = conn.build_llm_job(inf.messages, inf.schemas, inf.max_tokens, inf.reasoning)
+    try:
+        db_store.enqueue_job("llm", payload, game_id=run_id, build_id=cursor.build_id, model=model,
+                             metadata={"stage": "build", "run_id": run_id, "build_id": cursor.build_id})
+    except db_store.InsufficientCompute as e:
+        logger.error("build %s turn refused: %s", run_id, e)
+        rs = RunState(run_id)
+        cursor.phase = "done"
+        cursor.ok = False
+        build_state.save(rs.run_dir, cursor)
+        db_store.set_status(run_id, "failed")
+        if cursor.build_id:
+            db_store.build_finished(cursor.build_id, "failed", steps=cursor.step)
+        from maestro.run_control import remove as remove_control
+        remove_control(run_id)
+        _emit("build_done", run_id, ok=False, steps=cursor.step, error=f"compute exhausted: {e}")
+
+
+def _emit_step(run_id: str, cursor: BuildCursor, summary: str) -> None:
+    _emit("build_step", run_id, step=cursor.step, max_steps=cursor.max_steps, summary=summary,
+          n_failing=len(cursor.todo), todo=cursor.todo, elapsed=time.time() - cursor.t0)
+    logger.info("build %s step %d: %s", run_id, cursor.step, summary)

@@ -1,3 +1,10 @@
+"""RunControl — the cross-thread pause/resume signal + the per-run registry.
+
+The build is completion-driven now (build_chain.advance checks control.paused at each step and stops,
+persisting the cursor; resume re-drives), so the signal itself is what matters here. The build-level
+pause behaviour is covered in test_build_chain.
+"""
+
 import sys
 import threading
 import time
@@ -5,88 +12,36 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.agent_loop import AgentLoop
-from maestro.modules.module import CorrectionPrompt, Error, ErrorType, Module
 from maestro.run_control import RunControl, get, get_or_create, remove
-from maestro.state import RunState
 
 
-class _WritePremise(Module):
-    """One BUILD error, cleared by a single write_component call."""
-    id = "writeprem"
-    priority = 10
-
-    def affected_components(self):
-        return ("premise",)
-
-    def get_errors(self, ctx):
-        if ctx.artifact.get("premise"):
-            return []
-        return [Error(ErrorType.BUILD, "make", "premise", "write premise")]
-
-    def get_correction_prompt(self, ctx, error, slot=0):
-        return CorrectionPrompt(system="s", user="u", allowed_tools=("write_component",))
+def test_pause_sets_flag_and_resume_clears():
+    c = RunControl()
+    assert not c.paused
+    c.request_pause()
+    assert c.paused
+    c.set_status("paused")
+    assert c.status == "paused"
+    c.request_resume()
+    assert not c.paused
 
 
-def _write_call():
-    return {"choices": [{"message": {"tool_calls": [
-        {"id": "1", "function": {"name": "write_component",
-                                 "arguments": '{"component_id": "premise", "content": {"x": 1}}'}}]}}]}
+def test_wait_while_paused_unblocks_on_resume():
+    c = RunControl()
+    c.request_pause()
+    done = []
 
+    def waiter():
+        c.wait_while_paused()
+        done.append(1)
 
-class _Conn:
-    """Returns a write_component tool call; runs `on_call` once (e.g. to pause)."""
-    def __init__(self, on_call=None):
-        self.on_call = on_call
-        self.fired = False
-
-    def generate_with_tools(self, messages, schemas, **kw):
-        if self.on_call and not self.fired:
-            self.fired = True
-            self.on_call()
-        return _write_call()
-
-
-def _tools(state):
-    def write_component(component_id, content, **kw):
-        state.write_component(component_id, content)
-        return {"ok": True, "component_id": component_id}
-    return {"write_component": write_component}
-
-
-def _loop(state, control, conn):
-    return AgentLoop({"frozen": True}, state, [_WritePremise()], _tools(state),
-                     connector=conn, max_steps=10, on_event=lambda e: state._events.append(e),
-                     control=control)
-
-
-def _state(tmp_path):
-    state = RunState(tmp_path)
-    state._events = []
-    return state
-
-
-def test_pause_then_resume_completes(tmp_path):
-    state = _state(tmp_path)
-    control = RunControl()
-    conn = _Conn(on_call=control.request_pause)  # pause once, at the first decision
-    loop = _loop(state, control, conn)
-    t = threading.Thread(target=loop.run, daemon=True)
+    t = threading.Thread(target=waiter, daemon=True)
     t.start()
-
-    for _ in range(200):
-        if control.status == "paused":
-            break
-        time.sleep(0.01)
-    assert control.status == "paused"
-    assert any(e["type"] == "build_paused" for e in state._events)
-
-    control.request_resume()
-    t.join(timeout=5)
-    assert not t.is_alive()
-    types = [e["type"] for e in state._events]
-    assert "build_resumed" in types
-    assert state.read_component("premise") is not None
+    time.sleep(0.05)
+    assert not done            # still blocked while paused
+    c.request_resume()
+    t.join(timeout=2)
+    assert done == [1]
 
 
 def test_registry_lifecycle():

@@ -31,7 +31,6 @@ app.add_middleware(
 import tools.chat_tools  # noqa: F401  — the @tool decorators register on import
 import tools.comfyui_tools  # noqa: F401
 import tools.system_tools  # noqa: F401
-from api.build_queue import build_queue
 from api.routers import admin, agents, billing, chat, games, system, websocket, workqueue
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
@@ -52,12 +51,10 @@ async def startup_event():
         await event_bus.start()
         logging.info("Event bus started")
 
-        # Start the single-GPU build worker (serializes builds; extras queue with a position).
-        build_queue.start()
-        logging.info("Build queue started")
-
-        # Queue housekeeping. Unconditional, unlike the autoscaler below: a wedged job or a
-        # dropped finalize needs reaping on the home box too.
+        # Queue housekeeping. Unconditional, unlike the autoscaler below: a wedged job, a dropped
+        # asset finalize, or a stuck build (its driver process died mid-turn) needs reaping on the
+        # home box too. Builds have no dedicated worker any more — each build's llm turns ride the
+        # shared `llm` queue and the completion handler drives the next.
         app.state.reaper = Reaper()
         app.state.reaper.start()
         logging.info("Queue reaper started")
@@ -84,7 +81,6 @@ async def shutdown_event():
             app.state.autoscaler.stop()
         if getattr(app.state, "reaper", None):
             app.state.reaper.stop()
-        build_queue.stop()
         await event_bus.shutdown()
         logging.info("Event bus stopped")
     except Exception as e:

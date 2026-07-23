@@ -11,9 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from maestro.agent_loop import AgentLoop
+from build_harness import run_build_to_completion
 from maestro.codegen import controls as controls_mod
-from maestro.codegen import run as run_mod
 from maestro.codegen.fix_classes import DEFAULT, classify
 from maestro.codegen.gates import (
     RUNTIME_DIR,
@@ -27,14 +26,12 @@ from maestro.codegen.gates import (
 from maestro.codegen.module import (
     _READS_BEFORE_FORCE_ACT,
     CodegenModule,
-    _author_via_write,
     _authoring_order,
     _detect_typechecks,
     _fix_schemas,
     _is_contract,
     _is_stub,
     _kit_context,
-    _manifest_files,
     _sibling_lines,
 )
 from maestro.codegen.scaffold import seed_scaffold
@@ -895,19 +892,16 @@ class _FakeConn:
         return {"choices": [{"message": {"content": f"```js\n{self.code}\n```"}}]}
 
 
-def test_loop_authors_until_gates_pass(tmp_path):
+def test_loop_authors_until_gates_pass(tmp_path, monkeypatch):
     state = _run_dir(tmp_path)
     spec = {"frozen": True, "mode": "2d", "title": "Pong",
             "design": {"title": "Pong", "control": {"scheme": "top-down"}}}
     state.write_spec(spec)
-    seed_scaffold(state, spec)   # run_build seeds before the loop — mirror that order
-    conn = _FakeConn(HOOKS_GOOD)
-    loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
-                     connector=conn, max_steps=10)
-    result = loop.run()
-    assert result.ok is True
+    conn = _FakeConn(HOOKS_GOOD)   # kickoff seeds the scaffold, then plan(fallback)/data/author drive
+    cursor = run_build_to_completion(str(tmp_path), conn, monkeypatch)
+    assert cursor.ok is True
     assert conn.calls >= 1
-    assert result.steps >= 1   # the fix must report so max_steps actually bounds the loop
+    assert cursor.step >= 1   # each llm turn advances the step so max_steps actually bounds it
     assert (tmp_path / "game" / "game.ts").read_text().strip() == HOOKS_GOOD.strip()
 
 
@@ -951,7 +945,7 @@ class _FakeToolConn:
         return {"choices": [{"message": {"content": "Fixed it.", "tool_calls": [tc]}}]}
 
 
-def test_fix_subloop_reads_then_edits_to_green(tmp_path):
+def test_fix_subloop_reads_then_edits_to_green(tmp_path, monkeypatch):
     # A game that crashes headless (init throws). The fix subloop must read, then land a grounded
     # edit (write refuses overwrites now); the outer loop re-gates to green.
     state = _run_dir(tmp_path)
@@ -959,10 +953,8 @@ def test_fix_subloop_reads_then_edits_to_green(tmp_path):
     spec = {**spec, "title": "T", "design": {**spec["design"], "title": "T"}}
     state.write_spec(spec)
     conn = _FakeToolConn([{"old_string": HOOKS_BROKEN, "new_string": HOOKS_GOOD}], target="game.ts")
-    loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
-                     connector=conn, max_steps=15)
-    result = loop.run()
-    assert result.ok is True
+    cursor = run_build_to_completion(str(tmp_path), conn, monkeypatch)
+    assert cursor.ok is True
     assert "read_file" in conn.calls and "edit" in conn.calls
     assert conn.calls.index("read_file") < conn.calls.index("edit")
     assert (tmp_path / "game" / "game.ts").read_text().strip() == HOOKS_GOOD.strip()
@@ -982,15 +974,9 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
     conn = _FakeToolConn([{"old_string": 'if (input.pressed(" ")) state.score += 1;',
                            "new_string": 'if (input.pressed(" ")) state.score += 2;'}],
                          target="game.ts")
-    monkeypatch.setattr(run_mod, "RunState", lambda rid: state)
-    monkeypatch.setattr(run_mod, "get_connector", lambda: conn)
-    regated = {}
-    monkeypatch.setattr(run_mod, "run_build",
-                        lambda rid, max_steps=40: regated.update(rid=rid, max_steps=max_steps) or "REGATED")
-
-    out = run_mod.fix_from_note("rid1", "the player can leave the screen on the right")
-    assert out == "REGATED"
-    assert regated == {"rid": "rid1", "max_steps": 40}   # re-gate always runs after the patch
+    cursor = run_build_to_completion(str(tmp_path), conn, monkeypatch, kind="fix",
+                                     note="the player can leave the screen on the right")
+    assert cursor.ok is True
     assert conn.calls == ["read_file", "edit"]           # the subloop shape: grounded read, then edit
     assert any("HUMAN PLAYTEST FEEDBACK" in m and "leave the screen" in m for m in conn.user_msgs)
     assert 'state.score += 2;' in (tmp_path / "game" / "game.ts").read_text()
@@ -1005,13 +991,11 @@ def test_human_note_error_classifies_to_default():
 
 
 def test_loop_refuses_unfrozen_spec(tmp_path):
+    from maestro.codegen import build_chain
     state = _run_dir(tmp_path)
-    spec = {"frozen": False, "mode": "2d", "design": {}}
-    state.write_spec(spec)
-    loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
-                     connector=_FakeConn(GOOD), max_steps=5)
+    state.write_spec({"frozen": False, "mode": "2d", "design": {}})
     with pytest.raises(RuntimeError):
-        loop.run()
+        build_chain.start_build(str(tmp_path), "bid")
 
 
 # ── context assembly (the fixes that converge multi-file builds) ────────────────
@@ -1038,41 +1022,23 @@ def test_fix_schemas_ladder():
                for e in (True, False) for r in (0, hi))
 
 
-def test_author_via_write_uses_the_write_tool():
-    """Authoring goes THROUGH the write tool (a real tool call with the file in a `code` arg), not a
-    raw fenced-block completion — the tool boundary is what stops the model chattering / duplicating a
-    function inside a free-form block. The write schema is offered to the model, and the tool call's
-    `code` is what lands."""
-
-    offered = {}
-
-    class Svc:
-        def infer(self, msgs, schemas, max_tokens=None):
-            offered["names"] = {s["function"]["name"] for s in schemas}
-            return {"choices": [{"message": {"content": "", "tool_calls": [
-                {"id": "c1", "function": {"name": "write",
-                                          "arguments": json.dumps({"file": "main.ts", "code": "export const x = 1;"})}}]}}]}
-
-    landed = {}
-    dispatch = lambda name, args: landed.update(name=name, **args) or {"ok": True, "chars": len(args["code"])}
-    res = _author_via_write(Svc(), "sys", "user", dispatch, "main.ts", 1000)
-    assert offered["names"] == {"write"}                       # the write tool WAS offered to the model
-    assert landed["name"] == "write" and landed["code"] == "export const x = 1;"
-    assert res["ok"] is True
+def test_author_extracts_code_from_the_write_tool_call():
+    """Authoring goes THROUGH the write tool (a real tool call with the file in a `code` arg): the
+    author step pulls the tool call's `code` and writes it. The write schema is what the turn offers."""
+    from maestro.codegen.build_steps import _WRITE_SCHEMA, _extract_write_code
+    result = {"choices": [{"message": {"content": "", "tool_calls": [
+        {"id": "c1", "function": {"name": "write",
+                                  "arguments": json.dumps({"file": "main.ts", "code": "export const x = 1;"})}}]}}]}
+    assert _extract_write_code(result) == "export const x = 1;"
+    assert _WRITE_SCHEMA["function"]["name"] == "write"
 
 
-def test_author_via_write_falls_back_to_fence_when_no_tool_call():
+def test_author_falls_back_to_fence_when_no_tool_call():
     """A local model that ignores the tool and emits a ```ts block still lands — the fence is scraped as
     a last resort so authoring never silently writes nothing."""
-
-    class Svc:
-        def infer(self, msgs, schemas, max_tokens=None):
-            return {"choices": [{"message": {"content": "here you go\n```ts\nexport const y = 2;\n```"}}]}
-
-    landed = {}
-    dispatch = lambda name, args: landed.update(args) or {"ok": True}
-    _author_via_write(Svc(), "sys", "user", dispatch, "main.ts", 1000)
-    assert landed["code"] == "export const y = 2;"
+    from maestro.codegen.build_steps import _extract_write_code
+    result = {"choices": [{"message": {"content": "here you go\n```ts\nexport const y = 2;\n```"}}]}
+    assert _extract_write_code(result).strip() == "export const y = 2;"
 
 
 def test_is_stub_rejects_placeholder_and_empty_bodies():

@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from config.settings_manager import settings_manager
 from db import store as db_store
-from maestro.codegen import asset_chain
+from maestro.codegen import asset_chain, build_chain
 from tools.build_events import _emit
 
 router = APIRouter()
@@ -187,12 +187,18 @@ async def complete(body: CompleteBody, request: Request):
             blob.unlink(missing_ok=True)
         return {"ok": False}
 
-    # Fire-and-forget: bounded CPU (a decimate, a bundle), and the worker's response must not
-    # wait on it. to_thread, not a bare task — sync work on the loop stalls every other
-    # completion. A restart between here and the finalize is what the reaper backstops.
-    task = asyncio.create_task(asyncio.to_thread(
-        asset_chain.on_completion, metadata, body.result, outcome["batch_id"],
-        outcome["batch_complete"]))
+    # Fire-and-forget: the completion's follow-up work must not block the worker's response. For a
+    # BUILD turn that work is the whole next advance (gates, tool dispatch, the next enqueue), for
+    # an ASSET job it is the ops + finalize. Either way it's off the event loop; a restart between
+    # here and it is what the reaper backstops. to_thread, not a bare task — sync work on the loop
+    # stalls every other completion.
+    if metadata.get("stage") == "build":
+        follow_up = (build_chain.on_completion, metadata["run_id"], metadata.get("build_id"),
+                     body.result, body.error)
+    else:
+        follow_up = (asset_chain.on_completion, metadata, body.result, outcome["batch_id"],
+                     outcome["batch_complete"])
+    task = asyncio.create_task(asyncio.to_thread(*follow_up))
     _BACKGROUND.add(task)
     task.add_done_callback(_BACKGROUND.discard)
     return {"ok": True}

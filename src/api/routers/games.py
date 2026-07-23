@@ -15,13 +15,13 @@ from typing import Dict, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.build_queue import AlreadyQueued, build_queue
 from auth import store
 from auth.billing import SECONDS_PER_CREDIT, cost
 from auth.deps import get_current_user
 from auth.store import User
 from db import store as db_store
 from db.estimates import cheapest_seconds
+from maestro.codegen import build_chain
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
 from maestro.codegen.reskin import add_assets
 from maestro.codegen.run import freeze_spec
@@ -91,7 +91,7 @@ async def list_games(user: User = Depends(get_current_user)):
             "status": row["status"],
             "frozen": row["status"] != "draft",
             "built": _built(row["id"]),
-            "building": build_queue.is_active(row["id"]),
+            "building": build_chain.is_active(row["id"]),
             "mtime": row["updated_at"],
         })
     games.sort(key=lambda g: g["mtime"], reverse=True)
@@ -106,23 +106,21 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     row = db_store.game(run_id) or {}
     ctrl = get_control(run_id)
     built = _built(run_id)
-    qstate = build_queue.state_of(run_id)
-    if qstate and qstate["status"] == "queued":
-        status, queue_position = "queued", qstate["position"]
-    elif qstate:
-        live = "fixing" if qstate["kind"] == "fix" else "building"
-        status, queue_position = ("paused" if ctrl and ctrl.paused else live), None
+    active = build_chain.status_of(run_id)
+    if active:
+        live = "fixing" if active["kind"] == "fix" else "building"
+        status = "paused" if ctrl and ctrl.paused else live
     else:
-        status, queue_position = ("built" if built else "idle"), None
+        status = "built" if built else "idle"
     return {
         "run_id": run_id,
         "spec": spec_data,
         "mode": spec_data.get("mode", ""),
         "frozen": bool(spec_data.get("frozen")),
         "built": built,
-        "building": qstate is not None,
+        "building": active is not None,
         "status": status,
-        "queue_position": queue_position,
+        "queue_position": None,   # builds no longer queue behind each other; kept for the client shape
         "auto_pause": ctrl.auto_pause if ctrl else False,
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         "play_url": f"/play/index.html?game={run_id}" if built else None,
@@ -163,6 +161,8 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     if not spec_data.get("frozen"):
         raise HTTPException(status_code=400, detail="freeze the spec before building")
 
+    if build_chain.is_active(run_id):
+        raise HTTPException(status_code=409, detail="build already in progress")
     if not db_store.is_charged(run_id):
         price = cost(spec_data)
         if not store.deduct(user.id, price, "build", run_id):
@@ -171,13 +171,10 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
         db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
     _require_compute(run_id)
 
-    try:
-        position = build_queue.enqueue(run_id, user.id, body.auto_pause)
-    except AlreadyQueued:
-        raise HTTPException(status_code=409, detail="build already in progress")
-
-    return {"status": "building" if position == 0 else "queued",
-            "run_id": run_id, "queue_position": position}
+    # kickoff seeds the scaffolds, runs the first gate sweep and enqueues the first llm turn — that
+    # touches disk + tsc, so off the event loop. It returns as soon as the turn is queued.
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build", auto_pause=body.auto_pause)
+    return {"status": "building", "run_id": run_id, "queue_position": 0}
 
 
 def _control(run_id: str):
@@ -203,19 +200,16 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     on-disk state so it rebuilds where it left off. The run is already `charged`, so re-enqueue
     never re-charges."""
     _require_state(run_id, user)
-    ctrl = get_control(run_id)
-    if ctrl is not None:
-        ctrl.request_resume()
+    _require_compute(run_id)
+    if build_chain.is_active(run_id):
+        # A mid-flight build — paused, or one whose driver died (cursor on disk). Re-drive it.
+        await asyncio.to_thread(build_chain.resume, run_id)
         return {"run_id": run_id, "status": "running"}
     if not db_store.is_charged(run_id):
         raise HTTPException(status_code=409, detail="no build to resume for this run")
-    _require_compute(run_id)
-    try:
-        position = build_queue.enqueue(run_id, user.id)
-    except AlreadyQueued:
-        raise HTTPException(status_code=409, detail="build already in progress")
-    return {"status": "building" if position == 0 else "queued",
-            "run_id": run_id, "queue_position": position}
+    # A finished/failed build: re-run the gate loop over the on-disk game (rebuild where it left off).
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
+    return {"status": "building", "run_id": run_id, "queue_position": 0}
 
 
 @router.post("/{run_id}/auto-pause", response_model=Dict)
@@ -233,13 +227,10 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
     can't run at once. Progress + completion stream over the websocket (fix_started, build_*)."""
     _require_state(run_id, user)
     _require_compute(run_id)
-    try:
-        position = build_queue.enqueue(run_id, user.id, kind="fix", note=body.note)
-    except AlreadyQueued:
+    if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="a build or fix is already running for this run")
-
-    return {"status": "fixing" if position == 0 else "queued",
-            "run_id": run_id, "queue_position": position}
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="fix", note=body.note)
+    return {"status": "fixing", "run_id": run_id, "queue_position": 0}
 
 
 @router.post("/{run_id}/assets", response_model=Dict)

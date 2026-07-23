@@ -386,3 +386,20 @@ init(kit) {
 `update` mutates state and never renders; the runtime handles all drawing. Keep the sim pure so it
 runs headless. Randomness only via `kit.rng`. `kit.win`/`kit.lose` END the game — milestones along
 the way are `kit.quest.complete` / `kit.notify`, which keep it running.
+
+<!-- data -->
+## Data-driven entities  (a data row IS the thing's look)
+When the game has DATA (`game/data/*.json` → `./data.ts`), a row already describes its own
+appearance — `size` (WORLD UNITS in 3D: a person is `{w:0.8,h:1.7,d:0.8}`, use as-is), optional
+`shape` ("box"|"sphere") and `color` — and its `id` is ALSO the mesh id the asset stage renders to.
+Spawn from the row and the entity is skinnable with no code change:
+```ts
+import { ENEMIES } from "./data.ts";
+const e = kit.spawnData(state.world, ENEMIES[0], { x, y: heightAt(x, z) + 0.85, z });
+// -> { shape, w,h,d, color, mesh: "<row id>", x, y, z } — the renderer swaps in the GLB when it exists
+```
+- `kit.spawnData(world, row, {x,y,z, ...})` — anything in the third arg overrides.
+- `kit.dataVisual(row)` — just the visual fields, when you need to build the entity yourself.
+NEVER re-scale a row's `size` (no `/100`), and never hand-pick a color for a row that has one.
+There is no `drawEntity` in 3D — the scene renders from the shape tag, and `mesh` is one.
+<!-- /data -->

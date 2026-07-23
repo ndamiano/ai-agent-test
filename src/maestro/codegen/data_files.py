@@ -9,8 +9,15 @@ Source of truth on disk per run, under `game/data/`:
 
 Every row carries the implicit ENVELOPE (never declared in `fields`): `id` (required, unique
 lowercase slug), `name?`, `look?` (an image-gen art prompt), `presence?` ("world"|"ui"|"both"),
-`size?` ({w,h} or {w,h,d}). The envelope serves the PIPELINE (assets/gates); custom fields serve
-the game and the pipeline never interprets them.
+`size?` ({w,h} or {w,h,d} — WORLD UNITS in 3D, PIXELS in 2D), `shape?`, `color?` and `parts?`
+(a 2D COMPOUND look: sub-shapes in fractions of the entity box, so hand-drawn art is data too). The envelope
+serves the PIPELINE (assets/gates); custom fields serve the game and the pipeline never interprets
+them.
+
+`size`/`shape`/`color` + `id` are the row's WHOLE VISUAL: `kit.spawnData(world, row, {x,y,z})`
+builds the entity from them and binds the asset id (`mesh` in 3D, `sprite` in 2D), so the skin
+stage never has to rewrite source to tag an entity — the row it came from already says what it
+looks like, skinned or not.
 """
 
 import json
@@ -22,7 +29,9 @@ from maestro.codegen.gates import game_dir
 _SLUG = re.compile(r"^[a-z][a-z0-9_]*$")
 _REF = re.compile(r"^ref:([a-z][a-z0-9_]*)(\[\])?$")
 _BASE_TYPES = {"number", "string", "boolean", "number[]", "string[]"}
-_ENVELOPE = ("id", "name", "look", "presence", "size")
+_ENVELOPE = ("id", "name", "look", "presence", "size", "shape", "color", "parts")
+_SHAPES_3D = ("box", "sphere")
+_SHAPES_2D = ("rect", "circle")
 _PRESENCE = ("world", "ui", "both")
 _TYPE_VOCAB = ("number, string, boolean, number[], string[], ref:<dataset>, ref:<dataset>[], "
                "each optionally ending in ?")
@@ -208,9 +217,27 @@ def validate_data(run_dir) -> list:
                 if rid in seen_ids:
                     errors.append(f"{where}: duplicate id '{rid}'")
                 seen_ids.add(rid)
-            for env in ("name", "look"):
+            for env in ("name", "look", "shape", "color"):
                 if env in row and not isinstance(row[env], str):
                     errors.append(f"{where}: field '{env}' must be string, got {_jstype(row[env])}")
+            if "parts" in row:
+                parts = row["parts"]
+                if not isinstance(parts, list) or not all(isinstance(q, dict) for q in parts):
+                    errors.append(f"{where}: parts must be an array of objects")
+                else:
+                    for q in parts:
+                        bad = [k for k in ("dx", "dy", "w", "h")
+                               if k in q and not (isinstance(q[k], (int, float))
+                                                 and not isinstance(q[k], bool))]
+                        if bad:
+                            errors.append(f"{where}: part {', '.join(bad)} must be a number "
+                                          "(a FRACTION of the entity box, 0..1)")
+                        if isinstance(q.get("shape"), str) and q["shape"] not in _SHAPES_2D:
+                            errors.append(f'{where}: part shape must be one of '
+                                          f'{", ".join(_SHAPES_2D)}, got {q["shape"]!r}')
+            if isinstance(row.get("shape"), str) and row["shape"] not in _SHAPES_3D + _SHAPES_2D:
+                errors.append(f'{where}: shape must be one of '
+                              f'{", ".join(_SHAPES_3D + _SHAPES_2D)}, got {row["shape"]!r}')
             if "presence" in row and row["presence"] not in _PRESENCE:
                 errors.append(f'{where}: presence must be "world"|"ui"|"both", got {row["presence"]!r}')
             if "size" in row:
@@ -267,7 +294,9 @@ def generate_data_ts(run_dir) -> None:
         return
     lines = [_HEADER,
              'export type Presence = "world" | "ui" | "both";',
-             "export interface Size { w: number; h: number; d?: number }"]
+             "export interface Size { w: number; h: number; d?: number }",
+             "export interface Part { shape?: string; dx?: number; dy?: number; w?: number; "
+             "h?: number; color?: string }"]
     for ds in datasets:
         name = ds["name"]
         fields = ds.get("fields") if isinstance(ds.get("fields"), dict) else {}
@@ -277,7 +306,10 @@ def generate_data_ts(run_dir) -> None:
                   "  name?: string;",
                   "  look?: string;",
                   "  presence?: Presence;",
-                  "  size?: Size;"]
+                  "  size?: Size;",
+                  "  shape?: string;",
+                  "  color?: string;",
+                  "  parts?: Part[];"]
         parsed = {}
         for fname, ftype in fields.items():
             base, optional = _parse_type(ftype)
@@ -309,7 +341,12 @@ def data_summary(run_dir) -> str:
     if not datasets:
         return ""
     out = ['# GAME DATA (import from "./data.ts" — typed, GENERATED; never redefine these '
-           "tables inline)"]
+           "tables inline)",
+           "SPAWN FROM A ROW — never hand-build a row's entity: `kit.spawnData(state.world, ROW, "
+           "{ x, y, z })` takes the row's size/shape/color AND binds its art (the row id), so the "
+           "asset stage skins it with no code change. 2D: draw it with `kit.drawEntity(g, e)`, "
+           "which prefers the sprite and falls back to the shape. `size` is already in the right "
+           "units (2D pixels, 3D world units) — never scale it."]
     for ds in datasets:
         name = ds["name"]
         fields = ds.get("fields") if isinstance(ds.get("fields"), dict) else {}

@@ -465,6 +465,87 @@ def test_simulate_fires_registered_actions():
     assert r["frame"] >= 20
 
 
+# ── data-driven visuals: a row IS the entity's look ───────────────────────────
+def test_spawn_data_binds_the_row_s_visual_and_asset_id():
+    """The point of the whole data-visual path: an entity spawned from a row carries that row's
+    size/shape/color AND its asset id (`mesh` in 3D, `sprite` in 2D), so the skin stage never has to
+    rewrite source to tag it. Sizes ride through UNSCALED (a live build divided them by 100)."""
+    r = _node_eval("""
+      import {dataVisual} from "./engine.js";
+      const wolf = { id: "wolf", size: { w: 0.8, h: 1.0, d: 1.8 }, color: "#777777" };
+      const orb  = { id: "orb", size: { w: 0.6, h: 0.6, d: 0.6 }, shape: "sphere", color: "#44ccff" };
+      const bare = { id: "bare" };
+      const slime = { id: "slime", size: { w: 24, h: 24 }, shape: "circle", color: "#33cc77" };
+      console.log(JSON.stringify({
+        wolf3d: dataVisual(wolf, "3d"), orb3d: dataVisual(orb, "3d"),
+        bare3d: dataVisual(bare, "3d"), slime2d: dataVisual(slime, "2d"),
+        bare2d: dataVisual(bare, "2d"),
+      }));
+    """)
+    assert r["wolf3d"] == {"shape": "box", "w": 0.8, "h": 1.0, "d": 1.8,
+                           "color": "#777777", "mesh": "wolf"}
+    assert r["orb3d"] == {"shape": "sphere", "r": 0.3, "color": "#44ccff", "mesh": "orb"}
+    assert r["slime2d"] == {"shape": "circle", "w": 24, "h": 24,
+                            "color": "#33cc77", "sprite": "slime"}
+    # shape/color are OPTIONAL — a row that omits them still draws
+    assert r["bare3d"]["shape"] == "box" and r["bare3d"]["mesh"] == "bare"
+    assert r["bare2d"]["shape"] == "rect" and r["bare2d"]["sprite"] == "bare"
+
+
+def test_spawn_data_position_overrides_and_lands_in_the_world():
+    r = _node_eval("""
+      import {spawnData} from "./engine.js";
+      const world = [];
+      const e = spawnData(world, { id: "wolf", size: { w: 1, h: 1, d: 2 }, color: "#777777" },
+                          { x: 5, y: 0.5, z: -3, hp: 20 }, "3d");
+      console.log(JSON.stringify({ n: world.length, same: world[0] === e,
+                                   x: e.x, y: e.y, z: e.z, hp: e.hp, mesh: e.mesh }));
+    """)
+    assert r == {"n": 1, "same": True, "x": 5, "y": 0.5, "z": -3, "hp": 20, "mesh": "wolf"}
+
+
+def test_draw_entity_renders_a_compound_look_from_parts():
+    """A multi-shape look stays DATA: `parts` are fractions of the entity box, so the row still owns
+    the art and one sprite can replace all of it."""
+    r = _node_eval("""
+      import {drawEntity} from "./engine.js";
+      const calls = [];
+      const g = { rect: (...a) => calls.push(["rect", ...a]),
+                  circle: (...a) => calls.push(["circle", ...a]),
+                  sprite: (...a) => calls.push(["sprite"]) };
+      const e = { x: 100, y: 200, w: 32, h: 32, color: "#ccddee", sprite: "fighter", parts: [
+        { shape: "rect", dx: 0.25, dy: 0, w: 0.5, h: 1, color: "#ccddee" },
+        { shape: "circle", dx: 0.25, dy: 0.5, w: 0.5, h: 0.5 },
+      ] };
+      drawEntity(g, e, {});                        // unskinned -> every part
+      drawEntity(g, e, { fighter: "IMG" });        // skinned -> ONE sprite, parts gone
+      console.log(JSON.stringify(calls));
+    """)
+    assert r[0] == ["rect", 108, 200, 16, 32, "#ccddee"]
+    assert r[1] == ["circle", 116, 224, 8, "#ccddee"]     # part color falls back to the entity's
+    assert r[2] == ["sprite"] and len(r) == 3
+
+
+def test_draw_entity_prefers_the_sprite_and_falls_back_to_the_shape():
+    """kit.drawEntity is the 2D half — the same call renders a game before and after skinning, so a
+    skinned game needs no draw() rewrite."""
+    r = _node_eval("""
+      import {drawEntity} from "./engine.js";
+      const calls = [];
+      const g = { rect: (...a) => calls.push(["rect", ...a]),
+                  circle: (...a) => calls.push(["circle", ...a]),
+                  sprite: (...a) => calls.push(["sprite", a[1], a[2], a[3], a[4]]) };
+      const box = { x: 10, y: 20, w: 8, h: 8, color: "#ff0000", sprite: "slime" };
+      drawEntity(g, box, {});                       // no asset loaded -> shape
+      drawEntity(g, { ...box, shape: "circle" }, {});
+      drawEntity(g, box, { slime: "IMG" });         // asset loaded -> sprite
+      console.log(JSON.stringify(calls));
+    """)
+    assert r[0] == ["rect", 10, 20, 8, 8, "#ff0000"]
+    assert r[1] == ["circle", 14, 24, 4, "#ff0000"]     # centered from the box
+    assert r[2] == ["sprite", 10, 20, 8, 8]
+
+
 # ── probe: dead_action / unbound_control / solid invariants ───────────────────
 def test_probe_dead_action_flags_noop_and_passes_real():
     r = _node_eval("""

@@ -54,6 +54,55 @@ ITEMS = [{"id": "coin", "name": "Coin", "look": "a gold coin, plain background",
           "presence": "ui", "size": {"w": 8, "h": 8}, "value": 1}]
 
 
+def test_shape_and_color_are_envelope_fields(tmp_path):
+    """A row owns its whole VISUAL — size + shape + color — so kit.spawnData can build the entity and
+    the skin stage never has to rewrite source to tag it."""
+    _write_data(tmp_path, rows={"enemies": [
+        {"id": "orc", "shape": "box", "color": "#3c7a38", "size": {"w": 1, "h": 2, "d": 1},
+         "hp": 10, "speed": 50},
+    ], "items": []})
+    assert validate_data(tmp_path) == []
+    generate_data_ts(tmp_path)
+    ts = (tmp_path / "game" / "data.ts").read_text()
+    assert "shape?: string;" in ts and "color?: string;" in ts
+
+
+def test_parts_are_validated_as_fractional_sub_shapes(tmp_path):
+    _write_data(tmp_path, rows={"enemies": [
+        {"id": "ship", "size": {"w": 32, "h": 32}, "hp": 1, "speed": 1,
+         "parts": [{"shape": "rect", "dx": 0.2, "dy": 0, "w": 0.6, "h": 1}]}], "items": []})
+    assert validate_data(tmp_path) == []
+    _write_data(tmp_path, rows={"enemies": [
+        {"id": "ship", "hp": 1, "speed": 1,
+         "parts": [{"shape": "box", "dx": "left"}]}], "items": []})
+    errs = validate_data(tmp_path)
+    assert any("part dx must be a number" in e for e in errs), errs
+    assert any("part shape must be one of" in e for e in errs), errs
+
+
+def test_shape_must_be_a_known_primitive(tmp_path):
+    _write_data(tmp_path, rows={"enemies": [{"id": "orc", "shape": "dodecahedron", "hp": 1,
+                                             "speed": 1}], "items": []})
+    errs = validate_data(tmp_path)
+    assert any("shape must be one of" in e for e in errs), errs
+
+
+def test_shape_and_color_cannot_be_declared_as_custom_fields(tmp_path):
+    _write_data(tmp_path, manifest={"datasets": [
+        {"name": "enemies", "fields": {"shape": "string"}}]}, rows={"enemies": []})
+    errs = validate_data(tmp_path)
+    assert any("envelope field" in e and "shape" in e for e in errs), errs
+
+
+def test_data_summary_tells_the_author_to_spawn_through_the_kit(tmp_path):
+    """The summary is the ONLY data context the authoring prompt gets, so the spawn contract and the
+    units live here — a live build scaled size by /100 because the units never reached the author."""
+    _write_data(tmp_path)
+    summary = data_summary(tmp_path)
+    assert "kit.spawnData" in summary and "kit.drawEntity" in summary
+    assert "never scale it" in summary.lower() or "never scale" in summary.lower()
+
+
 def _write_data(tmp_path, manifest=None, rows=None):
     dd = tmp_path / "game" / "data"
     dd.mkdir(parents=True, exist_ok=True)
@@ -478,23 +527,69 @@ def _boom(*a, **k):
 
 
 def test_skin_2d_prefers_the_data_plan(tmp_path, monkeypatch):
+    """Data-planned: no LLM plan AND no LLM rewrite. kit.spawnData already put `sprite: <row id>` on
+    the entity and kit.drawEntity prefers it, so there is nothing left to rewrite."""
     _write_planned_game(tmp_path)
     _write_data(tmp_path)
     monkeypatch.setattr(reskin, "plan_assets", _boom)
-    monkeypatch.setattr(reskin, "_reskin_and_gate", lambda *a, **k: _Result())
+    monkeypatch.setattr(reskin, "_reskin_and_gate", _boom)      # must NOT be reached
+    monkeypatch.setattr(reskin, "_regate", lambda *a, **k: _Result())
     monkeypatch.setattr(reskin, "generate_sprites", lambda rd, s: set())
-    out = reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None,
-                          {"main.ts": "g.rect(0,0,1,1,'#fff')"}, 1)
+    files = {"game.ts": "kit.spawnData(state.world, ORC, {x:1,y:1});\nkit.drawEntity(g, e);"}
+    out = reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None, files, 1)
     assert [s["id"] for s in out["sprites"]] == ["orc", "coin"]
+
+
+def test_skin_2d_hand_drawn_game_still_gets_the_rewrite(tmp_path, monkeypatch):
+    """A data-planned game that hand-draws never consults the sprite, so the generated art would be
+    orphaned — the rewrite is still the only thing that wires it."""
+    _write_planned_game(tmp_path)
+    _write_data(tmp_path)
+    monkeypatch.setattr(reskin, "plan_assets", _boom)
+    monkeypatch.setattr(reskin, "_regate", _boom)
+    called = {}
+
+    def _spy(*a, **k):
+        called["yes"] = True
+        return _Result()
+
+    monkeypatch.setattr(reskin, "_reskin_and_gate", _spy)
+    monkeypatch.setattr(reskin, "generate_sprites", lambda rd, s: set())
+    reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None,
+                    {"game.ts": "g.rect(0,0,1,1,'#fff')"}, 1)
+    assert called == {"yes": True}
+
+
+def test_skin_2d_without_data_still_rewrites_draw(tmp_path, monkeypatch):
+    """The data-less fallback keeps the LLM plan + rewrite — an arcade game with no datasets still
+    needs the model to wire kit.sprite into its draw()."""
+    _write_planned_game(tmp_path)
+    (tmp_path / "game" / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "game" / "data" / "manifest.json").write_text(json.dumps({"datasets": []}))
+    monkeypatch.setattr(reskin, "plan_assets", lambda *a: [{"id": "ship", "prompt": "p", "w": 8, "h": 8}])
+    monkeypatch.setattr(reskin, "_regate", _boom)               # must NOT be reached
+    called = {}
+
+    def _spy(*a, **k):
+        called["yes"] = True
+        return _Result()
+
+    monkeypatch.setattr(reskin, "_reskin_and_gate", _spy)
+    monkeypatch.setattr(reskin, "generate_sprites", lambda rd, s: set())
+    reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None,
+                    {"main.ts": "g.rect(0,0,1,1,'#fff')"}, 1)
+    assert called == {"yes": True}
 
 
 def test_skin_3d_data_plan_unions_required_mesh_tags(tmp_path, monkeypatch):
     _write_planned_game(tmp_path)
     _write_data(tmp_path)
     monkeypatch.setattr(reskin, "plan_meshes", _boom)
-    monkeypatch.setattr(reskin, "_reskin_and_gate", lambda *a, **k: _Result())
+    monkeypatch.setattr(reskin, "_reskin_and_gate", _boom)      # data-planned: no tagging call
+    monkeypatch.setattr(reskin, "_regate", lambda *a, **k: _Result())
     monkeypatch.setattr(reskin, "generate_meshes", lambda rd, m: set())
-    files = {"main.ts": 'config: { mode: "3d" }\nworld.push({ shape: "box", mesh: "old_barn" });'}
+    files = {"game.ts": 'config: { mode: "3d" }\nworld.push({ shape: "box", mesh: "old_barn" });\n'
+                        'kit.spawnData(state.world, ORC, {x:1,y:1,z:1});'}
     out = reskin._skin_3d("rid", RunState(tmp_path), {"design": {}}, None, files, 1)
     ids = [m["id"] for m in out["meshes"]]
     assert ids == ["orc", "old_barn"]          # data rows + the source's required tag, none dropped

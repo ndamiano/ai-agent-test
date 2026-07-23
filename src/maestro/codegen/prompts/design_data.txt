@@ -27,15 +27,31 @@ ENVELOPE — every row carries these implicit fields; NEVER declare them in "fie
   background, echoing the spec's colors/style. OMIT look for a non-visual row (a status effect,
   a wave definition). NEVER write a filler prompt just to fill the field.
 - "presence" (optional): "world" | "ui" | "both" — where the art appears
-- "size" (optional): { "w": n, "h": n } (2D, pixels) or { "w": n, "h": n, "d": n } (3D, world units)
+- "size" (optional): { "w": n, "h": n } (2D, pixels) or { "w": n, "h": n, "d": n } (3D, world units).
+  REAL units the game uses as-is — a 3D person is about { "w": 0.8, "h": 1.7, "d": 0.8 }, not 170.
+- "shape" (optional): the primitive drawn before art exists (and behind it) — 3D "box"|"sphere",
+  2D "rect"|"circle". Default "box"/"rect".
+- "color" (optional): a "#rrggbb" CSS color for that primitive. Give a row that has a "look" a
+  color that matches it, so the game reads correctly even with no art generated.
+- "parts" (optional, 2D): the thing's look when ONE rect/circle isn't enough — a list of sub-shapes
+  drawn in order, each placed in FRACTIONS of the row's box so it scales with "size":
+  { "shape": "rect"|"circle", "dx": 0..1, "dy": 0..1, "w": 0..1, "h": 0..1, "color": "#rrggbb" }
+  e.g. a ship: [{"shape":"rect","dx":0.2,"dy":0,"w":0.6,"h":1,"color":"#ccd"},
+                {"shape":"rect","dx":0,"dy":0.6,"w":1,"h":0.25,"color":"#88a"}].
+  DESCRIBE THE ART HERE, never as drawing code in the game — a row that draws itself is one the
+  art pipeline can replace with a real sprite later. The game never hand-draws a data-backed thing.
 
 FIELD TYPES — the only vocabulary: "number", "string", "boolean", "number[]", "string[]",
 "ref:<dataset>" (holds a row id from that dataset), "ref:<dataset>[]". Append ? to make a field
 optional, e.g. "number?". A type is always one of those STRINGS — never an object, never an enum
 declaration: a category field ("chase"/"wander"/"ranged") is just "string".
 
-"fields" declares ONLY custom gameplay fields. NEVER declare id, name, look, presence, or size in
-"fields" — they are the envelope: put them straight in the rows.
+"fields" declares ONLY custom gameplay fields. NEVER declare id, name, look, presence, size, shape
+or color in "fields" — they are the envelope: put them straight in the rows.
+
+size + shape + color + the row id ARE the thing's whole appearance: the game spawns it with
+kit.spawnData(world, row, {x,y,z}) and the art pipeline renders `look` to that same id. Fill them
+in for every row the player SEES.
 
 Rules:
 - Only datasets THIS game's systems actually read; 3-30 rows per dataset. A simple arcade game

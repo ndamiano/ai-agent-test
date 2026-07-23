@@ -44,6 +44,20 @@ _MODE_3D = re.compile(r"""mode\s*:\s*["']3d["']""")
 
 
 _GENERATED = "// GENERATED"
+_SPAWN_DATA = re.compile(r"kit\s*\.\s*spawnData\s*\(")
+_DRAWS_ASSET = re.compile(r"kit\s*\.\s*(drawEntity|sprite)\s*\(")
+
+
+def _binds_data_assets(files: dict, mode_3d: bool) -> bool:
+    """Whether the source already binds its rows' asset ids, making the reskin rewrite unnecessary.
+
+    kit.spawnData binds them at runtime. A game that hand-built entities with kit.spawn, or (2D)
+    hand-drew with g.rect, never binds them and would orphan the generated art — only the rewrite
+    wires that. 2D also needs the draw side, since the game owns draw()."""
+    authored = [src for name, src in files.items() if not src.lstrip().startswith(_GENERATED)]
+    if not any(_SPAWN_DATA.search(src) for src in authored):
+        return False
+    return True if mode_3d else any(_DRAWS_ASSET.search(src) for src in authored)
 
 
 def _content(resp) -> str:
@@ -296,6 +310,13 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
     return skin(run_id, state, spec, infer, files, max_steps)
 
 
+def _regate(run_id, state, max_steps) -> object:
+    """Re-gate with no rewrite — the path where kit.spawnData already bound every asset id.
+    (state is unused; kept for call-site symmetry with _reskin_and_gate.)"""
+    logger.info("assets %s: data-bound — no reskin rewrite needed", run_id)
+    return run_build(run_id, max_steps=max_steps)
+
+
 def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps) -> object:
     """Rewrite each matching file (detect → reskin), then re-gate and auto-fix any regression.
     Written straight to disk: the tool-side `write` is create-only (the fix loop's no-overwrite
@@ -321,13 +342,17 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
 
 def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
     # The data rows' `look` prompts ARE the plan when a run has them — deterministic, no LLM call.
-    sprites = sprite_plan_from_data(state.run_dir, "2d") or plan_assets(infer, spec, files)
+    from_data = sprite_plan_from_data(state.run_dir, "2d")
+    sprites = from_data or plan_assets(infer, spec, files)
     if not sprites:
         raise ValueError("asset plan produced no sprites")
     ids = [s["id"] for s in sprites]
     logger.info("assets %s: planned %d sprite(s): %s", run_id, len(sprites), ", ".join(ids))
 
-    result = _reskin_and_gate(run_id, state, infer, files, ids, _draws, reskin_file, max_steps)
+    # Skip the LLM rewrite only when the game ALREADY binds its assets through the kit; a hand-drawn
+    # draw() still needs wiring or the sprites we just planned would never appear.
+    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, False) \
+        else _reskin_and_gate(run_id, state, infer, files, ids, _draws, reskin_file, max_steps)
 
     generated = generate_sprites(state.run_dir, sprites)
     write_manifest(state.run_dir, sprites)
@@ -397,15 +422,18 @@ def fit_building_boxes(run_dir) -> int:
 
 def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
     # Data-planned meshes still union the source's `mesh:` tags — a tagged entity MUST get a mesh.
-    meshes = sprite_plan_from_data(state.run_dir, "3d")
-    meshes = _add_required(meshes, _existing_mesh_ids(files)) if meshes \
+    from_data = sprite_plan_from_data(state.run_dir, "3d")
+    meshes = _add_required(from_data, _existing_mesh_ids(files)) if from_data \
         else plan_meshes(infer, spec, files)
     if not meshes:
         raise ValueError("mesh plan produced no meshes")
     ids = [m["id"] for m in meshes]
     logger.info("assets %s: planned %d mesh(es): %s", run_id, len(meshes), ", ".join(ids))
 
-    result = _reskin_and_gate(run_id, state, infer, files, ids, _tags_shapes, reskin_mesh_file, max_steps)
+    # Skip the tagging LLM call only when the game already spawns through kit.spawnData (which binds
+    # `mesh: <row id>`); a hand-spawned entity still needs the model to tag it.
+    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, True) \
+        else _reskin_and_gate(run_id, state, infer, files, ids, _tags_shapes, reskin_mesh_file, max_steps)
 
     generated = generate_meshes(state.run_dir, meshes)
     write_mesh_manifest(state.run_dir, meshes)

@@ -162,7 +162,11 @@ src/
       data_files.py      the DATA-FILE substrate: game/data/manifest.json declares per-game
                          datasets (field vocab number/string/boolean/arrays/ref:<dataset>, "?" =
                          optional; every row carries an implicit envelope id/name?/look?/presence?/
-                         size? — pipeline fields, nullable so no-asset still renders as shapes),
+                         size?/shape?/color?/parts? — pipeline fields, nullable so no-asset still
+                         renders as shapes. size/shape/color/parts + the id ARE the row's whole
+                         VISUAL: kit.spawnData builds the entity from them and binds the row id as
+                         its asset id, so the skin stage needs no source rewrite; `parts` keeps a
+                         COMPOUND look (hull+fin, eyes) in data, so hand-drawn art stays skinnable),
                          game/data/<name>.json holds flat rows. Owns validate_data (type/id/ref/
                          envelope violations as FIX errors → one-shot rows rewrite via fix_data.txt),
                          the GENERATED typed game/data.ts (marker-protected like world.ts; games
@@ -174,7 +178,12 @@ src/
       reskin.py          the ASSETS stage (skin the shapes), mode-dispatched: 2D → plan sprites →
                          rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
-                         (TRELLIS). The plan is DETERMINISTIC whenever any data row carries `look`
+                         (TRELLIS). The TAGGING rewrite is skipped entirely when the plan came from
+                         data AND the source binds through the kit (_binds_data_assets: spawnData,
+                         plus drawEntity/sprite in 2D since the game owns draw) — a data-driven skin
+                         spends ZERO LLM calls; a hand-drawn/hand-spawned game still gets the
+                         rewrite or its art would be orphaned.
+                         The plan is DETERMINISTIC whenever any data row carries `look`
                          (sprite_plan_from_data: 2D all look rows, 3D look + presence world/both;
                          prompts from look, sizes from size — no 3-8 sprite cap); the LLM plan is
                          the data-less fallback. Both re-gate then write game/assets/ + assets.json.
@@ -316,15 +325,19 @@ src/
                          success); autoscaler.py = the daemon-thread tick loop (pod age via
                          first-seen tracking; errors logged, never fatal).
   api/                   FastAPI routers (chat, games, agents, system, websocket, billing,
-                         workqueue) + build_queue.py (single-GPU FIFO build serializer). The
+                         workqueue) + build_queue.py (single-GPU FIFO serializer for BOTH kinds of
+                         run job — `build` → run_build and `fix` → fix_from_note; a fix off-queue
+                         was invisible to the status endpoints, so a run being fixed read "built"
+                         and the next fix hit a bare 409). The
                          workqueue router (/worker/claim|heartbeat|complete|deregister, mounted
                          OUTSIDE the
                          user gate) is the pull side of the inference queue — token-gated
                          (settings workqueue.token, fail-closed when unset). WS events route
                          per-user server-side (event_bus resolves run → owner). The games router is
                          codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets,
-                         all against maestro.codegen.run; freeze→freeze_spec, build→build_queue→
-                         codegen run_build, fix→fix_from_note, assets→reskin.add_assets. Chat drafts
+                         all against maestro.codegen.run; freeze→freeze_spec, build/fix→build_queue→
+                         codegen run_build / fix_from_note, assets→reskin.add_assets (still its own
+                         thread — the image/mesh queues, not the build GPU). Chat drafts
                          specs via tools/chat_tools.py (propose_game_spec/amend_game_spec →
                          codegen.propose_spec/amend_spec). Build progress + spec events emit through
                          tools/build_events.py (_emit → db events log + event_bus). A built run is staged to

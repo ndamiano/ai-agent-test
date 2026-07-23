@@ -65,6 +65,52 @@ export function spawn(world, ent) {
 export function cull(world) {
   for (let i = world.length - 1; i >= 0; i--) if (world[i].dead) world.splice(i, 1);
 }
+
+// ── data-driven visuals ──────────────────────────────────────────────────────
+// A row's id is also its ASSET id, so an entity spawned from a row carries its own binding
+// (`mesh` in 3D, `sprite` in 2D) and the skin stage never has to rewrite source to tag it.
+// `size` is 3D world units / 2D pixels; shape/color/parts are optional.
+const DATA_COLOR = "#c8c8c8";
+
+export function dataVisual(row, mode) {
+  const s = (row && row.size) || {};
+  const color = row.color || DATA_COLOR;
+  if (mode === "3d") {
+    const shape = row.shape || "box";
+    const w = s.w ?? 1, h = s.h ?? 1, d = s.d ?? s.w ?? 1;
+    const base = shape === "sphere" ? { shape, r: Math.max(w, h) / 2 } : { shape, w, h, d };
+    return { ...base, color, mesh: row.id };
+  }
+  const vis = { shape: row.shape || "rect", w: s.w ?? 16, h: s.h ?? 16, color, sprite: row.id };
+  if (Array.isArray(row.parts) && row.parts.length) vis.parts = row.parts;
+  return vis;
+}
+
+// `at` supplies position, and overrides anything else.
+export function spawnData(world, row, at, mode) {
+  return spawn(world, { ...dataVisual(row, mode), ...(at || {}) });
+}
+
+// Draw one entity (2D): its loaded sprite, else its shape/parts. 3D needs no equivalent — the
+// scene renders from shape tags and `mesh` is one.
+export function drawEntity(g, e, sprites) {
+  const img = e.sprite ? (sprites || {})[e.sprite] : null;
+  if (img) return g.sprite(img, e.x, e.y, e.w, e.h);
+  const color = e.color || DATA_COLOR;
+  // `parts` are fractions of the entity's box, so one description works at any size.
+  if (Array.isArray(e.parts) && e.parts.length) {
+    for (const p of e.parts) {
+      const px = e.x + (p.dx || 0) * e.w, py = e.y + (p.dy || 0) * e.h;
+      const pw = (p.w ?? 1) * e.w, ph = (p.h ?? 1) * e.h;
+      const pc = p.color || color;
+      if (p.shape === "circle") g.circle(px + pw / 2, py + ph / 2, Math.min(pw, ph) / 2, pc);
+      else g.rect(px, py, pw, ph, pc);
+    }
+    return;
+  }
+  if (e.shape === "circle") g.circle(e.x + e.w / 2, e.y + e.h / 2, Math.min(e.w, e.h) / 2, color);
+  else g.rect(e.x, e.y, e.w, e.h, color);
+}
 // Semi-implicit Euler integration with optional gravity (px/s^2).
 export function integrate(e, dt, gravity = 0) {
   e.vy += gravity * dt;
@@ -824,6 +870,9 @@ export function makeKit(config, rng) {
       for (const [, a] of actions) if (a.keys.some((k) => input.pressed(k))) a.fn();
     },
     audio: { play: () => {} }, // stub; real backend wired later
+    spawnData: (world, row, at) => spawnData(world, row, at, config.mode),
+    dataVisual: (row) => dataVisual(row, config.mode),
+    drawEntity: (g, e) => drawEntity(g, e, sprites),
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },
     _stepToasts(dt) { for (const t of toasts) t.ttl -= dt; toasts = toasts.filter((t) => t.ttl > 0); },

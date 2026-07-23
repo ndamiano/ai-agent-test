@@ -207,5 +207,28 @@ init(state, kit) {
 - `g.text(str,x,y,color="#fff",size=16,align="left")`  (align: "left"|"center"|"right")
 - `g.sprite(img,x,y,w,h)` — draw a loaded image (asset pipeline supplies these later).
 
+## Data-driven entities  (a data row IS the thing's look)
+When the game has DATA (`game/data/*.json` → `./data.ts`), a row already describes its own
+appearance — `size` (PIXELS in 2D, use as-is), optional `shape` ("rect"|"circle") and `color` — and
+its `id` is ALSO the art id the asset stage renders to. So spawn from the row and draw through the
+kit, and the game is skinnable with no code change:
+```ts
+import { ENEMIES } from "./data.ts";
+const row = ENEMIES[0];
+const e = kit.spawnData(state.world, row, { x: 100, y: 60 });   // size/shape/color + sprite: row.id
+// draw(g, kit): prefers the loaded sprite, falls back to the row's shape+color
+for (const e of state.world) kit.drawEntity(g, e);
+```
+- `kit.spawnData(world, row, {x, y, ...})` — spawn an entity FROM a row. Anything in the third arg
+  overrides (position, velocity, per-instance stats).
+- `kit.drawEntity(g, e)` — draw ONE entity: its sprite when the art exists, else its shape+color.
+  Use it in your `draw` loop instead of hand-writing `kit.sprite(...)` + `g.rect(...)` per kind.
+- `kit.dataVisual(row)` — just the visual fields, when you need to build the entity yourself.
+A COMPOUND look is data too — `parts` (sub-shapes in fractions of the box) draws a ship's hull+fin
+or a slime's eyes, and `kit.drawEntity` renders them, so it is STILL skinnable (one sprite replaces
+every part). Never hand-draw a data-backed entity with `g.rect`/`g.circle`: art that lives in
+drawing code can never be replaced by a generated sprite. NEVER re-scale a row's `size`, and never
+hand-pick a color for a row that has one.
+
 ## Audio  (stub for now — safe to call)
 - `kit.audio.play(name)` — no-op until a backend is wired; never crashes.

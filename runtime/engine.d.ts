@@ -6,6 +6,23 @@
 interface Vec2 { x: number; y: number; }
 interface Vec3 { x: number; y: number; z: number; }
 
+// One row of a game/data/*.json dataset (see data.ts). The pipeline envelope is fixed; the game's
+// own stat fields ride alongside it. `size` is WORLD UNITS in 3D and PIXELS in 2D.
+interface DataRow {
+  id: string;
+  name?: string;
+  look?: string;
+  presence?: "world" | "ui" | "both";
+  size?: { w: number; h: number; d?: number };
+  shape?: string;
+  color?: string;
+  // A compound look, in fractions of the entity's box. A sprite replaces every part at once.
+  parts?: { shape?: string; dx?: number; dy?: number; w?: number; h?: number; color?: string }[];
+  // No index signature on purpose: data.ts emits an INTERFACE per dataset, and TS never treats an
+  // interface as assignable to a type carrying one. The kit only ever reads the envelope, so the
+  // game's own stat fields ride along untyped here and stay fully typed at their own use sites.
+}
+
 interface Entity {
   x: number; y: number; z?: number;
   vx?: number; vy?: number; vz?: number;
@@ -204,6 +221,12 @@ interface Kit {
   fpCam(cam: Camera3, player: Entity, opts?: { eye?: number }): void;
   moveFP(player: Entity, input: Input, dt: number, speed?: number): void;
   audio: { play(name?: string): void };
+  // A row's `id` is its asset id, so a row-spawned entity carries `mesh` (3D) / `sprite` (2D) and
+  // the renderer swaps in the GLB/PNG when one exists.
+  spawnData(world: World, row: DataRow, at: Partial<Entity>): Entity;
+  dataVisual(row: DataRow): Partial<Entity>;
+  // 2D only; 3D renders from the shape tag.
+  drawEntity(g: DrawApi, e: Entity): void;
   // The skin: returns the preloaded sprite image for an entity's `sprite` id, or null if no
   // asset was generated (headless, or an unskinned game) — draw the placeholder shape then.
   sprite(id: string): unknown;

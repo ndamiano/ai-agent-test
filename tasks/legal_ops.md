@@ -7,12 +7,13 @@ or paid access.** Capture it now so it's not a scramble at launch.
 
 ## Guardrail / phasing
 - **Private alpha** — DONE 2026-07-23: `frontend/public/terms.html` + `privacy.html` (served in
-  the clear, linked from the login screen with an 18+ / acceptance line). Covers: alpha
-  disclaimers, 18+, acceptable use (no CSAM in any form, no sexually explicit content, no
-  real-person likeness), credits no-cash-value + discretionary refunds, personal-use-only rights
-  in generated games (resale reserved to the later tier), liability cap, honest privacy
-  inventory (incl. the safety log's matched-terms-only detail; no analytics, no third-party AI).
-  Drafted in-house — **get counsel review before paid/public.**
+  the clear, linked from the login screen with an 18+ / acceptance line). Deliberately
+  operator-favorable and promise-free (owner's direction): no contact path (5 trusted testers
+  know how to reach Nick — formal path comes later), NO refund mentions, personal-use-only
+  rights (no sharing/redistribution — any free-license idea waits for the store), terms
+  changeable at any time without notice. Privacy note stays transparency-flavored (no
+  analytics, no third-party AI) but avoids mechanism-level detail. Drafted in-house —
+  **get counsel review before paid/public.**
 - **Paid / public:** the full set below is required before the first real dollar or public signup.
 
 ## Owner's direction — content ownership (Background)

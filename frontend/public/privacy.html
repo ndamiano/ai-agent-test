@@ -17,39 +17,30 @@
 
 <h2>What we store</h2>
 <ul>
-  <li><strong>Account:</strong> your handle and a salted hash of your password (never the
-      password itself), session tokens (stored hashed), and your credit ledger.</li>
-  <li><strong>What you create:</strong> your chat messages and game requests, the game
-      specifications drafted from them, the generated games and their assets, and build
-      logs/events.</li>
-  <li><strong>Usage:</strong> per-build GPU time (that's how compute budgets are metered) and
-      standard server logs (including IP addresses) kept by our hosting.</li>
-  <li><strong>Safety:</strong> if a request trips the illegal-content filter we log which
-      term matched and your account id — never the full text of the request.</li>
+  <li><strong>Account:</strong> your handle, your password in hashed form (never the password
+      itself), and your credit balance and history.</li>
+  <li><strong>What you create:</strong> your requests, the game specifications drafted from
+      them, and the generated games and their assets.</li>
+  <li><strong>Operations:</strong> logs needed to run, debug, and protect the Service —
+      build activity, resource usage, content-safety screening, and standard server logs.</li>
 </ul>
 
 <h2>What we don't do</h2>
 <ul>
   <li>No analytics, tracking pixels, or advertising of any kind.</li>
-  <li>No selling or sharing of your data, except the infrastructure that runs the Service
-      (our host, and cloud GPU workers that process generation jobs) and where the law
-      requires it.</li>
+  <li>No selling or sharing of your data, except with the infrastructure that runs the
+      Service and where the law requires it.</li>
   <li>No third-party AI services: generation runs on models we operate ourselves. Your
       prompts are not sent to outside AI providers.</li>
-  <li>No payment data — the alpha has no payments. (When payments arrive they'll be handled
-      by a payment provider; card details will never touch our servers.)</li>
+  <li>No payment data — the alpha has no payments.</li>
 </ul>
 
 <h2>Cookies</h2>
-<p>One essential cookie (<code>maestro_play</code>) signs your browser into the game player.
-No tracking cookies. Your session token is kept in your browser's storage.</p>
+<p>One essential cookie signs your browser into the game player. No tracking cookies.</p>
 
-<h2>Retention and deletion</h2>
-<p>Data is kept while your account exists. Email us to delete your account and its data —
-generated games included. Backups may lag deletion by a short period.</p>
-
-<h2>Contact</h2>
-<p><a href="mailto:ndamiano100@gmail.com">ndamiano100@gmail.com</a></p>
+<h2>Retention</h2>
+<p>Data is kept while your account exists. During the private alpha, account and data removal
+is handled directly; a formal contact path will be provided in the future.</p>
 
 <p class="muted">See also the <a href="/terms.html">terms of service</a>.</p>
 </body>

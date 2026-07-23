@@ -12,48 +12,33 @@ per-tenant inference routing** instead of raw threads against global singletons.
 "future priority" — but they're the *relief valve* for concurrency (more builds need more inference
 capacity), so design the spine now, fill it later.
 
-## Background (VERIFIED — current flow, `file:line`)
+## Background (VERIFIED — updated 2026-07-23; the spine LANDED)
 
-**Build trigger & execution:**
-- `POST /games/{run_id}/build` → spawns a raw daemon `threading.Thread` running `run_build`
-  (`src/api/routers/games.py:191-222`, thread at `:212-221`). Returns immediately.
-- `_active_builds: set` + `_active_lock` (`games.py:90-91`) de-dupe only the **same** run_id
-  (`:205-208`). **Different run_ids already run concurrently** — and collide on the singletons below.
-- `run_build` runs synchronously on that bg thread (`src/maestro/run.py:30-82`); asset gen +
-  packaging happen at the end on success (`:62-77`).
-- `RunControl` registry (`src/maestro/run_control.py:77-97`) IS properly per-run isolated + locked —
-  this piece is already concurrency-safe. Good foundation.
-- No pool/limit on the per-build threads (`games.py:221`) — 100 builds = 100 threads.
+**The job/worker spine exists and is the only transport to a GPU:**
+- **Worker-pull job queue** — `src/db/store.py` (jobs + workers tables, atomic claim w/ lease,
+  complete debits GPU-seconds) + `src/api/routers/workqueue.py` (claim/heartbeat/complete/
+  deregister, token-gated) + `src/worker/agent.py` (the pull-side worker; one per queue: llm /
+  image / mesh). No direct-call fallback anywhere.
+- **Build-as-jobs** — a build is a CHAIN of `llm` jobs driven by
+  `src/maestro/codegen/build_chain.py` (durable cursor in `runs/<id>/build_state.json`), not a
+  resident thread. **Builds no longer serialize behind one another** — they contend only for llm
+  workers, which autoscale.
+- **Parallel asset generation** — `reskin.py` plans + gates, then `start_asset_chain` enqueues
+  EVERY image job at once as one batch; `src/maestro/codegen/asset_chain.py` chains mesh
+  follow-ups and finalizes the batch. Nothing waits on a GPU.
+- **RunPod autoscaler live on prod** — `src/scaler/` (control plane owns scale-up + pod reaping;
+  workers own scale-down via idle self-exit).
+- **WS routing is per-user server-side** — event_bus resolves each event's run → owner (db
+  `games.user_id`) and sends only to that user's sockets.
 
-**Collision points at concurrency (the work):**
-- **LLM connector is a process-wide singleton** — `get_connector()` returns one shared instance
-  (`src/llm_clients/connector.py:11-13,19-47`), rebuilt in place on a settings change with no lock
-  around the module globals.
+**Still-standing collision points (the remaining work):**
+- **LLM connector is a process-wide singleton** — `get_connector()` returns one cached instance
+  (`src/llm_clients/connector.py:240-255`), rebuilt on a settings change with no lock around the
+  module global.
 - **Global LLM rate limiter** — `_llm_rate_limiter = LLMRateLimiter(rate=2.0, capacity=8)`
-  (`src/llm_clients/rate_limiter.py:60-64`). One 2 req/s bucket shared across ALL builds → global
-  starvation.
-- **Settings is one global config** — `settings_manager` singleton (`src/config/settings_manager.py:118-119`);
-  thread-safe but no per-user/per-run settings (endpoints, model all shared).
-- **Single local inference server assumption** — one-model-resident LM Studio/llama.cpp with
-  unload/reload eviction (`src/tools/comfyui_tools.py:732-874`); `vram_bracket()` (`:988-1009`) and
-  `run_trellis_batch` (`:473-501`) free/unload models globally → concurrent builds evict each
-  other's model mid-generation.
-- **Single global asset endpoints** — ComfyUI `:8188` (`comfyui_tools.py:672`), Trellis `:8189`
-  (`:452`), tile/mesh from the one settings singleton (`:447-449`).
-- **WS event bus is a GLOBAL broadcast** — one `event_bus` singleton, single `asyncio.Queue(1000)`
-  (`src/api/websocket/event_bus.py:86-87`), `broadcast_to_all` to every socket
-  (`src/api/websocket/manager.py:22-37`); run isolation is **client-side only**
-  (`frontend/src/contexts/WebSocketContext.tsx:86-93`). Every build's events leak to every browser.
-- **Shared default chat session** — `_sessions` dict, default `session_id="default"`
-  (`src/api/routers/chat.py:18-31`) — all sessionless clients share one `MainAgent`.
-
-**Asset gen — sequential, at end:**
-- `run.py:62-77` calls `generate_images` then `generate_voices` then `compile_for(...)` only after
-  `result.ok`.
-- `generate_images` (`src/renpy/fns.py:128+`) is plain sequential `for` loops (bg/char/cg/item/
-  feature/emotion/tile passes); `run_jobs` (`comfyui_tools.py:1011-1024`) docstring literally
-  "Run image jobs sequentially"; `generate_voices` is sequential per line. **No pool/executor/async
-  anywhere.** Assets are defined up front and independent → fully parallelizable.
+  (`src/llm_clients/rate_limiter.py:68`). One bucket shared across ALL builds → global starvation.
+- **No per-tenant fair scheduling** — the queue is FIFO per queue name; one user's hundred-job
+  build can starve another user's single turn.
 
 ## Guardrails
 - **Depends on auth** (`auth_and_billing.md`). Concurrency without ownership = anyone controls/
@@ -61,62 +46,54 @@ capacity), so design the spine now, fill it later.
   `games.py:103-134`). Land per-user run ownership alongside concurrent builds, not after.
 - **No half-measures on the singletons** (per `CLAUDE.md`): make inference access per-run/per-tenant
   or explicitly pooled — do not bolt a lock around the global and call it done.
-- Keep the engine-agnostic seam: asset parallelism must work for both renpy and godot asset passes.
+- Keep the queue a generic transport: asset parallelism rides the same job queue as llm/mesh work,
+  and the queue never learns what an asset is (`asset_chain.py` owns that).
 
 ## S1 — Concurrent multi-user builds (launch blocker)
 Turn "raw threads against globals" into a bounded job/worker model with isolated inference access.
 
-- [x] **Build queue + worker pool.** *(pre-alpha subset: cap=1.)* Replaced the per-request raw
-      `threading.Thread` with `api/build_queue.py` — one daemon worker draining a FIFO queue, one
-      build in flight, extras queued with a visible `queue_position` (surfaced on GET /games/{id}
-      + a `build_queued` event). A queued run holds its RunControl so pause/cancel land before it
-      starts; a cancel-while-queued skips the build. Pool>1 is deferred (single GPU).
+- [x] **Build queue + worker pool.** DONE — and the interim `api/build_queue.py` (one-build-in-
+      flight FIFO) is deleted, superseded by the real spine: the worker-pull job queue
+      (`src/db/store.py` + `src/api/routers/workqueue.py` + `src/worker/agent.py`) + build-as-jobs
+      (`src/maestro/codegen/build_chain.py`). Builds don't serialize behind one another any more;
+      they contend only for llm workers, which autoscale.
 - [ ] **Per-run inference handle, not a shared singleton.** Give each build its own connector /
       inference route (or a pooled lease) so a settings swap can't yank a running build's
       connector. Decouple from the process-global (`connector.py`).
-- [ ] **Rate-limit / capacity per backend, not one global 2 req/s bucket** (`rate_limiter.py:60`).
-      Size the limiter to actual backend capacity; scale it with the worker pool.
+- [ ] **Rate-limit / capacity per backend, not one global 2 req/s bucket**
+      (`src/llm_clients/rate_limiter.py:68`). Size the limiter to actual backend capacity; scale it
+      with the worker pool.
 - [x] **Per-run (and per-user) WS routing.** Server-side filter: `manager.py` keys sockets by the
-      authenticated user; `event_bus.py` resolves each event's run → owner (owner.json, cached) and
+      authenticated user; `event_bus.py` resolves each event's run → owner (db `games.user_id`) and
       sends only to that user's sockets (no-run_id events fall back to a global broadcast). The leak
       is closed — a client only receives its own runs' events.
-- [ ] **Per-session chat isolation.** Kill the shared `session_id="default"` (`chat.py:31`); key
-      sessions to the authenticated user.
+- [x] **Per-session chat isolation.** DONE — `src/api/routers/chat.py` keys `_sessions` on the
+      authenticated `user_id`; the shared `session_id="default"` is gone.
 - [ ] **Tests:** two concurrent builds don't cross-contaminate state/events; queue caps at N;
       a settings change doesn't break an in-flight build.
 
-## S2 — Parallel asset generation
-Assets are defined once, independent, generated at the end — parallelize them.
-
-- [ ] **Parallelize `generate_images`** (`renpy/fns.py`) — fan the independent jobs (backgrounds,
-      characters, CGs, items, features, tiles) across workers instead of the sequential `for`.
-      The img2img emotion pass depends on its neutral base → keep that dependency, parallelize across
-      characters.
-- [ ] **Make `run_jobs` concurrent** (`comfyui_tools.py:1011-1024`) — pool across available asset
-      endpoints instead of one sequential loop on one endpoint. Requires >1 asset endpoint (→ S3).
-- [ ] **Parallelize `generate_voices`** per line (independent TTS calls).
-- [ ] **Reconcile with `vram_bracket`/`run_trellis_batch`** (`comfyui_tools.py:988-1009,473-501`):
-      global VRAM juggling is incompatible with parallel gen on ONE box — parallelism needs multiple
-      GPUs/endpoints (S3) or a scheduler that batches by model to avoid thrashing evictions.
-- [ ] **Tests:** parallel asset gen produces the same manifest as sequential; failures isolate
-      (one bad asset doesn't sink the batch); coverage reporting intact.
+## S2 — Parallel asset generation  ✅ DONE (superseded shape)
+The old sequential renpy `generate_images`/`run_jobs`/`generate_voices` path is deleted with the
+engine it served. Assets now ride the shared job queue as one batch: `reskin.py` plans + gates,
+`start_asset_chain` enqueues EVERY image job at once, and `asset_chain.py` chains each mesh
+follow-up + runs the batch finalize (stage_for_play + assets_done). Parallelism = however many
+image/mesh workers the scaler runs; a queue owns its GPU, so there's no VRAM juggling to reconcile.
 
 ## S3 — On-demand inference (runpod)
 Capacity is the ceiling for both S1 and S2. Move from one fixed local server to spin-up-on-demand.
 
-- [ ] **Inference backend abstraction.** A backend registry / router that maps a build (or asset
-      job) to an inference endpoint, so "localhost single server" becomes one backend among many.
-      Generalize the single-endpoint assumptions (`comfyui_tools.py:672,452,447-449`,
-      `connector.py:34`) behind it.
-- [ ] **Runpod spin-up/tear-down.** Provision GPU instances on demand (LLM + ComfyUI + Trellis/TTS
-      stacks), register their endpoints with the router, tear down when idle. Warm-pool vs cold-start
-      tradeoff is a design decision (note it).
-- [ ] **Per-tenant routing + fair scheduling.** Route each user's build/assets to an available
-      backend; don't let one big build starve others. Ties to S1's queue.
-- [ ] **Cost metering hook.** Emit inference usage (tokens, GPU-seconds) per run — feeds the credit
-      cost formula stub in `auth_and_billing.md`.
-- [ ] **Tests:** router picks a healthy backend; backend loss mid-build fails gracefully (retry /
-      requeue, not silent hang); idle tear-down doesn't kill an active build.
+- [x] **Inference backend abstraction.** DONE — the worker-pull queue IS the seam: the control
+      plane touches no GPU, workers dial out and claim, so "localhost single server" is just a
+      worker registration like any pod's.
+- [x] **Runpod spin-up/tear-down.** DONE — `src/scaler/` (live on prod): scale-from-zero on any
+      pending job, workers self-exit on idle, the scaler's reaper is the billing guarantee.
+- [ ] **Per-tenant routing + fair scheduling.** Route each user's build/assets fairly; don't let
+      one big build starve others. The queue is FIFO today — still open.
+- [x] **Cost metering hook.** DONE — `complete_job` debits measured exec_seconds to the owning
+      game (`games.seconds_used`) + worker `busy_seconds`; the compute budget admits jobs against
+      the grant (see `auth_and_billing.md`).
+- [x] **Tests:** `test_gpu_queue.py`/`test_workqueue.py` (claim/lease-lapse requeue, stale
+      completion dropped), `test_scaler_policy.py`/`test_scaler_stats.py`/`test_runpod_client.py`.
 
 ## Ordering
 1. **Auth ownership first** (dependency) — see `auth_and_billing.md`.

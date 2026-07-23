@@ -1,159 +1,97 @@
 # Test Health — Audit & Anti-Bloat Governance
 
+Rewritten 2026-07-23. The previous file audited the pre-codegen-rewrite suite (IR/Ren'Py/Godot
+era); those test files are deleted and its G1–G5 work is history — logged here only as the
+principles that survived. This is a fresh recon of the CURRENT suite.
+
 ## Why
-582 unit tests (+1 live integration) across 40 files. **Quality is already high** — the suite
-overwhelmingly tests behaviour/contracts, avoids over-mocking (~8 call-spy asserts total), has no
-golden dumps, and most tests carry a WHY-comment tying them to a real bug/invariant. The threat is
-**not weak asserts — it's STRUCTURAL bloat.** The suite has ~1 shared fixture total, so people add
-coverage by *cloning whole files*; that's the path from 500 → 10,000 tests. Governance = shared
-fixtures + conventions + fixing a small weak fraction + filling load-bearing gaps.
+618 unit tests / 52 files, green in ~19s. Quality is high: near every file opens with a
+contract-stating docstring, WHY-comments tie tests to real bugs/invariants, asserts are
+behavioural (charge-once, FIFO claim, budget reservation), and realistic fixtures exist
+(`tests/fixtures/design_local_qwen_run2.txt` = captured model output; `tests/build_harness.py` =
+the shared in-process build driver). The threat — same as last era — is **structural**: the suite
+was rebuilt file-by-file with **zero shared fixtures** (`conftest.py` is a 4-line sys.path shim),
+so setup boilerplate is re-cloned per file. That is the path from 600 → 10,000 tests. Governance =
+shared fixtures + a truthful conventions doc + a cadence, NOT chasing coverage.
+
+Surviving principles (do not re-litigate): variants are `parametrize` rows not cloned `def test_`
+functions; every test carries a WHY-comment; test contracts not implementation; never cut a
+validation/authz/money refusal test.
+
+## Background (VERIFIED 2026-07-23)
+- **Scale:** 618 tests / 52 files (+1 live `tests/integration/test_connectors.py`, correctly
+  isolated). Full run 19s. Run: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`.
+- **Distribution:** codegen build path 290/14 files (`test_codegen.py` alone is 70 tests /
+  1178 lines), db/queue/scaler/worker 112/10, auth/billing/admin 59/11, config/utils 41/4,
+  assets 39/3, api/ws/chat 39/5, connector/message-builder 38/5.
+- **Cloned boilerplate (the lever):**
+  - `_tmp_db` autouse fixture (`monkeypatch store._db_path → tmp_path`) cloned in **13 files**;
+    22 files touch `_db_path`, 34 occurrences.
+  - `TestClient(app)` fixture (auth.db + platform.db patch, sometimes `resolve_base_path`)
+    cloned in **8 files** (`test_auth_gate/auth_me/admin_api/games_db_wiring/play_auth/
+    workqueue/billing_seam/chat_credit_gate`).
+  - `_user` (create_user + grant + issue_token → headers) cloned in 3 files; the raw
+    create_user/token boilerplate appears in **11 files** (34 call sites).
+  - `_game` (create_game + charge_game) cloned in `test_compute_budget` + `test_asset_chain`;
+    `_make_game` in `test_games_db_wiring` + `test_play_auth`.
+  - Fake-requests `_Resp` class cloned in `test_gpu_queue` + `test_worker_agent`.
+  - **32 files** carry a per-file `sys.path.insert` shim that `tests/conftest.py` already does.
+- **`tests/README.md` is STALE/false:** advertises conftest fixtures that no longer exist
+  (`spec_factory`, `run_state`, `frozen_run`, `patch_for_run`, `example_ir`, `ctx_factory`,
+  `docs/examples/*.json` IR loaders) and says "582+ tests".
+- **Two `unittest` holdouts:** `test_ws_event_routing.py` (`IsolatedAsyncioTestCase`) +
+  `test_websocket_errors.py` (3 classes). Everything else is pytest. anyio 4.13 is installed
+  (starlette dep) — its pytest plugin covers async migration; no pytest-asyncio.
+- **New-surface shallow audit** (db_store, workqueue, gpu_queue, compute_budget, build_chain,
+  worker_agent, scaler_*, codegen*): behavioural and well-motivated throughout. Grey zones, all
+  tolerable: `test_codegen.py` imports 8 private names from `module.py` (`_authoring_order`,
+  `_detect_typechecks`, `_is_stub`, `_kit_context`, …) — justified reach-in, don't expand; the
+  6 workqueue long-poll tests each burn ~0.5s real wall clock; `test_worldgen_bridge` setup runs
+  real worldgen (3.4s). Slowest 8 items ≤3.4s — no `slow` marker needed yet.
+- `parametrize` is in use where variants exist (7 files; `test_scaffold` ×5, `test_auth_gate`
+  GATED_PATHS) — no clone-fold backlog found in the current suite.
 
 ## Guardrails
-- Don't chase coverage %. Add a test only for a behaviour/contract or a fixed bug.
-- **Consolidate variants with `parametrize`, not new `def test_` functions.**
-- Every test keeps a WHY-comment (the suite's best existing asset — codify it).
-- Fix implementation-coupled tests toward observable behaviour; don't add more of them.
+- Governance only: no prod-code changes beyond a test seam, no coverage chasing.
+- A conftest fixture earns its place by replacing ≥2 clones; don't invent speculative fixtures.
+- Migrating a file to a shared fixture must not change what it asserts. Suite stays green at 618
+  (± only deliberate adds/cuts).
+- Don't force divergent look-alikes into one `parametrize`; fold clones only.
 
-## Background (VERIFIED — audit findings)
-- **Scale:** 536 unit tests / 46 files; `tests/integration/test_connectors.py` (1, live LLM server) is
-  correctly isolated. Run: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`.
-- **`conftest.py` is a 4-line `sys.path` shim with ZERO fixtures.** Exactly **one** `@pytest.fixture`
-  in the whole suite (`tests/test_vram_management.py:19`). **No `parametrize` anywhere.**
-- **Distribution:** maestro core/loop/modules 190 (33%), API routers 93, Ren'Py 79, mechanic
-  modules 77, IR 32, assets 35, connector 27, config/utils 26, Godot 23. Heavily tested: module
-  core/checks/loop, `build_tools`, combat/world, VN projection. Thin for weight: connector layer,
-  main agent, services.
-- **Weak fraction ~5–8%**, concentrated (not tautologies):
-  - Graph-node-index / hardcoded-string asserts: `tests/test_comfyui_prompt.py:42,55,57` assert on
-    ComfyUI workflow node numbers + `ckpt_name`; `:16,38,47` assert prose fragments.
-  - Timing-coupled flakes: `tests/test_llm_rate_limit.py:51,66,106` assert wall-clock windows
-    (`1.8<=elapsed<=2.5`) — ~3–4s real time, flake-prone on loaded CI.
-  - Thin `assert res["ok"] is True` where the real check is the follow-up read
-    (`tests/test_maestro_tools.py:42-44`).
-  - Private-symbol reach-in is widespread but mostly justified (asserts on output, binds to private
-    names) — grey zone, don't expand.
-- **Good patterns to preserve:** `monkeypatch RunState.for_run → tmp_path` (router tests exercise
-  the real router + RunState, only redirect the FS); `docs/examples/*.json` as shared realistic
-  fixtures; the `_ctx`/fake-`State` pattern (`test_core.py:56`); WHY-comment-per-test.
+## Tasks
 
-## G1 — Anti-bloat infrastructure (the main lever)
-- [x] **Populate `conftest.py` with shared fixtures + helpers** — `spec_factory`/`make_spec`,
-      `run_state`, `frozen_run`/`seed_frozen_run`, `patch_for_run`/`patch_run_state_for`,
-      `example_ir`/`load_example`, `ctx_factory`/`make_ctx`. Deleted the identical `_patch`/
-      `_patch_for_run` clones (routers now import the shared helper); migrated the `example_ir`
-      loaders in all 5 IR test files + `_spec`/`_places_spec` in `test_maestro_tools.py`.
-      Suite green (691). REMAINING: `_frozen_run` (hitl) + `_ctx` (core) call sites not yet
-      threaded onto the fixtures — they're heavier per-call migrations; the fixtures exist so new
-      tests use them and the two files can be drained incrementally.
-- [x] **Adopt a `parametrize` convention** for case lists (combat-shape variants, module resolution),
-      so new variants are rows not functions. Convention in `tests/README.md` AND applied by the G5
-      FOLD pass (7 files converted — see G5).
-- [x] **Standardize on pytest-style.** All 4 `unittest.TestCase` files migrated:
-      `test_settings_manager.py` (FOLD pass), `test_time_utils.py` + `test_tools.py` (folded where
-      variants existed). Integration file left (live-service, out of default run). No `unittest`
-      import remains in the unit suite.
-- [x] **Add markers + fix the slow file.** `test_llm_rate_limit.py` rewritten onto a `FakeClock` —
-      the limiter now takes a `clock`/`sleep` seam (defaults = real `time.time`/`time.sleep`, zero
-      prod change); the timing tests advance virtual time, run in 0.03s, no wall-clock flake. No
-      `slow` marker needed (nothing touches real time).
+### T1 — Shared conftest fixtures (the main lever)
+Files: `tests/conftest.py` + the cloning test files. Verify: full suite green, 618 collected.
+- [ ] `tmp_db` (autouse-compatible: patch `db.store._db_path → tmp_path/platform.db`) — migrate
+      the 13 `_tmp_db` clones. Keep `test_workqueue`'s rate-limiter reset comment/behaviour.
+- [ ] `app_client` (auth.db + platform.db patch + `TestClient(app)`, no startup handlers) —
+      migrate the 8 clones; a param/second fixture covers the `resolve_base_path` variant.
+- [ ] `make_user` (create + optional grant + token headers) and `charged_game` helpers — migrate
+      `_user`/`_game`/`_make_game` call sites.
+- [ ] Move `_Resp` into conftest (or a `tests/fakes.py`) — dedupe `test_gpu_queue`/
+      `test_worker_agent`.
+- [ ] Delete the 32 redundant per-file `sys.path.insert` shims (conftest owns it).
 
-## G2 — Fix the weak ~5–8%
-- [x] `test_comfyui_prompt.py` node-index/`ckpt_name` asserts — removed in the G5 cut pass (the
-      `:42,55,57` literal-index + checkpoint-name asserts are gone; the positive prompt-content
-      contract kept in each test). Remaining `wf["5"] width==height` / `wf["7"]` scenery-negative
-      asserts are observable prompt-construction behaviour, not the literal-index smell — kept.
-- [x] `test_llm_rate_limit.py` timing asserts → fake clock (done via G1 seam).
-- [~] Thin `ok is True`-only tests → assert the observable follow-up state. `test_services` now
-      asserts follow-up state on the dispatch/guard paths; the `test_maestro_tools:42-44`-style thin
-      asserts not separately swept (low value; fold pass already tightened that file).
-- [ ] Tighten brittle `.rpy`/`.gd` substring greps where cheap — HELD (G5 flagged these as the only
-      runtime coverage on CI without a godot binary; fix via G3-style runtime drive, don't delete).
+### T2 — Rewrite `tests/README.md` truthfully
+Files: `tests/README.md`. Verify: every fixture it names exists in `tests/conftest.py`.
+- [ ] Keep the conventions + reviewer checklist; replace the dead fixture list with T1's real
+      one; fix the count; document `build_harness.run_build_to_completion` and
+      `tests/fixtures/` as the shared build-drive / realistic-fixture patterns.
 
-## G3 — Fill load-bearing coverage gaps (source with NO/thin direct tests) — DONE 2026-07-08
-Six new test files, +99 items, suite green (695→794). Each pins observable contracts (LLM/loop
-boundary stubbed, never live).
-- [x] **`src/maestro/services.py` → `test_services.py`** (24 tests) — `BudgetExhausted` is a
-      `BaseException` a fix can't swallow + fires at cap; `dispatch` tool-scope refuse/allow;
-      `salvage_tool_call`; `parse_action`; `_create_guard` no-overwrite/slot-advance.
-- [x] **`src/llm_clients/message_builder.py` → `test_message_builder.py`** (12) —
-      `_deduplicate_tool_results`/`_cap_tool_results`/`_enforce_budget` + `build()` composition.
-- [x] **`src/maestro/context_render.py` → `test_context_render.py`** (21) — every block builder
-      (emits-data / omits-when-empty), `id_catalogues`, `ctx_structural`/`ctx_crossref`,
-      `_kind_catalogue`, `crossref_correction`.
-- [x] **`src/maestro/climb.py` → `test_climb.py`** (10) — `clone_run` (component copy, HITL-skip,
-      story reseed, distinct ids), `run_module` wipe/keep selection (loop stubbed), `_cli` args +
-      exit codes. Live-loop drive not unit-testable (no offline seam) — noted.
-- [x] **Projection registry → `test_projections.py`** (14) — `(engine, module_id)` pairs,
-      `engine_for` (combat→godot), `unprojectable` fail-fast signal.
-- [x] **`spec_tools` state machine → `test_spec_tools.py`** (18) — propose (unfrozen, foundation +
-      deps, floors, VN fallback, presentation), amend (re-opens a frozen spec — the un-freeze IS
-      the contract), freeze (re-holds floors, not a pure flag flip), frozen-gate end-to-end.
+### T3 — Framework unification (small)
+Files: `tests/test_ws_event_routing.py`, `tests/test_websocket_errors.py`. Verify: no
+`unittest.TestCase` import left in the unit suite; suite green.
+- [ ] Migrate both to pytest (async via the anyio plugin already installed).
 
-### G3 findings (latent bugs surfaced by the new tests — NOT fixed, tests-only pass)
-- `message_builder._enforce_budget` protects the latest user turn by an index computed on the
-  PRE-mutation list; drops shift indices, so the guard is stale. Safe today (loop stops once it
-  fits, before reaching the shifted index) but fragile if drops ever pass that point.
-- `message_builder._cap_tool_results` can make slightly-over-cap content LONGER (elision notice +
-  two retained halves > original). Only shrinks well above the notice size.
-- `services.dispatch` uses two error-dict shapes: scope/guard refusals `{ok:False,error}` vs
-  unknown-tool/tool-exception `{error}` (no `ok`). Inconsistent, not wrong.
+### T4 — Re-audit cadence
+- [ ] Each milestone (or ~+150 tests), rerun this recon: count/distribution, clone-grep
+      (`grep -c "def _tmp_db\|TestClient(app)\|class _Resp" tests/test_*.py`), `parametrize`
+      opportunities, README accuracy. This file's Background is the template; update it in place.
 
-## G4 — Governance policy (write it down)
-- [x] **A test-conventions doc / section** — `tests/README.md` written: behaviour-not-implementation;
-      WHY-comment required; reuse `conftest` fixtures/helpers + `docs/examples`; `parametrize` for
-      variants; mark slow; one framework (pytest); + a reviewer checklist.
-- [ ] **Re-audit cadence** — a periodic map/quality pass (this recon is the template) each milestone,
-      so drift and bloat get caught early.
-
-## G5 — Reduction: test contracts, not "doesn't do X" (net-negative pass)
-The suite trends toward too many tests. Prune toward **contracts**, not coverage. A test earns its
-place by pinning a promise the code makes; delete tests that pin incidental non-behaviour nobody
-promised, or that re-prove one contract N times.
-- **KEEP a negative test** only when the refusal IS the contract: validation boundaries (reject
-  malformed IR, dupe id, bad shape), security/authz (cross-user 403, off-scope tool refused, frozen
-  gate), money (402 when short, charge-once), and any invariant a real bug proved load-bearing (the
-  WHY-comment names it). "It refuses X" where X-refusal is the promise = a contract test. Keep.
-- **CUT** a test that: (a) asserts an incidental non-behaviour no contract states ("doesn't touch
-  unrelated field Y"); (b) re-proves a contract already covered elsewhere (fold into a `parametrize`
-  row or delete the dup); (c) pins an implementation detail (node index, literal `.rpy`/`.gd`
-  substring, private call order) rather than an observable promise; (d) is a tautology / restates the
-  mock.
-- [x] **Audit for cut candidates** — DONE (2026-07-08, 55 files). Finding: bloat is STRUCTURAL
-      (clone-not-parametrize), not weak-assert. True cuts small (~11); big lever is FOLD (~80 near-dup
-      `def test_` fns → ~19 `parametrize`). Headline "doesn't do X" incidental cuts confirmed only in
-      `test_comfyui_prompt.py`.
-- [~] **Apply approved cuts** — partial (2026-07-08). Applied the high-confidence, contract-preserving
-      set (691→686, green):
-      - `test_comfyui_prompt`: cut `test_no_pony_booru_quality_tags_leak` (incidental score_* absence);
-        trimmed incidental "not in prompt" negatives + `ckpt_name` node-index from `test_item_job` /
-        `test_background` / `test_cg` (kept the positive contract in each, renamed).
-      - `test_renpy_component_schemas::test_write_node_rejects_start_id` (redundant — `test_maestro_tools`
-        covers it).
-      - `test_auth_router::test_auth_router_exposes_no_signup_route` (redundant — `test_auth_gate`
-        app-level route set is the stronger surface).
-      - `test_execution_context::test_nested_contexts` (redundant — `test_nesting_restores_outer_values`
-        supersedes: adds subtask_id).
-      - `test_llm_rate_limit::test_rate_limiter_maintains_rate` (flaky wall-clock re-proving the bucket
-        that `allows_burst`+`refills_tokens` already pin).
-      HELD FOR HUMAN: the godot/renpy `.gd`-substring greps (`test_godot_runtime_gd`,
-      `test_renpy_fns` overworld, `test_tile_assets` trellis) — technically impl-detail, but the ONLY
-      runtime coverage on CI without a godot binary (real self-tests are `skipif`); fix via G3 (drive
-      the runtime), don't delete. Plus the UNSURE "doesn't do X" list (compile-tool-absent,
-      no-cancel-endpoint, no-signup, foreign-font hygiene) — each may encode a real posture.
-- [x] **Apply the FOLD pass** — DONE (2026-07-08, 7 files, suite green). Net **−70 `def test_`
-      functions** (173→103); every assertion preserved as a `parametrize` row. Per file:
-      `test_settings_manager` 18→6 (+unittest→pytest), `test_ir_crossref` 20→6, `test_world_rpg`
-      37→21, `test_maestro_tools` write_node family 64→58, `test_scenes_prompts` 10→2,
-      `test_content_prompts` 11→3, `test_world_prompts` 13→7. Collected ITEMS rose 686→695 (a fold
-      of a multi-IR original into separate rows = finer isolation, not more surface). Divergent-
-      assertion look-alikes deliberately left standalone (noted inline) — the goal was clone
-      removal, not forcing unrelated tests together.
-- **Guardrail:** the goal is fewer tests that each guard MORE contract, not a coverage-% drop for its
-  own sake. Never cut a validation/authz/money refusal. When unsure whether a refusal is a promise,
-  KEEP + flag for the human.
-
-## Ordering
-G1 first (it removes the bloat mechanism and makes every later test cheaper). G4 alongside G1 (codify
-while building the fixtures). G2/G3 are steady cleanup/fill-in. G5 (reduction) is the counterweight
-to G3 — run them together so the suite fills real gaps while shedding incidental/redundant tests;
-net test count should stay flat or fall, not balloon.
+## Parked
+- Splitting the `test_codegen.py` monolith (70 tests: kit runtime / gates / module checks /
+  build steps) — organizational only, no quality defect; revisit if it keeps growing.
+- The 6 × ~0.5s workqueue long-poll wall-clock tests — real-time by design (they test the poll
+  window); a clock seam is not worth the prod change today.
+- The old scroll-gate false positive is a PRODUCT issue (memory: project_scroll_gate_false_positive),
+  not a test-health one — do not "fix" it here.

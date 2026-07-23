@@ -8,16 +8,18 @@ compose, no CI exists today.
 
 ## Background (VERIFIED — updated 2026-07-09)
 - `Dockerfile` + `docker-compose.yml` + `scripts/deploy.sh` + `docs/DEPLOY.md` exist (T2/T3/T4).
-- `.github/workflows/ci.yml` exists (T1): unit suite + frontend lint/build on push/PR to master.
+- `.github/workflows/ci.yml` exists (T1): unit suite (+ the runtime npm toolchain the gates shell
+  out to) + frontend build on push/PR to master. No lint step and no docker-build validation —
+  those are T1's open bits.
 - **Current run recipe** (`CLAUDE.md` + `tasks/nicknotes.md`): `source venv/bin/activate && python
   run.py` (backend), `cd frontend && npm run dev` (frontend), plus manual services: `comfy-start`,
   `docker start kokoro` (TTS), and a `llama-server` invocation for the LLM.
-- **Recompile-a-run CLI** exists (`renpy.compiler.compile_renpy` / `godot.compiler.compile_godot`),
-  but there's no packaging/release pipeline around the *platform*.
+- There's no packaging/release pipeline around the *platform* beyond `scripts/deploy.sh`.
 - **Settings** live in gitignored `src/config/settings.json` (copy of `settings.example.json`) —
   secrets management is ad-hoc.
-- **Persistence today is on-disk run dirs only, no database.** Auth + credits (`auth_and_billing.md`)
-  introduce the first user store — this workstream owns that DB choice + provisioning.
+- **Persistence:** run dirs stay the artifact source of truth; `auth.db` + `platform.db` (sqlite,
+  WAL) live under `data_dir` (settings `data_dir`, env `MAESTRO_DATA_DIR`, default `<repo>/data`) —
+  control-plane state, deliberately not under `working_directory`.
 - Ties to `scaleout.md` S3: the runpod inference images are built artifacts this pipeline produces.
 
 ## Guardrails
@@ -44,8 +46,9 @@ compose, no CI exists today.
       GPU stack, named data volume, healthcheck).
 
 ## T3 — Persistence & config  ✅ DONE
-- [x] **Datastore provisioned** — sqlite at `private/auth.db` for users/credits/ownership
-      (`auth_and_billing.md`). Path to postgres open when needed.
+- [x] **Datastore provisioned** — sqlite under `data_dir` (env `MAESTRO_DATA_DIR`): `auth.db`
+      (users/credits/sessions) + `platform.db` (games/builds/jobs/workers, WAL)
+      (`auth_and_billing.md`, `src/db/store.py`). Path to postgres open when needed.
 - [x] **Environment/secrets** — `.env` (`env_file` in compose); host engine paths + endpoints injected.
 - [x] **Persistent volume for run dirs** — named `maestro-data` volume mounted at `/data` (runs/ +
       auth.db); survives image rebuilds (the critical data invariant, per `docs/DEPLOY.md`).
@@ -68,4 +71,5 @@ images with `scaleout.md` S3.
 ## Parked (needs owner input)
 - **Hosting target:** RESOLVED for alpha — self-hosted remote box over Tailscale (`scripts/deploy.sh`).
   Cloud/runpod-for-everything revisited at scale (`scaleout.md` S3).
-- **Datastore:** RESOLVED — sqlite to start (`private/auth.db`); postgres path open for later.
+- **Datastore:** RESOLVED — sqlite to start (`auth.db` + `platform.db` under `data_dir`); postgres
+  path open for later.

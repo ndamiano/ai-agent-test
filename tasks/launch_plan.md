@@ -8,13 +8,13 @@ dollar, and defines each stage's bar. Points into the other task files rather th
 - **Can a stranger pay + get one safely?** (business/infra) — auth, payments, deploy, safety, scale.
 
 They're separable, but a business that ships bad games churns — so a **minimum reliability bar is a
-business requirement**, and you do **NOT need breadth (`module_catalog`) to launch**. Launch narrow +
+business requirement**, and you do **NOT need genre breadth to launch**. Launch narrow +
 good, expand later.
 
 ## Stage 0a — Pre-alpha (immediate — validate it FUNCTIONS)
 Before demand validation, prove the loop works for a non-owner. Inference stays on the owner's PC
 (5090) over Tailscale; a couple of trusted people; manual accounts, stubbed credits, no payments.
-**The build playbook + copy-paste agent prompts live in `pre_alpha_kickoff.md`.** A narrow subset of
+A narrow subset of
 Stage 0: auth+ownership, a single-GPU build queue, per-user WS routing, stubbed credits. **All four
 build pieces DONE** (auth+ownership T1/T2, build queue, per-user WS routing, credits stub T3 — suite
 green). **Validated end-to-end on a second box** — a non-owner drove the full loop. Everything else
@@ -25,15 +25,18 @@ below is Stage 0 (private alpha) and later.
 measure real cost/time/failure (`unit_economics.md`). No real payments, no self-serve signup.
 
 - [x] **Auth (manual accounts)** — `auth_and_billing.md` T1 + T2 DONE (login + run ownership, no signup).
-- [x] **Credits stubbed** — ledger + atomic deduct/refund (`auth` T3) + manual grants (`auth` T4 admin
-      op) DONE. No payment integration yet (T4 seam only).
+- [x] **Credits stubbed** — ledger + atomic deduct (`auth` T3) + manual grants (`auth` T4 admin
+      op) DONE. The free initial grant was removed — accounts start at **0 credits**; alpha testers
+      get manual grants (`auth/cli.py grant`). No payment integration yet (T4 seam only).
 - [x] **Deployed + reachable** — `build_deploy.md` T2 (containerize) + T3 (datastore/volumes) + T4
       (deploy) DONE (Dockerfile + compose + named-volume persistence + `scripts/deploy.sh` +
-      `docs/DEPLOY.md`); validated on a second box, non-owner drove the full loop. Only T1 (CI —
-      no `.github/` yet) is a nice-to-have follow-up.
+      `docs/DEPLOY.md`); validated on a second box, non-owner drove the full loop. T1 (CI) now
+      exists too (`.github/workflows/ci.yml`).
 - [ ] **Reliably good on ONE genre** — narrow to the best-working path (VN/dialogue). Judge-in-loop
       (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred. NOT STARTED.
-- [x] **Download works** — Ren'Py distribute / Godot export; delivery confirmed in the deployed env.
+- [x] **Delivery works** — the `/play` web harness serves the staged bundle
+      (`runtime/games/<id>/`, cookie-gated). The old Ren'Py distribute / Godot export are deleted;
+      a downloadable export is OPEN work.
 - [x] **Safety posture** — `safety_filter.md` Phase 1 (research, `safety_phase1_notes.md`) done +
       a basic fail-closed CSAM-adjacent block landed (chat/spec input + the image-generation
       seam, `src/tools/safety.py`). Still pre-alpha tier (keyword/pattern only, no classifier/
@@ -53,6 +56,8 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
 - [ ] **Concurrency S1** — `scaleout.md` S1 (queue + per-run isolation + WS routing) so N payers
       don't collide.
 - [ ] **Speed-up tier** — A100 rental path (verify economics first).
+- [ ] **Production hardening** — the four security deferrals now live in
+      `tasks/production_hardening.md`; land them before charging strangers.
 
 **Exit:** paying users, positive unit economics confirmed, no safety/legal gaps.
 
@@ -61,8 +66,8 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
 - [ ] **On-demand inference** — `scaleout.md` S3 (runpod spin-up) + S2 (parallel assets) for capacity.
 - [ ] **Ownership / resale tier** — the 100-credit resell path + "contact me" baseline + site listing
       (`legal_ops.md`, `unit_economics.md`).
-- [ ] **Breadth + polish** — `module_catalog.md`, `game_media.md`, `game_style.md`, `asset_quality.md`,
-      `realtime_substrate.md` — the growth engine, now that the business stands.
+- [ ] **Breadth + polish** — `game_media.md`, `game_style.md`, `asset_quality.md`, kit widening
+      (new primitive families) — the growth engine, now that the business stands.
 
 ## "Minimum to charge $1"
 Real payment → credit ledger deducts → a build runs (isolated, safe) → a good game downloads →

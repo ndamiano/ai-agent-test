@@ -1,89 +1,85 @@
-# Asset Quality — Better Prompting & Better Models
+# Asset Quality — better prompting + the right model per asset type
 
 ## Why
-Asset quality is a ship-blocker (asset-monotony post-mortem; map-gen output is "vibe-coded garbage").
-Two levers to pull, per asset type: **prompt better** and **use the right/better model for the
-need**. This file is the **generation-side** home for art quality. The **validation-side** checks
-(bg-description lint, character-consistency, CG quality gate) live in `quality_backlog.md` §7 — this
-file makes the art good; that file catches when it isn't.
+Art quality is a ship-lever with two knobs, per asset type: **prompt better** and **use the
+right model for the need**. Generation now lives in the codegen reskin pipeline; today ONE
+square item workflow renders every 2D sprite AND every 3D mesh source image — fine for props,
+wrong for characters, tiles and buildings. This file is the generation-side home; style
+coherence is `game_style.md` (the styled-prompt stage composes there, model scaffolding lands
+here).
+
+## Background (VERIFIED 2026-07-23)
+- Pipeline: `src/maestro/codegen/reskin.py` (plan from data rows' `look` fields via
+  `data_files.sprite_plan_from_data`, LLM fallback `plan_assets`/`plan_meshes`;
+  `start_asset_chain` enqueues the whole batch) → `src/maestro/codegen/asset_chain.py`
+  (save_sprite / mesh_from_image / decimate / `skin` finalize) →
+  `src/tools/comfyui_tools.py` (`build_item_job`/`build_item_payload`) → the `image` queue.
+  Per-asset re-render: `POST /{run_id}/assets/{asset_id}/regenerate`
+  (`src/api/routers/games.py` → `reskin.regenerate_asset`).
+- Models in play: `src/config/workflows/txt2img_item.json` = **flux1-schnell-fp8** + BiRefNet
+  matting (EVERY asset goes through this, 1024² square); `src/config/workflows/txt2img.json`
+  = **animaOfficial_preview3Base** (UNET/T5, currently unused by reskin). Meshes:
+  **TRELLIS.2-4B** (`src/tools/trellis_server.py`, `mesh` queue) → 50k-tri GLB → bundled at
+  ~20k tris (`runtime/decimate.mjs`).
+- Prompt text: a data-driven plan uses the row's `look` string VERBATIM as the positive;
+  prompts land in `assets.json` and regenerate consumes only the saved prompt.
+  `screen_image_prompt` (`src/tools/safety.py`) can block a prompt → job not sent.
+- **Hard-won, still true:** T5/flux-class encoders read PROSE — danbooru quality tags and
+  tag-style negatives are Illustrious-era culture and off-distribution (they caused subject
+  drift; the verbatim-prompt rule in `build_item_job`'s docstring is the fix). BiRefNet
+  matting exists because props shipped with baked backgrounds. TRELLIS decimation to 50k (not
+  500k) cut postprocess 4-13s → ~2s and uploads ~8x with equal-or-better meshes — don't
+  regress it. Illustrious-era caveat to RE-VERIFY on flux/anima: a creature named in an
+  environment description gets rendered as the subject.
 
 ## Guardrails
-- **Per-asset-type, not one model.** The stack already runs different models per need (Illustrious
-  SDXL for sprites, ideogram4 for tiles, Hunyuan3D/TRELLIS for meshes) — that diversity is correct.
-  Pick the best tool per asset type; don't collapse to one.
-- **Local-first** (vision) — evaluate local models before an API; note the tradeoff when an API wins.
-- **Prompts as data + climbable** — image prompts live as `.txt` and/or in the manifest, not inlined
-  in Python; iterate them with the same discipline as generation prompts (`quality_backlog.md` §2).
-- **Coordinate, don't duplicate** — style coherence goes through `game_style.md`; content-coupling +
-  styled-prompt-stage through the asset-pipeline redesign; the *checks* through `quality_backlog.md` §7.
+- **Per-asset-type, not one model** — pick the best tool per need; a single checkpoint for
+  everything is the current bug, not a simplification to preserve.
+- **Local-first**; note the tradeoff explicitly if an API ever wins a bake-off.
+- **Prompts as saved data** — model-agnostic art direction lives in `look`/the style brief;
+  model-SPECIFIC scaffolding (framing, negatives, resolution) lives in the `build_*_job`
+  builders and workflow json, nowhere else.
+- **Coordinate, don't duplicate:** style brief = `game_style.md` S1; audio = `game_media.md`.
 
-## Background (VERIFIED — `CLAUDE.md` + recon)
-- **Characters:** neutral sprite + img2img emotion variants; `waiIllustriousSDXL_v170` checkpoint
-  (`tests/test_comfyui_prompt.py:42`), ComfyUI (`src/tools/comfyui_tools.py`, `src/renpy/fns.py`).
-- **Backgrounds:** Illustrious — **known caveat: renders a creature named in a bg description as the
-  subject** (needs environmental-only prompts). Prompts are the SD prose in `asset_manifest`.
-- **Tiles:** ideogram4 stack (`build_tile_job`, structured JSON captions, role-specific body +
-  hex palette) + `make_seamless_tile`; fallback = role-aware DreamShaper formulas.
-- **Meshes (hd2d):** Hunyuan3D-2.1 (~9s, untextured→triplanar projection) or TRELLIS.2-4B (~50-90s,
-  native PBR) via `settings.comfyui.mesh_backend`. Known gaps: TRELLIS plinth slab + occasional black
-  bakes (tracked in `docs/ROADMAP.md` "Godot/3D polish").
-- **Feature objects:** item workflow + BiRefNet matting → matted sprite.
-- **Prompts** are the styled prose SAVED on each stub by the styled prompt stage
-  (`maestro/asset_prompts.py`); the `build_*_job` builders wrap them with model-specific
-  scaffolding (quality tags, framing, negatives).
+## Tasks
 
-## T1 — Prompt quality (the cheap lever first)
-- [x] **Completeness by construction** — every authoring tool that adds a visual thing emits an
-      asset STUB into the manifest at creation time (`maestro/asset_stubs.py::reconcile_stubs`,
-      called from the tool bodies), so an asset-less entity is impossible by construction, not a
-      silent placeholder discovered at gen time. The `assets` module carries the done-condition
-      (`assets_complete` — missing stub = Error, fix = reconcile); the compile-time placeholder
-      backfills stay as the net. `generate_images` is now a pure consumer of the manifest (the old
-      at-gen derivation of tokens/features/tiles/markers is deleted).
-- [x] **Styled prompt stage** — `maestro/asset_prompts.py::apply_styled_prompts` runs once when
-      content is done (before generation, sequenced in `run.run_build`): it reads the game's
-      identity ONCE (spec concept + story spine tone/theme) into one deterministic style brief, then
-      composes a style-consistent image prompt per stub and SAVES it on the manifest entry —
-      inspectable in the browser, editable, climbable (`maestro/prompts/asset_*.txt`), re-runnable
-      (`generate_images` + the HITL per-asset regen consume ONLY the saved prompt).
-- [ ] **Per-asset-type prompt improvement** — backgrounds (`asset_background.txt` now forces
-      environmental-only, the source fix for the named-creature bug; §7 lint is the guard), character
-      sprites (identity/consistency descriptors), CGs, tiles (already structured — refine). The
-      templates exist; climbing their wording is the remaining work.
-- [ ] **Climb the image prompts** — treat each as a hill-climbable `.txt`, run the genre battery,
-      judge before/after (`quality_backlog.md` §2 discipline applied to art).
+### A1 — Prompt quality (cheap lever first)
+- [ ] Climb the `look`-authoring guidance in `prompts/design_data.txt` + the fallback
+      planners (`prompts/plan_assets.txt`, `plan_meshes.txt`): concrete subject, material,
+      view/framing per asset kind. Verify: before/after renders on one game, judged
+      side-by-side (quality_backlog Q2 discipline).
+- [ ] Prompt-lint at plan time: warn when a `look` names a creature inside an environment
+      prompt or a scene around an object (the subject-drift class). Files: `reskin.py`.
+      Test: unit on the lint with fixture plans.
 
-## T2 — Model selection per need (the bigger lever)
-- [ ] **Audit each asset type's current model** vs the state of the art for that specific need
-      (character sprites, backgrounds, CGs, UI, tiles, meshes, feature objects).
-- [ ] **Bake-off the candidates** — reuse the proven approach from the 3D mesh bake-off (benchmark N
-      models on a fixed set of real game objects, judge, wire the winner as a selectable backend).
-      Local-first, note API tradeoffs.
-- [ ] **Make winners selectable backends** (like `mesh_backend`) so a better model drops in without a
-      pipeline rewrite.
+### A2 — Per-asset-type jobs (the current single-workflow bug)
+- [ ] Split `build_item_job` into typed builders: character sprite (full-body, transparent),
+      prop/item (current square), tile/terrain (seamless), mesh-source image (single object,
+      neutral ground — TRELLIS input quality bounds mesh quality). Route by the plan entry's
+      kind (2D rows vs mesh plan already distinguishes). Files: `src/tools/comfyui_tools.py`,
+      `src/config/workflows/*.json`, `reskin.py` plan entries. Test: each builder unit-tested
+      on workflow shape (pattern: existing comfyui tests).
 
-## T3 — Known bad spots (specific, high-value)
-- [x] **Map generation redesign** — DONE (layout/rasterization): structure-first generators keyed
-      on place kind (town road+parcel, interior room-graph, world_map terrain-fill) + the two-tier
-      furniture-list model (a feature houses an interaction OR the LLM-derived per-place furniture
-      list fills to density — never free-form), footprints sized by declared size and
-      overlap-forbidden by construction, `map_builder.render_ascii` debug view. Global geography /
-      edge-matched cross-zone alignment stays parked; WFC rejected as backbone.
-- [ ] **Asset monotony → locations-with-states** — the same-place-every-scene problem is addressed by
-      IR 0.2 first-class `locations` with img2img'd state variants (tracked in `docs/ROADMAP.md` Build
-      quality; cross-ref, don't duplicate the work here).
-- [ ] **Mesh polish** — TRELLIS plinth slab + black bakes (`docs/ROADMAP.md` "Godot/3D polish").
+### A3 — Model bake-offs per type (the bigger lever)
+- [ ] Audit + bake-off per asset type on a fixed set of real game objects (the proven 3D
+      bake-off method): flux-schnell vs anima vs a current SOTA per need; judge, record the
+      call HERE, wire the winner as that type's workflow json (the workflow file IS the
+      selectable-backend seam). Local-first.
 
-## T4 — Consistency
-- [ ] **Character identity across scenes** — sprite drift; anchor generation so a character reads as
-      the same person scene to scene (paired with the §7 consistency check).
-- [ ] **Style coherence** — all of a game's assets share a look; drive off `game_style.md` tokens.
+### A4 — Mesh polish
+- [ ] Re-verify the TRELLIS plinth-slab / black-bake artifacts on the current 4B server +
+      50k pipeline; if still present, attack via mesh-source image prompts (A2's builder)
+      before touching the server. Files: `src/tools/trellis_server.py` only if image-side
+      fails. Verify: building/char/foliage set renders clean in `run3d`.
 
-## Ordering
-T1 (prompting) first — cheapest, and a styled-prompt stage benefits every asset type at once. T2
-(model bake-offs) per asset type as prioritized. T3 map-gen redesign is high-value and can run in
-parallel. Quality-gate everything with the genre battery + the §7 checks.
+### A5 — Consistency
+- [ ] Character identity: a game's character re-renders (regenerate endpoint) should keep
+      reading as the same entity — carry the full original `look` + style brief into
+      regenerate prompts rather than the user's bare replacement text. Files: `reskin.py`
+      `regenerate_asset`. Test: unit — regenerate prompt contains the brief.
 
 ## Parked
-- Which asset types most need a model upgrade — decide from the T2 audit.
-- Local vs API per asset type (same tension as `game_media.md`).
+- Which asset types most need a model upgrade — decide from the A3 audit.
+- Sprite animation frames — `game_media.md` M4 owns it.
+- Terrain texture quality (worldgen's `assets/terrain.png`) — revisit with A3's tile slot.
+- Local vs API per asset type — same tension as game_media; default local.

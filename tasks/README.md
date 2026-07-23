@@ -7,43 +7,40 @@ detail under it.
 ## Active
 
 Grouped by theme. Generation-quality work makes the output good; platform work makes it
-shippable to many users.
+shippable to many users. All files re-baselined 2026-07-23 against the codegen architecture
+(the IR-era workstreams were retired to `finished.md`).
 
 **Generation quality**
 | File | Workstream | Status |
 |------|-----------|--------|
-| [quality_backlog.md](quality_backlog.md) | Judge-in-loop, prompt iteration, continuity, mechanic depth | §1 (judge) is the lever; ship first |
-| [world_first.md](world_first.md) | World-first content model: bible, objectives/quests, residents, ambient dialogue | Designed 2026-07-09 — depends on aspects A1/A2; W7 gold game can start now |
-| [aspects_and_scale.md](aspects_and_scale.md) | Nouns-primary aspect layer (A) + declared scale/coverage (B) | Not started — A before B |
-| [module_catalog.md](module_catalog.md) | Build out the mechanic library (card game, shop, affinity, quests…) | Depends on aspect layer (A) |
-| [game_style.md](game_style.md) | LLM-authored style module + projection theming (the OUTPUT game's look/UX) | Not started — schema+module first |
-| [realtime_substrate.md](realtime_substrate.md) | Build the `real_time_sim` substrate (continuous time, Godot-only) | Designed not built — reconcile design first |
-| [game_media.md](game_media.md) | Music + sound effects + animation (three generative pipelines) | Not started — M1 music first |
-| [asset_quality.md](asset_quality.md) | Art quality via better prompting + better models per asset type | Not started — T1 prompting first |
-| [hitl_backlog.md](hitl_backlog.md) | Dirty-core HITL rebuild + component browser UI (epics A–G) | Not started — backend spine first |
+| [quality_backlog.md](quality_backlog.md) | Gate/prompt hill-climbing toward "good, not just valid"; play-critic last | Judge is the lever; Q1 retargets the stale grading skills |
+| [world_first.md](world_first.md) | World-first content on the live seams: residents-as-data, kit.quest, dialogue | Rewritten 2026-07-23 — residents dataset first |
+| [game_style.md](game_style.md) | Per-game visual identity: style brief composed into every asset prompt | Rewritten — styled-prompt stage (S1) first |
+| [game_media.md](game_media.md) | Audio backend for the kit + music/SFX/animation pipelines | kit.audio is a stub; wiring-first, generation later |
+| [asset_quality.md](asset_quality.md) | Art quality: per-asset-type models + prompt lint + identity-stable regen | Typed job builders (A2) first |
 
 **Business / strategy** — start here for the path to launch
 | File | Workstream | Status |
 |------|-----------|--------|
-| [pre_alpha_kickoff.md](pre_alpha_kickoff.md) | **Agent playbook** for building pre-alpha (scope + copy-paste prompts) | ← start building here |
-| [launch_plan.md](launch_plan.md) | **Meta-doc**: current→business, staged (pre-alpha → alpha → paid beta → public) | The sequencing map — read first |
-| [unit_economics.md](unit_economics.md) | Cost/game ($0.99 on 5090) + credit pricing ($5 base / 2 for A100 speed-up) | Measure during alpha; not MVP-blocking |
+| [launch_plan.md](launch_plan.md) | **Meta-doc**: current→business, staged (alpha → paid beta → public) | The sequencing map — read first. Pre-alpha DONE |
+| [unit_economics.md](unit_economics.md) | Cost/game + credit pricing | Measure during alpha; metering hooks now exist |
 | [legal_ops.md](legal_ops.md) | ToS/privacy/refunds/IP-ownership/age-gate/entity | Alpha: minimal; full set before paid |
 
 **Platform / launch**
 | File | Workstream | Status |
 |------|-----------|--------|
-| [auth_and_billing.md](auth_and_billing.md) | Login gate, run ownership, credit ledger (NO self-serve signup) | Not started — auth+ownership first |
-| [scaleout.md](scaleout.md) | Concurrent builds, parallel asset gen, runpod on-demand inference | Not started — depends on auth; S1 is launch blocker |
-| [build_deploy.md](build_deploy.md) | CI, containerize, persistence, deploy pipeline | Not started — CI (T1) first, cheap |
-| [safety_filter.md](safety_filter.md) | Illegal-content filter over text + (uncensored) image gen | Research first; launch gate |
+| [production_hardening.md](production_hardening.md) | Pre-beta security: game sandbox, chat rate limit, API surface, sessions | H1 (sandbox) is the big one |
+| [auth_and_billing.md](auth_and_billing.md) | Login gate, ownership, credit ledger + compute budget (NO self-serve signup) | Core landed; T4 payments open |
+| [scaleout.md](scaleout.md) | Queue/scaler follow-ups: connector singleton, fair scheduling | Spine landed (queue + autoscaler); polish open |
+| [build_deploy.md](build_deploy.md) | CI, containerize, persistence, deploy pipeline | Landed through deploy; CI lint/docker-build + T5 versioning open |
+| [safety_filter.md](safety_filter.md) | Illegal-content filter over text + (uncensored) image gen | Phase 1 + partial 2 landed; tests + classifier open |
 
 **Research / governance**
 | File | Workstream | Status |
 |------|-----------|--------|
 | [create_ux_research.md](create_ux_research.md) | Research: what a *good* create-game UX is (deep-dive, not build) | Research not started |
-| [test_health.md](test_health.md) | Test audit + anti-bloat governance (582 tests, high quality, structural risk) | Recon done; G1 fixtures first |
-| [doc_accuracy.md](doc_accuracy.md) | Doc audit + anti-drift governance (CLAUDE/README/ROADMAP/VISION/docs) | Recon-ready; run T1 audit |
+| [test_health.md](test_health.md) | Test governance (618 tests / 52 files, green) | Re-reconned 2026-07-23; T1 shared fixtures first |
+| [doc_accuracy.md](doc_accuracy.md) | Doc audit + anti-drift governance (CLAUDE/README/ROADMAP/VISION/docs) | T1 superseded by rebuild; rerun via T2 method |
 
 ## Reference
 

@@ -2,8 +2,8 @@
 
 **Type: research, not build.** The ask is not "implement screens" — it's *figure out what a GOOD
 experience for creating a game should be*. This file frames the research question and its
-deliverable. Build tasks get carved out AFTER the research lands (they'll likely feed
-`hitl_backlog.md` Epics E/F, or replace them).
+deliverable. Build tasks get carved out AFTER the research lands (they'll likely extend or
+replace the current build-cockpit frontend).
 
 ## Why
 Today the create flow is: chat request → `propose_game_spec` → freeze in Games → watch a log →
@@ -31,11 +31,10 @@ A written UX proposal (flow + sketches + decisions) that we review, then carve i
 Only after that do frontend tasks get created.
 
 ## Relationship to existing work
-- `hitl_backlog.md` **Epic E** (live build legibility) and **Epic F** (chat front door) are the
-  *current partial* UX. The research decides whether to extend those or rethink them — do not build
-  more of them until this lands.
-- The component-browser rebuild (`hitl_backlog.md` Epic D) is the review/edit surface; the research
-  should treat it as a given substrate, not re-litigate it.
+- The *current partial* UX is the SPA's chat front door + the persistent build cockpit (durable
+  event feed, asset gallery, structured spec view in `frontend/src/components/GamesPanel.tsx`).
+  The research decides whether to extend that or rethink it — do not build more of it until this
+  lands.
 
 ## Parked
 - Not designing now (owner's call). This is a placeholder + scoped research brief so it isn't lost.

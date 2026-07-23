@@ -272,7 +272,7 @@ Everything below is parameterized by env vars — no code edits to deploy.
    ```bash
    cd src
    python -m auth.cli create <handle>       # prompts for a password
-   python -m auth.cli grant  <handle> <n>   # top up credits if needed (seed is 100)
+   python -m auth.cli grant  <handle> <n>   # grant credits (accounts start at 0)
    ```
 
 ---
@@ -321,14 +321,17 @@ WantedBy=multi-user.target
 ## Known deferred risks (accepted for private alpha — trusted testers)
 
 These were flagged in the pre-open security audit and consciously deferred. Fix before public beta.
+Task breakdown: `tasks/production_hardening.md`.
 
-- **Single-GPU DoS.** The build queue (`api/build_queue.py`) has no per-user in-flight limit or max
-  depth; run creation + freeze are free (only `build` costs 1 credit, `INITIAL_CREDITS=100`), and
-  failed builds refund. One account can queue ~100 builds and monopolize the GPU. Mitigation for now:
-  trusted users + watch the queue. Fix = per-user in-flight cap + bounded queue.
-- **Untrusted generated JS in the browser.** A build ships model-authored TypeScript bundled to JS
-  and served at `/play` as static files. Playing another user's game runs their code in your browser;
-  a crafted build could exfiltrate via the page's origin. Trusted testers who only play their own
-  builds → low risk. Fix = sandbox the player (isolated origin / iframe + CSP).
+- **Untrusted generated JS in the browser** (the big one). A build ships model-authored TypeScript
+  bundled to JS and served at `/play` on the app's own origin — the same origin holding the SPA's
+  bearer token in web storage. A crafted (or merely broken) generation can read it and call the API
+  as the user. Trusted testers who only play their own builds → low risk today. Fix = sandbox the
+  player (isolated origin / sandboxed iframe + CSP).
+- **Chat is uncharged inference.** `POST /api/chat` requires a positive balance but never deducts
+  or meters — one funded account can loop chat turns and burn llm-worker GPU at zero marginal cost.
+  Fix = per-user rate limit on chat. (The former "build-flood DoS" is retired: builds charge
+  credits before enqueue, every GPU job admits against the game's compute budget, the autoscaler
+  absorbs depth, and accounts start at 0 credits — a build flood is now paid load, not an attack.)
 - **Session TTL 30 days, no rotation** (`auth/store.py`); **`/docs` + `/openapi.json` public**
   (`auth/deps.py` PUBLIC_PATHS) expose the API surface. Both hardening, not blockers.

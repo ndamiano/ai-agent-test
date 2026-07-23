@@ -84,14 +84,14 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
 
 ## Milestones
 
-### Pre-alpha — *validate it FUNCTIONS* (current focus)
+### Pre-alpha — *validate it FUNCTIONS* (DONE)
 Prove the whole loop works for someone who isn't the owner. Inference runs on the owner's PC (5090)
 over Tailscale; a couple of trusted people. Manual accounts, credits stubbed, one genre, no payments.
-- **Bar:** a non-owner logs in, requests a game, it builds without hand-holding, and they download a
-  working game.
-- **Build path:** `tasks/pre_alpha_kickoff.md` (the playbook) → auth + ownership, per-user access,
-  stubbed credits. Builds run as a chain of llm jobs on the shared (autoscaled) `llm` queue — the
-  old single-thread build queue is gone, so concurrent builds no longer serialize behind one another.
+- **Bar (cleared):** a non-owner logged in, requested a game, it built without hand-holding, and
+  they played it — validated end-to-end on a second box.
+- Built: auth + ownership, per-user access, manual credits (accounts start at 0; admin grants).
+  Builds run as a chain of llm jobs on the shared (autoscaled) `llm` queue — the old single-thread
+  build queue is gone, so concurrent builds no longer serialize behind one another.
 
 ### Private alpha — *validate DEMAND + measure economics*
 Deployed off the owner's box; manual accounts + granted credits; basic safety; one genre reliably
@@ -105,12 +105,13 @@ good with refund-on-fail. Measure real cost/time/failure per game.
   three RunPod worker images + the provisioned network volume, and a queue-driven autoscaler
   (`src/scaler/`) — workers self-exit when their queue drains, the control plane adds pods on
   backlog and reaps dead ones. On-demand RunPod inference is no longer a Release-stage item.
-- **Deferred risks (fix before public beta):** build-fleet DoS (no per-user in-flight cap or bounded
-  depth — one account can flood the llm queue), 30-day session TTL, public `/docs`, and the new
-  codegen surface: the generated
-  `game.js` runs in the player's browser — sandbox it (served from a null-origin/sandboxed iframe,
-  no same-origin API access) so a malicious/broken generation can't touch the app. Detail in
-  `DEPLOY.md` § Known deferred risks.
+- **Deferred risks (fix before public beta):** the generated `game.js` runs same-origin in the
+  player's browser — sandbox it (isolated origin / sandboxed iframe + CSP) so a malicious/broken
+  generation can't read the SPA's token or touch the API; uncharged chat inference needs a per-user
+  rate limit; 30-day session TTL; public `/docs`. (The old build-flood DoS is retired: builds
+  charge credits before enqueue, jobs admit against the compute budget, the autoscaler absorbs
+  depth, and accounts start at 0 credits.) Detail + tasks: `DEPLOY.md` § Known deferred risks and
+  `tasks/production_hardening.md`.
 
 ### Public beta (paid) — *first dollar*
 Real payments + pricing, safety filter proper, legal set, concurrency for N users.

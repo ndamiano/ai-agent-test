@@ -30,12 +30,12 @@ filters either.
 - **Content-flow hook points** (where a filter could sit), from prior recon:
   1. **Input** — user request into chat (`src/api/routers/chat.py`) and the spec request paragraph.
   2. **Spec freeze gate** — `spec_tools.freeze_spec` (already a human/gate checkpoint).
-  3. **Authored text** — nodes/characters/dialogue written during the build loop (`maestro/modules/`).
-  4. **Pre-asset prompts** — the image prompts built before generation (`comfyui_tools.py`,
-     `renpy/fns.py` `generate_images`).
+  3. **Authored text** — game code/data/dialogue written during the build (`maestro/codegen/`).
+  4. **Pre-asset prompts** — the image/mesh prompts built before generation
+     (`src/tools/comfyui_tools.py` `build_item_payload`, consumed by `codegen/reskin.py`).
   5. **Generated images** — post-generation, before they're written into the artifact
-     (`generate_images` output; the sequential `run_jobs` results).
-  6. **Final artifact gate** — before packaging/download (`run.py:62-77`).
+     (the asset-chain results — `save_sprite`/`mesh_from_image` in `codegen/asset_chain.py`).
+  6. **Final artifact gate** — before the build is staged for `/play` (`stage_for_play`).
 - **Ties to `auth_and_billing.md`:** a violating user should be attributable/blockable (needs
   identity) — another reason auth lands first.
 
@@ -73,13 +73,14 @@ fiction and other dark/mature themes are explicitly NOT filtered):
 - Hook point A (input) — `src/api/routers/chat.py` screens the raw chat message before it reaches
   the agent; `src/tools/chat_tools.py:propose_game_spec` screens the spec request paragraph too
   (defense in depth, since the agent may reformulate the request before proposing a spec).
-- Hook point B (image prompts) — `src/tools/comfyui_tools.py:run_jobs` (the chokepoint every build
-  image job funnels through) and the standalone `generate_image` chat tool screen each finalized
-  prompt; a flagged prompt is skipped (never sent to the model) and degrades like any other failed
-  job (placeholder/fallback), never crashing the build.
+- Hook point B (image prompts) — `src/tools/comfyui_tools.py:build_item_payload` (the chokepoint
+  every asset image/mesh prompt funnels through — `codegen/reskin.py` builds each job's payload
+  here) and the standalone `generate_image` fn screen each finalized prompt; a flagged prompt is
+  skipped (never sent to the model, logged as blocked), never crashing the build.
 - Violations are logged (`maestro.safety` logger) with the authed user id where available — never
   the full flagged text, only the matched term(s).
-- Tests: `tests/test_safety.py` (synthetic proxy phrasing only).
+- Tests: `tests/test_safety.py` was lost in the codegen rebuild — the file no longer exists (see
+  Phase 2 tests below).
 
 Still open for full Phase 2: authored-text moderation (hook 3), post-gen image classification
 (hook 5), the final artifact gate (hook 6), and a classifier/hash-matching upgrade path (explicitly
@@ -88,16 +89,18 @@ out of scope for this pass — see Guardrails above).
 ## Phase 2 — Implement (shape TBD by Phase 1)
 - [x] **Input screening** on the request (chat + spec) — cheap first line. (pre-alpha basic block)
 - [ ] **Output text moderation** on authored content before it's accepted into the artifact.
-- [x] **Image safety** — prompt screening pre-gen at the `run_jobs` seam (pre-alpha basic block).
-      Post-gen classifier + CSAM-specific detection (hash-matching per the research) still open.
+- [x] **Image safety** — prompt screening pre-gen at the `build_item_payload`/`generate_image`
+      seam (`src/tools/comfyui_tools.py`, consumed by `codegen/reskin.py`). Post-gen classifier +
+      CSAM-specific detection (hash-matching per the research) still open.
 - [ ] **A blocking gate** at the artifact boundary (`run.py` packaging) as the backstop.
 - [x] **Logging / flagging / attribution** — violations recorded (with user id where available) via
       the `maestro.safety` logger. A persistent per-user violation record for account action is
       still open (today it's log-only).
-- [x] **Tests:** known-bad prompts/text are blocked; legitimate mature content is NOT blocked
+- [ ] **Tests:** known-bad prompts/text are blocked; legitimate mature content is NOT blocked
       (false-positive guard); the image seam rejects a flagged generation. (Use synthetic/proxy
-      fixtures — never real illegal content in tests.) The artifact-gate fail-closed test is still
-      open (hook 6 not yet implemented).
+      fixtures — never real illegal content in tests.) NOTE: this was marked done citing
+      `tests/test_safety.py`, but that file does not exist (lost in the codegen rebuild) — the
+      screening code is live yet untested; re-cover it.
 
 ## Ordering
 Research (Phase 1) before any implementation — the tool + obligation decisions drive everything.

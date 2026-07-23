@@ -1,279 +1,90 @@
-# World-First — bible, objectives/quests, residents, ambient dialogue
+# World-First — residents, quests, ambient dialogue on the codegen stack
 
 ## Why
+A world game should be a PLACE where people live, not a room with a win condition. Worldgen
+now delivers the place (town + wilderness ring + POIs + roads), the kit delivers the
+mechanics (dialogue loop, quests, notifications) — but WHO lives there and WHAT the player
+does are still whatever the model improvises in `game.ts`. The surviving design decisions
+(settled 2026-07-09, do not re-litigate): residents are furniture-for-people — every place
+gets plausible inhabitants, never free-form, never absent; dialogue has two registers —
+set-piece (rare) and ambient (cheap, common); quest state machines are code-owned, the model
+fills content; the giver acknowledges completion; the player can always answer "what do I do
+next".
 
-Open-world games generate awful because the content model is drama-first (VN order:
-premise → cast → beats → scenes, places as backdrop). An open world's defining property is the
-inverse: the world exists independent of the player's path through it. Three concrete failures
-(all verified on live builds + code recon, 2026-07-09):
-
-1. **Nobody lives anywhere.** Characters exist only because the story needs them (`cast` floors
-   off the story premise); a blacksmith shop cannot have a shopkeep unless a story beat happens
-   to land there, and a story-less customer NPC is unrepresentable — no module has a reason to
-   author them, no dialogue form exists for them, `nodes_entered` (world.py:103) flags their
-   conversation as a defect.
-2. **No quests, only flags.** A "quest" today is emergent from (talk hotspot → scene → flag →
-   gated hotspot). Nothing owns the state machine, so nothing can validate "giver acknowledges
-   completion," render a journal, or check chain ordering. The player is never told what to do:
-   `ir.goal` is used ONLY as the invisible win-gate (Game.gd:324-330); gated-verb failure says
-   "Not yet." without naming the unlock; the only HUD string is the controls hint.
-3. **Side content under-generates by design.** Branching is demand-driven; a thin main line
-   produces zero side storylines (storyline_pivot.md risk #4, parked there — solved here: quest
-   pressure comes from bible tensions, not story branches).
-
-**Decided direction (settled with Nick 2026-07-09 — do not re-litigate):**
-- Generation order for world games inverts to world-first:
-  **bible → places(+residents) → cast(role-first) → objectives/quests → dialogue**.
-- `objectives` = engine module (goal state machine primitive). `quests` = LLM-facing content
-  aspect over it. This REPLACES economy/shop as the aspects_and_scale.md A3 proof — prove the
-  aspect layer on load-bearing work.
-- `story` demotes to the VN spine. World games compose `bible + objectives + quests` instead.
-  Composition is the genre selector (no genre string, per CLAUDE.md invariant).
-- NPCs come from EITHER a mechanical requirement OR place verisimilitude, never free-form,
-  never absent — the furniture-list model applied to people (**residents**).
-- Dialogue splits into two registers: **set-piece** (existing `scene_turn_loop`, the rare path)
-  and **ambient matrix** (cheap per-resident × quest-state exchanges, the common path).
-
-## Background (VERIFIED file refs from 2026-07-09 recon)
-
-- Module system: `Module` ABC + `Check` list, `src/maestro/modules/module.py`; demand-driven
-  worked example `inventory.demanded_items` (inventory.py:96-101, one create per dangling ref,
-  `when_clean=True`); count-driven examples cast/story/scenes/world.
-- Aspects layer (A1+A2) is IN FLIGHT on a worktree branch (tasks/aspects_and_scale.md):
-  `Module.layer` engine/aspect, catalog lists aspects, aspect requires ≥1 engine module.
-  THIS FILE DEPENDS ON IT — quests is authored as an aspect.
-- Storyline pivot LANDED (13513ae): story = spine{theme,tone,trope} + storylines[] with
-  code-guarded termini (game_end/handoff/merge), demand-driven spinoffs, `max_storylines`.
-  Beat→node stamping `(storyline, beat)`; provenance stripped at ir_assemble.py:142-ish.
-  KEEP ALL OF IT for VN. A live-build slot/stamp bug is being fixed in parallel (duplicate
-  slot stamps + model-picked node ids colliding with beat ids).
-- World module: places + interactables, `min_places=4`, `min_interactables=3`
-  (world.py:729-730); talk hotspot carries `action.node`; dialogue graph entered via
-  `nodes_world_entered` (world.py:103-144); spatial gates `_rpg_world_error` (world.py:278-390).
-- Runtime: verbs dispatch through `Game.run_action` (Game.gd:290-339); gated-verb failures are
-  bare ("Not yet." Game.gd:327); NPC-on-map rendering is a LABEL STRING MATCH against character
-  names (overworld.gd:398-415) — fragile, replaced here by id binding.
-- State wiring is existence-only (state.py:127-149): producer AND consumer must exist, but
-  nothing checks the producer is reachable BEFORE the consumer. Quest transitions give flags
-  arc identity, making the ordering check expressible (storyline_pivot.md parked item #1 —
-  solved here as an objectives check).
-- Scene authoring: `scene_turn_loop` (scenes.py:884-1055) — one LLM call per character turn +
-  closer; `in_world` makes talks self-contained return-to-map (scenes.py:893-896).
-
-## The model
-
-### `bible` — engine module, the world-game root component
-
-```json
-{
-  "setting": "a drought-starved river barony, iron-age tech, superstitious",
-  "factions": [
-    {"id": "fac_guild", "name": "Smith's Guild", "wants": "the baron's levy repealed"},
-    {"id": "fac_keep",  "name": "the Baron's men", "wants": "order and the levy paid"}
-  ],
-  "tensions": [
-    {"id": "tension_levy", "summary": "the levy is bleeding the town dry",
-     "between": ["fac_guild", "fac_keep"], "scale": "main"},
-    {"id": "tension_mine", "summary": "something in the flooded mine kills prospectors",
-     "between": ["fac_keep"], "scale": "side"}
-  ]
-}
-```
-
-- Always-on for world compositions (pulled by the `exploration`/`quests` aspects' requires),
-  never composed in a plain VN. Blocking-first: authored before places/cast/quests, same tier
-  position spine holds in story.
-- Checks: setting non-empty (blocking); tensions floor (default 3, `scale=="main"` exactly one);
-  every tension's `between` resolves to declared factions; every faction/tension is CONSUMED
-  downstream once quests exist (use-it-or-cut-it, state's pattern).
-- Everything downstream composes a `bible_block` into its render_context (the pattern of
-  `story_block`). Bible ids are citable — a resident's `stance`, a quest's `tension` — and
-  crossref'd at the authoring layer (NOT the IR: bible is authoring-state like story,
-  stripped/never-lifted at assemble; the IR only ever sees the flags/nodes/places it produced).
-- Premise stays what it is: the frozen, human-gated pitch. Bible is build state derived from
-  it. Human review of tensions rides the existing auto-pause channel, not the freeze gate.
-
-### `objectives` — engine module, the goal state machine
-
-One `objective` = a small state machine over the existing flag substrate:
-
-```json
-{
-  "id": "obj_levy",
-  "tension": "tension_levy",
-  "archetype": "broker",
-  "title": "The Levy",
-  "steps": [
-    {"id": "s1", "summary": "hear the guild's case",   "advance_flag": "levy_heard"},
-    {"id": "s2", "summary": "get the ledger from the keep", "advance_flag": "ledger_taken"},
-    {"id": "s3", "summary": "choose a side", "resolutions": [
-       {"id": "guild", "flag": "sided_guild"}, {"id": "keep", "flag": "sided_keep"}]}
-  ],
-  "journal": {"offered": "…", "s1": "…", "s2": "…", "s3": "…",
-              "resolved.guild": "…", "resolved.keep": "…"},
-  "main": true
-}
-```
-
-- **Code owns the shape** (the storyline-terminus lesson): the model fills an archetype's slots
-  (fetch / escort / investigate / broker / moral-fork — a small declared library, each a step
-  template); it never invents transition semantics. States compile to ordinary flags
-  (`obj_levy.s1` etc. or the declared advance_flags) — the runtime needs NO new condition
-  grammar, gates keep using `requires`.
-- Checks (all deterministic): every step's advance_flag has a producer in reachable content;
-  **producer-before-consumer along the chain** (step N's producer reachable while step N-1
-  resolved — `views.shortest_path` over the node/place graph; this is the parked path-aware
-  wiring check, now expressible because flags have arc identity); exactly one `main` objective;
-  every resolution reachable; journal text present per state.
-- Demand: each bible tension fans one objective (`when_clean` demand check, inventory-shaped);
-  the `main` tension's objective is the win path — resolving it is the game_end (places.goal
-  generalizes to "main objective resolved").
-- IR lift: objectives ARE lifted (unlike bible) — the runtime renders the journal from them.
-  `ir_assemble` + `ir_crossref` + schema fragment + both projections per the CLAUDE.md
-  "adding a shape" checklist. Ren'Py projection = journal screen + objective line; Godot =
-  journal panel + HUD objective + gated-verb feedback that names the missing step.
-
-### `quests` — content aspect over objectives (the A3 proof)
-
-`layer="aspect"`, `requires=("objectives", "world", "cast")`. Shapes an objective into the
-NPC-given presentation: a **giver** (a resident id), per-state giver dialogue variants
-(offer / active nudge / turn-in / per-resolution reaction), and rewards (items/flags via
-existing effects). Checks: every objective has a giver who is a placed resident; offer
-dialogue reachable from the giver's talk; turn-in acknowledges each resolution (the variant
-exists and is gated on the resolution flag). The aspect authors the VARIANTS (via the ambient
-register below); the engine module owns the machine.
-
-### `residents` — on `world`, furniture-for-people
-
-Per-place, error-driven build state (NOT spec-frozen), mirroring the furniture-list design:
-
-- Blocking check per authored place: no residents list → author it (LLM derives who'd
-  plausibly be there from setting + place kind: "smith, apprentice, waiting customer";
-  density by place kind).
-- **Mechanical tier**: a resident who hosts a real interaction (quest giver, set-piece scene,
-  shop). Binds to a cast character **by id** — `{"resident": "r_smith", "character":
-  "char_yorra"}` — which kills the runtime label string match (overworld.gd:398-415): the
-  talk interactable carries the character id, the presenter renders that token.
-- **Verisimilitude tier**: exists to make the place read inhabited; gets ambient dialogue
-  (below). Ambient ≠ dead — same rule as examine-flavor on furniture.
-- Demand into cast: an unbound mechanical resident fans one `add_character` job with the
-  place + role as context (cast keeps its story floor for VN; this is a second demand source,
-  inventory-shaped). Character card gains `role` + optional `stance` (a tension id + position).
-- Every resident emits a token asset stub at creation (couples to the asset-stub redesign).
-
-### Ambient dialogue register — on `scenes`
-
-- A node authored `register: "ambient"`: single cheap LLM call (no turn loop), 2–4 lines,
-  small-talk register, `end: return`. Exempt from `each_node_min_lines`, beat/storyline
-  stamping, and the narrative-floor checks; still a real node (compile/crossref unchanged).
-- State-varied: a resident may carry several ambient nodes gated on quest-state flags (the
-  quests aspect's giver variants are authored through this same register). Selection at
-  runtime: the talk interactable lists `[{node, requires}]` variants, first match wins —
-  small IR addition to the talk action, both engines.
-
-### Composition
-
-- World game: `exploration` (aspect) → world + bible + objectives; `quests` aspect; cast,
-  scenes, state, assets, human as today; combat optional.
-- VN: `narrative`/`dialogue` aspects → story + scenes + cast, exactly as after the pivot.
-  `story` and `objectives` never compose together (nothing forbids it structurally, but no
-  aspect requires both; revisit if a hybrid wants it).
-- Kill `scenes.in_world` special-casing where superseded: a world talk is a quest variant or
-  an ambient node by construction, not a flattened beat-chain.
+## Background (VERIFIED 2026-07-23)
+- The place: `src/worldgen/` (towns, settlements, poi, roads, heightmap…), seeded as
+  `game/world.ts` by `src/maestro/codegen/worldgen_bridge.py` when the frozen spec sets
+  `world`. Exports `WORLD` (buildings/plaza/gate/grass/pois/regions/road) + `heightAt` +
+  `spawnWorld`; GENERATED, edit-refused; candidate seeds offset by run_id.
+- The mechanics, in `runtime/engine.js`: `talkOpen/talkStep/talkHud` (~line 628 — the whole
+  dialogue/shop loop; choice → `state.talkPick`), `kit.quest` add/complete/log (~line 667 —
+  milestones that do NOT end the game; win/lose reserved for the spec's ending), `kit.notify`
+  toasts. Scaffold interact partials (`src/maestro/codegen/scaffold_templates/interact_*.tmpl`)
+  wire the talk loop when the spec uses dialogue.
+- The content substrate: `src/maestro/codegen/data_files.py` — per-game datasets in
+  `game/data/manifest.json` + flat rows; envelope id/name/look/presence/size/shape/color/parts;
+  `ref:<dataset>` cross-references validated deterministically; typed `game/data.ts` generated;
+  `kit.spawnData` builds entities from rows and binds the row id as asset id (so residents
+  authored as rows are skinnable for free). Dataset design prompt:
+  `src/maestro/codegen/prompts/design_data.txt`.
+- Probe already enforces `player_not_in_world`, `dead_action`, `unbound_control`
+  (`runtime/probe.mjs`, spec controls ride in via `gates.run_probe`).
 
 ## Guardrails
-
-- **REJECT the model choosing transition semantics.** Archetypes + code-guarded steps only —
-  the storyline-terminus rule generalized.
-- **REJECT bible in the IR.** Authoring-state only, like story. If ir_crossref needs bible
-  ids, you've leaked the layer.
-- **REJECT a story↔objectives dependency.** story is VN-only; objectives is world-only-by-
-  composition. The unification already happened at the node/flag layer.
-- **REJECT free-form NPC authoring.** A character exists via story floor (VN) or resident
-  demand (world). No third path.
-- **REJECT prompt-only ordering.** Producer-before-consumer along quest chains is a
-  deterministic check, not an instruction.
-- Small-model rules apply throughout: one item per step (one tension, one resident, one
-  objective step, one ambient node), skeleton-first prompts, crafted context blocks.
+- **Residents and quest content are DATA ROWS, not code.** The fix loop sees schema + one
+  example row; content edits are row edits. A resident hand-spawned in `game.ts` is a bug in
+  the prompt, not a style.
+- **The kit owns dialogue/quest mechanics.** REJECT any prompt change that invites the model
+  to hand-roll a dialogue state machine or a quest tracker — widen `kit.quest`/`talk*` instead.
+- **Keep the ownership split:** worldgen owns the PLACE, the scaffold owns CONTROLS, the model
+  owns gameplay in `game.ts`. No new rival owner of `main.ts`/`world.ts`.
+- **Deterministic checks over prompt instructions** where expressible (the producer-before-
+  consumer lesson): validate quest/dialogue wiring statically, don't just ask nicely.
+- `kit.quest` law stands: quests are milestones; only the spec's ending wins/loses.
 
 ## Tasks
 
-### W1 — bible module — DONE 2026-07-09
-- [x] `src/maestro/modules/bible.py`: v_bible + checks (blocking setting → tension floor
-      slot-fan (cap=1) → one-main fix → demand-driven faction_refs), tools set_bible/
-      add_faction/add_tension, `bible_block`, params min_tensions:3. Registered, no projection.
-- [x] Prompts: `bible_write.txt`, `bible_tension_add.txt` (skeleton-first).
-- [x] Tests: tests/test_bible.py (24) — validators, check ordering/fan-out, tools round-trip,
-      never-lifted-into-IR regression.
-- DEFERRED to W3: the "every faction/tension consumed downstream" use-it-or-cut-it check —
-  nothing consumes a tension until objectives/quests exist.
+### W1 — Residents as data rows
+- [ ] `design_data.txt`: when the spec sets `world`, steer toward a `residents` dataset
+      (name, look, a `home` naming a WORLD poi/building index or region, optional `stance`).
+      Files: `src/maestro/codegen/prompts/design_data.txt`. Verify: two world builds produce
+      a residents dataset with ≥4 rows, placed via `WORLD.buildings`/`WORLD.pois`.
+- [ ] Worked example in `runtime/kit_api_3d.md`: spawn residents from rows with
+      `kit.spawnData`, positioned off `WORLD` + `heightAt`. Verify: a build places residents
+      on the ground, inside/near their home.
 
-### W2 — objectives engine module + IR — DONE 2026-07-09
-- [x] `src/maestro/modules/objectives.py`: archetype library as step templates
-      (fetch/escort/investigate/broker/moral_fork — code owns transition semantics, the model
-      fills slots; `advance` is a CONDITION, so `{item: sluice_crank}` advances on holding it —
-      the notes' has_crank gap closed), demand-from-tensions fan (when_clean, keyed on tension
-      id, main first; guard `prepare` code-fills objective id + tension), exactly-one-main
-      (derived: FIRST objective on the main tension — several quests per tension is legal, the
-      gold game's shape — repaired by a deterministic no-LLM restamp), path-aware
-      producer-before-consumer ordering + resolutions-reachable (`views.reachable`/
-      `shortest_path` over the gated nodes+places+encounter graph; forbidden set = this step's +
-      later steps' grants, so a producer behind its own gate is a deterministic error),
-      journal-completeness (text per state incl. per-resolution; final-step entry optional),
-      objectives-slice crossref (world/scenes route it here).
-- [x] Tools: `add_objective` (write-time archetype validation, born-compliant journal, main
-      stamped from the bible) + `edit_objective_step` (step patch + journal merge, revalidated).
-      IR: lifted minus tension/archetype provenance + `ir_crossref` walks advance/resolutions +
-      schema `$defs` objective/objective_step/resolution + `game_ir_decisions.md` rationale.
-- [x] Projections: godot-only (combat precedent — `engine_for` auto-routes; NOT selectable=False:
-      always-on would reroute plain VNs). Runtime surface landed with W6's first bullet below.
-- [x] Tests: tests/test_objectives.py (57) — archetype validation, demand fan, ordering catches
-      producer-behind-own-gate + behind-a-later-step's-gate, journal, IR round-trip + godot
-      compile carries ir.objectives, the notes' sketch (adapted) validates against
-      world_game.json; GDScript selftest for the read-time state derivation + gate text.
+### W2 — Dialogue as data
+- [ ] A `dialogue` dataset convention: rows `ref:residents` + lines/options, optional
+      `requires`-style gate on quest state; a worked `talkOpen(state, npc, options)` example
+      reading rows in `kit_api_3d.md`. Files: `design_data.txt`, `runtime/kit_api_3d.md`.
+      Verify: talking to a resident shows row-authored lines; grade with `grade-scenes`.
+- [ ] Ambient register: cheap per-resident one-liners (a `talkOpen` with no options, or
+      `kit.notify` barks on proximity) so verisimilitude residents aren't mute. Verify: a
+      non-quest resident says something.
 
-### W3 — quests aspect (A3 proof)
-- [ ] `quests` aspect module: giver binding, variant checks, rewards. Catalog description.
-- [ ] Tests: aspect resolves engine set; giver-less objective emits; turn-in variant gated.
+### W3 — Quest graphs on kit.quest
+- [ ] Widen `kit.quest` with `prereq` (an add whose HUD entry and giver offer gate on a prior
+      quest's completion) — code-owned semantics, model fills titles/rewards. Files:
+      `runtime/engine.js`, `runtime/engine.d.ts`, `runtime/kit_api*.md`, probe untouched.
+      Test: a node unit run in `runtime/` — prereq quest hidden until parent completes.
+- [ ] Giver-acknowledges-completion as the documented pattern: the giver's dialogue rows
+      carry a completed-state variant. Verify on a build: turn-in line changes after
+      `quest.complete`.
+- [ ] Static check (new non-blocking `Check` in `src/maestro/codegen/module.py`): every
+      `kit.quest.complete(state,"id")` string in `game/*.ts` has a matching `quest.add` with
+      that id, and ≥1 quest exists when the spec sets `world`. Test: tests/ unit on the check
+      with a fixture source.
 
-### W4 — residents on world
-- [ ] Residents list check chain (blocking author → tiers → cast demand → token stubs);
-      talk-variant IR addition (`[{node, requires}]`); presenter id-binding replaces the
-      string match (overworld.gd + overworld3d.gd).
-- [ ] Tests: resident demand fans, cast binding, variant selection, presenter binding.
-
-### W5 — ambient register on scenes
-- [ ] `register` field on nodes; ambient author path (single call, no turn loop); floor/stamp
-      exemptions; quests' variants authored through it.
-- [ ] Tests: ambient node exempt from min_lines/beat stamps; still compiles + crossrefs.
-
-### W6 — runtime quest surfacing
-- [x] Godot: journal UI (J + an Esc-menu Journal entry; state derived from flags/items at read
-      time, no runtime store), HUD current-objective line (main objective's current step),
-      gated-verb feedback names the missing requirement (`gate_text` renders `requires` in plain
-      words — item display names, humanized flags — at every "Not yet."/"Not now."/"can't go"
-      site in Game.run_action). Landed with W2.
-- [ ] Playable check: a world build where the player can always answer "what do I do next."
-
-### W7 — gold game (runs FIRST, in parallel with W1)
-- [ ] Hand-author one gold open-world game directly in IR + a hand-written objectives
-      component: ~5 places, ~8 NPCs (mechanical + ambient), 3 quests off one tension web.
-      Playtest until fun; it defines the runtime contract W6 builds and becomes the world-game
-      eval gold (the One Last LAN of world games). Home: docs/examples/world_game.json.
-
-## Open questions / risks
-1. **Archetype library size** — start with 5; too few makes samey quests, too many confuses a
-   small model. Revisit after the first generated batch.
-2. **Ambient volume** — residents × states multiplies nodes; density caps + the ambient
-   register's cheapness keep it bounded, but watch build time (parallel_fixes helps).
-3. **Does the main quest need dramatic beats on top?** Lean NO (set-piece scenes at quest
-   transitions suffice); revisit if generated main quests feel flat.
-4. **story_state continuity for ambient nodes** — ambient calls skip the closer/delta path;
-   they read the bible + quest state instead. Verify no continuity regression.
+### W4 — Gold world game
+- [ ] Hand-author one reference world game in `runtime/games/` (residents + 2–3 chained
+      quests + ambient barks over a worldgen world.ts). It defines the bar and becomes the
+      grading gold for world builds. Verify: playable via `runtime/index.html?game=<slug>`,
+      "what do I do next" always answerable.
 
 ## Parked
-- Scale/coverage demands (aspects_and_scale.md Workstream B) — residents + per-tension quests
-  ARE the first per-parent demands; the general `per_parent_errors` primitive lands with B.
-- Map/rasterizer redesign (asset_quality.md T3 + map-gen memory) — orthogonal; a coherent
-  inhabited world on ugly maps beats pretty empty maps.
-- Faction reputation as a variable (`factions` aspect) — after quests prove out.
+- Schedules / day-night movement for residents — needs a time primitive in the kit first.
+- Factions/reputation as a mechanic — after quests prove out.
+- A completability gate (headless-drive a quest chain to done) — wants scripted-input
+  self-play (quality_backlog Q3) to exist first.
+- VN-era machinery (bible/objectives modules, aspects layer, IR lifts, Godot journal UI) —
+  deleted with the IR; the design lessons above are what survives.

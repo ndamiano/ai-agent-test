@@ -9,17 +9,17 @@ representing current state.
 
 ## Guardrails
 - **Fix docs to match code, not code to match docs.**
-- Don't delete rationale/decision docs (`docs/game_ir_decisions.md`, `docs/ir_architecture.md`) —
-  they capture the WHY.
+- Don't delete rationale/decision docs — they capture the WHY. (The IR-era ones named here
+  previously went with the IR itself in the codegen rebuild.)
 - Avoid restating the same fact in 3 docs — duplication is where drift starts (see the source-of-
   truth map below).
 
-## Background (VERIFIED — the living docs)
+## Background (VERIFIED — the living docs, updated 2026-07-23)
 - **Root:** `CLAUDE.md` (architecture + code standards — the primary), `README.md`.
-- **`docs/`:** `ROADMAP.md` (forward-only), `VISION.md`, `DEPLOY.md`, `ir_architecture.md`,
-  `game_ir_decisions.md`, `game_ir.schema.json`, `asset_manifest.schema.json`,
-  `hitl_architecture.md`, `hitl_vision.md`, `tool_granularity.md`,
-  `game_creation_walkthrough.md`, `examples/`.
+- **`docs/`:** `ROADMAP.md` (forward-only), `VISION.md`, `DEPLOY.md`, `codegen_rebuild_plan.md`,
+  `compute_billing_plan.md`, `asset_pipeline_chaining.md`, `hitl_vision.md`. (The IR-era docs —
+  `ir_architecture.md`, `game_ir_decisions.md`, the schemas, `hitl_architecture.md`,
+  `tool_granularity.md`, `game_creation_walkthrough.md`, `examples/` — are deleted.)
 - **`tasks/`:** the work plans (this dir). **`finished.md`:** shipped ledger.
 - Drift evidence: pre-rewrite vocabulary (`validate.py`, `executor.build_context`, `done_condition`
   lists, genre/preset) lingered in task docs; sweep the living docs for the same.
@@ -29,11 +29,14 @@ representing current state.
 - **`docs/VISION.md`** — the north-star / product scope (games-first, on-demand tool).
 - **`docs/ROADMAP.md`** — forward plan only (done work lives in `tasks/finished.md`, not here).
 - **`README.md`** — entry point / orientation.
-- **`docs/*`** — deep rationale + schemas (IR decisions, architecture, HITL model, tool granularity).
+- **`docs/*`** — deep rationale + plans (codegen rebuild, compute/billing, asset chaining, HITL
+  vision, deploy).
 - **`tasks/*`** — active work plans; **`finished.md`** — shipped ledger.
 
-## T1 — Initial audit (do once) — DONE 2026-07-08
+## T1 — Initial audit (do once) — DONE 2026-07-08, SUPERSEDED
 Audited all living docs against `src/` at HEAD; drift report produced; every finding fixed inline.
+SUPERSEDED: that audit covered the pre-codegen-rebuild tree (IR/renpy/godot era) and most of the
+docs it fixed are since deleted. A fresh pass is due — run it with T2's method.
 - [x] **`CLAUDE.md`** — accurate except one stale API listing: fixed (`Preset/PRESETS` removed from
       module.py contents, real selection API named). Auth/tenancy section VERIFIED real (not
       aspirational) — every file it names exists.

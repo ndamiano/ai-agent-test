@@ -1,97 +1,79 @@
-# Game Media — Music, Sound Effects, Animation
+# Game Media — audio (music + SFX) and animation
 
 ## Why
-A game needs a soundscape and motion to feel alive. Today the asset pipeline generates **images**
-(two-pass emotion img2img) and **best-effort voice** (TTS) — nothing else. **Music, sound effects,
-and animation are all missing, all needed, each a separate pipeline.** This file covers the three as
-distinct legs sharing one spine (declare in the manifest → generate → wire per engine).
+A game needs a soundscape and motion to feel alive. Today `kit.audio.play` is an explicit
+no-op stub (`runtime/engine.js:872` — "stub; real backend wired later"); there is no music,
+no SFX, and animation is limited to engine3d's procedural walk-bob. Three legs, one spine:
+kit surface first (fail-soft), procedural/local generation second, model-generated content
+last — the prior stack proved the wiring end-to-end with a zero-dependency procedural stub
+before any model existed, and that ordering is the keeper lesson.
 
-## Background (VERIFIED — `CLAUDE.md` + prior recon)
-- **Current asset gen** (`src/renpy/fns.py`, at build-end `src/maestro/run.py:62-77`):
-  - `generate_images` — backgrounds, character sprites + emotion img2img variants, CGs, items,
-    features, tiles. Sequential.
-  - `generate_voices` — per-line kokoro TTS for VN, silent-`.wav` placeholder backfill (fail-soft).
-  - **No music, no SFX, no animation** anywhere.
-- **Sprite "expression" swaps** (per-line face change via the emotion map) are the closest thing to
-  animation, but they're static image swaps, not motion.
-- **Manifest:** `docs/asset_manifest.schema.json` defines the asset shapes — extend it per leg.
-- **Engine playback surfaces:** Ren'Py has native `play music` / `play sound` (via `ir_vn`/`ir_pnc`
-  + templates); Godot needs `AudioStreamPlayer` / `AnimationPlayer` in the runtime presenters.
-- **Ties:**
-  - `docs/ROADMAP.md` already lists "Music generation (MusicGen / Suno)".
-  - `scaleout.md` S2 — parallel asset gen must include these new passes.
-  - `game_style.md` — motion/transition style tokens overlap the animation leg.
-  - `asset_pipeline_redesign` direction — couple asset stubs to content authoring + a styled prompt
-    stage; these legs should follow that shape, not bolt on separately.
+## Background (VERIFIED 2026-07-23)
+- Kit/runtime: `runtime/engine.js` `run()` (browser 2D; preloads `assets.json` sprites),
+  `simulate()` (headless — audio must stay no-op there), `kit.register` bindings (the natural
+  SFX trigger points), `kit.audio.play` stub. 3D: `runtime/engine3d.js` `run3d` (preloads
+  `assets.json` meshes; procedural walk-bob already animates movers). Probe forbids
+  `Math.random`/`Date.now` — audio calls must never affect sim state.
+- Generation transport: the worker-pull queue is the ONLY path to a GPU. Handlers keyed by
+  payload `kind` in `src/worker/handlers.py` (`HANDLERS = {http, comfy_image, trellis_mesh}`);
+  per-queue second estimates in `src/db/estimates.py` (llm 30 / image 45 / mesh 240); asset
+  jobs chain via `src/maestro/codegen/asset_chain.py` (`CONTINUATIONS`/`OPERATIONS`/
+  `FINALIZERS` — mesh_from_image, save_sprite, decimate, skin) with blobs landing in
+  `<data_dir>/blobs/`; batches enqueue all-at-once via `reskin.start_asset_chain`.
+- Assets are additive by law: no asset ⇒ gates pass, shapes render. Audio inherits this.
+- ComfyUI is the image backend (`src/tools/comfyui_tools.py`, workflows in
+  `src/config/workflows/`); ComfyUI also runs audio models (stable-audio/ACE-Step) — a music
+  job can be a new workflow on the existing `image` queue's target before earning its own
+  queue.
 
 ## Guardrails
-- **Declared as DATA.** Each media asset is a manifest entry the LLM/modules author (tied to the
-  content that uses it), generated later — not hardcoded, not freeform.
-- **Fail-soft like voices** — a missing music/SFX/animation degrades to silence/static, never blocks
-  the build.
-- **Engine-agnostic seam** — the IR carries the media refs; each engine projects playback. No core
-  fork; reuse the projection registry.
-- **Local-first generation preferred** (matches the local-runnable vision) — evaluate local models
-  before committing to an API; note the tradeoff per leg.
+- **Fail-soft everywhere:** missing/failed audio degrades to silence, missing animation to
+  static. No gate ever blocks on media. (The old stack's silent-placeholder backfill lesson.)
+- **Sim/render law:** audio and animation are render-side. `kit.audio.*` is a no-op headless;
+  animation state that affects gameplay is a sim bug.
+- **Local-first, procedural-first:** a deterministic synth/tween that ships beats a model that
+  doesn't. Evaluate MusicGen/stable-audio/AudioGen only after the wiring is proven.
+- **The queue is the only transport** — no direct-call fallback to any audio backend.
 
-## Leg M1 — Music (score / ambient) — SHIPPED
-- [x] **Model choice** — local wins. v1 ships a local procedural `stub` backend (a deterministic,
-      license-free ambient pad synthesized with the stdlib `wave` module — numpy isn't a dep) behind
-      a clean `music.backend`/`endpoint` settings seam (mirrors `mesh_backend`), so a real local model
-      (MusicGen / stable-audio, via ComfyUI or a sibling HTTP server) is a drop-in, no rewrite. The
-      stub needs no server, so the wiring runs on every build and proves end-to-end.
-- [x] **Declaration** — `maestro/music.py` derives the track set deterministically (no LLM call):
-      one ambient bed per place KIND for a world/PnC game (keyed by place id), one bed per used scene
-      LOCATION for a VN (keyed by background id), plus a `default` main-theme bed; prompts carry the
-      story spine's tone/theme. Declared as data — schema fragments in `docs/asset_manifest.schema.json`
-      (`music_track`, the future-authoring shape) and `docs/game_ir.schema.json` (`music`, the lifted
-      runtime block). Derivation is a manifest-style backfill (like `_merge_cast_into_manifest`).
-- [x] **Generation pass** — `renpy.fns.generate_music` (called from `run.run_build`): one file per
-      track under `game/audio/music/`, fail-soft like voices — a failed synth degrades to a silent
-      `.wav` placeholder, and compile-time `_ensure_music_placeholders` backfills anything missing so
-      lint/runtime never break.
-- [x] **Playback** — `assemble_ir` lifts the derived set to `ir.music` (engine-agnostic seam, no
-      crossref churn — refs are derived from ids that already resolve). Ren'Py: `play music … if_changed`
-      per VN scene (`ir_vn`) and per PnC place (`ir_pnc`). Godot: an `AudioStreamPlayer` on `Game`,
-      `play_music` keyed on place (`_run_world`) and scene (`vn.play_node`), with a hand-rolled PCM-WAV
-      parser (`_load_wav`) since the runtime targets 4.2 and reads assets as raw bytes; a missing/unparseable
-      track is silent, never a crash.
-- [x] **Tests:** `tests/test_music.py` (derivation, IR-lift schema validity, per-engine playback,
-      stub-generates-real vs backend-failure-degrades-to-silence, placeholder backfill, Godot packaging)
-      + `tests/test_godot_runtime_gd.py` (live runtime parses the stub pad + silent placeholder; missing
-      → silent).
+## Tasks
 
-## Leg M2 — Sound effects
-- [ ] **Model / source** — local SFX gen (AudioGen / stable-audio) vs a curated library (license
-      check). Note the call.
-- [ ] **Declaration** — SFX tied to actions/effects/hotspots/combat events (hit, door, pickup, UI,
-      ability). Author alongside the event that fires them.
-- [ ] **Generation pass** — `generate_sfx` (coverage + fallback).
-- [ ] **Playback / trigger wiring** — Ren'Py `play sound` on the event; Godot one-shot
-      `AudioStreamPlayer` from `run_action`/combat resolution. IR lift + crossref of event → sfx.
-- [ ] **Tests:** an event with a declared SFX triggers it; missing SFX is silent, not a crash.
+### M1 — Audio backend in the kit
+- [ ] `kit.audio.play(id)` + `kit.audio.music(id)` real in `run()`/`run3d` via WebAudio
+      (preload from a new `assets.json` `audio` section; missing id ⇒ silent no-op), stub
+      unchanged headless. Files: `runtime/engine.js`, `runtime/engine3d.js`,
+      `runtime/engine.d.ts`, `runtime/kit_api*.md`. Test: node unit — headless sim with audio
+      calls is deterministic; a game calling an unknown id doesn't crash render gate.
 
-## Leg M3 — Animation (motion beyond static swaps)
-This leg has a real approach fork — resolve it first (see Parked).
-- [ ] **Scope + approach decision** — which of: sprite motion (idle sway, talk, expression *tweens*
-      not just swaps), UI/scene transitions, effect animations (combat hits, pickups). And how:
-      **generated frames vs in-engine procedural** (Godot `AnimationPlayer`/tweens, Ren'Py ATL) vs a
-      Live2D-style rig. Likely mostly procedural + a few generated — decide per animation type.
-- [ ] **Declaration** — animations tied to characters/actions/transitions in the IR (what animates,
-      when, which motion). Schema fragment.
-- [ ] **Realization** — procedural animations authored as data the runtime interprets (tween specs);
-      any generated-frame animations go through a generation pass with fallback to static.
-- [ ] **Playback** — Godot runtime animation driver; Ren'Py ATL/transform in the templates. Coordinate
-      motion style with `game_style.md` tokens.
-- [ ] **Tests:** a declared animation plays; absence degrades to static; no structural break.
+### M2 — SFX (procedural first)
+- [ ] A small synthesized SFX set (hit/pickup/ui/step — WebAudio oscillators or tiny baked
+      wavs we own) as kit-provided defaults, triggered from game code at `kit.register`
+      actions and collisions. Files: `runtime/engine.js`, kit docs + a worked example.
+      Verify: a build's actions audibly fire; probe/headless unaffected.
 
-## Ordering
-Independent legs; suggested order **M1 (music) → M2 (SFX) → M3 (animation)** — music is roadmap-primed
-and clearest, SFX is similar shape, animation is the fuzziest (approach fork). Each follows the same
-declare→generate→project→test shape and each plugs into `scaleout.md` S2's parallel gen.
+### M3 — Music generation pipeline
+- [ ] Derive the track plan deterministically (no LLM call): one ambient bed keyed off the
+      spec's genre/mood (+ per-region beds for a `world` game) — the old per-place derivation
+      lesson. Files: `src/maestro/codegen/reskin.py` (plan alongside sprites/meshes).
+- [ ] New job kind through the existing chain: a ComfyUI audio workflow under
+      `src/config/workflows/`, payload built in `src/tools/comfyui_tools.py`, a `save_audio`
+      OPERATION in `asset_chain.py`, estimate entry in `db/estimates.py`. Rides the `skin`
+      finalize so staging/bundling is untouched. Test: unit on the chain op (mirrors
+      save_sprite tests); fail ⇒ silent game, batch still finalizes.
+- [ ] Model choice bake-off (stable-audio vs ACE-Step vs MusicGen, local) — record the call
+      here; wire the winner's workflow json. Note VRAM fit vs the image queue's card.
 
-## Parked (owner / research)
-- Local vs API generation, per modality (music especially — Suno quality vs local-fit).
-- **Animation approach** — generated vs procedural is a genuine research fork; procedural is cheaper
-  + more reliable, generated is richer. Probably a mix; scope at M3.
-- Licensing if any curated SFX/music library is used instead of generation.
+### M4 — Animation
+- [ ] Procedural first: 2D kit tween helpers (squash on land, hit-flash, idle bob — mirrors
+      engine3d's walk-bob) applied render-side in `drawEntity`. Files: `runtime/engine.js`,
+      kit docs. Verify: movers visibly animate in a build; sim state untouched.
+- [ ] Generated frames later: N-frame sprite variants per `look` row through the EXISTING
+      image pipeline (same `build_item_payload`, frame suffix ids), kit-side frame cycling on
+      entity `anim` tags. Only after procedural proves insufficient — generated frames cost a
+      render per frame per entity.
+
+## Parked
+- Voice/TTS — no dialogue audio until world_first.md's dialogue-as-data lands.
+- A dedicated `audio` queue + worker — start on the `image` queue's ComfyUI; split only if
+  VRAM contention shows up.
+- Licensing for any curated SFX/music library — moot while we synthesize our own.
+- Suno-class API music — conflicts with local-first; revisit only if local quality stalls.

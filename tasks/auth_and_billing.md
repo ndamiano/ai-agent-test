@@ -44,8 +44,10 @@ per-user ownership, and a credit ledger that gates builds.
       ws gated), `test_auth_router.py` (login issues a working token), `test_auth_store.py`.
 
 ## T2 — Run ownership (also unblocks scaleout S1)  ✅ DONE
-- [x] **Attach `user_id` to runs** at create — `create_run(user_id)` writes `owner.json`
-      (`RunState.write_owner`); the chat tool path attributes via a user-id context var.
+- [x] **Attach `user_id` to runs** at create — ownership now lives in the platform db
+      (`src/db/store.py` `games.user_id`, `create_game`/`owner_of`); the original
+      `owner.json`/`RunState.write_owner` sidecar is deleted. The chat tool path attributes via a
+      user-id context var; `auth/deps.py` ownership-checks `/play` assets against the same rows.
 - [x] **Scope every run operation to its owner** — `_require_state(run_id, user)` in `games.py`
       404s an unknown run / 403s another user's; `list_games` filters to the caller. Closes the hole.
 - [x] **Tests:** `test_run_ownership.py` + cross-user 403 cases across the games routers.
@@ -55,7 +57,9 @@ per-user ownership, and a credit ledger that gates builds.
       `credit_transactions` (signed `delta`, reason, run_id); `balance` / `grant` / `deduct` /
       `refund` (`src/auth/store.py`). `deduct` is a single check-and-decrement UPDATE (atomic,
       never goes negative) returning a bool, not raising for control flow.
-- [x] **Grant-on-create.** `create_user` seeds `INITIAL_CREDITS` and logs an `initial_grant` txn.
+- [x] **Grant-on-create — landed, then deliberately REMOVED pre-launch.** Accounts now start at
+      **0 credits** so a free account can't spend GPU; top-up is the admin CLI
+      (`auth/cli.py grant`) or the billing webhook only.
 - [x] **Deduct-on-build, refund-on-fail.** `build_game` deducts atomically BEFORE enqueue; the
       queue worker refunds the exact deducted `cost` (carried on `_Item`) if the run is cancelled
       while queued or `run_build` raises. Exactly one net deduction per real build (cancel path and
@@ -66,9 +70,9 @@ per-user ownership, and a credit ledger that gates builds.
 - [x] **Insufficient-credits response** — clean HTTP **402** `{reason, balance, cost}` (never a 500,
       never enqueues).
 - [x] **Tests:** `test_credits.py` (grant/deduct/refund, non-negative atomic deduct under two
-      concurrent threads, ledger reconciles with balance), `test_games_router.py` (deduct-once /
-      402-below-balance / refund-on-AlreadyQueued), `test_build_queue.py` (refund on cancel-while-
-      queued + on `run_build` raising).
+      concurrent threads, ledger reconciles with balance); the old `test_build_queue.py` went with
+      the build queue — the charge/budget paths are now covered by `test_gpu_queue.py`,
+      `test_workqueue.py`, `test_db_store.py` and `test_games_db_wiring.py`.
 
 ## T4 — Buy credits (seam only, no integration yet)  ✅ DONE
 - [x] **Admin grant op** — `python -m auth.cli grant <handle> <n>` (the "manual" path), wired to the
@@ -85,6 +89,17 @@ per-user ownership, and a credit ledger that gates builds.
 - [x] **Tests** (`test_billing_seam.py`): CLI grant increments balance + logs a txn; CLI grant on an
       unknown handle exits cleanly; the webhook credits on a stubbed verified event, rejects an
       unverified one (400, credits nothing), and is not blocked by the user-auth middleware.
+
+## Landed beyond this plan — the compute-budget layer
+A credit is no longer just an admission ticket; it buys GPU time, and the queue enforces it:
+- **`SECONDS_PER_CREDIT`** (`src/auth/billing.py`) — charging a build grants the game
+  `credits × SECONDS_PER_CREDIT` (`games.seconds_granted` in `src/db/store.py`).
+- **Reserve / admit / debit** (`src/db/store.py`) — `enqueue_job` admits a job against
+  grant − seconds_used − the reserved `est_seconds` of pending/claimed jobs, in one write txn
+  (else `InsufficientCompute`); `complete_job` debits measured exec_seconds — only delivered work
+  is billed (failed/lapsed/abandoned jobs leave `seconds_used` untouched).
+- **Charge model supersedes T3's refund-on-fail shape** — a game is charged ONCE on first enqueue,
+  never re-deducted, never auto-refunded; refunds are a manual admin action (`auth/cli.py refund`).
 
 ## T5 — Frontend gate  ✅ DONE
 - [x] **Login screen** + gate the app behind it. `AuthProvider` (`contexts/AuthContext.tsx`, token

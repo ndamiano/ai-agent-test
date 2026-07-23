@@ -59,7 +59,7 @@ export type WebSocketMessage = {
     // build_queued — kind is 'build' | 'fix'
     position?: number
     kind?: string
-    // fix_started
+    // fix_started / spec_amend_requested
     note?: string
     // build_started / build_step
     n_failing?: number
@@ -81,8 +81,6 @@ export type WebSocketMessage = {
     // spec_proposed / spec_frozen
     title?: string
     mode?: GameMode
-    // spec_amend_requested
-    note?: string
     // assets_done
     rendered?: number
     [key: string]: any

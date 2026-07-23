@@ -35,8 +35,9 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
 - [ ] **Reliably good on ONE genre** — narrow to the best-working path (VN/dialogue). Judge-in-loop
       (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred. NOT STARTED.
 - [x] **Delivery works** — the `/play` web harness serves the staged bundle
-      (`runtime/games/<id>/`, cookie-gated). The old Ren'Py distribute / Godot export are deleted;
-      a downloadable export is OPEN work.
+      (`runtime/games/<id>/`, cookie-gated). Browser play IS the product (decision 2026-07-23):
+      the old Ren'Py/Godot download made sense when games were desktop builds; a downloadable
+      export is a possible later add, not launch work.
 - [x] **Safety posture** — `safety_filter.md` Phase 1 (research, `safety_phase1_notes.md`) done +
       a basic fail-closed CSAM-adjacent block landed (chat/spec input + the image-generation
       seam, `src/tools/safety.py`). Still pre-alpha tier (keyword/pattern only, no classifier/
@@ -70,8 +71,8 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       (new primitive families) — the growth engine, now that the business stands.
 
 ## "Minimum to charge $1"
-Real payment → credit ledger deducts → a build runs (isolated, safe) → a good game downloads →
-refund on failure. That's Stage 1's core loop. Everything before it is Stage 0; everything after is
+Real payment → credit ledger deducts → a build runs (isolated, safe) → a good game is playable
+at /play → refund on failure. That's Stage 1's core loop. Everything before it is Stage 0; everything after is
 scale.
 
 ## Critical-path ordering (across files)

@@ -79,8 +79,8 @@ fiction and other dark/mature themes are explicitly NOT filtered):
   skipped (never sent to the model, logged as blocked), never crashing the build.
 - Violations are logged (`maestro.safety` logger) with the authed user id where available — never
   the full flagged text, only the matched term(s).
-- Tests: `tests/test_safety.py` was lost in the codegen rebuild — the file no longer exists (see
-  Phase 2 tests below).
+- Tests: `tests/test_safety.py` (rewritten 2026-07-23 after the codegen rebuild dropped the
+  original) — both match shapes, false-positive guards, the logging contract, the chat refusal path.
 
 Still open for full Phase 2: authored-text moderation (hook 3), post-gen image classification
 (hook 5), the final artifact gate (hook 6), and a classifier/hash-matching upgrade path (explicitly
@@ -96,11 +96,12 @@ out of scope for this pass — see Guardrails above).
 - [x] **Logging / flagging / attribution** — violations recorded (with user id where available) via
       the `maestro.safety` logger. A persistent per-user violation record for account action is
       still open (today it's log-only).
-- [ ] **Tests:** known-bad prompts/text are blocked; legitimate mature content is NOT blocked
-      (false-positive guard); the image seam rejects a flagged generation. (Use synthetic/proxy
-      fixtures — never real illegal content in tests.) NOTE: this was marked done citing
-      `tests/test_safety.py`, but that file does not exist (lost in the codegen rebuild) — the
-      screening code is live yet untested; re-cover it.
+- [x] **Tests:** `tests/test_safety.py` (2026-07-23): known-bad text blocked (both match shapes,
+      synthetic fixtures only); legitimate mature/dark content passes (false-positive guard, incl.
+      word-boundary and adult-age cases); inflected sexual terms match (regression — the list once
+      held bare stems the boundary compiler could never match); log carries matched terms + user,
+      never the full text; a blocked chat message never reaches the agent. Seam plumbing
+      (`build_item_payload` → None, `generate_image` → error) covered in `test_gpu_queue.py`.
 
 ## Ordering
 Research (Phase 1) before any implementation — the tool + obligation decisions drive everything.

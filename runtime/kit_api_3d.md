@@ -45,21 +45,26 @@ long body box (`w:1, h:1.2, d:2.6`) plus a small head box than as one slab.
 it move (dead-controls). One object, in the world, referenced by `state.player`.
 
 <!-- world -->
-**If a `world.ts` file is provided (a generated world), BUILD ON IT — do not author terrain/town
-yourself.** Import it and use its API; the town, streets, terrain, forest, roads, and outlying sites
-already exist:
+**A generated `world.ts` is on disk — BUILD ON IT, never author terrain or a town.** The PLACE
+already exists: terrain, streets, buildings, the roads out, forest, and outlying sites. Spawn it and
+put the player on it:
 ```ts
 import { WORLD, spawnWorld, heightAt } from "./world.ts";
-// init(kit): spawn the world, then put the player ON the ground at the plaza
-spawnWorld(this.state.world);
-const px = WORLD.plaza.x, pz = WORLD.plaza.z;
-this.state.player = kit.spawn(this.state.world, { shape:"box", x:px, y:heightAt(px,pz)+0.9, z:pz, w:0.8,h:1.7,d:0.8, color:"#28303a" });
-// place NPCs at buildings (each has {x,z,w,d,label}), creatures at WORLD.regions points,
-// objectives at WORLD.pois — use the WHOLE map, not just the plaza
-// update(dt,input,kit): after kit.drive, keep the player on the terrain EVERY frame:
-this.state.player.y = heightAt(this.state.player.x, this.state.player.z) + 0.9;
-kit.avoidRects(this.state.player, WORLD.buildings);   // slide around buildings, not through them
+
+export function init(state: GameState, kit: Kit): void {
+  spawnWorld(state.world);            // the whole place: terrain, town, forest, POI dressing
+  const p = WORLD.plaza;
+  state.player = kit.spawn(state.world, { shape:"box", x:p.x, y:heightAt(p.x,p.z)+0.9, z:p.z,
+                                          w:0.8, h:1.7, d:0.8, color:"#28303a" });
+  // ...then the spec's NPCs / creatures / items, ACROSS THE WHOLE MAP (see below)
+}
 ```
+The GENERATED main.ts owns the ENTIRE player loop on a world: it moves the player, stands them on
+the terrain and slides them around buildings, every frame, already wired. So in `update` do NOT call
+`kit.drive`, do NOT clamp `state.player.y`, do NOT `kit.avoidRects` the player. (Your own NPCs and
+creatures ARE yours: after any steering, set `e.y = heightAt(e.x, e.z) + halfHeight` and
+`kit.avoidRects(e, WORLD.buildings)` yourself.)
+
 `WORLD.buildings` (`[{id,label,x,z,w,d,h,color}]`, `label` = kind — the SET VARIES per world, so
 NEVER `find(b => b.label === "...")` a guessed name (a miss silently drops your NPC/shop). Place
 people by POSITION instead — e.g. the building nearest the plaza:
@@ -69,10 +74,16 @@ Math.hypot(b.x-WORLD.plaza.x, b.z-WORLD.plaza.z) ? a : b);` — or just spread N
 `WORLD.pois` (`[{id,kind,label,x,z}]` — real outlying sites: a cave, ruins, a camp, far outside the
 village, already dressed with props by spawnWorld), `WORLD.regions` (`{forest:[[x,z],…],
 meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground height — every entity's
-`y` should be `heightAt(x,z) + halfHeight`. Set `controls` from the spec's scheme (`"orbital"` for a
-third-person town, `"fp"` for a first-person walk-through — see Control scheme below), no camera hook.
-Spread the GAME across the world: town = talk/trade/quests, wilderness = danger/objectives (put a
-goal at a POI so the player travels), and mark the current objective with a `marker` HUD item.
+`y` should be `heightAt(x,z) + halfHeight`.
+
+**Use the WHOLE map — this is what makes it a place and not a room:**
+- **Every building gets a function.** Put an NPC in front of each one, matched to its `label` (a
+  vendor at a market stall selling from a priced talk menu, a smith at a workshop, an elder by the
+  well). Each NPC gets ITS OWN name and its own `kit.talkOpen` lines — never one shared script.
+- **Send the player OUT.** Put at least one objective — the spec's boss/goal/destination — at or
+  near a `WORLD.pois` entry, out past `WORLD.gate`, never in the plaza. Spawn roaming or hostile
+  creatures at `WORLD.regions.forest` points and scatter items over both town grass and meadows.
+- Mark the current objective with a `{kind:"marker", x, z, text}` HUD item so the player can find it.
 <!-- /world -->
 
 **Two hard rules that shape how you build a 3D game — internalize these:**
@@ -216,9 +227,10 @@ they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the
 - After ANY steering, keep the entity's `y` on the ground: on FLAT ground (no world.ts) that is a
   CONSTANT — `e.y = halfHeight` — never a function call.
 <!-- world -->
-- In a WORLD game (a world.ts exists): after any steering (and after `kit.drive` on the player) —
+- In a WORLD game (a world.ts exists): after steering ANY entity of yours —
   `e.y = heightAt(e.x, e.z) + halfHeight` — and `kit.avoidRects(e, WORLD.buildings)` so walkers
-  slide around buildings instead of through them.
+  slide around buildings instead of through them. Not the player: the scaffold does both for them
+  once you set `state.ground` / `state.walls`.
 <!-- /world -->
 
 ## Effects, collision & bounds  (3D-specific — READ THIS, the 2D kit misleads here)

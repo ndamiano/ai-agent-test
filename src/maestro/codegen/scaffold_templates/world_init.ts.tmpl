@@ -1,0 +1,8 @@
+      // The generated world's two per-frame passes, wired by the pipeline because world.ts is the
+      // pipeline's own file: it always exports heightAt and WORLD.buildings, so there is exactly one
+      // correct wiring and nothing for game.ts to get wrong. AFTER initGame, so a hook that set its
+      // own terrain/walls wins. (Measured: told to set these itself, a build used the whole WORLD
+      // API correctly and still never assigned them — the player walked through walls in mid-air,
+      // and no gate can see either.)
+      if (!state.ground) state.ground = heightAt;
+      if (!state.walls) state.walls = WORLD.buildings;

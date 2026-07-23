@@ -1,7 +1,7 @@
 """Control scaffold: the pipeline seeds a GENERATED main.ts from the spec's control scheme; the
-model authors gameplay behind the game.ts hooks. Covers: per-scheme rendering, idempotence, the
-world exclusion, the state.player contract throw, the planned/authoring integration, and the
-scheme-aware probe (dead_movement) — the invariant the two shipped dead-control games motivated."""
+model authors gameplay behind the game.ts hooks. Covers: per-scheme rendering, the world spec's
+sky background + terrain clamp, the state.player contract throw, the planned/authoring integration,
+and the scheme-aware probe (dead_movement) — the invariant two shipped dead-control games motivated."""
 
 import json
 from types import SimpleNamespace
@@ -21,12 +21,9 @@ from maestro.codegen.module import (
     CodegenModule,
     _authoring_order,
     _detect_contracted,
-    _plan_entry,
     _plan_fix,
 )
 from maestro.codegen.scaffold import (
-    ENTRY_HOOK,
-    is_scaffolded,
     reexport_hooks,
     seed_scaffold,
 )
@@ -165,38 +162,37 @@ def test_scaffold_renders_each_scheme(tmp_path, scheme, movement, config_bits):
         assert bit in src
     assert "{interact}" not in src           # placeholder consumed
     assert 'from "./game.ts"' in src         # hooks imported — tsc enforces the contract
-    assert is_scaffolded(tmp_path)
     if scheme.endswith("-3d"):
         assert "draw(" not in src.split("export function createGame")[1]   # 3D scaffold has NO draw hook
+
+
+def test_unknown_scheme_on_a_3d_spec_falls_to_orbital_not_the_2d_default(tmp_path):
+    # The default template is 2D; landing there on a 3D spec would render the game flat.
+    src = _seed(tmp_path, _spec("", mode="3d")).read_text()
+    assert 'mode: "3d"' in src and 'controls: "orbital"' in src
 
 
 def test_unknown_scheme_gets_the_default_scaffold(tmp_path):
     src = _seed(tmp_path, _spec("mouse-aim")).read_text()
     assert src.splitlines()[0].startswith("// GENERATED control scaffold")
     assert "kit.moveTopDown" not in src and "kit.drive(" not in src   # no movement wired
-    assert is_scaffolded(tmp_path)
 
 
-def test_seed_is_idempotent(tmp_path):
-    main = _seed(tmp_path, _spec("top-down"))
-    first = main.read_text()
-    seed_scaffold(RunState(tmp_path), _spec("platformer"))   # re-entry, even with a drifted spec
-    assert main.read_text() == first
+@pytest.mark.parametrize("scheme", ["orbital-3d", "vehicle-3d", "first-person-3d", "follow-3d"])
+def test_world_spec_is_scaffolded_under_a_sky(tmp_path, scheme):
+    """A world game is scaffolded like any other — worldgen owns the PLACE, the scaffold the
+    CONTROLS. Its background must be sky, not the indoor dark (config.background also tints the
+    3D distance fog, so the default would fog a village grey)."""
+    src = _seed(tmp_path, _spec(scheme, mode="3d", world={"settlement": "X"})).read_text()
+    assert src.splitlines()[0].startswith("// GENERATED control scaffold")
+    assert "kit.drive(state.player" in src
+    assert 'background: "#a9c7e0"' in src
+    assert "{background}" not in src
 
 
-def test_seed_never_clobbers_an_existing_main(tmp_path):
-    d = tmp_path / "game"
-    d.mkdir()
-    (d / "main.ts").write_text("export function createGame(kit: Kit) {}\n", encoding="utf-8")
-    seed_scaffold(RunState(tmp_path), _spec("top-down"))
-    assert (d / "main.ts").read_text() == "export function createGame(kit: Kit) {}\n"
-    assert not is_scaffolded(tmp_path)
-
-
-def test_world_flagged_spec_skips_scaffold(tmp_path):
-    # v1 scope: worldgen owns world games' main.ts (it already prescribes the drive wiring).
-    seed_scaffold(RunState(tmp_path), _spec("first-person-3d", mode="3d", world={"settlement": "X"}))
-    assert not (tmp_path / "game" / "main.ts").exists()
+def test_world_less_3d_keeps_the_dark_background(tmp_path):
+    src = _seed(tmp_path, _spec("orbital-3d", mode="3d")).read_text()
+    assert 'background: "#101018"' in src
 
 
 def test_dialogue_use_adds_the_interact_block(tmp_path):
@@ -230,6 +226,113 @@ def test_scaffolded_3d_game_passes_gates(tmp_path):
     assert run_headless(tmp_path).get("ok") is True
     assert run_probe(tmp_path, scheme="orbital-3d").get("ok") is True
     assert run_render(tmp_path).get("ok") is True   # no draw in 3D — hud only
+
+
+# A 3D hook module that ASSERTS the scaffold ground-clamped the player last frame: update runs
+# before the clamp, so frame N sees frame N-1's result. A missing clamp throws at the headless gate.
+GAME_TS_3D_GROUND = """export interface GameState { world: World; player: Entity | null;
+  ground: ((x: number, z: number) => number) | null; }
+export function createState(kit: Kit): GameState { return { world: [], player: null, ground: null }; }
+export function init(state: GameState, kit: Kit): void {
+  state.ground = (x: number, z: number) => 5 + x * 0.1 + z * 0.2;
+  state.player = kit.spawn(state.world, { shape: "box", x: 3, y: 0, z: -2, w: 0.8, h: 1.7, d: 0.8, color: "#28303a" });
+}
+let frames = 0;
+export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
+  frames++;
+  if (frames > 1 && state.player && state.ground) {
+    const want = state.ground(state.player.x, state.player.z) + 0.85;
+    if (Math.abs(state.player.y - want) > 1e-9)
+      throw new Error(`ground clamp missing: y=${state.player.y} want=${want}`);
+  }
+}
+export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
+"""
+
+
+@pytest.mark.parametrize("scheme", ["orbital-3d", "vehicle-3d", "first-person-3d", "follow-3d"])
+def test_scaffold_stands_the_player_on_state_ground(tmp_path, scheme):
+    """The terrain half of the world merge: game.ts hands over a height function and the scaffold
+    owns the per-frame clamp, so a world game never re-implements it in update (the old worldgen
+    main.ts did, by hand, in model-authored code)."""
+    _hook_game(tmp_path, _spec(scheme, mode="3d"), GAME_TS_3D_GROUND)
+    assert typecheck(tmp_path) == []
+    assert run_headless(tmp_path).get("ok") is True
+
+
+def test_no_state_ground_leaves_y_alone(tmp_path):
+    # The clamp is opt-in: a 3D game that never sets state.ground keeps the y it spawned with.
+    _hook_game(tmp_path, _spec("orbital-3d", mode="3d"), GAME_TS_3D.replace(
+        "export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }",
+        "export function update(state: GameState, dt: number, input: Input, kit: Kit): void {\n"
+        "  if (state.player && state.player.y !== 0.9) throw new Error(`y moved to ${state.player.y}`);\n}"))
+    assert typecheck(tmp_path) == []
+    assert run_headless(tmp_path).get("ok") is True
+
+
+# A stand-in for worldgen's output: the same exported surface (WORLD / spawnWorld / heightAt) the
+# scaffold imports, without running worldgen in a unit test.
+FAKE_WORLD_TS = """// GENERATED by worldgen
+export const WORLD: any = {
+  plaza: { x: 0, z: 0 },
+  buildings: [0, 1, 2, 3, 4].map((i) => ({ id: `b${i}`, label: "cottage", x: 12 + i * 6, z: 0,
+                                           w: 4, d: 4, h: 3, color: "#a84" })),
+};
+export function spawnWorld(world: World): void {
+  world.push({ shape: "ground", x: 0, y: 0, z: 0, size: 200, color: "#274" });
+}
+export function heightAt(x: number, z: number): number { return 2 + x * 0.01 + z * 0.02; }
+"""
+# The failure this guards: a hook module that uses the world API correctly but never assigns
+# state.ground / state.walls. A live build did exactly that — the player walked through buildings in
+# mid-air and NO gate could see it — so the scaffold wires both itself on a world game.
+WORLD_GAME_TS = """import { WORLD, spawnWorld, heightAt } from "./world.ts";
+export interface GameState {
+  world: World; player: Entity | null; ground: any; walls: any; f: number;
+}
+export function createState(kit: Kit): GameState {
+  return { world: [], player: null, ground: null, walls: null, f: 0 };
+}
+export function init(state: GameState, kit: Kit): void {
+  spawnWorld(state.world);
+  const p = WORLD.plaza;
+  // y = 0 is UNDERGROUND here — only the scaffold's clamp can stand the player on the terrain.
+  state.player = kit.spawn(state.world, { shape: "box", x: p.x, y: 0, z: p.z,
+                                          w: 0.8, h: 1.7, d: 0.8, color: "#28303a" });
+}
+export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
+  state.f++;
+  const p = state.player!;
+  if (state.f > 1) {
+    const want = heightAt(p.x, p.z) + 0.85;   // the clamp lags XZ one frame — hence the tolerance
+    if (Math.abs(p.y - want) > 0.5) throw new Error(`NOT GROUNDED: y=${p.y} want=${want}`);
+    if (!state.walls || state.walls.length !== 5)
+      throw new Error(`NOT WALLED: ${state.walls && state.walls.length}`);
+  }
+}
+export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
+"""
+
+
+@pytest.mark.parametrize("scheme", ["orbital-3d", "first-person-3d"])
+def test_world_scaffold_wires_ground_and_walls_itself(tmp_path, scheme):
+    spec = _spec(scheme, mode="3d", world={"settlement": "X"})
+    _hook_game(tmp_path, spec, WORLD_GAME_TS)
+    (tmp_path / "game" / "world.ts").write_text(FAKE_WORLD_TS, encoding="utf-8")
+    main = (tmp_path / "game" / "main.ts").read_text()
+    assert 'import { WORLD, heightAt } from "./world.ts";' in main
+    assert typecheck(tmp_path) == []
+    assert run_headless(tmp_path).get("ok") is True
+    assert run_probe(tmp_path, scheme=scheme).get("ok") is True
+
+
+def test_world_less_scaffold_never_imports_world_ts(tmp_path):
+    # The import only exists when worldgen seeded a world — otherwise it would not resolve.
+    src = _seed(tmp_path, _spec("orbital-3d", mode="3d")).read_text()
+    assert "world.ts" not in src
+    assert "{world_init}" not in src and "{world_import}" not in src
 
 
 def test_missing_player_throws_the_contract_error(tmp_path):
@@ -353,10 +456,9 @@ def _manifest(tmp_path, names):
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
 
 
-def test_planned_requires_game_ts_for_scaffolded_runs(tmp_path):
+def test_planned_requires_game_ts(tmp_path):
     spec = _spec("top-down")
     _seed(tmp_path, spec)   # run_build seeds before the loop ever detects — mirror that order
-    assert _plan_entry(tmp_path) == ENTRY_HOOK
     _manifest(tmp_path, ["main.ts"])   # a plan of only the scaffold's own file is no plan at all
     errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
     assert [e.code for e in errs] == ["planned"]
@@ -365,17 +467,21 @@ def test_planned_requires_game_ts_for_scaffolded_runs(tmp_path):
     assert [e.code for e in errs] == ["authored"] and errs[0].path == "game.ts"
 
 
-def test_planned_keeps_main_ts_for_unscaffolded_runs(tmp_path):
-    # A world game (worldgen owns main.ts, no scaffold) — the plan entry stays main.ts.
+def test_planned_requires_game_ts_for_a_world_game_too(tmp_path):
+    """A world game plans like any other: main.ts is the scaffold's, world.ts is worldgen's, and
+    the model's entry is still game.ts."""
     spec = _spec("first-person-3d", mode="3d", world={"settlement": "X"})
-    seed_scaffold(RunState(tmp_path), spec)   # no-op for a world spec
-    assert _plan_entry(tmp_path) == "main.ts"
-    _manifest(tmp_path, ["main.ts"])
+    _seed(tmp_path, spec)
+    (tmp_path / "game" / "world.ts").write_text("// GENERATED by worldgen\n", encoding="utf-8")
+    _manifest(tmp_path, ["main.ts", "world.ts"])
     errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["authored"]
+    assert [e.code for e in errs] == ["planned"]
+    _manifest(tmp_path, ["game.ts"])
+    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
+    assert [e.code for e in errs] == ["authored"] and errs[0].path == "game.ts"
 
 
-def test_authoring_order_puts_game_ts_last_when_scaffolded(tmp_path):
+def test_authoring_order_puts_game_ts_last(tmp_path):
     _seed(tmp_path, _spec("top-down"))
     _manifest(tmp_path, ["game.ts", "types.ts", "combat.ts"])
     order = [f["name"] for f in _authoring_order(tmp_path)]

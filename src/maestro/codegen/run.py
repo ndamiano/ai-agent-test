@@ -22,6 +22,7 @@ from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
 from maestro.agent_loop import AgentLoop
 from maestro.codegen import worldgen_bridge
+from maestro.codegen.controls import normalize_controls
 from maestro.codegen.fix_classes import classify
 from maestro.codegen.gates import RUNTIME_DIR, entry_src_path, game_dir, stage_for_play
 from maestro.codegen.module import (
@@ -36,62 +37,31 @@ from maestro.modules.module import Error, ErrorType
 from maestro.run_control import get_or_create, remove
 from maestro.services import BudgetExhausted, Services
 from maestro.state import RunState
-from maestro.templating import render_template
 from tools.build_events import _emit
 from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
-_WORLDGEN_BIOMES = ["ocean", "beach", "grassland", "forest", "hill", "mountain"]
 
 
-def _recipe_from_spec(spec: dict) -> dict:
-    """The worldgen recipe for a world-flagged spec — the requested settlement / size / biomes."""
-    w = spec.get("world") if isinstance(spec.get("world"), dict) else {}
-    name = (w.get("settlement") or spec.get("title") or "Village").strip()
-    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "settlement"
-    return {"archetype": "continent", "size": w.get("size") or "small",
-            "palette": {"biomes": w.get("biomes") or _WORLDGEN_BIOMES},
-            "locations": [{"id": slug, "type": "settlement", "name": name}]}
+def _seed(run_id: str, state: RunState, spec: dict) -> None:
+    """The pre-seeds the build loop authors on top of, each written only when absent so a rebuild,
+    reskin or note-fix never regenerates one under a half-built game. Two independent axes:
 
+      world.ts  CONTENT — worldgen owns the PLACE (terrain, town, roads, POIs). World specs only.
+      main.ts   CONTROL — the scaffold owns the frozen spec's control scheme. EVERY game.
 
-def _world_main_purpose(spec: dict) -> str:
-    """main.ts's manifest purpose for a world game — the fixed scaffold (import world.ts, spawnWorld,
-    player-on-ground, drive, dialogue primitives) with the frozen spec's entities + objective inlined,
-    so the model realizes THIS game on the village, not a fixed Rivervale."""
-    d = spec.get("design", spec)
-    ents = d.get("entities") or []
-    entities = "; ".join(f"{e.get('id', '?')}: {e.get('desc', '')}" for e in ents) or "the spec's entities"
-    scheme = ((d.get("control") or {}).get("scheme") or "").lower()
-    return render_template(_PROMPTS / "world_main_purpose.txt", {
-        "title": d.get("title") or spec.get("title") or "the game",
-        "controls": "fp" if "first-person" in scheme else "orbital",
-        "entities": entities,
-        "objective": d.get("win") or "explore the village",
-        "lose": d.get("lose") or "none",
-    })
-
-
-def _maybe_seed_worldgen(run_id: str, state: RunState, spec: dict) -> None:
-    """World-flagged 3D game: worldgen OWNS the layout. Before the build loop, generate world.ts
-    (terrain heightfield + labelled building parcels) via the bridge and force a single-file manifest
-    (main.ts only) so the planner is bypassed and the model authors gameplay ON TOP. Idempotent — on
-    re-entry (re-gate after ok, reskin, note-fix) world.ts already exists and this is a no-op, so the
-    town is never regenerated under a half-built game."""
-
-    if not spec.get("world"):
-        return
+    Both are `// GENERATED` (the edit tool refuses them); the model authors game.ts against both.
+    """
     gd = game_dir(state.run_dir)
-    if (gd / "world.ts").exists():
-        return
     gd.mkdir(parents=True, exist_ok=True)
-    info = worldgen_bridge.build(_recipe_from_spec(spec), gd)
-    logger.info("worldgen seed %s: %sx%s town, %d buildings",
-                run_id, info["gw"], info["gh"], len(info["buildings"]))
-    manifest = {"files": [{"name": "main.ts", "purpose": _world_main_purpose(spec),
-                           "exports": ["createGame"]}]}
-    (gd / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if spec.get("world") and not (gd / "world.ts").exists():
+        info = worldgen_bridge.seed_world(gd, spec)
+        logger.info("worldgen seed %s: %sx%s town, %d buildings",
+                    run_id, info["gw"], info["gh"], len(info["buildings"]))
+    if not entry_src_path(state.run_dir).exists():
+        seed_scaffold(state, spec)
 
 
 def create_run(user_id: str) -> str:
@@ -126,6 +96,7 @@ def draft_spec(request: str) -> dict:
             user = f"Request: {request}\n\nYour previous JSON was invalid: {last}\n\nWrite the JSON spec."
     if design is None:
         raise ValueError(f"spec draft never produced valid JSON: {last}")
+    normalize_controls(design)
     return {"request": request, "title": design.get("title", request),
             "mode": design.get("mode", "2d"), "world": design.get("world"),
             "design": design, "frozen": False}
@@ -168,6 +139,7 @@ def freeze_spec(run_id: str) -> dict:
     state = RunState(run_id)
     spec = state.read_spec()
     spec["frozen"] = True
+    normalize_controls(spec.get("design") or {})   # also catches a hand-written / hand-edited spec
     state.write_spec(spec)
     _mirror_spec_meta(run_id, spec)
     _emit("spec_frozen", run_id, title=spec["title"])
@@ -188,8 +160,8 @@ def run_build(run_id: str, max_steps: int = 60):
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no spec for run {run_id!r} — draft one first")
-    _maybe_seed_worldgen(run_id, state, spec)
-    seed_scaffold(state, spec)   # non-world: the pipeline, not the model, wires the controls
+
+    _seed(run_id, state, spec)
     tools = build_codegen_tools(state)
     control = get_or_create(run_id)
     loop = AgentLoop(spec, state, [CodegenModule()], tools, connector=get_connector(),

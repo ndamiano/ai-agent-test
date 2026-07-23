@@ -129,10 +129,12 @@ src/
       module.py          CodegenModule = planned → data → authored → typechecks → single_mover →
                          runs → plays → renders → scrolls (blocking where noted; single_mover is a
                          STATIC check — a scaffolded game re-driving the player from input double-
-                         moves it, and no runtime gate can see that). For a SCAFFOLDED run (every
-                         non-world game) `planned` requires the hook module game.ts — main.ts is the
-                         GENERATED control scaffold, never planned/authored, and authoring order
-                         keys entry-last on game.ts. DATA = the model designs per-game
+                         moves it, and no runtime gate can see that). `planned` requires the hook
+                         module game.ts and drops every already-GENERATED file the model lists
+                         (main.ts's control scaffold, a world game's world.ts — unauthorable, so
+                         planning one would strand an authoring step); the plan prompt carries an
+                         ALREADY ON DISK block naming them. Authoring order keys entry-last on
+                         game.ts. DATA = the model designs per-game
                          datasets ONCE (design_data.txt; {"datasets":[]} legal — arcade games opt
                          out), then deterministic row validation + typed data.ts regeneration
                          (data_files.py); authoring/fix prompts carry a GAME DATA summary (schema +
@@ -178,21 +180,30 @@ src/
                          the data-less fallback. Both re-gate then write game/assets/ + assets.json.
                          Additive: no asset ⇒ still passes gates, renders as shapes. CLI
                          `--assets <run_id>`.
-      scaffold.py        the CONTROL SCAFFOLD pre-seed: for every NON-world game, run_build seeds a
+      scaffold.py        the CONTROL SCAFFOLD pre-seed: for EVERY game, run_build seeds a
                          GENERATED game/main.ts from scaffold_templates/<scheme>.ts.tmpl before the
-                         loop. The scaffold owns config (2D size defaults; 3D controls: name), the
-                         scheme's ONE-correct-realization movement (moveTopDown / walk+jump+physics /
-                         gridMove-on-pressed w/ state.passable / kit.drive — run BEFORE the hook
-                         update so gameplay adjusts after, never re-wires), the state.player init
-                         assert, the solid-collision pass (kit.collideWorld AFTER the hook update:
-                         movement → gameplay → collide; 2D templates only), and — when the spec uses
-                         dialogue — the whole kit talk loop (talkStep update-side, the OPEN half a
-                         registered "interact" action; choice → state.talkPick). The model authors
-                         the hooks in game.ts
-                         (createState/init/update/draw(2D)/hud). WHY: two live builds shipped dead
-                         controls out of model-authored glue (one never read a movement key, one
-                         zeroed the wired movement every frame). Idempotent; world games keep the
-                         worldgen flow (v1).
+                         loop. The scaffold owns config (2D size defaults; 3D controls: name +
+                         background — sky for a world game, since background also tints the 3D fog),
+                         the scheme's ONE-correct-realization movement (moveTopDown /
+                         walk+jump+physics / gridMove-on-pressed w/ state.passable / kit.drive — run
+                         BEFORE the hook update so gameplay adjusts after, never re-wires), the
+                         state.player init assert, the solid-collision pass (kit.collideWorld AFTER
+                         the hook update: movement → gameplay → collide; 2D templates only), the 3D
+                         per-frame passes state declares in init (state.walls → kit.avoidRects,
+                         state.ground → stand the player on that height fn) — and on a WORLD game
+                         main.ts imports world.ts and sets BOTH itself (heightAt / WORLD.buildings),
+                         since world.ts is the pipeline's own file with exactly one correct wiring:
+                         a measured build used the whole WORLD API correctly yet never assigned
+                         them, so the player walked through buildings in mid-air and no gate could
+                         see it. A hook that sets its own wins (the scaffold only fills a blank).
+                         And — when the
+                         spec uses dialogue — the whole kit talk loop (talkStep update-side, the OPEN
+                         half a registered "interact" action; choice → state.talkPick). The model
+                         authors the hooks in game.ts (createState/init/update/draw(2D)/hud). WHY:
+                         two live builds shipped dead controls out of model-authored glue (one never
+                         read a movement key, one zeroed the wired movement every frame). `mode` (not
+                         the scheme name) decides 3D-ness, so an unknown scheme on a 3D spec lands on
+                         orbital-3d rather than the 2D default. Seeded only when main.ts is absent.
       scaffold_templates/ the per-scheme scaffold sources (top-down/platformer/grid-turn/
                          orbital-3d/vehicle-3d/first-person-3d/follow-3d + default + interact
                          partials) — real TypeScript we own, hill-climbable like prompts.
@@ -201,6 +212,16 @@ src/
                          buildings) inside a WILDERNESS RING (forest trees, 3 POIs w/ set dressing,
                          roads out of the gate, named regions) so the game is a place, not a room.
                          WORLD exports buildings/plaza/gate/grass/pois/regions/road + heightAt.
+                         CONTENT only: it owns the PLACE, the scaffold owns the CONTROLS, and the
+                         model authors game.ts on top of both. Seeded only when world.ts is absent.
+      controls.py        the spec's CONTROL VOCABULARY: normalize_controls maps a gamepad name onto
+                         the key that exists (stick→W/A/S/D, right stick→Mouse, A/B/X/Y→E/Q/F/R, a
+                         collision to a free key). The runtime has no gamepad, so an unbindable
+                         control makes the probe's unbound_control UNSATISFIABLE and grinds the fix
+                         loop to its cap — map the vocabulary, never forbid it (the probe already
+                         does the same for mouse/Spacebar/Up tokens). Called at the SPEC boundary
+                         (draft + freeze) so the human review, the prompts, the scaffold and the
+                         probe all read the same key.
       run.py             create_run / draft_spec / freeze / run_build / fix_from_note + CLI
                          `python -m maestro.codegen.run [--yes] "<request>"` and
                          `--fix <run_id> "<what's wrong>"` (the human-note fix path)

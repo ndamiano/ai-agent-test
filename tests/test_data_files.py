@@ -21,21 +21,25 @@ from maestro.codegen.data_files import (
 from maestro.codegen.module import CodegenModule, _design_data_fix
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType
+from maestro.codegen.scaffold import seed_scaffold
 from maestro.state import RunState
 
-GOOD_GAME = """export function createGame(kit: Kit): GameObject {
-  return {
-    config: { width: 200, height: 200, seed: 1 },
-    state: { world: [] as World, p: null as any },
-    init(kit) { this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 10, h: 10 }); },
-    update(dt, input, kit) {
-      if (input.down("d")) kit.walk(this.state.p, 1, 150); else kit.walk(this.state.p, 0, 150);
-      kit.integrate(this.state.p, dt);
-      this.state.p.x = kit.V.clamp(this.state.p.x, 0, 190);
-    },
-    draw(g) { g.clear("#000"); g.rect(this.state.p.x, this.state.p.y, 10, 10, "#fff"); },
-  };
-}"""
+# The model-authored hook module behind the GENERATED control scaffold.
+GOOD_GAME = """export interface GameState { world: World; player: Entity | null; score: number; }
+export function createState(kit: Kit): GameState { return { world: [], player: null, score: 0 }; }
+export function init(state: GameState, kit: Kit): void {
+  state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });
+}
+export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
+  if (input.pressed(" ")) state.score += 1;
+}
+export function draw(g: DrawApi, state: GameState, kit: Kit): void {
+  g.clear("#000");
+  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
+}
+export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+"""
 
 MANIFEST = {"datasets": [
     {"name": "enemies", "fields": {"hp": "number", "speed": "number", "drops": "ref:items[]?"}},
@@ -60,11 +64,14 @@ def _write_data(tmp_path, manifest=None, rows=None):
 
 
 def _write_planned_game(tmp_path, code=GOOD_GAME):
+    """A SCAFFOLDED run: the GENERATED main.ts + the model's game.ts + a manifest naming it."""
+    seed_scaffold(RunState(tmp_path), {"frozen": True, "mode": "2d",
+                                       "design": {"control": {"scheme": "top-down"}}})
     d = tmp_path / "game"
-    d.mkdir(exist_ok=True)
-    (d / "main.ts").write_text(code, encoding="utf-8")
+    (d / "game.ts").write_text(code, encoding="utf-8")
     (d / "manifest.json").write_text(
-        json.dumps({"files": [{"name": "main.ts", "purpose": "game", "exports": ["createGame"]}]}),
+        json.dumps({"files": [{"name": "game.ts", "purpose": "game",
+                               "exports": ["createState", "init", "update", "draw", "hud"]}]}),
         encoding="utf-8")
     return tmp_path
 
@@ -371,7 +378,7 @@ def test_data_check_blocks_before_authored_when_design_missing(tmp_path):
     d = tmp_path / "game"
     d.mkdir()
     (d / "manifest.json").write_text(json.dumps(
-        {"files": [{"name": "main.ts", "purpose": "game", "exports": ["createGame"]}]}))
+        {"files": [{"name": "game.ts", "purpose": "game", "exports": ["createState"]}]}))
     errs = CodegenModule().get_errors(_ctx(tmp_path))
     assert [e.code for e in errs] == ["data"]              # blocking: authored is suppressed
     assert errs[0].type is ErrorType.BUILD
@@ -399,23 +406,22 @@ def test_valid_data_regenerates_stale_data_ts_and_game_stays_green(tmp_path):
 
 
 IMPORTING_GAME = """import { ENEMIES } from "./data.ts";
-export function createGame(kit: Kit): GameObject {
-  return {
-    config: { width: 200, height: 200, seed: 1 },
-    state: { world: [] as World, p: null as any, hp: 0 },
-    init(kit) {
-      this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 10, h: 10 });
-      this.state.hp = ENEMIES[0].hp;
-    },
-    update(dt, input, kit) {
-      if (input.down("d")) kit.walk(this.state.p, 1, 150); else kit.walk(this.state.p, 0, 150);
-      kit.integrate(this.state.p, dt);
-      this.state.p.x = kit.V.clamp(this.state.p.x, 0, 190);
-    },
-    draw(g) { g.clear("#000"); g.rect(this.state.p.x, this.state.p.y, 10, 10, "#fff"); },
-  };
-}"""
-
+export interface GameState { world: World; player: Entity | null; hp: number; }
+export function createState(kit: Kit): GameState { return { world: [], player: null, hp: 0 }; }
+export function init(state: GameState, kit: Kit): void {
+  state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });
+  state.hp = ENEMIES[0].hp;
+}
+export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
+  if (input.pressed(" ")) state.hp -= 1;
+}
+export function draw(g: DrawApi, state: GameState, kit: Kit): void {
+  g.clear("#000");
+  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
+}
+export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+"""
 
 def test_game_importing_data_ts_passes_every_gate(tmp_path):
     # the whole contract end-to-end: tsc resolves ./data.ts (typed rows), esbuild bundles it,

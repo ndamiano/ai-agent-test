@@ -46,13 +46,28 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   edits become row edits, the fix loop sees schema + one example row instead of inline stat blocks,
   and asset planning becomes deterministic enumeration from `look` rows (kills the 3–8 sprite
   ceiling). Design + task breakdown: `docs/codegen_rebuild_plan.md` § Data files.
-- **Control-scaffold stage (landed):** the pipeline, not the model, wires controls. Every non-world
+- **Control-scaffold stage (landed):** the pipeline, not the model, wires controls. EVERY
   build seeds a GENERATED `game/main.ts` from a per-scheme template (config + movement + frame
   loop + the dialogue loop when the spec uses it); the model authors gameplay behind the `game.ts`
   hooks (createState/init/update/draw/hud), and the probe gains a scheme-aware `dead_movement`
   invariant (movement keys must displace the steered entity — an action key mutating state can no
   longer green a game the player can't steer, the failure two live builds shipped). Design +
   breakdown: `docs/codegen_rebuild_plan.md` § Control scaffold.
+- **Worldgen × scaffold merged (landed):** the two pre-seeds were rival owners of `main.ts`, so a
+  world spec took the older path and lost every control-layer guarantee. They are now orthogonal
+  axes — worldgen seeds the PLACE (`world.ts`), the scaffold seeds the CONTROLS (`main.ts`) — and a
+  village RPG plans, decomposes and gates exactly like every other game. Terrain following and
+  building collision became scaffold passes (`state.ground` / `state.walls`), wired by main.ts
+  itself on a world game — a live build proved prompting for them isn't enough: it used the whole
+  WORLD API correctly and still never assigned them, leaving the player walking through buildings in
+  mid-air with every gate green. Next: a probe invariant for "the player is on the ground", so this
+  class of defect is caught rather than prevented only by construction.
+- **Gamepad controls normalize (landed):** a spec may describe a gamepad; the runtime has none
+  (`Input` is keys + pointer), so `draft_spec`/`freeze_spec` MAP the intent onto real keys —
+  stick→WASD, right stick→Mouse, A/B/X/Y→E/Q/F/R, colliding aliases moved to a free key. A live
+  build drew `LEFT_STICK`/`A_BUTTON` and `unbound_control` became unsatisfiable, grinding the fix
+  loop to the step cap. Same shape as the probe's existing mouse-token normalization: map the
+  vocabulary, never forbid it.
 - **Collision + actions (landed):** two kit widenings behind the scaffold. `kit.collideWorld` is
   the ONE 2D solid pass (tile pushout + solid-pair separation; entities tag `solid: true`; the 2D
   scaffold templates call it after the hook update) — the shipped walk-through-walls and

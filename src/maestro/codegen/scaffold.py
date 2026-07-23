@@ -15,8 +15,9 @@ delegates everything else to the hook module the model authors — `game.ts` exp
 createState/init/update/draw (2D only)/hud. init asserts `state.player` exists so a hook that
 forgets the contract fails loudly at the headless gate.
 
-v1 scope: world-flagged specs keep the worldgen flow untouched (it already prescribes the drive
-wiring and is validated end-to-end) — seed_scaffold skips them.
+EVERY game is scaffolded, world-flagged ones included: worldgen seeds the PLACE (world.ts) and the
+scaffold seeds the CONTROLS (main.ts) — orthogonal axes, so a village RPG gets the same wired
+movement, ground clamp and solid pass as everything else and the model only ever authors game.ts.
 """
 
 import logging
@@ -29,8 +30,12 @@ from maestro.templating import render_template
 logger = logging.getLogger(__name__)
 
 _TEMPLATES = Path(__file__).resolve().parent / "scaffold_templates"
-_MARK = "// GENERATED control scaffold"
 ENTRY_HOOK = "game.ts"   # the model-authored entry hook module behind the scaffold
+
+# A world game is outdoors under a sky; config.background also tints the 3D distance fog, so the
+# indoor-dark default would fog a village grey.
+_SKY = "#a9c7e0"
+_DARK_3D = "#101018"
 
 
 def scheme_of(spec: dict) -> str:
@@ -38,9 +43,10 @@ def scheme_of(spec: dict) -> str:
     return ((design.get("control") or {}).get("scheme") or "").lower().strip()
 
 
-def is_scaffolded(run_dir) -> bool:
-    p = entry_src_path(run_dir)
-    return p.exists() and p.read_text(encoding="utf-8").lstrip().startswith(_MARK)
+def _is_3d(spec: dict) -> bool:
+    """`mode` is the authority on 3D-ness, not the scheme name: it routes the renderer and the kit
+    doc, so a spec whose scheme drifted from its mode must still get a 3D scaffold (no draw hook)."""
+    return spec.get("mode") == "3d" or scheme_of(spec).endswith("-3d")
 
 
 def _wants_interact(spec: dict) -> bool:
@@ -60,8 +66,6 @@ def reexport_hooks(run_dir) -> dict:
     scaffold's import path is the only thing that's law — bridge them instead of making the model
     move code (measured: a capped run diagnosed this exact split correctly and still couldn't land
     the move by hand). Returns {changes, count}."""
-    if not is_scaffolded(run_dir):
-        return {"changes": [], "count": 0}
     files = game_files(run_dir)
     hook_src = files.get(ENTRY_HOOK)
     if hook_src is None:
@@ -94,7 +98,7 @@ CONTRACT_ASSERT_3D = ("const _scaffoldContract: GameHooks<GameState> = "
 
 
 def contract_assert_line(spec: dict) -> str:
-    return CONTRACT_ASSERT_3D if scheme_of(spec).endswith("-3d") else CONTRACT_ASSERT_2D
+    return CONTRACT_ASSERT_3D if _is_3d(spec) else CONTRACT_ASSERT_2D
 
 
 def has_contract_assert(run_dir) -> bool:
@@ -103,27 +107,32 @@ def has_contract_assert(run_dir) -> bool:
 
 
 def seed_scaffold(state, spec: dict) -> None:
-    """Seed the GENERATED control-scaffold main.ts for a non-world game. Idempotent like the
-    worldgen seed: any existing main.ts (the scaffold on re-entry, or a pre-scaffold run's authored
-    entry) is left alone, so a rebuild/fix never regenerates controls under a half-built game."""
-    if spec.get("world"):
-        return
+    """Write the GENERATED control-scaffold main.ts for this spec's scheme. The caller seeds only
+    when main.ts is absent, so a rebuild/fix never regenerates controls under a half-built game."""
     main = entry_src_path(state.run_dir)
-    if main.exists():
-        return
     scheme = scheme_of(spec)
     tmpl = _TEMPLATES / f"{scheme}.ts.tmpl"
     if not tmpl.exists():
-        tmpl = _TEMPLATES / "default.ts.tmpl"
+        # The default template is 2D — falling to it on a 3D spec would render the game as a flat
+        # canvas. orbital is the neutral third-person 3D camera to land on instead.
+        tmpl = _TEMPLATES / ("orbital-3d.ts.tmpl" if _is_3d(spec) else "default.ts.tmpl")
+    world_import = world_init = ""
+    if spec.get("world"):
+        # world.ts is seeded before this file, so the scaffold can import it directly — the terrain
+        # and building passes stop depending on the model opting in.
+        world_import = (_TEMPLATES / "world_import.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
+        world_init = (_TEMPLATES / "world_init.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
     interact = interact_init = ""
     if _wants_interact(spec):
         # Two halves of one feature: the update-side talk loop (advance/choose/close) and the
         # init-side kit.register("interact", ...) that OPENS it — registered so the binding is
         # machine-readable (probe/bindings/remap) while talkStep keeps the per-frame key reads.
-        mode = "3d" if scheme.endswith("-3d") else "2d"
+        mode = "3d" if _is_3d(spec) else "2d"
         interact = (_TEMPLATES / f"interact_{mode}.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
         interact_init = (_TEMPLATES / f"interact_init_{mode}.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
     game_dir(state.run_dir).mkdir(parents=True, exist_ok=True)
-    main.write_text(render_template(tmpl, {"interact": interact, "interact_init": interact_init}),
+    main.write_text(render_template(tmpl, {"interact": interact, "interact_init": interact_init,
+                                           "world_import": world_import, "world_init": world_init,
+                                           "background": _SKY if spec.get("world") else _DARK_3D}),
                     encoding="utf-8")
     logger.info("control scaffold seeded (%s): %s", scheme or "no scheme", main)

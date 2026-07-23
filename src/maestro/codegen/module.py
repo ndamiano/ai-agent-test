@@ -28,7 +28,6 @@ from maestro.codegen.fix_classes import (
     strip_unplanned_imports,
 )
 from maestro.codegen.gates import (
-    ENTRY_SRC,
     RUNTIME_DIR,
     extract_code,
     game_files,
@@ -44,7 +43,6 @@ from maestro.codegen.scaffold import (
     ENTRY_HOOK,
     contract_assert_line,
     has_contract_assert,
-    is_scaffolded,
     scheme_of,
 )
 from maestro.modules.module import Check, Error, ErrorType, Module
@@ -112,6 +110,18 @@ def _kit_context(spec: dict, error) -> str:
 
 def _design_block(spec: dict) -> str:
     return f"# DESIGN SPEC\n```json\n{json.dumps(spec.get('design', spec), indent=1)}\n```"
+
+
+def _seeded_block(run_dir) -> str:
+    """What the PIPELINE already wrote. The planner sees only the spec otherwise, so without this a
+    world game plans the terrain file it was handed — an authoring step the tools then refuse."""
+    lines = ["- main.ts — the GENERATED control scaffold: config, the spec's control scheme, the "
+             "frame loop. It calls your hooks in game.ts."]
+    if "world.ts" in game_files(run_dir):
+        lines.append("- world.ts — a GENERATED world: terrain heightfield, a laid-out town, roads, "
+                     "forest and outlying sites (exports WORLD / spawnWorld / heightAt). The game is "
+                     "built ON it — never plan a terrain/worldgen/map file, the world exists.")
+    return "\n\n# ALREADY ON DISK — build on these, never plan them\n" + "\n".join(lines)
 
 
 def _infer(services, system: str, user: str, max_tokens: int) -> str:
@@ -182,16 +192,9 @@ def _sibling_lines(run_dir, exclude: str) -> str:
 
 
 # ── detectors ─────────────────────────────────────────────────────────────────
-def _plan_entry(run_dir) -> str:
-    """The file a valid plan must contain. When the control scaffold owns main.ts (every non-world
-    game — run_build seeds it before the loop ever detects), the model's entry is the hook module
-    game.ts; otherwise (a world game's forced manifest, a hand-assembled run) it is main.ts itself."""
-    return ENTRY_HOOK if is_scaffolded(run_dir) else ENTRY_SRC
-
-
 def _detect_planned(check, module, context):
     files = _manifest_files(context.state.run_dir)
-    if files and any(f["name"] == _plan_entry(context.state.run_dir) for f in files):
+    if files and any(f["name"] == ENTRY_HOOK for f in files):
         return []
     return [Error(type=ErrorType.BUILD, code="planned", component="game",
                   message="no manifest yet — plan the game's files from the spec")]
@@ -223,14 +226,12 @@ def _is_contract(f) -> bool:
 
 def _authoring_order(run_dir) -> list:
     """Files in DEPENDENCY order: the shared contract first (consumers author against real types),
-    the ENTRY-HOOK file LAST — game.ts when a control scaffold owns main.ts, else main.ts. The hook
-    file is the one that depends on ALL the others — it imports and wires every system — so
-    authoring it last lets it bind against its siblings' REAL on-disk signatures instead of
-    guessing an API that doesn't exist yet (the source of phantom calls and missing imports).
-    Everything else keeps its manifest order."""
+    game.ts LAST. The hook file is the one that depends on ALL the others — it imports and wires
+    every system — so authoring it last lets it bind against its siblings' REAL on-disk signatures
+    instead of guessing an API that doesn't exist yet (the source of phantom calls and missing
+    imports). Everything else keeps its manifest order."""
     files = _manifest_files(run_dir)
-    hook = ENTRY_HOOK if is_scaffolded(run_dir) else ENTRY_SRC
-    return sorted(files, key=lambda f: (f["name"] == hook, _is_contract(f) is False))
+    return sorted(files, key=lambda f: (f["name"] == ENTRY_HOOK, _is_contract(f) is False))
 
 
 def _detect_authored(check, module, context):
@@ -253,8 +254,6 @@ def _detect_contracted(check, module, context):
     demands it; the MODEL appends it via the edit subloop (a prompting fix — the pipeline never
     edits game.ts)."""
     run_dir = context.state.run_dir
-    if not is_scaffolded(run_dir):
-        return []
     if not (game_files(run_dir).get(ENTRY_HOOK) or "").strip() or has_contract_assert(run_dir):
         return []
     line = contract_assert_line(context.spec)
@@ -268,14 +267,12 @@ _MOVER_RE = re.compile(r"kit\s*\.\s*(drive|moveTopDown3?|moveTank3|moveRelative|
 
 
 def _detect_single_mover(check, module, context):
-    """A scaffolded game's movement is wired ONCE, in the GENERATED main.ts. A model file calling an
-    input-driven kit mover AGAIN double-moves the player (2x speed) or fights the scaffold — one
-    measured build shipped a knight at double speed (game.ts ran moveTopDown3 on top of the
-    scaffold's kit.drive) and no runtime gate can see it (the probe only checks that movement
-    exists). Static and cheap, so it runs between typecheck and the runtime gates."""
+    """Movement is wired ONCE, in the GENERATED main.ts. A model file calling an input-driven kit
+    mover AGAIN double-moves the player (2x speed) or fights the scaffold — one measured build
+    shipped a knight at double speed (game.ts ran moveTopDown3 on top of the scaffold's kit.drive)
+    and no runtime gate can see it (the probe only checks that movement exists). Static and cheap,
+    so it runs between typecheck and the runtime gates."""
     run_dir = context.state.run_dir
-    if not is_scaffolded(run_dir):
-        return []
     errors = []
     for name, src in game_files(run_dir).items():
         if src.lstrip().startswith("// GENERATED"):
@@ -325,13 +322,12 @@ def _detect_typechecks(check, module, context):
     forbidden from touching)."""
     run_dir = context.state.run_dir
     files = game_files(run_dir)
-    hook = ENTRY_HOOK if is_scaffolded(run_dir) else None
     by_file = {}
     for f, msg in typecheck(run_dir):
-        if hook and f != hook and files.get(f, "").startswith("// GENERATED"):
+        if f != ENTRY_HOOK and files.get(f, "").startswith("// GENERATED"):
             msg = (f"(reported in {f}, a GENERATED file whose contract is law — the real fix is "
-                   f"making {hook}'s exports/signatures satisfy it) {msg}")
-            f = hook
+                   f"making {ENTRY_HOOK}'s exports/signatures satisfy it) {msg}")
+            f = ENTRY_HOOK
         by_file.setdefault(f, []).append(msg)
     return [Error(type=ErrorType.FIX, code="typechecks", component="game", path=f,
                   message=f"{f} has {len(msgs)} type error(s):\n" + "\n".join(f"  - {m}" for m in msgs))
@@ -413,29 +409,27 @@ def _hook_exports(spec: dict) -> list:
 
 def _plan_fix(module, context, error, slot, services, dispatch):
     """Author the manifest: the spec's systems → a small set of files (the entry-hook game.ts + one
-    per system), each with its exports. main.ts is the GENERATED control scaffold, never planned —
-    if the model lists it anyway it is dropped (a world game, which has no scaffold, keeps main.ts).
-    On unparseable output, fall back to a single-file manifest so the build proceeds rather than
-    thrashing on the plan."""
+    per system), each with its exports. A file the pipeline already GENERATED (main.ts's control
+    scaffold, a world game's world.ts) is never planned — the model can't author or edit it, so
+    listing it would strand an authoring step. On unparseable output, fall back to a single-file
+    manifest so the build proceeds rather than thrashing on the plan."""
     spec = context.spec
-    entry = _plan_entry(context.state.run_dir)
+    run_dir = context.state.run_dir
     system = (_PROMPTS / "plan_game.txt").read_text(encoding="utf-8")
-    user = f"{_design_block(spec)}\n\nPlan the files. Output ONLY one ```json block."
+    user = f"{_design_block(spec)}{_seeded_block(run_dir)}\n\nPlan the files. Output ONLY one ```json block."
     text = _infer(services, system, user, _PLAN_MAX_TOKENS)
     m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.S)
+    generated = {n for n, src in game_files(run_dir).items() if src.lstrip().startswith("// GENERATED")}
     try:
         manifest = json.loads(m.group(1) if m else text)
         files = [f for f in (manifest.get("files") or []) if f.get("name")]
-        if entry == ENTRY_HOOK:
-            files = [f for f in files if f["name"] != ENTRY_SRC]
-        assert any(f["name"] == entry for f in files)
+        files = [f for f in files if f["name"] not in generated]
+        assert any(f["name"] == ENTRY_HOOK for f in files)
         manifest = {"files": files}
     except Exception:
-        manifest = {"files": [{"name": entry,
-                               "purpose": ("the whole game" if entry == ENTRY_SRC
-                                           else "the whole game behind the scaffold hooks"),
-                               "exports": (["createGame"] if entry == ENTRY_SRC
-                                           else _hook_exports(spec))}]}
+        manifest = {"files": [{"name": ENTRY_HOOK,
+                               "purpose": "the whole game behind the scaffold hooks",
+                               "exports": _hook_exports(spec)}]}
     manifest_path(context.state.run_dir).parent.mkdir(parents=True, exist_ok=True)
     manifest_path(context.state.run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     services._report(f"planned {len(manifest['files'])} file(s): {', '.join(f['name'] for f in manifest['files'])}")
@@ -545,7 +539,7 @@ def _author_file_fix(module, context, error, slot, services, dispatch):
     if not result.get("error"):
         if strip_unplanned_imports(run_dir, {f["name"] for f in files}):
             detail += " (stripped unplanned import)"
-        if is_scaffolded(run_dir) and strip_dead_creategame(run_dir):
+        if strip_dead_creategame(run_dir):
             detail += " (stripped dead createGame)"
     services._report(f"authored {me['name']}: {detail}")
 

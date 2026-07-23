@@ -1,9 +1,14 @@
 """EXPERIMENT bridge: worldgen -> a game `world.ts` (terrain heightfield + streets/parcels + helpers)
 the model authors on top of. No engine change beyond the `heightfield` shape. world.ts is a sibling
-file main.ts imports; its API (spawnWorld/heightAt/WORLD) is stable so authored games keep working."""
+game.ts imports; its API (spawnWorld/heightAt/WORLD) is stable so authored games keep working.
+
+This is the CONTENT seed — it owns the PLACE and nothing else. The control layer (config, the
+scheme's movement, the frame loop) is the scaffold's, exactly as for a world-less game: a world spec
+gets both seeds, and the model authors gameplay hooks on top of the pair."""
 import json
 import math
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +19,7 @@ from worldgen import noise, towns
 
 CELL = 2.0  # world units per town cell
 RING = 22   # wilderness cells beyond the town on every side — the "leave the village" space
+BIOMES = ["ocean", "beach", "grassland", "forest", "hill", "mountain"]
 
 THEME_COLOR = {
     "cobbled plaza": "#b7b0a0", "worn path": "#977c50", "stone well": "#9aa0a8",
@@ -44,6 +50,22 @@ def _jitter(color, cx, cy, seed):
     n = noise.fbm(cx / 3.0, cy / 3.0, seed + 777, octaves=2)  # -1..1
     f = 1.0 + n * 0.10
     return _hex([v * f for v in _rgb(color)])
+
+
+def _recipe_from_spec(spec: dict) -> dict:
+    """The worldgen recipe for a world-flagged spec — the requested settlement / size / biomes."""
+    w = spec.get("world") if isinstance(spec.get("world"), dict) else {}
+    name = (w.get("settlement") or spec.get("title") or "Village").strip()
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "settlement"
+    return {"archetype": "continent", "size": w.get("size") or "small",
+            "palette": {"biomes": w.get("biomes") or BIOMES},
+            "locations": [{"id": slug, "type": "settlement", "name": name}]}
+
+
+def seed_world(out_dir: Path, spec: dict) -> dict:
+    """Generate this spec's world into `out_dir/world.ts`. The caller seeds only when world.ts is
+    absent, so a rebuild/fix never regenerates the town under a half-built game."""
+    return build(_recipe_from_spec(spec), out_dir)
 
 
 def build(recipe, out_dir: Path):

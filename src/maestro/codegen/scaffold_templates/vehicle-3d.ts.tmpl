@@ -13,10 +13,13 @@
 //   update(state: GameState, dt: number, input: Input, kit: Kit): void gameplay, runs AFTER movement
 //   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
 // Scaffold-read state fields: state.player (required — a shape-tagged member of state.world),
-// state.player.speed? (units/s, default 8).
+// state.player.speed? (units/s, default 8), state.walls? (Rect[] the player is kept out of),
+// state.ground? ((x, z) => number — terrain height the player is stood on). Set either in init and
+// the scaffold applies it every frame; on a generated world the scaffold sets both itself.
 import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
+{world_import}
 
-const CONFIG: Config = { width: 1280, height: 720, mode: "3d", background: "#101018", seed: 1, controls: "vehicle" };
+const CONFIG: Config = { width: 1280, height: 720, mode: "3d", background: "{background}", seed: 1, controls: "vehicle" };
 
 export function createGame(kit: Kit): GameObject {
   // realize() peeks config via createGame(null) before the kit exists — createState must not run then.
@@ -30,6 +33,7 @@ export function createGame(kit: Kit): GameObject {
       if (!state.player) throw new Error(
         "game.ts init(state, kit) must create state.player (a shape-tagged entity spawned into " +
         "state.world) — the control scaffold steers state.player.");
+{world_init}
 {interact_init}
     },
     update(dt: number, input: Input, kit: Kit) {
@@ -40,6 +44,13 @@ export function createGame(kit: Kit): GameObject {
       // a walled level: game.ts sets state.walls (kit.wallsFromTilemap rects) and the scaffold
       // keeps the player out of them — movement → gameplay → collide, like the 2D solid pass.
       if (state.walls) kit.avoidRects(state.player, state.walls);
+      // terrain: game.ts sets state.ground (a height fn — a generated world's `heightAt`) and the
+      // scaffold stands the player ON it. Runs after the XZ passes so the final y matches the
+      // final position, whichever pass moved it last.
+      if (state.ground) {
+        const half = (state.player.h ?? (state.player.r ? state.player.r * 2 : 1.8)) / 2;
+        state.player.y = state.ground(state.player.x, state.player.z) + half;
+      }
     },
     hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },
   };

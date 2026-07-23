@@ -1,6 +1,7 @@
-"""Worldgen seeding folded into run_build: a world-flagged spec pre-seeds world.ts via the bridge
-and forces a single-file (main.ts) manifest, so the planner is bypassed and the model authors gameplay
-on top. worldgen_bridge.build and the AgentLoop are stubbed — no worldgen run, no live model.
+"""The two pre-seeds run_build lays down before the loop, on ORTHOGONAL axes: worldgen writes
+world.ts (the PLACE) for a world-flagged spec, the scaffold writes main.ts (the CONTROLS) for every
+spec. Both are seed-if-absent, so a rebuild/fix/reskin never regenerates one under a half-built
+game. worldgen_bridge.build and the AgentLoop are stubbed — no worldgen run, no live model.
 """
 
 import sys
@@ -14,7 +15,7 @@ import tempfile
 
 import maestro.codegen.run as run_mod
 import maestro.codegen.worldgen_bridge as wb
-from maestro.codegen.gates import game_dir, read_manifest
+from maestro.codegen.gates import game_dir
 from maestro.codegen.tools import _cap_chars, _elide_long_lines
 from maestro.codegen.worldgen_bridge import _ts_shape, _write_world_ts
 from maestro.state import RunState
@@ -26,6 +27,7 @@ def _world_spec():
             "world": {"settlement": "Willowmere", "size": "medium",
                       "biomes": ["grassland", "forest", "hill"]},
             "design": {"title": "Willowmere", "mode": "3d",
+                       "control": {"entity": "player", "scheme": "first-person-3d"},
                        "entities": [{"id": "baker", "desc": "a friendly baker in an apron"},
                                     {"id": "coin", "desc": "a small gold coin"}],
                        "win": "deliver bread to every villager", "lose": "none"},
@@ -50,67 +52,68 @@ def stub_bridge(monkeypatch):
 
 
 def test_recipe_from_spec_reflects_requested_setting():
-    recipe = run_mod._recipe_from_spec(_world_spec())
+    recipe = wb._recipe_from_spec(_world_spec())
     assert recipe["size"] == "medium"
     assert recipe["palette"]["biomes"] == ["grassland", "forest", "hill"]
     loc = recipe["locations"][0]
     assert loc["type"] == "settlement" and loc["name"] == "Willowmere" and loc["id"] == "willowmere"
 
 
-def test_main_purpose_is_spec_driven_not_hardcoded_village():
-    purpose = run_mod._world_main_purpose(_world_spec())
-    assert "baker" in purpose and "deliver bread to every villager" in purpose
-    assert "Rivervale" not in purpose               # the old hardcoded village is gone
-    assert 'spawnWorld' in purpose and 'heightAt' in purpose
-
-
-def test_maybe_seed_writes_world_and_forces_single_file_manifest(tmp_path, stub_bridge):
+def test_seed_writes_both_the_world_and_the_control_scaffold(tmp_path, stub_bridge):
+    """The merge: a world spec gets BOTH seeds. worldgen owns the place, the scaffold owns the
+    controls, and no manifest is forced — the planner runs and decomposes like any other game."""
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
         st = RunState(rid)
-        run_mod._maybe_seed_worldgen(rid, st, _world_spec())
+        run_mod._seed(rid, st, _world_spec())
 
         gd = game_dir(st.run_dir)
-        assert (gd / "world.ts").exists()                       # bridge wrote world.ts
+        assert (gd / "world.ts").exists()                       # bridge wrote the place
         assert stub_bridge["recipe"]["locations"][0]["name"] == "Willowmere"
 
-        files = read_manifest(st.run_dir)["files"]
-        assert [f["name"] for f in files] == ["main.ts"]        # planner bypassed: only main.ts
-        assert "deliver bread to every villager" in files[0]["purpose"]
+        main = (gd / "main.ts").read_text()
+        assert main.startswith("// GENERATED control scaffold")  # scaffold wrote the controls
+        assert 'controls: "fp"' in main                          # the spec's OWN scheme, not a default
+        assert not (gd / "manifest.json").exists()               # planner NOT bypassed
 
 
-def test_maybe_seed_is_idempotent(tmp_path, stub_bridge):
+def test_seed_is_idempotent_per_file(tmp_path, stub_bridge):
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
         st = RunState(rid)
-        run_mod._maybe_seed_worldgen(rid, st, _world_spec())
-        (game_dir(st.run_dir) / "world.ts").write_text("edited", encoding="utf-8")
+        run_mod._seed(rid, st, _world_spec())
+        gd = game_dir(st.run_dir)
+        (gd / "world.ts").write_text("edited world", encoding="utf-8")
+        (gd / "main.ts").write_text("edited main", encoding="utf-8")
         stub_bridge.clear()
-        run_mod._maybe_seed_worldgen(rid, st, _world_spec())    # re-entry: world.ts exists → no-op
+        run_mod._seed(rid, st, _world_spec())                   # re-entry: both exist → no-op
         assert stub_bridge == {}                                # bridge NOT called again
-        assert (game_dir(st.run_dir) / "world.ts").read_text() == "edited"
+        assert (gd / "world.ts").read_text() == "edited world"
+        assert (gd / "main.ts").read_text() == "edited main"
 
 
-def test_maybe_seed_noop_when_not_world_flagged(tmp_path, stub_bridge):
+def test_seed_skips_worldgen_when_not_world_flagged(tmp_path, stub_bridge):
     with execution_context(working_directory=str(tmp_path)):
         rid = run_mod.create_run("u1")
         st = RunState(rid)
         spec = _world_spec()
         spec["world"] = None
-        run_mod._maybe_seed_worldgen(rid, st, spec)
+        run_mod._seed(rid, st, spec)
         assert not (game_dir(st.run_dir) / "world.ts").exists()
         assert stub_bridge == {}
+        assert (game_dir(st.run_dir) / "main.ts").exists()       # ...but the scaffold still lands
 
 
-def test_run_build_seeds_world_before_loop(tmp_path, stub_bridge, monkeypatch):
-    """run_build on a world-flagged frozen spec seeds world.ts + the single-file manifest before the
-    driving loop runs. AgentLoop and the connector are stubbed so no model is called."""
+def test_run_build_seeds_both_before_loop(tmp_path, stub_bridge, monkeypatch):
+    """run_build on a world-flagged frozen spec has world.ts AND the control scaffold on disk before
+    the driving loop runs. AgentLoop and the connector are stubbed so no model is called."""
     class _Result:
         ok, steps, failures, elapsed = False, 0, [], 0.0
 
     class _FakeLoop:
         def __init__(self, *a, **k):
-            _FakeLoop.seen_world = (game_dir(RunState(rid).run_dir) / "world.ts").exists()
+            gd = game_dir(RunState(rid).run_dir)
+            _FakeLoop.seen = ((gd / "world.ts").exists(), (gd / "main.ts").exists())
 
         def run(self):
             return _Result()
@@ -125,9 +128,7 @@ def test_run_build_seeds_world_before_loop(tmp_path, stub_bridge, monkeypatch):
         result = run_mod.run_build(rid, max_steps=1)
 
         assert result.ok is False
-        assert _FakeLoop.seen_world is True                     # world.ts existed by the time the loop built
-        files = read_manifest(st.run_dir)["files"]
-        assert [f["name"] for f in files] == ["main.ts"]
+        assert _FakeLoop.seen == (True, True)                   # both seeds landed before the loop built
 
 
 def test_world_ts_carries_schema_header_surviving_read_elision():

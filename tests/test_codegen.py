@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from maestro.agent_loop import AgentLoop
+from maestro.codegen import controls as controls_mod
 from maestro.codegen import run as run_mod
 from maestro.codegen.fix_classes import DEFAULT, classify
 from maestro.codegen.gates import (
@@ -36,6 +37,7 @@ from maestro.codegen.module import (
     _manifest_files,
     _sibling_lines,
 )
+from maestro.codegen.scaffold import seed_scaffold
 from maestro.codegen.tools import build_codegen_tools
 from maestro.modules.context import build_context
 from maestro.modules.module import Error, ErrorType
@@ -156,6 +158,65 @@ TYPE_ERROR = """export function createGame(kit: Kit): GameObject {
   const n: number = "not a number";
   return { config: {}, state: { n } as any, update(dt, input, kit) {} };
 }"""
+
+
+# ── the SCAFFOLDED layout (what the pipeline actually produces: a GENERATED main.ts owning the
+# control scheme, the model's game.ts behind its hooks). The gate fixtures above stay bare-entry:
+# they test the RUNTIME contract (a bundle exporting createGame), which the scaffold sits on top of.
+HOOKS_GOOD = """export interface GameState { world: World; player: Entity | null; score: number; }
+export function createState(kit: Kit): GameState { return { world: [], player: null, score: 0 }; }
+export function init(state: GameState, kit: Kit): void {
+  state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });
+}
+export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
+  if (input.pressed(" ")) state.score += 1;
+}
+export function draw(g: DrawApi, state: GameState, kit: Kit): void {
+  g.clear("#000");
+  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
+}
+export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+"""
+# init throws — a runtime headless crash behind the hooks.
+HOOKS_BROKEN = """export interface GameState { world: World; player: Entity | null; }
+export function createState(kit: Kit): GameState { return { world: [], player: null }; }
+export function init(state: GameState, kit: Kit): void { throw new Error("boom"); }
+export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }
+export function draw(g: DrawApi, state: GameState, kit: Kit): void { g.clear("#000"); }
+export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+"""
+# typechecks + runs + plays clean; draw() throws at RUNTIME — only the render gate sees it.
+HOOKS_DRAW_CRASH = HOOKS_GOOD.replace(
+    'g.clear("#000");\n  g.rect(state.player.x, state.player.y, 10, 10, "#fff");',
+    "const z: any = null; z.nope();")
+HOOKS_TYPE_ERROR = HOOKS_GOOD.replace(
+    "  if (input.pressed(\" \")) state.score += 1;",
+    "  const n: number = \"not a number\"; state.score += n;")
+# `g` is ANNOTATED DrawApi (the author prompt requires annotating exported params), so a canvas call
+# that isn't on DrawApi is a type error before the run.
+HOOKS_CANVAS_MISUSE = HOOKS_GOOD.replace(
+    'g.rect(state.player.x, state.player.y, 10, 10, "#fff");',
+    "(g as any as { fillRect: unknown }); g.fillRect(0, 0, 10, 10);")
+
+
+def _write_hook_game(tmp_path, game_ts=HOOKS_GOOD, extra=None, spec=None):
+    """A SCAFFOLDED run: the GENERATED main.ts from the spec's scheme + the model's game.ts (and any
+    sibling system files) + a manifest naming them + an empty data design — gate-ready."""
+    spec = spec or {"frozen": True, "mode": "2d", "design": {"control": {"scheme": "top-down"}}}
+    seed_scaffold(RunState(tmp_path), spec)
+    d = tmp_path / "game"
+    (d / "game.ts").write_text(game_ts, encoding="utf-8")
+    files = [{"name": "game.ts", "purpose": "the whole game behind the scaffold hooks",
+              "exports": ["createState", "init", "update", "draw", "hud"]}]
+    for name, src in (extra or {}).items():
+        (d / name).write_text(src, encoding="utf-8")
+        files.append({"name": name, "purpose": "", "exports": []})
+    (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
+    (d / "data").mkdir(exist_ok=True)
+    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    return spec
 
 
 def _run_dir(tmp_path) -> RunState:
@@ -427,6 +488,53 @@ def test_probe_dead_action_flags_noop_and_passes_real():
     assert r["liveOk"] is True   # registered keys also count toward controls-live
 
 
+def test_gamepad_controls_normalize_to_real_keys():
+    """A spec is free to describe a gamepad — the runtime has none, so the pipeline MAPS the intent
+    onto keys that exist rather than refusing it. A live build drew LEFT_STICK/A_BUTTON and the
+    probe's unbound_control became unsatisfiable, grinding the fix loop until the step cap."""
+    d = {"controls": {"LEFT_STICK": "move hero", "RIGHT_STICK": "orbit camera",
+                      "A_BUTTON": "interact", "B_BUTTON": "swing weapon"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {"W/A/S/D": "move hero", "Mouse": "orbit camera",
+                             "E": "interact", "Q": "swing weapon"}
+
+
+def test_gamepad_alias_never_collides_with_a_key_the_spec_already_uses():
+    d = {"controls": {"E": "open door", "A_BUTTON": "interact", "Start": "pause"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"]["E"] == "open door"          # the real key keeps its meaning
+    assert d["controls"]["Q"] == "interact"           # the pad button moves to a free one
+    assert d["controls"]["Escape"] == "pause"
+    assert len(d["controls"]) == 3                    # nothing silently dropped
+
+
+def test_non_gamepad_controls_pass_through_untouched():
+    d = {"controls": {"W": "forward", "Mouse Left": "attack", "Space": "jump"}}
+    before = dict(d["controls"])
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == before
+
+
+def test_normalized_gamepad_spec_satisfies_the_probe():
+    """The point of normalizing: the resulting map is one the probe can actually be green on —
+    movement and camera ride the skip lists, and the action keys are bindable."""
+    d = {"controls": {"LEFT_STICK": "move", "RIGHT_STICK": "look", "A_BUTTON": "interact"}}
+    controls_mod.normalize_controls(d)
+    keys = json.dumps(d["controls"])
+    r = _node_eval("""
+      import {probe} from "./engine.js";
+      const game = (kit) => ({
+        config: { width: 100, height: 100, seed: 1 },
+        state: { world: [], score: 0 },
+        init(kit) { const s = this.state; kit.register("interact", ["e"], () => { s.score += 1; }); },
+        update(dt, input, kit) {},
+      });
+      const r = probe(game, { controlKeys: %s });
+      console.log(JSON.stringify({ ok: r.ok, kinds: r.violations.map(v => v.kind) }));
+    """ % keys)
+    assert r["ok"] is True, r["kinds"]
+
+
 def test_probe_unbound_control_names_unregistered_spec_key():
     r = _node_eval("""
       import {probe} from "./engine.js";
@@ -623,18 +731,18 @@ def test_planned_error_when_empty(tmp_path):
 
 def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
     # authoring is ONE file at a time in DEPENDENCY order: the shared-types file FIRST (consumers
-    # author against real types), the entry main.ts LAST (it wires every system, so it binds against
-    # its siblings' real on-disk signatures) — even though the manifest lists main.ts second.
+    # author against real types), the entry game.ts LAST (it wires every system, so it binds against
+    # its siblings' real on-disk signatures) — even though the manifest lists game.ts second.
     d = tmp_path / "game"
     d.mkdir()
     (d / "manifest.json").write_text(json.dumps({"files": [
         {"name": "types.ts", "purpose": "shared interfaces", "exports": ["GameState"]},
-        {"name": "main.ts", "purpose": "entry", "exports": ["createGame"]},
+        {"name": "game.ts", "purpose": "entry", "exports": ["createState"]},
         {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]}]}))
     (d / "data").mkdir()
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}))
     order = [f["name"] for f in _authoring_order(_run_dir(tmp_path).run_dir)]
-    assert order == ["types.ts", "combat.ts", "main.ts"]   # contract first, systems, entry LAST
+    assert order == ["types.ts", "combat.ts", "game.ts"]   # contract first, systems, entry LAST
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["authored"]
     assert [e.path for e in errs] == ["types.ts"]   # first to author
@@ -642,45 +750,45 @@ def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
 
 def test_typecheck_gate_catches_type_error(tmp_path):
     # a type error (string assigned to number) is caught by tsc, tagged with the file, BEFORE the run.
-    _write_game(tmp_path, TYPE_ERROR)
+    _write_hook_game(tmp_path, HOOKS_TYPE_ERROR)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["typechecks"]
-    assert errs[0].path == "main.ts" and "TS" in errs[0].message
+    assert errs[0].path == "game.ts" and "TS" in errs[0].message
 
 
 def test_typecheck_catches_cross_file_shape_mismatch(tmp_path):
-    # THE motivating bug: world.ts returns a boolean grid, main.ts consumes a char grid — tsc catches
+    # THE motivating bug: level.ts returns a boolean grid, game.ts consumes a char grid — tsc catches
     # the disagreement across files, which no runtime gate could.
-    world = "export function makeMap(): boolean[][] { return [[false]]; }"
-    main = ("import { makeMap } from './world.ts';\n"
-            "export function createGame(kit: Kit): GameObject {\n"
-            "  return { config: {}, state: {} as any,\n"
-            "    init(kit) { const m: string[][] = makeMap(); this.state.m = m; },\n"
-            "    update(dt, input, kit) {} }; }")
-    _write_game(tmp_path, main, extra={"world.ts": world})
+    level = "export function makeMap(): boolean[][] { return [[false]]; }"
+    game = HOOKS_GOOD.replace(
+        "export interface GameState",
+        "import { makeMap } from './level.ts';\nexport interface GameState").replace(
+        'state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });',
+        'state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });\n'
+        "  const m: string[][] = makeMap();")
+    _write_hook_game(tmp_path, game, extra={"level.ts": level})
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["typechecks"]
-    assert errs[0].path == "main.ts"
+    assert errs[0].path == "game.ts"
 
 
 def test_typecheck_catches_canvas_api_on_drawapi(tmp_path):
-    # the compile-time catch for the shipped bug: when createGame is annotated `: GameObject`, draw's
-    # `g` is CONTEXTUALLY a DrawApi, so g.fillRect (not on DrawApi) is a type error before the run.
-    # This bites only if the model leaves g unannotated — an explicit `g: any` defeats it, which is
-    # why the render gate is the reliable backstop.
-    _write_game(tmp_path, CANVAS_MISUSE_2D)
+    # the compile-time catch for the shipped bug: the author prompt requires annotating every
+    # exported param, so draw's `g` is a DrawApi and g.fillRect (not on DrawApi) is a type error
+    # before the run. An explicit `g: any` defeats it, which is why render is the reliable backstop.
+    _write_hook_game(tmp_path, HOOKS_CANVAS_MISUSE)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["typechecks"]
     assert "fillRect" in errs[0].message
 
 
 def test_clean_game_has_no_errors(tmp_path):
-    _write_game(tmp_path, GOOD)
+    _write_hook_game(tmp_path)
     assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []
 
 
 def test_runs_error_on_crash(tmp_path):
-    _write_game(tmp_path, BROKEN)
+    _write_hook_game(tmp_path, HOOKS_BROKEN)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["runs"]
     assert errs[0].type is ErrorType.FIX
@@ -688,7 +796,7 @@ def test_runs_error_on_crash(tmp_path):
 
 def test_renders_error_when_draw_crashes(tmp_path):
     # authored + runs + plays are clean; only the render gate fires.
-    _write_game(tmp_path, DRAW_CRASH)
+    _write_hook_game(tmp_path, HOOKS_DRAW_CRASH)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["renders"]
     assert "draw_crash" in errs[0].message
@@ -708,30 +816,30 @@ class _FakeConn:
 
 def test_loop_authors_until_gates_pass(tmp_path):
     state = _run_dir(tmp_path)
-    spec = {"frozen": True, "mode": "2d", "title": "Pong", "design": {"title": "Pong"}}
+    spec = {"frozen": True, "mode": "2d", "title": "Pong",
+            "design": {"title": "Pong", "control": {"scheme": "top-down"}}}
     state.write_spec(spec)
-    conn = _FakeConn(GOOD)
+    seed_scaffold(state, spec)   # run_build seeds before the loop — mirror that order
+    conn = _FakeConn(HOOKS_GOOD)
     loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
                      connector=conn, max_steps=10)
     result = loop.run()
     assert result.ok is True
     assert conn.calls >= 1
     assert result.steps >= 1   # the fix must report so max_steps actually bounds the loop
-    assert (tmp_path / "game" / "main.ts").read_text().strip() == GOOD.strip()
+    assert (tmp_path / "game" / "game.ts").read_text().strip() == HOOKS_GOOD.strip()
 
 
 def test_multi_file_game_loads_and_gates(tmp_path):
-    # a game split across files (main.ts imports a typed system file) type-checks, bundles, and runs.
-    main = ("import { movePaddle } from './paddle.ts';\n"
-            "export function createGame(kit: Kit): GameObject {\n"
-            "  return {\n"
-            "    config: { width: 320, height: 240, seed: 1 }, state: { world: [] as World, p: null as any },\n"
-            "    init(kit) { this.state.p = kit.spawn(this.state.world, { x: 20, y: 100, w: 10, h: 40 }); },\n"
-            "    update(dt, input, kit) { movePaddle(this.state.p, input, dt); },\n"
-            "    draw(g) { g.rect(this.state.p.x, this.state.p.y, 10, 40, '#fff'); } }; }")
-    paddle = ("export function movePaddle(p: Entity, input: Input, dt: number): void {\n"
-              "  if (input.down('w')) p.y -= 200 * dt; if (input.down('s')) p.y += 200 * dt; }")
-    _write_game(tmp_path, main, extra={"paddle.ts": paddle})
+    # a game split across files (game.ts imports a typed system file) type-checks, bundles, and runs.
+    game = HOOKS_GOOD.replace(
+        "export interface GameState",
+        "import { scorePoint } from './scoring.ts';\nexport interface GameState").replace(
+        'if (input.pressed(" ")) state.score += 1;',
+        'if (input.pressed(" ")) state.score = scorePoint(state.score, 1);')
+    scoring = ("export function scorePoint(score: number, by: number): number {\n"
+               "  return score + by; }")
+    _write_hook_game(tmp_path, game, extra={"scoring.ts": scoring})
     assert run_headless(tmp_path).get("ok") is True
     assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []
 
@@ -766,17 +874,17 @@ def test_fix_subloop_reads_then_edits_to_green(tmp_path):
     # A game that crashes headless (init throws). The fix subloop must read, then land a grounded
     # edit (write refuses overwrites now); the outer loop re-gates to green.
     state = _run_dir(tmp_path)
-    _write_game(tmp_path, BROKEN)
-    spec = {"frozen": True, "mode": "2d", "title": "T", "design": {"title": "T"}}
+    spec = _write_hook_game(tmp_path, HOOKS_BROKEN)
+    spec = {**spec, "title": "T", "design": {**spec["design"], "title": "T"}}
     state.write_spec(spec)
-    conn = _FakeToolConn([{"old_string": BROKEN, "new_string": GOOD}])
+    conn = _FakeToolConn([{"old_string": HOOKS_BROKEN, "new_string": HOOKS_GOOD}], target="game.ts")
     loop = AgentLoop(spec, state, [CodegenModule()], build_codegen_tools(state),
                      connector=conn, max_steps=15)
     result = loop.run()
     assert result.ok is True
     assert "read_file" in conn.calls and "edit" in conn.calls
     assert conn.calls.index("read_file") < conn.calls.index("edit")
-    assert (tmp_path / "game" / "main.ts").read_text().strip() == GOOD.strip()
+    assert (tmp_path / "game" / "game.ts").read_text().strip() == HOOKS_GOOD.strip()
     # the fix loop forces reasoning OFF — a thinking model burns the whole budget reasoning and starves
     # the tool call.
     assert conn.reasonings and all(r == "none" for r in conn.reasonings)
@@ -787,11 +895,12 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
     rewrite shape left): the note rides as the failing-gate text, the fix lands as a grounded edit,
     then the build re-gates."""
     state = _run_dir(tmp_path)
-    _write_game(tmp_path, GOOD)
-    state.write_spec({"frozen": True, "mode": "2d", "title": "T", "design": {"title": "T"}})
+    spec = _write_hook_game(tmp_path)
+    state.write_spec({**spec, "title": "T"})
 
-    conn = _FakeToolConn([{"old_string": "kit.V.clamp(this.state.p.x, 0, 190)",
-                           "new_string": "kit.V.clamp(this.state.p.x, 0, 180)"}])
+    conn = _FakeToolConn([{"old_string": 'if (input.pressed(" ")) state.score += 1;',
+                           "new_string": 'if (input.pressed(" ")) state.score += 2;'}],
+                         target="game.ts")
     monkeypatch.setattr(run_mod, "RunState", lambda rid: state)
     monkeypatch.setattr(run_mod, "get_connector", lambda: conn)
     regated = {}
@@ -803,7 +912,7 @@ def test_fix_from_note_routes_through_subloop_and_lands_edit(tmp_path, monkeypat
     assert regated == {"rid": "rid1", "max_steps": 40}   # re-gate always runs after the patch
     assert conn.calls == ["read_file", "edit"]           # the subloop shape: grounded read, then edit
     assert any("HUMAN PLAYTEST FEEDBACK" in m and "leave the screen" in m for m in conn.user_msgs)
-    assert "kit.V.clamp(this.state.p.x, 0, 180)" in (tmp_path / "game" / "main.ts").read_text()
+    assert 'state.score += 2;' in (tmp_path / "game" / "game.ts").read_text()
 
 
 def test_human_note_error_classifies_to_default():
@@ -917,8 +1026,8 @@ def test_sibling_sigs_capture_full_multiline_params(tmp_path):
     combat = ("import { Entity, GameState } from './types';\n"
               "export function applyDamage(\n  target: Entity,\n  amount: number,\n"
               "  state: GameState,\n  kit: any\n): void {\n  target.hp -= amount;\n}\n")
-    _write_game(tmp_path, GOOD, extra={"combat.ts": combat})
-    sigs = _sibling_lines(_run_dir(tmp_path).run_dir, exclude="main.ts")
+    _write_hook_game(tmp_path, extra={"combat.ts": combat})
+    sigs = _sibling_lines(_run_dir(tmp_path).run_dir, exclude="game.ts")
     assert "applyDamage" in sigs
     for param in ("target: Entity", "amount: number", "state: GameState", "kit: any"):
         assert param in sigs, f"missing {param!r} — signature was truncated"

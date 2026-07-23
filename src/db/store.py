@@ -603,6 +603,36 @@ def queue_stats(queue: str) -> Dict:
     }
 
 
+def backlog_seconds(queue: str) -> float:
+    """Projected GPU-seconds still owed to clear a queue: the reserved estimate of every job not
+    yet finished (pending + claimed). What the admin view reads as the live backlog cost."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(est_seconds), 0) AS s FROM jobs "
+            "WHERE queue = ? AND status IN ('pending', 'claimed')", (queue,)).fetchone()
+    return row["s"]
+
+
+def gpu_seconds(queue: str, since: Optional[float] = None) -> Dict:
+    """Recorded GPU-seconds for FINISHED jobs on a queue, optionally bounded by finished_at.
+
+    paid   = every finished job's exec_seconds (done AND failed) — the GPU time WE pay for, real
+             whether or not the user got anything, mirroring workers.busy_seconds.
+    billed = only delivered, game-attributed work (status done, game_id set) — what actually
+             debited games.seconds_used.
+    The gap between them is unbilled GPU we ate (failures, chat/spec platform jobs)."""
+    clause = "AND finished_at >= ?" if since is not None else ""
+    args = [queue] + ([since] if since is not None else [])
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(exec_seconds), 0) AS paid, "
+            "COALESCE(SUM(CASE WHEN status = 'done' AND game_id IS NOT NULL "
+            "THEN exec_seconds ELSE 0 END), 0) AS billed "
+            f"FROM jobs WHERE queue = ? AND finished_at IS NOT NULL {clause}",
+            args).fetchone()
+    return {"paid": row["paid"], "billed": row["billed"]}
+
+
 # ── events (append-only build/spec lifecycle log) ─────────────────────────────
 def record_event(game_id: str, kind: str, payload: Dict, build_id: Optional[str] = None) -> None:
     with _db() as conn:

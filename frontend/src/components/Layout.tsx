@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react'
 import ChatPanel from './ChatPanel'
 import GamesPanel from './GamesPanel'
+import AdminPanel from './AdminPanel'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import { useAuth } from '../contexts/AuthContext'
 
+type Tab = 'chat' | 'games' | 'admin'
+
 const Layout: React.FC = () => {
-    const [tab, setTab] = useState<'chat' | 'games'>('chat')
+    const [tab, setTab] = useState<Tab>('chat')
     const { messages } = useWebSocket()
     const { user, balance, logout } = useAuth()
     const [focusRun, setFocusRun] = useState<string | null>(null)
     const seenMsgs = useRef(0)
+
+    // The admin tab is operator-only. The server enforces it (require_admin → 403); this just hides
+    // the entry point from ordinary users so it never shows.
+    const tabs: Tab[] = user?.role === 'admin' ? ['chat', 'games', 'admin'] : ['chat', 'games']
 
     // F2 — chat→build continuity: a chat request that drafts a spec emits `spec_proposed` (carrying
     // the new run_id) over the WebSocket. Surface it: jump to the games view and focus the run, so
@@ -30,7 +37,7 @@ const Layout: React.FC = () => {
                 <div className="flex items-center gap-4">
                     <div className="text-white font-semibold text-sm tracking-wide">Maestro</div>
                     <div className="flex gap-1">
-                        {(['chat', 'games'] as const).map(t => (
+                        {tabs.map(t => (
                             <button
                                 key={t}
                                 onClick={() => setTab(t)}
@@ -62,7 +69,9 @@ const Layout: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-hidden">
-                {tab === 'chat' ? <ChatPanel /> : <GamesPanel focusRunId={focusRun} />}
+                {tab === 'chat' && <ChatPanel />}
+                {tab === 'games' && <GamesPanel focusRunId={focusRun} />}
+                {tab === 'admin' && <AdminPanel />}
             </div>
         </div>
     )

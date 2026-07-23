@@ -1,4 +1,4 @@
-import type { Game, GameDetail, SystemStatus } from '../types'
+import type { AdminQueues, Game, GameDetail, SystemStatus } from '../types'
 import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
@@ -203,6 +203,10 @@ export const api = {
     // System
     getStatus: () =>
         request<SystemStatus>('/system/status'),
+
+    // Admin (role-gated server-side; a 403 means not an admin)
+    getAdminQueues: () =>
+        request<AdminQueues>('/admin/queues'),
 
     // Chat
     streamChatMessage,

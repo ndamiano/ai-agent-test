@@ -48,6 +48,36 @@ export interface SystemStatus {
     agent_count: number
 }
 
+// Admin queue snapshot (GET /api/admin/queues). GPU-SECONDS only — no dollar conversion.
+export interface QueueRow {
+    queue: string
+    pending: number
+    claimed: number
+    oldest_pending_age_seconds: number | null
+    workers_live: number
+    workers_max: number
+    est_seconds: number
+    backlog_seconds: number
+    paid_all: number
+    billed_all: number
+    paid_24h: number
+    billed_24h: number
+}
+
+export interface AdminQueues {
+    queues: QueueRow[]
+    totals: {
+        pending: number
+        claimed: number
+        workers_live: number
+        backlog_seconds: number
+        paid_all: number
+        billed_all: number
+        paid_24h: number
+        billed_24h: number
+    }
+}
+
 // Generic envelope — the event bus broadcasts many shapes. Known fields are typed as optional so
 // a consumer can narrow by `type` without a full discriminated union; anything else still falls
 // through the index signature.

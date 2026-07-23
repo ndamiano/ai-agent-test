@@ -48,6 +48,16 @@ def require_credits(request: Request) -> User:
     return user
 
 
+def require_admin(request: Request) -> User:
+    """`get_current_user` plus the admin role. Gates the operator-only surfaces (queue stats,
+    fleet spend). A signed-in non-admin gets a 403, not a 401 — they ARE authenticated, they just
+    can't see this."""
+    user = get_current_user(request)
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+    return user
+
+
 def install_auth(app) -> None:
     """Register the auth gate on `app`. Every request except PUBLIC_PATHS (and CORS preflight)
     must carry a valid bearer token; the resolved user is attached to `request.state.user`."""

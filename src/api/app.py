@@ -32,7 +32,7 @@ import tools.chat_tools  # noqa: F401  — the @tool decorators register on impo
 import tools.comfyui_tools  # noqa: F401
 import tools.system_tools  # noqa: F401
 from api.build_queue import build_queue
-from api.routers import agents, billing, chat, games, system, websocket, workqueue
+from api.routers import admin, agents, billing, chat, games, system, websocket, workqueue
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
@@ -103,6 +103,7 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 # Outside the /api user gate on purpose — workers auth with the shared workqueue token.
 app.include_router(workqueue.router, prefix="/worker", tags=["workqueue"])
 

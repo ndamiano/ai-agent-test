@@ -36,20 +36,19 @@ describe('stageFor', () => {
 })
 
 describe('budgetFraction', () => {
-    it('falls back to remaining/granted when no percentage is given', () => {
-        expect(budgetFraction(null, 14400, 14400)).toBe(1)
-        expect(budgetFraction(undefined, 7200, 14400)).toBe(0.5)
-        expect(budgetFraction(null, 0, 14400)).toBe(0)
+    it('is null (no bar) when the game is uncharged', () => {
+        expect(budgetFraction(null)).toBeNull()
+        expect(budgetFraction(undefined)).toBeNull()
     })
 
-    it('prefers the backend percentage, accepting either 0..1 or 0..100', () => {
-        expect(budgetFraction(0.25, 999, 14400)).toBe(0.25)
-        expect(budgetFraction(40, 999, 14400)).toBe(0.4)
+    it('passes a 0..1 fraction through, and normalizes a 0..100 percentage', () => {
+        expect(budgetFraction(0.25)).toBe(0.25)
+        expect(budgetFraction(1)).toBe(1)
+        expect(budgetFraction(40)).toBe(0.4)
     })
 
-    it('clamps overdraw and an uncharged game to zero', () => {
-        expect(budgetFraction(null, -100, 14400)).toBe(0)
-        expect(budgetFraction(null, 0, 0)).toBe(0)
-        expect(budgetFraction(150, 0, 14400)).toBe(1)
+    it('clamps to [0,1]', () => {
+        expect(budgetFraction(-0.5)).toBe(0)
+        expect(budgetFraction(150)).toBe(1)
     })
 })

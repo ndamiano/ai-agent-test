@@ -37,19 +37,16 @@ const BuildProgressHeader: React.FC<{
 )
 
 // The compute budget as an obfuscated draining bar, 0..1 — users see a bar, never seconds (the
-// plan's contract). Prefer the backend's pre-computed percentage; fall back to remaining/granted.
-// NEVER derived from seconds_used — that value is deliberately not surfaced to the client.
-export const budgetFraction = (
-    pct: number | null | undefined, remaining: number, granted: number,
-): number => {
-    const clamp = (x: number) => Math.max(0, Math.min(1, x))
-    if (pct != null) return clamp(pct > 1 ? pct / 100 : pct)
-    return granted > 0 ? clamp(remaining / granted) : 0
+// plan's contract; seconds_used never reaches the client). null ⇒ uncharged, no bar. Tolerates the
+// backend sending either a 0..1 fraction or a 0..100 percentage.
+export const budgetFraction = (pct: number | null | undefined): number | null => {
+    if (pct == null) return null
+    return Math.max(0, Math.min(1, pct > 1 ? pct / 100 : pct))
 }
 
 const ComputeBar: React.FC<{ detail: GameDetail }> = ({ detail }) => {
-    if (detail.seconds_granted <= 0) return null
-    const frac = budgetFraction(detail.budget_pct_remaining, detail.seconds_remaining ?? 0, detail.seconds_granted)
+    const frac = budgetFraction(detail.budget_pct_remaining)
+    if (frac == null) return null
     const color = frac < 0.1 ? 'bg-red-500' : frac < 0.34 ? 'bg-amber-500' : 'bg-green-500'
     return (
         <div className="flex items-center gap-2" title="compute remaining for this game">

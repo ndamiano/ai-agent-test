@@ -185,24 +185,19 @@ export const api = {
     // event-id cursor (0 = from the start); the rows carry `id` for incremental follow-up.
     getGameEvents: (runId: string, after = 0) =>
         request<DurableEventRow[]>(`/games/${runId}/events?after=${after}`),
-    // The built game's asset manifest, read straight off the static /play mount. Returns [] when the
-    // game hasn't been skinned yet (no assets.json → 404). NOTE: /play is currently unauthenticated;
-    // when the backend gates it, this fetch needs the bearer token (see getGameAssets below).
-    getGameAssets: (runId: string): Promise<GameAsset[]> =>
-        fetch(`/play/games/${runId}/assets.json`)
-            .then(res => (res.ok ? res.json() : null))
-            .then((m: any): GameAsset[] => {
-                if (!m) return []
-                const at = (file: string) => `/play/games/${runId}/${file}`
-                const sprites: GameAsset[] = (m.sprites ?? []).map((s: any) => ({
-                    id: s.id, kind: 'sprite', url: at(s.file), w: s.w, h: s.h,
-                }))
-                const meshes: GameAsset[] = (m.meshes ?? []).map((mesh: any) => ({
-                    id: mesh.id, kind: 'mesh', url: at(mesh.file),
-                }))
-                return [...sprites, ...meshes]
-            })
-            .catch(() => []),
+    // The built game's asset manifest with per-asset render status. Authed + ownership-checked;
+    // returns [] before the game is skinned.
+    getGameAssets: (runId: string) =>
+        request<GameAsset[]>(`/games/${runId}/assets`),
+    // Fetch one asset's bytes through the authed blob route and hand back an object URL — <img>/
+    // download can't attach a bearer header, so the header-only auth design loads binaries this way.
+    // The caller owns the URL and must revokeObjectURL it when done.
+    getAssetBlobUrl: async (runId: string, assetId: string): Promise<string> => {
+        const res = await fetch(`${base}/games/${runId}/assets/${assetId}`, { headers: authHeaders() })
+        if (res.status === 401) handleUnauthorized()
+        if (!res.ok) throw new ApiError(res.status, await errorBody(res))
+        return URL.createObjectURL(await res.blob())
+    },
     freezeGame: (runId: string) =>
         request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
     buildGame: (runId: string, autoPause = false) =>

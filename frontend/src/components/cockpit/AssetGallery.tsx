@@ -12,31 +12,73 @@ const CHECKER: React.CSSProperties = {
     backgroundPosition: '0 0,0 7px,7px -7px,-7px 0',
 }
 
-const SpriteCard: React.FC<{ asset: GameAsset }> = ({ asset }) => (
+// The bytes come from the authed blob route, so <img> can't load them by URL — fetch to an object
+// URL and revoke it on unmount / when the asset changes. Only fetches once the asset is ready.
+const useAssetBlob = (runId: string, asset: GameAsset): string | null => {
+    const [url, setUrl] = useState<string | null>(null)
+    useEffect(() => {
+        if (asset.status !== 'ready') { setUrl(null); return }
+        let live = true
+        let made: string | null = null
+        api.getAssetBlobUrl(runId, asset.id)
+            .then(u => { if (live) { made = u; setUrl(u) } else URL.revokeObjectURL(u) })
+            .catch(() => { if (live) setUrl(null) })
+        return () => { live = false; if (made) URL.revokeObjectURL(made) }
+    }, [runId, asset.id, asset.status])
+    return url
+}
+
+const StatusNote: React.FC<{ status: GameAsset['status'] }> = ({ status }) => (
+    <span className="text-[10px] text-gray-500 flex items-center gap-1.5">
+        {status === 'rendering' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
+        {status === 'rendering' ? 'rendering…' : 'pending'}
+    </span>
+)
+
+const CardShell: React.FC<{ id: string; right?: React.ReactNode; children: React.ReactNode }> = ({ id, right, children }) => (
     <div className="rounded-lg border border-white/[0.06] overflow-hidden bg-[#141414]">
-        <div className="aspect-square flex items-center justify-center p-3" style={CHECKER}>
-            <img src={asset.url} alt={asset.id} loading="lazy"
-                className="max-w-full max-h-full object-contain [image-rendering:pixelated]" />
-        </div>
+        <div className="aspect-square flex items-center justify-center p-3" style={CHECKER}>{children}</div>
         <div className="px-2 py-1.5 flex items-center justify-between gap-2">
-            <span className="text-gray-300 text-[11px] font-medium truncate" title={asset.id}>{asset.id}</span>
-            {asset.w && asset.h && <span className="text-gray-600 text-[10px] font-mono shrink-0">{asset.w}×{asset.h}</span>}
+            <span className="text-gray-300 text-[11px] font-medium truncate" title={id}>{id}</span>
+            {right}
         </div>
     </div>
 )
 
-const MeshCard: React.FC<{ asset: GameAsset }> = ({ asset }) => (
-    <div className="rounded-lg border border-white/[0.06] overflow-hidden bg-[#141414]">
-        <div className="aspect-square flex items-center justify-center text-4xl" style={CHECKER}>
-            <span className="opacity-40">⬡</span>
-        </div>
-        <div className="px-2 py-1.5 flex items-center justify-between gap-2">
-            <span className="text-gray-300 text-[11px] font-medium truncate" title={asset.id}>{asset.id}</span>
-            <a href={asset.url} target="_blank" rel="noreferrer"
-                className="text-blue-400 hover:text-blue-300 text-[10px] shrink-0">GLB ↗</a>
-        </div>
-    </div>
-)
+const SpriteCard: React.FC<{ runId: string; asset: GameAsset }> = ({ runId, asset }) => {
+    const url = useAssetBlob(runId, asset)
+    return (
+        <CardShell id={asset.id}
+            right={asset.w && asset.h ? <span className="text-gray-600 text-[10px] font-mono shrink-0">{asset.w}×{asset.h}</span> : undefined}>
+            {url
+                ? <img src={url} alt={asset.id} className="max-w-full max-h-full object-contain [image-rendering:pixelated]" />
+                : <StatusNote status={asset.status} />}
+        </CardShell>
+    )
+}
+
+const MeshCard: React.FC<{ runId: string; asset: GameAsset }> = ({ runId, asset }) => {
+    const [busy, setBusy] = useState(false)
+    const download = async () => {
+        setBusy(true)
+        try {
+            const u = await api.getAssetBlobUrl(runId, asset.id)
+            const a = document.createElement('a')
+            a.href = u; a.download = `${asset.id}.glb`; a.click()
+            URL.revokeObjectURL(u)
+        } catch { /* transient — the button stays clickable */ }
+        finally { setBusy(false) }
+    }
+    return (
+        <CardShell id={asset.id}
+            right={asset.status === 'ready'
+                ? <button onClick={download} disabled={busy}
+                    className="text-blue-400 hover:text-blue-300 disabled:opacity-40 text-[10px] shrink-0">GLB ↓</button>
+                : undefined}>
+            {asset.status === 'ready' ? <span className="text-4xl opacity-40">⬡</span> : <StatusNote status={asset.status} />}
+        </CardShell>
+    )
+}
 
 // `version` bumps when a skin run finishes (assets_done) so the gallery re-reads the manifest.
 export const AssetGallery: React.FC<{
@@ -52,7 +94,7 @@ export const AssetGallery: React.FC<{
     useEffect(() => {
         let cancelled = false
         setAssets(null)
-        api.getGameAssets(runId).then(a => { if (!cancelled) setAssets(a) })
+        api.getGameAssets(runId).then(a => { if (!cancelled) setAssets(a) }).catch(() => { if (!cancelled) setAssets([]) })
         return () => { cancelled = true }
     }, [runId, version])
 
@@ -88,8 +130,8 @@ export const AssetGallery: React.FC<{
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                     {assets!.map(a => a.kind === 'sprite'
-                        ? <SpriteCard key={a.id} asset={a} />
-                        : <MeshCard key={a.id} asset={a} />)}
+                        ? <SpriteCard key={a.id} runId={runId} asset={a} />
+                        : <MeshCard key={a.id} runId={runId} asset={a} />)}
                 </div>
             )}
         </section>

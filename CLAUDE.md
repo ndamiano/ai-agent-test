@@ -186,9 +186,20 @@ src/
                          The plan is DETERMINISTIC whenever any data row carries `look`
                          (sprite_plan_from_data: 2D all look rows, 3D look + presence world/both;
                          prompts from look, sizes from size — no 3-8 sprite cap); the LLM plan is
-                         the data-less fallback. Both re-gate then write game/assets/ + assets.json.
+                         the data-less fallback. Both re-gate, then write assets.json (a pure
+                         function of the plan) and START THE CHAIN: start_asset_chain enqueues
+                         EVERY image job at once as one batch and returns. Nothing waits on a GPU.
                          Additive: no asset ⇒ still passes gates, renders as shapes. CLI
-                         `--assets <run_id>`.
+                         `--assets <run_id>` (which does block — a CLI has no socket to report on).
+      asset_chain.py     what a finished asset job does NEXT — the names in its `metadata.then`:
+                         a CONTINUATION to enqueue (mesh_from_image: the PNG a TRELLIS job turns
+                         into a GLB), OPERATIONS on this result (save_sprite / decimate), and the
+                         batch's FINALIZE (fit_building_boxes + bundle + stage_for_play +
+                         assets_done). This module owns those names so the queue stays a generic
+                         transport that never learns what an asset is. WHY: the stage used to be a
+                         thread parked on a 250ms poll for the whole render — queue depth never
+                         exceeded 1, so the scaler's depth rule could never fire and a worker
+                         idle-exited with the next job seconds away.
       scaffold.py        the CONTROL SCAFFOLD pre-seed: for EVERY game, run_build seeds a
                          GENERATED game/main.ts from scaffold_templates/<scheme>.ts.tmpl before the
                          loop. The scaffold owns config (2D size defaults; 3D controls: name +
@@ -303,11 +314,27 @@ src/
                          abandon_job releases a reservation the enqueuer stopped waiting on (a
                          late completion is then dropped like a lapsed lease). Overdraw is possible
                          by design: a job that runs longer than its estimate is never killed
-                         mid-flight, the reservation only bounds how far. Plain
+                         mid-flight, the reservation only bounds how far. A job also CHAINS: its
+                         `metadata` (control-plane only, never handed to a worker) carries the
+                         follow-up job + the ops + the batch finalize, and complete_job lands the
+                         follow-up INSIDE the completion txn — inheriting game_id/build_id/batch_id,
+                         so a continuation nothing enqueued in a run_scope still debits the right
+                         game. It then counts the batch's remaining pending/claimed AFTER that
+                         insert (inverted, the last image completion would finalize a batch whose
+                         mesh jobs don't exist yet) and reports batch_complete to exactly one
+                         completer. Plain
                          parameterized SQL, short-lived connections — the run dir stays the source
                          of truth for spec + artifacts; rows index, never duplicate.
                          estimates.py — per-queue estimated seconds, the admission input (a
                          hill-climbable constant, not a measurement).
+                         reaper.py — the housekeeping daemon (5s tick, started unconditionally by
+                         api/app.py): requeue lapsed leases even when no claim arrives to trigger
+                         it, fail never-claimed pending jobs to release their reservations (this
+                         replaces the enqueuer timeout for chained jobs — no clock starts until a
+                         job is real work), and finalize any batch whose live completion was lost
+                         to a restart. NOT in the scaler: that only exists when runpod is
+                         configured, and scaler/stats.py is deliberately the only scaler module
+                         touching db.store (the SQS seam).
                          queue_client.py — the enqueue side every producer shares (run_job: land a
                          jobs row, wait for a worker, hand back the row; a refused budget or a
                          timeout comes back as a failed job, so callers branch on one shape). LLM,
@@ -359,12 +386,22 @@ src/
                          workqueue router (/worker/claim|heartbeat|complete|deregister, mounted
                          OUTSIDE the
                          user gate) is the pull side of the inference queue — token-gated
-                         (settings workqueue.token, fail-closed when unset). WS events route
+                         (settings workqueue.token, fail-closed when unset). /complete is also
+                         where a CHAIN advances: it offloads the blobs, builds the follow-up job
+                         from the parent's `then`, lands both in one txn, emits job_done, and
+                         fires the ops + any batch finalize FORGOTTEN (to_thread — bounded CPU, and
+                         the worker's response must not wait on it; a bare create_task would run
+                         sync work on the event loop and stall every other completion). WS events
+                         route
                          per-user server-side (event_bus resolves run → owner). The games router is
                          codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets,
                          all against maestro.codegen.run; freeze→freeze_spec, build/fix→build_queue→
-                         codegen run_build / fix_from_note, assets→reskin.add_assets (still its own
-                         thread — the image/mesh queues, not the build GPU). build/resume/fix/assets
+                         codegen run_build / fix_from_note, assets→reskin.add_assets (its own
+                         thread, now only for the plan+gate half — the render outlives it on the
+                         queue, so assets_done and build_finished are the FINALIZE's job, and a
+                         second skin is refused by has_active_batch as well as the in-process key,
+                         or a double-click pays for a second full set of image/mesh jobs).
+                         build/resume/fix/assets
                          all pass _require_compute FIRST: enqueue enforces the same budget per job,
                          but a broke run must not win the GPU slot and then thrash on refused jobs
                          until its step cap. build charges before checking, since charging grants.

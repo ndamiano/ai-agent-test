@@ -10,6 +10,7 @@ Postgres port is DDL + driver work, not a rewrite.
 """
 
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -20,6 +21,8 @@ from typing import Dict, List, Optional
 
 from config.settings_manager import settings_manager
 from db.estimates import estimate_seconds
+
+logger = logging.getLogger(__name__)
 
 
 class InsufficientCompute(Exception):
@@ -77,12 +80,16 @@ CREATE TABLE IF NOT EXISTS jobs (
     est_seconds      REAL NOT NULL DEFAULT 0,
     exec_seconds     REAL,
     lease_expires_at REAL,
+    metadata         TEXT,
+    batch_id         TEXT,
+    finalized_at     REAL,
     created_at       REAL NOT NULL,
     started_at       REAL,
     finished_at      REAL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(queue, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_build ON jobs(build_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_batch ON jobs(batch_id, status);
 
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY,
@@ -281,29 +288,45 @@ def builds_for(game_id: str) -> List[Dict]:
 # atomic UPDATE...RETURNING, so two workers can never take the same job. A claimed job whose
 # lease lapses (worker died mid-inference) returns to pending on the next claim sweep — the
 # enqueuer just keeps waiting and the retry is invisible to it.
+def _insert_job_locked(conn, queue: str, payload: Dict, game_id: Optional[str],
+                       build_id: Optional[str], model: Optional[str],
+                       batch_id: Optional[str], metadata: Optional[Dict]) -> str:
+    """Admit + insert one job on a connection that ALREADY holds the write lock. Raises
+    InsufficientCompute. Shared by enqueue_job and the continuation a completion lands, so both
+    reserve against the same headroom under the same lock."""
+    est = estimate_seconds(queue)
+    job_id = uuid.uuid4().hex[:16]
+    if game_id is not None:
+        remaining = _remaining_locked(conn, game_id)
+        if remaining < est:
+            raise InsufficientCompute(game_id, remaining, est)
+    conn.execute(
+        "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, "
+        "est_seconds, batch_id, metadata, created_at) "
+        "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+        (job_id, queue, game_id, build_id, json.dumps(payload, ensure_ascii=False), model, est,
+         batch_id, json.dumps(metadata, ensure_ascii=False) if metadata else None, time.time()),
+    )
+    return job_id
+
+
 def enqueue_job(queue: str, payload: Dict, game_id: Optional[str] = None,
-                build_id: Optional[str] = None, model: Optional[str] = None) -> str:
+                build_id: Optional[str] = None, model: Optional[str] = None,
+                batch_id: Optional[str] = None, metadata: Optional[Dict] = None) -> str:
     """Land a job as pending, ADMITTING it against its game's compute budget first. The check and
     the insert share one write transaction, so concurrent enqueues (parallel_fixes) can't each see
     the same headroom and all take it. Raises InsufficientCompute when the queue's estimate does
     not fit in what's left.
 
     A job with no game — chat, spec drafting — is platform cost rather than a game's, so it is
-    attributed to nobody and gated by nothing."""
-    est = estimate_seconds(queue)
-    job_id = uuid.uuid4().hex[:16]
+    attributed to nobody and gated by nothing.
+
+    `metadata` is control-plane only and never reaches a worker: it carries `then` (the follow-up
+    job, this result's operations, the batch's finalize). `batch_id` groups a chain so the last
+    completion of the batch can be identified."""
     with _db(immediate=game_id is not None) as conn:
-        if game_id is not None:
-            remaining = _remaining_locked(conn, game_id)
-            if remaining < est:
-                raise InsufficientCompute(game_id, remaining, est)
-        conn.execute(
-            "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, "
-            "est_seconds, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
-            (job_id, queue, game_id, build_id,
-             json.dumps(payload, ensure_ascii=False), model, est, time.time()),
-        )
-    return job_id
+        return _insert_job_locked(conn, queue, payload, game_id, build_id, model,
+                                  batch_id, metadata)
 
 
 def abandon_job(job_id: str, error: str) -> bool:
@@ -354,17 +377,32 @@ def heartbeat_job(job_id: str, worker_id: str, lease_seconds: float) -> bool:
 
 
 def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Optional[str],
-                 exec_seconds: float, gpu_type: Optional[str] = None) -> bool:
-    """Land a job's outcome and debit its game's compute budget. One transaction: the job row,
-    the games seconds_used debit, and the worker's busy-seconds all move together. False if the
-    job isn't this worker's claim (lease lapsed — the retry's result wins, this one is dropped).
+                 exec_seconds: float, gpu_type: Optional[str] = None,
+                 continuation: Optional[Dict] = None) -> Optional[Dict]:
+    """Land a job's outcome, debit its game's compute budget, and advance its chain. One
+    transaction: the job row, the games seconds_used debit, the worker's busy-seconds and the
+    follow-up job all move together. None if the job isn't this worker's claim (lease lapsed —
+    the retry's result wins, this one is dropped).
 
     ONLY DELIVERED WORK IS BILLED. A game is debited when it got a result and never otherwise: a
     failed job, a lapsed-lease duplicate, and a job whose enqueuer abandoned it all leave
     seconds_used untouched. The worker's busy_seconds still moves in every case — that measures
-    the GPU time WE pay for, which is real whether or not the user got anything for it."""
+    the GPU time WE pay for, which is real whether or not the user got anything for it.
+
+    `continuation` is a fully-built {queue, payload, metadata?, model?} the caller derived from
+    this job's `then`; it inherits game_id/build_id/batch_id so its seconds debit the same game
+    even though nothing enqueued it inside a run_scope. Refused by the budget it is simply
+    dropped — the batch finishes short and the finalize still runs, which is the asset stage's
+    soft-degrade.
+
+    Returns {batch_id, batch_complete, metadata, game_id, continuation_id}. batch_complete is
+    true for exactly ONE completion per batch: the count of jobs still pending/claimed is taken
+    AFTER the continuation is inserted, inside the same write transaction, so a completion can
+    never see an empty batch whose next job simply doesn't exist yet."""
     now = time.time()
     status = "failed" if error else "done"
+    # No immediate=True: the UPDATE below is the first statement, so the write lock is already
+    # held by the time the continuation's admission reads the game's headroom.
     with _db() as conn:
         cur = conn.execute(
             "UPDATE jobs SET status = ?, result = ?, error = ?, exec_seconds = ?, gpu_type = ?, "
@@ -373,16 +411,37 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
              error, exec_seconds, gpu_type, now, job_id, worker_id),
         )
         if cur.rowcount != 1:
-            return False
-        row = conn.execute("SELECT game_id FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if error is None and row and row["game_id"]:
+            return None
+        row = conn.execute(
+            "SELECT game_id, build_id, batch_id, metadata FROM jobs WHERE id = ?",
+            (job_id,)).fetchone()
+        if error is None and row["game_id"]:
             conn.execute(
                 "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
                 (exec_seconds, now, row["game_id"]))
         conn.execute(
             "UPDATE workers SET busy_seconds = busy_seconds + ?, last_seen_at = ? WHERE id = ?",
             (exec_seconds, now, worker_id))
-    return True
+
+        continuation_id = None
+        if continuation is not None and error is None:
+            try:
+                continuation_id = _insert_job_locked(
+                    conn, continuation["queue"], continuation["payload"], row["game_id"],
+                    row["build_id"], continuation.get("model"), row["batch_id"],
+                    continuation.get("metadata"))
+            except InsufficientCompute as e:
+                logger.error("continuation for job %s refused: %s", job_id, e)
+
+        batch_complete = False
+        if row["batch_id"]:
+            left = conn.execute(
+                "SELECT COUNT(*) AS n FROM jobs WHERE batch_id = ? "
+                "AND status IN ('pending', 'claimed')", (row["batch_id"],)).fetchone()["n"]
+            batch_complete = left == 0
+    return {"batch_id": row["batch_id"], "batch_complete": batch_complete,
+            "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+            "game_id": row["game_id"], "continuation_id": continuation_id}
 
 
 def get_job(job_id: str) -> Optional[Dict]:
@@ -390,10 +449,84 @@ def get_job(job_id: str) -> Optional[Dict]:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row is None:
         return None
+    return _job_dict(row)
+
+
+def _job_dict(row: sqlite3.Row) -> Dict:
     job = dict(row)
     job["payload"] = json.loads(job["payload"]) if job["payload"] else {}
     job["result"] = json.loads(job["result"]) if job["result"] else None
+    job["metadata"] = json.loads(job["metadata"]) if job["metadata"] else {}
     return job
+
+
+def claim_batch_finalize(batch_id: str) -> bool:
+    """Take ownership of a batch's finalize. True for exactly one caller — the live completion
+    that saw the batch empty, or the reaper picking up after a restart dropped it, never both."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET finalized_at = ? WHERE batch_id = ? AND finalized_at IS NULL",
+            (time.time(), batch_id))
+    return cur.rowcount > 0
+
+
+def has_active_batch(game_id: str) -> bool:
+    """Whether this game has batched work still in the queue. The asset stage outlives the thread
+    that started it, so this is what a second skin request has to check."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM jobs WHERE game_id = ? AND batch_id IS NOT NULL "
+            "AND status IN ('pending', 'claimed') LIMIT 1", (game_id,)).fetchone()
+    return row is not None
+
+
+def batch_jobs(batch_id: str) -> List[Dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE batch_id = ? ORDER BY created_at", (batch_id,)).fetchall()
+    return [_job_dict(r) for r in rows]
+
+
+# ── reaper sweeps ─────────────────────────────────────────────────────────────
+def requeue_lapsed_leases() -> int:
+    """Return claimed jobs whose worker stopped heartbeating to pending. claim_job does this too,
+    but only when a claim arrives — a queue that goes quiet would otherwise hold a dead job (and
+    its reservation) forever."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'pending', worker_id = NULL, lease_expires_at = NULL "
+            "WHERE status = 'claimed' AND lease_expires_at < ?", (time.time(),))
+    return cur.rowcount
+
+
+def fail_stale_pending(max_age_seconds: float) -> List[Dict]:
+    """Fail jobs nobody ever claimed, releasing their reservations. For chained jobs this replaces
+    the enqueuer timeout: no clock starts until a job is real work."""
+    cutoff = time.time() - max_age_seconds
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, queue, batch_id, game_id FROM jobs "
+            "WHERE status = 'pending' AND created_at < ?", (cutoff,)).fetchall()
+        if rows:
+            conn.execute(
+                "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
+                "WHERE status = 'pending' AND created_at < ?",
+                (f"pending longer than {max_age_seconds:.0f}s with no worker", time.time(),
+                 cutoff))
+    return [dict(r) for r in rows]
+
+
+def batches_awaiting_finalize(grace_seconds: float) -> List[str]:
+    """Batches whose jobs are all terminal but whose finalize never ran — the live completion was
+    lost to a restart. Grace-delayed so a finalize in flight is not duplicated."""
+    cutoff = time.time() - grace_seconds
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT batch_id FROM jobs WHERE batch_id IS NOT NULL AND finalized_at IS NULL "
+            "GROUP BY batch_id "
+            "HAVING SUM(CASE WHEN status IN ('pending', 'claimed') THEN 1 ELSE 0 END) = 0 "
+            "   AND MAX(finished_at) < ?", (cutoff,)).fetchall()
+    return [r["batch_id"] for r in rows]
 
 
 # ── workers (fleet + utilization facts) ───────────────────────────────────────

@@ -4,17 +4,14 @@ direct-call path — every producer of GPU work goes through db.queue_client so 
 and budget-gated in one place.
 """
 
-import base64
 import copy
-import glob
 import json
 import logging
 import os
-import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from db import queue_client
 from tools.execution_context import resolve_base_path
@@ -66,30 +63,17 @@ def build_item_job(description: str) -> dict:
     return {"prompt": positive, "workflow_override": wf}
 
 
-def run_trellis_batch(sprite_dir: str, out_dir: str) -> set:
-    """Run TRELLIS.2 over every sprite in sprite_dir → a textured .glb per slug in out_dir. Each
-    sprite is one `mesh` job: the worker owns the GPU and the retry, this side only lands the
-    bytes. Returns the set of slugs that produced a .glb. Never raises — a failure leaves
-    billboards."""
-    done: set = set()
-    for png in sorted(glob.glob(os.path.join(sprite_dir, "*.png"))):
-        slug = os.path.splitext(os.path.basename(png))[0]
-        with open(png, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode("ascii")
-        # Cold start on an autoscaled pod (boot + image pull + pipeline lazy-load) plus the
-        # generate itself can exceed the 900s queue default.
-        job = queue_client.run_job("mesh", {"kind": "trellis_mesh", "image_b64": img_b64},
-                                   timeout_seconds=1800)
-        if job["status"] != "done":
-            logger.error(f"trellis {slug} failed: {job.get('error')}")
-            continue
-        glb_path = os.path.join(out_dir, f"{slug}.glb")
-        # The control plane offloaded the GLB to <data_dir>/blobs at completion (workqueue
-        # router); the jobs row carries only the path — same disk as this process.
-        shutil.copyfile(job["result"]["glb_file"], glb_path)
-        _decimate_glb(glb_path)
-        done.add(slug)
-    return done
+def build_item_payload(description: str) -> Optional[Dict[str, Any]]:
+    """The queue payload for ONE item icon, safety-screened. None = blocked, never sent.
+
+    The local image model (uncensored SDXL) has no built-in guardrails, so every finalized prompt
+    is screened before it can reach a worker. A blocked prompt degrades like any other missing
+    asset — the game renders that entity as its shape."""
+    violation = screen_image_prompt(description)
+    if violation is not None:
+        log_violation(violation, source="image_prompt")
+        return None
+    return {"kind": "comfy_image", "workflow": build_item_job(description)["workflow_override"]}
 
 
 def _decimate_glb(glb_path: str) -> bool:
@@ -155,29 +139,6 @@ def _run_comfyui_job(prompt: str, workflow_override: Optional[dict]) -> Dict[str
         "saved_paths": saved_paths,
         "message": f"Image generated successfully. Saved to: {saved_str}",
     }
-
-
-def run_jobs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Run image jobs sequentially. Each job: {"prompt": str, "workflow_override": dict | None}.
-
-    The local image model (uncensored SDXL) has no built-in guardrails, so every finalized
-    prompt is screened here before it reaches the model — the one chokepoint every image job
-    funnels through. A flagged prompt is skipped (never sent) and degrades like any other failed
-    job (placeholder/fallback in the caller); it never crashes the build."""
-    results = []
-    for job in jobs:
-        violation = screen_image_prompt(job.get("prompt"))
-        if violation is not None:
-            log_violation(violation, source="image_prompt")
-            results.append({"success": False, "error": "blocked by safety filter"})
-            continue
-        try:
-            result = _run_comfyui_job(job["prompt"], job.get("workflow_override"))
-        except Exception as e:
-            logger.error(f"run_jobs job failed: {e}")
-            result = {"success": False, "error": str(e)}
-        results.append(result)
-    return results
 
 
 @tool_manager.tool(

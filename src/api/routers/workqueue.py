@@ -18,11 +18,17 @@ from pydantic import BaseModel
 
 from config.settings_manager import settings_manager
 from db import store as db_store
+from maestro.codegen import asset_chain
+from tools.build_events import _emit
 
 router = APIRouter()
 
 CLAIM_LONG_POLL_SECONDS = 25.0
 _CLAIM_POLL_INTERVAL = 0.5
+
+# Fire-and-forget completion work. asyncio holds only weak references to tasks, so an unheld
+# task can be collected mid-run.
+_BACKGROUND: set = set()
 
 
 def _queue_settings() -> Dict:
@@ -147,15 +153,46 @@ def _offload_blobs(job_id: str, result: Optional[Dict]) -> list:
     return written
 
 
+def _prepare(job_id: str, result: Optional[Dict]) -> tuple:
+    """Offload the result's binaries, then build the follow-up job from the parent's `then`. Both
+    read the same blob paths, so they share one hop off the event loop."""
+    blobs = _offload_blobs(job_id, result)
+    job = db_store.get_job(job_id) or {}
+    metadata = job.get("metadata") or {}
+    continuation = asset_chain.build_continuation(metadata, result) if metadata else None
+    return blobs, metadata, continuation, job.get("queue")
+
+
+def _land(body: "CompleteBody", continuation: Optional[Dict], queue: Optional[str]) -> Optional[Dict]:
+    outcome = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
+                                    body.exec_seconds, body.gpu_type, continuation)
+    if outcome is not None and outcome["game_id"]:
+        _emit("job_done", outcome["game_id"], job_id=body.job_id, queue=queue,
+              ok=body.error is None, exec_seconds=body.exec_seconds)
+    return outcome
+
+
 @router.post("/complete", response_model=Dict)
 async def complete(body: CompleteBody, request: Request):
     """Land a result (or failure). ok=false means the lease lapsed and the job was requeued —
     this worker's result was dropped and it should just move on."""
     _require_worker(request)
-    blobs = await asyncio.to_thread(_offload_blobs, body.job_id, body.result)
-    ok = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
-                               body.exec_seconds, body.gpu_type)
-    if not ok:
+    blobs, metadata, continuation, queue = await asyncio.to_thread(
+        _prepare, body.job_id, body.result)
+    # sqlite, not the event loop: the completion txn now also admits and inserts the follow-up,
+    # and _emit writes an events row.
+    outcome = await asyncio.to_thread(_land, body, continuation, queue)
+    if outcome is None:
         for blob in blobs:
             blob.unlink(missing_ok=True)
-    return {"ok": ok}
+        return {"ok": False}
+
+    # Fire-and-forget: bounded CPU (a decimate, a bundle), and the worker's response must not
+    # wait on it. to_thread, not a bare task — sync work on the loop stalls every other
+    # completion. A restart between here and the finalize is what the reaper backstops.
+    task = asyncio.create_task(asyncio.to_thread(
+        asset_chain.on_completion, metadata, body.result, outcome["batch_id"],
+        outcome["batch_complete"]))
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+    return {"ok": True}

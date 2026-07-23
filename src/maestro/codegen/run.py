@@ -258,6 +258,28 @@ def _cli_fix(run_id: str, note: str) -> int:
     return 0 if result.ok else 1
 
 
+def _await_batch(batch_id: str, run_id: str, mode: str) -> list:
+    """Block until the asset batch drains. The API path returns as soon as the jobs are enqueued
+    and reports over the websocket; a CLI has no socket, so it waits and prints.
+
+    The chain is advanced by the control plane's /worker/complete, so this needs the API server
+    up — same as any other queue work."""
+    from maestro.codegen.asset_chain import _asset_path   # noqa: PLC0415
+    ext = "glb" if mode == "3d" else "png"
+    ids, seen = set(), 0
+    while True:
+        jobs = db_store.batch_jobs(batch_id)
+        ids = {j["metadata"].get("asset_id") for j in jobs} - {None}
+        if len(jobs) > seen:
+            seen = len(jobs)
+            print(f"  {seen} job(s) queued, "
+                  f"{sum(1 for j in jobs if j['status'] in ('done', 'failed'))} done")
+        if jobs and all(j["status"] in ("done", "failed") for j in jobs):
+            break
+        time.sleep(2.0)
+    return sorted(i for i in ids if _asset_path(run_id, i, ext).exists())
+
+
 def _cli_assets(run_id: str) -> int:
     # Lazy on purpose: reskin imports run_build from here. One side of the cycle must stay
     # deferred, and this CLI entry is the cheaper side to defer.
@@ -265,9 +287,9 @@ def _cli_assets(run_id: str) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     print(f"skinning {run_id} with generated assets\n")
     out = add_assets(run_id)
-    got = out["generated"]
     planned = out.get("meshes") if out["mode"] == "3d" else out.get("sprites")
     kind = "meshes" if out["mode"] == "3d" else "sprites"
+    got = _await_batch(out["batch_id"], run_id, out["mode"]) if out["batch_id"] else []
     print(f"\nok={out['ok']}  mode={out['mode']}  {kind}={len(planned)}  rendered={len(got)} {got}")
     if not got:
         backend = "ComfyUI + TRELLIS" if out["mode"] == "3d" else "ComfyUI"

@@ -37,6 +37,7 @@ from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
 from config.settings_manager import settings_manager
+from db.reaper import Reaper
 from scaler.autoscaler import Autoscaler
 from scaler.runpod_client import RunPodClient
 from scaler.stats import SqliteStatsSource
@@ -54,6 +55,12 @@ async def startup_event():
         # Start the single-GPU build worker (serializes builds; extras queue with a position).
         build_queue.start()
         logging.info("Build queue started")
+
+        # Queue housekeeping. Unconditional, unlike the autoscaler below: a wedged job or a
+        # dropped finalize needs reaping on the home box too.
+        app.state.reaper = Reaper()
+        app.state.reaper.start()
+        logging.info("Queue reaper started")
 
         # RunPod autoscaler — only when RunPod is configured.
         _settings = settings_manager.get_settings()
@@ -75,6 +82,8 @@ async def shutdown_event():
     try:
         if getattr(app.state, "autoscaler", None):
             app.state.autoscaler.stop()
+        if getattr(app.state, "reaper", None):
+            app.state.reaper.stop()
         build_queue.stop()
         await event_bus.shutdown()
         logging.info("Event bus stopped")

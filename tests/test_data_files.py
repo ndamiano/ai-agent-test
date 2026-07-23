@@ -534,7 +534,7 @@ def test_skin_2d_prefers_the_data_plan(tmp_path, monkeypatch):
     monkeypatch.setattr(reskin, "plan_assets", _boom)
     monkeypatch.setattr(reskin, "_reskin_and_gate", _boom)      # must NOT be reached
     monkeypatch.setattr(reskin, "_regate", lambda *a, **k: _Result())
-    monkeypatch.setattr(reskin, "generate_sprites", lambda rd, s: set())
+    monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
     files = {"game.ts": "kit.spawnData(state.world, ORC, {x:1,y:1});\nkit.drawEntity(g, e);"}
     out = reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None, files, 1)
     assert [s["id"] for s in out["sprites"]] == ["orc", "coin"]
@@ -554,7 +554,7 @@ def test_skin_2d_hand_drawn_game_still_gets_the_rewrite(tmp_path, monkeypatch):
         return _Result()
 
     monkeypatch.setattr(reskin, "_reskin_and_gate", _spy)
-    monkeypatch.setattr(reskin, "generate_sprites", lambda rd, s: set())
+    monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
     reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None,
                     {"game.ts": "g.rect(0,0,1,1,'#fff')"}, 1)
     assert called == {"yes": True}
@@ -575,7 +575,7 @@ def test_skin_2d_without_data_still_rewrites_draw(tmp_path, monkeypatch):
         return _Result()
 
     monkeypatch.setattr(reskin, "_reskin_and_gate", _spy)
-    monkeypatch.setattr(reskin, "generate_sprites", lambda rd, s: set())
+    monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
     reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None,
                     {"main.ts": "g.rect(0,0,1,1,'#fff')"}, 1)
     assert called == {"yes": True}
@@ -587,7 +587,7 @@ def test_skin_3d_data_plan_unions_required_mesh_tags(tmp_path, monkeypatch):
     monkeypatch.setattr(reskin, "plan_meshes", _boom)
     monkeypatch.setattr(reskin, "_reskin_and_gate", _boom)      # data-planned: no tagging call
     monkeypatch.setattr(reskin, "_regate", lambda *a, **k: _Result())
-    monkeypatch.setattr(reskin, "generate_meshes", lambda rd, m: set())
+    monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
     files = {"game.ts": 'config: { mode: "3d" }\nworld.push({ shape: "box", mesh: "old_barn" });\n'
                         'kit.spawnData(state.world, ORC, {x:1,y:1,z:1});'}
     out = reskin._skin_3d("rid", RunState(tmp_path), {"design": {}}, None, files, 1)

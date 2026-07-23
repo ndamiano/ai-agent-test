@@ -249,6 +249,11 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     _require_state(run_id, user)
     _require_compute(run_id)
     key = f"assets:{run_id}"
+    # Two guards, because the stage now outlives its thread: the key covers the plan-and-enqueue
+    # half, the batch query covers the queued half. Without the second, a double-click enqueues a
+    # second full set of image/mesh jobs and pays for them.
+    if db_store.has_active_batch(run_id):
+        raise HTTPException(status_code=409, detail="assets are already being skinned for this run")
     with _active_lock:
         if key in _active:
             raise HTTPException(status_code=409, detail="assets are already being skinned for this run")
@@ -258,11 +263,9 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
         db_store.build_started(build_id)
         _emit("assets_started", run_id)
         try:
-            result = add_assets(run_id)
-            ok = result.get("ok", False)
-            _emit("assets_done", run_id, ok=ok,
-                  mode=result.get("mode"), rendered=result.get("generated", []))
-            db_store.build_finished(build_id, "succeeded" if ok else "failed")
+            # Returns once the asset jobs are ENQUEUED. assets_done and build_finished are the
+            # batch finalize's job, since the render outlives this thread by minutes.
+            add_assets(run_id, build_id=build_id)
         except Exception:
             logger.exception("asset skin failed for %s", run_id)
             _emit("assets_done", run_id, ok=False, mode=None, rendered=[])

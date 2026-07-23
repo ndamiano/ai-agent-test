@@ -116,7 +116,7 @@ def test_worker_completing_an_abandoned_job_is_dropped():
     store.claim_job("llm", "w1", 60)
     store.abandon_job(job_id, "timed out")
 
-    assert store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=99.0) is False
+    assert store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=99.0) is None
     assert store.game("g1")["seconds_used"] == 0
 
 

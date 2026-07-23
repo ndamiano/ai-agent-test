@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import tools.comfyui_tools as ct
+from db import store
 from maestro.codegen import reskin
 from maestro.codegen.gates import RUNTIME_DIR, game_dir, stage_for_play
 
@@ -69,12 +70,32 @@ def test_write_manifest_shape(tmp_path):
     assert m["sprites"][1]["file"] == "assets/enemy.png"
 
 
-def test_generate_sprites_soft_fails_when_server_down(tmp_path, monkeypatch):
-    _write_game(tmp_path)
-    monkeypatch.setattr(reskin, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
-    got = reskin.generate_sprites(tmp_path, [{"id": "player", "prompt": "p", "w": 24, "h": 24}])
-    assert got == set()                        # no crash, no files
-    assert (game_dir(tmp_path) / "assets").exists()
+def test_start_asset_chain_enqueues_one_job_per_item(tmp_path, monkeypatch):
+    """Every job lands at once — that depth is what the scaler reads and what keeps a worker from
+    idling out with the next asset seconds away."""
+    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
+    monkeypatch.setattr(reskin, "build_item_payload", lambda d: {"kind": "comfy_image"})
+    store.create_game("rid", "u1")
+    store.charge_game("rid", 1, 10_000.0)
+
+    batch_id = reskin.start_asset_chain(
+        "rid", [{"id": "player", "prompt": "p"}, {"id": "enemy", "prompt": "e"}], "3d", True)
+
+    jobs = store.batch_jobs(batch_id)
+    assert [j["status"] for j in jobs] == ["pending", "pending"]
+    assert [j["metadata"]["asset_id"] for j in jobs] == ["player", "enemy"]
+    # 3D fans out image → mesh, so the head job carries the TRELLIS job that follows it.
+    assert jobs[0]["metadata"]["then"]["enqueue"] == "mesh_from_image"
+
+
+def test_start_asset_chain_returns_none_when_every_prompt_is_blocked(tmp_path, monkeypatch):
+    """A blocked prompt is never sent. With none left there is no batch, so the caller has to
+    finalize directly — no completion ever will."""
+    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
+    monkeypatch.setattr(reskin, "build_item_payload", lambda d: None)
+    store.create_game("rid", "u1")
+    store.charge_game("rid", 1, 10_000.0)
+    assert reskin.start_asset_chain("rid", [{"id": "player", "prompt": "x"}], "2d", True) is None
 
 
 def test_autocrop_tightens_to_opaque_subject(tmp_path):
@@ -195,12 +216,6 @@ def test_write_mesh_manifest_shape(tmp_path):
     assert m["meshes"][1]["file"] == "assets/crystal.glb"
 
 
-def test_generate_meshes_soft_fails_when_backend_down(tmp_path, monkeypatch):
-    _write_3d_game(tmp_path)
-    monkeypatch.setattr(reskin, "run_jobs", lambda jobs: (_ for _ in ()).throw(ConnectionError("down")))
-    got = reskin.generate_meshes(tmp_path, [{"id": "player", "prompt": "p", "w": 1, "h": 2, "d": 1}])
-    assert got == set()                        # no crash, no files
-    assert (game_dir(tmp_path) / "assets").exists()
 
 
 def test_stage_copies_mesh_skin_when_present(tmp_path):

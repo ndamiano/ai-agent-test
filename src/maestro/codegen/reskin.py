@@ -2,38 +2,36 @@
 
   add_assets(run_id) → plan a sprite set from the frozen spec + game source, rewrite the drawing
   code to prefer each entity kind's sprite (falling back to the shape when the image is absent),
-  re-gate, then render the sprites (ComfyUI) into game/assets/ + game/assets.json.
+  re-gate, write game/assets.json, then ENQUEUE the renders and return. The images (and, in 3D,
+  the meshes they feed) land on the queue; maestro.codegen.asset_chain finalizes the batch.
 
 The skin is purely additive: `kit.sprite(id)` returns null headless and for any missing file, so a
 reskinned game still passes every gate and still renders — just as shapes — with no images present.
-The image render degrades soft: if ComfyUI is down, the draw rewrite + manifest still land and the
-game plays as shapes; re-running with the server up fills in the pngs.
+So a render that never happens degrades soft: the draw rewrite + manifest already landed and the
+game plays as shapes; re-running fills in the pngs.
 """
 
 import json
 import logging
 import re
 import struct
-import tempfile
+import uuid
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image
 
+from db import store as db_store
 from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
+from maestro.codegen import asset_chain
 from maestro.codegen.data_files import sprite_plan_from_data
-from maestro.codegen.gates import (
-    build_bundle,
-    extract_code,
-    game_dir,
-    game_files,
-    stage_for_play,
-)
+from maestro.codegen.gates import extract_code, game_dir, game_files
 from maestro.codegen.run import run_build
 from maestro.codegen.worldgen_bridge import _write_world_ts
 from maestro.state import RunState
-from tools.comfyui_tools import build_item_job, run_jobs, run_trellis_batch
-from tools.execution_context import execution_context, run_scope
+from tools.comfyui_tools import build_item_payload
+from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
 
@@ -216,34 +214,37 @@ def _autocrop(path: Path, pad_frac: float = 0.06) -> None:
     im.crop(box).save(path)
 
 
-def generate_sprites(run_dir, sprites: list) -> set:
-    """Render each sprite prompt to game/assets/<id>.png via ComfyUI. Soft-fails per sprite (and
-    wholesale if the server is down) — returns the set of ids that produced a file."""
-    assets_dir = game_dir(run_dir) / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    jobs = [build_item_job(s["prompt"]) for s in sprites]
-    try:
-        with execution_context(working_directory=str(assets_dir)):
-            results = run_jobs(jobs)
-    except Exception as e:
-        logger.warning("sprite render skipped (ComfyUI unavailable?): %s", e)
-        return set()
+def start_asset_chain(run_id: str, plan: list, mode: str, gate_ok: bool,
+                      build_id: Optional[str] = None) -> Optional[str]:
+    """Enqueue every asset job at once and return the batch id. NOTHING WAITS: each job carries
+    what follows it (in 3D, the TRELLIS job its image feeds) and the batch's finalize, so the
+    whole stage lives in the queue where its depth is real work the scaler can act on and no
+    worker idles out with the next job seconds away.
 
-    done = set()
-    for s, res in zip(sprites, results):
-        saved = res.get("saved_paths") if isinstance(res, dict) else None
-        if not saved:
-            logger.info("sprite %s not rendered: %s", s["id"],
-                        (res or {}).get("error", "no output"))
+    None when nothing was enqueued — an empty plan, every prompt blocked, or a budget refusal on
+    the first job. The caller finalizes directly, since no completion ever will."""
+    batch_id = uuid.uuid4().hex[:16]
+    then = {"enqueue": "mesh_from_image", "finalize": "skin"} if mode == "3d" \
+        else {"operations": ["save_sprite"], "finalize": "skin"}
+    enqueued = 0
+    for item in plan:
+        payload = build_item_payload(item["prompt"])
+        if payload is None:
+            logger.warning("assets %s: %s blocked by the safety filter — not sent",
+                           run_id, item["id"])
             continue
-        dst = assets_dir / f"{s['id']}.png"
-        Path(saved[0]).replace(dst)
         try:
-            _autocrop(dst)
-        except Exception as e:
-            logger.warning("autocrop %s failed: %s", s["id"], e)
-        done.add(s["id"])
-    return done
+            db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
+                                 batch_id=batch_id,
+                                 metadata={"run_id": run_id, "asset_id": item["id"], "mode": mode,
+                                           "gate_ok": gate_ok, "then": then})
+        except db_store.InsufficientCompute as e:
+            logger.error("assets %s: budget refused after %d job(s): %s", run_id, enqueued, e)
+            break
+        enqueued += 1
+    logger.info("assets %s: enqueued %d/%d asset job(s) as batch %s",
+                run_id, enqueued, len(plan), batch_id)
+    return batch_id if enqueued else None
 
 
 def write_manifest(run_dir, sprites: list) -> None:
@@ -253,46 +254,20 @@ def write_manifest(run_dir, sprites: list) -> None:
         json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def generate_meshes(run_dir, meshes: list) -> set:
-    """Render each mesh prompt to an image (ComfyUI) then turn each image into a textured GLB
-    (TRELLIS) at game/assets/<id>.glb. Soft-fails wholesale if either backend is down (returns the
-    empty set) — the mesh tags + manifest still land and the game renders its primitive shapes, so a
-    re-run with the servers up fills the GLBs. Mirrors the 2D sprite soft-degrade."""
-    assets_dir = game_dir(run_dir) / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        jobs = [build_item_job(m["prompt"]) for m in meshes]
-        try:
-            with execution_context(working_directory=tmp):
-                results = run_jobs(jobs)
-        except Exception as e:
-            logger.warning("mesh image render skipped (ComfyUI unavailable?): %s", e)
-            return set()
-        for m, res in zip(meshes, results):
-            saved = res.get("saved_paths") if isinstance(res, dict) else None
-            if not saved:
-                logger.info("mesh %s image not rendered: %s", m["id"],
-                            (res or {}).get("error", "no output"))
-                continue
-            Path(saved[0]).replace(Path(tmp) / f"{m['id']}.png")   # TRELLIS keys the GLB on the stem
-        try:
-            return run_trellis_batch(tmp, str(assets_dir))
-        except Exception as e:
-            logger.warning("mesh render skipped (TRELLIS unavailable?): %s", e)
-            return set()
-
-
 def write_mesh_manifest(run_dir, meshes: list) -> None:
     manifest = {"meshes": [{"id": m["id"], "file": f"assets/{m['id']}.glb"} for m in meshes]}
     (game_dir(run_dir) / "assets.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def add_assets(run_id: str, max_steps: int = 40) -> dict:
+def add_assets(run_id: str, max_steps: int = 40, build_id: Optional[str] = None) -> dict:
     """Skin a built run. Dispatches on the game's mode: 2D games get sprites (kit.sprite draw
     rewrite), 3D games get meshes (entity `mesh` tags → TRELLIS GLBs). Both are additive — the
     reskin + manifest always land and the game still renders as shapes if the image/mesh backend
-    is down."""
+    is down.
+
+    Returns once the asset jobs are ENQUEUED, not once they are rendered: the batch finishes on
+    the queue and its finalize emits assets_done. `batch_id` in the return is what to watch."""
     state = RunState(run_id)
     spec = state.read_spec()
     if spec is None:
@@ -311,7 +286,7 @@ def add_assets(run_id: str, max_steps: int = 40) -> dict:
     # scope their jobs enqueue with no game_id, so nothing is metered and nothing is gated —
     # this stage ran entirely off the books.
     with run_scope(run_id):
-        return skin(run_id, state, spec, infer, files, max_steps)
+        return skin(run_id, state, spec, infer, files, max_steps, build_id)
 
 
 def _regate(run_id, state, max_steps) -> object:
@@ -344,7 +319,7 @@ def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps
     return run_build(run_id, max_steps=max_steps)
 
 
-def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
+def _skin_2d(run_id, state, spec, infer, files, max_steps, build_id=None) -> dict:
     # The data rows' `look` prompts ARE the plan when a run has them — deterministic, no LLM call.
     from_data = sprite_plan_from_data(state.run_dir, "2d")
     sprites = from_data or plan_assets(infer, spec, files)
@@ -358,14 +333,12 @@ def _skin_2d(run_id, state, spec, infer, files, max_steps) -> dict:
     result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, False) \
         else _reskin_and_gate(run_id, state, infer, files, ids, _draws, reskin_file, max_steps)
 
-    generated = generate_sprites(state.run_dir, sprites)
+    # The manifest is a pure function of the plan, so it lands now rather than at finalize — a
+    # missing sprite still renders as its shape, which is the stage's soft-degrade either way.
     write_manifest(state.run_dir, sprites)
-    logger.info("assets %s: rendered %d/%d sprite(s)", run_id, len(generated), len(sprites))
-
-    if result.ok:
-        stage_for_play(state.run_dir, run_id)
+    batch_id = _launch(run_id, sprites, "2d", result.ok, build_id)
     return {"ok": result.ok, "mode": "2d", "sprites": sprites,
-            "generated": sorted(generated), "result": result}
+            "batch_id": batch_id, "result": result}
 
 
 def _glb_dims(path: Path):
@@ -424,7 +397,7 @@ def fit_building_boxes(run_dir) -> int:
     return fitted
 
 
-def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
+def _skin_3d(run_id, state, spec, infer, files, max_steps, build_id=None) -> dict:
     # Data-planned meshes still union the source's `mesh:` tags — a tagged entity MUST get a mesh.
     from_data = sprite_plan_from_data(state.run_dir, "3d")
     meshes = _add_required(from_data, _existing_mesh_ids(files)) if from_data \
@@ -439,15 +412,18 @@ def _skin_3d(run_id, state, spec, infer, files, max_steps) -> dict:
     result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, True) \
         else _reskin_and_gate(run_id, state, infer, files, ids, _tags_shapes, reskin_mesh_file, max_steps)
 
-    generated = generate_meshes(state.run_dir, meshes)
     write_mesh_manifest(state.run_dir, meshes)
-    logger.info("assets %s: rendered %d/%d mesh(es)", run_id, len(generated), len(meshes))
-    fitted = fit_building_boxes(state.run_dir)
-    if fitted:
-        logger.info("assets %s: fitted %d building box(es) to their meshes", run_id, fitted)
-        build_bundle(state.run_dir)
-
-    if result.ok:
-        stage_for_play(state.run_dir, run_id)
+    batch_id = _launch(run_id, meshes, "3d", result.ok, build_id)
     return {"ok": result.ok, "mode": "3d", "meshes": meshes,
-            "generated": sorted(generated), "result": result}
+            "batch_id": batch_id, "result": result}
+
+
+def _launch(run_id: str, plan: list, mode: str, gate_ok: bool,
+            build_id: Optional[str]) -> Optional[str]:
+    """Start the chain, or finalize immediately when it enqueued nothing — with no jobs in the
+    batch no completion will ever fire, and the stage would hang unreported."""
+    batch_id = start_asset_chain(run_id, plan, mode, gate_ok, build_id)
+    if batch_id is None:
+        asset_chain.finalize_now({"run_id": run_id, "mode": mode, "gate_ok": gate_ok,
+                                  "then": {"finalize": "skin"}}, build_id)
+    return batch_id

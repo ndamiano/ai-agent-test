@@ -54,8 +54,8 @@ def test_expired_lease_requeues_and_stale_result_is_dropped():
     rejig = store.claim_job("llm", "w2", lease_seconds=60)   # sweep requeues, w2 takes it
     assert rejig["id"] == job_id
     # w1 comes back late — its completion must not clobber w2's claim.
-    assert store.complete_job(job_id, "w1", {"stale": True}, None, 1.0) is False
-    assert store.complete_job(job_id, "w2", {"fresh": True}, None, 2.0) is True
+    assert store.complete_job(job_id, "w1", {"stale": True}, None, 1.0) is None
+    assert store.complete_job(job_id, "w2", {"fresh": True}, None, 2.0) is not None
     assert store.get_job(job_id)["result"] == {"fresh": True}
 
 
@@ -110,6 +110,16 @@ def test_unconfigured_token_fails_closed(client, monkeypatch):
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"},
                     headers=_hdr(""))
     assert r.status_code == 403
+
+
+def test_a_claim_never_hands_a_worker_the_jobs_metadata(client):
+    """metadata carries the chain (what to enqueue next, what to finalize). It is control-plane
+    only — a worker stays a generic executor that knows nothing about assets."""
+    store.enqueue_job("image", {"kind": "comfy_image"}, batch_id="b1",
+                      metadata={"then": {"enqueue": "mesh_from_image"}, "asset_id": "goblin"})
+    r = client.post("/worker/claim", json={"queue": "image", "worker_id": "w1"}, headers=_hdr())
+    job = r.json()["job"]
+    assert set(job) == {"id", "queue", "payload"}
 
 
 def test_claim_execute_complete_over_http(client):

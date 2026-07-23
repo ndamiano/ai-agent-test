@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import tools.comfyui_tools as ct
 from db import queue_client
 from tools.execution_context import execution_context
+from tools.safety import SafetyViolation
 from worker import handlers
 from worker.agent import Agent
 
@@ -72,37 +73,20 @@ def test_comfy_image_job_failure_degrades(monkeypatch, tmp_path):
     assert result == {"success": False, "error": "no worker"}
 
 
-def test_trellis_batch_queues_one_job_per_sprite(monkeypatch, tmp_path):
-    sprites, out = tmp_path / "in", tmp_path / "out"
-    sprites.mkdir(), out.mkdir()
-    (sprites / "barrel.png").write_bytes(PNG)
-    (sprites / "crate.png").write_bytes(PNG)
-    queues = []
-
-    def run_job(queue, payload, **kw):
-        queues.append((queue, payload["kind"]))
-        assert base64.b64decode(payload["image_b64"]) == PNG
-        # The control plane offloads the GLB at completion; consumers get a path.
-        blob = tmp_path / f"{len(queues)}.glb"
-        blob.write_bytes(GLB)
-        return {"status": "done", "result": {"glb_file": str(blob)}}
-
-    monkeypatch.setattr(queue_client, "run_job", run_job)
-    monkeypatch.setattr(ct, "_decimate_glb", lambda p: True)
-
-    assert ct.run_trellis_batch(str(sprites), str(out)) == {"barrel", "crate"}
-    assert queues == [("mesh", "trellis_mesh")] * 2
-    assert (out / "barrel.glb").read_bytes() == GLB
+def test_build_item_payload_returns_workflow_for_clean_prompt(monkeypatch):
+    """The image queue payload for one item: safety-screened, wrapped for enqueue."""
+    monkeypatch.setattr(ct, "screen_image_prompt", lambda d: None)
+    result = ct.build_item_payload("a blue cat")
+    assert result["kind"] == "comfy_image"
+    assert "workflow" in result
 
 
-def test_trellis_batch_skips_failed_meshes(monkeypatch, tmp_path):
-    sprites, out = tmp_path / "in", tmp_path / "out"
-    sprites.mkdir(), out.mkdir()
-    (sprites / "barrel.png").write_bytes(PNG)
-    monkeypatch.setattr(queue_client, "run_job",
-                        lambda *a, **kw: {"status": "failed", "error": "OOM"})
-    assert ct.run_trellis_batch(str(sprites), str(out)) == set()
-    assert not (out / "barrel.glb").exists()
+def test_build_item_payload_returns_none_for_blocked_prompt(monkeypatch):
+    """Safety filter blocks: returns None, never sent to the queue."""
+    monkeypatch.setattr(ct, "screen_image_prompt",
+                        lambda d: SafetyViolation("csam_explicit", "kill"))
+    result = ct.build_item_payload("kill everyone")
+    assert result is None
 
 
 # --- worker: the flows that need the GPU ------------------------------------

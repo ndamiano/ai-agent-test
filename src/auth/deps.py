@@ -11,11 +11,20 @@ from fastapi import HTTPException, Request
 from starlette.responses import JSONResponse
 
 from auth.store import User, balance, resolve_token
+from db import store as db_store
 
 # Reachable without a token: the health probe, the login endpoint, the API docs, and the
 # payment webhook (server-to-server — no user token; authed by the provider's signature,
 # verified inside the CreditProvider, never by this gate).
 PUBLIC_PATHS = {"/", "/auth/login", "/docs", "/redoc", "/openapi.json", "/api/billing/webhook"}
+
+# The /play game harness is static HTML/JS the browser loads with plain <script>/<img>/fetch — no
+# way to attach a Bearer header to those sub-resource requests. So /play alone authenticates by a
+# cookie (`maestro_play`) the browser sends automatically, scoped to Path=/play so it NEVER rides
+# any /api or /auth request: the whole API surface stays strictly header-only, cookie-immune (and
+# thus CSRF-immune). This cookie is the single, deliberate deviation from that model — see the
+# /play branch in `install_auth`.
+PLAY_COOKIE = "maestro_play"
 
 
 def bearer_token(request: Request) -> Optional[str]:
@@ -65,11 +74,15 @@ def install_auth(app) -> None:
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
         path = request.url.path
+        if request.method == "OPTIONS" or path in PUBLIC_PATHS:
+            return await call_next(request)
+        # The static game harness — cookie-gated, ownership-checked (a separate model, see below).
+        if path == "/play" or path.startswith("/play/"):
+            return await _play_gate(request, call_next)
         # The API lives under /api and /auth; everything else is the static SPA shell + its
         # assets, which the browser must fetch (unauthenticated) before it can even show the
         # login form. So gate only the API surfaces — the frontend is served in the clear.
-        if (request.method == "OPTIONS" or path in PUBLIC_PATHS
-                or (not path.startswith("/api") and not path.startswith("/auth"))):
+        if not path.startswith("/api") and not path.startswith("/auth"):
             return await call_next(request)
         # Header-only: a token never rides in the URL, so it can't leak into access logs, browser
         # history, or Referer. Browser <img>/download fetches attach the header via authed fetch +
@@ -79,5 +92,20 @@ def install_auth(app) -> None:
         user = resolve_token(token)
         if user is None:
             return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        request.state.user = user
+        return await call_next(request)
+
+    async def _play_gate(request: Request, call_next):
+        """Gate a /play request by the `maestro_play` cookie (never the Authorization header — the
+        static harness can't set one on its sub-resource fetches). A valid session is required for
+        every /play path; a per-game bundle/asset under /play/games/<id>/ ALSO requires ownership,
+        so one signed-in user can't open another's game by guessing its run id."""
+        user = resolve_token(request.cookies.get(PLAY_COOKIE))
+        if user is None:
+            return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        parts = request.url.path.split("/")  # ["", "play", "games", "<id>", ...]
+        if len(parts) >= 4 and parts[2] == "games":
+            if db_store.owner_of(parts[3]) != user.id:
+                return JSONResponse(status_code=403, content={"detail": "not your game"})
         request.state.user = user
         return await call_next(request)

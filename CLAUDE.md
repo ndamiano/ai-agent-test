@@ -297,7 +297,11 @@ src/
   auth/                  identity + access (sqlite at <data_dir>/auth.db): store.py
                          (users + bearer sessions + credit ledger, pbkdf2, token stored as a hash +
                          TTL), deps.py (header-only bearer gate on /api + /auth; static SPA served
-                         in the clear; require_credits = that gate PLUS a positive balance, for
+                         in the clear; /play cookie-gated — the static game harness can't attach a
+                         header to its <script>/<img> sub-resource fetches, so login mints a
+                         `maestro_play` httponly cookie scoped Path=/play (never touches the API's
+                         header-only model), and the gate ownership-checks /play/games/<id>/*;
+                         require_credits = that gate PLUS a positive balance, for
                          inference that is never charged but must not be free to everyone),
                          ratelimit.py (per-handle login throttle), router.py (login/
                          logout, NO signup), billing.py (cost(spec), flat 1), credits.py (provider-

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatElapsed, stageFor, computeRemaining } from './GamesPanel'
+import { formatElapsed, stageFor, budgetFraction } from './GamesPanel'
 
 describe('formatElapsed', () => {
     it('renders m:ss, zero-padding seconds', () => {
@@ -35,15 +35,20 @@ describe('stageFor', () => {
     })
 })
 
-describe('computeRemaining', () => {
-    it('is the remaining fraction of the granted budget', () => {
-        expect(computeRemaining(14400, 0)).toBe(1)
-        expect(computeRemaining(14400, 7200)).toBe(0.5)
-        expect(computeRemaining(14400, 14400)).toBe(0)
+describe('budgetFraction', () => {
+    it('is null (no bar) when the game is uncharged', () => {
+        expect(budgetFraction(null)).toBeNull()
+        expect(budgetFraction(undefined)).toBeNull()
     })
 
-    it('clamps overdraw to zero and an uncharged game to zero', () => {
-        expect(computeRemaining(14400, 20000)).toBe(0)
-        expect(computeRemaining(0, 0)).toBe(0)
+    it('passes a 0..1 fraction through, and normalizes a 0..100 percentage', () => {
+        expect(budgetFraction(0.25)).toBe(0.25)
+        expect(budgetFraction(1)).toBe(1)
+        expect(budgetFraction(40)).toBe(0.4)
+    })
+
+    it('clamps to [0,1]', () => {
+        expect(budgetFraction(-0.5)).toBe(0)
+        expect(budgetFraction(150)).toBe(1)
     })
 })

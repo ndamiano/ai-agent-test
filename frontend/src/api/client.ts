@@ -1,4 +1,4 @@
-import type { AdminQueues, Game, GameDetail, SystemStatus } from '../types'
+import type { AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, SystemStatus } from '../types'
 import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
@@ -181,6 +181,23 @@ export const api = {
         request<Game[]>('/games'),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
+    // The durable build/spec event log — catch-up after a reload or a websocket gap. `after` is an
+    // event-id cursor (0 = from the start); the rows carry `id` for incremental follow-up.
+    getGameEvents: (runId: string, after = 0) =>
+        request<DurableEventRow[]>(`/games/${runId}/events?after=${after}`),
+    // The built game's asset manifest with per-asset render status. Authed + ownership-checked;
+    // returns [] before the game is skinned.
+    getGameAssets: (runId: string) =>
+        request<GameAsset[]>(`/games/${runId}/assets`),
+    // Fetch one asset's bytes through the authed blob route and hand back an object URL — <img>/
+    // download can't attach a bearer header, so the header-only auth design loads binaries this way.
+    // The caller owns the URL and must revokeObjectURL it when done.
+    getAssetBlobUrl: async (runId: string, assetId: string): Promise<string> => {
+        const res = await fetch(`${base}/games/${runId}/assets/${assetId}`, { headers: authHeaders() })
+        if (res.status === 401) handleUnauthorized()
+        if (!res.ok) throw new ApiError(res.status, await errorBody(res))
+        return URL.createObjectURL(await res.blob())
+    },
     freezeGame: (runId: string) =>
         request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
     buildGame: (runId: string, autoPause = false) =>
@@ -199,6 +216,11 @@ export const api = {
     // Skin the shapes: plan + render assets for a built game (additive, re-gates after).
     skinAssets: (runId: string) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/assets`, { method: 'POST' }),
+    // Re-render ONE asset with a new prompt — a single-asset swap, no whole-game re-skin. The
+    // batch's assets_done fires on completion, which is what refetches the gallery.
+    regenerateAsset: (runId: string, assetId: string, prompt: string) =>
+        request<{ status: string; run_id: string; asset_id: string }>(
+            `/games/${runId}/assets/${assetId}/regenerate`, { method: 'POST', body: JSON.stringify({ prompt }) }),
 
     // System
     getStatus: () =>

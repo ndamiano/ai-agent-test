@@ -8,11 +8,14 @@ live here.
 """
 
 import asyncio
+import json
 import logging
+import re
 import threading
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from auth import store
@@ -23,7 +26,7 @@ from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
-from maestro.codegen.reskin import add_assets
+from maestro.codegen.reskin import add_assets, regenerate_asset
 from maestro.codegen.run import freeze_spec
 from maestro.run_control import get as get_control
 from maestro.state import RunState
@@ -43,6 +46,10 @@ class AutoPauseBody(BaseModel):
 
 class FixBody(BaseModel):
     note: str = ""
+
+
+class RegenerateBody(BaseModel):
+    prompt: str
 
 
 # Asset skins in flight (one per run) — they run on the image/mesh queues, not the build GPU, so
@@ -125,10 +132,89 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         "play_url": f"/play/index.html?game={run_id}" if built else None,
         "credits_spent": row.get("credits_spent", 0),
-        "seconds_granted": row.get("seconds_granted", 0),
-        "seconds_used": row.get("seconds_used", 0),
-        "seconds_remaining": db_store.compute_remaining(run_id),
+        # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
+        # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
+        "budget_pct_remaining": _budget_pct(row, run_id),
     }
+
+
+def _budget_pct(row: Dict, run_id: str) -> Optional[float]:
+    granted = row.get("seconds_granted", 0)
+    if granted <= 0:
+        return None
+    return max(0.0, min(1.0, db_store.compute_remaining(run_id) / granted))
+
+
+_ASSET_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+# (kind, manifest key, file extension, media type)
+_ASSET_KINDS = (
+    ("sprite", "sprites", "png", "image/png"),
+    ("mesh", "meshes", "glb", "model/gltf-binary"),
+)
+
+
+@router.get("/{run_id}/assets", response_model=List[Dict])
+async def game_assets(run_id: str, user: User = Depends(get_current_user)):
+    """The built game's asset manifest with per-asset render status. Empty until the game is
+    skinned. `status`: ready (the file is on disk), rendering (a skin batch is in flight), or
+    pending (planned but not yet rendered). The bytes come from the sibling blob route, so the
+    frontend never touches the public /play mount."""
+    state = _require_state(run_id, user)
+    manifest_path = game_dir(state.run_dir) / "assets.json"
+    if not manifest_path.exists():
+        return []
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assets_dir = game_dir(state.run_dir) / "assets"
+    rendering = db_store.has_active_batch(run_id)
+    out: List[Dict] = []
+    for kind, key, ext, _media in _ASSET_KINDS:
+        for entry in manifest.get(key, []):
+            aid = entry["id"]
+            ready = (assets_dir / f"{aid}.{ext}").exists()
+            out.append({
+                "id": aid, "kind": kind,
+                "status": "ready" if ready else ("rendering" if rendering else "pending"),
+                "w": entry.get("w"), "h": entry.get("h"),
+            })
+    return out
+
+
+@router.get("/{run_id}/assets/{asset_id}")
+async def game_asset_blob(run_id: str, asset_id: str, user: User = Depends(get_current_user)):
+    """Stream one rendered asset (png or glb), authed + ownership-checked. Replaces the public
+    /play static path for the management UI."""
+    state = _require_state(run_id, user)
+    if not _ASSET_ID.match(asset_id):
+        raise HTTPException(status_code=400, detail="bad asset id")
+    assets_dir = game_dir(state.run_dir) / "assets"
+    for _kind, _key, ext, media in _ASSET_KINDS:
+        path = assets_dir / f"{asset_id}.{ext}"
+        if path.exists():
+            return FileResponse(path, media_type=media)
+    raise HTTPException(status_code=404, detail="no such asset")
+
+
+@router.post("/{run_id}/assets/{asset_id}/regenerate", response_model=Dict)
+async def regenerate_game_asset(run_id: str, asset_id: str, body: RegenerateBody,
+                                user: User = Depends(get_current_user)):
+    """Re-render ONE asset of a built game with a new prompt, without re-skinning the whole game.
+    Enqueues a single image job that saves the new png/glb and re-stages it through the same `skin`
+    finalize a full re-skin uses — so assets_done fires and the gallery refetches. A build row of
+    kind 'assets' tracks it (the finalize closes it out)."""
+    _require_state(run_id, user)
+    if not _ASSET_ID.match(asset_id):
+        raise HTTPException(status_code=400, detail="bad asset id")
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="a prompt is required")
+    _require_compute(run_id)
+    build_id = db_store.create_build(run_id, kind="assets")
+    db_store.build_started(build_id)
+    batch_id = await asyncio.to_thread(regenerate_asset, run_id, asset_id, prompt, build_id)
+    if batch_id is None:
+        db_store.build_finished(build_id, "failed")
+        raise HTTPException(status_code=400, detail="prompt blocked by the safety filter")
+    return {"status": "regenerating", "run_id": run_id, "asset_id": asset_id}
 
 
 @router.get("/{run_id}/events", response_model=List[Dict])

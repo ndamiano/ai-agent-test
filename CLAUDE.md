@@ -297,7 +297,11 @@ src/
   auth/                  identity + access (sqlite at <data_dir>/auth.db): store.py
                          (users + bearer sessions + credit ledger, pbkdf2, token stored as a hash +
                          TTL), deps.py (header-only bearer gate on /api + /auth; static SPA served
-                         in the clear; require_credits = that gate PLUS a positive balance, for
+                         in the clear; /play cookie-gated — the static game harness can't attach a
+                         header to its <script>/<img> sub-resource fetches, so login mints a
+                         `maestro_play` httponly cookie scoped Path=/play (never touches the API's
+                         header-only model), and the gate ownership-checks /play/games/<id>/*;
+                         require_credits = that gate PLUS a positive balance, for
                          inference that is never charged but must not be free to everyone),
                          ratelimit.py (per-handle login throttle), router.py (login/
                          logout, NO signup), billing.py (cost(spec), flat 1), credits.py (provider-
@@ -427,7 +431,8 @@ src/
                          wait, and a bare create_task would stall every other completion). WS events
                          route
                          per-user server-side (event_bus resolves run → owner). The games router is
-                         codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets;
+                         codegen-only: list/detail/freeze/build/pause/resume/auto-pause/fix/assets
+                         (+ asset manifest/blob GETs and per-asset regenerate);
                          freeze→freeze_spec, build/fix→build_chain.kickoff (fire-and-forget, off the
                          event loop), resume→build_chain.resume (re-drive the durable cursor),
                          assets→reskin.add_assets (its own
@@ -435,6 +440,10 @@ src/
                          queue, so assets_done and build_finished are the FINALIZE's job, and a
                          second skin is refused by has_active_batch as well as the in-process key,
                          or a double-click pays for a second full set of image/mesh jobs).
+                         POST assets/<id>/regenerate→reskin.regenerate_asset: re-render ONE asset
+                         with a new prompt as a one-job `image` batch reusing the `skin` finalize
+                         (save_sprite/mesh_from_image → stage_for_play + assets_done), no whole-game
+                         re-skin — the source already references the id.
                          build/resume/fix/assets
                          all pass _require_compute FIRST: enqueue enforces the same budget per job,
                          but a broke run must not win the GPU slot and then thrash on refused jobs

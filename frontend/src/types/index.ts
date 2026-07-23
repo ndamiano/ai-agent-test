@@ -37,8 +37,35 @@ export interface GameDetail {
     assets_exist: boolean
     play_url: string | null
     credits_spent: number
-    seconds_granted: number
-    seconds_used: number
+    // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
+    // uncharged (no bar). Raw seconds — especially seconds_used — are deliberately never surfaced.
+    budget_pct_remaining: number | null
+}
+
+// One row of the durable build/spec event log (GET /api/games/:id/events). Written by the backend's
+// _emit: the event name is in `kind` and the fields live in `payload` (flattened) — a different
+// shape from the live websocket copy, so both are normalized to a common event before folding.
+export interface DurableEventRow {
+    id: number
+    game_id: string
+    build_id: string | null
+    kind: string
+    payload: Record<string, any>
+    created_at: number
+}
+
+// An asset the built game uses (GET /api/games/:id/assets). The bytes are fetched separately from
+// the authed blob route (never the public /play mount), so there is no url here — the gallery builds
+// an object URL from an authed fetch. `status`: ready (on disk), rendering (a skin batch is live),
+// or pending (planned, not yet rendered).
+export type AssetKind = 'sprite' | 'mesh'
+export type AssetStatus = 'ready' | 'rendering' | 'pending'
+export interface GameAsset {
+    id: string
+    kind: AssetKind
+    status: AssetStatus
+    w?: number
+    h?: number
 }
 
 export interface SystemStatus {

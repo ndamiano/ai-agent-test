@@ -247,6 +247,35 @@ def start_asset_chain(run_id: str, plan: list, mode: str, gate_ok: bool,
     return batch_id if enqueued else None
 
 
+def regenerate_asset(run_id: str, asset_id: str, prompt: str,
+                     build_id: Optional[str] = None) -> Optional[str]:
+    """Re-render ONE asset of a built+skinned game with a new prompt — without re-skinning the
+    whole game. The source already references the asset id (assets.json + the draw/tag it keys on),
+    so this is a pure file swap: a one-job batch that saves the new png/glb and RE-STAGES it into
+    runtime/games/<run_id>/ through the SAME `skin` finalize a full re-skin uses (stage_for_play +
+    assets_done), so the played game and the cockpit gallery both pick it up and the existing
+    assets_done refetch just works. Returns the batch id, or None if the prompt was blocked by the
+    safety filter.
+
+    gate_ok is True unconditionally: the game already passed its gates and is staged, so the
+    finalize must re-stage the swapped file (stage_for_play only runs when gate_ok)."""
+    mode = "3d" if _is_3d(game_files(RunState(run_id).run_dir)) else "2d"
+    payload = build_item_payload(prompt)
+    if payload is None:
+        logger.warning("regenerate %s/%s: prompt blocked by the safety filter", run_id, asset_id)
+        return None
+    then = {"enqueue": "mesh_from_image", "finalize": "skin"} if mode == "3d" \
+        else {"operations": ["save_sprite"], "finalize": "skin"}
+    batch_id = uuid.uuid4().hex[:16]
+    with run_scope(run_id):
+        db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
+                             batch_id=batch_id,
+                             metadata={"run_id": run_id, "asset_id": asset_id, "mode": mode,
+                                       "gate_ok": True, "then": then})
+    logger.info("regenerate %s: enqueued asset %s (%s) as batch %s", run_id, asset_id, mode, batch_id)
+    return batch_id
+
+
 def write_manifest(run_dir, sprites: list) -> None:
     manifest = {"sprites": [{"id": s["id"], "file": f"assets/{s['id']}.png",
                              "w": s["w"], "h": s["h"]} for s in sprites]}

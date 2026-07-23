@@ -113,11 +113,11 @@ VOL=/workspace bash scripts/provision_volume.sh
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
 docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v3 .
 docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v3 .
-docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v6 .
-docker push ndamiano100/maestro-worker:mesh-v6   # etc.
+docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v10 .
+docker push ndamiano100/maestro-worker:mesh-v10   # etc.
 ```
 
-Current tags: `llm-v3`, `image-v3`, `mesh-v6`. Bump the tag on every push — RunPod caches images
+Current tags: `llm-v3`, `image-v3`, `mesh-v10`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
 
 The mesh image is the fussy one; its runtime deps are the home-verified TRELLIS stack exactly
@@ -125,6 +125,24 @@ The mesh image is the fussy one; its runtime deps are the home-verified TRELLIS 
 set (`scripts/trellis2-sdpa-dinov3.patch` — sdpa attention backends + the DINOv3 module layout),
 gcc for triton's first-use JIT of the flex_gemm kernels, and `TRITON_CACHE_DIR` on the network
 volume so that JIT is paid once per volume, not per pod.
+
+**Mesh cold start (measured on a 5090 pod, 2026-07-23).** A pod reaches WARM — able to serve at
+steady speed — in ~116s of the ~330s it used to take, and a claimed job never pays boot:
+
+| phase | seconds | what removed the old cost |
+|---|---|---|
+| pod create → container running (13.7GB pull) | ~45 | image size — the remaining lever |
+| stage 9.7GB volume → `/dev/shm` | ~5 | @2.7GB/s; the FUSE mount does NOT retain page cache, so prefaulting in place bought nothing and only loading from RAM holds |
+| torch/trellis import | ~10 | |
+| pipeline load | ~4 | skip default init (37s of a 43s load, all overwritten by the checkpoint) + load only the tier's 6 models, not all 8 |
+| warmup mesh | ~35 | lazy encoders (DINOv3/BiRefNet) + first-use kernel compile, paid once at boot |
+| every real job | ~13 | |
+
+The entrypoint gates worker registration on `/health` reporting `"warm": true`. That costs no
+wall-clock (nothing can generate earlier) and keeps `exec_seconds` honest — otherwise the first
+claimed job is billed 53s for 13s of work. It also means a pod that cannot generate dies at boot
+instead of failing a user's job. Staging needs ~11GB free in `/dev/shm`, so mesh pods want ≥32GB
+RAM; below that the server logs `staging skipped` and loads off the volume (~48s instead of ~4s).
 
 Make one RunPod **template** per image (container image + volume mount at `/workspace`; no ports).
 Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (`WORKER_TOKEN` must

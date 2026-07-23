@@ -87,7 +87,12 @@ def trellis_mesh(agent, payload):
             r = _post(agent, f"{agent.target}/generate", data=img, timeout=900,
                       headers={"Content-Type": "image/png"})
             if r.status_code == 200:
-                return {"glb_b64": base64.b64encode(r.content).decode("ascii")}, None
+                # The pod's stdout is unreachable, so the server's own load/generate split rides
+                # back on the job row — otherwise a cold start can only ever be inferred.
+                return {"glb_b64": base64.b64encode(r.content).decode("ascii"),
+                        "stage_seconds": r.headers.get("X-Stage-Seconds"),
+                        "load_seconds": r.headers.get("X-Load-Seconds"),
+                        "generate_seconds": r.headers.get("X-Generate-Seconds")}, None
             last = f"Status {r.status_code}: {r.text[:2000]}"
         except Exception as e:
             last = str(e)

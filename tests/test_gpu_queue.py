@@ -21,11 +21,12 @@ GLB = b"glTF\x02fake"
 
 
 class _Resp:
-    def __init__(self, status_code=200, body=None, content=b"", text=""):
+    def __init__(self, status_code=200, body=None, content=b"", text="", headers=None):
         self.status_code = status_code
         self._body = body or {}
         self.content = content
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._body
@@ -142,6 +143,21 @@ def test_trellis_handler_retries_once():
     assert error is None
     assert base64.b64decode(result["glb_b64"]) == GLB
     assert calls.count("http://trellis/generate") == 2
+
+
+def test_trellis_handler_carries_the_servers_timing_split():
+    """A pod's stdout is unreachable, so cold-start attribution only survives if the load /
+    generate split rides back on the job row."""
+    a = _agent(queue="mesh", target="http://trellis")
+    a.session.get.side_effect = lambda url, **kw: _Resp(200, {"data": []})
+    a.session.post.side_effect = lambda url, **kw: _Resp(
+        200, content=GLB, headers={"X-Load-Seconds": "5.6", "X-Generate-Seconds": "16.2"})
+    result, error = handlers.trellis_mesh(
+        a, {"kind": "trellis_mesh", "image_b64": base64.b64encode(PNG).decode()})
+
+    assert error is None
+    assert result["load_seconds"] == "5.6"
+    assert result["generate_seconds"] == "16.2"
 
 
 def test_trellis_handler_gives_up_after_two_attempts():

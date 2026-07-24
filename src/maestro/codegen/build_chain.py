@@ -210,9 +210,10 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
             cursor.prev = snap
             started = _start_fix(run_id, rs, cursor, error, stalled)
             if not started:
-                # A deterministic pass resolved it — no llm turn. Advance the step so a pathological
-                # deterministic loop is still bounded by max_steps (mirrors AgentLoop's no-LLM batch).
-                cursor.step += 1
+                # A deterministic pass resolved it — no llm turn, no step consumed: steps meter the
+                # MODEL's budget. Unbounded looping is prevented by identity, not by the cap — each
+                # error identity gets exactly one free pass (det_tried), so a pass that doesn't
+                # actually clear its error goes to the LLM on the next encounter.
                 continue
             # phase is now "fix"; fall through with result=None
 
@@ -245,9 +246,10 @@ def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, sta
     shape = _SHAPE_BY_CODE.get(error.code, "read_write")
     if shape == "read_write":
         cls = classify(error)
-        if cls.deterministic is not None:
+        if cls.deterministic is not None and idkey(error) not in cursor.det_tried:
             res = cls.deterministic(rs.run_dir, error) or {}
             if res.get("count"):
+                cursor.det_tried.append(idkey(error))
                 summary = ", ".join(
                     f"{k}:{v if isinstance(v, str) else '.'.join(map(str, v[:2]))}"
                     for k, v in res.get("changes", [])[:8])

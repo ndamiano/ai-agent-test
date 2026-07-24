@@ -80,6 +80,7 @@ class BuildCursor:
     recent: List[List[str]] = field(default_factory=list)   # last N to-do snapshots
     parked: List[str] = field(default_factory=list)         # idkeys the loop gave up on
     prev: Optional[List[str]] = None                        # snapshot before the current/last fix
+    det_tried: List[str] = field(default_factory=list)      # idkeys already given their one free deterministic pass
     passed: List[str] = field(default_factory=list)         # components already milestoned
     todo: List[Dict] = field(default_factory=list)   # last outer to-do (emitted with build_step)
     # the current fix

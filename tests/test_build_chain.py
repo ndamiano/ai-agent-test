@@ -133,3 +133,36 @@ def test_reaper_readvance_of_a_mid_fix_build_does_not_crash(env, monkeypatch):
 
     cursor = build_state.load(run_dir)
     assert cursor.phase != "done"                        # re-driven, not wedged
+
+
+def test_deterministic_pass_spends_no_step_and_fires_once_per_identity(env, monkeypatch):
+    """Steps meter the MODEL's budget: a fix resolved by a deterministic pass must not consume one.
+    The pathological-loop bound is by identity instead — one free pass per error identity; if the
+    same identity survives its pass, _start_fix hands it to the LLM."""
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.codegen.fix_classes import FixClass
+    from maestro.modules.module import Error, ErrorType, idkey
+
+    run_id, tmp_path = env
+    rs = RunState(run_id)
+    cursor = build_state.BuildCursor(build_id="b1")
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game",
+                message="x", path="game.ts")
+
+    calls = []
+    fake_cls = FixClass(id="fake", matches=lambda e: True,
+                        deterministic=lambda rd, e: (calls.append(1) or
+                                                     {"changes": [("z", "game.ts")], "count": 1}))
+    monkeypatch.setattr(build_chain, "classify", lambda e: fake_cls)
+    monkeypatch.setattr(build_chain, "_emit_step", lambda *a, **k: None)
+
+    # First encounter: pass runs, fix resolved with no llm turn, step untouched, identity recorded.
+    assert _start_fix(run_id, rs, cursor, err, stalled=False) is False
+    assert cursor.step == 0
+    assert calls == [1]
+    assert idkey(err) in cursor.det_tried
+
+    # Same identity again: the free pass is spent — straight to the LLM fix, pass not re-run.
+    assert _start_fix(run_id, rs, cursor, err, stalled=False) is True
+    assert calls == [1]
+    assert cursor.phase == "fix"

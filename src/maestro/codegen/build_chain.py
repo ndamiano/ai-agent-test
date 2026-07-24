@@ -135,7 +135,13 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
         raise RuntimeError("build refuses to run until the spec is frozen")
     _seed(run_id, rs, spec)
 
+    prev = build_state.load(rs.run_dir)
     cursor = BuildCursor(build_id=build_id, kind=kind, max_steps=max_steps, t0=time.time())
+    if kind in _AUDIT_KINDS and prev is not None:
+        # Carry the verdict anchors across builds: the prior build's delivered claims were judged
+        # against this same on-disk code, so a fresh audit ratchets from them instead of
+        # re-litigating from zero.
+        cursor.audit_delivered = list(prev.audit_delivered)
     if kind == "fix":
         # The note is the failing gate; a synthetic HUMAN error classifies to `default` (grounded
         # hunk edits, no whole-file rewrite), exactly as the old fix_from_note.

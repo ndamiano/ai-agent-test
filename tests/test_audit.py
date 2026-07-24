@@ -212,6 +212,14 @@ def test_step_cap_and_fix_kind_skip_the_audit(finalized):
     assert finalized == [True, True]
 
 
+def test_first_sweep_of_a_new_audit_build_carries_prior_anchors(finalized):
+    cursor = BuildCursor(build_id="b2", kind="audit",
+                         audit_delivered=["Gold is earned by winning battles."])
+    assert _advance_audit("r", None, cursor) is True
+    assert cursor.fix["shape"] == "audit"
+    assert cursor.fix["anchors"] == ["Gold is earned by winning battles."]
+
+
 def test_audit_kickoff_gets_the_200_step_default(monkeypatch):
     """audit_run must not pin its own cap — kickoff owns the per-kind defaults (an explicit 40 here
     finalized a live run fail-open mid-round at step 43)."""

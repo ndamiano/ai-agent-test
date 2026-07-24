@@ -111,8 +111,12 @@ def test_play_responses_carry_the_no_exfil_csp(client):
     csp = client.get("/play/index.html", cookies={"maestro_play": tok}).headers.get(
         "content-security-policy", "")
     assert "default-src 'self'" in csp
-    assert "connect-src 'self'" in csp
+    # blob: is required for GLTFLoader's embedded GLB textures (object URLs) — img + fetch only.
+    assert "connect-src 'self' blob:" in csp
+    assert "img-src 'self' blob:" in csp
     assert "object-src 'none'" in csp
+    # blob: must never reach script-src — a blob: script would let generated code sidestep 'self'.
+    assert "script-src 'self' 'unsafe-inline';" in csp
 
     assert "content-security-policy" in client.get("/play/index.html").headers  # 401 too
     assert "content-security-policy" not in client.get("/api/games").headers

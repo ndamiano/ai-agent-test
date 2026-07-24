@@ -121,9 +121,13 @@ from fastapi.staticfiles import StaticFiles
 # the app origin (ownership-gated — a game only ever runs in its owner's browser), so this is
 # containment, not isolation; SHARING games requires true origin isolation first — see
 # tasks/production_hardening.md H1. 'unsafe-inline' is for index.html's own bootstrap script;
-# eval stays blocked.
+# eval stays blocked. blob: in img-src + connect-src is for GLTFLoader's embedded GLB textures —
+# it decodes them through same-document object URLs (ImageBitmapLoader fetches them, so connect-src
+# governs too); without it every mesh texture rejects and the whole GLB silently falls back to its
+# primitive shape (shipped: a fully skinned game playing as bare boxes). blob: grants nothing
+# cross-origin — the data already lives in the page.
 _PLAY_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
-             "connect-src 'self'; img-src 'self'; style-src 'self' 'unsafe-inline'; "
+             "connect-src 'self' blob:; img-src 'self' blob:; style-src 'self' 'unsafe-inline'; "
              "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 

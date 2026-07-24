@@ -122,7 +122,10 @@ src/
       tools.py           write(code, file — CREATE-ONLY, an existing non-empty file refuses with its
                          body so the turn converts to an edit) / edit(file, edits) — ATOMIC multi-hunk
                          (every hunk validated against the original body: found, unique, no overlap —
-                         all land or none, one version bump) / read_file (whole file, or offset/limit
+                         all land or none, one version bump; an exact-anchor miss falls back to
+                         whitespace-tolerant line matching — measured 668 misses were mostly
+                         indentation drift on otherwise-correct hunks — splicing at the file's REAL
+                         text, still unique-or-fail) / read_file (whole file, or offset/limit
                          line window; per-file .ts, path-safe — a slice does NOT ground an edit).
                          edit refuses any file whose first line starts `// GENERATED` (the control
                          scaffold, data.ts, worldgen's world.ts), pointing at the owning source. The
@@ -179,7 +182,13 @@ src/
                          the SITE but underdetermines the REPAIR, so ownership is by AUTHORITY not code.
                          contract-mismatch (field/export/shape) reconciles the CALLER to what exists
                          (its deterministic pass runs reconcile_types include_fields=False, so a field
-                         mismatch is NOT laundered into types.ts — it goes to the authority LLM).
+                         mismatch is NOT laundered into types.ts — it goes to the authority LLM;
+                         EXCEPT the dominance-gated append: a field used ≥2× on a game-owned type
+                         with no near-miss member is the types.ts-authored-first-couldn't-predict-it
+                         shape — the top measured TS2339 class — and is appended deterministically).
+                         missing-name (TS2304/TS2552, the top measured tsc code ×299) — deterministic
+                         import insertion when exactly ONE sibling exports the name; authority block
+                         distinguishes import-it vs thread-the-hook-parameter vs define-it-locally.
                          contract-assert (append the pipeline's own known assertion line) and
                          single-mover (strip the redundant input-driven mover) are deterministic-only
                          — a class whose repair the pipeline can compute spends no LLM call.

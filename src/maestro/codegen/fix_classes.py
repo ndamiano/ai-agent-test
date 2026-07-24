@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from maestro.codegen.gates import (
+    _append_field as append_field,
     dedupe_decls,
     game_dir,
     game_files,
@@ -134,11 +135,61 @@ def _contract_authority(spec, run_dir, error) -> str:
     return "# AUTHORITY — reconcile to what EXISTS (do not invent fields/exports)\n" + "\n\n".join(blocks)
 
 
+def _edit_distance(a: str, b: str) -> int:
+    if abs(len(a) - len(b)) > 2:
+        return 3
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _near_member(members: list, fld: str) -> Optional[str]:
+    low = fld.lower()
+    for m in members:
+        if m.lower() == low or _edit_distance(m.lower(), low) <= 2:
+            return m
+    return None
+
+
+def _append_dominant_fields(run_dir, error) -> list:
+    """The gated half of field-append: a field the game uses in ≥2 places, on a game-owned type
+    with NO near-miss existing member, is a field the model systematically relies on — types.ts
+    was authored first and simply couldn't predict it (the dominant TS2339 shape in measured
+    multi-file builds). Append it. A single use, or a near-miss name (`health` beside `hp`),
+    stays with the authority-guided LLM — that's the caller-typo case the blanket append would
+    launder into a duplicate field."""
+    files = game_files(run_dir)
+    types_path = game_dir(run_dir) / "types.ts"
+    if not types_path.exists():
+        return []
+    changes = []
+    for fld, typ in _PROP.findall(error.message or ""):
+        decl = _extract_decl(files, typ)
+        if not decl:                       # kit ambient type — never ours to widen
+            continue
+        if _near_member(_members(decl), fld):
+            continue
+        if _member_uses(files, fld) < 2:
+            continue
+        if append_field(types_path, typ, fld):
+            changes.append(("field", (typ, fld)))
+    return changes
+
+
 def _contract_deterministic(run_dir, error) -> dict:
-    # The safe monotone transforms only (declare export / union→enum / relax over-strict required).
-    # Field-append is OFF here: a field mismatch is exactly the hallucination-prone case, routed to the
-    # authority-guided LLM below instead of laundered into types.ts.
-    return reconcile_types(run_dir, include_fields=False)
+    # The safe monotone transforms (declare export / union→enum / relax over-strict required) —
+    # blanket field-append stays OFF (a field mismatch is the hallucination-prone case) — plus the
+    # dominance-gated append above, which recovers the one field-append shape that IS safe.
+    res = reconcile_types(run_dir, include_fields=False)
+    extra = _append_dominant_fields(run_dir, error)
+    if extra:
+        res = {"changes": list(res.get("changes", [])) + extra,
+               "count": res.get("count", 0) + len(extra)}
+    return res
 
 
 CONTRACT = FixClass(
@@ -403,12 +454,109 @@ SINGLE_MOVER = FixClass(
     deterministic=_strip_redundant_movers,
 )
 
+# ── missing-name ──────────────────────────────────────────────────────────────
+# TS2304 "Cannot find name 'X'" (+TS2552's did-you-mean variant) — the single biggest tsc code in
+# measured builds (×299). Three distinct root causes the raw error can't distinguish: the name is
+# exported by a SIBLING (fix = an import line — computable), it's a HOOK PARAMETER the function
+# didn't take (`kit` referenced in a helper — 3 of 8 prod parks), or it's genuinely undefined.
+# The deterministic pass lands the import case; the directive + authority steer the other two.
+_CANT_FIND = re.compile(r"Cannot find name '([^']+)'")
+_HOOK_PARAMS = {"kit", "input", "dt", "state", "g", "cam"}
+
+
+def _matches_missing_name(error) -> bool:
+    msg = error.message or ""
+    return ("TS2304" in msg or "TS2552" in msg) and bool(_CANT_FIND.search(msg))
+
+
+def _exporters_of(files: dict, name: str, exclude: str) -> list:
+    out = []
+    for fname, src in files.items():
+        if fname == exclude:
+            continue
+        if re.search(rf"export\s+(?:async\s+)?(?:interface|type|enum|const|let|var|function|class)\s+{re.escape(name)}\b", src) \
+           or re.search(rf"export\s*\{{[^}}]*\b{re.escape(name)}\b[^}}]*\}}", src):
+            out.append(fname)
+    return out
+
+
+def _add_import(src: str, name: str, module: str) -> str:
+    """Merge `name` into an existing import from `module`, else prepend a new import line."""
+    rx = re.compile(rf"^([ \t]*import\s*\{{)([^}}]*)(\}}\s*from\s*[\"']\./{re.escape(module)}(?:\.ts)?[\"'];?)",
+                    re.M)
+    m = rx.search(src)
+    if m:
+        names = [n.strip() for n in m.group(2).split(",") if n.strip()]
+        if name in names:
+            return src
+        return src[:m.start(2)] + " " + ", ".join(names + [name]) + " " + src[m.end(2):]
+    return f'import {{ {name} }} from "./{module}.ts";\n' + src
+
+
+def _import_missing_names(run_dir, error) -> Optional[dict]:
+    blamed = getattr(error, "path", None)
+    if not blamed:
+        return None
+    files = game_files(run_dir)
+    src = files.get(blamed)
+    if src is None or src.lstrip().startswith("// GENERATED"):
+        return None
+    changes = []
+    for name in dict.fromkeys(_CANT_FIND.findall(error.message or "")):
+        if name in _HOOK_PARAMS:
+            continue
+        owners = _exporters_of(files, name, blamed)
+        if len(owners) != 1:               # absent or ambiguous — the LLM decides with the authority block
+            continue
+        new = _add_import(src, name, owners[0][:-3])
+        if new != src:
+            src = new
+            changes.append(("import", f"{blamed}:{name}"))
+    if not changes:
+        return None
+    (Path(run_dir) / "game" / blamed).write_text(src, encoding="utf-8")
+    return {"changes": changes, "count": len(changes)}
+
+
+def _missing_name_authority(spec, run_dir, error) -> str:
+    files = game_files(run_dir)
+    blamed = getattr(error, "path", None) or ""
+    blocks = []
+    for name in dict.fromkeys(_CANT_FIND.findall(error.message or "")):
+        if name in _HOOK_PARAMS:
+            blocks.append(f"## `{name}` is a HOOK PARAMETER, not a global. The function using it "
+                          f"must TAKE it as a parameter, and every call site must PASS it — change "
+                          f"signature and call sites in the SAME edit.")
+            continue
+        owners = _exporters_of(files, name, blamed)
+        if owners:
+            blocks.append(f"## `{name}` is exported by {', '.join(owners)} — import it from there; "
+                          f"do NOT redefine it.")
+        else:
+            blocks.append(f"## `{name}` is defined NOWHERE in the game. Either it is a typo for an "
+                          f"existing name (check the file's own declarations) or it must be defined "
+                          f"locally in {blamed or 'the failing file'}.")
+    if not blocks:
+        return ""
+    return "# AUTHORITY — where each missing name actually lives\n" + "\n\n".join(blocks)
+
+
+MISSING_NAME = FixClass(
+    id="missing-name",
+    matches=_matches_missing_name,
+    directive=_directive("missing_name.txt"),
+    authority=_missing_name_authority,
+    deterministic=_import_missing_names,
+)
+
+
 DEFAULT = FixClass(id="default", matches=lambda e: True)
 
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [CONTRACT_ASSERT, SINGLE_MOVER, AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE, CONTRACT, DEFAULT]
+FIX_CLASSES = [CONTRACT_ASSERT, SINGLE_MOVER, AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE,
+               MISSING_NAME, CONTRACT, DEFAULT]
 
 
 def classify(error) -> FixClass:

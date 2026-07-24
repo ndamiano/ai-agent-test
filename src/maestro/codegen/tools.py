@@ -68,6 +68,33 @@ def _safe(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
 
 
+def _fuzzy_spans(content: str, old: str) -> list:
+    """Whitespace-tolerant hunk anchor: the (start, end) spans of every line window whose lines
+    match old_string's lines after per-line strip. The model reproduces the code it means to
+    replace with drifted indentation/trailing spaces far more often than it picks the wrong code —
+    measured 668 exact-anchor misses, many a whole fix subloop dying on a hunk whose every line was
+    right modulo whitespace. Matching is by line CONTENT; the span (and so what survives around the
+    replacement) is the file's real text. All-blank old_strings don't anchor."""
+    old_lines = [ln.strip() for ln in old.splitlines()]
+    if not old_lines or not any(old_lines):
+        return []
+    raw = content.splitlines(keepends=True)
+    offsets, pos = [], 0
+    for ln in raw:
+        offsets.append(pos)
+        pos += len(ln)
+    spans = []
+    for i in range(len(raw) - len(old_lines) + 1):
+        if all(raw[i + j].strip() == old_lines[j] for j in range(len(old_lines))):
+            start = offsets[i]
+            last = raw[i + len(old_lines) - 1]
+            end = offsets[i + len(old_lines) - 1] + len(last)
+            if not old.endswith("\n"):
+                end -= len(last) - len(last.rstrip("\r\n"))
+            spans.append((start, end))
+    return spans
+
+
 def _planned_names(state) -> set:
     """The filenames the planner committed to (manifest) — the write allow-list. Empty before a plan
     exists (early authoring), which disables the guard until there's a plan to enforce."""
@@ -142,6 +169,7 @@ def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict
             return fail('no edits — pass edits=[{"old_string": ..., "new_string": ...}, ...].')
         spans = []
         appends = []
+        fuzzy = 0
         for i, h in enumerate(hunks, 1):
             old = (h or {}).get("old_string", "")
             if not old:
@@ -155,14 +183,23 @@ def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict
                 appends.append(h)
                 continue
             n = content.count(old)
-            if n == 0:
-                return fail(f"hunk {i}/{len(hunks)}: old_string not found — re-anchor on the "
-                            "current content below. Nothing was applied.")
             if n > 1:
                 return fail(f"hunk {i}/{len(hunks)}: old_string matched {n} places — add "
                             "surrounding lines to make it unique. Nothing was applied.")
-            start = content.index(old)
-            end = start + len(old)
+            if n == 1:
+                start = content.index(old)
+                end = start + len(old)
+            else:
+                near = _fuzzy_spans(content, old)
+                if not near:
+                    return fail(f"hunk {i}/{len(hunks)}: old_string not found — re-anchor on the "
+                                "current content below. Nothing was applied.")
+                if len(near) > 1:
+                    return fail(f"hunk {i}/{len(hunks)}: old_string matched {len(near)} places "
+                                "(ignoring indentation) — add surrounding lines to make it "
+                                "unique. Nothing was applied.")
+                start, end = near[0]
+                fuzzy += 1
             for j, (s2, e2) in enumerate(spans, 1):
                 if start < e2 and s2 < end:
                     return fail(f"hunk {i}/{len(hunks)} overlaps hunk {j}'s text — merge them into "
@@ -178,7 +215,10 @@ def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict
             sep = "" if (not new_body or new_body.endswith("\n")) else "\n"
             new_body = new_body + sep + h["new_string"]
         v = _bump(name, new_body)
-        return {"ok": True, "file": name, "version": v, "applied": len(hunks), "content": new_body}
+        out = {"ok": True, "file": name, "version": v, "applied": len(hunks), "content": new_body}
+        if fuzzy:
+            out["fuzzy"] = fuzzy   # hunks that landed via whitespace-tolerant anchoring (telemetry)
+        return out
 
     def write(code: str = "", file: str = "main.ts", **_) -> dict:
         if not code or not code.strip():

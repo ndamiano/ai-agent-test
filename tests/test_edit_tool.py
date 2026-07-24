@@ -274,3 +274,38 @@ def test_edit_grounds_after_elided_read(tmp_path):
     tools["read_file"](file="world.ts")
     r = tools["edit"](file="world.ts", edits=[_hunk("export const TAG = 1;", "export const TAG = 2;")])
     assert r["ok"] is True  # grounded despite the read being elided
+
+
+# ── whitespace-tolerant anchoring ─────────────────────────────────────────────
+def test_fuzzy_anchor_lands_indentation_drift(tools, tmp_path):
+    """The dominant measured miss: every line of the hunk is right, the indentation isn't. The
+    edit lands, splicing at the file's REAL text."""
+    tools["read_file"](file="main.ts")
+    r = tools["edit"](file="main.ts",
+                      edits=[_hunk("   export const B = 2;  ", "export const B = 9;")])
+    assert r["ok"] is True and r.get("fuzzy") == 1
+    assert "export const B = 9;" in (tmp_path / "game" / "main.ts").read_text()
+
+
+def test_fuzzy_anchor_multiline(tmp_path):
+    _game(tmp_path, {"main.ts": "function f() {\n    let x = 1;\n    return x;\n}\n"})
+    tools = build_codegen_tools(RunState(tmp_path))
+    tools["read_file"](file="main.ts")
+    r = tools["edit"](file="main.ts",
+                      edits=[_hunk("let x = 1;\nreturn x;", "    return 2;")])
+    assert r["ok"] is True and r.get("fuzzy") == 1
+    assert (tmp_path / "game" / "main.ts").read_text() == "function f() {\n    return 2;\n}\n"
+
+
+def test_fuzzy_anchor_still_refuses_ambiguity(tmp_path):
+    _game(tmp_path, {"main.ts": "  let a = 1;\nif (x) {\n  let a = 1;\n}\n"})
+    tools = build_codegen_tools(RunState(tmp_path))
+    tools["read_file"](file="main.ts")
+    r = tools["edit"](file="main.ts", edits=[_hunk("let a = 1;", "let a = 2;")])
+    assert r["ok"] is False and "matched" in r["error"]
+
+
+def test_fuzzy_anchor_never_matches_blank(tools):
+    tools["read_file"](file="main.ts")
+    r = tools["edit"](file="main.ts", edits=[_hunk("   \n  ", "zap")])
+    assert r["ok"] is False and "not found" in r["error"]

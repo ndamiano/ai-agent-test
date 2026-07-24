@@ -346,3 +346,97 @@ def test_strip_dead_creategame_removes_block_keeps_hooks(tmp_path):
     assert "export function createState" in body and "export function update" in body
     main = (tmp_path / "game" / "main.ts").read_text(encoding="utf-8")
     assert "createGame" in main   # GENERATED file untouched
+
+
+# ── missing-name class ────────────────────────────────────────────────────────
+def test_missing_name_routes_ts2304():
+    from maestro.codegen.fix_classes import MISSING_NAME
+    e = _err("b.ts(3,5): error TS2304: Cannot find name 'spawnWave'", code="typechecks")
+    assert classify(e) is MISSING_NAME
+
+
+def test_missing_name_imports_from_the_one_exporter(tmp_path):
+    from maestro.codegen.fix_classes import _import_missing_names
+    rd = _write_files(tmp_path, {
+        "waves.ts": "export function spawnWave(n: number): void {}\n",
+        "b.ts": "export function step(): void { spawnWave(1); }\n",
+    })
+    e = _err("b.ts(1,30): error TS2304: Cannot find name 'spawnWave'", code="typechecks")
+    e = Error(type=e.type, code=e.code, component=e.component, message=e.message, path="b.ts")
+    res = _import_missing_names(rd, e)
+    assert res["count"] == 1
+    body = (tmp_path / "game" / "b.ts").read_text()
+    assert 'import { spawnWave } from "./waves.ts";' in body.splitlines()[0]
+
+
+def test_missing_name_merges_into_existing_import(tmp_path):
+    from maestro.codegen.fix_classes import _import_missing_names
+    rd = _write_files(tmp_path, {
+        "waves.ts": "export function spawnWave(n: number): void {}\nexport const MAX = 3;\n",
+        "b.ts": 'import { MAX } from "./waves.ts";\nexport function step(): void { spawnWave(MAX); }\n',
+    })
+    e = Error(type=ErrorType.FIX, code="typechecks", component="game", path="b.ts",
+              message="b.ts(2,32): error TS2304: Cannot find name 'spawnWave'")
+    res = _import_missing_names(rd, e)
+    assert res["count"] == 1
+    first = (tmp_path / "game" / "b.ts").read_text().splitlines()[0]
+    assert "MAX" in first and "spawnWave" in first and first.count("import") == 1
+
+
+def test_missing_name_leaves_hook_params_and_ambiguity_alone(tmp_path):
+    from maestro.codegen.fix_classes import _import_missing_names, _missing_name_authority
+    rd = _write_files(tmp_path, {
+        "a.ts": "export const boom = 1;\n",
+        "c.ts": "export const boom = 2;\n",
+        "b.ts": "export function step(): void { boom; kit.rng(); }\n",
+    })
+    e = Error(type=ErrorType.FIX, code="typechecks", component="game", path="b.ts",
+              message="b.ts(1,1): error TS2304: Cannot find name 'boom'\n"
+                      "b.ts(1,2): error TS2304: Cannot find name 'kit'")
+    assert _import_missing_names(rd, e) is None          # two exporters + a hook param → no edit
+    auth = _missing_name_authority({}, rd, e)
+    assert "HOOK PARAMETER" in auth and "a.ts" in auth and "c.ts" in auth
+
+
+# ── dominance-gated field append ──────────────────────────────────────────────
+def test_dominant_field_is_appended(tmp_path):
+    from maestro.codegen.fix_classes import _append_dominant_fields
+    rd = _write_files(tmp_path, {
+        "types.ts": "export interface GameState {\n  score: number;\n}\n",
+        "game.ts": "let s: any;\ns.combo += 1;\nif (s.combo > 2) {}\n",
+    })
+    e = _err("game.ts(2,3): error TS2339: Property 'combo' does not exist on type 'GameState'")
+    changes = _append_dominant_fields(rd, e)
+    assert ("field", ("GameState", "combo")) in changes
+    assert "combo?: any;" in (tmp_path / "game" / "types.ts").read_text()
+
+
+def test_near_miss_field_is_not_appended(tmp_path):
+    """`health` beside an existing `hp`-like member is the caller-typo case — stays with the LLM."""
+    from maestro.codegen.fix_classes import _append_dominant_fields
+    rd = _write_files(tmp_path, {
+        "types.ts": "export interface GameState {\n  health: number;\n}\n",
+        "game.ts": "let s: any;\ns.helth = 3;\ns.helth -= 1;\n",
+    })
+    e = _err("game.ts(2,3): error TS2339: Property 'helth' does not exist on type 'GameState'")
+    assert _append_dominant_fields(rd, e) == []
+
+
+def test_single_use_field_is_not_appended(tmp_path):
+    from maestro.codegen.fix_classes import _append_dominant_fields
+    rd = _write_files(tmp_path, {
+        "types.ts": "export interface GameState {\n  score: number;\n}\n",
+        "game.ts": "let s: any;\ns.oneOff = 1;\n",
+    })
+    e = _err("game.ts(2,3): error TS2339: Property 'oneOff' does not exist on type 'GameState'")
+    assert _append_dominant_fields(rd, e) == []
+
+
+def test_kit_type_is_never_widened(tmp_path):
+    from maestro.codegen.fix_classes import _append_dominant_fields
+    rd = _write_files(tmp_path, {
+        "types.ts": "export interface GameState { score: number; }\n",
+        "game.ts": "let e: any;\ne.mana = 1;\ne.mana += 2;\n",
+    })
+    e = _err("game.ts(2,3): error TS2339: Property 'mana' does not exist on type 'Entity'")
+    assert _append_dominant_fields(rd, e) == []          # Entity is ambient — not declared in game files

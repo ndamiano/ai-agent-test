@@ -14,7 +14,10 @@ right; only split when the game genuinely has several independent systems.
 - A CLASSIC ARCADE game — pong, breakout, asteroids, snake, flappy, a single-screen platformer, a
   simple shooter — is **ONE file, `game.ts` only**. Do NOT split these.
 - Split ONLY a game with 3+ genuinely distinct systems (an RPG: world/level, combat, enemies/AI,
-  inventory/loot, ui/hud). Then 3–6 files, one per real system. Never more.
+  inventory/loot, ui/hud; a world-plus-card-battle game: exploration, the card battle, the
+  shop/economy). Then 3–6 files, one per real system. Never more. A game that combines a WORLD
+  with a distinct battle/trade loop is the split case, not the one-file case — one file for all
+  of it will not fit in a single authoring pass.
 - The spec's `control` scheme is ALREADY WIRED by the scaffold — never plan a movement, input,
   camera, or controls file. The spec's `uses` (tilemap, scrolling, particles, chase, …) are KIT
   PRIMITIVES — ONE function call each inside game.ts, NOT systems to split out. NEVER create a
@@ -24,7 +27,8 @@ right; only split when the game genuinely has several independent systems.
   thrash.
 - A SUB-MODE (a card battle / puzzle / minigame that opens over the world and returns to it) is ONE
   file owning that whole loop (its state shape, turn logic, and HUD items) — never split a sub-mode
-  into logic + render + types of its own.
+  into logic + render + types of its own. ONE file for the sub-mode, alongside game.ts — this rule
+  bounds the sub-mode's file count, it is NOT a reason to fold the sub-mode into game.ts.
 - When you DO split and files share data structures (the map, the player/state shape), ADD a
   `types.ts` that exports the shared `interface`s. Every file imports them, so the compiler enforces
   that all files agree on the data — no "one file expects a char grid, another returns booleans".

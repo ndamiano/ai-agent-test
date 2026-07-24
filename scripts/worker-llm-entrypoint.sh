@@ -10,10 +10,15 @@ set -euo pipefail
 : "${WORKER_TOKEN:?WORKER_TOKEN is required}"
 
 # Router mode: children inherit these, so they match the home box's serving config exactly.
+# --chat-template-kwargs: --reasoning-budget 0 is a NO-OP for Qwen3.6's template — the model
+# thinks in content and truncates at the output cap before ever emitting the message/tool call
+# (measured: whole authoring turns lost as 16K-token reasoning blobs). enable_thinking=false
+# switches the template itself; verified locally: zero reasoning tokens, clean tool calls.
 /app/llama-server \
     --models-dir "$MODELS_DIR" \
     --host 127.0.0.1 --port "$LLAMA_PORT" \
-    -ngl 99 -c 32768 --jinja --reasoning-budget 0 &
+    -ngl 99 -c 32768 --jinja --reasoning-budget 0 \
+    --chat-template-kwargs '{"enable_thinking":false}' &
 llama_pid=$!
 
 # The router answers /models before any weights load (models load on first request), so this waits

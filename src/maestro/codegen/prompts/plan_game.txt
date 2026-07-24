@@ -14,10 +14,10 @@ right; only split when the game genuinely has several independent systems.
 - A CLASSIC ARCADE game — pong, breakout, asteroids, snake, flappy, a single-screen platformer, a
   simple shooter — is **ONE file, `game.ts` only**. Do NOT split these.
 - Split ONLY a game with 3+ genuinely distinct systems (an RPG: world/level, combat, enemies/AI,
-  inventory/loot, ui/hud; a world-plus-card-battle game: exploration, the card battle, the
-  shop/economy). Then 3–6 files, one per real system. Never more. A game that combines a WORLD
-  with a distinct battle/trade loop is the split case, not the one-file case — one file for all
-  of it will not fit in a single authoring pass.
+  inventory/loot, ui/hud). Then 3–6 files, one per real system. Never more. The capacity law
+  behind the rule: one file is authored in ONE pass, so a game whose mechanics span a world PLUS
+  any distinct sub-loop (a battle mode, trading, a minigame) is past what one file can hold —
+  that is the split case, never the one-file case.
 - The spec's `control` scheme is ALREADY WIRED by the scaffold — never plan a movement, input,
   camera, or controls file. The spec's `uses` (tilemap, scrolling, particles, chase, …) are KIT
   PRIMITIVES — ONE function call each inside game.ts, NOT systems to split out. NEVER create a

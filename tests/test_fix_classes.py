@@ -50,6 +50,17 @@ def test_probe_kind_falls_to_default():
     assert classify(e) is DEFAULT
 
 
+def test_dead_action_routes_to_its_directive():
+    # The condition-gated-ability thrash (a cost the player starts unable to pay): the class must
+    # steer toward denied-press feedback, never a spec-betraying rebalance.
+    e = _err('PROBE FAILED: [dead_action] registered action "overdrive" (keys ["f"]) was pressed '
+             "8 time(s) and changed NOTHING", kind="dead_action", code="plays")
+    c = classify(e)
+    assert c.id == "dead-action"
+    assert "feedback" in c.directive.lower()
+    assert c.deterministic is None
+
+
 def test_crash_falls_to_default():
     e = _err("HEADLESS FAILED: TypeError: cannot read x of undefined", kind="crash", code="runs")
     assert classify(e) is DEFAULT

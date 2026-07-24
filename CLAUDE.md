@@ -221,6 +221,10 @@ src/
                          contract-assert (append the pipeline's own known assertion line) and
                          single-mover (strip the redundant input-driven mover) are deterministic-only
                          — a class whose repair the pipeline can compute spends no LLM call.
+                         dead-action (probe kind) is directive-only: the dominant real shape is a
+                         CONDITION-GATED ability whose condition can't hold at init (a cost the
+                         player starts unable to pay — measured ~29 steps of thrash on one), and the
+                         correct repair is denied-press feedback, never a spec-betraying rebalance.
                          `default` matches everything + adds no steering = today's generic loop, so an
                          unclassified failure degrades to the status quo, never worse.
       data_files.py      the DATA-FILE substrate: game/data/manifest.json declares per-game

@@ -605,13 +605,32 @@ MISSING_NAME = FixClass(
 )
 
 
+# ── dead-action ───────────────────────────────────────────────────────────────
+# The probe pressed a registered action from the initial state and nothing changed. The dominant
+# real shape (measured: one build burned ~29 steps on a single overdrive ability) is a CONDITION-
+# GATED effect whose condition can't hold at init — a cost the player starts unable to pay. The
+# correct repair is denied-press feedback, not deleting the gate; the directive pins that so the
+# loop stops thrashing between no-op edits and spec-betraying rebalances.
+
+
+def _matches_dead_action(error) -> bool:
+    return getattr(error, "kind", "") == "dead_action"
+
+
+DEAD_ACTION = FixClass(
+    id="dead-action",
+    matches=_matches_dead_action,
+    directive=_directive("dead_action.txt"),
+)
+
+
 DEFAULT = FixClass(id="default", matches=lambda e: True)
 
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
 FIX_CLASSES = [CONTRACT_ASSERT, SINGLE_MOVER, AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE,
-               MISSING_NAME, CONTRACT, DEFAULT]
+               MISSING_NAME, CONTRACT, DEAD_ACTION, DEFAULT]
 
 
 def classify(error) -> FixClass:

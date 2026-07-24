@@ -319,6 +319,68 @@ def test_detect_single_mover_flags_input_driven_call_in_scaffolded_game(tmp_path
     assert _detect_single_mover(None, None, ctx) == []
 
 
+def test_detect_single_mover_sees_input_guards_and_register_handlers(tmp_path):
+    """The two shipped blind spots: `input` BEFORE the mover in a guard, and a mover inside a
+    kit.register handler (input-driven by construction, no `input` token near the call)."""
+    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path))
+    _write_files(tmp_path, {
+        "game.ts": "export function update(state, dt, input, kit) {\n"
+                   "  if (input.pressed(\"w\") && kit.gridMove(state.player, 0, -1, cell, pass)) moved = true;\n"
+                   "}\n"})
+    errs = _detect_single_mover(None, None, ctx)
+    assert len(errs) == 1 and "gridMove" in errs[0].message
+
+    _write_files(tmp_path, {
+        "game.ts": "export function init(state, kit) {\n"
+                   "  kit.register(\"move_up\", [\"w\"], () => {\n"
+                   "    if (!state.inCombat && kit.gridMove(state.player, 0, -1, cell, pass)) { }\n"
+                   "  });\n"
+                   "}\n"})
+    errs = _detect_single_mover(None, None, ctx)
+    assert len(errs) == 1 and "gridMove" in errs[0].message
+
+    # An NPC mover after a CLOSED register handler stays legal.
+    _write_files(tmp_path, {
+        "game.ts": "export function init(state, kit) {\n"
+                   "  kit.register(\"interact\", [\"e\"], () => { state.talking = true; });\n"
+                   "  kit.gridMove(state.npc, 1, 0, cell, pass);\n"
+                   "}\n"})
+    assert _detect_single_mover(None, None, ctx) == []
+
+    # A register-wrapped mover on a key the scaffold does NOT bind is that key's ONLY wiring —
+    # the correct realization of a spec control like Q, not a double-move.
+    _write_files(tmp_path, {
+        "game.ts": "export function init(state, kit) {\n"
+                   "  kit.register(\"move_left\", [\"q\"], () => {\n"
+                   "    kit.gridMove(state.player, -1, 0, cell, pass);\n"
+                   "  });\n"
+                   "}\n"})
+    assert _detect_single_mover(None, None, ctx) == []
+
+
+def test_strip_deletes_scaffold_key_register_handlers_and_keeps_the_rest(tmp_path):
+    """The LLM lane relocates instead of deleting, so the register-wrapped double-move must fall to
+    the deterministic pass: scaffold-key handlers deleted whole, the q handler and interact kept."""
+    from maestro.codegen.fix_classes import _strip_redundant_movers
+    src = ("export function init(state, kit) {\n"
+           "  kit.register(\"move_up\", [\"w\"], () => {\n"
+           "    if (kit.gridMove(state.player, 0, -1, cell, pass)) { check(state); }\n"
+           "  });\n"
+           "  kit.register(\"move_left\", [\"q\"], () => {\n"
+           "    kit.gridMove(state.player, -1, 0, cell, pass);\n"
+           "  });\n"
+           "  kit.register(\"interact\", [\"e\"], () => { state.talking = true; });\n"
+           "}\n")
+    _write_files(tmp_path, {"game.ts": src})
+    res = _strip_redundant_movers(tmp_path, None)
+    assert res and res["count"] == 1
+    body = (tmp_path / "game" / "game.ts").read_text()
+    assert "move_up" not in body
+    assert "move_left" in body and "interact" in body
+    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path))
+    assert _detect_single_mover(None, None, ctx) == []
+
+
 # ── write-time strip of unplanned imports ─────────────────────────────────────
 def test_strip_unplanned_imports_removes_phantom_keeps_planned(tmp_path):
     _write_files(tmp_path, {

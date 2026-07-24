@@ -226,6 +226,36 @@ def _detect_contracted(check, module, context):
 _MOVER_RE = re.compile(r"kit\s*\.\s*(drive|moveTopDown3?|moveTank3|moveRelative|moveFP|walk|gridMove)\s*\(")
 
 
+# The keys every scaffold's movement pass reads. A register-wrapped mover on any of these
+# double-moves (the scaffold already moves on the press); on any OTHER key the handler is the
+# key's ONLY wiring — the correct realization of a spec control the scaffold doesn't bind
+# (e.g. Q for move-left), and flagging it makes unbound_control unsatisfiable.
+_SCAFFOLD_MOVE_KEYS = {"w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"}
+_REGISTER_KEYS_RE = re.compile(r"kit\s*\.\s*register\s*\(\s*\"[^\"]*\"\s*,\s*\[([^\]]*)\]")
+
+
+def _mover_is_input_driven(src: str, m) -> bool:
+    """True when the mover call double-applies player input: `input` anywhere in its statement (a
+    guard like `if (input.pressed(..) && kit.gridMove(..))` puts it BEFORE the call, so a
+    call-forward window alone misses it), or the call sits inside a still-open kit.register handler
+    whose keys the scaffold's movement pass also reads. A mover steering an NPC from plain code
+    matches neither."""
+    line_start = src.rfind("\n", 0, m.start()) + 1
+    stmt_end = src.find(";", m.end())
+    stmt = src[line_start:stmt_end if stmt_end != -1 else m.end() + 150]
+    if re.search(r"\binput\b", stmt):
+        return True
+    back = src[max(0, line_start - 400):line_start]
+    reg = back.rfind("kit.register")
+    if reg == -1 or "});" in back[reg:]:
+        return False
+    keys_m = _REGISTER_KEYS_RE.search(back[reg:])
+    if not keys_m:
+        return True
+    keys = {k.strip().strip("'\"").lower() for k in keys_m.group(1).split(",") if k.strip()}
+    return bool(keys & _SCAFFOLD_MOVE_KEYS)
+
+
 def _detect_single_mover(check, module, context):
     """Movement is wired ONCE, in the GENERATED main.ts. A model file calling an input-driven kit
     mover AGAIN double-moves the player (2x speed) or fights the scaffold — one measured build
@@ -238,8 +268,7 @@ def _detect_single_mover(check, module, context):
         if src.lstrip().startswith("// GENERATED"):
             continue
         for m in _MOVER_RE.finditer(src):
-            window = src[m.end():m.end() + 150]
-            if not re.search(r"\binput\b", window.split(";")[0]):
+            if not _mover_is_input_driven(src, m):
                 continue
             ln = src[:m.start()].count("\n") + 1
             errors.append(Error(
@@ -248,9 +277,10 @@ def _detect_single_mover(check, module, context):
                         f"SCAFFOLDED game: the GENERATED main.ts already applies the spec's control "
                         f"scheme to state.player EVERY frame, before your update runs. A second "
                         f"input-driven movement call double-moves the player (or fights the "
-                        f"scaffold's move). DELETE the whole call statement; keep any bounds/ground "
-                        f"clamps that run after it. Movement speed is tuned via state.player.speed, "
-                        f"never by re-wiring input."))
+                        f"scaffold's move). DELETE the whole call statement (a mover inside a "
+                        f"kit.register movement handler: delete that whole register call); keep any "
+                        f"bounds/ground clamps that run after it. Movement speed is tuned via "
+                        f"state.player.speed, never by re-wiring input."))
             break   # one per file — the fix strips every occurrence anyway
     return errors
 

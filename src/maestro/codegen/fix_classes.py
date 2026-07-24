@@ -435,12 +435,67 @@ def _matches_single_mover(error) -> bool:
     return getattr(error, "code", "") == "single_mover"
 
 
+def _call_end(src: str, open_paren: int) -> Optional[int]:
+    """Index just past the `)` balancing src[open_paren] == '(', quote-aware."""
+    depth, i, quote = 0, open_paren, None
+    while i < len(src):
+        c = src[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "'\"`":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+_REGISTER_OPEN = re.compile(r"^[ \t]*kit\s*\.\s*register\s*(\()", re.M)
+_MOVER_CALL = re.compile(r"kit\s*\.\s*(?:drive|moveTopDown3?|moveTank3|moveRelative|moveFP|walk|gridMove)\s*\(")
+
+
+def _strip_mover_registers(src: str) -> str:
+    """Delete every kit.register statement whose handler moves the player on a key the scaffold's
+    movement pass also reads — the double-move the LLM lane reliably fails to DELETE (it relocates
+    instead). A handler on a non-scaffold key is that key's only wiring and stays."""
+    from maestro.codegen.module import _REGISTER_KEYS_RE, _SCAFFOLD_MOVE_KEYS
+    spans = []
+    for m in _REGISTER_OPEN.finditer(src):
+        end = _call_end(src, m.end(1) - 1)
+        if end is None:
+            continue
+        span = src[m.start():end]
+        if not _MOVER_CALL.search(span):
+            continue
+        keys_m = _REGISTER_KEYS_RE.search(span)
+        keys = {k.strip().strip("'\"").lower()
+                for k in keys_m.group(1).split(",") if k.strip()} if keys_m else set()
+        if not keys or keys & _SCAFFOLD_MOVE_KEYS:
+            while end < len(src) and src[end] in "; \t":
+                end += 1
+            if end < len(src) and src[end] == "\n":
+                end += 1
+            spans.append((m.start(), end))
+    for start, end in reversed(spans):
+        src = src[:start] + src[end:]
+    return src
+
+
 def _strip_redundant_movers(run_dir, error) -> Optional[dict]:
     changes, count = [], 0
     for name, src in game_files(run_dir).items():
         if src.lstrip().startswith("// GENERATED"):
             continue
         new = _MOVER_LINE.sub("", src)
+        new = _strip_mover_registers(new)
         if new != src:
             (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
             changes.append(("strip-mover", name))

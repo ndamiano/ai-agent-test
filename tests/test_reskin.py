@@ -285,3 +285,107 @@ def test_truncated_rewrite_is_left_unwritten(tmp_path, monkeypatch):
     assert reskin._looks_truncated(src, src[:len(src) // 3])   # cut off mid-body
     assert reskin._looks_truncated(src, src + "\nfunction b() {")  # unbalanced braces
     assert not reskin._looks_truncated(src, src.replace("const x", "const y"))
+
+
+# ── the early + green asset lanes ─────────────────────────────────────────────
+def _write_data(tmp_path, rows):
+    dd = game_dir(tmp_path) / "data"
+    dd.mkdir(parents=True, exist_ok=True)
+    (dd / "manifest.json").write_text(json.dumps(
+        {"datasets": [{"name": "units", "fields": {}}]}), encoding="utf-8")
+    (dd / "units.json").write_text(json.dumps(rows), encoding="utf-8")
+
+
+@pytest.fixture
+def lane_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
+    monkeypatch.setattr(reskin, "_emit", lambda *a, **k: None)
+    monkeypatch.setattr(reskin, "build_item_payload", lambda d: {"kind": "comfy_image"})
+    monkeypatch.setattr(reskin, "RunState",
+                        lambda rid: type("S", (), {"run_dir": tmp_path})())
+    store.create_game("rid", "u1")
+    store.charge_game("rid", 1, 10_000.0)
+    _write_game(tmp_path)
+    return tmp_path
+
+
+def test_early_lane_waits_for_a_plan(lane_env):
+    """No data yet → None, so the build retries next sweep instead of settling."""
+    assert reskin.start_assets_early("rid", lane_env, {"mode": "2d"}) is None
+
+
+def test_early_lane_enqueues_from_data_and_writes_the_manifest(lane_env):
+    _write_data(lane_env, [{"id": "goblin", "look": "a green goblin"},
+                           {"id": "plain", "note": "no look"}])
+    batch = reskin.start_assets_early("rid", lane_env, {"mode": "2d"})
+    assert batch
+    jobs = store.batch_jobs(batch)
+    assert [j["metadata"]["asset_id"] for j in jobs] == ["goblin"]
+    assert jobs[0]["metadata"]["gate_ok"] is False       # staging deferred to the build
+    m = json.loads((game_dir(lane_env) / "assets.json").read_text())
+    assert m["sprites"][0]["id"] == "goblin"
+
+
+def test_early_lane_settles_when_assets_exist_or_batch_live(lane_env):
+    _write_data(lane_env, [{"id": "goblin", "look": "a green goblin"}])
+    batch = reskin.start_assets_early("rid", lane_env, {"mode": "2d"})
+    assert batch
+    # assets.json now exists AND the batch is live — either alone settles the lane
+    assert reskin.start_assets_early("rid", lane_env, {"mode": "2d"}) == ""
+
+
+def test_green_lane_runs_the_full_skin_when_no_early_batch(lane_env, monkeypatch):
+    called = []
+    monkeypatch.setattr(reskin, "add_assets", lambda rid, **kw: called.append(rid))
+    reskin.auto_skin("rid")
+    assert called == ["rid"]
+
+
+def test_green_lane_noops_when_already_skinned(lane_env, monkeypatch):
+    (game_dir(lane_env) / "assets.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(reskin, "add_assets",
+                        lambda rid, **kw: pytest.fail("skinned game must not re-skin"))
+    reskin.auto_skin("rid")
+
+
+def test_green_lane_skips_the_rewrite_when_data_bound(lane_env, monkeypatch):
+    """A game that binds through kit.spawnData (+ drawEntity in 2D) wires the early renders
+    itself — the green lane must spend zero LLM calls on it."""
+    _write_data(lane_env, [{"id": "goblin", "look": "a green goblin"}])
+    (game_dir(lane_env) / "game.ts").write_text(
+        "kit.spawnData('units');\nkit.drawEntity(g, e);\n", encoding="utf-8")
+    monkeypatch.setattr(reskin, "_reskin_and_gate",
+                        lambda *a, **k: pytest.fail("bound game must not be rewritten"))
+    reskin.auto_skin("rid", early_batch="b1")
+
+
+def test_green_lane_wires_an_unbound_game(lane_env, monkeypatch):
+    """Hand-drawn draw(): the early renders would be orphaned — the green lane must run the
+    rewrite (which re-gates internally)."""
+    _write_data(lane_env, [{"id": "goblin", "look": "a green goblin"}])
+    wired = []
+    monkeypatch.setattr(reskin, "_make_infer", lambda: None)
+    monkeypatch.setattr(reskin, "_reskin_and_gate",
+                        lambda rid, state, infer, files, ids, *a, **k: wired.append(ids))
+    reskin.auto_skin("rid", early_batch="b1")
+    assert wired == [["goblin"]]
+
+
+def test_green_lane_defers_to_an_inflight_skin(lane_env, monkeypatch):
+    monkeypatch.setattr(reskin, "add_assets",
+                        lambda rid, **kw: pytest.fail("in-flight skin owns the endgame"))
+    reskin._skinning.add("rid")
+    try:
+        reskin.auto_skin("rid")
+    finally:
+        reskin._skinning.discard("rid")
+
+
+def test_add_assets_is_exclusive(lane_env, monkeypatch):
+    with reskin._exclusive("rid"):
+        with pytest.raises(reskin.AlreadySkinning):
+            with reskin._exclusive("rid"):
+                pass
+    # released on exit
+    with reskin._exclusive("rid"):
+        pass

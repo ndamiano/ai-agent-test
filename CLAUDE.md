@@ -148,7 +148,13 @@ src/
                          CodegenModule's gates, cross-fix stall/park bookkeeping, pick the top error,
                          START its fix — and when the gates are GREEN, run the spec-vs-code audit
                          (audit.py) before finalizing, fixing failed claims one per iteration) and FIX
-                         (a build_steps shape; apply the turn, enqueue the next or return to outer). advance() runs ALL local work — gates, tool dispatch,
+                         (a build_steps shape; apply the turn, enqueue the next or return to outer).
+                         The outer sweep also fires the EARLY asset lane (reskin.start_assets_early,
+                         once the data lands — batch id on the cursor), an ok finalize absorbs
+                         mid-build meshes (box-fit + rebundle) then fires the GREEN lane
+                         (reskin.auto_skin on a thread), and a build turn refused for compute
+                         PREEMPTS the run's still-pending asset jobs before giving up — gameplay
+                         beats skin. advance() runs ALL local work — gates, tool dispatch,
                          deterministic fix passes — synchronously and SUSPENDS only at a real inference
                          (enqueue one llm job + return; the process is free to die). Never more than one
                          build turn in flight per run, and advance runs only in the control-plane
@@ -233,7 +239,16 @@ src/
       prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix ·
                          design_data · fix_data .txt +
                          fix_kinds/<class>.txt (per-fix-class root-cause directives)
-      reskin.py          the ASSETS stage (skin the shapes), mode-dispatched: 2D → plan sprites →
+      reskin.py          the ASSETS stage (skin the shapes) — NO CLICK: assets start the moment
+                         their inputs exist. EARLY lane (start_assets_early, fired from the build's
+                         outer sweep once the data rows land): the rows' `look` prompts ARE the
+                         plan, so the GPU renders sprites/meshes DURING the build; renders key on
+                         row ids so art rendered before the source binds it is never wasted.
+                         GREEN lane (auto_skin, fired by every ok build finalize): no early batch →
+                         the classic full skin below; early batch → only what's missing — WIRING
+                         (unbound hand-drawn/hand-spawned games get the rewrite) + a 3D top-up of
+                         mesh ids tagged during authoring. A per-run guard (AlreadySkinning)
+                         serializes all skin entry points. Mode-dispatched: 2D → plan sprites →
                          rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
                          (TRELLIS). The TAGGING rewrite is skipped entirely when the plan came from
@@ -467,7 +482,8 @@ src/
                          (+ asset manifest/blob GETs and per-asset regenerate);
                          freeze→freeze_spec, build/fix→build_chain.kickoff (fire-and-forget, off the
                          event loop), resume→build_chain.resume (re-drive the durable cursor),
-                         assets→reskin.add_assets (its own
+                         assets→reskin.add_assets (a MANUAL re-skin — builds
+                         now skin themselves via the early/green lanes; its own
                          thread, now only for the plan+gate half — the render outlives it on the
                          queue, so assets_done and build_finished are the FINALIZE's job, and a
                          second skin is refused by has_active_batch as well as the in-process key,

@@ -92,6 +92,9 @@ class BuildCursor:
     det_tried: List[str] = field(default_factory=list)      # idkeys already given their one free deterministic pass
     passed: List[str] = field(default_factory=list)         # components already milestoned
     todo: List[Dict] = field(default_factory=list)   # last outer to-do (emitted with build_step)
+    # the early asset lane: the batch id once the data rows' renders are enqueued mid-build
+    # ("" = settled with nothing to watch; None = no plan yet, retry next sweep)
+    asset_batch: Optional[str] = None
     # the spec-vs-code audit (runs when the gates are green, before finalizing)
     audit_round: int = 0                          # sweeps already run
     audit_pending: List[Dict] = field(default_factory=list)   # findings awaiting their fix

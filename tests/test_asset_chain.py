@@ -187,3 +187,52 @@ def test_a_batch_with_work_left_is_never_offered():
     _image_job("b1", "two")
     _complete(store.batch_jobs("b1")[0]["id"])
     assert store.batches_awaiting_finalize(-1.0) == []
+
+
+# ── the skin finalize vs the build's lifecycle ───────────────────────────────
+@pytest.fixture
+def _skin_env(monkeypatch, tmp_path):
+    from maestro.codegen import asset_chain
+
+    staged, events = [], []
+    monkeypatch.setattr(asset_chain, "stage_for_play", lambda rd, rid: staged.append(rid))
+    monkeypatch.setattr(asset_chain, "_emit",
+                        lambda et, rid, **f: events.append((et, f)))
+    monkeypatch.setattr(asset_chain, "RunState",
+                        lambda rid: type("S", (), {"run_dir": tmp_path})())
+    return asset_chain, staged, events
+
+
+def _skin_md(gate_ok):
+    return {"run_id": "g1", "mode": "2d", "gate_ok": gate_ok, "then": {"finalize": "skin"}}
+
+
+def test_early_finalize_mid_build_defers_staging(_skin_env):
+    """An early batch lands while the build is still running: renders are on disk, but staging is
+    the build finalize's job — and the outcome is a success, not a failed skin."""
+    asset_chain, staged, events = _skin_env
+    _game()                                            # status defaults to non-built
+    store.set_status("g1", "building")
+    asset_chain._finalize_skin(_skin_md(gate_ok=False), [{"metadata": {}, "build_id": None}])
+    assert staged == []
+    assert events == [("assets_done", {"ok": True, "mode": "2d", "rendered": []})]
+
+
+def test_finalize_after_green_stages_even_without_gate_ok(_skin_env):
+    """The batch outlives the build: gate_ok was False at enqueue, but the game is BUILT by the
+    time the last render lands — the finalize must stage, or the art never reaches /play."""
+    asset_chain, staged, events = _skin_env
+    _game()
+    store.set_status("g1", "built")
+    asset_chain._finalize_skin(_skin_md(gate_ok=False), [{"metadata": {}, "build_id": None}])
+    assert staged == ["g1"]
+    assert events[0][1]["ok"] is True
+
+
+def test_finalize_on_a_failed_build_neither_stages_nor_claims_ok(_skin_env):
+    asset_chain, staged, events = _skin_env
+    _game()
+    store.set_status("g1", "failed")
+    asset_chain._finalize_skin(_skin_md(gate_ok=False), [{"metadata": {}, "build_id": None}])
+    assert staged == []
+    assert events[0][1]["ok"] is False

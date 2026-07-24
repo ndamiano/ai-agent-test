@@ -166,3 +166,73 @@ def test_deterministic_pass_spends_no_step_and_fires_once_per_identity(env, monk
     assert _start_fix(run_id, rs, cursor, err, stalled=False) is True
     assert calls == [1]
     assert cursor.phase == "fix"
+
+
+# ── the early asset lane + build-vs-assets budget priority ───────────────────
+def test_outer_sweep_starts_the_early_asset_lane_once(env, monkeypatch):
+    """The lane fires from the outer sweep and its outcome sticks on the cursor: a real batch id
+    is never re-attempted, and None (no plan yet) retries next sweep."""
+    from maestro.codegen import reskin
+
+    run_id, run_dir = env
+    monkeypatch.setattr(db_store, "enqueue_job", lambda queue, payload, **kw: "j")
+    calls = []
+
+    def fake_early(rid, rdir, spec):
+        calls.append(rid)
+        return None if len(calls) == 1 else "batch123"
+
+    monkeypatch.setattr(reskin, "start_assets_early", fake_early)
+
+    build_chain.kickoff(run_id, kind="build")          # sweep 1: no plan yet
+    assert build_state.load(run_dir).asset_batch is None
+    build_chain.advance(run_id, {"choices": [{"message": {"content": "garbage"}}]})  # sweep 2
+    assert build_state.load(run_dir).asset_batch == "batch123"
+
+    n = len(calls)
+    build_chain.advance(run_id, {"choices": [{"message": {"content": "garbage"}}]})
+    assert len(calls) == n                             # settled — never re-attempted
+
+
+def test_a_fix_build_never_starts_the_early_lane(env, monkeypatch):
+    from maestro.codegen import reskin
+
+    run_id, run_dir = env
+    monkeypatch.setattr(db_store, "enqueue_job", lambda queue, payload, **kw: "j")
+    monkeypatch.setattr(reskin, "start_assets_early",
+                        lambda *a: pytest.fail("a note-scoped fix must not skin"))
+    build_chain.kickoff(run_id, kind="fix", note="the player is stuck")
+
+
+def test_a_refused_turn_preempts_queued_asset_renders(env, monkeypatch):
+    """Budget priority: gameplay beats skin. A build turn refused for headroom abandons the run's
+    still-pending asset jobs (releasing their reservations) and retries — the build proceeds and
+    the batch finishes short, which is the asset stage's soft-degrade."""
+    from maestro.codegen import reskin
+
+    run_id, run_dir = env
+    monkeypatch.setattr(reskin, "start_assets_early", lambda *a: "")
+    # grant fits ONE image reservation (45s) but not image + the llm turn (30s)
+    db_store.charge_game(run_id, 1, 60.0)
+    asset_job = db_store.enqueue_job("image", {"kind": "comfy_image"}, game_id=run_id,
+                                     batch_id="early", metadata={"asset_id": "goblin"})
+
+    build_chain.kickoff(run_id, kind="build")
+
+    assert db_store.get_job(asset_job)["status"] == "failed"          # preempted
+    assert db_store.game(run_id)["status"] == "building"              # the build got its turn
+    jobs = [j for j in db_store.batch_jobs("early")]
+    assert all(j["status"] == "failed" for j in jobs)
+
+
+def test_a_refused_turn_with_nothing_to_preempt_still_fails(env, monkeypatch):
+    from maestro.codegen import reskin
+
+    run_id, run_dir = env
+    monkeypatch.setattr(reskin, "start_assets_early", lambda *a: "")
+    db_store.charge_game(run_id, 1, 1.0)               # can't afford any turn, nothing queued
+
+    build_chain.kickoff(run_id, kind="build")
+
+    assert db_store.game(run_id)["status"] == "failed"
+    assert build_state.load(run_dir).ok is False

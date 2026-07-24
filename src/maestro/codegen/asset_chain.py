@@ -93,19 +93,25 @@ def _finalize_skin(md: Dict, jobs: List[Dict]) -> None:
                   if j["metadata"].get("asset_id")})
     rendered = _rendered(run_id, ids, ext)
 
-    if mode == "3d":
+    # gate_ok is the ENQUEUE-time verdict; an early batch enqueues mid-build (gate_ok False), so
+    # the game's CURRENT status decides staging. Mid-build, staging — and the 3D box-fit, which
+    # rewrites world.ts under the build's feet — defer to the build's own finalize.
+    status = (db_store.game(run_id) or {}).get("status")
+    stage = bool(md.get("gate_ok")) or status == "built"
+    if mode == "3d" and stage:
         fitted = fit_building_boxes(state.run_dir)
         if fitted:
             logger.info("assets %s: fitted %d building box(es) to their meshes", run_id, fitted)
             build_bundle(state.run_dir)
-    if md.get("gate_ok"):
+    if stage:
         stage_for_play(state.run_dir, run_id)
 
+    ok = stage or status == "building"   # renders landed mid-build: the build stages them later
     logger.info("assets %s: rendered %d/%d asset(s)", run_id, len(rendered), len(ids))
-    _emit("assets_done", run_id, ok=md.get("gate_ok", False), mode=mode, rendered=rendered)
+    _emit("assets_done", run_id, ok=ok, mode=mode, rendered=rendered)
     build_id = next((j["build_id"] for j in jobs if j["build_id"]), None)
     if build_id:
-        db_store.build_finished(build_id, "succeeded" if md.get("gate_ok") else "failed")
+        db_store.build_finished(build_id, "succeeded" if ok else "failed")
 
 
 FINALIZERS = {"skin": _finalize_skin}

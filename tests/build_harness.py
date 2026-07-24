@@ -52,6 +52,10 @@ def run_build_to_completion(run_id, fake, monkeypatch, *, kind="build", note="",
 
     monkeypatch.setattr(build_chain, "get_connector", lambda: _Adapter(fake))
     monkeypatch.setattr(db_store, "enqueue_job", fake_enqueue)
+    # The asset lanes are exercised in their own tests; here they would enqueue image jobs into
+    # `captured` (clobbering the llm turn the harness re-drives) and spawn auto-skin threads.
+    monkeypatch.setattr(build_chain, "_maybe_early_assets", lambda *a, **k: None)
+    monkeypatch.setattr(build_chain, "_auto_skin", lambda *a, **k: None)
 
     build_chain.kickoff(run_id, kind=kind, note=note)
     for _ in range(max_turns):

@@ -341,6 +341,19 @@ def abandon_job(job_id: str, error: str) -> bool:
     return cur.rowcount == 1
 
 
+def abandon_pending_batch_jobs(game_id: str, error: str) -> int:
+    """Fail a game's queued (still-unclaimed) batch jobs, releasing their reservations — the
+    build-vs-assets budget priority: a build turn refused for headroom preempts the opportunistic
+    asset renders rather than dying. Claimed jobs are left alone (their GPU time is already being
+    paid for); a batch failed whole is finalized by the reaper's batches_awaiting_finalize sweep."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
+            "WHERE game_id = ? AND batch_id IS NOT NULL AND status = 'pending'",
+            (error, time.time(), game_id))
+    return cur.rowcount
+
+
 def claim_job(queue: str, worker_id: str, lease_seconds: float) -> Optional[Dict]:
     """Atomically claim the oldest pending job on `queue` (requeueing expired leases first).
     Returns the job dict with a decoded payload, or None if the queue is empty."""

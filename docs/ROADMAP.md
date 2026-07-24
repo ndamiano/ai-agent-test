@@ -29,8 +29,12 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   spec read-only, drives freeze→build→skin→fix→play, and the IR component/asset browser is deleted.
   Also finished the demolition: removed the leftover `renpy/`/`godot/`/`utils/` dirs, `maestro/spec.py`,
   `tools/tts_tools.py`, and the dead IR asset generators in `comfyui_tools.py`.
-- **Phase 5 assets (IN PROGRESS):** skin the placeholder shapes. A post-build reskin stage
-  (`maestro/codegen/reskin.py`, CLI `--assets <run_id>`) plans a sprite set from the spec + source,
+- **Phase 5 assets (IN PROGRESS):** skin the placeholder shapes — now with NO click: the build's
+  outer sweep starts rendering a data game's assets the moment its `look` rows land (the EARLY
+  lane), and every ok build finalize finishes the story (the GREEN lane: full skin for data-less
+  games, wiring/top-up otherwise), so a finished game is playable WITH its art. A refused build
+  turn preempts still-queued renders — gameplay beats skin. The manual stage remains
+  (`maestro/codegen/reskin.py`, CLI `--assets <run_id>`): plans a sprite set from the spec + source,
   rewrites the draw code to prefer `kit.sprite(id)` with the shape as fallback, re-gates, then renders
   the sprites (ComfyUI) into `game/assets/` + `assets.json`; the runtime preloads them. Purely
   additive — a run with no images still passes every gate and renders as shapes. Mode-dispatched:

@@ -26,7 +26,7 @@ from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
 from maestro.codegen.gates import RUNTIME_DIR, game_dir
-from maestro.codegen.reskin import add_assets, regenerate_asset
+from maestro.codegen.reskin import AlreadySkinning, add_assets, regenerate_asset
 from maestro.codegen.run import freeze_spec
 from maestro.run_control import get as get_control
 from maestro.state import RunState
@@ -343,6 +343,9 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             # Returns once the asset jobs are ENQUEUED. assets_done and build_finished are the
             # batch finalize's job, since the render outlives this thread by minutes.
             add_assets(run_id, build_id=build_id)
+        except AlreadySkinning:
+            # Lost the race to the build's own auto-skin — that skin owns the endgame.
+            db_store.build_finished(build_id, "failed")
         except Exception:
             logger.exception("asset skin failed for %s", run_id)
             _emit("assets_done", run_id, ok=False, mode=None, rendered=[])

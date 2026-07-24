@@ -158,7 +158,10 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
     get_or_create(run_id).set_auto_pause(auto_pause)
     db_store.set_status(run_id, "building")
     _emit("build_started", run_id, n_failing=0, max_steps=max_steps, todo=[], started_at=cursor.t0)
-    advance(run_id)
+    # wait=True: a skin's re-gate build can kick off while the PREVIOUS build's finalize still
+    # holds the run's advance lock — a non-blocking first advance would silently no-op and strand
+    # the fresh cursor until the reaper's stuck-build sweep.
+    advance(run_id, wait=True)
 
 
 def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Optional[str]) -> None:
@@ -169,11 +172,14 @@ def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Opt
     advance(run_id, get_connector().to_chat(raw))
 
 
-def advance(run_id: str, result: Optional[Dict] = None) -> None:
+def advance(run_id: str, result: Optional[Dict] = None, *, wait: bool = False) -> None:
     """Run the state machine forward until it must infer (enqueue + return) or the build finishes.
-    Serialized per run; a stale call whose cursor is already done/absent is a no-op."""
+    Serialized per run; a stale call whose cursor is already done/absent is a no-op. `wait` blocks
+    for the lock instead — for a fresh build's FIRST advance, which must never be dropped."""
     lock = _lock_for(run_id)
-    if not lock.acquire(blocking=False):
+    if wait:
+        lock.acquire()
+    elif not lock.acquire(blocking=False):
         return   # another advance (completion or reaper) is already driving this run
     try:
         _advance_locked(run_id, result)
@@ -205,6 +211,8 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
             if cursor.prev is not None:
                 _post_fix_bookkeeping(run_id, cursor, pairs)
             cursor.todo = _todo_from_pairs(pairs)
+            if cursor.kind == "build" and cursor.asset_batch is None:
+                _maybe_early_assets(run_id, rs, spec, cursor)
             if not pairs:
                 if not _advance_audit(run_id, rs, cursor):
                     return   # finalized ok
@@ -287,6 +295,21 @@ def _advance_audit(run_id: str, rs: RunState, cursor: BuildCursor) -> bool:
     return False
 
 
+def _maybe_early_assets(run_id: str, rs: RunState, spec: dict, cursor: BuildCursor) -> None:
+    """The EARLY asset lane: once the data rows land, their `look` prompts are the whole render
+    plan — start the GPU on sprites/meshes while the llm turns keep building, so a finished game
+    is playable WITH its art instead of shapes-first. Wiring/staging stay the finalize's job."""
+    from maestro.codegen import reskin
+    try:
+        batch = reskin.start_assets_early(run_id, rs.run_dir, spec)
+    except Exception:
+        logger.exception("early asset lane failed for %s", run_id)
+        batch = ""   # never retry a lane that throws — the green lane still covers the game
+    if batch is not None:
+        cursor.asset_batch = batch
+        build_state.save(rs.run_dir, cursor)
+
+
 def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, stalled: bool) -> bool:
     """Enter the fix for `error`: pick its shape, and for a read→edit fix run the fix class's
     DETERMINISTIC pre-pass first. If that pass changes files, the fix is resolved with no llm turn
@@ -331,6 +354,7 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
     cursor.ok = ok
     build_state.save(rs.run_dir, cursor)
     if ok:
+        _absorb_assets(rs.run_dir)
         stage_for_play(rs.run_dir, run_id)
     db_store.set_status(run_id, "built" if ok else "failed")
     if cursor.build_id:
@@ -339,18 +363,55 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
     remove_control(run_id)
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
     _emit("build_done", run_id, ok=ok, steps=cursor.step)
+    if ok:
+        threading.Thread(target=_auto_skin, args=(run_id, cursor.asset_batch or None),
+                         daemon=True, name=f"autoskin-{run_id}").start()
+
+
+def _absorb_assets(run_dir) -> None:
+    """Meshes an early batch landed DURING the build: their box-fit + rebundle was deferred (the
+    asset finalize won't rewrite a building world mid-build) — pick them up before staging."""
+    from maestro.codegen.gates import build_bundle
+    from maestro.codegen.reskin import fit_building_boxes
+    if fit_building_boxes(run_dir):
+        build_bundle(run_dir)
+
+
+def _auto_skin(run_id: str, early_batch: Optional[str]) -> None:
+    """The GREEN asset lane, fired after every ok finalize: make the assets exist and be wired
+    without a click (reskin.auto_skin no-ops when there is nothing left to do)."""
+    from maestro.codegen import reskin
+    try:
+        reskin.auto_skin(run_id, early_batch=early_batch)
+    except Exception:
+        logger.exception("auto-skin failed for %s", run_id)
 
 
 # ── enqueue + events ──────────────────────────────────────────────────────────
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:
     """Land one build llm turn as a pending `llm` job. Its completion re-enters advance. A refused
-    compute budget ends the build — a broke run can't spin on refused turns."""
+    compute budget first PREEMPTS the run's queued (unclaimed) asset renders — gameplay beats skin,
+    and the early lane is opportunistic by design — then, still refused, ends the build: a broke
+    run can't spin on refused turns."""
     conn = get_connector()
     payload, model = conn.build_llm_job(inf.messages, inf.schemas, inf.max_tokens, inf.reasoning)
-    try:
+
+    def _enqueue():
         db_store.enqueue_job("llm", payload, game_id=run_id, build_id=cursor.build_id, model=model,
                              metadata={"stage": "build", "run_id": run_id, "build_id": cursor.build_id})
+
+    try:
+        return _enqueue()
     except db_store.InsufficientCompute as e:
+        released = db_store.abandon_pending_batch_jobs(
+            run_id, "preempted: the build needs the remaining compute")
+        if released:
+            logger.warning("build %s: preempted %d queued asset job(s) to admit the next turn",
+                           run_id, released)
+            try:
+                return _enqueue()
+            except db_store.InsufficientCompute as e2:
+                e = e2
         logger.error("build %s turn refused: %s", run_id, e)
         rs = RunState(run_id)
         cursor.phase = "done"

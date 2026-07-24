@@ -15,7 +15,9 @@ import json
 import logging
 import re
 import struct
+import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -30,10 +32,37 @@ from maestro.codegen.gates import extract_code, game_dir, game_files
 from maestro.codegen.run import run_build
 from maestro.codegen.worldgen_bridge import _write_world_ts
 from maestro.state import RunState
+from tools.build_events import _emit
 from tools.comfyui_tools import build_item_payload
 from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
+
+
+class AlreadySkinning(Exception):
+    """A skin (plan/wire/enqueue) is already in flight for this run."""
+
+
+_skinning: set = set()
+_skinning_lock = threading.Lock()
+
+
+def is_skinning(run_id: str) -> bool:
+    return run_id in _skinning
+
+
+@contextmanager
+def _exclusive(run_id: str):
+    with _skinning_lock:
+        if run_id in _skinning:
+            raise AlreadySkinning(run_id)
+        _skinning.add(run_id)
+    try:
+        yield
+    finally:
+        with _skinning_lock:
+            _skinning.discard(run_id)
+
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _DRAW_CALL = re.compile(r"\.(rect|circle|line|sprite|text)\s*\(")
@@ -301,6 +330,18 @@ def add_assets(run_id: str, max_steps: int = 40, build_id: Optional[str] = None)
     spec = state.read_spec()
     if spec is None:
         raise ValueError(f"no run {run_id!r}")
+
+    with _exclusive(run_id):
+        files = game_files(state.run_dir)
+        skin = _skin_3d if _is_3d(files) else _skin_2d
+        # The image and mesh queues are the most expensive GPU work the platform runs. Without the
+        # scope their jobs enqueue with no game_id, so nothing is metered and nothing is gated —
+        # this stage ran entirely off the books.
+        with run_scope(run_id):
+            return skin(run_id, state, spec, _make_infer(), files, max_steps, build_id)
+
+
+def _make_infer():
     conn = get_connector()
 
     def infer(system, user, mt):
@@ -309,13 +350,7 @@ def add_assets(run_id: str, max_steps: int = 40, build_id: Optional[str] = None)
         return _content(conn.generate_with_tools(
             MessageBuilder(system).add_user(user).build(), [], max_tokens=mt, reasoning="none"))
 
-    files = game_files(state.run_dir)
-    skin = _skin_3d if _is_3d(files) else _skin_2d
-    # The image and mesh queues are the most expensive GPU work the platform runs. Without the
-    # scope their jobs enqueue with no game_id, so nothing is metered and nothing is gated —
-    # this stage ran entirely off the books.
-    with run_scope(run_id):
-        return skin(run_id, state, spec, infer, files, max_steps, build_id)
+    return infer
 
 
 def _regate(run_id, state, max_steps) -> object:
@@ -456,3 +491,94 @@ def _launch(run_id: str, plan: list, mode: str, gate_ok: bool,
         asset_chain.finalize_now({"run_id": run_id, "mode": mode, "gate_ok": gate_ok,
                                   "then": {"finalize": "skin"}}, build_id)
     return batch_id
+
+
+def start_assets_early(run_id: str, run_dir, spec: dict) -> Optional[str]:
+    """The EARLY asset lane: a data game's render plan is its rows' `look` prompts, which exist the
+    moment the data lands — so the GPU renders sprites/meshes DURING the build instead of after a
+    click. Renders are keyed to row ids, so art rendered before the source binds it is never
+    wasted; WIRING (and staging) is the green lane's job (auto_skin / the build finalize).
+
+    Returns the batch id; "" when the lane is settled with nothing to watch (assets already exist,
+    a batch is already live, or the plan enqueued nothing); None when there is no plan YET — the
+    rows may still gain looks, so the caller retries next sweep."""
+    if (game_dir(run_dir) / "assets.json").exists() or db_store.has_active_batch(run_id):
+        return ""
+    mode = "3d" if spec.get("mode") == "3d" else "2d"
+    plan = sprite_plan_from_data(run_dir, mode)
+    if not plan:
+        return None
+    if mode == "3d":
+        plan = _add_required(plan, _existing_mesh_ids(game_files(run_dir)))
+        write_mesh_manifest(run_dir, plan)
+    else:
+        write_manifest(run_dir, plan)
+    build_id = db_store.create_build(run_id, kind="assets")
+    db_store.build_started(build_id)
+    batch_id = start_asset_chain(run_id, plan, mode, gate_ok=False, build_id=build_id)
+    if batch_id is None:
+        db_store.build_finished(build_id, "failed")
+        return ""
+    _emit("assets_started", run_id)
+    logger.info("assets %s: early lane enqueued %d render(s) as batch %s",
+                run_id, len(plan), batch_id)
+    return batch_id
+
+
+def auto_skin(run_id: str, early_batch: Optional[str] = None, max_steps: int = 40) -> None:
+    """The GREEN lane: a build that finalizes ok finishes the asset story without a click.
+
+    No early batch → the classic full skin (plan → wire → render), exactly what the Skin button
+    did. Early batch → the renders exist or are in flight, so all that can be missing is WIRING
+    (a game that hand-draws/hand-spawns instead of binding through kit.spawnData) and, in 3D,
+    mesh ids tagged during authoring that the data-time plan couldn't see — top up just those."""
+    if is_skinning(run_id):
+        return   # an in-flight skin owns the endgame; its own re-gate build re-enters here
+    state = RunState(run_id)
+    run_dir = state.run_dir
+    if not early_batch:
+        if (game_dir(run_dir) / "assets.json").exists() or db_store.has_active_batch(run_id):
+            return
+        build_id = db_store.create_build(run_id, kind="assets")
+        db_store.build_started(build_id)
+        _emit("assets_started", run_id)
+        try:
+            add_assets(run_id, build_id=build_id)
+        except AlreadySkinning:
+            db_store.build_finished(build_id, "failed")
+        except Exception:
+            logger.exception("auto-skin failed for %s", run_id)
+            _emit("assets_done", run_id, ok=False, mode=None, rendered=[])
+            db_store.build_finished(build_id, "failed")
+        return
+
+    with _exclusive(run_id):
+        files = game_files(run_dir)
+        mode3d = _is_3d(files)
+        from_data = sprite_plan_from_data(run_dir, "3d" if mode3d else "2d") or []
+        plan = _add_required(list(from_data), _existing_mesh_ids(files)) if mode3d else from_data
+        if mode3d:
+            done = {j["metadata"].get("asset_id") for j in db_store.batch_jobs(early_batch)}
+            missing = [m for m in plan if m["id"] not in done]
+            if missing:
+                logger.info("assets %s: topping up %d mesh(es) the early plan couldn't see: %s",
+                            run_id, len(missing), ", ".join(m["id"] for m in missing))
+                write_mesh_manifest(run_dir, plan)
+                build_id = db_store.create_build(run_id, kind="assets")
+                db_store.build_started(build_id)
+                if start_asset_chain(run_id, missing, "3d", gate_ok=True,
+                                     build_id=build_id) is None:
+                    db_store.build_finished(build_id, "failed")
+        if from_data and _binds_data_assets(files, mode3d):
+            return   # bound through the kit — the early renders wire themselves
+        ids = [p["id"] for p in plan]
+        if not ids:
+            return
+        infer = _make_infer()
+        with run_scope(run_id):
+            if mode3d:
+                _reskin_and_gate(run_id, state, infer, files, ids, _tags_shapes,
+                                 reskin_mesh_file, max_steps)
+            else:
+                _reskin_and_gate(run_id, state, infer, files, ids, _draws,
+                                 reskin_file, max_steps)

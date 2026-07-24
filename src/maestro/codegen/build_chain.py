@@ -45,6 +45,14 @@ _STUCK_REPEATS = 20
 # error.code -> fix shape (build_steps). Everything else is a read→edit subloop.
 _SHAPE_BY_CODE = {"planned": "plan", "data": "data", "authored": "author"}
 
+# The spec-vs-code audit: after the gates go green, sweep the frozen spec's claims against the
+# source and fix what isn't delivered — "done" means the spec is exhausted (or the caps are), never
+# just errors-zero. Sweeps repeat until one returns ZERO findings (the spec-clean signal); the round
+# cap is a backstop against a judge that never converges, not the intended exit. A human-note fix
+# stays scoped to its note, so no audit there.
+_AUDIT_KINDS = ("build", "audit")
+_AUDIT_ROUNDS = 10
+
 # One advance at a time per run — the completion handler and the reaper both call advance, and only
 # the control-plane process ever does, so an in-process lock is sufficient mutual exclusion.
 _locks: Dict[str, threading.Lock] = {}
@@ -81,7 +89,7 @@ def kickoff(run_id: str, *, kind: str = "build", note: str = "", auto_pause: boo
     """Create the build attempt row and start the build. Returns the build_id. The single entry the
     API and the CLI both call; `start_build` does the actual seeding + first advance."""
     if max_steps is None:
-        max_steps = 40 if kind == "fix" else 60
+        max_steps = 40 if kind == "fix" else 200 if kind == "audit" else 60
     build_id = db_store.create_build(run_id, kind=kind)
     db_store.build_started(build_id)
     start_build(run_id, build_id, kind=kind, note=note, auto_pause=auto_pause, max_steps=max_steps)
@@ -123,7 +131,7 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
     spec = rs.read_spec()
     if spec is None:
         raise ValueError(f"no spec for run {run_id!r}")
-    if kind == "build" and not spec.get("frozen"):
+    if kind in ("build", "audit") and not spec.get("frozen"):
         raise RuntimeError("build refuses to run until the spec is frozen")
     _seed(run_id, rs, spec)
 
@@ -192,8 +200,9 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
                 _post_fix_bookkeeping(run_id, cursor, pairs)
             cursor.todo = _todo_from_pairs(pairs)
             if not pairs:
-                _finalize(run_id, rs, cursor, ok=True)
-                return
+                if not _advance_audit(run_id, rs, cursor):
+                    return   # finalized ok
+                continue     # a finding's fix or an audit sweep is armed — run its first turn
             # The step cap bounds the NUMBER of fixes, checked here (after the clean-check, so a fix
             # that greens everything exactly at the cap still finalizes ok). Each fix is itself
             # bounded by its per-shape turn cap, so the fix branch below needs no cap check.
@@ -232,11 +241,42 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
             if cursor.phase != "done":   # a refused budget finalizes inside _enqueue_turn
                 _emit_step(run_id, cursor, outcome.report)
             return
-        # Done: the fix finished — back to the outer gate sweep.
+        # Done: the fix finished — back to the outer gate sweep. A finished audit sweep hands its
+        # findings to the pending queue; the outer loop fixes them one per iteration (re-gating
+        # between, so a fix that regresses a gate is repaired before the next finding runs).
+        if fc.shape == "audit":
+            cursor.audit_pending = list(fc.findings or [])
+            cursor.audit_done = not cursor.audit_pending
         cursor.set_fix(None)
         cursor.phase = "outer"
         build_state.save(rs.run_dir, cursor)
         _emit_step(run_id, cursor, outcome.report)
+
+
+def _advance_audit(run_id: str, rs: RunState, cursor: BuildCursor) -> bool:
+    """The gates are green — decide what greenness means. Arm the next pending finding's fix, else
+    the next audit sweep, and return True; when the audit is exhausted (clean sweep, round cap, step
+    cap, or a kind that doesn't audit) finalize ok and return False. Every limit here FAILS OPEN to
+    a successful build: an incomplete audit ships the game, it never strands it."""
+    if cursor.audit_pending and cursor.step < cursor.max_steps:
+        finding = cursor.audit_pending.pop(0)
+        error = Error(type=ErrorType.HUMAN, code="audit", component="game",
+                      message=finding["note"])
+        cursor.prev = []
+        cursor.set_fix(FixCursor(shape="read_write", error=error_to_dict(error)))
+        cursor.phase = "fix"
+        return True
+    if (cursor.kind in _AUDIT_KINDS and not cursor.audit_done
+            and cursor.audit_round < _AUDIT_ROUNDS and cursor.step < cursor.max_steps):
+        cursor.audit_round += 1
+        sweep = Error(type=ErrorType.BUILD, code="audit_sweep", component="game",
+                      message=f"spec-vs-code audit (round {cursor.audit_round}/{_AUDIT_ROUNDS})")
+        cursor.prev = []
+        cursor.set_fix(FixCursor(shape="audit", error=error_to_dict(sweep)))
+        cursor.phase = "fix"
+        return True
+    _finalize(run_id, rs, cursor, ok=True)
+    return False
 
 
 def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, stalled: bool) -> bool:

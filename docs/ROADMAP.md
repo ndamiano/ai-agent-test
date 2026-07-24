@@ -77,6 +77,16 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
   control must be registered — the spec's controls map now rides into the probe) and
   `solid_overlap` (no solid entities interpenetrate at rest). Design:
   `docs/codegen_rebuild_plan.md` § Collision + actions.
+- **Spec-vs-code audit (landed 2026-07-23):** the gates prove a game RUNS, not that its declared
+  mechanics exist — a live build shipped every gate green with dead gold, unreachable floors and
+  zero-damage combat. A build now ends on SPEC-EXHAUSTED, not errors-zero: when the gates go green,
+  an audit llm turn (`maestro/codegen/audit.py`, shape `audit` in `build_steps`) judges the source
+  against the frozen spec's mechanically-enumerated claims (controls/mechanics/win/lose/render);
+  failed claims become fixes on the `fix_from_note` lane, then re-gate → re-audit until a sweep
+  returns zero findings (round + step caps as fail-open backstops; audit builds default 200 steps). `blocked_by` verdicts collapse cascades to their root cause; every failure path
+  (unparseable reply, caps, budget) FAILS OPEN to a finished build. CLI: `--audit <run_id>` re-runs
+  it on a built game. Also widened `single_mover` to the two shipped blind spots (input-guard
+  movers, movers inside `kit.register` handlers).
 - **Next:** finish the data-file stage → Phase 3 harden the probe → Phase 4 widen the kit → finish
   Phase 5 assets (styled-prompt stage) → Phase 7 the "good" tier (deferred cloud play-critic).
 

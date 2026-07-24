@@ -146,8 +146,9 @@ src/
                          metadata.stage="build"; /worker/complete routes here. Owns the two-level state
                          machine the old resident AgentLoop was: OUTER (rebuild context from disk, sweep
                          CodegenModule's gates, cross-fix stall/park bookkeeping, pick the top error,
-                         START its fix) and FIX (a build_steps shape; apply the turn, enqueue the next
-                         or return to outer). advance() runs ALL local work — gates, tool dispatch,
+                         START its fix — and when the gates are GREEN, run the spec-vs-code audit
+                         (audit.py) before finalizing, fixing failed claims one per iteration) and FIX
+                         (a build_steps shape; apply the turn, enqueue the next or return to outer). advance() runs ALL local work — gates, tool dispatch,
                          deterministic fix passes — synchronously and SUSPENDS only at a real inference
                          (enqueue one llm job + return; the process is free to die). Never more than one
                          build turn in flight per run, and advance runs only in the control-plane
@@ -173,6 +174,20 @@ src/
                          {"datasets":[]} legal — arcade games opt out), then deterministic row
                          validation + typed data.ts regeneration (data_files.py); authoring/fix prompts
                          carry a GAME DATA summary (schema + ONE example row), never the rows.
+                         AUDIT = the terminal shape: one llm turn judges the source against the frozen
+                         spec's claims (see audit.py).
+      audit.py           the spec-vs-code AUDIT — the gates prove a game RUNS, not that its declared
+                         mechanics exist, so a build ends on SPEC-EXHAUSTED, not errors-zero. Claims
+                         are enumerated MECHANICALLY from the spec (controls/mechanics/win/lose/
+                         render — a small model asked to choose its own checklist returns one finding
+                         and stops); the audit turn reads the full source (GENERATED files labeled as
+                         law — control claims are judged scaffold+hooks COMBINED) and verdicts each
+                         claim delivered/broken/stub/missing/blocked. `blocked_by` collapses cascades
+                         to the root cause (one bug ≠ N fixes); failed claims become human-note-shaped
+                         fixes on the fix_from_note lane, then re-gate → re-audit (_AUDIT_ROUNDS).
+                         Strict parse + entry-count validation with one retry; every failure path
+                         FAILS OPEN to a finished build — a game that never finishes is worse than an
+                         incomplete one that ships. CLI: run.py --audit <run_id>.
       fix_classes.py     the error-class → fixer MAP (codegen analog of IR's per-check owner). A GATE
                          detects a raw failure; a FIX CLASS resolves it — chosen by matching the Error
                          (its `kind` for our gates, the TS code in its message for tsc). A class owns

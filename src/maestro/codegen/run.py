@@ -176,6 +176,12 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40) -> BuildResult:
     return _await_build(run_id)
 
 
+def audit_run(run_id: str, max_steps: int = 40) -> BuildResult:
+    """Run the spec-vs-code audit (and its fixes) on an already-built run."""
+    build_chain.kickoff(run_id, kind="audit", max_steps=max_steps)
+    return _await_build(run_id)
+
+
 def _await_build(run_id: str) -> BuildResult:
     """Block until the build's cursor reports done, then summarize it. CLI-only — the web path never
     waits."""
@@ -245,6 +251,19 @@ def _cli_fix(run_id: str, note: str) -> int:
     return 0 if result.ok else 1
 
 
+def _cli_audit(run_id: str) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    print(f"auditing {run_id} against its frozen spec\n")
+    result = audit_run(run_id)
+    print(f"\nok={result.ok}  steps={result.steps}")
+    if result.ok:
+        print(f"play: runtime/index.html?game={run_id}")
+    else:
+        for e in result.failures:
+            print(f"  unmet: [{e.component}] {e.code}: {e.message[:200]}")
+    return 0 if result.ok else 1
+
+
 def _await_batch(batch_id: str, run_id: str, mode: str) -> list:
     """Block until the asset batch drains. The API path returns as soon as the jobs are enqueued
     and reports over the websocket; a CLI has no socket, so it waits and prints.
@@ -291,6 +310,7 @@ _HELP = """maestro codegen — draft a spec, build a game, skin it with assets.
 usage:
   python -m maestro.codegen.run "<request>"   draft → freeze → build → play
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
+  python -m maestro.codegen.run --audit <run_id>          audit a built run against its frozen spec
   python -m maestro.codegen.run --assets <run_id>         run the asset (reskin) stage on a built run
   python -m maestro.codegen.run --help | -h              show this help
 """
@@ -304,6 +324,10 @@ if __name__ == "__main__":
         if len(sys.argv) < 4:
             sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')
         sys.exit(_cli_fix(sys.argv[2], " ".join(sys.argv[3:])))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--audit":
+        if len(sys.argv) < 3:
+            sys.exit("usage: python -m maestro.codegen.run --audit <run_id>")
+        sys.exit(_cli_audit(sys.argv[2]))
     if len(sys.argv) >= 2 and sys.argv[1] == "--assets":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')

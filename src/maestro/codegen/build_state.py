@@ -65,6 +65,9 @@ class FixCursor:
     system: str = ""                              # the fix's system prompt, re-sent each turn
     history: List[Dict] = field(default_factory=list)
     started: bool = False                         # has the first request been built yet
+    # audit shape: the findings harvested from a completed sweep (build_chain moves them to the
+    # BuildCursor's audit_pending queue when the shape returns Done)
+    findings: List[Dict] = field(default_factory=list)
 
 
 @dataclass
@@ -83,6 +86,10 @@ class BuildCursor:
     det_tried: List[str] = field(default_factory=list)      # idkeys already given their one free deterministic pass
     passed: List[str] = field(default_factory=list)         # components already milestoned
     todo: List[Dict] = field(default_factory=list)   # last outer to-do (emitted with build_step)
+    # the spec-vs-code audit (runs when the gates are green, before finalizing)
+    audit_round: int = 0                          # sweeps already run
+    audit_pending: List[Dict] = field(default_factory=list)   # findings awaiting their fix
+    audit_done: bool = False                      # a sweep returned zero findings — spec clean
     # the current fix
     fix: Optional[Dict] = None                    # FixCursor as dict
     # read→edit grounding, durable across process death

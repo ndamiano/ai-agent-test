@@ -29,12 +29,12 @@ export function createGame(kit: Kit): GameObject {
     config: CONFIG,
     state,
     init(kit: Kit) {
+{interact_init}
       initGame(state, kit);
       if (!state.player) throw new Error(
         "game.ts init(state, kit) must create state.player (a shape-tagged entity spawned into " +
         "state.world) — the control scaffold steers state.player.");
 {world_init}
-{interact_init}
     },
     update(dt: number, input: Input, kit: Kit) {
 {interact}

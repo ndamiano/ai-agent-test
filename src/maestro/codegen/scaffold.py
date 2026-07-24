@@ -20,6 +20,7 @@ scaffold seeds the CONTROLS (main.ts) — orthogonal axes, so a village RPG gets
 movement, ground clamp and solid pass as everything else and the model only ever authors game.ts.
 """
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -54,6 +55,43 @@ def _wants_interact(spec: dict) -> bool:
     # false positives, and widening later is a one-line change here.
     uses = (spec.get("design") or {}).get("uses") or []
     return any("dialogue" in str(u).lower() for u in uses)
+
+
+# Mirrors the probe's unbound_control tokenization (engine.js ALIAS/MOVEMENT/MOUSE): the key the
+# scaffold registers must be the key the probe will demand a binding on.
+_KEY_ALIAS = {"space": " ", "spacebar": " ", "esc": "Escape", "escape": "Escape",
+              "enter": "Enter", "return": "Enter", "tab": "Tab", "shift": "Shift",
+              "ctrl": "Control", "control": "Control",
+              "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight",
+              "arrowup": "ArrowUp", "arrowdown": "ArrowDown",
+              "arrowleft": "ArrowLeft", "arrowright": "ArrowRight"}
+_MOVEMENT_TOKENS = {"w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright",
+                    "wasd", "arrows", "arrowkeys", "arrow"}
+_MOUSE_TOKEN = re.compile(r"mouse|click|pointer|cursor|drag|wheel|scroll|lmb|rmb|mmb")
+_INTERACT_WHAT = re.compile(r"interact|talk|dialog|speak", re.I)
+
+
+def _interact_keys(spec: dict) -> list:
+    """The keys the scaffold's interact action binds: the spec's own interact-shaped control when it
+    names one, else E. Hardcoding E cost a live build its whole step budget — the spec bound
+    interact to SPACE, the hook registered it correctly on space, and the scaffold's later
+    same-name register replaced that binding (register replaces by name), leaving unbound_control
+    unfixable by construction."""
+    controls = (spec.get("design") or {}).get("controls") or {}
+    for raw, what in controls.items():
+        if not _INTERACT_WHAT.search(str(what)):
+            continue
+        keys = []
+        for tok in re.split(r"[\s/+,|]+", str(raw)):
+            if not tok:
+                continue
+            lc = tok.lower()
+            if lc in _MOVEMENT_TOKENS or _MOUSE_TOKEN.search(lc):
+                continue
+            keys.append(_KEY_ALIAS.get(lc, lc if len(tok) == 1 else tok))
+        if keys:
+            return keys
+    return ["e"]
 
 
 _HOOK_EXPORT = r"export\s+(?:async\s+)?(?:function\s+{name}\b|const\s+{name}\b)|export\s*\{{[^}}]*\b{name}\b[^}}]*\}}"
@@ -127,9 +165,13 @@ def seed_scaffold(state, spec: dict) -> None:
         # Two halves of one feature: the update-side talk loop (advance/choose/close) and the
         # init-side kit.register("interact", ...) that OPENS it — registered so the binding is
         # machine-readable (probe/bindings/remap) while talkStep keeps the per-frame key reads.
+        # The keys are substituted here, not by render_template: the partial rides in as a VALUE,
+        # and values are never re-scanned for {tokens}.
         mode = "3d" if _is_3d(spec) else "2d"
+        keys = json.dumps(_interact_keys(spec))
         interact = (_TEMPLATES / f"interact_{mode}.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
-        interact_init = (_TEMPLATES / f"interact_init_{mode}.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
+        interact_init = (_TEMPLATES / f"interact_init_{mode}.ts.tmpl").read_text(
+            encoding="utf-8").rstrip("\n").replace("{interact_keys}", keys)
     game_dir(state.run_dir).mkdir(parents=True, exist_ok=True)
     main.write_text(render_template(tmpl, {"interact": interact, "interact_init": interact_init,
                                            "world_import": world_import, "world_init": world_init,

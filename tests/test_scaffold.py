@@ -25,6 +25,7 @@ from maestro.codegen.module import (
     _detect_contracted,
 )
 from maestro.codegen.scaffold import (
+    _interact_keys,
     reexport_hooks,
     seed_scaffold,
 )
@@ -437,6 +438,54 @@ def test_scaffold_dialogue_interact_satisfies_spec_key_and_probe(tmp_path):
     _hook_game(tmp_path, spec, GAME_TS_TALK)
     main = (tmp_path / "game" / "main.ts").read_text()
     assert 'kit.register("interact", ["e"]' in main
+    assert typecheck(tmp_path) == []
+    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
+    assert pr.get("ok") is True, pr
+
+
+def test_interact_keys_bind_the_spec_control():
+    def spec(controls):
+        return {"design": {"controls": controls}}
+    assert _interact_keys(spec({"WASD": "move", "SPACE": "interact / start dialogue"})) == [" "]
+    assert _interact_keys(spec({"E": "talk to villagers"})) == ["e"]
+    assert _interact_keys(spec({"Enter": "speak"})) == ["Enter"]
+    # multi-token keys keep every real key; movement/mouse tokens fall out
+    assert _interact_keys(spec({"E/Space": "interact"})) == ["e", " "]
+    assert _interact_keys(spec({"LEFT_CLICK": "talk"})) == ["e"]   # no mouse keys to bind → default
+    assert _interact_keys(spec({"F": "attack"})) == ["e"]          # nothing interact-shaped → default
+    assert _interact_keys(spec({})) == ["e"]
+
+
+def test_scaffold_dialogue_interact_binds_a_space_spec_key(tmp_path):
+    # The shipped incident: the spec bound interact to SPACE, the scaffold hardcoded E and its
+    # post-init register REPLACED the hook's correct space binding by name (register replaces by
+    # name) — unbound_control on " " became unfixable by construction and the build burned its
+    # whole step cap. The scaffold must bind the spec's key.
+    spec = _spec("top-down", uses=["dialogue"])
+    spec["design"]["controls"] = {"WASD": "move", "SPACE": "interact / start dialogue"}
+    _hook_game(tmp_path, spec, GAME_TS_TALK)
+    main = (tmp_path / "game" / "main.ts").read_text()
+    assert 'kit.register("interact", [" "]' in main
+    assert typecheck(tmp_path) == []
+    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
+    assert pr.get("ok") is True, pr
+
+
+def test_hook_own_interact_register_wins_over_the_scaffold(tmp_path):
+    # Same incident, other half: the scaffold registers BEFORE the hook init runs, so a game that
+    # registers its own "interact" (dialogue + combat in one handler) replaces the scaffold's
+    # default instead of being clobbered by it — the scaffold only fills a blank.
+    spec = _spec("top-down", uses=["dialogue"])
+    spec["design"]["controls"] = {"WASD": "move", "SPACE": "interact / start dialogue"}
+    game = GAME_TS_TALK.replace(
+        'talk: { name: "Elder", lines: ["Hello."] } });\n}',
+        'talk: { name: "Elder", lines: ["Hello."] } });\n'
+        '  kit.register("interact", [" "], () => { (state as any).presses = '
+        '((state as any).presses ?? 0) + 1; });\n}')
+    assert 'presses' in game   # the replace landed
+    _hook_game(tmp_path, spec, game)
+    main = (tmp_path / "game" / "main.ts").read_text()
+    assert main.index('kit.register("interact"') < main.index("initGame(state, kit);")
     assert typecheck(tmp_path) == []
     pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
     assert pr.get("ok") is True, pr

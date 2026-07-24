@@ -291,7 +291,12 @@ src/
                          see it. A hook that sets its own wins (the scaffold only fills a blank).
                          And — when the
                          spec uses dialogue — the whole kit talk loop (talkStep update-side, the OPEN
-                         half a registered "interact" action; choice → state.talkPick). The model
+                         half a registered "interact" action bound to the SPEC's interact key, not a
+                         hardcoded E, and registered BEFORE the hook init so a game registering its
+                         own "interact" replaces the default (register replaces by name; a measured
+                         build bound interact to space correctly and the scaffold's post-init E
+                         register clobbered it — unbound_control unfixable, whole step cap burned);
+                         choice → state.talkPick). The model
                          authors the hooks in game.ts (createState/init/update/draw(2D)/hud). WHY:
                          two live builds shipped dead controls out of model-authored glue (one never
                          read a movement key, one zeroed the wired movement every frame). `mode` (not

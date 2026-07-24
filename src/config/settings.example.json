@@ -26,11 +26,37 @@
           "NVIDIA GeForce RTX 5090",
           "NVIDIA RTX PRO 4500 Blackwell"
         ],
-        "max_workers": 2,
+        "max_workers": 3,
         "scale_up_depth_per_worker": 10,
         "scale_up_max_age_seconds": 300,
         "cooldown_seconds": 90,
-        "idle_exit_seconds": 10,
+        "idle_exit_seconds": 120,
+        "boot_deadline_seconds": 900
+      },
+      "llm": {
+        "template_id": "",
+        "gpu_type_ids": [
+          "NVIDIA GeForce RTX 5090",
+          "NVIDIA RTX PRO 4500 Blackwell"
+        ],
+        "max_workers": 3,
+        "scale_up_depth_per_worker": 10,
+        "scale_up_max_age_seconds": 300,
+        "cooldown_seconds": 90,
+        "idle_exit_seconds": 30,
+        "boot_deadline_seconds": 900
+      },
+      "image": {
+        "template_id": "",
+        "gpu_type_ids": [
+          "NVIDIA GeForce RTX 5090",
+          "NVIDIA RTX PRO 4500 Blackwell"
+        ],
+        "max_workers": 3,
+        "scale_up_depth_per_worker": 10,
+        "scale_up_max_age_seconds": 300,
+        "cooldown_seconds": 90,
+        "idle_exit_seconds": 30,
         "boot_deadline_seconds": 900
       }
     }

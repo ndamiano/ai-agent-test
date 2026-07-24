@@ -18,6 +18,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from auth import store
 from auth.billing import SECONDS_PER_CREDIT
@@ -176,7 +177,7 @@ def fix_from_note(run_id: str, note: str, max_steps: int = 40) -> BuildResult:
     return _await_build(run_id)
 
 
-def audit_run(run_id: str, max_steps: int = 40) -> BuildResult:
+def audit_run(run_id: str, max_steps: Optional[int] = None) -> BuildResult:
     """Run the spec-vs-code audit (and its fixes) on an already-built run."""
     build_chain.kickoff(run_id, kind="audit", max_steps=max_steps)
     return _await_build(run_id)

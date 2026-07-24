@@ -194,6 +194,21 @@ def test_step_cap_and_fix_kind_skip_the_audit(finalized):
     assert finalized == [True, True]
 
 
+def test_audit_kickoff_gets_the_200_step_default(monkeypatch):
+    """audit_run must not pin its own cap — kickoff owns the per-kind defaults (an explicit 40 here
+    finalized a live run fail-open mid-round at step 43)."""
+    from maestro.codegen import build_chain, run as run_mod
+    seen = {}
+    monkeypatch.setattr(build_chain, "create_build", None, raising=False)
+    monkeypatch.setattr(build_chain.db_store, "create_build", lambda rid, kind: "b")
+    monkeypatch.setattr(build_chain.db_store, "build_started", lambda b: None)
+    monkeypatch.setattr(build_chain, "start_build",
+                        lambda rid, bid, **kw: seen.update(kw))
+    monkeypatch.setattr(run_mod, "_await_build", lambda rid: None)
+    run_mod.audit_run("r1")
+    assert seen["kind"] == "audit" and seen["max_steps"] == 200
+
+
 def test_audit_cursor_fields_survive_the_json_round_trip(tmp_path):
     cursor = BuildCursor(build_id="b", audit_round=1,
                          audit_pending=[{"claim": "c", "note": "n"}])

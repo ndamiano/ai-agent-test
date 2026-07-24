@@ -53,7 +53,8 @@ def claims_of(spec: dict) -> List[str]:
     return claims
 
 
-def build_request(spec: dict, run_dir, claims: List[str], retry: bool = False) -> Tuple[List[dict], int]:
+def build_request(spec: dict, run_dir, claims: List[str], retry: bool = False,
+                  anchors: List[str] = ()) -> Tuple[List[dict], int]:
     """The audit turn's messages. Sources ride in full — games are small and the verdicts must cite
     file:line. GENERATED files are included (the scaffold IS the other half of every control claim)
     but labeled as law."""
@@ -67,12 +68,22 @@ def build_request(spec: dict, run_dir, claims: List[str], retry: bool = False) -
         label = " (GENERATED — pipeline law, judge against it, never blame it)" \
             if src.lstrip().startswith("// GENERATED") else ""
         sources.append(f"# game/{name}{label}\n```ts\n{src}\n```")
-    user = "\n\n".join([
+    # Verdict anchoring: without it the judge oscillates (measured 5→7→3 delivered across sweeps of
+    # a monotonically-improving game) and an until-clean loop can never terminate on merit.
+    anchor_block = ""
+    if anchors:
+        anchor_lines = "\n".join(f"- {a}" for a in anchors)
+        anchor_block = ("# VERIFIED BY THE PREVIOUS SWEEP — these claims were already judged "
+                        "delivered against this same code. Mark one failed ONLY if you can cite a "
+                        "specific regression introduced since (changed lines that broke it); a new "
+                        "opinion is not a regression.\n" + anchor_lines)
+    user = "\n\n".join(p for p in [
         f"# CLAIM LIST — audit every claim, in order; your array has EXACTLY {len(claims)} entries",
         checklist,
+        anchor_block,
         _design_block(spec),
         *sources,
-    ])
+    ] if p)
     if retry:
         user += (f"\n\nCRITICAL: your previous reply was not a valid JSON array of {len(claims)} "
                  f"entries. Reply with ONLY the complete JSON array — start with `[`, one entry per "

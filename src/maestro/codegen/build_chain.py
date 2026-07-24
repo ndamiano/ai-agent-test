@@ -247,6 +247,7 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
         if fc.shape == "audit":
             cursor.audit_pending = list(fc.findings or [])
             cursor.audit_done = not cursor.audit_pending
+            cursor.audit_delivered = list(fc.delivered or [])
         cursor.set_fix(None)
         cursor.phase = "outer"
         build_state.save(rs.run_dir, cursor)
@@ -272,7 +273,8 @@ def _advance_audit(run_id: str, rs: RunState, cursor: BuildCursor) -> bool:
         sweep = Error(type=ErrorType.BUILD, code="audit_sweep", component="game",
                       message=f"spec-vs-code audit (round {cursor.audit_round}/{_AUDIT_ROUNDS})")
         cursor.prev = []
-        cursor.set_fix(FixCursor(shape="audit", error=error_to_dict(sweep)))
+        cursor.set_fix(FixCursor(shape="audit", error=error_to_dict(sweep),
+                                 anchors=list(cursor.audit_delivered)))
         cursor.phase = "fix"
         return True
     _finalize(run_id, rs, cursor, ok=True)

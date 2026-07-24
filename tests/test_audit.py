@@ -126,6 +126,24 @@ def test_audit_step_requests_then_harvests_findings(tmp_path):
     assert "5/6 delivered" in out.report
 
 
+def test_audit_step_harvests_delivered_and_anchors_ride_the_next_sweep(tmp_path):
+    """Verdict anchoring: the judge oscillates on unchanged code, so each sweep carries the previous
+    sweep's delivered claims and may only flip one with regression evidence."""
+    run_dir = _game(tmp_path)
+    fc = _fc()
+    build_steps.step("audit", _SPEC, run_dir, {}, fc, {})
+    entries = _entries(["delivered"] * 5 + ["broken"], {5: {"fix_note": "x"}})
+    build_steps.step("audit", _SPEC, run_dir, {}, fc, _reply(entries))
+    claims = audit.claims_of(_SPEC)
+    assert fc.delivered == claims[:5]
+
+    nxt = FixCursor(shape="audit", error=fc.error, anchors=fc.delivered)
+    out = build_steps.step("audit", _SPEC, run_dir, {}, nxt, {})
+    user = out.messages[-1]["content"]
+    assert "VERIFIED BY THE PREVIOUS SWEEP" in user
+    assert claims[0] in user.split("# DESIGN SPEC")[0].split("VERIFIED")[1]
+
+
 def test_audit_step_retries_once_then_fails_open(tmp_path):
     run_dir = _game(tmp_path)
     fc = _fc()

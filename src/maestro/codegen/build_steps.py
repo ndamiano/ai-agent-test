@@ -364,20 +364,23 @@ def audit_step(spec, run_dir, tools, fc, result) -> Outcome:
         return Done("audit: spec enumerates no claims — passing")
     if not fc.started:
         fc.started = True
-        msgs, max_tokens = audit.build_request(spec, run_dir, claims)
+        msgs, max_tokens = audit.build_request(spec, run_dir, claims, anchors=fc.anchors)
         return Infer(msgs, [], max_tokens, reasoning="none",
                      report=f"auditing {len(claims)} spec claim(s)")
     entries, why = audit.parse_verdicts(_content(result), len(claims))
     if entries is None:
         if fc.attempt < 1:
             fc.attempt = 1
-            msgs, max_tokens = audit.build_request(spec, run_dir, claims, retry=True)
+            msgs, max_tokens = audit.build_request(spec, run_dir, claims, retry=True,
+                                                   anchors=fc.anchors)
             return Infer(msgs, [], max_tokens, reasoning="none",
                          report=f"auditing (retry: {why})")
         return Done(f"audit reply invalid after retry ({why}) — passing")
     findings, dropped = audit.findings_from(claims, entries)
     fc.findings = findings
-    delivered = sum(1 for e in entries if str(e.get("status", "")).lower() == "delivered")
+    fc.delivered = [claims[i] for i, e in enumerate(entries)
+                    if str(e.get("status", "")).lower() == "delivered" and i < len(claims)]
+    delivered = len(fc.delivered)
     blocked = sum(1 for e in entries if str(e.get("status", "")).lower() == "blocked")
     report = (f"audit: {delivered}/{len(claims)} delivered, {blocked} blocked, "
               f"{len(findings)} finding(s) queued")

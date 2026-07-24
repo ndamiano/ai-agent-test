@@ -65,9 +65,12 @@ class FixCursor:
     system: str = ""                              # the fix's system prompt, re-sent each turn
     history: List[Dict] = field(default_factory=list)
     started: bool = False                         # has the first request been built yet
-    # audit shape: the findings harvested from a completed sweep (build_chain moves them to the
-    # BuildCursor's audit_pending queue when the shape returns Done)
+    # audit shape: the findings + verified claims harvested from a completed sweep (build_chain
+    # moves them onto the BuildCursor when the shape returns Done); anchors is the PREVIOUS sweep's
+    # delivered list, injected so a verdict can only flip back with evidence of a regression
     findings: List[Dict] = field(default_factory=list)
+    delivered: List[str] = field(default_factory=list)
+    anchors: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -90,6 +93,7 @@ class BuildCursor:
     audit_round: int = 0                          # sweeps already run
     audit_pending: List[Dict] = field(default_factory=list)   # findings awaiting their fix
     audit_done: bool = False                      # a sweep returned zero findings — spec clean
+    audit_delivered: List[str] = field(default_factory=list)  # claims the last sweep verified
     # the current fix
     fix: Optional[Dict] = None                    # FixCursor as dict
     # read→edit grounding, durable across process death

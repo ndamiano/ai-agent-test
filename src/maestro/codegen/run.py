@@ -20,6 +20,7 @@ import uuid
 from pathlib import Path
 
 from auth import store
+from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
 from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
@@ -207,6 +208,9 @@ def _cli(request: str) -> int:
     owner = users[0].id
 
     run_id = create_run(owner)
+    # The CLI is the employee path — no credit charge, but the compute budget still gates every
+    # enqueue, so grant the same seconds a charged build would get or step 1 is refused.
+    db_store.charge_game(run_id, 0, SECONDS_PER_CREDIT)
     print(f"run: {run_id}\ndrafting spec for: {request!r}\n")
     spec = draft_spec(request)
     state = RunState(run_id)

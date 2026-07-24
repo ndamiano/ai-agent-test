@@ -443,6 +443,18 @@ def test_scaffold_dialogue_interact_satisfies_spec_key_and_probe(tmp_path):
     assert pr.get("ok") is True, pr
 
 
+def test_multiword_mouse_spec_key_is_exempt_from_unbound_control(tmp_path):
+    # The shipped incident: "Mouse Move: look around" splits to ["Mouse", "Move"] and the per-token
+    # exemption only caught "Mouse" — "Move" survived as a phantom keyboard key no register can
+    # satisfy, and the build ping-ponged unbound_control/dead_action to its step cap. The whole raw
+    # key is mouse-shaped, so the whole entry is exempt.
+    spec = _spec("top-down")
+    spec["design"]["controls"] = {"WASD": "move", "Mouse Move": "look around", "F": "attack"}
+    _hook_game(tmp_path, spec, GAME_TS_SOLID)
+    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
+    assert pr.get("ok") is True, pr
+
+
 def test_interact_keys_bind_the_spec_control():
     def spec(controls):
         return {"design": {"controls": controls}}

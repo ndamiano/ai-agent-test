@@ -1365,6 +1365,10 @@ export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = 
     const bound = new Set();
     for (const b of allBindings) for (const k of b.keys) bound.add(k);
     for (const [rawKey, what] of Object.entries(controlKeys)) {
+      // The WHOLE raw key, before tokenizing: "Mouse Move" splits to ["Mouse", "Move"] and the
+      // per-token test exempts only "Mouse" — "Move" survives as a phantom keyboard key the game
+      // can never satisfy (a live build ping-ponged unbound_control/dead_action to its step cap).
+      if (MOUSE.test(String(rawKey).toLowerCase())) continue;
       const tokens = String(rawKey).split(/[\s/+,|]+/).filter(Boolean)
         .map((t) => { const lc = t.toLowerCase(); return ALIAS[lc] ?? (t.length === 1 ? lc : t); });
       const actionable = tokens.filter((k) => !MOVEMENT.has(k.toLowerCase()) && !MOUSE.test(k.toLowerCase())

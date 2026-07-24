@@ -65,9 +65,12 @@ class FixCursor:
     system: str = ""                              # the fix's system prompt, re-sent each turn
     history: List[Dict] = field(default_factory=list)
     started: bool = False                         # has the first request been built yet
-    # audit shape: the findings + verified claims harvested from a completed sweep (build_chain
-    # moves them onto the BuildCursor when the shape returns Done); anchors is the PREVIOUS sweep's
-    # delivered list, injected so a verdict can only flip back with evidence of a regression
+    # audit shape: one claim at a time through a read→verdict subloop. claim_idx is the claim being
+    # judged (history/turn/nreads reset per claim); verdicts accumulates every claim's outcome for
+    # the durable log; findings + delivered are harvested onto the BuildCursor at Done; anchors is
+    # the PREVIOUS round's delivered list, so a verdict only flips back with regression evidence.
+    claim_idx: int = 0
+    verdicts: List[Dict] = field(default_factory=list)
     findings: List[Dict] = field(default_factory=list)
     delivered: List[str] = field(default_factory=list)
     anchors: List[str] = field(default_factory=list)

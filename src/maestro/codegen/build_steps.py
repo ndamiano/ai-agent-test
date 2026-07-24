@@ -355,38 +355,93 @@ def _apply_tool_call(tools, fc, tc) -> None:
 
 # ── audit (the spec-vs-code sweep, one turn + one retry) ──────────────────────
 def audit_step(spec, run_dir, tools, fc, result) -> Outcome:
-    """One audit sweep: a verdict per spec claim, the failed ones harvested into `fc.findings` for
-    the driver to queue as fixes. A reply still unparseable after the retry yields zero findings —
-    an audit failure must never strand a green build."""
+    """One audit round: every spec claim judged in turn by a bounded read→verdict subloop — the
+    judge reads the files it needs and must cite the traced path (single-shot judging over pasted
+    sources was measured wrong both ways on the same code; tracing corrected it). A claim with no
+    verdict inside its turn cap is SKIPPED, never a finding — an audit failure must not strand a
+    green build."""
     from maestro.codegen import audit
     claims = audit.claims_of(spec)
     if not claims:
         return Done("audit: spec enumerates no claims — passing")
     if not fc.started:
         fc.started = True
-        msgs, max_tokens = audit.build_request(spec, run_dir, claims, anchors=fc.anchors)
-        return Infer(msgs, [], max_tokens, reasoning="none",
-                     report=f"auditing {len(claims)} spec claim(s)")
-    entries, why = audit.parse_verdicts(_content(result), len(claims))
-    if entries is None:
-        if fc.attempt < 1:
-            fc.attempt = 1
-            msgs, max_tokens = audit.build_request(spec, run_dir, claims, retry=True,
-                                                   anchors=fc.anchors)
-            return Infer(msgs, [], max_tokens, reasoning="none",
-                         report=f"auditing (retry: {why})")
-        return Done(f"audit reply invalid after retry ({why}) — passing")
-    findings, dropped = audit.findings_from(claims, entries)
-    fc.findings = findings
-    fc.delivered = [claims[i] for i, e in enumerate(entries)
-                    if str(e.get("status", "")).lower() == "delivered" and i < len(claims)]
-    delivered = len(fc.delivered)
-    blocked = sum(1 for e in entries if str(e.get("status", "")).lower() == "blocked")
-    report = (f"audit: {delivered}/{len(claims)} delivered, {blocked} blocked, "
-              f"{len(findings)} finding(s) queued")
+        return _audit_claim_start(audit, spec, run_dir, claims, fc)
+
+    message = (result.get("choices") or [{}])[0].get("message", {}) or {}
+    content = message.get("content", "") or ""
+    if len(content) > 2000:
+        content = "[…truncated…]\n" + content[-2000:]
+    tcs = [tc for tc in (message.get("tool_calls") or [])
+           if tc.get("function", {}).get("name") == "read_file"]
+    fc.turn += 1
+
+    if tcs and fc.nreads < audit.READS_BEFORE_VERDICT and fc.turn < audit.CLAIM_TURN_CAP:
+        fc.history.append({"role": "assistant", "content": content, "tool_calls": tcs})
+        for tc in tcs:
+            args = parse_args(tc["function"].get("arguments"))
+            read_args = {"file": args.get("file", "")}
+            if args.get("offset") is not None:
+                read_args["offset"] = args["offset"]
+            if args.get("limit") is not None:
+                read_args["limit"] = args["limit"]
+            res = tools["read_file"](**read_args)
+            fc.nreads += 1
+            fc.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                               "content": json.dumps(res)})
+        return _audit_claim_infer(audit, claims, fc)
+
+    verdict = audit.parse_verdict(content)
+    if verdict is None and fc.turn < audit.CLAIM_TURN_CAP:
+        fc.history.append({"role": "assistant", "content": content})
+        nudge = ("No more reads — output ONLY the verdict JSON object now."
+                 if fc.nreads >= audit.READS_BEFORE_VERDICT
+                 else "Call read_file, or output ONLY the verdict JSON object.")
+        fc.history.append({"role": "user", "content": nudge})
+        return _audit_claim_infer(audit, claims, fc)
+
+    claim = claims[fc.claim_idx]
+    if verdict is None:
+        fc.verdicts.append({"claim": claim, "status": "skipped", "evidence": ""})
+    else:
+        status = str(verdict.get("status", "")).lower()
+        fc.verdicts.append({"claim": claim, "status": status,
+                            "evidence": verdict.get("evidence", "")})
+        if status == "delivered":
+            fc.delivered.append(claim)
+        elif audit.is_failed(verdict):
+            fc.findings.append({"claim": claim, "note": audit.note_for(claim, verdict)})
+    fc.claim_idx += 1
+    if fc.claim_idx < len(claims):
+        return _audit_claim_start(audit, spec, run_dir, claims, fc)
+
+    audit.log_verdicts(run_dir, fc.verdicts)
+    dropped = max(0, len(fc.findings) - audit.MAX_FINDINGS_PER_ROUND)
+    fc.findings = fc.findings[:audit.MAX_FINDINGS_PER_ROUND]
+    skipped = sum(1 for v in fc.verdicts if v["status"] == "skipped")
+    report = (f"audit: {len(fc.delivered)}/{len(claims)} delivered, "
+              f"{len(fc.findings)} finding(s) queued")
+    if skipped:
+        report += f", {skipped} skipped"
     if dropped:
         report += f" ({dropped} more over the per-round cap — next round)"
     return Done(report)
+
+
+def _audit_claim_start(audit, spec, run_dir, claims, fc) -> Infer:
+    claim = claims[fc.claim_idx]
+    system, user = audit.claim_prompt(spec, run_dir, claim, anchored=claim in fc.anchors)
+    fc.system = system
+    fc.history = [{"role": "user", "content": user}]
+    fc.turn = 0
+    fc.nreads = 0
+    return _audit_claim_infer(audit, claims, fc)
+
+
+def _audit_claim_infer(audit, claims, fc) -> Infer:
+    msgs = MessageBuilder(fc.system).extend(fc.history).build()
+    return Infer(msgs, audit.read_schemas(fc.nreads), audit._AUDIT_MAX_TOKENS, reasoning="none",
+                 report=f"audit claim {fc.claim_idx + 1}/{len(claims)} (turn {fc.turn + 1})")
 
 
 # ── kit doc helper (author needs the full 2D/3D doc, not the error-scoped surface) ────

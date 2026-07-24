@@ -1,4 +1,4 @@
-"""The spec-vs-code audit: claim enumeration, verdict parsing, the audit fix shape, and the driver's
+"""The spec-vs-code audit: claim enumeration, the per-claim read→verdict subloop, and the driver's
 termination inversion (green gates → audit → findings → finalize), including every fail-open path."""
 
 import json
@@ -24,14 +24,7 @@ _SPEC = {
         "render": "2D tilemap.",
     },
 }
-
-
-def _entries(statuses, overrides=None):
-    out = [{"n": i + 1, "status": s, "evidence": f"game.ts:{i + 1} x", "fix_note": ""}
-           for i, s in enumerate(statuses)]
-    for i, ov in (overrides or {}).items():
-        out[i].update(ov)
-    return out
+_N = 6   # claims_of(_SPEC): E + 2 mechanics + win/lose/render (W is movement, excluded)
 
 
 # ── claims ────────────────────────────────────────────────────────────────────
@@ -55,42 +48,17 @@ def test_claims_empty_for_specless_run():
 
 
 # ── verdict parsing ───────────────────────────────────────────────────────────
-def test_parse_accepts_fenced_array_and_rejects_bad_shapes():
-    ok = json.dumps(_entries(["delivered", "broken"]))
-    entries, _ = audit.parse_verdicts(f"noise\n```json\n{ok}\n```", 2)
-    assert len(entries) == 2
-
-    for bad, n in [("not json at all", 2),
-                   (json.dumps(_entries(["delivered"])), 2),          # count mismatch
-                   (json.dumps({"n": 1, "status": "broken"}), 1),     # not an array
-                   (json.dumps([{"n": 1, "status": "nonsense"}]), 1)]:
-        entries, why = audit.parse_verdicts(bad, n)
-        assert entries is None and why
+def test_parse_verdict_tolerates_object_array_and_fence():
+    obj = {"status": "delivered", "evidence": "game.ts:1 x", "fix_note": ""}
+    assert audit.parse_verdict(json.dumps(obj))["status"] == "delivered"
+    assert audit.parse_verdict(json.dumps([obj]))["status"] == "delivered"
+    assert audit.parse_verdict(f"noise\n```json\n{json.dumps(obj)}\n```")["status"] == "delivered"
+    assert audit.parse_verdict("prose then " + json.dumps(obj))["status"] == "delivered"
+    assert audit.parse_verdict("no json here") is None
+    assert audit.parse_verdict(json.dumps({"status": "nonsense"})) is None
 
 
-# ── findings ──────────────────────────────────────────────────────────────────
-def test_findings_skip_delivered_and_blocked_and_carry_the_claim():
-    claims = audit.claims_of(_SPEC)
-    entries = _entries(
-        ["delivered", "broken", "blocked", "missing", "delivered", "delivered", "delivered"],
-        {1: {"evidence": "damage always 0", "fix_note": "Use defense."},
-         2: {"blocked_by": 2}})
-    findings, dropped = audit.findings_from(claims, entries)
-    assert dropped == 0
-    assert [f["claim"] for f in findings] == [claims[1], claims[3]]
-    assert "damage always 0" in findings[0]["note"]
-    assert "Use defense." in findings[0]["note"]
-
-
-def test_findings_cap_per_round_and_report_the_overflow():
-    claims = [f"c{i}" for i in range(8)]
-    entries = _entries(["broken"] * 8)
-    findings, dropped = audit.findings_from(claims, entries)
-    assert len(findings) == audit.MAX_FINDINGS_PER_ROUND
-    assert dropped == 8 - audit.MAX_FINDINGS_PER_ROUND
-
-
-# ── the audit fix shape ───────────────────────────────────────────────────────
+# ── the per-claim subloop ─────────────────────────────────────────────────────
 def _game(tmp_path):
     d = tmp_path / "game"
     d.mkdir(exist_ok=True)
@@ -99,65 +67,104 @@ def _game(tmp_path):
     return tmp_path
 
 
-def _fc():
+def _fc(**kw):
     err = Error(type=ErrorType.BUILD, code="audit_sweep", component="game", message="audit")
-    return FixCursor(shape="audit", error=error_to_dict(err))
+    return FixCursor(shape="audit", error=error_to_dict(err), **kw)
 
 
-def _reply(entries):
-    return {"choices": [{"message": {"content": "```json\n" + json.dumps(entries) + "\n```"}}]}
+def _tools():
+    calls = []
+    return {"read_file": lambda **kw: calls.append(kw) or {"ok": True, "content": "src"}}, calls
 
 
-def test_audit_step_requests_then_harvests_findings(tmp_path):
+def _verdict_reply(status, evidence="game.ts:1 x", fix_note=""):
+    return {"choices": [{"message": {"content": json.dumps(
+        {"status": status, "evidence": evidence, "fix_note": fix_note})}}]}
+
+
+def _read_reply(file="game.ts"):
+    return {"choices": [{"message": {"content": "", "tool_calls": [
+        {"id": "t1", "function": {"name": "read_file", "arguments": json.dumps({"file": file})}}]}}]}
+
+
+def test_claim_subloop_reads_then_verdicts_then_advances(tmp_path):
     run_dir = _game(tmp_path)
+    tools, reads = _tools()
     fc = _fc()
-    out = build_steps.step("audit", _SPEC, run_dir, {}, fc, {})
+    out = build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
     assert isinstance(out, build_steps.Infer)
-    user = out.messages[-1]["content"]
-    assert "1. Control 'E': interact" in user and "EXACTLY 6 entries" in user
-    assert "game/game.ts" in user and "GENERATED" in user
-    assert "engine.d.ts" not in user
+    assert "audit claim 1/6" in out.report
+    assert out.schemas and out.schemas[0]["function"]["name"] == "read_file"
+    assert "# CLAIM\nControl 'E': interact" in fc.history[0]["content"]
 
-    entries = _entries(["delivered"] * 5 + ["broken"],
-                       {5: {"fix_note": "Draw the tilemap."}})
-    out = build_steps.step("audit", _SPEC, run_dir, {}, fc, _reply(entries))
+    out = build_steps.step("audit", _SPEC, run_dir, tools, fc, _read_reply())
+    assert isinstance(out, build_steps.Infer) and reads == [{"file": "game.ts"}]
+    assert fc.claim_idx == 0 and fc.nreads == 1
+
+    out = build_steps.step("audit", _SPEC, run_dir, tools, fc, _verdict_reply("delivered"))
+    assert isinstance(out, build_steps.Infer)
+    assert "audit claim 2/6" in out.report
+    assert fc.claim_idx == 1 and fc.delivered == [audit.claims_of(_SPEC)[0]]
+    assert fc.nreads == 0 and fc.turn == 0   # per-claim state reset
+
+
+def test_failed_verdict_becomes_a_finding_with_the_evidence(tmp_path):
+    run_dir = _game(tmp_path)
+    tools, _ = _tools()
+    fc = _fc()
+    build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
+    build_steps.step("audit", _SPEC, run_dir, tools, fc,
+                     _verdict_reply("broken", "gold never spent", "Add a shop."))
+    assert len(fc.findings) == 1
+    note = fc.findings[0]["note"]
+    assert "gold never spent" in note and "Add a shop." in note
+    assert fc.delivered == []
+
+
+def test_read_cap_drops_the_tool_and_turn_cap_skips_the_claim(tmp_path):
+    run_dir = _game(tmp_path)
+    tools, _ = _tools()
+    fc = _fc()
+    build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
+    for _ in range(audit.READS_BEFORE_VERDICT):
+        out = build_steps.step("audit", _SPEC, run_dir, tools, fc, _read_reply())
+    assert out.schemas == []   # read tool dropped — verdict forced
+
+    # Garbage until the turn cap: the claim is SKIPPED (fail-open), never a finding.
+    while fc.claim_idx == 0:
+        out = build_steps.step("audit", _SPEC, run_dir, tools, fc,
+                               {"choices": [{"message": {"content": "no json"}}]})
+    assert fc.verdicts[0]["status"] == "skipped"
+    assert fc.findings == [] and fc.delivered == []
+    assert "audit claim 2/6" in out.report
+
+
+def test_round_finishes_with_report_log_and_finding_cap(tmp_path):
+    run_dir = _game(tmp_path)
+    tools, _ = _tools()
+    fc = _fc()
+    out = build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
+    statuses = ["delivered", "broken", "broken", "broken", "broken", "broken"]
+    for s in statuses:
+        out = build_steps.step("audit", _SPEC, run_dir, tools, fc, _verdict_reply(s))
     assert isinstance(out, build_steps.Done)
-    assert len(fc.findings) == 1 and "Draw the tilemap." in fc.findings[0]["note"]
-    assert "5/6 delivered" in out.report
+    assert "1/6 delivered" in out.report and "5 finding(s)" in out.report
+    assert len(fc.findings) == audit.MAX_FINDINGS_PER_ROUND
+    logged = [json.loads(l) for l in
+              (tmp_path / "audit_verdicts.jsonl").read_text().splitlines()]
+    assert len(logged[0]["verdicts"]) == _N
+    assert logged[0]["verdicts"][0]["status"] == "delivered"
 
 
-def test_audit_step_harvests_delivered_and_anchors_ride_the_next_sweep(tmp_path):
-    """Verdict anchoring: the judge oscillates on unchanged code, so each sweep carries the previous
-    sweep's delivered claims and may only flip one with regression evidence."""
+def test_anchored_claim_carries_the_anchor_block(tmp_path):
     run_dir = _game(tmp_path)
-    fc = _fc()
-    build_steps.step("audit", _SPEC, run_dir, {}, fc, {})
-    entries = _entries(["delivered"] * 5 + ["broken"], {5: {"fix_note": "x"}})
-    build_steps.step("audit", _SPEC, run_dir, {}, fc, _reply(entries))
+    tools, _ = _tools()
     claims = audit.claims_of(_SPEC)
-    assert fc.delivered == claims[:5]
-
-    nxt = FixCursor(shape="audit", error=fc.error, anchors=fc.delivered)
-    out = build_steps.step("audit", _SPEC, run_dir, {}, nxt, {})
-    user = out.messages[-1]["content"]
-    assert "VERIFIED BY THE PREVIOUS SWEEP" in user
-    assert claims[0] in user.split("# DESIGN SPEC")[0].split("VERIFIED")[1]
-
-
-def test_audit_step_retries_once_then_fails_open(tmp_path):
-    run_dir = _game(tmp_path)
-    fc = _fc()
-    build_steps.step("audit", _SPEC, run_dir, {}, fc, {})
-
-    out = build_steps.step("audit", _SPEC, run_dir, {}, fc,
-                           {"choices": [{"message": {"content": "garbage"}}]})
-    assert isinstance(out, build_steps.Infer)           # one retry
-    assert "CRITICAL" in out.messages[-1]["content"]
-
-    out = build_steps.step("audit", _SPEC, run_dir, {}, fc,
-                           {"choices": [{"message": {"content": "garbage"}}]})
-    assert isinstance(out, build_steps.Done)            # fail-open, no findings
-    assert fc.findings == []
+    fc = _fc(anchors=[claims[0]])
+    build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
+    assert "# ANCHOR" in fc.history[0]["content"]
+    build_steps.step("audit", _SPEC, run_dir, tools, fc, _verdict_reply("delivered"))
+    assert "# ANCHOR" not in fc.history[0]["content"]   # claim 2 is not anchored
 
 
 def test_audit_step_passes_a_claimless_spec(tmp_path):
@@ -187,6 +194,12 @@ def test_green_gates_arm_an_audit_sweep_then_finalize_at_round_cap(finalized):
     assert finalized == [True]
 
 
+def test_a_clean_sweep_ends_the_audit_before_the_round_cap(finalized):
+    cursor = BuildCursor(build_id="b", kind="build", audit_round=1, audit_done=True)
+    assert _advance_audit("r", None, cursor) is False
+    assert finalized == [True]
+
+
 def test_pending_findings_are_fixed_one_per_iteration(finalized):
     cursor = BuildCursor(build_id="b", kind="build", audit_round=1,
                          audit_pending=[{"claim": "c1", "note": "n1"},
@@ -196,12 +209,6 @@ def test_pending_findings_are_fixed_one_per_iteration(finalized):
     assert cursor.fix["error"]["code"] == "audit" and cursor.fix["error"]["message"] == "n1"
     assert cursor.audit_pending == [{"claim": "c2", "note": "n2"}]
     assert finalized == []
-
-
-def test_a_clean_sweep_ends_the_audit_before_the_round_cap(finalized):
-    cursor = BuildCursor(build_id="b", kind="build", audit_round=1, audit_done=True)
-    assert _advance_audit("r", None, cursor) is False
-    assert finalized == [True]
 
 
 def test_step_cap_and_fix_kind_skip_the_audit(finalized):
@@ -225,7 +232,6 @@ def test_audit_kickoff_gets_the_200_step_default(monkeypatch):
     finalized a live run fail-open mid-round at step 43)."""
     from maestro.codegen import build_chain, run as run_mod
     seen = {}
-    monkeypatch.setattr(build_chain, "create_build", None, raising=False)
     monkeypatch.setattr(build_chain.db_store, "create_build", lambda rid, kind: "b")
     monkeypatch.setattr(build_chain.db_store, "build_started", lambda b: None)
     monkeypatch.setattr(build_chain, "start_build",

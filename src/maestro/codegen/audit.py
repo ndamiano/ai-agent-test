@@ -1,35 +1,37 @@
-"""The spec-vs-code AUDIT: after the gates go green, an llm turn reads the game's source against
-the frozen spec and reports every promise the code does not deliver, so a build ends on
-spec-exhausted rather than errors-zero — the gates prove a game RUNS, not that its declared
-mechanics exist.
+"""The spec-vs-code AUDIT: after the gates go green, the frozen spec's claims are judged one at a
+time against the game's source, so a build ends on spec-exhausted rather than errors-zero — the
+gates prove a game RUNS, not that its declared mechanics exist.
 
-Claims are enumerated MECHANICALLY from the spec's fields and the model fills verdicts against the
-numbered list — asked to choose its own checklist, a small model returns one finding and stops.
-Each failed claim becomes a human-note-shaped fix on the fix_from_note lane; the driver re-gates,
-re-audits, and finalizes on a clean sweep or the round/step caps.
+Claims are enumerated MECHANICALLY from the spec's fields — asked to choose its own checklist, a
+small model returns one finding and stops. Each claim is judged by a bounded read→verdict subloop
+(the fix loop's grounding, transplanted): the judge reads the files it needs and must cite the
+traced path. Single-shot judging over pasted sources was measured wrong BOTH ways on the same code
+— unanimous "broken" on a working mechanic, "delivered" swinging 11/12→5/12 between sweeps — and
+tracing corrected both. Each failed claim becomes a human-note-shaped fix on the fix_from_note
+lane; the driver re-gates, re-audits, and finalizes on a clean sweep or the round/step caps.
 
-FAIL-OPEN is law: an unparseable audit, an exhausted budget, a finding cap — every failure path
-finalizes the build ok. A game that never finishes is worse than an incomplete one that ships.
+FAIL-OPEN is law: a claim with no verdict inside its turn cap is skipped (never a finding), an
+exhausted budget finalizes ok. A game that never finishes is worse than an incomplete one that
+ships.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from maestro.codegen.gates import game_files
-from maestro.codegen.module import _PROMPTS, _design_block
+from maestro.codegen.module import _PROMPTS, _READ_SCHEMA, _design_block
 
-_AUDIT_MAX_TOKENS = 8000
+_AUDIT_MAX_TOKENS = 3000
 MAX_FINDINGS_PER_ROUND = 5
+CLAIM_TURN_CAP = 6       # inference turns one claim may spend before it is skipped
+READS_BEFORE_VERDICT = 4  # reads before the read tool is dropped and a verdict is forced
 
 _FAIL_STATUSES = ("broken", "stub", "missing")
 _STATUSES = ("delivered",) + _FAIL_STATUSES + ("blocked",)
-
-# Gate artifacts the audit must not read: the kit types are 16KB of context the verdicts never cite,
-# and the bundle/config aren't source.
-_SKIP_FILES = ("engine.d.ts",)
 
 
 # Movement controls are scaffold-owned law, already gated by dead_movement + single_mover — an
@@ -53,80 +55,64 @@ def claims_of(spec: dict) -> List[str]:
     return claims
 
 
-def build_request(spec: dict, run_dir, claims: List[str], retry: bool = False,
-                  anchors: List[str] = ()) -> Tuple[List[dict], int]:
-    """The audit turn's messages. Sources ride in full — games are small and the verdicts must cite
-    file:line. GENERATED files are included (the scaffold IS the other half of every control claim)
-    but labeled as law."""
-    from llm_clients.message_builder import MessageBuilder
-    system = (_PROMPTS / "audit.txt").read_text(encoding="utf-8")
-    checklist = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(claims))
-    sources = []
-    for name, src in game_files(run_dir).items():
-        if name in _SKIP_FILES:
-            continue
-        label = " (GENERATED — pipeline law, judge against it, never blame it)" \
-            if src.lstrip().startswith("// GENERATED") else ""
-        sources.append(f"# game/{name}{label}\n```ts\n{src}\n```")
-    # Verdict anchoring: without it the judge oscillates (measured 5→7→3 delivered across sweeps of
-    # a monotonically-improving game) and an until-clean loop can never terminate on merit.
-    anchor_block = ""
-    if anchors:
-        anchor_lines = "\n".join(f"- {a}" for a in anchors)
-        anchor_block = ("# VERIFIED BY THE PREVIOUS SWEEP — these claims were already judged "
-                        "delivered against this same code. Mark one failed ONLY if you can cite a "
-                        "specific regression introduced since (changed lines that broke it); a new "
-                        "opinion is not a regression.\n" + anchor_lines)
-    user = "\n\n".join(p for p in [
-        f"# CLAIM LIST — audit every claim, in order; your array has EXACTLY {len(claims)} entries",
-        checklist,
-        anchor_block,
-        _design_block(spec),
-        *sources,
-    ] if p)
-    if retry:
-        user += (f"\n\nCRITICAL: your previous reply was not a valid JSON array of {len(claims)} "
-                 f"entries. Reply with ONLY the complete JSON array — start with `[`, one entry per "
-                 f"claim, all {len(claims)}, evidence strings under 40 words with all quotes escaped.")
-    return MessageBuilder(system).add_user(user).build(), _AUDIT_MAX_TOKENS
+def claim_prompt(spec: dict, run_dir, claim: str, anchored: bool) -> (str, str):
+    """(system, first user message) for one claim's read→verdict subloop. No sources ride along —
+    the judge reads its way in, which is what grounds the verdict."""
+    system = (_PROMPTS / "audit_claim.txt").read_text(encoding="utf-8")
+    filelist = "\n".join(f"- {name} ({len(src.splitlines())} lines)"
+                         for name, src in game_files(run_dir).items()
+                         if not name.endswith(".d.ts"))
+    parts = [f"# CLAIM\n{claim}"]
+    if anchored:
+        parts.append("# ANCHOR — a previous audit verified this claim delivered against this same "
+                     "code. Judge it failed ONLY if you can cite a specific regression (changed "
+                     "lines that broke it); a new opinion is not a regression.")
+    parts.append(_design_block(spec))
+    parts.append(f"# FILES (read what you need)\n{filelist}")
+    return system, "\n\n".join(parts)
 
 
-def parse_verdicts(text: str, n_claims: int) -> Tuple[Optional[List[Dict]], str]:
-    """The audit reply → validated entry list, or (None, why) so the shape retries. Local-model
-    audits are often degenerate — a single entry, or JSON broken by an unescaped quote inside a
-    reasoning blob — and both are only catchable by strict parse + count validation."""
+def read_schemas(nreads: int) -> List[dict]:
+    """The judge's toolset: read_file until it has read enough, then nothing — an empty toolset
+    forces the verdict (the fix loop's force-act, repurposed: claim 12 in the validation run spent
+    10 reads and never committed)."""
+    return [] if nreads >= READS_BEFORE_VERDICT else [_READ_SCHEMA]
+
+
+def parse_verdict(text: str) -> Optional[Dict]:
+    """The claim reply → one verdict object, or None (the subloop nudges/retries). Tolerates a
+    fenced block, a bare object, or a one-entry array."""
     blocks = re.findall(r"```(?:json)?\s*\n(.*?)```", text or "", re.S)
     raw = blocks[-1] if blocks else (text or "")
+    entry = None
     try:
-        entries = json.loads(raw)
-    except Exception as e:
-        return None, f"not JSON ({e})"
-    if not isinstance(entries, list):
-        return None, "not a JSON array"
-    if len(entries) != n_claims:
-        return None, f"{len(entries)} entries for {n_claims} claims"
-    for e in entries:
-        if not isinstance(e, dict) or str(e.get("status", "")).lower() not in _STATUSES:
-            return None, f"bad entry: {json.dumps(e)[:80]}"
-    return entries, ""
+        entry = json.loads(raw)
+    except Exception:
+        m = re.search(r"\{.*\}", raw, re.S)
+        if m:
+            try:
+                entry = json.loads(m.group(0))
+            except Exception:
+                return None
+    if isinstance(entry, list) and len(entry) == 1:
+        entry = entry[0]
+    if isinstance(entry, dict) and str(entry.get("status", "")).lower() in _STATUSES:
+        return entry
+    return None
 
 
-def findings_from(claims: List[str], entries: List[Dict]) -> Tuple[List[Dict], int]:
-    """Failed verdicts → fix-note findings, root causes only. `blocked` entries are dropped — they
-    re-judge for free next round once their blocker's fix lands, so one root bug spawns one fix
-    instead of a cascade. Returns (findings capped per round, n_dropped_over_cap)."""
-    failed = []
-    for i, e in enumerate(entries):
-        if str(e.get("status", "")).lower() not in _FAIL_STATUSES:
-            continue
-        if e.get("blocked_by"):
-            continue
-        claim = claims[i] if i < len(claims) else ""
-        failed.append({"claim": claim, "note": _note(claim, e)})
-    return failed[:MAX_FINDINGS_PER_ROUND], max(0, len(failed) - MAX_FINDINGS_PER_ROUND)
+def is_failed(entry: Dict) -> bool:
+    return str(entry.get("status", "")).lower() in _FAIL_STATUSES and not entry.get("blocked_by")
 
 
-def _note(claim: str, entry: Dict) -> str:
+def log_verdicts(run_dir, verdicts: List[Dict]) -> None:
+    """Append the round's per-claim verdicts to the run's audit_verdicts.jsonl — a sweep's judgment
+    must be recoverable after the cursor moves on."""
+    with (Path(run_dir) / "audit_verdicts.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"verdicts": verdicts}, ensure_ascii=False) + "\n")
+
+
+def note_for(claim: str, entry: Dict) -> str:
     parts = [f"AUDIT — the game passes the functional gates, but this frozen-spec promise is not "
              f"delivered to the player:\n{claim}"]
     if entry.get("evidence"):

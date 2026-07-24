@@ -80,13 +80,21 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
 - **Spec-vs-code audit (landed 2026-07-23):** the gates prove a game RUNS, not that its declared
   mechanics exist — a live build shipped every gate green with dead gold, unreachable floors and
   zero-damage combat. A build now ends on SPEC-EXHAUSTED, not errors-zero: when the gates go green,
-  an audit llm turn (`maestro/codegen/audit.py`, shape `audit` in `build_steps`) judges the source
-  against the frozen spec's mechanically-enumerated claims (controls/mechanics/win/lose/render);
-  failed claims become fixes on the `fix_from_note` lane, then re-gate → re-audit until a sweep
-  returns zero findings (round + step caps as fail-open backstops; audit builds default 200 steps). `blocked_by` verdicts collapse cascades to their root cause; every failure path
-  (unparseable reply, caps, budget) FAILS OPEN to a finished build. CLI: `--audit <run_id>` re-runs
-  it on a built game. Also widened `single_mover` to the two shipped blind spots (input-guard
-  movers, movers inside `kit.register` handlers).
+  the frozen spec's mechanically-enumerated claims (controls/mechanics/win/lose/render; movement
+  excluded — scaffold law) are each judged by a bounded read→verdict subloop
+  (`maestro/codegen/audit.py`, shape `audit` in `build_steps`): the judge reads the files it needs
+  and cites the traced path, per-claim verdicts logged durably to `audit_verdicts.jsonl`. Validated
+  against human play-notes: single-shot judging over pasted sources was wrong both ways (unanimous
+  "broken" on working mechanics; 11/12→5/12 swings on unchanged code) and 3-vote majorities did NOT
+  fix the bias — grounding did (traced judge agreed with the human on ~6/7 confident claims).
+  Delivered claims ANCHOR later rounds and future builds (flip only with cited regression
+  evidence), so rounds ratchet. Failed claims become fixes on the `fix_from_note` lane, then
+  re-gate → re-audit until a round returns zero findings (round + step caps as fail-open backstops;
+  audit builds default 200 steps). CLI: `--audit <run_id>`. Also widened `single_mover` to the two
+  shipped blind spots (input-guard movers, movers inside `kit.register` handlers), register-strip
+  deterministic. Known ceiling: the audit certifies the spec AS WRITTEN — a shallow spec certifies
+  shallow (the unwinnable-fight case: no claim promises winnable combat); spec richness is a
+  stage-1 lever.
 - **Next:** finish the data-file stage → Phase 3 harden the probe → Phase 4 widen the kit → finish
   Phase 5 assets (styled-prompt stage) → Phase 7 the "good" tier (deferred cloud play-critic).
 

@@ -12,7 +12,7 @@ import json
 import logging
 import re
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -50,6 +50,7 @@ class FixBody(BaseModel):
 
 class RegenerateBody(BaseModel):
     prompt: str
+    mode: Literal["full", "img2img"] = "full"
 
 
 # Asset skins in flight (one per run) — they run on the image/mesh queues, not the build GPU, so
@@ -210,7 +211,8 @@ async def regenerate_game_asset(run_id: str, asset_id: str, body: RegenerateBody
     _require_compute(run_id)
     build_id = db_store.create_build(run_id, kind="assets")
     db_store.build_started(build_id)
-    batch_id = await asyncio.to_thread(regenerate_asset, run_id, asset_id, prompt, build_id)
+    batch_id = await asyncio.to_thread(regenerate_asset, run_id, asset_id, prompt, body.mode,
+                                       build_id)
     if batch_id is None:
         db_store.build_finished(build_id, "failed")
         raise HTTPException(status_code=400, detail="prompt blocked by the safety filter")

@@ -218,9 +218,9 @@ export const api = {
         request<{ status: string; run_id: string }>(`/games/${runId}/assets`, { method: 'POST' }),
     // Re-render ONE asset with a new prompt — a single-asset swap, no whole-game re-skin. The
     // batch's assets_done fires on completion, which is what refetches the gallery.
-    regenerateAsset: (runId: string, assetId: string, prompt: string) =>
+    regenerateAsset: (runId: string, assetId: string, prompt: string, mode: 'full' | 'img2img' = 'full') =>
         request<{ status: string; run_id: string; asset_id: string }>(
-            `/games/${runId}/assets/${assetId}/regenerate`, { method: 'POST', body: JSON.stringify({ prompt }) }),
+            `/games/${runId}/assets/${assetId}/regenerate`, { method: 'POST', body: JSON.stringify({ prompt, mode }) }),
 
     // System
     getStatus: () =>

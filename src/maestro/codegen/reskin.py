@@ -11,6 +11,7 @@ So a render that never happens degrades soft: the draw rewrite + manifest alread
 game plays as shapes; re-running fills in the pngs.
 """
 
+import base64
 import json
 import logging
 import re
@@ -276,44 +277,104 @@ def start_asset_chain(run_id: str, plan: list, mode: str, gate_ok: bool,
     return batch_id if enqueued else None
 
 
-def regenerate_asset(run_id: str, asset_id: str, prompt: str,
+def _asset_context(run_dir, asset_id: str, mode: str) -> Optional[str]:
+    """The asset's ORIGINAL styled prompt — assets.json first (manifests persist it), the data
+    rows' `look` as the fallback for games skinned before prompts were persisted."""
+    try:
+        manifest = json.loads((game_dir(run_dir) / "assets.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = {}
+    for entry in (manifest.get("sprites") or []) + (manifest.get("meshes") or []):
+        if entry.get("id") == asset_id and entry.get("prompt"):
+            return entry["prompt"]
+    for item in sprite_plan_from_data(run_dir, mode) or []:
+        if item["id"] == asset_id:
+            return item["prompt"]
+    return None
+
+
+def _merge_regen_prompt(infer, original: Optional[str], note: str) -> str:
+    """Fold the user's change note into the asset's original prompt — "make it redder" is an
+    instruction, not an image prompt, and sending it wholesale loses the asset entirely. No
+    original context (or a dead llm queue) degrades to the note verbatim: a regen must never
+    fail on its helper."""
+    if not original:
+        return note
+    system = (_PROMPTS / "regen_asset.txt").read_text(encoding="utf-8")
+    user = f"ORIGINAL PROMPT:\n{original}\n\nCHANGE REQUEST:\n{note}\n\nOutput the new prompt."
+    try:
+        merged = infer(system, user, 400).strip().strip('"`')
+    except Exception as e:
+        logger.warning("regenerate: prompt merge failed (%s) — using the note verbatim", e)
+        return note
+    return merged or note
+
+
+def _regen_init_image(run_dir, asset_id: str, mode: str) -> Optional[str]:
+    """The img2img init as base64: the sprite itself in 2D; in 3D the mesh's SOURCE render
+    (<id>.src.png, saved by the chain) — a GLB can't seed an image model. None → the caller
+    falls back to a full render."""
+    name = f"{asset_id}.src.png" if mode == "3d" else f"{asset_id}.png"
+    path = game_dir(run_dir) / "assets" / name
+    if not path.exists():
+        return None
+    return base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def regenerate_asset(run_id: str, asset_id: str, prompt: str, mode: str = "full",
                      build_id: Optional[str] = None) -> Optional[str]:
-    """Re-render ONE asset of a built+skinned game with a new prompt — without re-skinning the
-    whole game. The source already references the asset id (assets.json + the draw/tag it keys on),
-    so this is a pure file swap: a one-job batch that saves the new png/glb and RE-STAGES it into
+    """Re-render ONE asset of a built+skinned game — without re-skinning the whole game. The
+    source already references the asset id (assets.json + the draw/tag it keys on), so this is a
+    pure file swap: a one-job batch that saves the new png/glb and RE-STAGES it into
     runtime/games/<run_id>/ through the SAME `skin` finalize a full re-skin uses (stage_for_play +
     assets_done), so the played game and the cockpit gallery both pick it up and the existing
     assets_done refetch just works. Returns the batch id, or None if the prompt was blocked by the
     safety filter.
 
+    The user's text is a CHANGE NOTE, not the finished prompt: it is merged with the asset's saved
+    original prompt (one small llm call) so "give him a red cape" keeps the goblin. mode="img2img"
+    additionally seeds the render from the existing image (partial denoise), preserving the
+    composition; it degrades to a full render when no init image exists.
+
     gate_ok is True unconditionally: the game already passed its gates and is staged, so the
     finalize must re-stage the swapped file (stage_for_play only runs when gate_ok)."""
-    mode = "3d" if _is_3d(game_files(RunState(run_id).run_dir)) else "2d"
-    payload = build_item_payload(prompt)
-    if payload is None:
-        logger.warning("regenerate %s/%s: prompt blocked by the safety filter", run_id, asset_id)
-        return None
-    then = {"enqueue": "mesh_from_image", "finalize": "skin"} if mode == "3d" \
-        else {"operations": ["save_sprite"], "finalize": "skin"}
-    batch_id = uuid.uuid4().hex[:16]
+    state = RunState(run_id)
+    render_mode = "3d" if _is_3d(game_files(state.run_dir)) else "2d"
     with run_scope(run_id):
+        original = _asset_context(state.run_dir, asset_id, render_mode)
+        final = _merge_regen_prompt(_make_infer(), original, prompt)
+        init_b64 = _regen_init_image(state.run_dir, asset_id, render_mode) \
+            if mode == "img2img" else None
+        if mode == "img2img" and init_b64 is None:
+            logger.info("regenerate %s/%s: no init image — falling back to a full render",
+                        run_id, asset_id)
+        payload = build_item_payload(final, init_image_b64=init_b64)
+        if payload is None:
+            logger.warning("regenerate %s/%s: prompt blocked by the safety filter", run_id, asset_id)
+            return None
+        then = {"enqueue": "mesh_from_image", "finalize": "skin"} if render_mode == "3d" \
+            else {"operations": ["save_sprite"], "finalize": "skin"}
+        batch_id = uuid.uuid4().hex[:16]
         db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
                              batch_id=batch_id,
-                             metadata={"run_id": run_id, "asset_id": asset_id, "mode": mode,
+                             metadata={"run_id": run_id, "asset_id": asset_id, "mode": render_mode,
                                        "gate_ok": True, "then": then})
-    logger.info("regenerate %s: enqueued asset %s (%s) as batch %s", run_id, asset_id, mode, batch_id)
+    logger.info("regenerate %s: enqueued asset %s (%s, %s) as batch %s",
+                run_id, asset_id, render_mode, mode, batch_id)
     return batch_id
 
 
 def write_manifest(run_dir, sprites: list) -> None:
+    # `prompt` rides along so a later regenerate knows what the asset IS, not just its file.
     manifest = {"sprites": [{"id": s["id"], "file": f"assets/{s['id']}.png",
-                             "w": s["w"], "h": s["h"]} for s in sprites]}
+                             "w": s["w"], "h": s["h"], "prompt": s["prompt"]} for s in sprites]}
     (game_dir(run_dir) / "assets.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def write_mesh_manifest(run_dir, meshes: list) -> None:
-    manifest = {"meshes": [{"id": m["id"], "file": f"assets/{m['id']}.glb"} for m in meshes]}
+    manifest = {"meshes": [{"id": m["id"], "file": f"assets/{m['id']}.glb",
+                            "prompt": m["prompt"]} for m in meshes]}
     (game_dir(run_dir) / "assets.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
 

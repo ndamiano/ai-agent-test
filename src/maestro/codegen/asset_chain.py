@@ -42,7 +42,10 @@ def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
     src = _first_image(result)
     if src is None:
         return None
-    b64 = base64.b64encode(Path(src).read_bytes()).decode("ascii")
+    data = Path(src).read_bytes()
+    # keep the mesh's source render: an img2img regenerate needs an image to seed, and a GLB isn't one
+    _asset_path(md["run_id"], md["asset_id"], "src.png").write_bytes(data)
+    b64 = base64.b64encode(data).decode("ascii")
     return {"queue": "mesh",
             "payload": {"kind": "trellis_mesh", "image_b64": b64},
             "metadata": {**md, "then": {"operations": ["decimate"],

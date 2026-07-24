@@ -177,3 +177,50 @@ def test_deregister_is_best_effort():
     a = _agent()
     a.session.post.side_effect = requests.ConnectionError("cp down")
     a.deregister()   # swallowed, not raised
+
+
+# ── comfy_image uploads (img2img init images) ─────────────────────────────────
+def test_comfy_image_uploads_init_images_before_submit():
+    import base64
+    from worker import handlers
+
+    a = _agent()
+    calls = []
+
+    def post(url, **kw):
+        calls.append((url, kw))
+        if url.endswith("/upload/image"):
+            return _Resp(200, {"name": "init_x.png"})
+        return _Resp(200, {"prompt_id": "p1"})
+
+    a.session.post.side_effect = post
+    a.session.get.return_value = _Resp(200, {"p1": {"outputs": {}}})
+
+    result, err = handlers.comfy_image(a, {
+        "kind": "comfy_image", "workflow": {},
+        "uploads": [{"name": "init_x.png", "b64": base64.b64encode(b"png").decode("ascii")}]})
+
+    assert err is None
+    up_url, up_kw = calls[0]
+    assert up_url == "http://gpu/upload/image"
+    assert up_kw["files"]["image"][0] == "init_x.png"
+    assert up_kw["files"]["image"][1] == b"png"
+    assert calls[1][0] == "http://gpu/prompt"
+
+
+def test_comfy_image_upload_failure_never_submits():
+    from worker import handlers
+
+    a = _agent()
+    calls = []
+
+    def post(url, **kw):
+        calls.append(url)
+        return _Resp(500, text="disk full")
+
+    a.session.post.side_effect = post
+    result, err = handlers.comfy_image(a, {
+        "kind": "comfy_image", "workflow": {}, "uploads": [{"name": "i.png", "b64": "aGk="}]})
+
+    assert result is None and "/upload/image" in err
+    assert calls == ["http://gpu/upload/image"]

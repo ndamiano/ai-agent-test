@@ -66,7 +66,8 @@ def test_write_manifest_shape(tmp_path):
     reskin.write_manifest(tmp_path, [{"id": "player", "prompt": "p", "w": 24, "h": 24},
                                      {"id": "enemy", "prompt": "e", "w": 16, "h": 16}])
     m = json.loads((game_dir(tmp_path) / "assets.json").read_text())
-    assert m["sprites"][0] == {"id": "player", "file": "assets/player.png", "w": 24, "h": 24}
+    assert m["sprites"][0] == {"id": "player", "file": "assets/player.png",
+                               "w": 24, "h": 24, "prompt": "p"}
     assert m["sprites"][1]["file"] == "assets/enemy.png"
 
 
@@ -212,7 +213,7 @@ def test_write_mesh_manifest_shape(tmp_path):
     reskin.write_mesh_manifest(tmp_path, [{"id": "player", "prompt": "p", "w": 1, "h": 2, "d": 1},
                                           {"id": "crystal", "prompt": "c", "w": 1, "h": 1, "d": 1}])
     m = json.loads((game_dir(tmp_path) / "assets.json").read_text())
-    assert m["meshes"][0] == {"id": "player", "file": "assets/player.glb"}
+    assert m["meshes"][0] == {"id": "player", "file": "assets/player.glb", "prompt": "p"}
     assert m["meshes"][1]["file"] == "assets/crystal.glb"
 
 
@@ -389,3 +390,78 @@ def test_add_assets_is_exclusive(lane_env, monkeypatch):
     # released on exit
     with reskin._exclusive("rid"):
         pass
+
+
+# ── regenerate: asset context + img2img ───────────────────────────────────────
+def test_merge_regen_prompt_folds_the_note_into_the_original():
+    infer = lambda s, u, m: "a green goblin sprite with a red cape"
+    assert reskin._merge_regen_prompt(infer, "a green goblin sprite", "give him a red cape") \
+        == "a green goblin sprite with a red cape"
+
+
+def test_merge_regen_prompt_without_context_is_the_note_verbatim():
+    def boom(*a):
+        raise AssertionError("no original context — no llm call")
+    assert reskin._merge_regen_prompt(boom, None, "a red dragon") == "a red dragon"
+
+
+def test_merge_regen_prompt_fails_open_on_infer_error():
+    def boom(*a):
+        raise RuntimeError("llm queue down")
+    assert reskin._merge_regen_prompt(boom, "a goblin", "make it red") == "make it red"
+
+
+def test_asset_context_reads_the_manifest_prompt(tmp_path):
+    _write_game(tmp_path)
+    reskin.write_manifest(tmp_path, [{"id": "goblin", "prompt": "a green goblin", "w": 24, "h": 24}])
+    assert reskin._asset_context(tmp_path, "goblin", "2d") == "a green goblin"
+    assert reskin._asset_context(tmp_path, "nope", "2d") is None
+
+
+def test_asset_context_falls_back_to_data_look(tmp_path):
+    """Games skinned before manifests persisted prompts still have the rows' look."""
+    _write_game(tmp_path)
+    _write_data(tmp_path, [{"id": "goblin", "look": "a green goblin"}])
+    assert reskin._asset_context(tmp_path, "goblin", "2d") == "a green goblin"
+
+
+@pytest.fixture
+def regen_env(lane_env, monkeypatch):
+    reskin.write_manifest(lane_env, [{"id": "goblin", "prompt": "a green goblin", "w": 24, "h": 24}])
+    monkeypatch.setattr(reskin, "_make_infer",
+                        lambda: (lambda s, u, m: "a green goblin with a red cape"))
+    captured = {}
+
+    def fake_payload(desc, init_image_b64=None):
+        captured["prompt"] = desc
+        captured["init"] = init_image_b64
+        return {"kind": "comfy_image"}
+
+    monkeypatch.setattr(reskin, "build_item_payload", fake_payload)
+    return lane_env, captured
+
+
+def test_regenerate_merges_the_asset_context(regen_env):
+    env, captured = regen_env
+    batch = reskin.regenerate_asset("rid", "goblin", "give him a red cape")
+    assert batch
+    assert captured["prompt"] == "a green goblin with a red cape"
+    assert captured["init"] is None
+    (job,) = store.batch_jobs(batch)
+    assert job["metadata"]["asset_id"] == "goblin" and job["metadata"]["gate_ok"] is True
+
+
+def test_regenerate_img2img_seeds_from_the_current_sprite(regen_env):
+    env, captured = regen_env
+    assets = game_dir(env) / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (assets / "goblin.png").write_bytes(b"png-bytes")
+    assert reskin.regenerate_asset("rid", "goblin", "redder", mode="img2img")
+    import base64 as b64mod
+    assert captured["init"] == b64mod.b64encode(b"png-bytes").decode("ascii")
+
+
+def test_regenerate_img2img_without_an_image_falls_back_to_full(regen_env):
+    env, captured = regen_env
+    assert reskin.regenerate_asset("rid", "goblin", "redder", mode="img2img")
+    assert captured["init"] is None

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
 _TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
+_IMG2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_item.json"
 _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
 # ---------------------------------------------------------------------------
@@ -63,8 +64,24 @@ def build_item_job(description: str) -> dict:
     return {"prompt": positive, "workflow_override": wf}
 
 
-def build_item_payload(description: str) -> Optional[Dict[str, Any]]:
+def build_img2img_item_job(description: str, init_name: str, denoise: float = 0.6) -> dict:
+    """The item workflow seeded from an EXISTING render instead of an empty latent: the init image
+    (uploaded to ComfyUI under `init_name` by the worker) is VAE-encoded and partially denoised, so
+    the output keeps the original's composition while the prompt steers the change. Same prompt
+    conventions and BiRefNet matting as build_item_job."""
+    wf = _build_background_workflow(
+        _load_workflow(_IMG2IMG_ITEM_WORKFLOW_PATH), description, _ITEM_NEGATIVE)
+    wf["50"]["inputs"]["image"] = init_name
+    wf["3"]["inputs"]["denoise"] = denoise
+    return {"prompt": description, "workflow_override": wf}
+
+
+def build_item_payload(description: str, init_image_b64: Optional[str] = None,
+                       denoise: float = 0.6) -> Optional[Dict[str, Any]]:
     """The queue payload for ONE item icon, safety-screened. None = blocked, never sent.
+
+    With `init_image_b64` the job is img2img: the payload carries the init image as an upload the
+    worker lands on ComfyUI before submitting, and the workflow denoises from it instead of noise.
 
     The local image model (uncensored SDXL) has no built-in guardrails, so every finalized prompt
     is screened before it can reach a worker. A blocked prompt degrades like any other missing
@@ -73,7 +90,12 @@ def build_item_payload(description: str) -> Optional[Dict[str, Any]]:
     if violation is not None:
         log_violation(violation, source="image_prompt")
         return None
-    return {"kind": "comfy_image", "workflow": build_item_job(description)["workflow_override"]}
+    if init_image_b64 is None:
+        return {"kind": "comfy_image", "workflow": build_item_job(description)["workflow_override"]}
+    init_name = f"init_{uuid.uuid4().hex}.png"
+    wf = build_img2img_item_job(description, init_name, denoise)["workflow_override"]
+    return {"kind": "comfy_image", "workflow": wf,
+            "uploads": [{"name": init_name, "b64": init_image_b64}]}
 
 
 def _decimate_glb(glb_path: str) -> bool:

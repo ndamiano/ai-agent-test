@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { GameAsset } from '../../types'
 
+type RegenMode = 'full' | 'img2img'
+
 // A transparent-sprite-friendly checkerboard so a white or partially-transparent PNG is still
 // visible against the dark UI — the whole point is to judge whether the art rendered well.
 const CHECKER: React.CSSProperties = {
@@ -37,19 +39,21 @@ const StatusNote: React.FC<{ status: GameAsset['status'] }> = ({ status }) => (
 )
 
 // Every card carries a ↻ that reveals a prompt input; submitting re-renders just this asset.
+// "redraw" renders from scratch; "refine" is img2img off the current image, keeping its composition.
 const CardShell: React.FC<{
     id: string
     status: GameAsset['status']
     right?: React.ReactNode
-    onRegenerate: (prompt: string) => void
+    onRegenerate: (prompt: string, mode: RegenMode) => void
     children: React.ReactNode
 }> = ({ id, status, right, onRegenerate, children }) => {
     const [open, setOpen] = useState(false)
     const [prompt, setPrompt] = useState('')
+    const [mode, setMode] = useState<RegenMode>('full')
     const submit = () => {
         const p = prompt.trim()
         if (!p) return
-        onRegenerate(p)
+        onRegenerate(p, mode)
         setPrompt(''); setOpen(false)
     }
     return (
@@ -60,18 +64,31 @@ const CardShell: React.FC<{
                 <div className="flex items-center gap-2 shrink-0">
                     {right}
                     <button onClick={() => setOpen(o => !o)} disabled={status === 'rendering'}
-                        title="regenerate this asset with a new prompt"
+                        title="regenerate this asset"
                         className="text-gray-400 hover:text-gray-200 disabled:opacity-30 text-xs leading-none">↻</button>
                 </div>
             </div>
             {open && (
-                <div className="px-2 pb-2 flex gap-1">
-                    <input autoFocus value={prompt} onChange={e => setPrompt(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') submit(); else if (e.key === 'Escape') setOpen(false) }}
-                        placeholder="new prompt…"
-                        className="flex-1 min-w-0 bg-black/40 border border-white/[0.1] rounded text-[11px] text-gray-200 px-1.5 py-1" />
-                    <button onClick={submit} disabled={!prompt.trim()}
-                        className="bg-blue-600/80 hover:bg-blue-700 disabled:opacity-40 text-white px-2 rounded text-[11px] shrink-0">Go</button>
+                <div className="px-2 pb-2 space-y-1">
+                    <div className="flex gap-1">
+                        {(['full', 'img2img'] as const).map(m => (
+                            <button key={m} onClick={() => setMode(m)}
+                                title={m === 'full' ? 'render from scratch' : 'refine the current image (keeps its composition)'}
+                                className={`px-1.5 py-0.5 rounded text-[10px] ${mode === m
+                                    ? 'bg-white/[0.14] text-gray-200'
+                                    : 'bg-black/40 text-gray-500 hover:text-gray-300'}`}>
+                                {m === 'full' ? 'redraw' : 'refine'}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex gap-1">
+                        <input autoFocus value={prompt} onChange={e => setPrompt(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') submit(); else if (e.key === 'Escape') setOpen(false) }}
+                            placeholder="what should change…"
+                            className="flex-1 min-w-0 bg-black/40 border border-white/[0.1] rounded text-[11px] text-gray-200 px-1.5 py-1" />
+                        <button onClick={submit} disabled={!prompt.trim()}
+                            className="bg-blue-600/80 hover:bg-blue-700 disabled:opacity-40 text-white px-2 rounded text-[11px] shrink-0">Go</button>
+                    </div>
                 </div>
             )}
         </div>
@@ -80,7 +97,7 @@ const CardShell: React.FC<{
 
 const SpriteCard: React.FC<{
     runId: string; asset: GameAsset; version: number; regenerating: boolean
-    onRegenerate: (prompt: string) => void
+    onRegenerate: (prompt: string, mode: RegenMode) => void
 }> = ({ runId, asset, version, regenerating, onRegenerate }) => {
     const status = regenerating ? 'rendering' : asset.status
     const url = useAssetBlob(runId, asset, version)
@@ -96,7 +113,7 @@ const SpriteCard: React.FC<{
 
 const MeshCard: React.FC<{
     runId: string; asset: GameAsset; regenerating: boolean
-    onRegenerate: (prompt: string) => void
+    onRegenerate: (prompt: string, mode: RegenMode) => void
 }> = ({ runId, asset, regenerating, onRegenerate }) => {
     const status = regenerating ? 'rendering' : asset.status
     const [busy, setBusy] = useState(false)
@@ -145,9 +162,9 @@ export const AssetGallery: React.FC<{
 
     useEffect(() => { setRegenerating(new Set()) }, [runId, version])
 
-    const regenerate = (asset: GameAsset, prompt: string) => {
+    const regenerate = (asset: GameAsset, prompt: string, mode: RegenMode) => {
         setRegenerating(prev => new Set(prev).add(asset.id))
-        api.regenerateAsset(runId, asset.id, prompt).catch(() => {
+        api.regenerateAsset(runId, asset.id, prompt, mode).catch(() => {
             setRegenerating(prev => { const next = new Set(prev); next.delete(asset.id); return next })
         })
     }
@@ -185,9 +202,9 @@ export const AssetGallery: React.FC<{
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                     {assets!.map(a => a.kind === 'sprite'
                         ? <SpriteCard key={a.id} runId={runId} asset={a} version={version}
-                            regenerating={regenerating.has(a.id)} onRegenerate={p => regenerate(a, p)} />
+                            regenerating={regenerating.has(a.id)} onRegenerate={(p, m) => regenerate(a, p, m)} />
                         : <MeshCard key={a.id} runId={runId} asset={a}
-                            regenerating={regenerating.has(a.id)} onRegenerate={p => regenerate(a, p)} />)}
+                            regenerating={regenerating.has(a.id)} onRegenerate={(p, m) => regenerate(a, p, m)} />)}
                 </div>
             )}
         </section>

@@ -41,7 +41,16 @@ def http_passthrough(agent, payload):
 
 
 def comfy_image(agent, payload):
-    """Run one fully-resolved ComfyUI workflow; return every output image inline as base64."""
+    """Run one fully-resolved ComfyUI workflow; return every output image inline as base64.
+
+    `uploads` (img2img init images) land on ComfyUI's input dir first — the workflow's LoadImage
+    references them by name, and ComfyUI can only read what its own /upload/image accepted."""
+    for up in payload.get("uploads") or []:
+        r = _post(agent, f"{agent.target}/upload/image",
+                  files={"image": (up["name"], base64.b64decode(up["b64"]), "image/png")},
+                  data={"overwrite": "true"}, timeout=60)
+        if r.status_code != 200:
+            return None, f"ComfyUI /upload/image status {r.status_code}: {r.text[:2000]}"
     r = _post(agent, f"{agent.target}/prompt",
               json={"prompt": payload["workflow"], "client_id": str(uuid.uuid4())}, timeout=60)
     if r.status_code != 200:

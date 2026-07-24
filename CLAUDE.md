@@ -494,9 +494,17 @@ src/
                          second skin is refused by has_active_batch as well as the in-process key,
                          or a double-click pays for a second full set of image/mesh jobs).
                          POST assets/<id>/regenerate→reskin.regenerate_asset: re-render ONE asset
-                         with a new prompt as a one-job `image` batch reusing the `skin` finalize
+                         as a one-job `image` batch reusing the `skin` finalize
                          (save_sprite/mesh_from_image → stage_for_play + assets_done), no whole-game
-                         re-skin — the source already references the id.
+                         re-skin — the source already references the id. The user's text is a
+                         CHANGE NOTE, not the finished prompt: it is merged (one small llm call)
+                         with the asset's ORIGINAL prompt — assets.json entries persist `prompt`,
+                         data rows' `look` is the pre-persistence fallback — so "give him a red
+                         cape" keeps the goblin. mode="img2img" seeds the render from the existing
+                         image (partial denoise, keeps composition): the sprite itself in 2D, the
+                         mesh's source render in 3D (asset_chain saves it as <id>.src.png), falling
+                         back to a full render when no init exists. The init image rides the
+                         payload as an upload the worker lands on ComfyUI /upload/image first.
                          build/resume/fix/assets
                          all pass _require_compute FIRST: enqueue enforces the same budget per job,
                          but a broke run must not win the GPU slot and then thrash on refused jobs

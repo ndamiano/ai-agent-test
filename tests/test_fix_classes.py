@@ -229,12 +229,16 @@ def test_start_fix_reports_every_deterministic_change_shape(tmp_path):
     from maestro.state import RunState
     rs = RunState(str(tmp_path))
     cursor = BuildCursor(build_id="b", t0=0.0)
-    for changes in ([("strip", "main.ts")], [("field", ("Hero", "stamina"))]):
+    # Distinct paths → distinct identities: each gets its own free deterministic pass.
+    cases = [([("strip", "main.ts")], "a.ts"), ([("field", ("Hero", "stamina"))], "b.ts")]
+    for changes, path in cases:
         cls = fix_classes.FixClass(
             id="stub", matches=lambda e: True,
             deterministic=lambda rd, e, c=changes: {"changes": c, "count": len(c)})
+        err = Error(type=ErrorType.FIX, code="typechecks", component="game",
+                    message="boom", path=path)
         with patch.object(build_chain, "classify", lambda e: cls):
-            started = build_chain._start_fix(str(tmp_path), rs, cursor, _err("boom"), False)
+            started = build_chain._start_fix(str(tmp_path), rs, cursor, err, False)
         assert started is False   # deterministic resolved it — no llm turn
 
 

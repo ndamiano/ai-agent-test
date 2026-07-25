@@ -91,6 +91,17 @@ _DOM_DRAW_TYPES = {
     "CanvasRenderingContext": "DrawApi",
     "HTMLCanvasElement": "DrawApi",
 }
+
+# The state entries the scaffold's own code decides. state.ts is GENERATED from this table, so an
+# architecture that omits a field main.ts asserts describes a GameState the game cannot be written
+# against: the model widens GameState locally to compile, the declaration stops describing the real
+# state (conform can no longer see the field at all), and the next file authored against the
+# generated type dies on it.
+_SCAFFOLD_STATE = {
+    "player": {"type": "Entity", "lifetime": "run", "owner": "init",
+               "meaning": "the avatar the control scaffold steers; init must spawn it",
+               "mutators": ["init", "update"], "readers": []},
+}
 _HOOKS_IFACE_RE = re.compile(r"interface\s+GameHooks<(\w+)>\s*\{(.*?)\n\}", re.S)
 _HOOK_MEMBER_RE = re.compile(r"^\s*(\w+)\??\s*(\([^;]*\)\s*:\s*[^;]+);", re.M)
 _ENGINE_DTS = "engine.d.ts"
@@ -134,7 +145,7 @@ def _retype(text: str) -> str:
 
 def enforce_kit_contract(run_dir, iface: Dict) -> List[str]:
     """Overwrite the parts of the architecture the kit already decides. Returns what it corrected."""
-    from maestro.codegen.scaffold import ENTRY_HOOK
+    from maestro.codegen.scaffold import ENTRY_HOOK, unguarded_state_fields
 
     hooks = hook_signatures(run_dir)
     fixed: List[str] = []
@@ -152,6 +163,14 @@ def enforce_kit_contract(run_dir, iface: Dict) -> List[str]:
         if _retype(f.get("type") or "") != (f.get("type") or ""):
             f["type"] = _retype(f["type"])
             fixed.append(f"{f['field']}: the game draws through DrawApi, not the DOM")
+    declared = {f.get("field") for f in _list(iface.get("state"))}
+    for name in unguarded_state_fields(run_dir):
+        entry = _SCAFFOLD_STATE.get(name)
+        if not entry or name in declared:
+            continue
+        iface.setdefault("state", []).append({"field": name, **entry})
+        fixed.append(f"{name}: main.ts asserts state.{name} — declared {entry['type']}, "
+                     f"owned by {entry['owner']}()")
     return fixed
 
 

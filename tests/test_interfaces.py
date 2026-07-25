@@ -4,10 +4,14 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.codegen import build_steps, conform, interfaces
+from maestro.codegen import build_steps, conform, interfaces, scaffold
+from maestro.codegen.scaffold import seed_scaffold
 from maestro.codegen.build_state import FixCursor, error_to_dict
 from maestro.modules.module import Error, ErrorType
 
@@ -271,6 +275,83 @@ def test_save_enforces_the_kit_contract(tmp_path):
     """Every write of the architecture goes through save, so no path can bypass the kit's law."""
     interfaces.save(tmp_path, _hook_iface("draw(ctx: CanvasRenderingContext2D): void"))
     assert "CanvasRenderingContext2D" not in json.dumps(interfaces.load(tmp_path))
+
+
+# ── the scaffold's state, appended rather than asked for ─────────────────────
+_SCHEMES = ["top-down", "platformer", "grid-turn", "orbital-3d", "vehicle-3d", "first-person-3d",
+            "follow-3d", "nonsense"]
+
+
+def _seed(tmp_path, scheme="top-down", **spec):
+    spec = {"mode": "3d" if scheme.endswith("-3d") else "2d",
+            "design": {"control": {"scheme": scheme}, **(spec.pop("design", {}))}, **spec}
+    seed_scaffold(SimpleNamespace(run_dir=tmp_path), spec)
+    return tmp_path
+
+
+def test_the_state_the_scaffold_asserts_is_appended_when_the_architecture_omits_it(tmp_path):
+    """The design turn is TOLD to declare state.player and a measured build ignored it: state.ts is
+    GENERATED from the architecture, so game.ts widened GameState locally to compile, and a sibling
+    authored later against the real GameState died on `Property 'player' does not exist`."""
+    _seed(tmp_path)
+    iface = _iface()
+    fixed = interfaces.enforce_kit_contract(tmp_path, iface)
+    player = next(f for f in iface["state"] if f["field"] == "player")
+    assert player["type"] == "Entity" and player["owner"] == "init"
+    assert player["lifetime"] in interfaces.LIFETIMES
+    assert any("player" in c for c in fixed)
+
+
+def test_a_player_the_model_declared_itself_is_left_alone(tmp_path):
+    _seed(tmp_path)
+    iface = _iface()
+    mine = {"field": "player", "type": "Ship", "meaning": "the ship", "lifetime": "level",
+            "owner": "startFight", "mutators": [], "readers": []}
+    iface["state"].append(mine)
+    assert interfaces.enforce_kit_contract(tmp_path, iface) == []
+    assert [f for f in iface["state"] if f["field"] == "player"] == [mine]
+
+
+def test_the_appended_field_survives_into_the_generated_state_type(tmp_path):
+    _game_dir(tmp_path)
+    _seed(tmp_path)
+    iface = _iface()
+    interfaces.enforce_kit_contract(tmp_path, iface)
+    interfaces.generate_state_ts(tmp_path, iface)
+    assert "player: Entity;" in (tmp_path / "game" / interfaces.STATE_FILE).read_text()
+
+
+@pytest.mark.parametrize("scheme", _SCHEMES)
+def test_only_the_fields_the_scaffold_cannot_run_without_are_forced(tmp_path, scheme):
+    """`state.world ?? []`, `state.tilemap?.solidAt` and `if (state.ground)` are optional BY
+    CONSTRUCTION — forcing them into every game's contract would be the pipeline inventing a rule
+    rather than stating the kit's."""
+    _seed(tmp_path, scheme, world=True, design={"uses": ["dialogue"]})
+    assert scaffold.unguarded_state_fields(tmp_path) == ["player"]
+
+
+def test_every_scaffolded_field_has_a_declaration_to_append(tmp_path):
+    """A template that starts asserting a new field must bring its type/owner with it, or the
+    enforcement silently skips it and the gap reopens."""
+    for scheme in _SCHEMES:
+        for extra in ({}, {"world": True, "design": {"uses": ["dialogue"]}}):
+            d = tmp_path / f"{scheme}{len(extra)}"
+            (d / "game").mkdir(parents=True)
+            _seed(d, scheme, **extra)
+            assert set(scaffold.unguarded_state_fields(d)) <= set(interfaces._SCAFFOLD_STATE)
+
+
+def test_save_appends_the_scaffolds_state(tmp_path):
+    """Every write of the architecture goes through save, so no path can bypass this either."""
+    _seed(tmp_path)
+    interfaces.save(tmp_path, {"state": [], "functions": [], "invariants": []})
+    assert [f["field"] for f in interfaces.load(tmp_path)["state"]] == ["player"]
+
+
+def test_nothing_is_appended_before_the_scaffold_is_seeded(tmp_path):
+    iface = _iface()
+    assert interfaces.enforce_kit_contract(tmp_path, iface) == []
+    assert not [f for f in iface["state"] if f["field"] == "player"]
 
 
 def test_hooks_block_gives_the_architecture_turn_the_signatures_and_the_vocabulary(tmp_path):

@@ -162,7 +162,14 @@ src/
                          to DrawApi. Without it a measured build declared
                          `draw(state, ctx: CanvasRenderingContext2D)`, authored render.ts faithfully
                          to it, and burned its whole step cap on tsc blaming game.ts — the one file
-                         that was right. `review_log.jsonl` records
+                         that was right. It also APPENDS the state the seeded main.ts asserts or
+                         dereferences unguarded (`scaffold.unguarded_state_fields` reads it off the
+                         file on disk — today `player: Entity`, owned by init; `state.world ?? []`
+                         and `if (state.ground)` are optional by construction and never forced).
+                         Without it a measured build declared no `player`, so GENERATED state.ts had
+                         none, every file invented its own local widening of GameState, and the build
+                         died at its step cap on TS2339 in the one sibling whose widening was
+                         missing it. `review_log.jsonl` records
                          what each round found + the ops it landed/rejected — the review patches in
                          place, so nothing else can answer "which contradiction did it fix?". Owns
                          the artifact, the review's PATCH OPS (replace/delete/add state|function +

@@ -164,6 +164,43 @@ def required_state_fields(spec: dict) -> list:
     return sorted(set(_STATE_REF_RE.findall(_scaffold_source(spec))))
 
 
+_NONCODE_RE = re.compile(r"//[^\n]*|/\*.*?\*/|\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'"
+                         r"|`(?:[^`\\]|\\.)*`", re.S)
+_ASSERT_RE = re.compile(r"if\s*\(\s*!\s*state\.([A-Za-z_$][\w$]*)\s*\)\s*\{?\s*throw\b")
+_DEREF_RE = re.compile(r"\bstate\.([A-Za-z_$][\w$]*)\s*[.(\[]")
+_MAYBE_RE = re.compile(r"\bstate\.([A-Za-z_$][\w$]*)\s*\?")
+_COND_RE = re.compile(r"\b(?:if|while)\s*\(")
+
+
+def _tested_fields(src: str) -> set:
+    """Fields named inside an `if`/`while` test — being checked FOR, not relied on."""
+    out = set()
+    for m in _COND_RE.finditer(src):
+        depth, i = 1, m.end()
+        while i < len(src) and depth:
+            depth += (src[i] == "(") - (src[i] == ")")
+            i += 1
+        out.update(_STATE_REF_RE.findall(src[m.end():i]))
+    return out
+
+
+def unguarded_state_fields(run_dir) -> list:
+    """The fields the SEEDED main.ts cannot run without: the ones it asserts, and the ones it
+    dereferences without a `??`, `?.` or `if` guard anywhere in the file.
+
+    Read off the seeded file rather than the template, so it describes the scaffold this run is
+    actually checked against. `state.world ?? []` and `if (state.ground)` are optional BY
+    CONSTRUCTION — demanding those of every game would be the pipeline inventing a rule instead of
+    stating the kit's.
+    """
+    p = entry_src_path(run_dir)
+    if not p.exists():
+        return []
+    src = _NONCODE_RE.sub(" ", p.read_text(encoding="utf-8"))
+    guarded = set(_MAYBE_RE.findall(src)) | _tested_fields(src)
+    return sorted(set(_ASSERT_RE.findall(src)) | (set(_DEREF_RE.findall(src)) - guarded))
+
+
 def state_contract_notes(spec: dict) -> list:
     """The template's OWN comment lines documenting what those fields must be.
 

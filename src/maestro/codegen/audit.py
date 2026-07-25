@@ -37,16 +37,55 @@ _STATUSES = ("delivered",) + _FAIL_STATUSES + ("blocked",)
 # it is still not the game code's claim to deliver.
 _MOVEMENT_CLAIM = re.compile(r"\b(move|walk|steer|drive|turn|jump)\b", re.I)
 
+_ENDING_VOCAB = re.compile(r"\b(wins?|winning|loses?|losing|lost|game\s+over|victory|"
+                           r"defeat(?:s|ed|ing)?)\b", re.I)
+# "condition" is spec boilerplate ("Lose condition: …"), not something the game delivers.
+_STOPWORDS = frozenset("""a an the and or but if of to in on at by for with from into onto over
+under as is are was were be been being it its this that these those they them their you your
+player players game games when while until once each every all any some no not do does did can
+will would should must more most than then there here which who whom whose what how why also just
+only both either neither about after before during through above below out off again other same
+such own too very condition conditions""".split())
+_RESTATEMENT_OVERLAP = 0.5
+
+
+def _stem(word: str) -> str:
+    for suffix in ("ing", "ies", "es", "ed", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[:-len(suffix)] + ("y" if suffix == "ies" else "")
+    return word
+
+
+def _significant(text: str) -> set:
+    return {_stem(w) for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(w) > 2 and w not in _STOPWORDS}
+
+
+def _restates_ending(mechanic: str, endings: List[set]) -> bool:
+    """Does this mechanic re-promise what the win/lose field already promises? Judging one promise
+    as two claims lets the two verdicts disagree, and then every fix for one breaks the other —
+    the dedicated field is the authority. Both halves are required so a mechanic that merely
+    mentions an ending while adding a rule the field doesn't cover stays a claim of its own."""
+    if not _ENDING_VOCAB.search(mechanic):
+        return False
+    words = _significant(mechanic)
+    return any(2 * len(words & end) / (len(words) + len(end)) >= _RESTATEMENT_OVERLAP
+               for end in endings if words and end)
+
 
 def claims_of(spec: dict) -> List[str]:
     """The claim list, enumerated mechanically from the frozen spec's own fields. The spec is the
     contract — a shallow spec yields a short list and that's as-designed; the audit never invents
-    requirements the spec didn't make."""
+    requirements the spec didn't make. `render` is a look description, so whether code "delivered"
+    it is a taste verdict; it stays a spec field for the data/asset stage but is never a claim."""
     design = (spec or {}).get("design") or {}
     claims = [f"Control '{k}': {v}" for k, v in (design.get("controls") or {}).items()
               if isinstance(v, str) and not _MOVEMENT_CLAIM.search(v)]
-    claims += [m for m in (design.get("mechanics") or []) if isinstance(m, str)]
-    for field, label in (("win", "WIN"), ("lose", "LOSE"), ("render", "RENDER")):
+    endings = [_significant(design[f]) for f in ("win", "lose")
+               if isinstance(design.get(f), str) and design[f]]
+    claims += [m for m in (design.get("mechanics") or [])
+               if isinstance(m, str) and not _restates_ending(m, endings)]
+    for field, label in (("win", "WIN"), ("lose", "LOSE")):
         if design.get(field):
             claims.append(f"{label}: {design[field]}")
     return claims

@@ -18,13 +18,14 @@ _SPEC = {
     "frozen": True, "mode": "2d",
     "design": {
         "controls": {"W": "move up", "E": "interact"},
-        "mechanics": ["Gold is earned by winning battles.", "Shops sell cards for gold."],
+        "mechanics": ["Gold is earned by winning battles.", "Shops sell cards for gold.",
+                      "Cards are dealt at the start of each battle."],
         "win": "Reach floor 10.",
         "lose": "Deck empty.",
         "render": "2D tilemap.",
     },
 }
-_N = 6   # claims_of(_SPEC): E + 2 mechanics + win/lose/render (W is movement, excluded)
+_N = 6   # claims_of(_SPEC): E + 3 mechanics + win/lose (W is movement, render is not a claim)
 
 
 # ── claims ────────────────────────────────────────────────────────────────────
@@ -36,10 +37,62 @@ def test_claims_enumerate_controls_mechanics_and_endings():
         "Control 'E': interact",
         "Gold is earned by winning battles.",
         "Shops sell cards for gold.",
+        "Cards are dealt at the start of each battle.",
         "WIN: Reach floor 10.",
         "LOSE: Deck empty.",
-        "RENDER: 2D tilemap.",
     ]
+
+
+def test_render_is_never_a_claim():
+    """Whether code delivered a look description is a taste verdict, and the skin stage rewrites
+    the visuals afterwards. The field stays in the spec for the data/asset stage."""
+    assert not [c for c in audit.claims_of(_SPEC) if "2D tilemap" in c]
+    render_only = {"design": {"render": "16-bit pixel art sprites with a CRT scanline overlay."}}
+    assert audit.claims_of(render_only) == []
+
+
+def test_a_mechanic_restating_the_lose_field_is_not_its_own_claim():
+    """One promise judged twice cannot converge: every fix for one verdict breaks the other."""
+    spec = {"design": {
+        "mechanics": ["Slimes chase the knight.",
+                      "If the player's health reaches zero, they wake up at the nearest inn with "
+                      "reduced gold (lose condition)."],
+        "lose": "Player health reaches zero.",
+    }}
+    assert audit.claims_of(spec) == [
+        "Slimes chase the knight.",
+        "LOSE: Player health reaches zero.",
+    ]
+
+
+def test_a_mechanic_restating_the_win_field_is_not_its_own_claim():
+    spec = {"design": {"mechanics": ["Defeating 10 slimes wins the game immediately."],
+                       "win": "Defeat 10 slimes"}}
+    assert audit.claims_of(spec) == ["WIN: Defeat 10 slimes"]
+
+
+def test_a_mechanic_that_only_mentions_an_ending_stays_a_claim():
+    """Ending vocabulary alone never skips a mechanic — the sword-slash is a rule of its own that
+    the lose field does not cover."""
+    spec = {"design": {
+        "mechanics": ["Pressing Space triggers a sword-slash; any slime within melee range takes "
+                      "damage and is defeated if its health reaches zero.",
+                      "Gold is earned by winning battles."],
+        "lose": "Knight's health reaches zero",
+        "win": "Defeat 10 slimes",
+    }}
+    assert audit.claims_of(spec) == [
+        "Pressing Space triggers a sword-slash; any slime within melee range takes damage and is "
+        "defeated if its health reaches zero.",
+        "Gold is earned by winning battles.",
+        "WIN: Defeat 10 slimes",
+        "LOSE: Knight's health reaches zero",
+    ]
+
+
+def test_endings_are_claims_even_with_no_mechanics():
+    spec = {"design": {"win": "Reach floor 10.", "lose": "Deck empty."}}
+    assert audit.claims_of(spec) == ["WIN: Reach floor 10.", "LOSE: Deck empty."]
 
 
 def test_claims_empty_for_specless_run():

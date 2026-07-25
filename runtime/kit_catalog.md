@@ -39,3 +39,14 @@ implementer chooses the numbers and wiring.
 For an open-ended game (a sandbox/settlement/life sim with no final victory) set "win": null and
 carry ALL progression as quests/milestones; for a finite goal ("defeat the beast") state it as the
 win — reaching it ends the game.
+
+## What the runtime CANNOT do — design around these, never promise them
+- **Sound.** The game is SILENT: no music, no soundtrack, no sound effects. A rhythm or beat-driven
+  game therefore carries its beat VISUALLY — a pulsing on-screen cue the player times against — and
+  is designed and described that way ("pulse", "the beat marker"), never "in time with the music".
+- **Screen effects.** No shaders and no post-processing: no CRT/scanline overlay, no bloom, no
+  chromatic aberration, no blur, no screen warp. Look is flat shapes, sprites and colors.
+- **Typing.** No text input of any kind (no naming, no chat, no typed commands). Every choice is a
+  key press or a menu option.
+- **Persistence and other players.** Nothing is saved between sessions (no high-score table
+  surviving a reload, no profiles) and there is no networking, no multiplayer, no leaderboard.

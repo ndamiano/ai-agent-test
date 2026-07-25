@@ -114,7 +114,7 @@ const ChatPanel: React.FC = () => {
                 {messages.length > 0 && (
                     <div className="flex justify-center">
                         <button
-                            onClick={() => { setMessages([]); api.clearChatSession() }}
+                            onClick={async () => { await api.clearChatSession(); setMessages([]) }}
                             className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
                         >
                             Clear conversation

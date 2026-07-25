@@ -106,6 +106,13 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          + module boundaries, entity FIELDS left open.
   kit_api.md             the injected 2D kit surface (load-bearing prompt input)
   kit_api_3d.md          the injected 3D kit surface
+  kit_catalog.md         the SPEC-level kit surface (the only prompt input `spec_draft` gets): the
+                         control schemes, behaviors and depth blocks a spec may compose — plus the
+                         CANNOT list, which is the only thing standing between a request and a spec
+                         that promises what the runtime has no way to deliver. A live request asked
+                         for beat-synced scoring and a synthwave soundtrack; `kit.audio.play` is a
+                         no-op stub, so the whole game was unbuildable and nothing downstream could
+                         see it. Widening the kit means widening this too, or specs never reach it.
   headless.mjs / render.mjs   node runners for the two runtime gates
   index.html             browser harness (loads games/<slug>/main.js bundle; 3D → run3d else run)
   games/, specs/         sample games + specs (fixtures/reference)
@@ -242,9 +249,16 @@ src/
                          spec's claims (see audit.py).
       audit.py           the spec-vs-code AUDIT — the gates prove a game RUNS, not that its declared
                          mechanics exist, so a build ends on SPEC-EXHAUSTED, not errors-zero. Claims
-                         are enumerated MECHANICALLY from the spec (controls/mechanics/win/lose/
-                         render; movement controls excluded — scaffold law, gated by
-                         single_mover). Each claim is judged by a bounded READ→VERDICT subloop (the
+                         are enumerated MECHANICALLY from the spec (controls/mechanics/win/lose;
+                         movement controls excluded — scaffold law). `render` is NOT a claim: it is a
+                         look description the skin stage rewrites, so "delivered" is a taste verdict.
+                         Nor is a mechanic RESTATING the win/lose field — 66% of measured specs
+                         re-promise an ending inside `mechanics`, and one promise judged twice yields
+                         two verdicts free to contradict, after which every fix for one breaks the
+                         other; the dedicated field is the authority (ending vocabulary AND ≥0.5 Dice
+                         overlap on stemmed significant words, so a mechanic that merely mentions an
+                         ending while adding an uncovered rule survives).
+                         Each claim is judged by a bounded READ→VERDICT subloop (the
                          fix loop's grounding transplanted): the judge reads the files it needs via
                          read_file and must cite the traced path — single-shot judging over pasted
                          sources was measured wrong BOTH ways on the same code (unanimous "broken"
@@ -375,11 +389,21 @@ src/
                          Keyed on the run, not a clock, so it stays reproducible from the run dir.
                          CONTENT only: it owns the PLACE, the scaffold owns the CONTROLS, and the
                          model authors game.ts on top of both. Seeded only when world.ts is absent.
-      controls.py        the spec's CONTROL VOCABULARY: normalize_controls maps a gamepad name onto
-                         the key that exists (stick→W/A/S/D, right stick→Mouse, A/B/X/Y→E/Q/F/R, a
-                         collision to a free key). The runtime has no gamepad, so an unbindable
-                         control cannot be wired to anything — map the vocabulary, never forbid it
-                         (mouse/Spacebar/Up tokens normalize the same way). Called at the SPEC
+      controls.py        the spec's CONTROL VOCABULARY: normalize_controls maps every control name
+                         onto a key the runtime can BIND — single lowercase chars (`pressed` matches
+                         the keymap exactly, so "W" is a control nothing can press), Arrow*,
+                         Escape/Tab/Shift/Enter. Word forms (Spacebar/ESC/Up Arrow), gamepad names
+                         (stick→W/A/S/D, right stick→Mouse, A/B/X/Y→e/q/f/r), alternates
+                         ("Right Click / Key Q"→q) and movement aggregates (WASD, W/Up, Arrow Keys →
+                         the W/A/S/D sentinel, since movement is the scaffold's). The mouse is
+                         SCHEME-AWARE: first-person-3d/orbital-3d own it and keep the Mouse
+                         sentinel, every other scheme has no mouse input at all so the action lands
+                         on a free key — and since there is ONE pointer, a second mouse action takes
+                         a key too rather than overwriting the first. An unbindable control cannot
+                         be wired to anything and prose cannot fix it — measured over 112 real
+                         specs, 52% of non-movement entries named a key that does not exist, 45 of
+                         them mouse entries two hard spec_draft rules already forbade. So map the
+                         vocabulary, never forbid it and never DROP an entry. Called at the SPEC
                          boundary (draft + freeze) so the human review, the prompts and the scaffold
                          all read the same key.
       run.py             create_run / draft_spec / freeze / run_build (CLI: kickoff + block-poll the

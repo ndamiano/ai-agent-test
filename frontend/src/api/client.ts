@@ -232,6 +232,6 @@ export const api = {
 
     // Chat
     streamChatMessage,
-    clearChatSession: (session_id = 'default') =>
-        fetch(`${base}/chat/${session_id}`, { method: 'DELETE', headers: authHeaders() }),
+    clearChatSession: () =>
+        fetch(`${base}/chat`, { method: 'DELETE', headers: authHeaders() }),
 }

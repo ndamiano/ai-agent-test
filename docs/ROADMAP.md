@@ -84,8 +84,9 @@ task breakdown: **`docs/codegen_rebuild_plan.md`**.
 - **Spec-vs-code audit (landed 2026-07-23):** the gates prove a game RUNS, not that its declared
   mechanics exist — a live build shipped every gate green with dead gold, unreachable floors and
   zero-damage combat. A build now ends on SPEC-EXHAUSTED, not errors-zero: when the gates go green,
-  the frozen spec's mechanically-enumerated claims (controls/mechanics/win/lose/render; movement
-  excluded — scaffold law) are each judged by a bounded read→verdict subloop
+  the frozen spec's mechanically-enumerated claims (controls/mechanics/win/lose; movement excluded —
+  scaffold law; render excluded — a taste verdict; mechanics that restate win/lose excluded — one
+  promise judged twice cannot converge) are each judged by a bounded read→verdict subloop
   (`maestro/codegen/audit.py`, shape `audit` in `build_steps`): the judge reads the files it needs
   and cites the traced path, per-claim verdicts logged durably to `audit_verdicts.jsonl`. Validated
   against human play-notes: single-shot judging over pasted sources was wrong both ways (unanimous

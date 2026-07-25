@@ -554,23 +554,108 @@ def test_gamepad_controls_normalize_to_real_keys():
                       "A_BUTTON": "interact", "B_BUTTON": "swing weapon"}}
     controls_mod.normalize_controls(d)
     assert d["controls"] == {"W/A/S/D": "move hero", "Mouse": "orbit camera",
-                             "E": "interact", "Q": "swing weapon"}
+                             "e": "interact", "q": "swing weapon"}
 
 
 def test_gamepad_alias_never_collides_with_a_key_the_spec_already_uses():
     d = {"controls": {"E": "open door", "A_BUTTON": "interact", "Start": "pause"}}
     controls_mod.normalize_controls(d)
-    assert d["controls"]["E"] == "open door"          # the real key keeps its meaning
-    assert d["controls"]["Q"] == "interact"           # the pad button moves to a free one
+    assert d["controls"]["e"] == "open door"          # the real key keeps its meaning
+    assert d["controls"]["q"] == "interact"           # the pad button moves to a free one
     assert d["controls"]["Escape"] == "pause"
     assert len(d["controls"]) == 3                    # nothing silently dropped
 
 
-def test_non_gamepad_controls_pass_through_untouched():
-    d = {"controls": {"W": "forward", "Mouse Left": "attack", "Space": "jump"}}
+def test_keys_already_in_the_runtime_vocabulary_pass_through():
+    d = {"controls": {"e": "use", " ": "jump", "ArrowLeft": "left", "Escape": "pause",
+                      "Tab": "map", "Shift": "run", "Enter": "confirm", "1": "slot one"}}
     before = dict(d["controls"])
     controls_mod.normalize_controls(d)
     assert d["controls"] == before
+
+
+def test_single_letter_keys_fold_to_the_case_the_runtime_binds():
+    """The runtime lowercases single characters (keymap + register), and `pressed` matches
+    exactly — so a spec key of "W" is a control nothing can ever press."""
+    d = {"controls": {"W": "forward", "Z": "zoom", "B": "bomb"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {"w": "forward", "z": "zoom", "b": "bomb"}
+
+
+@pytest.mark.parametrize("raw,key", [
+    ("SPACE", " "), ("Spacebar", " "), ("Space", " "), ("spacebar", " "),
+    ("ESC", "Escape"), ("Escape", "Escape"),
+    ("Enter", "Enter"), ("Return", "Enter"),
+    ("TAB", "Tab"), ("SHIFT", "Shift"),
+    ("Up", "ArrowUp"), ("Up Arrow", "ArrowUp"), ("UP_ARROW", "ArrowUp"),
+    ("DOWN", "ArrowDown"), ("LEFT_ARROW", "ArrowLeft"), ("Right Arrow", "ArrowRight"),
+    ("Key Q", "q"), ("1-5", "1"),
+])
+def test_word_forms_map_onto_the_key_that_exists(raw, key):
+    d = {"controls": {raw: "do a thing"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {key: "do a thing"}
+
+
+@pytest.mark.parametrize("raw", ["WASD", "W/A/S/D", "W, A, S, D", "WASD/Arrows", "Arrow Keys",
+                                 "W/Up", "A/Left", "S/DOWN", "D/Right", "A/Left/D/Right",
+                                 "W/S", "ArrowUp / W", "LEFT/RIGHT ARROW"])
+def test_movement_aggregates_collapse_to_the_scaffold_sentinel(raw):
+    """Movement is scaffold-owned: an aggregate must not become a per-key binding."""
+    d = {"controls": {raw: "move"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {"W/A/S/D": "move"}
+
+
+@pytest.mark.parametrize("raw", ["Left Click", "LEFT_CLICK", "Right Click", "Mouse Look",
+                                 "MOUSE_MOVE", "Mouse Move", "MOUSE_XY", "Mouse", "click",
+                                 "left mouse button", "MOUSE CLICK CARD"])
+def test_mouse_keeps_the_sentinel_on_a_scheme_that_owns_the_mouse(raw):
+    d = {"control": {"scheme": "first-person-3d"}, "controls": {raw: "aim"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {"Mouse": "aim"}
+
+
+@pytest.mark.parametrize("scheme", ["top-down", "platformer", "grid-turn", "follow-3d",
+                                    "vehicle-3d", None])
+def test_mouse_lands_on_a_free_key_where_there_is_no_mouse_input(scheme):
+    """Only first-person/orbital read the mouse; everywhere else `pointer` is never wired, so a
+    mouse control would ship dead."""
+    d = {"control": {"scheme": scheme} if scheme else None,
+         "controls": {"Left Click": "shoot", "E": "use"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"]["e"] == "use"                # the spec's own key is reserved first
+    assert d["controls"]["q"] == "shoot"              # the mouse action gets a free key
+    assert "Mouse" not in d["controls"]
+
+
+def test_a_second_mouse_action_gets_its_own_key():
+    """One pointer can't tell a left click from a right click — the look half keeps the sentinel
+    and the clicks take keys, so no mechanic is overwritten."""
+    d = {"control": {"scheme": "first-person-3d"},
+         "controls": {"Mouse Look": "aim", "Left Click": "fire", "Right Click": "block"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {"Mouse": "aim", "e": "fire", "q": "block"}
+
+
+@pytest.mark.parametrize("raw,key", [("Right Click / Key Q", "q"), ("Space/Click", " "),
+                                     ("Q / Right Click", "q"), ("F or Left Click", "f")])
+def test_alternates_resolve_to_the_first_bindable_alternative(raw, key):
+    d = {"controls": {raw: "parry"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {key: "parry"}
+
+
+def test_an_unmappable_control_is_kept_never_dropped():
+    d = {"controls": {"MUTE_KEY": "toggle sound", "E": "use"}}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == {"MUTE_KEY": "toggle sound", "e": "use"}
+
+
+def test_controls_that_are_not_a_map_are_left_alone():
+    d = {"controls": "WASD to move, click to shoot"}
+    controls_mod.normalize_controls(d)
+    assert d["controls"] == "WASD to move, click to shoot"
 
 
 

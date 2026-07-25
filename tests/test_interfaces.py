@@ -593,3 +593,24 @@ def test_derived_manifest_omits_the_draw_hook_for_a_3d_game(tmp_path):
     manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
     entry = next(f for f in manifest["files"] if f["name"] == "game.ts")
     assert entry["exports"] == ["initGame", "createState", "init", "update", "hud"]
+
+
+def test_a_subdirectory_file_is_flattened(tmp_path):
+    """A game is a flat folder: `write` drops the path, so a manifest asking for systems/beat.ts
+    would never be satisfied by the beat.ts that actually lands."""
+    out = interfaces.normalize({"state": [], "invariants": [], "functions": [
+        {"name": "updateBeat", "file": "systems/beat.ts", "signature": "updateBeat(): void"},
+        {"name": "init", "file": "game.ts", "signature": "init(): void"},
+    ]})
+    assert [f["file"] for f in out["functions"]] == ["beat.ts", "game.ts"]
+
+
+def test_flattened_files_group_into_one_manifest_entry(tmp_path):
+    _game_dir(tmp_path)
+    iface = interfaces.normalize({"state": [], "invariants": [], "functions": [
+        {"name": "a", "file": "systems/beat.ts", "signature": "a(): void"},
+        {"name": "b", "file": "beat.ts", "signature": "b(): void"},
+    ]})
+    m = interfaces.manifest_from(iface, tmp_path, ["createState"])
+    beat = [f for f in m["files"] if f["name"] == "beat.ts"]
+    assert len(beat) == 1 and set(beat[0]["exports"]) == {"a", "b"}

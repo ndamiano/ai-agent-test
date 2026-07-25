@@ -62,6 +62,11 @@ def normalize(iface: Dict) -> Dict:
         "functions": [f for f in _list(iface.get("functions")) if f.get("name")],
         "invariants": [s for s in _list(iface.get("invariants")) if isinstance(s, str)],
     }
+    for f in out["functions"]:
+        # A game is a FLAT folder. `systems/beat.ts` is a reasonable intent the tools cannot honour —
+        # write flattens the path, so the manifest would ask forever for a file that lands elsewhere.
+        if f.get("file"):
+            f["file"] = str(f["file"]).replace("\\", "/").split("/")[-1]
     for f in out["state"]:
         for k in ("mutators", "readers"):
             f[k] = [x for x in _list(f.get(k)) if isinstance(x, str)]

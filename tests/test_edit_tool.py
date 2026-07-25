@@ -309,3 +309,30 @@ def test_fuzzy_anchor_never_matches_blank(tools):
     tools["read_file"](file="main.ts")
     r = tools["edit"](file="main.ts", edits=[_hunk("   \n  ", "zap")])
     assert r["ok"] is False and "not found" in r["error"]
+
+
+def test_edit_refuses_to_empty_a_file(tmp_path):
+    """A hunk whose old_string is the whole body and new_string is empty passes found/unique/no-
+    overlap and deletes the file. Measured: a fix emptied a 3,241-char render.ts and the authored
+    gate had to rebuild it from scratch."""
+    _game(tmp_path, {"render.ts": SRC})
+    tools = build_codegen_tools(RunState(tmp_path))
+    tools["read_file"](file="render.ts")
+
+    res = tools["edit"](file="render.ts", edits=[_hunk(SRC, "")])
+
+    assert res["ok"] is False
+    assert "empty" in res["error"]
+    assert (tmp_path / "game" / "render.ts").read_text() == SRC     # untouched
+
+
+def test_edit_still_allows_deleting_a_region(tmp_path):
+    """Only EMPTYING the file is refused — removing one declaration from it stays legal."""
+    _game(tmp_path, {"x.ts": SRC})
+    tools = build_codegen_tools(RunState(tmp_path))
+    tools["read_file"](file="x.ts")
+
+    res = tools["edit"](file="x.ts", edits=[_hunk("export const B = 2;\n", "")])
+
+    assert res["ok"] is True
+    assert "export const A = 1;" in (tmp_path / "game" / "x.ts").read_text()

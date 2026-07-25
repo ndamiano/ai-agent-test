@@ -29,7 +29,7 @@ class Error:
     message: str              # human-facing description; reword-safe, outside identity()
     path: Optional[str] = None      # locator within the component (filename)
     ref: Optional[str] = None       # for reference errors: the unresolved id
-    kind: Optional[str] = None      # violation kind (crash/probe kind) — lets a fix class route
+    kind: Optional[str] = None      # violation kind (crash phase, tsc shape) — lets a fix class route
 
     def identity(self) -> Tuple:
         """Stable key the loop compares across steps for stall detection, across rewordings of

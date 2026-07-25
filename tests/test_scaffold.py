@@ -1,22 +1,18 @@
 """Control scaffold: the pipeline seeds a GENERATED main.ts from the spec's control scheme; the
 model authors gameplay behind the game.ts hooks. Covers: per-scheme rendering, the world spec's
 sky background + terrain clamp, the state.player contract throw, the planned/authoring integration,
-and the scheme-aware probe (dead_movement) — the invariant two shipped dead-control games motivated."""
+— the wiring two shipped dead-control games motivated."""
 
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from build_harness import run_build_to_completion
-from maestro.codegen import build_steps
-from maestro.codegen.build_state import FixCursor
+from build_harness import canned_prelude, run_build_to_completion, seed_interfaces
 from maestro.codegen.fix_classes import classify
 from maestro.codegen.gates import (
     run_headless,
-    run_probe,
     run_render,
-    run_scroll,
     typecheck,
 )
 from maestro.codegen.module import (
@@ -143,6 +139,7 @@ def _hook_game(tmp_path, spec, game_ts):
          "exports": ["createState", "init", "update", "draw", "hud"]}]}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    seed_interfaces(tmp_path)
 
 
 # ── template rendering ────────────────────────────────────────────────────────
@@ -210,13 +207,11 @@ def test_no_dialogue_use_no_interact_block(tmp_path):
 # ── the hook contract at the gates ────────────────────────────────────────────
 def test_scaffolded_game_passes_all_gates(tmp_path):
     # The scaffold itself must be gate-clean: a minimal hook game goes typecheck → headless →
-    # probe (scheme-aware) → render → scroll green with zero fixes.
+    # render green with zero fixes.
     _hook_game(tmp_path, _spec("top-down"), GAME_TS)
     assert typecheck(tmp_path) == []
     assert run_headless(tmp_path).get("ok") is True
-    assert run_probe(tmp_path, scheme="top-down").get("ok") is True
     assert run_render(tmp_path).get("ok") is True
-    assert run_scroll(tmp_path).get("ok") is True
     errs = CodegenModule().get_errors(_ctx(tmp_path, _spec("top-down")))
     assert errs == []
 
@@ -225,7 +220,6 @@ def test_scaffolded_3d_game_passes_gates(tmp_path):
     _hook_game(tmp_path, _spec("orbital-3d", mode="3d"), GAME_TS_3D)
     assert typecheck(tmp_path) == []
     assert run_headless(tmp_path).get("ok") is True
-    assert run_probe(tmp_path, scheme="orbital-3d").get("ok") is True
     assert run_render(tmp_path).get("ok") is True   # no draw in 3D — hud only
 
 
@@ -326,7 +320,6 @@ def test_world_scaffold_wires_ground_and_walls_itself(tmp_path, scheme):
     assert 'import { WORLD, heightAt } from "./world.ts";' in main
     assert typecheck(tmp_path) == []
     assert run_headless(tmp_path).get("ok") is True
-    assert run_probe(tmp_path, scheme=scheme).get("ok") is True
 
 
 def test_world_less_scaffold_never_imports_world_ts(tmp_path):
@@ -357,102 +350,25 @@ def test_scaffold_collide_world_call_per_template(tmp_path, scheme, expect):
 
 def test_scaffolded_solid_game_passes_all_gates(tmp_path):
     # The two live incidents, resolved by the scaffold's pass: walls hold the knight, and the
-    # slimes SPAWN stacked yet the probe's solid_overlap invariant stays green — the scaffold's
-    # collideWorld separated them. The registered attack satisfies the action invariants (the
-    # spec's controls map rides into the probe like _detect_plays passes it).
+    # slimes SPAWN stacked yet separate — the scaffold's collideWorld pass pushed them apart.
     spec = _spec("top-down")
     spec["design"]["controls"] = {"WASD": "move", "F": "attack"}
     _hook_game(tmp_path, spec, GAME_TS_SOLID)
     assert typecheck(tmp_path) == []
     assert run_headless(tmp_path).get("ok") is True
-    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
-    assert pr.get("ok") is True, pr
     assert run_render(tmp_path).get("ok") is True
-    assert run_scroll(tmp_path).get("ok") is True
     errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
     assert errs == []
 
 
-def test_scaffolded_unregistered_spec_key_fails_probe(tmp_path):
-    # Negative control: strip only the kit.register — the same game now trips unbound_control for
-    # the spec's F key, naming the key and the register call to add. (The solid-stack negative
-    # lives at the probe level in test_codegen — the scaffold's own pass can't be defeated from
-    # game.ts, which is the point.)
-    spec = _spec("top-down")
-    spec["design"]["controls"] = {"WASD": "move", "F": "attack"}
-    bare = GAME_TS_SOLID.replace('kit.register("attack", ["f"], () => { state.score += 1; });', "")
-    _hook_game(tmp_path, spec, bare)
-    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
-    assert pr["ok"] is False
-    kinds = [v["kind"] for v in pr["violations"]]
-    assert "unbound_control" in kinds
-    detail = next(v["detail"] for v in pr["violations"] if v["kind"] == "unbound_control")
-    assert '"F"' in detail and "kit.register" in detail
-
-
-# ── scheme-aware probe: dead_movement ─────────────────────────────────────────
-def test_probe_dead_movement_catches_undone_movement(tmp_path):
-    # The incident: an action key mutates state (dead_controls green) while a per-frame snap-back
-    # kills all displacement. Only the scheme-aware probe sees it.
-    _hook_game(tmp_path, _spec("top-down"), GAME_TS_SABOTAGED)
-    assert run_probe(tmp_path).get("ok") is True   # scheme-less probe: the shipped false green
-    pr = run_probe(tmp_path, scheme="top-down")
-    assert pr["ok"] is False
-    kinds = [v["kind"] for v in pr["violations"]]
-    assert "dead_movement" in kinds and "dead_controls" not in kinds
-    detail = next(v["detail"] for v in pr["violations"] if v["kind"] == "dead_movement")
-    assert "top-down" in detail and "displace" in detail
-
-
-def test_probe_dead_movement_passes_working_movement(tmp_path):
-    _hook_game(tmp_path, _spec("top-down"), GAME_TS)
-    assert run_probe(tmp_path, scheme="top-down").get("ok") is True
-
-
-def test_plays_check_passes_scheme_through(tmp_path):
-    # _detect_plays hands the frozen spec's scheme to the probe — the module-level wiring.
-    spec = _spec("top-down")
-    _hook_game(tmp_path, spec, GAME_TS_SABOTAGED)
-    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["plays"]
-    assert errs[0].kind == "dead_movement"
-
-
-def test_plays_check_passes_control_keys_through(tmp_path):
-    # _detect_plays hands the spec's whole controls map to the probe: a spec-bound action key with
-    # no kit.register (GAME_TS reads bare input.pressed(" ")) comes back as unbound_control.
-    spec = _spec("top-down")
-    spec["design"]["controls"] = {"WASD": "move", "SPACE": "attack"}
-    _hook_game(tmp_path, spec, GAME_TS)
-    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["plays"]
-    assert errs[0].kind == "unbound_control"
-    assert '"SPACE"' in errs[0].message
-
-
 def test_scaffold_dialogue_interact_satisfies_spec_key_and_probe(tmp_path):
-    # The dialogue scaffold registers "interact" on E: the spec's "E: talk" key reads as wired
-    # (no unbound_control) and dead_action's explicit skip exempts the proximity-gated action.
+    # The dialogue scaffold registers "interact" on the spec's key, not a hardcoded E.
     spec = _spec("top-down", uses=["dialogue"])
     spec["design"]["controls"] = {"WASD": "move", "E": "talk to villagers"}
     _hook_game(tmp_path, spec, GAME_TS_TALK)
     main = (tmp_path / "game" / "main.ts").read_text()
     assert 'kit.register("interact", ["e"]' in main
     assert typecheck(tmp_path) == []
-    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
-    assert pr.get("ok") is True, pr
-
-
-def test_multiword_mouse_spec_key_is_exempt_from_unbound_control(tmp_path):
-    # The shipped incident: "Mouse Move: look around" splits to ["Mouse", "Move"] and the per-token
-    # exemption only caught "Mouse" — "Move" survived as a phantom keyboard key no register can
-    # satisfy, and the build ping-ponged unbound_control/dead_action to its step cap. The whole raw
-    # key is mouse-shaped, so the whole entry is exempt.
-    spec = _spec("top-down")
-    spec["design"]["controls"] = {"WASD": "move", "Mouse Move": "look around", "F": "attack"}
-    _hook_game(tmp_path, spec, GAME_TS_SOLID)
-    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
-    assert pr.get("ok") is True, pr
 
 
 def test_interact_keys_bind_the_spec_control():
@@ -479,8 +395,6 @@ def test_scaffold_dialogue_interact_binds_a_space_spec_key(tmp_path):
     main = (tmp_path / "game" / "main.ts").read_text()
     assert 'kit.register("interact", [" "]' in main
     assert typecheck(tmp_path) == []
-    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
-    assert pr.get("ok") is True, pr
 
 
 def test_hook_own_interact_register_wins_over_the_scaffold(tmp_path):
@@ -499,8 +413,6 @@ def test_hook_own_interact_register_wins_over_the_scaffold(tmp_path):
     main = (tmp_path / "game" / "main.ts").read_text()
     assert main.index('kit.register("interact"') < main.index("initGame(state, kit);")
     assert typecheck(tmp_path) == []
-    pr = run_probe(tmp_path, scheme="top-down", control_keys=spec["design"]["controls"])
-    assert pr.get("ok") is True, pr
 
 
 # ── planned / authoring integration ───────────────────────────────────────────
@@ -517,61 +429,12 @@ def _manifest(tmp_path, names):
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
 
 
-def test_planned_requires_game_ts(tmp_path):
-    spec = _spec("top-down")
-    _seed(tmp_path, spec)   # run_build seeds before the loop ever detects — mirror that order
-    _manifest(tmp_path, ["main.ts"])   # a plan of only the scaffold's own file is no plan at all
-    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["planned"]
-    _manifest(tmp_path, ["game.ts"])
-    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["authored"] and errs[0].path == "game.ts"
-
-
-def test_planned_requires_game_ts_for_a_world_game_too(tmp_path):
-    """A world game plans like any other: main.ts is the scaffold's, world.ts is worldgen's, and
-    the model's entry is still game.ts."""
-    spec = _spec("first-person-3d", mode="3d", world={"settlement": "X"})
-    _seed(tmp_path, spec)
-    (tmp_path / "game" / "world.ts").write_text("// GENERATED by worldgen\n", encoding="utf-8")
-    _manifest(tmp_path, ["main.ts", "world.ts"])
-    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["planned"]
-    _manifest(tmp_path, ["game.ts"])
-    errs = CodegenModule().get_errors(_ctx(tmp_path, spec))
-    assert [e.code for e in errs] == ["authored"] and errs[0].path == "game.ts"
-
-
 def test_authoring_order_puts_game_ts_last(tmp_path):
     _seed(tmp_path, _spec("top-down"))
     _manifest(tmp_path, ["game.ts", "types.ts", "combat.ts"])
+    seed_interfaces(tmp_path)
     order = [f["name"] for f in _authoring_order(tmp_path)]
     assert order == ["types.ts", "combat.ts", "game.ts"]   # contract first, hook entry LAST
-
-
-def _plan_apply(spec, run_dir, reply_content):
-    """Drive the plan shape's apply step over one model reply (no infer)."""
-    fc = FixCursor(shape="plan", error={"type": "build", "code": "planned", "component": "game",
-                                        "message": ""}, started=True)
-    return build_steps.plan_step(spec, run_dir, {}, fc,
-                                 {"choices": [{"message": {"content": reply_content}}]})
-
-
-def test_plan_fix_fallback_and_main_ts_drop(tmp_path):
-    """An unparseable plan falls back to a game.ts-only manifest for a scaffolded spec, and a plan
-    that lists main.ts anyway gets it dropped (the scaffold owns main.ts)."""
-    spec = _spec("top-down")
-    _seed(tmp_path, spec)
-    _plan_apply(spec, tmp_path, "not json at all")
-    manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
-    assert [f["name"] for f in manifest["files"]] == ["game.ts"]
-    assert manifest["files"][0]["exports"] == ["createState", "init", "update", "draw", "hud"]
-
-    reply = '```json\n{"files": [{"name": "main.ts", "purpose": "entry", "exports": ["createGame"]},' \
-            ' {"name": "game.ts", "purpose": "hooks", "exports": ["createState"]}]}\n```'
-    _plan_apply(spec, tmp_path, reply)
-    manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
-    assert [f["name"] for f in manifest["files"]] == ["game.ts"]
 
 
 def test_loop_builds_scaffolded_game_to_green(tmp_path, monkeypatch):
@@ -581,7 +444,8 @@ def test_loop_builds_scaffolded_game_to_green(tmp_path, monkeypatch):
 
     class FakeConn:
         def generate_with_tools(self, messages, tools=None, **kw):
-            return {"choices": [{"message": {"content": f"```ts\n{GAME_TS}\n```"}}]}
+            return canned_prelude(messages) or {
+                "choices": [{"message": {"content": f"```ts\n{GAME_TS}\n```"}}]}
 
     state = RunState(tmp_path)
     spec = _spec("top-down")
@@ -592,14 +456,6 @@ def test_loop_builds_scaffolded_game_to_green(tmp_path, monkeypatch):
     assert cursor.ok is True
     assert (tmp_path / "game" / "game.ts").read_text().strip() == GAME_TS.strip()
     assert (tmp_path / "game" / "main.ts").read_text() == scaffold_src   # scaffold untouched
-
-
-def test_plan_fix_fallback_3d_omits_draw_hook(tmp_path):
-    spec = _spec("orbital-3d", mode="3d")
-    _seed(tmp_path, spec)
-    _plan_apply(spec, tmp_path, "garbage")
-    manifest = json.loads((tmp_path / "game" / "manifest.json").read_text())
-    assert manifest["files"][0]["exports"] == ["createState", "init", "update", "hud"]
 
 
 # ── hook re-export bridge (run-7 regression) ────────────────────────────────────
@@ -705,3 +561,53 @@ def test_contracted_check_demands_the_assertion_line(tmp_path):
     assert "_scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud }" in errs[0].message
     _assert_run(tmp_path, _HOOKS_OK)   # with the line present the check is clean
     assert _detect_contracted(None, None, ctx) == []
+
+
+def test_required_state_fields_come_from_the_scheme_s_own_template():
+    """Read off the template that will actually be seeded, so it cannot drift from the scaffold."""
+    from maestro.codegen.scaffold import required_state_fields
+
+    fields = required_state_fields({"mode": "3d", "design": {"control": {"scheme": "vehicle-3d"}}})
+    assert {"player", "world", "walls", "ground"} <= set(fields)
+
+    grid = required_state_fields({"mode": "2d", "design": {"control": {"scheme": "grid-turn"}}})
+    assert {"player", "world", "passable"} <= set(grid)
+    assert "walls" not in grid          # a 2D scheme is not handed the 3D passes
+
+
+def test_an_unknown_scheme_still_yields_the_universal_fields():
+    from maestro.codegen.scaffold import required_state_fields
+
+    fields = required_state_fields({"mode": "2d", "design": {"control": {"scheme": "nonsense"}}})
+    assert {"player", "world"} <= set(fields)
+
+
+def test_state_contract_notes_quote_the_template_s_own_documentation():
+    """Field NAMES are not enough: told only that `ground` exists, an architecture declared it
+    `Entity | null` and the scaffold called `state.ground(x, z)` — a frame-0 TypeError."""
+    from maestro.codegen.scaffold import state_contract_notes
+
+    notes = "\n".join(state_contract_notes(
+        {"mode": "3d", "design": {"control": {"scheme": "vehicle-3d"}}}))
+    assert "(x, z) => number" in notes          # ground is a height function, not an entity
+    assert "Rect[]" in notes                     # walls are rects, not entities
+    assert "state.player" in notes
+
+
+def test_state_contract_notes_are_scheme_specific():
+    from maestro.codegen.scaffold import state_contract_notes
+
+    grid = "\n".join(state_contract_notes(
+        {"mode": "2d", "design": {"control": {"scheme": "grid-turn"}}}))
+    assert "(x, z) => number" not in grid       # no terrain height fn in a 2D grid game
+
+
+def test_state_contract_notes_keep_whole_comment_blocks():
+    """Taking only the lines that say `state.` cut a note mid-sentence at 'state.cell? (defaults to',
+    so the model never saw 'tilemap.tile or 32' and declared cell as an object, not a number."""
+    from maestro.codegen.scaffold import state_contract_notes
+
+    notes = "\n".join(state_contract_notes(
+        {"mode": "2d", "design": {"control": {"scheme": "platformer"}}}))
+    assert "state.cell? (defaults to" in notes
+    assert "tilemap.tile or 32" in notes          # the continuation line, which says no `state.`

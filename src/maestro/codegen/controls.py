@@ -3,9 +3,9 @@ that actually exist.
 
 The runtime's whole input surface is `down(key)` / `pressed(key)` / `pointer` (+ mouse-look
 deltas): there is no gamepad. But a spec asking for `A_BUTTON: swing weapon` has stated a
-perfectly clear intent, so the pipeline MAPS it rather than refusing it — the same way the probe
+perfectly clear intent, so the pipeline MAPS it rather than refusing it — the same way authoring
 already folds `LEFT_CLICK`/`Spacebar`/`Up` into the tokens it understands. Refusing instead of
-mapping cost one measured build its entire step budget: `unbound_control` demanded a binding on
+mapping cost one measured build its entire step budget: the scaffold could not bind
 `LEFT_STICK`, which no edit can ever satisfy.
 """
 
@@ -14,7 +14,7 @@ import re
 
 # A gamepad control → the keyboard/mouse equivalent that actually exists. The runtime has no gamepad
 # (Input is keys + pointer), but "A_BUTTON: swing weapon" is perfectly clear intent — so MAP it
-# rather than refuse it, the same way the probe already normalizes "LEFT_CLICK"/"Spacebar"/"Up".
+# rather than refuse it, normalizing "LEFT_CLICK"/"Spacebar"/"Up" onto keys that exist.
 _PAD_ACTION = {"a": "E", "b": "Q", "x": "F", "y": "R",
                "cross": "E", "circle": "Q", "square": "F", "triangle": "R",
                "lb": "1", "l1": "1", "rb": "2", "r1": "2",
@@ -40,9 +40,9 @@ def normalize_controls(design: dict) -> None:
     """Rewrite gamepad control names in the spec's `controls` map to real keys, in place.
 
     Done HERE, at the spec boundary, so the human reviewing the spec, the authoring prompt, the
-    scaffold and the probe all read the SAME key. Aliasing inside the probe alone would have it
+    scaffold and the prompts all read the SAME key. Aliasing at one site alone would have it
     demand a binding on "E" while the model, reading "A_BUTTON" off the spec, binds that — the
-    ping-pong the probe's own MOUSE-token comment warns about.
+    ping-pong between a spec key and a key that exists.
     """
     controls = design.get("controls")
     if not isinstance(controls, dict):

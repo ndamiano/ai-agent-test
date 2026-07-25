@@ -24,6 +24,7 @@ from maestro.codegen.module import CodegenModule
 from maestro.modules.context import build_context
 from maestro.modules.module import ErrorType
 from maestro.codegen.scaffold import seed_scaffold
+from build_harness import seed_interfaces
 from maestro.state import RunState
 
 # The model-authored hook module behind the GENERATED control scaffold.
@@ -124,6 +125,7 @@ def _write_planned_game(tmp_path, code=GOOD_GAME):
         json.dumps({"files": [{"name": "game.ts", "purpose": "game",
                                "exports": ["createState", "init", "update", "draw", "hud"]}]}),
         encoding="utf-8")
+    seed_interfaces(tmp_path)
     return tmp_path
 
 
@@ -430,6 +432,7 @@ def test_data_check_blocks_before_authored_when_design_missing(tmp_path):
     d.mkdir()
     (d / "manifest.json").write_text(json.dumps(
         {"files": [{"name": "game.ts", "purpose": "game", "exports": ["createState"]}]}))
+    seed_interfaces(tmp_path)
     errs = CodegenModule().get_errors(_ctx(tmp_path))
     assert [e.code for e in errs] == ["data"]              # blocking: authored is suppressed
     assert errs[0].type is ErrorType.BUILD

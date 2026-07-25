@@ -5,5 +5,5 @@ build (stage 2) drives ONE `CodegenModule`'s gates to green. The build is a CHAI
 `build_chain` seeds the scaffolds, sweeps the gates, and enqueues one llm turn; the control-plane's
 `/worker/complete` reloads the durable cursor (`build_state.json`), applies the turn, and enqueues the
 next — no resident loop. `build_steps` holds the per-shape fix machines (plan/data/author/read→edit).
-The gate gradient (headless smoke + probe invariants) decides "done", never the model.
+The gate gradient (typecheck + headless/render smoke) decides "done", never the model.
 """

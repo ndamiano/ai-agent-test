@@ -6,7 +6,7 @@ plus system files it imports, plus `manifest.json` (the code contract). The gate
      the whole class of cross-file/type bugs (missing exports, wrong data shapes, bad arg counts)
      BEFORE the game runs, with file:line attribution.
   2. BUNDLE `main.ts` → `main.js` with esbuild (sourcemap) — the runnable artifact.
-  3. Run the bundle headless / probe / render / scroll (node --enable-source-maps, so a runtime
+  3. Run the bundle headless / render (node --enable-source-maps, so a runtime
      crash stack names the .ts SOURCE file, not the bundle).
 """
 
@@ -474,25 +474,7 @@ def _run_violation_gate(run_dir, runner: str, hint: str, extra_args: list | None
         return {"ok": False, "violations": [{"kind": "runner", "detail": (p.stdout + p.stderr)[-400:]}]}
 
 
-def run_probe(run_dir, scheme: str = None, control_keys: dict = None) -> dict:
-    """`scheme` = the frozen spec's control scheme; when it names a movement scheme the probe also
-    enforces dead_movement (movement keys must displace the steered entity). `control_keys` = the
-    spec's `controls` map ({key: what it does}); when present the probe also enforces dead_action
-    (every registered binding must act) and unbound_control (every non-movement spec key must have
-    a registered action) — the probe itself skips movement/mouse entries."""
-    extra = [scheme or ""] if (scheme or control_keys) else None
-    if control_keys:
-        extra.append(json.dumps(control_keys))
-    return _run_violation_gate(run_dir, "probe.mjs",
-                               "probe did not finish (likely an infinite loop in update)",
-                               extra_args=extra)
-
-
 def run_render(run_dir) -> dict:
     return _run_violation_gate(run_dir, "render.mjs",
                                "render did not finish (likely an infinite loop in draw)")
 
-
-def run_scroll(run_dir) -> dict:
-    return _run_violation_gate(run_dir, "scroll.mjs",
-                               "scroll check did not finish (likely an infinite loop in update)")

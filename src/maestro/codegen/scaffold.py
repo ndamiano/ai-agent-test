@@ -1,7 +1,7 @@
 """Control scaffold — the PIPELINE wires the controls; the model authors gameplay behind hooks.
 
 WHY this stage exists: two live builds shipped games where opening them did nothing. One never read
-a movement key at all — the probe's dead_controls passed because a space-attack mutated state. One
+a movement key at all, yet nothing caught it because a space-attack still mutated state. One
 wired kit.moveTopDown correctly and then a hand-rolled collision loop undid the movement every
 frame. Both share a root: controls are the one part of a game with exactly ONE correct realization
 given the frozen spec's control scheme, so model-authored glue there is pure downside. This
@@ -57,8 +57,8 @@ def _wants_interact(spec: dict) -> bool:
     return any("dialogue" in str(u).lower() for u in uses)
 
 
-# Mirrors the probe's unbound_control tokenization (engine.js ALIAS/MOVEMENT/MOUSE): the key the
-# scaffold registers must be the key the probe will demand a binding on.
+# Tokenized the same way the spec's control vocabulary is normalized, so the key the scaffold
+# registers is the key the spec names.
 _KEY_ALIAS = {"space": " ", "spacebar": " ", "esc": "Escape", "escape": "Escape",
               "enter": "Enter", "return": "Enter", "tab": "Tab", "shift": "Shift",
               "ctrl": "Control", "control": "Control",
@@ -75,8 +75,8 @@ def _interact_keys(spec: dict) -> list:
     """The keys the scaffold's interact action binds: the spec's own interact-shaped control when it
     names one, else E. Hardcoding E cost a live build its whole step budget — the spec bound
     interact to SPACE, the hook registered it correctly on space, and the scaffold's later
-    same-name register replaced that binding (register replaces by name), leaving unbound_control
-    unfixable by construction."""
+    same-name register replaced that binding (register replaces by name), silently unbinding the
+    spec's own key."""
     controls = (spec.get("design") or {}).get("controls") or {}
     for raw, what in controls.items():
         if not _INTERACT_WHAT.search(str(what)):
@@ -144,6 +144,58 @@ def has_contract_assert(run_dir) -> bool:
     return p.exists() and "_scaffoldContract" in p.read_text(encoding="utf-8")
 
 
+_STATE_REF_RE = re.compile(r"\bstate\.([A-Za-z_$][\w$]*)")
+
+
+def _scaffold_source(spec: dict) -> str:
+    """The template text this spec will actually be seeded from, partials included."""
+    scheme = scheme_of(spec)
+    tmpl = _TEMPLATES / f"{scheme}.ts.tmpl"
+    if not tmpl.exists():
+        tmpl = _TEMPLATES / ("orbital-3d.ts.tmpl" if _is_3d(spec) else "default.ts.tmpl")
+    src = tmpl.read_text(encoding="utf-8")
+    if _wants_interact(spec):
+        mode = "3d" if _is_3d(spec) else "2d"
+        for part in (f"interact_{mode}", f"interact_init_{mode}"):
+            src += (_TEMPLATES / f"{part}.ts.tmpl").read_text(encoding="utf-8")
+    return src
+
+
+def required_state_fields(spec: dict) -> list:
+    """The state fields THIS spec's scaffold touches, read off the template it will actually seed.
+
+    The scaffold steers the game through these — `state.player` is asserted at init — but the
+    architecture turn runs before main.ts is written and is never told, so it omits them and the gap
+    surfaces as a runtime assert twenty steps later, in a contract no fix loop can widen (state.ts is
+    GENERATED). Derived from the template so it cannot drift from the scaffold it describes.
+    """
+    return sorted(set(_STATE_REF_RE.findall(_scaffold_source(spec))))
+
+
+def state_contract_notes(spec: dict) -> list:
+    """The template's OWN comment lines documenting what those fields must be.
+
+    Names alone are not enough: told only that `ground` exists, the architecture declared it
+    `Entity | null` and the scaffold called it as `state.ground(x, z)` — a frame-0 TypeError. The
+    templates already document each field's shape beside the code that uses it, so the prompt quotes
+    them rather than restating a contract that could drift.
+    """
+    # Whole contiguous comment BLOCKS, not the lines that happen to say `state.`: these notes wrap,
+    # and taking matching lines only cut one mid-sentence at "state.cell? (defaults to" — the model
+    # never saw "tilemap.tile or 32", so it declared `cell: {w, h}` where the scaffold wants a number.
+    notes, block, hit = [], [], False
+    for line in _scaffold_source(spec).splitlines() + [""]:
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            block.append(stripped.lstrip("/ ").rstrip())
+            hit = hit or bool(_STATE_REF_RE.search(stripped))
+            continue
+        if hit:
+            notes.extend(block)
+        block, hit = [], False
+    return notes
+
+
 def seed_scaffold(state, spec: dict) -> None:
     """Write the GENERATED control-scaffold main.ts for this spec's scheme. The caller seeds only
     when main.ts is absent, so a rebuild/fix never regenerates controls under a half-built game."""
@@ -164,7 +216,7 @@ def seed_scaffold(state, spec: dict) -> None:
     if _wants_interact(spec):
         # Two halves of one feature: the update-side talk loop (advance/choose/close) and the
         # init-side kit.register("interact", ...) that OPENS it — registered so the binding is
-        # machine-readable (probe/bindings/remap) while talkStep keeps the per-frame key reads.
+        # machine-readable (bindings/remap) while talkStep keeps the per-frame key reads.
         # The keys are substituted here, not by render_template: the partial rides in as a VALUE,
         # and values are never re-scanned for {tokens}.
         mode = "3d" if _is_3d(spec) else "2d"

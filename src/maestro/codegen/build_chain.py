@@ -28,6 +28,7 @@ from llm_clients.connector import get_connector
 from maestro.codegen import build_state, build_steps
 from maestro.codegen.build_state import BuildCursor, FixCursor, error_to_dict
 from maestro.codegen.fix_classes import classify
+from maestro.codegen import interfaces
 from maestro.codegen.gates import stage_for_play
 from maestro.codegen.module import CodegenModule
 from maestro.codegen.tools import build_codegen_tools
@@ -41,9 +42,13 @@ logger = logging.getLogger(__name__)
 _TYPE_RANK = {ErrorType.HUMAN: 0, ErrorType.BUILD: 1, ErrorType.FIX: 2}
 _STUCK_WINDOW = 40
 _STUCK_REPEATS = 20
+# How many sweeps an error may recur across before the CONTRACT gets a chance to be the thing that
+# is wrong. Well under _STUCK_REPEATS: parking gives up on an error, amend still tries to fix it.
+_AMEND_RECURRENCES = 3
 
 # error.code -> fix shape (build_steps). Everything else is a read→edit subloop.
-_SHAPE_BY_CODE = {"planned": "plan", "data": "data", "authored": "author"}
+_SHAPE_BY_CODE = {"interfaced": "interfaces", "reviewed": "review", "data": "data",
+                  "authored": "author", "conforms": "amend"}
 
 # The spec-vs-code audit: after the gates go green, sweep the frozen spec's claims against the
 # source and fix what isn't delivered — "done" means the spec is exhausted (or the caps are), never
@@ -313,7 +318,9 @@ def _maybe_early_assets(run_id: str, rs: RunState, spec: dict, cursor: BuildCurs
 def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, stalled: bool) -> bool:
     """Enter the fix for `error`: pick its shape, and for a read→edit fix run the fix class's
     DETERMINISTIC pre-pass first. If that pass changes files, the fix is resolved with no llm turn
-    (returns False, stays in `outer`). Otherwise arm the fix cursor and switch to `fix` (True)."""
+    (returns False, stays in `outer`). A read→edit fix that has already stalled is routed through
+    `amend` once, so the contract gets a chance to be the thing that is wrong. Otherwise arm the fix
+    cursor and switch to `fix` (True)."""
     shape = _SHAPE_BY_CODE.get(error.code, "read_write")
     if shape == "read_write":
         cls = classify(error)
@@ -326,6 +333,25 @@ def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, sta
                     for k, v in res.get("changes", [])[:8])
                 _emit_step(run_id, cursor, f"[{cls.id}] deterministic pass ({res['count']} edit(s): {summary})")
                 return False
+        # RECURRENCE, not just a repeated snapshot: two errors that each re-cause the other
+        # oscillate, so the to-do changes every sweep and `stalled` never trips — which is exactly
+        # the shape a wrong contract makes, because neither file is the one that is wrong.
+        # Counted over errors this build actually TRIED to fix, never over the to-do: a sweep's
+        # snapshot lists every failing error, so an error merely waiting its turn behind higher
+        # priority ones would otherwise earn a contract ruling before one line of it was ever edited.
+        cursor.attempted.append(idkey(error))
+        recurred = cursor.attempted.count(idkey(error)) >= _AMEND_RECURRENCES
+        if ((stalled or recurred) and idkey(error) not in cursor.amend_tried
+                and interfaces.load(rs.run_dir)):
+            # A code fix that made no progress may be unfixable in the code: the architecture was
+            # declared before any of it existed, and a file authored faithfully to a wrong contract
+            # is the file the gate blames. `amend` is the only shape that can rule the CONTRACT
+            # wrong; without this it fires on conformance alone, so every other gate's fix loop
+            # grinds against a declaration it is not allowed to contradict. One ruling per error
+            # identity — a `code` verdict falls straight through to the read→edit subloop, so a
+            # wrong guess costs one turn.
+            cursor.amend_tried.append(idkey(error))
+            shape = "amend"
     cursor.set_fix(FixCursor(shape=shape, error=error_to_dict(error), escalate=stalled))
     cursor.phase = "fix"
     return True

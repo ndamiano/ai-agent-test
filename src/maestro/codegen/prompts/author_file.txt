@@ -10,6 +10,10 @@ Rules:
   as a "rewritten" or "integrated" version — a redeclared top-level export does not compile. One
   complete definition per name, the whole file, first try.
 - Write exactly the file named below; export exactly the functions/types it must export.
+- The game state's type is GENERATED in `./state.ts` from the architecture you declared. Import it
+  (`import type { GameState } from "./state.ts";`) and use those fields exactly. Never redeclare
+  `GameState`, never widen it with a field it does not have — every other file is being written
+  against that same type, and a shape you invent here breaks all of them.
 - This is TypeScript. ANNOTATE every exported function's parameters and return type. The kit types
   are AMBIENT GLOBALS — use them directly, never IMPORT them: `Kit`, `Entity`, `World` (= Entity[]),
   `Input`, `DrawApi`, `Camera`, `Vec2`, `Vec3`, `GameObject`, `Config`, `Rect`, `Tilemap`. They also
@@ -92,14 +96,12 @@ Rules:
   back to fake collision. There is NO 3D solid-collision primitive: in 3D never write an AABB loop
   over the world to block the player (it pins them against road/ground slabs); leave the town open
   or clamp bounds with kit.V.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
-- ACTIONS: before writing init, list the spec's `controls` map entries that are NOT movement — init
-  MUST call `kit.register(name, keys, fn)` for EACH one, e.g. kit.register("attack", [" "], () =>
-  { ... }) for "SPACE: attack". A spec control with no register call fails the probe (unbound_control).
-  Never a bare `input.pressed(...)` scattered in update for a spec-bound action
-  (the probe presses registered actions and rejects unregistered spec keys). Held mechanics
-  (charging, sprint) may still read input.down per frame — the rule targets EDGE actions. Movement
-  keys stay with the control scheme; never register them. If the scaffold wires dialogue, "interact"
-  is already registered — do not re-register it.
+- ACTIONS: for the spec's `controls` entries that are NOT movement, prefer
+  `kit.register(name, keys, fn)` in init — e.g. kit.register("attack", [" "], () => { ... }) for
+  "SPACE: attack" — so the binding is named and remappable. Held mechanics (charging, sprint) read
+  input.down per frame instead; registration targets EDGE actions. Movement keys stay with the
+  control scheme; never register them. If the scaffold wires dialogue, "interact" is already
+  registered — do not re-register it.
 - Honor the kit laws: update mutates + never draws, draw reads + never mutates; velocities are
   pixels per SECOND (integrate/physics apply dt); randomness only via `kit.rng`.
 - Prefer real types over `any` — the whole point is that the compiler catches a file disagreeing

@@ -1,0 +1,48 @@
+You wrote an architecture for this game, and you are now implementing it. Your code conflicts with a
+contract you declared earlier.
+
+You decide which one is wrong. The contract is not sacred — you wrote it before you knew what the
+code would look like, and it may simply be wrong.
+
+Choose one:
+
+A. The CODE is wrong. The contract describes the right design and the implementation broke it — for
+   example it rebuilds something that was supposed to accumulate across the whole run, which would
+   silently destroy the player's progress.
+
+B. The CONTRACT is wrong. The implementation is correct and the declaration should change — for
+   example the field's real owner is this function, its lifetime was mislabelled, or a signature you
+   declared names a type or an argument list that nothing can actually supply.
+
+The conflict is not always a conformance violation: a type error that will not go away is often a
+file authored FAITHFULLY to a declaration that was wrong, in which case editing that file forever
+cannot fix it. Read the conflict for which side is really at fault.
+
+Answer as JSON:
+
+```json
+{
+  "verdict": "code" | "contract",
+  "reason": "one sentence",
+  "patches": [ ...only when verdict is "contract"... ]
+}
+```
+
+When the verdict is "code", send no patches — the code will be fixed in a later step.
+
+When the verdict is "contract", send the patch operations that correct the declaration:
+
+```json
+{"op": "replace_state",    "field": "<existing field name>", "value": { ...the complete state entry... }}
+{"op": "replace_function", "name":  "<existing function name>", "value": { ...the complete function entry... }}
+{"op": "set_invariants",   "value": ["...", "..."]}
+```
+
+A replace op overwrites the old object entirely, so its "value" must be the COMPLETE object with
+every key the original had — not only the keys you changed.
+
+Amend the contract only when the implementation is genuinely the better design. Amending it to make
+a violation disappear, when the code really did break the design, throws away the guarantee the
+declaration was there to give you.
+
+Output ONE ```json block and nothing else.

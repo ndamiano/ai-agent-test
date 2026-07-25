@@ -1,0 +1,65 @@
+You are designing the ARCHITECTURE for a game before any code is written.
+
+Do not write any implementation. Produce the CONTRACTS the implementation must satisfy, so that
+several people could each implement one function without talking to each other and the parts would
+still fit together.
+
+Answer as JSON with exactly these keys:
+
+```json
+{
+  "state": [
+    {
+      "field": "name of a field on the game state object",
+      "type": "its TypeScript type",
+      "meaning": "what it represents",
+      "lifetime": "run | session | level | turn",
+      "owner": "the ONE function allowed to create or replace this field",
+      "mutators": ["functions allowed to modify it in place"],
+      "readers": ["functions that only read it"]
+    }
+  ],
+  "functions": [
+    {
+      "name": "functionName",
+      "file": "the .ts file it will live in",
+      "signature": "functionName(args: T): R",
+      "purpose": "one line",
+      "reads": ["state fields it reads"],
+      "writes": ["state fields it writes"],
+      "calls": ["other functions it calls"],
+      "invariants": ["what must be true after it returns"]
+    }
+  ],
+  "invariants": ["whole-game rules that must never be violated, stated so they could be checked"]
+}
+```
+
+LIFETIME means how long a field's contents must survive:
+- `run`     — the whole run, across levels and fights. Progression lives here.
+- `session` — one play session; reset when a new game starts.
+- `level`   — reset when a level/room/fight begins.
+- `turn`    — recomputed every turn or frame.
+
+Rules for your answer:
+- Every design decision is yours. You choose the mechanics, the schema and the depth. Nobody will
+  correct you later, so choose what makes the best game you can actually implement.
+- Be exhaustive about state. Every field the game needs, including progression that has to survive
+  between levels.
+- `lifetime` and `owner` are the most important fields you will write. If a field persists across
+  levels, say so — and make sure no per-level function is named as its owner.
+- Think about what breaks if two functions both believe they own the same field.
+- Every function you list will be implemented by someone who sees ONLY its own contract, the state
+  table, and the list of signatures. If a function needs something, its contract must say so.
+- Give every function a `file`, grouping them by system. One file per system; a small game may put
+  everything in one file.
+- `game.ts` is the entry file. Declare its hooks as functions on it, with the EXACT signatures given
+  below — they are not yours to choose, because the generated scaffold already calls them. A 3D game
+  has no draw, since the renderer draws the entities itself.
+- You are writing a game against a kit, not against a browser. There is no DOM, no canvas and no
+  rendering context: everything a function draws with, or is handed, is a kit type. Name a type from
+  the kit's list below, a type you declare yourself, or a TypeScript builtin — nothing else.
+- Only declare what the game needs. An architecture with more parts than the design calls for is a
+  worse architecture, not a more thorough one.
+
+Output ONE ```json block and nothing else.

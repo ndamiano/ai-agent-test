@@ -42,22 +42,23 @@ with no change to the gradient. Never violate it.
   Games are checked against `runtime/engine.d.ts` (ambient kit types). This is the deterministic fix
   for a whole class of silent cross-file bugs that no runtime gate can see.
 - **headless** — bundle (esbuild) then step the sim N frames, catch crashes/divergence.
-- **probe** — generic correctness invariants (controls actually DO something — move an entity, spawn
-  one, or mutate non-positional state, so turn/card games count; when the frozen spec names a
-  MOVEMENT scheme, dead_movement additionally requires the held movement keys to DISPLACE an entity —
-  an action key mutating state can't green a game the player can't steer; every kit.register binding
-  must ACT when pressed (dead_action) and every non-movement spec control must BE registered
-  (unbound_control — the spec's controls map rides into the probe; mouse-shaped spec keys are
-  exempt — there are no mouse keys to bind); a no-input run must not RESOLVE (premature_end: a win
-  from the initial state, or a loss inside 120 frames — the per-frame-contact-damage classic);
-  state.player must BE a member of state.world at init and STAY one over the first frames
-  (player_not_in_world — a field-presence "enemy" filter that matches the player despawns it);
-  no entity rests in a solid
-  tile; no two solid entities interpenetrate at rest (solid_overlap); no Math.random/Date.now —
-  determinism is what makes the gates' diffs meaningful), each
-  violation an actionable, units-aware diagnosis.
-- **render** — call `draw()` against a recording mock: catch draw-time crashes + blank screens.
-- **scroll** — a world bigger than the screen must be followed by a panning camera.
+- **render** — call `draw()`/`hud()` against a recording mock: catch draw-time crashes and malformed
+  HUD data.
+
+**THE GATES DETECT BROKEN, NEVER "BAD"** (the law that decides what may become a gate). A constraint
+the model builds to satisfy is only safe when satisfying it IS the goal: "must not crash" can only be
+met by not crashing. A constraint of the form "the game must DO X" is not — X is legitimately false
+for some games, so no edit satisfies it and the loop grinds to its cap while the model contorts the
+design to appease it. The `probe` (dead_action / unbound_control / dead_movement / premature_end /
+solid_overlap / player_not_in_world) and the `scroll` camera gate were exactly that shape and are
+GONE: measured over 278 build attempts they cost 13% of all build steps and killed 8 builds at the
+cap, in exchange for a benefit never once verified — nobody ever played the games they blocked. The
+render gate's `missing_draw`/`draw_blank` halves went with them (an idle/menu/text game legitimately
+paints no world, and the 3D scene was never exercised by that mock anyway). What is left detects
+crashes and contradictions. Playability is a HUMAN judgement — "the character doesn't move" is
+obvious to a person and near-impossible for code — so the gap stays visible rather than filled with a
+proxy. The spec-vs-code audit is the closest thing to a "done" signal: it judges claims the SPEC
+made, not invariants we invented.
 
 "Done" = the artifact passes the gates, never the model claiming done. Each gate sweep rebuilds a
 minimal context from durable on-disk state (the frozen spec + the failing file + the failing check's
@@ -82,9 +83,8 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          tilemap, walk/jump/physics, collideWorld (the ONE 2D solid pass: tile
                          pushout + solid-pair separation; entities tag `solid: true`),
                          register/bindings (named key-press actions — fired on the pressed edge
-                         after update; the probe presses them), camera, input, run() (browser 2D),
-                         simulate() (headless sim), probe() (invariants + dead-mouse-in-non-fp +
-                         dead_action/unbound_control/solid_overlap).
+                         after update), camera, input, run() (browser 2D),
+                         simulate() (headless sim).
                          integrate3 + z for 3D; 3D steering (seek3/flee3/wander3/patrol3 +
                          avoidRects building collision); wallsFromTilemap (a walled 3D level —
                          ground + wall boxes + the collision rects — in ONE call, so a dungeon is
@@ -106,7 +106,7 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          + module boundaries, entity FIELDS left open.
   kit_api.md             the injected 2D kit surface (load-bearing prompt input)
   kit_api_3d.md          the injected 3D kit surface
-  headless.mjs / probe.mjs / render.mjs / scroll.mjs   node runners for the four runtime gates
+  headless.mjs / render.mjs   node runners for the two runtime gates
   index.html             browser harness (loads games/<slug>/main.js bundle; 3D → run3d else run)
   games/, specs/         sample games + specs (fixtures/reference)
   node_modules/          runtime toolchain (typescript + esbuild; gitignored)
@@ -115,10 +115,8 @@ src/
   maestro/
     codegen/             THE build path (replaces the deleted IR):
       gates.py           typecheck (tsc → per-file errors) · build_bundle (esbuild main.ts → main.js
-                         + inline sourcemap) · run_headless/probe/render/scroll (build then run the
-                         bundle with --enable-source-maps, so a crash stack names the .ts source;
-                         run_probe rides the spec's control scheme + controls map so the probe
-                         enforces dead_movement and dead_action/unbound_control).
+                         + inline sourcemap) · run_headless/run_render (build then run the bundle
+                         with --enable-source-maps, so a crash stack names the .ts source).
       tools.py           write(code, file — CREATE-ONLY, an existing non-empty file refuses with its
                          body so the turn converts to an edit) / edit(file, edits) — ATOMIC multi-hunk
                          (every hunk validated against the original body: found, unique, no overlap —
@@ -129,18 +127,63 @@ src/
                          line window; per-file .ts, path-safe — a slice does NOT ground an edit).
                          edit refuses any file whose first line starts `// GENERATED` (the control
                          scaffold, data.ts, worldgen's world.ts), pointing at the owning source. The
-                         9-16KB kit doc rides in the fix loop's SYSTEM prompt (uncounted by the char
-                         budget), not a user turn, so file reads aren't demolished to fit.
-      module.py          CodegenModule = the GATE LIST (detection only): planned → data → authored →
-                         typechecks → single_mover → runs → plays → renders → scrolls (blocking where
-                         noted; single_mover is a STATIC check — a scaffolded game re-driving the
-                         player from input double-moves it, and no runtime gate can see that).
-                         `planned` requires the hook module game.ts and drops every already-GENERATED
-                         file the model lists (main.ts's control scaffold, a world game's world.ts —
-                         unauthorable, so planning one would strand an authoring step). Authoring order
-                         keys entry-last on game.ts. Each error's FIX is owned by the DRIVER, routed by
-                         `Error.code` — the checks carry no `run`. Also holds the shared prompt-building
-                         helpers + tool schemas build_steps imports.
+                         fix loop pastes NO reference material: the kit surface (engine.d.ts), the
+                         state contract (state.ts) and the data tables (data.ts) are FILES, and the
+                         fix reads the ones it decides it needs.
+      interfaces.py      THE INTERFACE CONTRACT (runs/<id>/interfaces.json) — the architecture the
+                         MODEL declares for itself before any code exists: every state field with its
+                         LIFETIME (run|session|level|turn) + the ONE function that may REPLACE it +
+                         who may mutate it in place, every function with its file/signature/reads/
+                         writes/calls, and the whole-game invariants. manifest.json is DERIVED from
+                         it (functions grouped by their `file`; GENERATED files dropped, the entry
+                         hook appended with the scaffold's hooks) — nothing plans the file list.
+                         The state table is ALSO emitted as GENERATED `game/state.ts` (one
+                         `GameState` interface, lifetime+owner as doc comments), so tsc enforces the
+                         architecture natively — the same move data.ts makes for the data manifest.
+                         Without it the declaration is advisory: a measured build authored room.ts
+                         correctly against the state table, then authored game.ts LAST with its own
+                         invented GameState, and burned 44 steps on a mismatch neither file owned.
+                         An empty architecture is never written (it declares no game), so
+                         `interfaced` stays red and the turn re-runs. THE KIT'S LAW: the entry hook
+                         signatures and the draw surface are not the architecture's to choose —
+                         main.ts is GENERATED and calls the hooks with fixed arity, and the game
+                         draws through `DrawApi`, never the DOM. So `hooks_block` injects the hook
+                         signatures + the kit's type vocabulary (both PARSED from engine.d.ts, the
+                         same types tsc checks against) into the design turn, and
+                         `enforce_kit_contract` — run inside `save`, so no path can bypass it —
+                         overwrites a hook signature the model invented and rewrites DOM draw types
+                         to DrawApi. Without it a measured build declared
+                         `draw(state, ctx: CanvasRenderingContext2D)`, authored render.ts faithfully
+                         to it, and burned its whole step cap on tsc blaming game.ts — the one file
+                         that was right. `review_log.jsonl` records
+                         what each round found + the ops it landed/rejected — the review patches in
+                         place, so nothing else can answer "which contradiction did it fix?". Owns
+                         the artifact, the review's PATCH OPS (replace/delete/add state|function +
+                         set_invariants — re-emitting a 28KB architecture to change one entry blows
+                         the token cap), the review's function-slicing, and the prompt renderings
+                         (state table + signatures) authoring/fix turns read.
+      conform.py         the CONFORMANCE gate: does the code obey the contracts the MODEL declared?
+                         Every rule comes out of interfaces.json — no game knowledge, so a violation
+                         is only ever the model contradicting itself. OWNERSHIP (a function replaces
+                         a field it doesn't own) · LIFETIME (a run-lifetime field replaced, so
+                         progression is destroyed) · ELEMTYPE (a value out of a T[] pushed into a U[]
+                         — silent at runtime: the reader gets undefined and draws nothing) · MISSING
+                         (a declared function nothing implements) · UNEXPORTED (a declared function
+                         implemented WITHOUT `export`, so the file the architecture says calls it
+                         cannot import it — MISSING alone is satisfied by a local, and the gap only
+                         shows up as tsc blaming the CALLER for a name the callee owns). tsc sees
+                         none of the others: every one
+                         is type-correct code that wires the game wrong. Only REPLACEMENT of a
+                         CONTAINER counts — `x = x.filter(…)` is an update, and scalars are
+                         recomputed constantly. GENERATED files are skipped.
+      module.py          CodegenModule = the GATE LIST (detection only): interfaced → reviewed →
+                         data → authored → contracted → typechecks → conforms → single_mover → runs →
+                         renders (blocking where noted; single_mover is a STATIC
+                         check — a scaffolded game re-driving the player from input double-moves it,
+                         and no runtime gate can see that). Authoring order keys entry-last on
+                         game.ts. Each error's FIX is owned by the DRIVER, routed by `Error.code` —
+                         the checks carry no `run`. Also holds the shared prompt-building helpers +
+                         tool schemas build_steps imports.
       build_chain.py     THE build DRIVER — what a finished build llm turn does next (codegen analog of
                          asset_chain). A build is a linear chain of `llm` jobs, each tagged
                          metadata.stage="build"; /worker/complete routes here. Owns the two-level state
@@ -170,12 +213,27 @@ src/
                          the completion reloads, advances, rewrites.
       build_steps.py     the per-shape fix MACHINES — the old synchronous fix bodies re-expressed as
                          resumable steps: step(spec, run_dir, tools, fix_cursor, result) -> Infer|Done.
-                         plan / data / author / read_write (the ≤8-turn read→edit subloop). Faithful
-                         port of module.py's old _plan_fix/_data_fix/_author_via_write/
-                         _read_write_loop_fix — same prompts, parsing, break-out conditions — only the
-                         control flow is inverted from "call infer + use the return" to "return the
-                         request, resume with the result". The read_write shape runs the fix class's
-                         DETERMINISTIC pre-pass (via build_chain) before its first turn.
+                         interfaces / review / data / author / amend / read_write (the read→edit
+                         subloop). The control flow is inverted from "call infer + use the
+                         return" to "return the request, resume with the result". The read_write
+                         shape runs the fix class's DETERMINISTIC pre-pass (via build_chain) before
+                         its first turn.
+                         INTERFACES = one turn declares the architecture (interfaces.py), and the
+                         manifest falls out of it deterministically.
+                         REVIEW = the model reviews the declarations it just wrote, before any code
+                         exists: rounds of (find over function slices) → (patch by op, one retry on
+                         unapplicable ops). Converges when a round reports nothing NEW — problem keys
+                         dedupe across rounds, since each round re-reads the same architecture. The
+                         round cap is the backstop for a reviewer that keeps inventing work.
+                         AMEND = a conformance violation is the code disagreeing with a contract
+                         written before the code existed, so one turn RULES on which side is wrong:
+                         `contract` patches interfaces.json and the fix is over, `code` falls through
+                         to the read→edit subloop. Without it `conforms` would be exactly the
+                         unsatisfiable gate the model can neither fix nor argue with. It is also
+                         where a STALLED read→edit fix is routed (once per error identity, after the
+                         deterministic pre-pass): any gate can be failing because a file was authored
+                         FAITHFULLY to a wrong declaration, and editing that file forever cannot fix
+                         it — amend is the only shape allowed to say the contract is the bug.
                          DATA = the model designs per-game datasets ONCE (design_data.txt;
                          {"datasets":[]} legal — arcade games opt out), then deterministic row
                          validation + typed data.ts regeneration (data_files.py); authoring/fix prompts
@@ -185,7 +243,7 @@ src/
       audit.py           the spec-vs-code AUDIT — the gates prove a game RUNS, not that its declared
                          mechanics exist, so a build ends on SPEC-EXHAUSTED, not errors-zero. Claims
                          are enumerated MECHANICALLY from the spec (controls/mechanics/win/lose/
-                         render; movement controls excluded — scaffold law, gated by dead_movement +
+                         render; movement controls excluded — scaffold law, gated by
                          single_mover). Each claim is judged by a bounded READ→VERDICT subloop (the
                          fix loop's grounding transplanted): the judge reads the files it needs via
                          read_file and must cite the traced path — single-shot judging over pasted
@@ -221,10 +279,6 @@ src/
                          contract-assert (append the pipeline's own known assertion line) and
                          single-mover (strip the redundant input-driven mover) are deterministic-only
                          — a class whose repair the pipeline can compute spends no LLM call.
-                         dead-action (probe kind) is directive-only: the dominant real shape is a
-                         CONDITION-GATED ability whose condition can't hold at init (a cost the
-                         player starts unable to pay — measured ~29 steps of thrash on one), and the
-                         correct repair is denied-press feedback, never a spec-betraying rebalance.
                          `default` matches everything + adds no steering = today's generic loop, so an
                          unclassified failure degrades to the status quo, never worse.
       data_files.py      the DATA-FILE substrate: game/data/manifest.json declares per-game
@@ -240,7 +294,8 @@ src/
                          the GENERATED typed game/data.ts (marker-protected like world.ts; games
                          import it, tsc typechecks content natively), the GAME DATA prompt summary,
                          and the deterministic sprite/mesh plan from rows.
-      prompts/           spec_draft · plan_game · author_file · fix_file · fix_loop · triage_fix ·
+      prompts/           spec_draft · design_interfaces · review_find · review_patch ·
+                         amend_contract · author_file · fix_file · fix_loop · triage_fix ·
                          design_data · fix_data .txt +
                          fix_kinds/<class>.txt (per-fix-class root-cause directives)
       reskin.py          the ASSETS stage (skin the shapes) — NO CLICK: assets start the moment
@@ -299,7 +354,7 @@ src/
                          hardcoded E, and registered BEFORE the hook init so a game registering its
                          own "interact" replaces the default (register replaces by name; a measured
                          build bound interact to space correctly and the scaffold's post-init E
-                         register clobbered it — unbound_control unfixable, whole step cap burned);
+                         register clobbered it, silently unbinding the spec's own key);
                          choice → state.talkPick). The model
                          authors the hooks in game.ts (createState/init/update/draw(2D)/hud). WHY:
                          two live builds shipped dead controls out of model-authored glue (one never
@@ -323,11 +378,10 @@ src/
       controls.py        the spec's CONTROL VOCABULARY: normalize_controls maps a gamepad name onto
                          the key that exists (stick→W/A/S/D, right stick→Mouse, A/B/X/Y→E/Q/F/R, a
                          collision to a free key). The runtime has no gamepad, so an unbindable
-                         control makes the probe's unbound_control UNSATISFIABLE and grinds the fix
-                         loop to its cap — map the vocabulary, never forbid it (the probe already
-                         does the same for mouse/Spacebar/Up tokens). Called at the SPEC boundary
-                         (draft + freeze) so the human review, the prompts, the scaffold and the
-                         probe all read the same key.
+                         control cannot be wired to anything — map the vocabulary, never forbid it
+                         (mouse/Spacebar/Up tokens normalize the same way). Called at the SPEC
+                         boundary (draft + freeze) so the human review, the prompts and the scaffold
+                         all read the same key.
       run.py             create_run / draft_spec / freeze / run_build (CLI: kickoff + block-poll the
                          cursor) / fix_from_note + CLI `python -m maestro.codegen.run "<request>"`
                          and `--fix <run_id> "<what's wrong>"` (the human-note fix path). The web
@@ -568,7 +622,7 @@ re-gates and repairs any regression, exactly like a build. Crash recovery: a bui
 flight and not done is re-advanced by the reaper (the per-run advance lock prevents a double-drive).
 
 **Adding a mechanic:** widen the KIT (`runtime/engine.js` + a `kit_api*.md` section + a worked
-example in the prompt + a probe invariant). Generation just composes the new primitive. Adding a
+example in the prompt). Generation just composes the new primitive. Adding a
 whole game FAMILY = a new primitive family (pathfinding, grid/turn, particles, 3D physics).
 
 **Adding a build capability that isn't a kit primitive:** a new tool in `maestro/codegen/tools.py`

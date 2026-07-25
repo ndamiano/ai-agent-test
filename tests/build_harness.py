@@ -15,9 +15,58 @@ harness wraps it with the `build_llm_job` seam the driver calls. Pass `run_id = 
 run dir is the temp dir AND the id is a db-safe string.
 """
 
+import json
 from db import store as db_store
-from maestro.codegen import build_chain, build_state
+from maestro.codegen import build_chain, build_state, interfaces
 from maestro.state import RunState
+
+
+def seed_interfaces(run_dir, iface=None):
+    """Mark a fixture's architecture as already declared + reviewed, so a gate-sweep test reaches the
+    check it is actually about.
+
+    The default declares exactly the functions the fixture's sources already export, with no state:
+    that satisfies `interfaced` (an empty architecture does not — it declares no game) while leaving
+    `conform` nothing to report. Before any source exists the fallback keeps the gate satisfied;
+    `authored` is blocking and fires first there, so `conform` never runs on it.
+    """
+    if iface is None:
+        import re
+        from maestro.codegen.gates import game_files
+        names = [(f, m.group(1))
+                 for f, src in game_files(run_dir).items()
+                 if not src.lstrip().startswith("// GENERATED")
+                 for m in re.finditer(r"^export\s+(?:async\s+)?function\s+(\w+)", src, re.M)]
+        iface = {"state": [], "invariants": [],
+                 "functions": [{"name": n, "file": f} for f, n in names]
+                 or [{"name": "createState", "file": "game.ts"}]}
+    iface = dict(iface)
+    iface["reviewed"] = True
+    interfaces.save(run_dir, iface)
+
+
+_HOOKS = ("createState", "init", "update", "draw", "hud")
+
+
+def canned_prelude(messages, hooks=_HOOKS, file="game.ts"):
+    """Answer the architecture + review turns a build now opens with, so a test fake only has to
+    care about the authoring turn it is actually about. Returns None for every other turn.
+
+    Keyed off the system prompt, since that is what distinguishes the shapes to a connector.
+    """
+    system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+
+    def _json(obj):
+        return {"choices": [{"message": {"content": "```json\n" + json.dumps(obj) + "\n```"}}]}
+
+    if "designing the ARCHITECTURE" in system:
+        return _json({"state": [], "invariants": [],
+                      "functions": [{"name": n, "file": file, "signature": f"{n}()",
+                                     "purpose": "hook", "reads": [], "writes": [], "calls": [],
+                                     "invariants": []} for n in hooks]})
+    if "Find the issues in the architecture" in system:
+        return _json({"problems_found": []})
+    return None
 
 
 class _Adapter:

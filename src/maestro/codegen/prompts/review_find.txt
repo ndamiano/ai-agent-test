@@ -1,0 +1,36 @@
+Below is an architecture you produced for a game. Nobody else will review it. Every function will be
+implemented by someone who sees only its own contract, so any contradiction here becomes a bug that
+nothing downstream can catch.
+
+Find the issues in the architecture.
+
+Look specifically for:
+- Two mechanisms that do the same job. If the design offers two ways for something to happen, one of
+  them must go. Ambiguity here becomes two functions that each believe they are in charge.
+- A field whose lifetime and owner disagree — a field that must survive the whole run, owned or
+  replaced by a function that runs at the start of every level. That silently destroys progression.
+- Progression that is never actually written anywhere, or written to a field that gets rebuilt.
+- A function that reads a field no function ever writes, or writes a field nobody reads.
+- State the game visibly needs that no field covers.
+- Functions named in a "calls" list that do not exist.
+- Anything the player is told about that no function computes.
+
+Answer as JSON:
+
+```json
+{
+  "problems_found": [
+    {
+      "problem": "what is wrong, naming the exact field or function",
+      "why_it_breaks": "the concrete failure a player would see",
+      "fix": "the change to make, naming the exact field or function to change"
+    }
+  ]
+}
+```
+
+Report at most 3 problems, worst first. Report only real contradictions — inventing work here costs a
+rewrite of the design. If you find nothing wrong, return an empty list, but look hard first.
+
+Keep every string short. Do NOT echo the architecture back; producing the corrected version is not
+your job here. Output ONE ```json block and nothing else.

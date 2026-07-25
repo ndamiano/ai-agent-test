@@ -288,7 +288,7 @@ first-person, `controls` MUST be `"fp"` — orbital is a THIRD-person camera and
 (drag = orbit); `input.pointer` is never set and there is no `"mouse0"`/`"click"` key. If the spec
 says "click to attack/shoot/use", bind that action to a KEYBOARD key instead — `" "` (space) or
 `"f"`, read with `input.pressed` — and show the key in the HUD. A mouse-bound action in these
-schemes can NEVER fire (the game becomes unwinnable) and the probe gate rejects it. Pick the row:
+schemes can NEVER fire, so the game becomes unwinnable. Pick the row:
 
 | `config.controls` | Feel | What you get |
 |-------------------|------|--------------|
@@ -360,15 +360,11 @@ action in the other schemes is a keyboard key.
 **Rule: EVERY non-movement control in the spec's `controls` map gets a `kit.register` in init.**
 Movement keys stay with the control scheme (`config.controls` + `kit.drive`) — never registered.
 The engine fires the handler on the PRESSED edge of any bound key, after update each frame; a
-re-register with the same name replaces. `kit.bindings()` → `[{name, keys}]`. The probe presses
-every registered action and requires an effect — a bare `input.pressed(...)` in update is invisible
-to it (held mechanics may still read `input.down` per frame; this rule targets EDGE actions).
-Register ONLY real state-mutating actions, bound to REAL `KeyboardEvent.key` values (`" "`, `"e"`,
-`"1"`, `"Enter"`). There are NO mouse keys — `"LEFT_CLICK"`/`"MOUSE_MOVE"`/`"mouse0"` do not exist,
-and a registration whose handler is a no-op (a "documentation" binding for the camera/aim) FAILS the
-probe (dead_action). In "fp" a click-to-shoot is `if (input.pointer.down)` in update, never a
-registration. EVERY action needs an effect that is observable even when it misses — a shot with no
-target in range must still cost ammo / spawn a muzzle flash / set a cooldown, or it reads as dead.
+re-register with the same name replaces. `kit.bindings()` → `[{name, keys}]`. Held mechanics may
+still read `input.down` per frame; registration targets EDGE actions. Register real state-mutating
+actions, bound to REAL `KeyboardEvent.key` values (`" "`, `"e"`, `"1"`, `"Enter"`). There are NO
+mouse keys — `"LEFT_CLICK"`/`"MOUSE_MOVE"`/`"mouse0"` do not exist. In "fp" a click-to-shoot is
+`if (input.pointer.down)` in update, never a registration.
 ```js
 init(kit) {
   kit.register("attack", [" "], () => {           // spec: "SPACE: attack" — keyboard, never mouse

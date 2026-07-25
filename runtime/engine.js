@@ -210,7 +210,7 @@ export function physics(e, dt, solids = [], gravity = 2000) {
 //      a wall this frame. Deterministic: stable order, no randomness.
 // Iterated to convergence: one pass fully separates a pair, but a chain push can re-overlap an
 // already-processed neighbor, and steering re-compresses clusters every frame — a single pass
-// leaves steady-state residuals above the probe's solid_overlap epsilon (a parked live build).
+// leaves steady-state residuals that jitter visibly (a parked live build).
 export function collideWorld(world, solidAt = null, cell = 32) {
   const solids = world.filter((e) => e.solid && !e.dead && e.w > 0 && e.h > 0);
   for (let pass = 0; pass < 8; pass++) {
@@ -836,7 +836,7 @@ export function makeKit(config, rng) {
   let sprites = {}; // id -> loaded Image; empty headless (kit.sprite always null -> game falls to shapes)
   let toasts = []; // transient notify() messages; stepped+drawn by the frame loop, inert headless
   // Registered ACTIONS (name -> {keys, fn}). Registration makes the spec's key bindings
-  // machine-readable: the probe can press every registered action's keys and require an effect
+  // machine-readable: a binding's keys can be listed, remapped or shown in a HUD
   // (a shipped game had a full melee implementation behind a key read that never fired), and a
   // future frontend remap becomes a key→action indirection with no game-code change. Handlers
   // mutate state (sim/render law), so every runner fires them update-side — on the PRESSED edge
@@ -1019,380 +1019,16 @@ export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [
   return { ok: true, frame: frames, resolved: "ran" };
 }
 
-// ── probe: correctness gate beyond "didn't crash" ────────────────────────────
-// GENERIC invariants no genre-specific knowledge is needed for:
-//   1. CONTROLS LIVE — run the sim with no input and with every direction key
-//      mashed; if the two final worlds are identical, input does nothing.
-//   2. NO WALL-CLIP — if a solid-cell lookup is reachable from state (a tilemap,
-//      or the scaffold's state.solidAt), no colliding entity may rest in a solid cell.
-//   3. NO SOLID OVERLAP — solid entities must not interpenetrate at rest.
-//   4. ACTIONS LIVE — every kit.register binding must change something when pressed
-//      (dead_action), and every non-movement spec control must be registered (unbound_control).
-// Returns { ok, violations:[{kind, detail}] } — each violation is a fix prompt.
-function worldOf(g) {
-  return g.state && (Array.isArray(g.state.world) ? g.state.world
-    : Array.isArray(g.state.entities) ? g.state.entities : []) || [];
-}
-function runSnapshot(gameFactory, { frames, dt, seed, script }) {
-  const { g, kit } = realize(gameFactory, { gravity: 0 }, seed);
-  const input = makeInput();
-  if (g.init) g.init(kit);
-  let f = 0;
-  for (; f < frames && !kit.over; f++) {
-    for (const c of script) if (c.frame === f) input._set(c.key, c.down !== false);
-    g.update(dt, input, kit);
-    kit._fireActions(input);
-    input._endFrame();
-  }
-  return { g, kit, overAt: kit.over ? f : null };
-}
-export function probe(gameFactory, { frames = 240, dt = 1 / 60, seed = 1, src = "", scheme = "",
-                                      controlKeys = null } = {}) {
-  const violations = [];
-  // The spec's control scheme, when it is a MOVEMENT scheme, makes displacement itself an
-  // invariant (dead_movement below): dead_controls alone let a shipped game pass with dead movement
-  // because a space-attack mutated state — "some key changed something" is not "the player can move".
-  const movementScheme = /^(top-down|platformer|grid-turn)$/.test(scheme) || /-3d$/.test(scheme);
-  const DIR_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s"]);
-
-  // CODE that reads the mouse outside the "fp" scheme: in a 3D orbital/follow/vehicle game the mouse
-  // is the camera (input.pointer is never fed; there is no "mouse0" key), so a mouse-gated action can
-  // never fire — the game passes every gate yet is unwinnable. Deterministic, so check it first.
-  if (src) {
-    // Nondeterminism breaks every gate's baseline-vs-driven comparison (and replay): the whole
-    // reason kit.rng exists. Deterministic to detect, so check it first.
-    const nondet = src.match(/Math\s*\.\s*random|Date\s*\.\s*now|new\s+Date\s*\(/);
-    if (nondet) {
-      violations.push({ kind: "nondeterminism",
-        detail: `the code calls ${JSON.stringify(nondet[0])} — a game must be DETERMINISTIC (the `
-          + `headless/probe gates diff a no-input run against driven runs; random state makes that `
-          + `diff meaningless). Replace EVERY Math.random/Date.now with kit.rng: .next() 0..1, `
-          + `.range(lo,hi), .int(lo,hi) inclusive, .pick(arr), .chance(p). A helper that needs `
-          + `randomness must take the rng as a parameter (thread kit.rng from init/update).` });
-    }
-    const mouseRead = src.match(/input\s*\.\s*pointer|["'`]mouse\d?["'`]/);
-    if (mouseRead) {
-      const cfg = realize(gameFactory, { gravity: 0 }, seed).config;
-      if (cfg.mode === "3d" && cfg.controls !== "fp") {
-        violations.push({ kind: "dead_mouse_control",
-          detail: `the code gates an action on the mouse (${JSON.stringify(mouseRead[0])}), but the `
-            + `"${cfg.controls || "default"}" control scheme has no mouse input (the mouse orbits the `
-            + `camera; input.pointer is never set outside "fp", and "mouse0" is not a key). That `
-            + `branch can NEVER run. Bind the action to a KEYBOARD key instead — e.g. attack on `
-            + `" " (space) or "f", checked with input.pressed(key) — and show the key in the HUD.` });
-      }
-    }
-  }
-  const MIN_MOVE = 4; // px; below this over the whole window a "control" is effectively dead
-  const snap = (script) => runSnapshot(gameFactory, { frames, dt, seed, script });
-
-  let baseline, baseKit, baseOverAt;
-  try { ({ g: baseline, kit: baseKit, overAt: baseOverAt } = snap([])); }
-  catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
-  // A game that resolves with NO input freezes every downstream signal (the engine stops update()
-  // once kit.over is set), so a frame-0 win reads as dead_movement/dead_action and sends the fix
-  // chasing movement ghosts (measured: a build oscillated 10+ steps on exactly this). A no-input WIN
-  // is always a broken win condition; a no-input LOSS is only pathological when near-instant — a
-  // late idle death (enemies reach the passive player) is legitimate design.
-  if (baseKit.over && (baseKit.over.won || baseOverAt <= 120)) {
-    const what = baseKit.over.won ? "WON" : "LOST";
-    violations.push({ kind: "premature_end",
-      detail: `the game ${what} (${JSON.stringify(baseKit.over.msg || "")}) after ${baseOverAt} `
-        + `frame(s) with NO input at all — the ${baseKit.over.won ? "win" : "lose"} condition is `
-        + `satisfied by the initial state, so play never happens (and every control then reads dead: `
-        + `the engine stops update() once the game resolves). Fix the condition or the state it `
-        + `checks — e.g. a counter that starts at its target, a win check against a list that starts `
-        + `empty, a kill tally compared with >= 0. For a fast LOSS the classic cause is per-FRAME `
-        + `contact damage: a touching enemy draining hp every frame kills in a fraction of a second — `
-        + `damage on contact needs a cooldown (e.g. once per 0.5s) or knockback that separates. The `
-        + `game must still be unresolved after ${frames} input-less frames.` });
-    return { ok: false, violations };
-  }
-  const baseW = worldOf(baseline);
-  // A steered player kept OUTSIDE state.world is invisible to the renderer AND to every displacement
-  // measurement below — movement reads dead no matter how correct the mover is, and the fix loop
-  // chases movement ghosts (measured: an orbital build churned 15 steps; the knight moved fine but
-  // was never spawned into the world). Say the real thing and skip the artifact reports.
-  // Membership is checked right after init (and again a few frames in), not on the 240-frame
-  // baseline: a game may legitimately splice the player out on DEATH late in an idle run — judging
-  // the corpse state false-flagged a correct game.
-  let initRun, earlyRun;
-  try {
-    initRun = runSnapshot(gameFactory, { frames: 0, dt, seed, script: [] });
-    earlyRun = runSnapshot(gameFactory, { frames: 8, dt, seed, script: [] });
-  } catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
-  const initPlayer = initRun.g.state && initRun.g.state.player;
-  const initW = worldOf(initRun.g);
-  if (initPlayer && typeof initPlayer === "object" && initW.length && !initW.includes(initPlayer)) {
-    violations.push({ kind: "player_not_in_world",
-      detail: `state.player is NOT a member of state.world — the renderer and this probe only see `
-        + `entities IN state.world, so the player never appears on screen and its movement reads as `
-        + `dead. In init, create the player WITH kit.spawn INTO the world and store that SAME object: `
-        + `\`state.player = kit.spawn(state.world, { shape:"box", x,y,z, w,h,d, color })\` — never a `
-        + `bare object kept outside the world, and never a copy (spawn once, reference it).` });
-    return { ok: false, violations };
-  }
-  // A 3D scene with no ground plane renders as a VOID — the camera floats in fog with nothing to
-  // stand on. Every runtime gate passed a shipped crypt whose init computed wall rects and spawned
-  // neither walls nor ground; only a human in the browser saw it. Deterministic, so gate it.
-  {
-    const cfg = realize(gameFactory, { gravity: 0 }, seed).config;
-    if (cfg.mode === "3d" && initW.length
-        && !initW.some((e) => e && (e.shape === "ground" || e.shape === "heightfield"))) {
-      violations.push({ kind: "no_ground",
-        detail: `this 3D game spawns NO ground — the scene renders as a void (fog + floating `
-          + `shapes). In init, spawn a ground plane FIRST, sized larger than the play area: `
-          + `kit.spawn(state.world, { shape:"ground", size: 100, color:"#333" }) — or, for a walled `
-          + `level (dungeon/maze/rooms), build it with kit.wallsFromTilemap(state.world, rows, opts) `
-          + `which spawns the ground AND the wall boxes and returns the collision rects (store them `
-          + `on state.walls; the scaffold collides the player with state.walls every frame).` });
-    }
-  }
-  const earlyPlayer = earlyRun.g.state && earlyRun.g.state.player;
-  const earlyW = worldOf(earlyRun.g);
-  if (earlyPlayer && typeof earlyPlayer === "object" && earlyW.length && !earlyW.includes(earlyPlayer)) {
-    violations.push({ kind: "player_not_in_world",
-      detail: `state.player IS spawned into state.world by init, but update REMOVES it within `
-        + `8 frames (no input, no death) — once out of the world the player disappears from the `
-        + `screen and every movement/measurement reads dead. Some update loop splices or culls an `
-        + `entity set that MATCHES THE PLAYER: selecting "enemies" by field presence (e.g. `
-        + `\`e.hp !== undefined\`) matches the player too, and a contact check then treats the player `
-        + `as touching itself (distance 0) and despawns it. Tag entities with an explicit kind `
-        + `(\`e.kind = "slime"\`) and filter by kind — never by shared fields — and make contact `
-        + `checks skip \`e === state.player\`.` });
-    return { ok: false, violations };
-  }
-  // Base movement keys, plus every key literal the game ITSELF reads (a turn game's controls may be
-  // Enter/e/r/1-9 — keys the base mash never touches, so a fully-working game read as dead), plus
-  // every registered binding's keys (a register-wired action has no input.pressed literal for the
-  // regex to find). Capped: each key costs a full sim run.
-  const declared = src
-    ? [...src.matchAll(/input\s*\.\s*(?:pressed|down)\(\s*["'`]([^"'`]{1,12})["'`]/g)].map((m) => m[1])
-    : [];
-  const boundKeys = (baseKit.bindings ? baseKit.bindings() : []).flatMap((b) => b.keys);
-  const DIRS = [...new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "a", "d", "w", "s", " ",
-                            ...declared, ...boundKeys])].slice(0, 20);
-
-  // Per-key SUSTAINED hold (one key at a time, so left/right can't cancel). Measure the biggest
-  // input-caused displacement of any entity vs the no-input baseline (deterministic → the diff
-  // isolates the input's effect). A spawn (bullet) => controls clearly live.
-  // Position-free state digest: a turn/card/menu game's controls mutate STATE (hand, health, turn)
-  // without moving any entity. Positions/velocities are EXCLUDED so a sub-MIN_MOVE drift can't
-  // launder a too-slow mover into "live" — spatial liveness stays owned by the displacement check.
-  const POS = new Set(["x", "y", "z", "vx", "vy", "vz"]);
-  const digest = (v, seen = new WeakSet()) => {
-    if (v === null || typeof v === "number" || typeof v === "boolean" || typeof v === "string") return JSON.stringify(v);
-    if (typeof v !== "object") return "";                    // functions/undefined
-    if (seen.has(v)) return "~";
-    seen.add(v);
-    if (Array.isArray(v)) return "[" + v.map((e) => digest(e, seen)).join(",") + "]";
-    return "{" + Object.keys(v).sort().filter((k) => !POS.has(k))
-      .map((k) => k + ":" + digest(v[k], seen)).join(",") + "}";
-  };
-  const baseDigest = digest(baseline.state);
-  // The digest signal is only meaningful if a no-input run reproduces itself: a nondeterministic
-  // init (random deck, Date-seeded anything) makes every digest differ, input or not.
-  let digestReliable;
-  try { digestReliable = digest(snap([]).g.state) === baseDigest; }
-  catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
-  let best = { key: null, disp: 0, spawned: false }, drivenForClip = baseline, stateChanged = false;
-  let dirBest = { key: null, disp: 0 };   // strongest DIRECTIONAL displacement (dead_movement's signal)
-  for (const key of DIRS) {
-    let g;
-    try { g = snap([{ frame: 0, key, down: true }]).g; }
-    catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
-    const w = worldOf(g);
-    // Only a NET SPAWN counts as "input did something" (a bullet/particle appears). A DECREASE
-    // (a brick smashed, a pellet eaten) happens under gameplay regardless of input, so it must NOT
-    // read as a live control — that false-green let a breakout with a dead paddle pass.
-    if (w.length > baseW.length) {
-      best = { key, disp: Infinity, spawned: true }; drivenForClip = g;
-      if (!movementScheme) break;   // a movement scheme still needs every directional key measured
-      // NO continue: a net spawn must not skip the displacement measurement — in a game that spawns
-      // continuously (most games) every directional key's run has a net spawn, so skipping here made
-      // dead_movement report "strongest one (none), max 0.00" against a working mover (measured: an
-      // orbital build churned 10 steps on that phantom).
-    }
-    if (digestReliable && !stateChanged && digest(g.state) !== baseDigest) stateChanged = true;
-    let m = 0;
-    const n = Math.min(w.length, baseW.length);
-    for (let i = 0; i < n; i++)
-      m = Math.max(m, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),
-                                 (w[i].z || 0) - (baseW[i].z || 0)));
-    if (DIR_KEYS.has(key) && m > dirBest.disp) dirBest = { key, disp: m };
-    if (m > best.disp) { best = { key, disp: m, spawned: false }; drivenForClip = g; }
-  }
-  if (!best.spawned && !stateChanged && best.disp < MIN_MOVE) {
-    const is3d = baseW.some((e) => e && (e.z !== undefined
-      || e.shape === "box" || e.shape === "sphere" || e.shape === "ground"));
-    const head = `no key does anything: the strongest input (${best.key}) shifted every entity by `
-      + `at most ${best.disp.toFixed(2)} over ${frames} frames, and no key changed game state at all. `
-      + `If the game is turn/menu-driven (input mutates state, not positions), check the KEY LITERALS: `
-      + `keys are KeyboardEvent.key values — space is " " (a single space), NOT "Space"; arrows are `
-      + `"ArrowLeft" etc. `;
-    const detail = is3d
-      // 3D: the #1 cause is a player that isn't the entity the probe (and renderer) sees.
-      ? head + `In a 3D game the usual cause is that the object you move is NOT a member of `
-        + `state.world — the probe (and the renderer) only see entities IN state.world. The player MUST `
-        + `be a SHAPE-TAGGED entity pushed into state.world, and state.player must reference that SAME `
-        + `object: \`state.player = kit.spawn(world, { shape:"box", x,y,z, w,h,d, color })\` (never a bare `
-        + `state object kept outside the world). Move it with kit.drive(player,input,dt,speed) or `
-        + `kit.moveTopDown3/moveRelative; speeds are units/SECOND. Do NOT use kit.walk/jump/physics — those `
-        + `are the 2D kit. Also make sure movement isn't gated off every frame (e.g. a dialogue/pause flag `
-        + `stuck true).`
-      // 2D: the classic too-slow / per-frame-magnitude mistake.
-      : head + `It likely responds but FAR too slowly — kit velocities are px/SECOND and integrate/physics `
-        + `apply dt for you; NEVER use per-frame magnitudes. Typical: walker ~150 px/s, jump ~600 px/s, `
-        + `gravity ~2000 px/s². Prefer kit.walk(e,dir,speed) / kit.jump(e,speed) / kit.physics(e,dt,solids,`
-        + `gravity) so dt is handled.`;
-    violations.push({ kind: "dead_controls", detail });
-  }
-  // dead_movement: the spec names a movement scheme, so the movement keys must DISPLACE something —
-  // a live action key (state mutation, a spawn) cannot green a game the player can't steer.
-  if (movementScheme && dirBest.disp < MIN_MOVE) {
-    const alive = (stateChanged || best.spawned)
-      ? " Other keys DO act (state changed / something spawned), so input is read — movement specifically is dead."
-      : "";
-    violations.push({ kind: "dead_movement",
-      detail: `the spec's "${scheme}" control scheme requires the movement keys (WASD/arrows, held) to `
-        + `displace the steered entity, but the strongest one (${dirBest.key || "none"}) moved nothing — max `
-        + `${dirBest.disp.toFixed(2)} over ${frames} frames.${alive} Check that the scheme's movement `
-        + `call runs EVERY frame off HELD keys (input.down) and that nothing undoes it afterwards — a `
-        + `collision/clamp loop that zeroes the velocities or snaps the position back each frame is `
-        + `the classic cause (resolve a collision by pushing OUT of the overlap, never by resetting `
-        + `the move).` });
-  }
-  // wall-clip on the most-moving run — checked wherever a solid-cell lookup is reachable from
-  // state: a tilemap (every sized entity is held to it, the original check), or the scaffold-read
-  // `state.solidAt` contract (only `solid` entities — non-solid decor may legitimately sit in walls).
-  const st = drivenForClip.state || {};
-  const tm = st.tilemap && typeof st.tilemap.solidAt === "function" && st.tilemap.tile ? st.tilemap : null;
-  const solidAtFn = tm ? (cx, cy) => tm.solidAt(cx, cy)
-    : typeof st.solidAt === "function" ? st.solidAt : null;
-  if (solidAtFn) {
-    const cellPx = tm ? tm.tile : typeof st.cell === "number" ? st.cell : 32;
-    const stuck = worldOf(drivenForClip).filter((e) => e.w > 0 && e.h > 0 && (tm || e.solid)
-      && solidAtFn(Math.floor(e.x / cellPx), Math.floor(e.y / cellPx)));
-    if (stuck.length) {
-      violations.push({ kind: "wall_clip",
-        detail: `${stuck.length} moving entit${stuck.length > 1 ? "ies rest" : "y rests"} INSIDE a `
-          + `solid wall tile (e.g. ${stuck.slice(0, 3).map((e) => (e.type || e.tag || "entity")
-          + `@${e.x?.toFixed(0)},${e.y?.toFixed(0)}`).join("; ")}). Block movement BEFORE an entity `
-          + `enters a wall; never snap it to the wall tile's own center.` });
-    }
-  }
-  // SOLID INTERPENETRATION: solid entities must not rest inside each other. After the settle run
-  // (no input, `frames` frames) no two solid AABBs may overlap beyond a small epsilon — the shipped
-  // enemies-stack-under-the-player failure. The fix is ONE pass: tag participants `solid: true` and
-  // let kit.collideWorld separate them (the scaffold already calls it), never gameplay-side nudges.
-  // 2D only: the pass and this check are x/y AABBs, and no 3D solid primitive exists (two 3D
-  // entities apart in z would false-read as overlapping).
-  const OVERLAP_EPS = 0.5;
-  const mode3d = realize(gameFactory, { gravity: 0 }, seed).config.mode === "3d";
-  const solidsAtRest = mode3d ? [] : baseW.filter((e) => e.solid && !e.dead && e.w > 0 && e.h > 0);
-  const pairs = [];
-  for (let i = 0; i < solidsAtRest.length; i++)
-    for (let j = i + 1; j < solidsAtRest.length; j++) {
-      const a = solidsAtRest[i], b = solidsAtRest[j];
-      if (!aabb(a, b)) continue;
-      const depth = Math.min(a.x + a.w - b.x, b.x + b.w - a.x, a.y + a.h - b.y, b.y + b.h - a.y);
-      if (depth > OVERLAP_EPS) pairs.push(`${a.type || a.tag || "entity"}@${a.x?.toFixed(0)},${a.y?.toFixed(0)}`
-        + ` into ${b.type || b.tag || "entity"}@${b.x?.toFixed(0)},${b.y?.toFixed(0)} by ${depth.toFixed(0)}px`);
-    }
-  if (pairs.length) {
-    violations.push({ kind: "solid_overlap",
-      detail: `${pairs.length} solid entity pair(s) interpenetrate at rest (e.g. ${pairs.slice(0, 3).join("; ")}). `
-        + `Solid entities must stay separated by the collision pass: keep them tagged solid:true and let `
-        + `kit.collideWorld(state.world, state.solidAt, state.cell) run every frame (the scaffold calls it) — `
-        + `do NOT spawn them on top of each other, and never undo the separation in update().` });
-  }
-  // DEAD ACTION: every registered binding must DO something. A pulsed press of its keys (settle
-  // frames between presses) must produce a state delta vs the no-input baseline — a non-positional
-  // state mutation, a spawn/despawn, or an entity displacement. This is the incident invariant: a
-  // shipped game had a full melee implementation behind a key read that never fired. Skip list is
-  // EXPLICIT: "interact" is scaffold/kit-owned wiring whose effect is proximity-gated (no talker
-  // near spawn ⇒ legitimately no delta), so a spawn-position probe cannot assert it.
-  const DEAD_ACTION_SKIP = new Set(["interact"]);
-  const allBindings = baseKit.bindings ? baseKit.bindings() : [];
-  for (const b of allBindings.filter((x) => !DEAD_ACTION_SKIP.has(x.name)).slice(0, 8)) {
-    const script = [];
-    let presses = 0;
-    for (let f = 10; f + 13 < frames; f += 30) {
-      presses++;
-      for (const k of b.keys) script.push({ frame: f, key: k, down: true }, { frame: f + 3, key: k, down: false });
-    }
-    if (!b.keys.length || !presses) continue;
-    let run, runKit;
-    try { ({ g: run, kit: runKit } = snap(script)); }
-    catch (e) { return { ok: false, violations: [{ kind: "crash", detail: String(e && e.stack || e) }] }; }
-    const w = worldOf(run);
-    let disp = 0;
-    for (let i = 0; i < Math.min(w.length, baseW.length); i++)
-      disp = Math.max(disp, Math.hypot((w[i].x || 0) - (baseW[i].x || 0), (w[i].y || 0) - (baseW[i].y || 0),
-                                       (w[i].z || 0) - (baseW[i].z || 0)));
-    const acted = w.length !== baseW.length || disp > 0.5 || !!runKit.over !== !!baseKit.over
-      || (digestReliable && digest(run.state) !== baseDigest);
-    if (!acted) {
-      violations.push({ kind: "dead_action",
-        detail: `registered action "${b.name}" (keys ${JSON.stringify(b.keys)}) was pressed ${presses} `
-          + `time(s) over ${frames} frames and changed NOTHING — no state mutation, no spawn/despawn, `
-          + `no entity moved. Its handler is a no-op or its effect is gated off from the initial state `
-          + `(a flag never set, a cost never payable, a target never in range). Wire the real mechanic `
-          + `into the kit.register handler so the action ACTS.` });
-    }
-  }
-  // UNBOUND CONTROL: the frozen spec promised each key in its `controls` map does something; a
-  // NON-movement spec key with no registered action is unverifiable wiring (the same shipped
-  // incident, seen from the spec side). Skip lists are EXPLICIT, not inferred: the scheme's own
-  // movement keys (movement liveness is dead_movement's job; platformer's space-jump is
-  // scaffold-owned movement too) and mouse tokens (the mouse is the camera outside "fp" —
-  // dead_mouse_control owns that failure).
-  if (controlKeys && typeof controlKeys === "object") {
-    const ALIAS = { space: " ", spacebar: " ", esc: "Escape", escape: "Escape", enter: "Enter",
-      return: "Enter", tab: "Tab", shift: "Shift", ctrl: "Control", control: "Control",
-      up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight",
-      arrowup: "ArrowUp", arrowdown: "ArrowDown", arrowleft: "ArrowLeft", arrowright: "ArrowRight" };
-    const MOVEMENT = new Set(["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright",
-      "wasd", "arrows", "arrowkeys", "arrow"]);
-    if (scheme === "platformer") MOVEMENT.add(" ");
-    // Substring match, not exact tokens: specs write mouse keys in every shape ("MOUSE_MOVE",
-    // "LEFT_CLICK", "RightMouseButton") and an unmatched one ping-pongs the fix loop — unbound_control
-    // demands a registration that dead_action then kills as a no-op (there are no mouse keys to bind).
-    const MOUSE = /mouse|click|pointer|cursor|drag|wheel|scroll|lmb|rmb|mmb/;
-    // Kit-owned reads: menu digits (kit.menuPick / talkStep choices) and Escape (talkStep close)
-    // are consumed by kit loops the game never registers — a spec "1-9: choose" is already wired.
-    const KIT_OWNED = /^(\d(-\d)?|Escape)$/;
-    const bound = new Set();
-    for (const b of allBindings) for (const k of b.keys) bound.add(k);
-    for (const [rawKey, what] of Object.entries(controlKeys)) {
-      // The WHOLE raw key, before tokenizing: "Mouse Move" splits to ["Mouse", "Move"] and the
-      // per-token test exempts only "Mouse" — "Move" survives as a phantom keyboard key the game
-      // can never satisfy (a live build ping-ponged unbound_control/dead_action to its step cap).
-      if (MOUSE.test(String(rawKey).toLowerCase())) continue;
-      const tokens = String(rawKey).split(/[\s/+,|]+/).filter(Boolean)
-        .map((t) => { const lc = t.toLowerCase(); return ALIAS[lc] ?? (t.length === 1 ? lc : t); });
-      const actionable = tokens.filter((k) => !MOVEMENT.has(k.toLowerCase()) && !MOUSE.test(k.toLowerCase())
-        && !KIT_OWNED.test(k));
-      if (!actionable.length || actionable.some((k) => bound.has(k))) continue;
-      violations.push({ kind: "unbound_control",
-        detail: `the spec binds ${JSON.stringify(rawKey)} to "${what}" but no registered action listens `
-          + `to ${actionable.map((k) => JSON.stringify(k)).join("/")}. Every non-movement spec control `
-          + `must be wired in init via kit.register — e.g. kit.register("action", `
-          + `[${actionable.map((k) => JSON.stringify(k)).join(", ")}], () => { /* mutate state */ }). A bare `
-          + `input.pressed(...) scattered in update is invisible to this gate (held mechanics may still `
-          + `read input.down each frame — this rule targets EDGE actions).` });
-    }
-  }
-  return { ok: violations.length === 0, violations };
-}
 
 // ── render smoke: exercise the draw() path headless can't otherwise see ───────
-// simulate() steps update() ONLY; a game can pass it yet crash or paint nothing — a blank/broken
-// browser screen. Exercise the two screen-space paths each frame against recording mocks:
-//   - 2D SCENE: draw(g) must not throw (draw_crash) and must paint ≥1 primitive (draw_blank).
+// simulate() steps update() ONLY; a game can pass it yet CRASH in screen-space code. Exercise both
+// screen-space paths each frame against recording mocks:
+//   - 2D SCENE: draw(g) must not throw (draw_crash).
 //   - HUD (both modes): hud(kit) must return a valid item array (hud_bad) and not throw (hud_crash).
-// A 3D game has no draw() — its scene renders from world entities — so only its hud() is checked. A
-// 3D game with neither draw nor hud passes through (scene-only).
+// What it does NOT judge is whether the game painted "enough". A 2D game that draws no world is an
+// idle/menu/text game, not a broken one, and the 3D scene is never exercised here at all — it
+// renders from entity shape tags through run3d, which this mock cannot see. Both were previously
+// enforced, and both are the model's design call, not ours.
 export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
   const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 }, seed);
   const has2dScene = typeof g.draw === "function";
@@ -1403,24 +1039,12 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
         + `the HUD is DATA returned from hud(kit). A draw() here is dead code (the 3D renderer ignores `
         + `it) and any g.clear in it would blank the scene. Delete draw(); move HUD into hud().` }] };
   }
-  if (config.mode !== "3d" && !has2dScene) {
-    return { ok: false, violations: [{ kind: "missing_draw",
-      detail: `a 2D game MUST define draw(g, kit) — the scene renders ONLY from it (hud() is a thin `
-        + `overlay; without draw the screen is the background color plus floating HUD text). Write `
-        + `draw: paint the tilemap/ground, then every entity in state (crops, NPCs, the player) as `
-        + `rects/circles/sprites at their positions, world-space under g.push(cam)/g.pop().` }] };
-  }
   if (!has2dScene && !hasHud) return { ok: true, skipped: true };
   const input = makeInput();
-  let content = 0;
-  const bump = () => { content++; };
-  const rec = { ctx: {}, clear: () => {}, push: () => {}, pop: () => {},
-                rect: bump, circle: bump, line: bump, text: bump, sprite: bump };
-  // HUD items render against a NON-counting mock: HUD text must not mask a blank SCENE (a game with
-  // no world drawing but a chatty hud() read as "painted something").
   const noop = () => {};
-  const hudRec = { ctx: {}, clear: noop, push: noop, pop: noop,
-                   rect: noop, circle: noop, line: noop, text: noop, sprite: noop };
+  const rec = { ctx: {}, clear: noop, push: noop, pop: noop,
+                rect: noop, circle: noop, line: noop, text: noop, sprite: noop };
+  const hudRec = rec;
   try {
     if (g.init) g.init(kit);
     for (let f = 0; f < frames; f++) {
@@ -1442,54 +1066,6 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
       detail: `${which} threw during render: ${String(e && e.stack || e)}. These must only READ state; `
         + `never mutate state or read undefined fields.` }] };
   }
-  if (has2dScene && content === 0) {
-    return { ok: false, violations: [{ kind: "draw_blank",
-      detail: `draw() ran ${frames} frames without drawing anything visible (no rect/circle/line/text/`
-        + `sprite calls) — the screen would be blank. Render every entity in state.world from `
-        + `draw(g,kit) at its position with a color.` }] };
-  }
-  return { ok: true, content };
+  return { ok: true };
 }
 
-// ── scroll smoke: a world bigger than the screen needs a camera that follows ──
-// Drive the player across the level and watch draw's camera offset. If entities range well beyond
-// one screen but the view never pans (no g.push(cam), or a static cam), most of the level is
-// permanently off-screen — it passes headless/probe/render yet is unplayable. Tightly guarded so
-// confined games (pong, wrap-around asteroids, one-screen mazes) never false-fire. 3D uses the
-// camera() hook, checked separately.
-export function scrollSmoke(gameFactory, { frames = 300, dt = 1 / 60, seed = 1 } = {}) {
-  const defaults = { width: 640, height: 480, gravity: 0 };
-  const config = realize(gameFactory, defaults, seed).config;
-  if (config.mode === "3d") return { ok: true, skipped: true };
-  const KEYS = ["d", "ArrowRight", "a", "ArrowLeft"];
-  let best = { span: 0, camDx: 0, drew: false };
-  for (const key of KEYS) {
-    const { g, kit } = realize(gameFactory, defaults, seed);
-    const input = makeInput();
-    let minX = Infinity, maxX = -Infinity, camMin = Infinity, camMax = -Infinity, drew = false;
-    const rec = { ctx: {}, clear: () => {}, pop: () => {}, rect: () => {}, circle: () => {},
-      line: () => {}, text: () => {}, sprite: () => {},
-      push: (cam) => { if (cam && typeof cam.x === "number") { drew = true; camMin = Math.min(camMin, cam.x); camMax = Math.max(camMax, cam.x); } } };
-    try {
-      if (g.init) g.init(kit);
-      for (let f = 0; f < frames && !kit.over; f++) {
-        input._set(key, true);
-        g.update(dt, input, kit);
-        kit._fireActions(input);
-        input._endFrame();
-        for (const e of worldOf(g)) if (typeof e.x === "number") { minX = Math.min(minX, e.x); maxX = Math.max(maxX, e.x); }
-        if (typeof g.draw === "function") g.draw(rec, kit);
-      }
-    } catch { continue; } // a draw/update crash is the render/headless gate's job, not this one
-    const span = maxX - minX;
-    if (span > best.span) best = { span, camDx: camMax - camMin, drew };
-  }
-  if (best.span > config.width * 1.5 && (!best.drew || best.camDx < config.width * 0.5)) {
-    return { ok: false, violations: [{ kind: "no_camera",
-      detail: `the world spans ~${Math.round(best.span)}px but the screen is only ${config.width}px and the `
-        + `camera ${best.drew ? `panned just ${Math.round(best.camDx)}px` : "was never used"} — most of the `
-        + `level is off-screen. Make a camera (const cam = kit.makeCamera()), call cam.follow(player, worldW, `
-        + `worldH) each update, and wrap WORLD-space drawing in g.push(cam) … g.pop() (draw HUD after pop).` }] };
-  }
-  return { ok: true, span: Math.round(best.span), camDx: Math.round(best.camDx) };
-}

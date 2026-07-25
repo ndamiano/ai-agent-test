@@ -168,6 +168,112 @@ def test_deterministic_pass_spends_no_step_and_fires_once_per_identity(env, monk
     assert cursor.phase == "fix"
 
 
+def test_a_stalled_code_fix_gets_one_contract_ruling(env, monkeypatch):
+    """A file authored faithfully to a wrong declaration is the file the gate blames, and the
+    read→edit subloop can only ever edit that file. `amend` is the one shape allowed to rule the
+    CONTRACT wrong, so a stalled fix is routed through it once per error identity."""
+    from maestro.codegen import interfaces
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.modules.module import Error, ErrorType, idkey
+
+    run_id, tmp_path = env
+    rs = RunState(run_id)
+    interfaces.save(tmp_path, {"state": [], "invariants": [], "functions": [
+        {"name": "f", "file": "game.ts", "signature": "f(): void", "purpose": "p",
+         "reads": [], "writes": [], "calls": [], "invariants": []}]})
+    cursor = build_state.BuildCursor(build_id="b1")
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", message="x",
+                path="game.ts")
+
+    # Not stalled: the ordinary read→edit subloop.
+    assert _start_fix(run_id, rs, cursor, err, stalled=False) is True
+    assert cursor.fix_cursor().shape == "read_write"
+
+    # Stalled on the same to-do: rule on the contract first.
+    assert _start_fix(run_id, rs, cursor, err, stalled=True) is True
+    assert cursor.fix_cursor().shape == "amend"
+    assert idkey(err) in cursor.amend_tried
+
+    # The ruling is spent — a still-stalled fix goes back to editing code, never loops on amend.
+    assert _start_fix(run_id, rs, cursor, err, stalled=True) is True
+    assert cursor.fix_cursor().shape == "read_write"
+
+
+def test_two_errors_that_oscillate_still_reach_the_contract_ruling(env):
+    """Each fix trades one error for the other, so no two consecutive to-do snapshots match and
+    `stalled` never trips — yet oscillation is exactly what a wrong contract looks like."""
+    from maestro.codegen import interfaces
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.modules.module import Error, ErrorType, idkey
+
+    run_id, tmp_path = env
+    interfaces.save(tmp_path, {"state": [], "invariants": [], "functions": [
+        {"name": "f", "file": "game.ts", "signature": "f(): void", "purpose": "p",
+         "reads": [], "writes": [], "calls": [], "invariants": []}]})
+    a = Error(type=ErrorType.FIX, code="typechecks", component="game", message="x", path="game.ts")
+    b = Error(type=ErrorType.FIX, code="runs", component="game", message="y", path="main.ts")
+    cursor = build_state.BuildCursor(build_id="b1")
+    rs = RunState(run_id)
+    # The sweeps alternate, so `stalled` is False every time.
+    for err in (a, b, a, b):
+        assert _start_fix(run_id, rs, cursor, err, stalled=False) is True
+        assert cursor.fix_cursor().shape == "read_write"
+    assert _start_fix(run_id, rs, cursor, a, stalled=False) is True   # third attempt on `a`
+    assert cursor.fix_cursor().shape == "amend"
+    assert idkey(a) in cursor.amend_tried
+
+
+def test_an_error_waiting_its_turn_never_earns_a_contract_ruling(env):
+    """A sweep's to-do lists every failing error. Counting recurrence there would hand a ruling to an
+    error that sat behind higher-priority ones without a single line of it being edited."""
+    from maestro.codegen import interfaces
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.modules.module import Error, ErrorType, idkey
+
+    run_id, tmp_path = env
+    interfaces.save(tmp_path, {"state": [], "invariants": [], "functions": [
+        {"name": "f", "file": "game.ts", "signature": "f(): void", "purpose": "p",
+         "reads": [], "writes": [], "calls": [], "invariants": []}]})
+    waiting = Error(type=ErrorType.FIX, code="typechecks", component="game", message="w",
+                    path="storm.ts")
+    cursor = build_state.BuildCursor(build_id="b1")
+    # It has been in the to-do for many sweeps, but has never been the error a fix was entered for.
+    cursor.recent = [["other", idkey(waiting)] for _ in range(6)]
+    assert _start_fix(run_id, RunState(run_id), cursor, waiting, stalled=False) is True
+    assert cursor.fix_cursor().shape == "read_write"
+
+
+def test_an_error_seen_once_or_twice_is_not_yet_a_contract_problem(env):
+    """Two encounters is ordinary iteration — spending the ruling there wastes it."""
+    from maestro.codegen import interfaces
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.modules.module import Error, ErrorType, idkey
+
+    run_id, tmp_path = env
+    interfaces.save(tmp_path, {"state": [], "invariants": [], "functions": [
+        {"name": "f", "file": "game.ts", "signature": "f(): void", "purpose": "p",
+         "reads": [], "writes": [], "calls": [], "invariants": []}]})
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", message="x",
+                path="game.ts")
+    cursor = build_state.BuildCursor(build_id="b1")
+    cursor.recent = [[idkey(err)], ["other"], [idkey(err)]]
+    assert _start_fix(run_id, RunState(run_id), cursor, err, stalled=False) is True
+    assert cursor.fix_cursor().shape == "read_write"
+
+
+def test_no_architecture_means_no_contract_ruling(env):
+    """With nothing declared there is no contract to be wrong — amend would have nothing to patch."""
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.modules.module import Error, ErrorType
+
+    run_id, _ = env
+    cursor = build_state.BuildCursor(build_id="b1")
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", message="x",
+                path="game.ts")
+    assert _start_fix(run_id, RunState(run_id), cursor, err, stalled=True) is True
+    assert cursor.fix_cursor().shape == "read_write"
+
+
 # ── the early asset lane + build-vs-assets budget priority ───────────────────
 def test_outer_sweep_starts_the_early_asset_lane_once(env, monkeypatch):
     """The lane fires from the outer sweep and its outcome sticks on the cursor: a real batch id

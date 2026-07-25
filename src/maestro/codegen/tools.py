@@ -214,6 +214,14 @@ def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict
         for h in appends:
             sep = "" if (not new_body or new_body.endswith("\n")) else "\n"
             new_body = new_body + sep + h["new_string"]
+        if content.strip() and not new_body.strip():
+            # A hunk whose old_string is the WHOLE file and whose new_string is empty passes every
+            # check above — found, unique, non-overlapping — and deletes the file. Measured: a fix
+            # emptied a 3,241-char render.ts, the `authored` gate re-authored it from scratch, and
+            # every sibling that agreed with it went stale. `write` is create-only to stop exactly
+            # this; edit had the same power and no guard. Emptying a file is never a fix.
+            return fail("that edit would leave the file empty — it deletes the whole body instead "
+                        "of fixing it. Edit the lines that are wrong and leave the rest.")
         v = _bump(name, new_body)
         out = {"ok": True, "file": name, "version": v, "applied": len(hunks), "content": new_body}
         if fuzzy:

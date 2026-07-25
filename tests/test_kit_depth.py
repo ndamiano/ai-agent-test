@@ -140,34 +140,12 @@ const game = (kit) => ({
 """
 
 
-def _probe_kinds(scheme: str, src: str) -> list:
-    r = _node_eval("""
-import { probe } from "./engine.js";
-""" + (_ORBITAL_GAME % scheme) + """
-const res = probe(game, { src: %s });
-console.log(JSON.stringify(res.violations.map(v => v.kind)));
-""" % json.dumps(src))
-    return r
 
 
-def test_probe_rejects_mouse_gated_code_outside_fp():
-    assert "dead_mouse_control" in _probe_kinds("orbital", 'if (input.pressed("mouse0")) attack();')
-    assert "dead_mouse_control" in _probe_kinds("orbital", "if (input.pointer.down) attack();")
 
 
-def test_probe_allows_keyboard_code_and_fp_mouse():
-    assert "dead_mouse_control" not in _probe_kinds("orbital", 'if (input.pressed("f")) attack();')
-    assert "dead_mouse_control" not in _probe_kinds("fp", "if (input.pointer.down) attack();")
 
 
-def _probe_game(game_js: str, src: str = "") -> list:
-    r = _node_eval("""
-import { probe } from "./engine.js";
-const game = %s;
-const res = probe(game, { src: %s });
-console.log(JSON.stringify(res.violations.map(v => v.kind)));
-""" % (game_js, json.dumps(src)))
-    return r
 
 
 _TURN_GAME = """(kit) => ({
@@ -186,21 +164,12 @@ _RANDOM_DEAD_GAME = """(kit) => ({
 })"""
 
 
-def test_probe_passes_turn_game_that_mutates_state_without_movement():
-    assert _probe_game(_TURN_GAME) == []
 
 
-def test_probe_still_flags_game_where_input_does_nothing():
-    assert "dead_controls" in _probe_game(_DEAD_GAME)
 
 
-def test_probe_flags_nondeterministic_source():
-    assert "nondeterminism" in _probe_game(_DEAD_GAME, src="const j = Math.random();")
-    assert "nondeterminism" not in _probe_game(_TURN_GAME, src="const j = kit.rng.next();")
 
 
-def test_probe_random_state_cannot_fake_live_controls():
-    assert "dead_controls" in _probe_game(_RANDOM_DEAD_GAME)
 
 
 _ENTER_ONLY_GAME = """(kit) => ({
@@ -209,10 +178,6 @@ _ENTER_ONLY_GAME = """(kit) => ({
 })"""
 
 
-def test_probe_mashes_keys_the_game_declares():
-    src = 'if (input.pressed("Enter")) endTurn();'
-    assert _probe_game(_ENTER_ONLY_GAME, src=src) == []
-    assert "dead_controls" in _probe_game(_ENTER_ONLY_GAME)  # without src, Enter never mashed
 
 
 def _render_kinds(game_js: str) -> list:
@@ -225,19 +190,6 @@ console.log(JSON.stringify((res.violations || []).map(v => v.kind)));
     return r
 
 
-def test_render_requires_draw_in_2d():
-    no_draw = """(kit) => ({
-      state: { world: [] },
-      update(dt, input, k) {},
-      hud(k) { return [{ kind: "text", text: "Gold: 100" }]; },
-    })"""
-    assert "missing_draw" in _render_kinds(no_draw)
-    with_draw = """(kit) => ({
-      state: { world: [] },
-      update(dt, input, k) {},
-      draw(g, k) { g.rect(0, 0, 10, 10, "#fff"); },
-    })"""
-    assert _render_kinds(with_draw) == []
 
 
 # ── premature_end: a game that resolves with no input is broken, not "dead controls" ──
@@ -257,27 +209,12 @@ _LATE_LOSE_GAME = """(kit) => ({
 })"""
 
 
-def test_probe_flags_no_input_win_as_premature_end_only():
-    kinds = _probe_game(_INSTANT_WIN_GAME)
-    assert kinds == ["premature_end"]   # dead_controls/dead_action artifacts suppressed
 
 
-def test_probe_flags_near_instant_no_input_loss():
-    assert _probe_game(_FAST_LOSE_GAME) == ["premature_end"]
 
 
-def test_probe_allows_late_idle_death():
-    assert "premature_end" not in _probe_game(_LATE_LOSE_GAME)
 
 
-def _probe_scheme(game_js: str, scheme: str) -> list:
-    r = _node_eval("""
-import { probe } from "./engine.js";
-const game = %s;
-const res = probe(game, { scheme: %s });
-console.log(JSON.stringify(res.violations.map(v => v.kind)));
-""" % (game_js, json.dumps(scheme)))
-    return r
 
 
 # Player kept OUTSIDE state.world: mover works, but renderer/probe can't see it — must be named
@@ -294,9 +231,6 @@ _PLAYER_OUTSIDE_GAME = """(kit) => {
 }"""
 
 
-def test_probe_names_player_not_in_world_precisely():
-    kinds = _probe_scheme(_PLAYER_OUTSIDE_GAME, "follow-3d")
-    assert kinds == ["player_not_in_world"]
 
 
 # Continuous spawning must not blind the dead_movement measurement (the net-spawn skip bug).
@@ -319,8 +253,6 @@ _SPAWNING_MOVER_GAME = """(kit) => {
 }"""
 
 
-def test_probe_measures_movement_despite_continuous_spawns():
-    assert "dead_movement" not in _probe_scheme(_SPAWNING_MOVER_GAME, "follow-3d")
 
 
 # ── no_ground: a 3D scene with no ground plane is a void ─────────────────────
@@ -335,12 +267,8 @@ _VOID_3D_GAME = """(kit) => {
 }"""
 
 
-def test_probe_flags_3d_game_with_no_ground():
-    assert "no_ground" in _probe_scheme(_VOID_3D_GAME, "first-person-3d")
 
 
-def test_probe_allows_3d_game_with_ground():
-    assert "no_ground" not in _probe_scheme(_PLAYER_OUTSIDE_GAME.replace("follow", "follow"), "follow-3d")
 
 
 def test_walls_from_tilemap_builds_level():

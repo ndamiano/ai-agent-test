@@ -3,14 +3,16 @@
 A game is a FOLDER of TypeScript modules (`game/main.ts` + system files) described by a
 `manifest.json` (the code contract: each file's name + purpose + exports). Checks swept by the base:
 
-  - `planned`  (blocking): manifest.json exists + names main.ts. Fix = author the manifest.
+  - `interfaced`/`reviewed` (blocking): the model declares its own architecture (state fields with
+                           lifetime + owner, function contracts) and reviews it for contradictions
+                           before any code exists. manifest.json is derived from it.
   - `authored` (blocking): every manifest file exists. Fix = author the MISSING files ONE per step,
                            each against the manifest (its purpose/exports + siblings' signatures).
   - `typechecks` (blocking): `tsc --noEmit` against the kit types — catches cross-file/type/contract
                            bugs (missing exports, wrong data shapes, bad arg counts) before the game
                            runs, with file:line attribution. Fix = the one file tsc blames.
-  - `runs` / `plays` / `renders` / `scrolls`: the runtime gates on the bundle. Fix = grounded hunk
-                           edits landed by the read→edit subloop, bounded.
+  - `runs` / `renders`: the runtime gates on the bundle — does it crash, does it draw.
+                           Fix = grounded hunk edits landed by the read→edit subloop, bounded.
 
 Every fix is a whole-body `Check.run`. Context is rebuilt from the durable folder each step — no
 transcript memory.
@@ -20,15 +22,13 @@ import json
 import re
 from pathlib import Path
 
-from maestro.codegen import data_files
+from maestro.codegen import conform, data_files, interfaces
 from maestro.codegen.gates import (
     RUNTIME_DIR,
     game_files,
     read_manifest,
     run_headless,
-    run_probe,
     run_render,
-    run_scroll,
     typecheck,
 )
 from maestro.codegen.scaffold import (
@@ -41,8 +41,9 @@ from maestro.modules.module import Check, Error, ErrorType, Module
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _CODE_MAX_TOKENS = 16000
-_PLAN_MAX_TOKENS = 2000
 _DATA_MAX_TOKENS = 8000
+_IFACE_MAX_TOKENS = 20000
+_REVIEW_MAX_TOKENS = 12000
 
 
 def _kit_doc(spec: dict) -> str:
@@ -50,7 +51,7 @@ def _kit_doc(spec: dict) -> str:
     text = (RUNTIME_DIR / doc).read_text(encoding="utf-8")
     # The worldgen sections (heightAt/WORLD/spawnWorld) only exist when world.ts is seeded. Injected
     # into a NON-world game they are hallucination bait: a measured build oscillated 10+ steps because
-    # a probe fix obediently added `heightAt(...)` (per the doc) and the typecheck fix then stripped
+    # a runtime fix obediently added `heightAt(...)` (per the doc) and the typecheck fix then stripped
     # the undefined name — two fixers undoing each other.
     if not spec.get("world"):
         text = re.sub(r"<!-- world -->.*?<!-- /world -->\n?", "", text, flags=re.S)
@@ -85,7 +86,7 @@ def _is_kit_surface_error(msg: str) -> bool:
 
 
 def _kit_context(spec: dict, error) -> str:
-    """The kit surface a fix actually needs. A runtime gate (crash/probe/render) needs the full kit
+    """The kit surface a fix actually needs. A runtime gate (crash/render) needs the full kit
     behavior + laws. A typecheck fix does NOT — it's a type/contract/call bug: inject nothing, unless
     the error shows kit MISUSE — arg-count/arg-type gets just the signatures; a hallucinated
     name/member gets the ambient d.ts (fixing API the model can't see just re-hallucinates it).
@@ -152,12 +153,54 @@ def _sibling_lines(run_dir, exclude: str) -> str:
 
 
 # ── detectors ─────────────────────────────────────────────────────────────────
-def _detect_planned(check, module, context):
-    files = _manifest_files(context.state.run_dir)
-    if files and any(f["name"] == ENTRY_HOOK for f in files):
+def _detect_interfaced(check, module, context):
+    if (interfaces.load(context.state.run_dir) or {}).get("functions"):
         return []
-    return [Error(type=ErrorType.BUILD, code="planned", component="game",
-                  message="no manifest yet — plan the game's files from the spec")]
+    return [Error(type=ErrorType.BUILD, code="interfaced", component="game",
+                  message="no architecture yet — declare this game's state fields (with their "
+                          "lifetimes and owners) and its function contracts from the spec")]
+
+
+def _detect_reviewed(check, module, context):
+    iface = interfaces.load(context.state.run_dir)
+    if not iface or iface.get("reviewed"):
+        return []
+    return [Error(type=ErrorType.BUILD, code="reviewed", component="game",
+                  message="the architecture has not been reviewed — find and patch its "
+                          "contradictions before any code is written")]
+
+
+_CONFORM_HINT = {
+    "OWNERSHIP": "Mutate the field in place, move the assignment into its declared owner, or amend "
+                 "the declaration if the implementation names the real owner.",
+    "LIFETIME": "A run-lifetime field carries progression. Rebuild nothing — mutate it in place.",
+    "ELEMTYPE": "One end is wrong: either store the whole object or look the id up before use.",
+    "MISSING": "Implement the declared function, or delete it from the architecture if the design "
+               "no longer needs it.",
+    "UNEXPORTED": "Add `export` to the implementation, or delete the function from the architecture "
+                  "if nothing outside its file needs it.",
+}
+
+
+def _detect_conforms(check, module, context):
+    """The code against the contracts the MODEL declared. Grouped by file so one fix addresses all of
+    a file's violations; a MISSING function has no file to blame and rides its own error."""
+    run_dir = context.state.run_dir
+    iface = interfaces.load(run_dir)
+    if not iface:
+        return []
+    by_file = {}
+    for v in conform.check(iface, game_files(run_dir)):
+        by_file.setdefault(v["file"], []).append(v)
+    errors = []
+    for f, vs in by_file.items():
+        lines = "\n".join(f"  - [{v['kind']}] line {v['line']}: {v['msg']}" for v in vs)
+        hints = "\n".join(f"  {_CONFORM_HINT[k]}" for k in dict.fromkeys(v["kind"] for v in vs)
+                          if k in _CONFORM_HINT)
+        errors.append(Error(type=ErrorType.FIX, code="conforms", component="game",
+                            path=f if f != "-" else None, kind=vs[0]["kind"].lower(),
+                            message=f"{f} breaks {len(vs)} contract(s) you declared:\n{lines}\n{hints}"))
+    return errors
 
 
 def _detect_data(check, module, context):
@@ -229,7 +272,7 @@ _MOVER_RE = re.compile(r"kit\s*\.\s*(drive|moveTopDown3?|moveTank3|moveRelative|
 # The keys every scaffold's movement pass reads. A register-wrapped mover on any of these
 # double-moves (the scaffold already moves on the press); on any OTHER key the handler is the
 # key's ONLY wiring — the correct realization of a spec control the scaffold doesn't bind
-# (e.g. Q for move-left), and flagging it makes unbound_control unsatisfiable.
+# (e.g. Q for move-left), and the scaffold owns movement wiring anyway.
 _SCAFFOLD_MOVE_KEYS = {"w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"}
 _REGISTER_KEYS_RE = re.compile(r"kit\s*\.\s*register\s*\(\s*\"[^\"]*\"\s*,\s*\[([^\]]*)\]")
 
@@ -260,7 +303,7 @@ def _detect_single_mover(check, module, context):
     """Movement is wired ONCE, in the GENERATED main.ts. A model file calling an input-driven kit
     mover AGAIN double-moves the player (2x speed) or fights the scaffold — one measured build
     shipped a knight at double speed (game.ts ran moveTopDown3 on top of the scaffold's kit.drive)
-    and no runtime gate can see it (the probe only checks that movement exists). Static and cheap,
+    and no runtime gate can see it. Static and cheap,
     so it runs between typecheck and the runtime gates."""
     run_dir = context.state.run_dir
     errors = []
@@ -362,31 +405,11 @@ def _detect_runs(check, module, context):
                         kind=hl.get("phase") or "crash")]
 
 
-def _detect_plays(check, module, context):
-    # The spec's control scheme rides along so the probe can hold a movement scheme to actual
-    # displacement (dead_movement), not just "some key changed something" — and the spec's whole
-    # `controls` map rides too, so the probe can press every registered action (dead_action) and
-    # flag spec-bound keys nothing registered (unbound_control). ALL entries are passed; the probe
-    # owns the explicit movement/mouse skip lists (it already knows the scheme's keys).
-    design = (context.spec or {}).get("design") or {}
-    controls = design.get("controls")
-    pr = run_probe(context.state.run_dir, scheme=scheme_of(context.spec),
-                   control_keys=controls if isinstance(controls, dict) and controls else None)
-    return [] if pr.get("ok") else [_gate_error("plays", "PROBE FAILED", _violations(pr),
-                                                context.state.run_dir, kind=_first_kind(pr))]
-
-
 def _detect_renders(check, module, context):
     rr = run_render(context.state.run_dir)
     return [] if rr.get("ok") else [_gate_error("renders", "RENDER FAILED", _violations(rr),
                                                 context.state.run_dir, kind=_first_kind(rr))]
 
-
-def _detect_scrolls(check, module, context):
-    sr = run_scroll(context.state.run_dir)
-    return [] if sr.get("ok") else [Error(type=ErrorType.FIX, code="scrolls", component="game",
-                                          kind=_first_kind(sr) or "no_camera",
-                                          message="CAMERA FAILED: " + _violations(sr))]
 
 
 # ── fixes ─────────────────────────────────────────────────────────────────────
@@ -442,9 +465,13 @@ _WRITE_SCHEMA = {"type": "function", "function": {
                    "properties": {"file": {"type": "string"},
                                   "code": {"type": "string", "description": "the complete file source"}},
                    "required": ["file", "code"]}}}
-_FIX_LOOP_MAX_TURNS = 8
-_READS_BEFORE_FORCE_ACT = 4  # after N reads with no write, drop read so the fix must ACT (kills the
-                             # read-thrash where a big/corrupt file eats every turn and none writes
+# Diagnosis is READING, and cutting it short is what strands a fix. Measured on one crash: the model
+# had the right line at turn 3, argued itself out of it by turn 6, and the old 8-turn cap ended the
+# fix there; given room it read 11 files and landed the correct 2-hunk edit on turn 12. The caps are
+# a runaway backstop, not a budget — the step cap already bounds the build.
+_FIX_LOOP_MAX_TURNS = 25
+_READS_BEFORE_FORCE_ACT = 15  # after N reads with no write, drop read so the fix must ACT (kills the
+                              # read-thrash where a big/corrupt file eats every turn and none writes
 
 _STUB_RE = re.compile(r"placeholder|do not use|will be replaced|fill (?:this|it|in) (?:later|next)"
                       r"|actual (?:file|fix|implementation) (?:first|later)", re.I)
@@ -481,16 +508,16 @@ class CodegenModule(Module):
     component = "game"
 
     checks = [
-        Check(code="planned", detect=_detect_planned, job="author", blocking=True),
+        Check(code="interfaced", detect=_detect_interfaced, job="author", blocking=True),
+        Check(code="reviewed", detect=_detect_reviewed, job="author", blocking=True),
         Check(code="data", detect=_detect_data, job="author", blocking=True),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True),
         Check(code="contracted", detect=_detect_contracted, job="fix", blocking=True),
         Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True),
+        Check(code="conforms", detect=_detect_conforms, job="fix"),
         Check(code="single_mover", detect=_detect_single_mover, job="fix"),
         Check(code="runs", detect=_detect_runs, job="fix"),
-        Check(code="plays", detect=_detect_plays, job="fix", when_clean=True),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True),
-        Check(code="scrolls", detect=_detect_scrolls, job="fix", when_clean=True),
     ]
 
     def affected_components(self):

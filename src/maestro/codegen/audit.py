@@ -34,9 +34,9 @@ _FAIL_STATUSES = ("broken", "stub", "missing")
 _STATUSES = ("delivered",) + _FAIL_STATUSES + ("blocked",)
 
 
-# Movement controls are scaffold-owned law, already gated by dead_movement + single_mover — an
-# audit verdict on them re-judges the pipeline's own wiring (the same reason the probe skips
-# movement keys in unbound_control). Matched on the description: the spec may put movement on a
+# Movement controls are scaffold-owned law, already gated by single_mover — an
+# audit verdict on them re-judges the pipeline's own wiring (the same reason authoring skips
+# movement keys). Matched on the description: the spec may put movement on a
 # key the scheme doesn't bind, and it is still not the game code's claim to deliver.
 _MOVEMENT_CLAIM = re.compile(r"\b(move|walk|steer|drive|turn|jump)\b", re.I)
 

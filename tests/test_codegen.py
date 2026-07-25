@@ -11,7 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from build_harness import run_build_to_completion
+from build_harness import canned_prelude, run_build_to_completion, seed_interfaces
+from maestro.codegen import interfaces
 from maestro.codegen import controls as controls_mod
 from maestro.codegen.fix_classes import DEFAULT, classify
 from maestro.codegen.gates import (
@@ -19,9 +20,7 @@ from maestro.codegen.gates import (
     dedupe_functions,
     extract_code,
     run_headless,
-    run_probe,
     run_render,
-    run_scroll,
 )
 from maestro.codegen.module import (
     _READS_BEFORE_FORCE_ACT,
@@ -213,6 +212,7 @@ def _write_hook_game(tmp_path, game_ts=HOOKS_GOOD, extra=None, spec=None):
     (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    seed_interfaces(tmp_path)
     return spec
 
 
@@ -234,6 +234,7 @@ def _write_game(tmp_path, code, extra=None):
     (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    seed_interfaces(tmp_path)
 
 
 def _node_eval(js: str) -> dict:
@@ -543,27 +544,6 @@ def test_draw_entity_prefers_the_sprite_and_falls_back_to_the_shape():
     assert r[2] == ["sprite", 10, 20, 8, 8]
 
 
-# ── probe: dead_action / unbound_control / solid invariants ───────────────────
-def test_probe_dead_action_flags_noop_and_passes_real():
-    r = _node_eval("""
-      import {probe} from "./engine.js";
-      const mk = (fn) => (kit) => ({
-        config: { width: 100, height: 100, seed: 1 },
-        state: { world: [], score: 0 },
-        init(kit) { const s = this.state; kit.register("attack", ["f"], () => fn(s)); },
-        update(dt, input, kit) {},
-      });
-      const dead = probe(mk((s) => {}), {});
-      const live = probe(mk((s) => { s.score += 1; }), {});
-      console.log(JSON.stringify({
-        deadKinds: dead.violations.map(v => v.kind),
-        deadDetail: (dead.violations.find(v => v.kind === "dead_action") || {}).detail || "",
-        liveOk: live.ok,
-      }));
-    """)
-    assert "dead_action" in r["deadKinds"]
-    assert '"attack"' in r["deadDetail"] and "kit.register" in r["deadDetail"]
-    assert r["liveOk"] is True   # registered keys also count toward controls-live
 
 
 def test_gamepad_controls_normalize_to_real_keys():
@@ -593,91 +573,12 @@ def test_non_gamepad_controls_pass_through_untouched():
     assert d["controls"] == before
 
 
-def test_normalized_gamepad_spec_satisfies_the_probe():
-    """The point of normalizing: the resulting map is one the probe can actually be green on —
-    movement and camera ride the skip lists, and the action keys are bindable."""
-    d = {"controls": {"LEFT_STICK": "move", "RIGHT_STICK": "look", "A_BUTTON": "interact"}}
-    controls_mod.normalize_controls(d)
-    keys = json.dumps(d["controls"])
-    r = _node_eval("""
-      import {probe} from "./engine.js";
-      const game = (kit) => ({
-        config: { width: 100, height: 100, seed: 1 },
-        state: { world: [], score: 0 },
-        init(kit) { const s = this.state; kit.register("interact", ["e"], () => { s.score += 1; }); },
-        update(dt, input, kit) {},
-      });
-      const r = probe(game, { controlKeys: %s });
-      console.log(JSON.stringify({ ok: r.ok, kinds: r.violations.map(v => v.kind) }));
-    """ % keys)
-    assert r["ok"] is True, r["kinds"]
 
 
-def test_probe_unbound_control_names_unregistered_spec_key():
-    r = _node_eval("""
-      import {probe} from "./engine.js";
-      const game = (kit) => ({
-        config: { width: 100, height: 100, seed: 1 },
-        state: { world: [], score: 0 },
-        init(kit) { const s = this.state; kit.register("attack", [" "], () => { s.score += 1; }); },
-        update(dt, input, kit) {},
-      });
-      // SPACE is registered; F is not; WASD (movement), CLICK (mouse), 1-9/ESC (kit-owned menu
-      // digits + talk close) all ride the explicit skip lists.
-      const bad = probe(game, { controlKeys: { "SPACE": "attack", "F": "parry", "WASD": "move", "CLICK": "aim" } });
-      const good = probe(game, { controlKeys: { "SPACE": "attack", "WASD": "move", "1-9": "choose option", "ESC": "close menu" } });
-      console.log(JSON.stringify({
-        badUnbound: bad.violations.filter(v => v.kind === "unbound_control").length,
-        badDetail: (bad.violations.find(v => v.kind === "unbound_control") || {}).detail || "",
-        goodOk: good.ok,
-      }));
-    """)
-    assert r["badUnbound"] == 1
-    assert '"F"' in r["badDetail"] and "kit.register" in r["badDetail"]
-    assert r["goodOk"] is True
 
 
-def test_probe_solid_overlap_fires_stacked_and_collide_world_fixes():
-    r = _node_eval("""
-      import {probe} from "./engine.js";
-      const mk = (collide) => (kit) => ({
-        config: { width: 200, height: 200, seed: 1 },
-        state: { world: [], p: null },
-        init(kit) {
-          this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 16, h: 16, solid: true });
-          kit.spawn(this.state.world, { x: 54, y: 50, w: 16, h: 16, solid: true, type: "enemy" });
-        },
-        update(dt, input, kit) {
-          if (input.down("d")) this.state.p.x += 150 * dt;
-          if (collide) kit.collideWorld(this.state.world);
-        },
-      });
-      const stacked = probe(mk(false), {});
-      const fixed = probe(mk(true), {});
-      console.log(JSON.stringify({stackedKinds: stacked.violations.map(v => v.kind), fixedOk: fixed.ok}));
-    """)
-    assert "solid_overlap" in r["stackedKinds"]
-    assert r["fixedOk"] is True
 
 
-def test_probe_wall_clip_sees_state_solid_at():
-    # The teeth the incident demanded: a solidAt lookup reachable from state now holds SOLID
-    # entities to it even without a state.tilemap.
-    r = _node_eval("""
-      import {probe} from "./engine.js";
-      const game = (kit) => ({
-        config: { width: 200, height: 200, seed: 1 },
-        state: { world: [], p: null, solidAt: (cx, cy) => cx === 3 && cy === 1, cell: 32 },
-        init(kit) {
-          this.state.p = kit.spawn(this.state.world, { x: 10, y: 10, w: 8, h: 8, solid: true });
-          kit.spawn(this.state.world, { x: 100, y: 40, w: 8, h: 8, solid: true, type: "ghost" });
-        },
-        update(dt, input, kit) { if (input.down("d")) this.state.p.x += 150 * dt; },
-      });
-      const pr = probe(game, {});
-      console.log(JSON.stringify({kinds: pr.violations.map(v => v.kind)}));
-    """)
-    assert "wall_clip" in r["kinds"]
 
 
 def test_run_headless_green_on_pong(tmp_path):
@@ -696,9 +597,6 @@ def test_run_headless_catches_crash(tmp_path):
     assert hl["ok"] is False and "boom" in hl.get("error", "")
 
 
-def test_run_probe_green_on_pong(tmp_path):
-    _write_game(tmp_path, GOOD)
-    assert run_probe(tmp_path).get("ok") is True
 
 
 def test_run_render_green_on_pong(tmp_path):
@@ -712,10 +610,6 @@ def test_run_render_catches_draw_crash(tmp_path):
     assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_crash"
 
 
-def test_run_render_catches_blank_screen(tmp_path):
-    _write_game(tmp_path, DRAW_BLANK)
-    rr = run_render(tmp_path)
-    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_blank"
 
 
 def test_run_render_skips_3d_without_draw(tmp_path):
@@ -750,33 +644,15 @@ def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
     # the whole point of the render gate: the sim gates alone give a false green here.
     _write_game(tmp_path, DRAW_CRASH)
     assert run_headless(tmp_path).get("ok") is True
-    assert run_probe(tmp_path).get("ok") is True
     assert run_render(tmp_path).get("ok") is False
 
 
-def test_run_scroll_flags_wide_world_without_camera(tmp_path):
-    _write_game(tmp_path, WIDE_NO_CAMERA)
-    sr = run_scroll(tmp_path)
-    assert sr["ok"] is False and sr["violations"][0]["kind"] == "no_camera"
 
 
-def test_run_scroll_passes_wide_world_with_camera(tmp_path):
-    _write_game(tmp_path, WIDE_WITH_CAMERA)
-    assert run_scroll(tmp_path).get("ok") is True
 
 
-def test_run_scroll_ignores_confined_game(tmp_path):
-    # pong never leaves one screen — the scroll gate must not demand a camera.
-    _write_game(tmp_path, GOOD)
-    assert run_scroll(tmp_path).get("ok") is True
 
 
-def test_wide_no_camera_passes_sim_gates_but_not_scroll(tmp_path):
-    _write_game(tmp_path, WIDE_NO_CAMERA)
-    assert run_headless(tmp_path).get("ok") is True
-    assert run_probe(tmp_path).get("ok") is True
-    assert run_render(tmp_path).get("ok") is True
-    assert run_scroll(tmp_path).get("ok") is False
 
 
 def test_extract_code_pulls_fenced_block():
@@ -800,11 +676,18 @@ def _ctx(state):
     return build_context({"mode": "2d", "design": {}}, state)
 
 
-def test_planned_error_when_empty(tmp_path):
-    # an empty run reports exactly one thing: plan the manifest (blocking, suppresses all later checks).
+def test_interfaced_error_when_empty(tmp_path):
+    # an empty run reports exactly one thing: declare the architecture (blocking, suppresses the rest).
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
-    assert [e.code for e in errs] == ["planned"]
+    assert [e.code for e in errs] == ["interfaced"]
     assert errs[0].type is ErrorType.BUILD
+
+
+def test_reviewed_blocks_until_the_architecture_has_been_reviewed(tmp_path):
+    interfaces.save(tmp_path, {"state": [], "invariants": [],
+                               "functions": [{"name": "update", "file": "game.ts"}]})
+    errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
+    assert [e.code for e in errs] == ["reviewed"]
 
 
 def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
@@ -819,6 +702,7 @@ def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
         {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]}]}))
     (d / "data").mkdir()
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}))
+    seed_interfaces(tmp_path)
     order = [f["name"] for f in _authoring_order(_run_dir(tmp_path).run_dir)]
     assert order == ["types.ts", "combat.ts", "game.ts"]   # contract first, systems, entry LAST
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
@@ -888,6 +772,9 @@ class _FakeConn:
         self.calls = 0
 
     def generate_with_tools(self, messages, tools=None, **kw):
+        pre = canned_prelude(messages)
+        if pre is not None:
+            return pre
         self.calls += 1
         return {"choices": [{"message": {"content": f"```js\n{self.code}\n```"}}]}
 

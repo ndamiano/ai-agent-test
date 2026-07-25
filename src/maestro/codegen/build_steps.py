@@ -16,12 +16,11 @@ the prompt-building + parsing helpers are imported from module.py unchanged.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
-from maestro.codegen import data_files
+from maestro.codegen import data_files, interfaces
 from maestro.codegen.fix_classes import (
     classify,
     strip_dead_creategame,
@@ -31,7 +30,8 @@ from maestro.codegen.gates import extract_code, game_files, manifest_path
 from maestro.codegen.module import (
     _CODE_MAX_TOKENS,
     _DATA_MAX_TOKENS,
-    _PLAN_MAX_TOKENS,
+    _IFACE_MAX_TOKENS,
+    _REVIEW_MAX_TOKENS,
     _PROMPTS,
     _WRITE_SCHEMA,
     _FIX_LOOP_MAX_TURNS,
@@ -42,12 +42,10 @@ from maestro.codegen.module import (
     _is_contract,
     _is_stub,
     _json_from,
-    _kit_context,
     _manifest_files,
     _seeded_block,
     _sibling_lines,
 )
-from maestro.codegen.scaffold import ENTRY_HOOK
 from maestro.services import parse_args, salvage_tool_call
 
 
@@ -73,35 +71,6 @@ Outcome = Union[Infer, Done]
 
 def _content(result) -> str:
     return ((result.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
-
-
-# ── plan ──────────────────────────────────────────────────────────────────────
-def plan_step(spec, run_dir, tools, fc, result) -> Outcome:
-    if not fc.started:
-        fc.started = True
-        system = (_PROMPTS / "plan_game.txt").read_text(encoding="utf-8")
-        user = (f"{_design_block(spec)}{_seeded_block(run_dir)}\n\n"
-                "Plan the files. Output ONLY one ```json block.")
-        msgs = MessageBuilder(system).add_user(user).build()
-        return Infer(msgs, [], _PLAN_MAX_TOKENS, report="planning the file list")
-    text = _content(result)
-    m = re.search(r"```(?:json)?\s*\n(.*?)```", text, re.S)
-    generated = {n for n, src in game_files(run_dir).items()
-                 if src.lstrip().startswith("// GENERATED")}
-    try:
-        manifest = json.loads(m.group(1) if m else text)
-        files = [f for f in (manifest.get("files") or []) if f.get("name")]
-        files = [f for f in files if f["name"] not in generated]
-        assert any(f["name"] == ENTRY_HOOK for f in files)
-        manifest = {"files": files}
-    except Exception:
-        manifest = {"files": [{"name": ENTRY_HOOK,
-                               "purpose": "the whole game behind the scaffold hooks",
-                               "exports": _hook_exports(spec)}]}
-    manifest_path(run_dir).parent.mkdir(parents=True, exist_ok=True)
-    manifest_path(run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    names = ", ".join(f["name"] for f in manifest["files"])
-    return Done(f"planned {len(manifest['files'])} file(s): {names}")
 
 
 # ── data (design | fix rows) ──────────────────────────────────────────────────
@@ -185,6 +154,204 @@ def _data_fix_apply(run_dir, result) -> Done:
     return Done(f"rewrote data/{target}.json ({len(rows)} rows), {len(remaining)} violation(s) remain")
 
 
+# ── interfaces (the architecture, one turn) ───────────────────────────────────
+def interfaces_step(spec, run_dir, tools, fc, result) -> Outcome:
+    if not fc.started:
+        fc.started = True
+        return _interfaces_request(spec, run_dir, report="declaring the architecture")
+    try:
+        iface = interfaces.normalize(_json_from(_content(result)))
+    except Exception:
+        iface = interfaces.normalize({})
+    # An architecture with no functions is not a smaller architecture, it is no game: nothing to
+    # author, no contracts to check. Leave it unwritten so `interfaced` stays red and the outer loop
+    # runs the turn again — bounded by the step cap and the stall detector, which fail the build
+    # rather than shipping one with no contracts.
+    if not iface["functions"]:
+        return Done("the architecture came back empty — declaring it again")
+    corrected = interfaces.enforce_kit_contract(run_dir, iface)
+    interfaces.save(run_dir, iface)
+    # state.ts first: manifest_from drops GENERATED files, so it must be on disk before the manifest
+    # is derived or the model would be asked to author it.
+    interfaces.generate_state_ts(run_dir, iface)
+    manifest = interfaces.manifest_from(iface, run_dir, _hook_exports(spec))
+    manifest_path(run_dir).parent.mkdir(parents=True, exist_ok=True)
+    manifest_path(run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return Done(f"declared {len(iface['state'])} state field(s), {len(iface['functions'])} "
+                f"function(s) across {len(manifest['files'])} file(s)"
+                + (f"; corrected {len(corrected)} against the kit: " + "; ".join(corrected[:4])
+                   if corrected else ""))
+
+
+def _interfaces_request(spec, run_dir, report: str) -> Infer:
+    system = (_PROMPTS / "design_interfaces.txt").read_text(encoding="utf-8")
+    user = (f"{_design_block(spec)}{_seeded_block(run_dir)}"
+            f"{interfaces.hooks_block(run_dir, spec)}\n\n"
+            "Declare the architecture. Output ONLY one ```json block.")
+    return Infer(MessageBuilder(system).add_user(user).build(), [], _IFACE_MAX_TOKENS,
+                 report=report)
+
+
+# ── review (rounds of find-then-patch over the architecture) ──────────────────
+_REVIEW_ROUNDS = 3
+_REVIEW_BATCH = 2
+
+
+def review_step(spec, run_dir, tools, fc, result) -> Outcome:
+    """The model reviews the declarations it just wrote, patching by op rather than re-emitting the
+    architecture. Converges when a whole round reports nothing new; `_REVIEW_ROUNDS` is the backstop
+    for a reviewer that keeps inventing work, not the intended exit."""
+    iface = interfaces.load(run_dir) or {"state": [], "functions": [], "invariants": []}
+    if not fc.started:
+        fc.started = True
+        fc.rnd = 1
+        return _review_find_infer(iface, fc)
+    if fc.mode == "patch":
+        return _review_patch_apply(run_dir, iface, fc, result)
+    return _review_find_apply(run_dir, iface, fc, result)
+
+
+def _review_find_infer(iface, fc) -> Infer:
+    fc.mode = "find"
+    parts = list(interfaces.slices(iface))
+    sl = parts[fc.slice_idx]
+    system = (_PROMPTS / "review_find.txt").read_text(encoding="utf-8")
+    body = [f"# ARCHITECTURE\n```json\n{json.dumps(sl, indent=1, ensure_ascii=False)}\n```"]
+    if len(parts) > 1:
+        body.append(f"The state table and invariants above are COMPLETE. Only batch "
+                    f"{fc.slice_idx + 1} of {len(parts)} of the functions is shown. Judge these "
+                    f"functions against the full state table; do not report a function as missing "
+                    f"merely because it is not in this batch.")
+    if fc.seen:
+        body.append("Problems already found and corrected in an earlier pass. They are fixed; do "
+                    "not report them again:\n"
+                    + "\n".join(f"  - {t}" for t in fc.seen[-20:]))
+    return Infer(MessageBuilder(system).add_user("\n\n".join(body)).build(), [], _REVIEW_MAX_TOKENS,
+                 report=f"reviewing the architecture (round {fc.rnd}, batch {fc.slice_idx + 1}/{len(parts)})")
+
+
+def _review_find_apply(run_dir, iface, fc, result) -> Outcome:
+    try:
+        fc.found += [p for p in (_json_from(_content(result)).get("problems_found") or [])]
+    except Exception:
+        pass
+    fc.slice_idx += 1
+    if fc.slice_idx < len(interfaces.slices(iface)):
+        return _review_find_infer(iface, fc)
+
+    fresh = []
+    for p in fc.found:
+        key = interfaces.problem_key(p)
+        if key and key not in fc.seen:
+            fc.seen.append(key)
+            fresh.append(p)
+    fc.slice_idx, fc.found = 0, []
+    if not fresh:
+        return _review_done(run_dir, iface, fc, f"architecture clean after {fc.rnd} round(s)")
+    fc.fresh, fc.patch_idx = fresh, 0
+    return _review_patch_infer(iface, fc)
+
+
+def _review_patch_infer(iface, fc) -> Infer:
+    fc.mode = "patch"
+    chunk = fc.fresh[fc.patch_idx:fc.patch_idx + _REVIEW_BATCH]
+    system = (_PROMPTS / "review_patch.txt").read_text(encoding="utf-8")
+    body = ["# PROBLEMS TO FIX\n" + "\n".join(f"- {json.dumps(p, ensure_ascii=False)}" for p in chunk),
+            f"# FULL ARCHITECTURE\n```json\n{json.dumps(iface, indent=1, ensure_ascii=False)}\n```"]
+    if fc.feedback:
+        body.append(fc.feedback)
+    return Infer(MessageBuilder(system).add_user("\n\n".join(body)).build(), [], _REVIEW_MAX_TOKENS,
+                 report=f"patching the architecture (round {fc.rnd}, "
+                        f"{fc.patch_idx + len(chunk)}/{len(fc.fresh)})")
+
+
+def _review_patch_apply(run_dir, iface, fc, result) -> Outcome:
+    try:
+        patches = _json_from(_content(result)).get("patches") or []
+    except Exception:
+        patches = []
+    errs = interfaces.apply_patches(iface, patches, dry=True)
+    if errs and not fc.patch_retry:
+        fc.patch_retry = 1
+        fc.feedback = ("Your previous patches could not be applied:\n"
+                       + "\n".join(f"- {e}" for e in errs) + "\nSend corrected patches.")
+        return _review_patch_infer(iface, fc)
+    rejected = interfaces.apply_patches(iface, patches)
+    interfaces.save(run_dir, iface)
+    interfaces.log_review(run_dir, fc.rnd, fc.fresh[fc.patch_idx:fc.patch_idx + _REVIEW_BATCH],
+                          patches, rejected)
+    fc.patch_retry, fc.feedback = 0, ""
+    fc.patch_idx += _REVIEW_BATCH
+    if fc.patch_idx < len(fc.fresh):
+        return _review_patch_infer(iface, fc)
+    fc.fresh, fc.patch_idx = [], 0
+    fc.rnd += 1
+    if fc.rnd > _REVIEW_ROUNDS:
+        return _review_done(run_dir, iface, fc,
+                            f"review hit the {_REVIEW_ROUNDS}-round cap "
+                            f"({len(fc.seen)} problem(s) corrected)")
+    return _review_find_infer(iface, fc)
+
+
+def _review_done(run_dir, iface, fc, report: str) -> Done:
+    iface["reviewed"] = True
+    interfaces.save(run_dir, iface)
+    interfaces.generate_state_ts(run_dir, iface)   # the review patches state; the type follows it
+    return Done(report)
+
+
+# ── amend (rule on a conformance violation, then fix whichever side was wrong) ─
+def amend_step(spec, run_dir, tools, fc, result) -> Outcome:
+    """A conformance violation is the code disagreeing with a contract the model wrote before it knew
+    what the code would look like, so the first turn RULES on which side is wrong. `contract` patches
+    interfaces.json and the fix is over; `code` falls through to the read→edit subloop."""
+    if fc.mode == "fix":
+        return read_write_apply(spec, run_dir, tools, fc, result)
+    if not fc.started:
+        fc.started = True
+        return _amend_request(spec, run_dir, fc)
+
+    try:
+        ruling = _json_from(_content(result))
+    except Exception:
+        ruling = {}
+    if str(ruling.get("verdict", "")).lower() == "contract":
+        iface = interfaces.load(run_dir) or {}
+        patches = ruling.get("patches") or []
+        rejected = interfaces.apply_patches(iface, patches)
+        interfaces.save(run_dir, iface)
+        # The GENERATED state type follows the declaration, exactly as it does after a review patch.
+        # A ruling reached from a TYPE error is usually a state SHAPE change, so without this the
+        # model is handed a verdict it cannot act on: tsc keeps checking against the stale GameState
+        # and the error it just ruled on can never clear.
+        interfaces.generate_state_ts(run_dir, iface)
+        landed = len(patches) - len(rejected)
+        if landed:
+            return Done(f"amended the contract ({landed} op(s)): {str(ruling.get('reason', ''))[:120]}")
+    fc.mode = "fix"
+    return read_write_start(spec, run_dir, fc)
+
+
+def _amend_request(spec, run_dir, fc) -> Infer:
+    from maestro.codegen.build_state import error_from_dict
+    error = error_from_dict(fc.error)
+    iface = interfaces.load(run_dir) or {}
+    files = game_files(run_dir)
+    body = (files.get(error.path) or "") if error.path else ""
+    system = (_PROMPTS / "amend_contract.txt").read_text(encoding="utf-8")
+    parts = [
+        _design_block(spec),
+        f"# THE ARCHITECTURE YOU DECLARED\n```json\n"
+        f"{json.dumps(iface, indent=1, ensure_ascii=False)}\n```",
+        f"# THE CONFLICT\n{error.message}",
+    ]
+    if body:
+        parts.append(f"# YOUR IMPLEMENTATION: {error.path}\n```ts\n{body}\n```")
+    parts.append("Rule on which side is wrong. Output ONLY one ```json block.")
+    return Infer(MessageBuilder(system).add_user("\n\n".join(parts)).build(), [], _REVIEW_MAX_TOKENS,
+                 report="ruling on a contract conflict")
+
+
 # ── author (one file, ≤2 turns) ───────────────────────────────────────────────
 def author_step(spec, run_dir, tools, fc, result) -> Outcome:
     name = fc.error.get("path")
@@ -216,6 +383,8 @@ def _author_request(spec, run_dir, name, report) -> Infer:
     parts = [
         f"# KIT API\n{_kit_doc_for(spec)}",
         _design_block(spec),
+        interfaces.interfaces_block(interfaces.load(run_dir)),
+        interfaces.state_ts_block(run_dir),
         f"# THIS FILE: {me['name']}\npurpose: {me.get('purpose', '')}\n"
         f"must export: {', '.join(me.get('exports') or []) or '(none)'}",
     ]
@@ -247,35 +416,32 @@ def _extract_write_code(result) -> str:
 
 # ── read_write (the ≤8-turn read→edit subloop) ────────────────────────────────
 def read_write_start(spec, run_dir, fc) -> Infer:
-    """Build the first request: assemble the fix_loop prompt (system = fix_loop.txt + kit + contract;
-    user = design + failing gate + the fix class's authority/directive). The system + the growing
-    transcript live in `fc` and are re-sent each turn."""
+    """Build the first request: the file list, the failure, and the tools. Nothing else.
+
+    Everything the fix might need is ALREADY on disk and readable — the kit surface is engine.d.ts,
+    the state contract is state.ts, the data tables are data.ts. Pasting them in spends the context
+    budget on OUR guess about what the fix needs; a measured A/B on the same crash settled it: the
+    32KB prompt (kit doc + architecture + state type + design spec + data summary) never fixed it
+    across 82 turns, and file-list + error fixed it in 12 — reading engine.d.ts and data.ts on turn 1
+    because it wanted them. Same end-of-loop context size either way; the difference is whether the
+    model chose what is in it.
+    """
     from maestro.codegen.build_state import error_from_dict
     error = error_from_dict(fc.error)
     cls = classify(error)
-    files = _manifest_files(run_dir)
-    filelist = "\n".join(
-        f"- {f['name']}: {f.get('purpose', '')} (exports: {', '.join(f.get('exports') or []) or 'none'})"
-        for f in files) or "\n".join(f"- {n}" for n in game_files(run_dir))
+    # Every file on disk, not just the model-authored ones: state.ts, data.ts, main.ts and
+    # engine.d.ts are GENERATED, so the manifest omits them — and they are precisely the four the
+    # measured successful fix read first. A file the model cannot see it may read is a file it
+    # invents assumptions about.
+    # engine.d.ts is the kit surface. game_files() drops .d.ts (right for the conform/typecheck
+    # sweeps), but this is the file the fix reads INSTEAD of being handed 14KB of kit doc.
+    filelist = ", ".join(sorted(set(game_files(run_dir)) | {"engine.d.ts"}))
     system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
-    kit = _kit_context(spec, error)
-    if kit:
-        system = f"{system}\n\n{kit}"
-    authority = cls.authority(spec, run_dir, error) if cls.authority else ""
-    directive = cls.directive or ""
-    contract_inv = ((_PROMPTS / "contract_invariant.txt").read_text(encoding="utf-8")
-                    if any(_is_contract(f) for f in files) else "")
     user = "\n\n".join(p for p in [
-        _design_block(spec),
-        contract_inv,
-        f"# FILES (read any you need — you are NOT shown their bodies)\n{filelist}",
-        data_files.data_summary(run_dir),
+        f"# FILES (read any of these)\n{filelist}",
         f"# FAILING GATE\n{error.message}",
-        authority,
-        directive,
-        "Read whatever files you need to find the root cause, then fix it with edit — the smallest "
-        "hunks that fix the failure, every needed hunk (definition + call sites) in the same "
-        "completion.",
+        cls.authority(spec, run_dir, error) if cls.authority else "",
+        cls.directive or "",
     ] if p)
     fc.system = system
     fc.history = [{"role": "user", "content": user}]
@@ -452,8 +618,12 @@ def _kit_doc_for(spec) -> str:
 
 # ── shape dispatch ────────────────────────────────────────────────────────────
 def step(shape: str, spec, run_dir, tools, fc, result) -> Outcome:
-    if shape == "plan":
-        return plan_step(spec, run_dir, tools, fc, result)
+    if shape == "interfaces":
+        return interfaces_step(spec, run_dir, tools, fc, result)
+    if shape == "review":
+        return review_step(spec, run_dir, tools, fc, result)
+    if shape == "amend":
+        return amend_step(spec, run_dir, tools, fc, result)
     if shape == "data":
         return data_step(spec, run_dir, tools, fc, result)
     if shape == "author":

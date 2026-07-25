@@ -84,7 +84,7 @@ kit.spawn(state.world, { x: 90, y: 64, w: 6, h: 6, vx: 400, type: "arrow" });   
 state.solidAt = (cx, cy) => state.tilemap.solidAt(cx, cy);   // or omit and keep state.tilemap
 ```
 **Law: gameplay must never zero velocities or snap positions back to fake collision** — the pass
-resolves overlap by pushing OUT; a hand-rolled undo kills movement (the probe rejects it).
+resolves overlap by pushing OUT; a hand-rolled undo kills movement.
 
 ## Steering  (enemy/NPC movement — chase, flee, patrol; velocities in px/SECOND)
 Set an entity's velocity toward or away from a target, then `kit.integrate` it. A `target` is any
@@ -161,10 +161,8 @@ kit.stepParticles(this.state.world, dt);
 **Rule: EVERY non-movement control in the spec's `controls` map gets a `kit.register` in init.**
 Movement keys stay with the control scheme (the scaffold wires them) — never registered. The engine
 fires the handler on the PRESSED edge of any bound key, after update each frame; a re-register with
-the same name replaces (safe on re-init). `kit.bindings()` → `[{name, keys}]`. The probe presses
-every registered action and requires an effect — a bare `input.pressed(...)` in update is invisible
-to it (held mechanics like charging may still read `input.down` per frame; this rule targets EDGE
-actions).
+the same name replaces (safe on re-init). `kit.bindings()` → `[{name, keys}]`. Held mechanics like
+charging may still read `input.down` per frame; registration targets EDGE actions.
 ```js
 init(state, kit) {
   kit.register("attack", [" "], () => {           // spec: "SPACE: attack"

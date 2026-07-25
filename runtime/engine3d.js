@@ -3,7 +3,7 @@
 //
 // The sim/render law is unchanged: a 3D game's update(dt,input,kit) mutates plain entity
 // state (x,y,z,vx,vy,vz) exactly like a 2D game — so it still runs headless in pure Node
-// and the probe still gates it. This module ONLY renders that state: it reads world entities
+// This module ONLY renders that state: it reads world entities
 // and draws one mesh each from a shape tag. The model writes NO three.js.
 //
 // Entity render convention (fields on a world entity):

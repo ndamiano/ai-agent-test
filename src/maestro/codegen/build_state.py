@@ -74,6 +74,17 @@ class FixCursor:
     findings: List[Dict] = field(default_factory=list)
     delivered: List[str] = field(default_factory=list)
     anchors: List[str] = field(default_factory=list)
+    # review shape: rounds of (find over function slices) then (patch in batches); `mode` says which
+    # half the pending result belongs to. `seen` spans ROUNDS — each round re-reads the same
+    # architecture, so an unpatched complaint recurs verbatim.
+    rnd: int = 0
+    slice_idx: int = 0
+    seen: List[str] = field(default_factory=list)
+    found: List[Dict] = field(default_factory=list)
+    fresh: List[Dict] = field(default_factory=list)
+    patch_idx: int = 0
+    patch_retry: int = 0
+    feedback: str = ""
 
 
 @dataclass
@@ -90,6 +101,8 @@ class BuildCursor:
     parked: List[str] = field(default_factory=list)         # idkeys the loop gave up on
     prev: Optional[List[str]] = None                        # snapshot before the current/last fix
     det_tried: List[str] = field(default_factory=list)      # idkeys already given their one free deterministic pass
+    amend_tried: List[str] = field(default_factory=list)    # idkeys already given their one contract-vs-code ruling
+    attempted: List[str] = field(default_factory=list)      # one entry per fix ENTERED, so a repeat means the fix came back
     passed: List[str] = field(default_factory=list)         # components already milestoned
     todo: List[Dict] = field(default_factory=list)   # last outer to-do (emitted with build_step)
     # the early asset lane: the batch id once the data rows' renders are enqueued mid-build

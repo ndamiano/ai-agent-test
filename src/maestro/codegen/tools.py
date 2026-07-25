@@ -2,11 +2,9 @@
 
 A game is a folder of ES modules. `write` is CREATE-ONLY (authoring a file that doesn't exist yet);
 every change to an existing file goes through `edit` — grounded anchor hunks (exact old→new,
-unique-or-fail), applied ATOMICALLY as a batch. Overwrites after creation are banned because forensic
-analysis of live builds showed whole-file rewrites are the fix loop's dominant failure mode: they
-destabilize previously-correct code — reintroducing fixed bugs (Math.random came back after being
-cleared), re-rolling exported signatures siblings depend on (arg-count oscillation), re-inventing
-forbidden patterns per rewrite. Edits are grounded and local; they can't do any of that. `read_file`
+unique-or-fail), applied ATOMICALLY as a batch. Overwrites after creation are banned: a whole-file
+rewrite destabilizes correct code — reintroducing cleared bugs, re-rolling exported signatures
+siblings depend on, re-inventing forbidden patterns. Edits are grounded and local; they cannot. `read_file`
 pulls a file back — whole by default, or a line window (offset/limit) for a big file you only need a
 slice of.
 
@@ -71,10 +69,9 @@ def _safe(name: str) -> str:
 def _fuzzy_spans(content: str, old: str) -> list:
     """Whitespace-tolerant hunk anchor: the (start, end) spans of every line window whose lines
     match old_string's lines after per-line strip. The model reproduces the code it means to
-    replace with drifted indentation/trailing spaces far more often than it picks the wrong code —
-    measured 668 exact-anchor misses, many a whole fix subloop dying on a hunk whose every line was
-    right modulo whitespace. Matching is by line CONTENT; the span (and so what survives around the
-    replacement) is the file's real text. All-blank old_strings don't anchor."""
+    replace with drifted indentation far more often than it picks the wrong code. Matching is by line
+    CONTENT; the span (and so what survives around the replacement) is the file's real text.
+    All-blank old_strings don't anchor."""
     old_lines = [ln.strip() for ln in old.splitlines()]
     if not old_lines or not any(old_lines):
         return []
@@ -173,10 +170,9 @@ def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict
         for i, h in enumerate(hunks, 1):
             old = (h or {}).get("old_string", "")
             if not old:
-                # Empty old_string = APPEND at end of file. A one-line append via anchor-replace
-                # needs the file's exact tail as the anchor — the flimsiest anchor there is, and a
-                # measured full fix budget failed to land one line that way. Still read-grounded
-                # (the seen-version gate above) and atomic with the batch.
+                # Empty old_string = APPEND at end of file: a one-line append via anchor-replace
+                # would need the file's tail as its anchor, the flimsiest anchor there is. Still
+                # read-grounded (the seen-version gate above) and atomic with the batch.
                 if not (h or {}).get("new_string", "").strip():
                     return fail(f"hunk {i}/{len(hunks)}: both strings empty — an append hunk needs "
                                 "new_string.")
@@ -215,11 +211,8 @@ def build_codegen_tools(state, versions: dict = None, seen: dict = None) -> dict
             sep = "" if (not new_body or new_body.endswith("\n")) else "\n"
             new_body = new_body + sep + h["new_string"]
         if content.strip() and not new_body.strip():
-            # A hunk whose old_string is the WHOLE file and whose new_string is empty passes every
-            # check above — found, unique, non-overlapping — and deletes the file. Measured: a fix
-            # emptied a 3,241-char render.ts, the `authored` gate re-authored it from scratch, and
-            # every sibling that agreed with it went stale. `write` is create-only to stop exactly
-            # this; edit had the same power and no guard. Emptying a file is never a fix.
+            # A hunk spanning the whole body with an empty replacement is found, unique and
+            # non-overlapping — every check above passes and the file is gone.
             return fail("that edit would leave the file empty — it deletes the whole body instead "
                         "of fixing it. Edit the lines that are wrong and leave the rest.")
         v = _bump(name, new_body)

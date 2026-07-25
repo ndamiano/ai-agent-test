@@ -31,12 +31,7 @@ from maestro.codegen.gates import (
     game_files,
     reconcile_types,
 )
-from maestro.codegen.scaffold import (
-    ENTRY_HOOK,
-    contract_assert_line,
-    has_contract_assert,
-    reexport_hooks,
-)
+from maestro.codegen.scaffold import ENTRY_HOOK, reexport_hooks
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts" / "fix_kinds"
 
@@ -157,9 +152,9 @@ def _near_member(members: list, fld: str) -> Optional[str]:
 
 def _append_dominant_fields(run_dir, error) -> list:
     """The gated half of field-append: a field the game uses in ≥2 places, on a game-owned type
-    with NO near-miss existing member, is a field the model systematically relies on — types.ts
-    was authored first and simply couldn't predict it (the dominant TS2339 shape in measured
-    multi-file builds). Append it. A single use, or a near-miss name (`health` beside `hp`),
+    with NO near-miss existing member, is a field the model systematically relies on — types.ts was
+    authored first and could not predict it. Append it. A single use, or a near-miss name
+    (`health` beside `hp`),
     stays with the authority-guided LLM — that's the caller-typo case the blanket append would
     launder into a duplicate field."""
     files = game_files(run_dir)
@@ -291,9 +286,9 @@ _LOCAL_IMPORT = re.compile(
 
 def strip_unplanned_imports(run_dir, planned) -> int:
     """Strip imports of local modules that are neither on disk nor in the plan — the model's
-    favorite phantom is `./types` in a single-file game (3/3 measured builds authored it despite
-    the prompt). Running this at WRITE time saves the phantom-import gate round; planned-but-not-
-    yet-authored siblings are legal and left alone. Returns files changed."""
+    favorite phantom is `./types` in a single-file game. Running this at WRITE time saves the
+    phantom-import gate round; planned-but-not-yet-authored siblings are legal and left alone.
+    Returns files changed."""
     allowed = set(planned) | set(game_files(run_dir))
     changed = 0
     for name, src in game_files(run_dir).items():
@@ -312,9 +307,9 @@ _CREATEGAME = re.compile(r"^(?:export\s+)?function\s+createGame\s*\(", re.M)
 
 def strip_dead_creategame(run_dir) -> int:
     """Delete a `createGame` block from a scaffolded game's model files. The GENERATED main.ts owns
-    createGame; a model-authored copy is dead code that MISDIRECTS the fix loop — measured: a build
-    ping-ponged 10+ steps because every edit landed in the dead createGame.update instead of the
-    exported update hook the scaffold actually calls. Brace-matched removal; returns files changed."""
+    createGame; a model-authored copy is dead code that MISDIRECTS the fix loop, which lands its
+    edits in the dead createGame.update instead of the exported hook the scaffold calls.
+    Brace-matched removal; returns files changed."""
     changed = 0
     for name, src in game_files(run_dir).items():
         if src.lstrip().startswith("// GENERATED"):
@@ -375,9 +370,9 @@ MISSING_HOOK = FixClass(
 
 # ── duplicate-decl ────────────────────────────────────────────────────────────
 # The file defines the same top-level symbol twice — two complete implementations (TS2323/TS2393,
-# TS2300). Trivial under a whole-file rewrite, EDIT-HOSTILE under grounded hunks (deleting an entire
-# duplicate body is one giant exact old_string — measured ~70 churned calls on one duplicate `init`).
-# The deterministic pass keeps the LAST implementation (latest intent) and deletes the earlier ones.
+# TS2300). Trivial under a whole-file rewrite, EDIT-HOSTILE under grounded hunks: deleting an entire
+# duplicate body is one giant exact old_string. The deterministic pass keeps the LAST implementation
+# and deletes the earlier ones.
 _DUP_CODES = ("TS2323", "TS2393", "TS2300")
 
 
@@ -392,34 +387,6 @@ DUPLICATE = FixClass(
     deterministic=dedupe_decls,
 )
 
-# ── contract-assert ───────────────────────────────────────────────────────────
-# The scaffold contract assertion is a KNOWN exact line the pipeline computes (scaffold.
-# contract_assert_line) — asking the model to append it burned 4 steps in one measured build
-# (3 attempts + a regression re-add after a tail rewrite). Append it deterministically; the
-# gate re-runs after, so a wrong-signature hook still surfaces as a local tsc error in game.ts.
-
-
-def _matches_contract_assert(error) -> bool:
-    return getattr(error, "code", "") == "contracted"
-
-
-def _append_contract_assert(run_dir, error) -> Optional[dict]:
-    if has_contract_assert(run_dir):
-        return None
-    p = Path(game_dir(run_dir)) / ENTRY_HOOK
-    if not p.exists():
-        return None
-    spec = json.loads((Path(run_dir) / "spec.json").read_text(encoding="utf-8"))
-    src = p.read_text(encoding="utf-8")
-    p.write_text(src.rstrip("\n") + "\n\n" + contract_assert_line(spec) + "\n", encoding="utf-8")
-    return {"changes": [("append-assert", ENTRY_HOOK)], "count": 1}
-
-
-CONTRACT_ASSERT = FixClass(
-    id="contract-assert",
-    matches=_matches_contract_assert,
-    deterministic=_append_contract_assert,
-)
 
 
 # ── single-mover ──────────────────────────────────────────────────────────────
@@ -431,90 +398,12 @@ _MOVER_LINE = re.compile(
     r"\s*\([^;\n]*\binput\b[^;\n]*\)\s*;?[ \t]*\n", re.M)
 
 
-def _matches_single_mover(error) -> bool:
-    return getattr(error, "code", "") == "single_mover"
-
-
-def _call_end(src: str, open_paren: int) -> Optional[int]:
-    """Index just past the `)` balancing src[open_paren] == '(', quote-aware."""
-    depth, i, quote = 0, open_paren, None
-    while i < len(src):
-        c = src[i]
-        if quote:
-            if c == "\\":
-                i += 2
-                continue
-            if c == quote:
-                quote = None
-        elif c in "'\"`":
-            quote = c
-        elif c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-            if depth == 0:
-                return i + 1
-        i += 1
-    return None
-
-
-_REGISTER_OPEN = re.compile(r"^[ \t]*kit\s*\.\s*register\s*(\()", re.M)
-_MOVER_CALL = re.compile(r"kit\s*\.\s*(?:drive|moveTopDown3?|moveTank3|moveRelative|moveFP|walk|gridMove)\s*\(")
-
-
-def _strip_mover_registers(src: str) -> str:
-    """Delete every kit.register statement whose handler moves the player on a key the scaffold's
-    movement pass also reads — the double-move the LLM lane reliably fails to DELETE (it relocates
-    instead). A handler on a non-scaffold key is that key's only wiring and stays."""
-    from maestro.codegen.module import _REGISTER_KEYS_RE, _SCAFFOLD_MOVE_KEYS
-    spans = []
-    for m in _REGISTER_OPEN.finditer(src):
-        end = _call_end(src, m.end(1) - 1)
-        if end is None:
-            continue
-        span = src[m.start():end]
-        if not _MOVER_CALL.search(span):
-            continue
-        keys_m = _REGISTER_KEYS_RE.search(span)
-        keys = {k.strip().strip("'\"").lower()
-                for k in keys_m.group(1).split(",") if k.strip()} if keys_m else set()
-        if not keys or keys & _SCAFFOLD_MOVE_KEYS:
-            while end < len(src) and src[end] in "; \t":
-                end += 1
-            if end < len(src) and src[end] == "\n":
-                end += 1
-            spans.append((m.start(), end))
-    for start, end in reversed(spans):
-        src = src[:start] + src[end:]
-    return src
-
-
-def _strip_redundant_movers(run_dir, error) -> Optional[dict]:
-    changes, count = [], 0
-    for name, src in game_files(run_dir).items():
-        if src.lstrip().startswith("// GENERATED"):
-            continue
-        new = _MOVER_LINE.sub("", src)
-        new = _strip_mover_registers(new)
-        if new != src:
-            (Path(run_dir) / "game" / name).write_text(new, encoding="utf-8")
-            changes.append(("strip-mover", name))
-            count += 1
-    return {"changes": changes, "count": count} if count else None
-
-
-SINGLE_MOVER = FixClass(
-    id="single-mover",
-    matches=_matches_single_mover,
-    deterministic=_strip_redundant_movers,
-)
 
 # ── missing-name ──────────────────────────────────────────────────────────────
-# TS2304 "Cannot find name 'X'" (+TS2552's did-you-mean variant) — the single biggest tsc code in
-# measured builds (×299). Three distinct root causes the raw error can't distinguish: the name is
-# exported by a SIBLING (fix = an import line — computable), it's a HOOK PARAMETER the function
-# didn't take (`kit` referenced in a helper — 3 of 8 prod parks), or it's genuinely undefined.
-# The deterministic pass lands the import case; the directive + authority steer the other two.
+# TS2304 "Cannot find name 'X'" (+TS2552's did-you-mean variant). Three root causes the raw error
+# can't distinguish: the name is exported by a SIBLING (fix = an import line, computable), it's a
+# HOOK PARAMETER the function didn't take (`kit` referenced in a helper), or it's genuinely
+# undefined. The deterministic pass lands the import case; the directive + authority steer the rest.
 _CANT_FIND = re.compile(r"Cannot find name '([^']+)'")
 _HOOK_PARAMS = {"kit", "input", "dt", "state", "g", "cam"}
 
@@ -611,7 +500,7 @@ DEFAULT = FixClass(id="default", matches=lambda e: True)
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [CONTRACT_ASSERT, SINGLE_MOVER, AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE,
+FIX_CLASSES = [AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE,
                MISSING_NAME, CONTRACT, DEFAULT]
 
 

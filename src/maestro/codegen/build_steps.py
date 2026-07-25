@@ -320,10 +320,7 @@ def amend_step(spec, run_dir, tools, fc, result) -> Outcome:
         patches = ruling.get("patches") or []
         rejected = interfaces.apply_patches(iface, patches)
         interfaces.save(run_dir, iface)
-        # The GENERATED state type follows the declaration, exactly as it does after a review patch.
-        # A ruling reached from a TYPE error is usually a state SHAPE change, so without this the
-        # model is handed a verdict it cannot act on: tsc keeps checking against the stale GameState
-        # and the error it just ruled on can never clear.
+        # The GENERATED state type follows the declaration — a ruling on a shape is inert until it does.
         interfaces.generate_state_ts(run_dir, iface)
         landed = len(patches) - len(rejected)
         if landed:
@@ -416,25 +413,13 @@ def _extract_write_code(result) -> str:
 
 # ── read_write (the ≤8-turn read→edit subloop) ────────────────────────────────
 def read_write_start(spec, run_dir, fc) -> Infer:
-    """Build the first request: the file list, the failure, and the tools. Nothing else.
-
-    Everything the fix might need is ALREADY on disk and readable — the kit surface is engine.d.ts,
-    the state contract is state.ts, the data tables are data.ts. Pasting them in spends the context
-    budget on OUR guess about what the fix needs; a measured A/B on the same crash settled it: the
-    32KB prompt (kit doc + architecture + state type + design spec + data summary) never fixed it
-    across 82 turns, and file-list + error fixed it in 12 — reading engine.d.ts and data.ts on turn 1
-    because it wanted them. Same end-of-loop context size either way; the difference is whether the
-    model chose what is in it.
-    """
+    """The file list, the failure, and the tools. Nothing else — the kit surface, the state contract
+    and the data tables are files the fix reads when it wants them."""
     from maestro.codegen.build_state import error_from_dict
     error = error_from_dict(fc.error)
     cls = classify(error)
-    # Every file on disk, not just the model-authored ones: state.ts, data.ts, main.ts and
-    # engine.d.ts are GENERATED, so the manifest omits them — and they are precisely the four the
-    # measured successful fix read first. A file the model cannot see it may read is a file it
-    # invents assumptions about.
-    # engine.d.ts is the kit surface. game_files() drops .d.ts (right for the conform/typecheck
-    # sweeps), but this is the file the fix reads INSTEAD of being handed 14KB of kit doc.
+    # Everything readable, not just the manifest's model-authored files: the GENERATED ones and
+    # engine.d.ts are what a fix traces through.
     filelist = ", ".join(sorted(set(game_files(run_dir)) | {"engine.d.ts"}))
     system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
     user = "\n\n".join(p for p in [
@@ -521,11 +506,9 @@ def _apply_tool_call(tools, fc, tc) -> None:
 
 # ── audit (the spec-vs-code sweep, one turn + one retry) ──────────────────────
 def audit_step(spec, run_dir, tools, fc, result) -> Outcome:
-    """One audit round: every spec claim judged in turn by a bounded read→verdict subloop — the
-    judge reads the files it needs and must cite the traced path (single-shot judging over pasted
-    sources was measured wrong both ways on the same code; tracing corrected it). A claim with no
-    verdict inside its turn cap is SKIPPED, never a finding — an audit failure must not strand a
-    green build."""
+    """One audit round: every spec claim judged by a read→verdict subloop that must cite the traced
+    path. A claim with no verdict inside its turn cap is SKIPPED, never a finding — an audit failure
+    must not strand a green build."""
     from maestro.codegen import audit
     claims = audit.claims_of(spec)
     if not claims:
@@ -538,11 +521,16 @@ def audit_step(spec, run_dir, tools, fc, result) -> Outcome:
     content = message.get("content", "") or ""
     if len(content) > 2000:
         content = "[…truncated…]\n" + content[-2000:]
-    tcs = [tc for tc in (message.get("tool_calls") or [])
-           if tc.get("function", {}).get("name") == "read_file"]
+    calls = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
     fc.turn += 1
 
-    if tcs and fc.nreads < audit.READS_BEFORE_VERDICT and fc.turn < audit.CLAIM_TURN_CAP:
+    # A model that answers with the JSON in content instead still lands via parse_verdict below.
+    committed = next((tc for tc in calls if tc["function"]["name"] == "verdict"), None)
+    if committed:
+        content = json.dumps(parse_args(committed["function"].get("arguments")))
+
+    tcs = [tc for tc in calls if tc["function"]["name"] == "read_file"]
+    if tcs and not committed and fc.turn < audit.CLAIM_TURN_CAP:
         fc.history.append({"role": "assistant", "content": content, "tool_calls": tcs})
         for tc in tcs:
             args = parse_args(tc["function"].get("arguments"))
@@ -560,10 +548,8 @@ def audit_step(spec, run_dir, tools, fc, result) -> Outcome:
     verdict = audit.parse_verdict(content)
     if verdict is None and fc.turn < audit.CLAIM_TURN_CAP:
         fc.history.append({"role": "assistant", "content": content})
-        nudge = ("No more reads — output ONLY the verdict JSON object now."
-                 if fc.nreads >= audit.READS_BEFORE_VERDICT
-                 else "Call read_file, or output ONLY the verdict JSON object.")
-        fc.history.append({"role": "user", "content": nudge})
+        fc.history.append({"role": "user",
+                           "content": "Call read_file to trace further, or call verdict to commit."})
         return _audit_claim_infer(audit, claims, fc)
 
     claim = claims[fc.claim_idx]

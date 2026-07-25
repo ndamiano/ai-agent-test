@@ -29,7 +29,7 @@ _N = 6   # claims_of(_SPEC): E + 2 mechanics + win/lose/render (W is movement, e
 
 # ── claims ────────────────────────────────────────────────────────────────────
 def test_claims_enumerate_controls_mechanics_and_endings():
-    """Movement controls are scaffold-owned (gated by dead_movement + single_mover) — the audit
+    """Movement controls are scaffold-owned — the audit
     judges only game-owned claims, so 'W: move up' is excluded and E-interact stays."""
     claims = audit.claims_of(_SPEC)
     assert claims == [
@@ -121,14 +121,17 @@ def test_failed_verdict_becomes_a_finding_with_the_evidence(tmp_path):
     assert fc.delivered == []
 
 
-def test_read_cap_drops_the_tool_and_turn_cap_skips_the_claim(tmp_path):
+def test_reads_are_never_capped_and_the_turn_cap_skips_the_claim(tmp_path):
+    """The judge decides when it has traced enough. A read quota made it guess: one claim judged on
+    2 reads called a promised segment-respawn delivered from two unused constants."""
     run_dir = _game(tmp_path)
     tools, _ = _tools()
     fc = _fc()
     build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
-    for _ in range(audit.READS_BEFORE_VERDICT):
+    for _ in range(8):                       # well past the old 4-read quota
         out = build_steps.step("audit", _SPEC, run_dir, tools, fc, _read_reply())
-    assert out.schemas == []   # read tool dropped — verdict forced
+    names = {s["function"]["name"] for s in out.schemas}
+    assert names == {"read_file", "verdict"}     # both still offered, however much it has read
 
     # Garbage until the turn cap: the claim is SKIPPED (fail-open), never a finding.
     while fc.claim_idx == 0:
@@ -137,6 +140,22 @@ def test_read_cap_drops_the_tool_and_turn_cap_skips_the_claim(tmp_path):
     assert fc.verdicts[0]["status"] == "skipped"
     assert fc.findings == [] and fc.delivered == []
     assert "audit claim 2/6" in out.report
+
+
+def test_verdict_tool_call_commits_the_judgement(tmp_path):
+    """Committing is a tool call now, not a bare JSON reply the parser has to recognise."""
+    run_dir = _game(tmp_path)
+    tools, _ = _tools()
+    fc = _fc()
+    build_steps.step("audit", _SPEC, run_dir, tools, fc, {})
+    reply = {"choices": [{"message": {"content": "", "tool_calls": [
+        {"id": "c1", "function": {"name": "verdict", "arguments": json.dumps(
+            {"status": "broken", "evidence": "health.ts:9 calls kit.lose()",
+             "fix_note": "Respawn at the segment start instead."})}}]}}]}
+    build_steps.step("audit", _SPEC, run_dir, tools, fc, reply)
+    assert fc.verdicts[0]["status"] == "broken"
+    assert "kit.lose()" in fc.verdicts[0]["evidence"]
+    assert len(fc.findings) == 1
 
 
 def test_round_finishes_with_report_log_and_finding_cap(tmp_path):

@@ -19,7 +19,6 @@ from maestro.codegen.fix_classes import (
     strip_unplanned_imports,
 )
 from maestro.codegen.gates import game_dir, reconcile_types, typecheck
-from maestro.codegen.module import _detect_single_mover
 from maestro.modules.module import Error, ErrorType
 from maestro.state import RunState
 
@@ -43,10 +42,6 @@ def test_arg_count_error_falls_to_default():
     # TS2554 (arg count) is not yet its own class — degrades to the generic loop, never misrouted.
     e = _err("line 9: error TS2554: Expected 2 arguments, but got 3")
     assert classify(e) is DEFAULT
-
-
-
-
 
 
 def test_crash_falls_to_default():
@@ -241,143 +236,9 @@ def test_start_fix_reports_every_deterministic_change_shape(tmp_path):
         assert started is False   # deterministic resolved it — no llm turn
 
 
-# ── contract-assert: deterministic append of the known line ───────────────────
-from maestro.codegen.fix_classes import (
-    CONTRACT_ASSERT,
-    SINGLE_MOVER,
-    _append_contract_assert,
-    _strip_redundant_movers,
-)
-
-
 def _spec_3d(tmp_path, scheme="follow-3d"):
     (tmp_path / "spec.json").write_text(json.dumps(
         {"mode": "3d", "design": {"control": {"scheme": scheme}}}), encoding="utf-8")
-
-
-def test_contracted_error_routes_to_contract_assert():
-    assert classify(_err("game.ts is missing the scaffold contract assertion", code="contracted")) \
-        is CONTRACT_ASSERT
-
-
-def test_single_mover_error_routes_to_its_class():
-    assert classify(_err("game.ts line 74: kit.moveTopDown3(..., input, ...)", code="single_mover")) \
-        is SINGLE_MOVER
-
-
-def test_append_contract_assert_writes_the_3d_line(tmp_path):
-    _spec_3d(tmp_path)
-    _write_files(tmp_path, {"game.ts": "export function update() {}\n"})
-    res = _append_contract_assert(tmp_path, None)
-    assert res["count"] == 1
-    body = (tmp_path / "game" / "game.ts").read_text(encoding="utf-8")
-    assert "_scaffoldContract" in body
-    assert "draw" not in body.splitlines()[-1]   # 3D contract has no draw
-
-
-def test_append_contract_assert_idempotent(tmp_path):
-    _spec_3d(tmp_path)
-    _write_files(tmp_path, {"game.ts": "const _scaffoldContract: GameHooks<S> = { };\n"})
-    assert _append_contract_assert(tmp_path, None) is None
-
-
-# ── single-mover: deterministic strip of a standalone redundant movement line ─
-def test_strip_redundant_mover_line(tmp_path):
-    src = ("export function update(state, dt, input, kit) {\n"
-           "  kit.moveTopDown3(p as Kit.Entity, input, dt, 8);\n"
-           "  state.t += dt;\n"
-           "}\n")
-    _write_files(tmp_path, {"game.ts": src})
-    res = _strip_redundant_movers(tmp_path, None)
-    assert res["count"] == 1
-    body = (tmp_path / "game" / "game.ts").read_text(encoding="utf-8")
-    assert "moveTopDown3" not in body and "state.t += dt;" in body
-
-
-def test_strip_leaves_generated_and_expression_calls(tmp_path):
-    _write_files(tmp_path, {
-        "main.ts": "// GENERATED control scaffold\nkit.drive(state.player, input, dt, 8);\n",
-        "game.ts": "const moved = kit.drive(state.player, input, dt, 8) ?? 0;\n",
-    })
-    # main.ts is GENERATED (skipped); game.ts's call is inside an expression (not a standalone
-    # statement line) — neither is stripped, so the pass reports nothing and the LLM path runs.
-    assert _strip_redundant_movers(tmp_path, None) is None
-
-
-def test_detect_single_mover_flags_input_driven_call_in_scaffolded_game(tmp_path):
-    _write_files(tmp_path, {
-        "main.ts": "// GENERATED control scaffold\nkit.drive(state.player, input, dt, 8);\n",
-        "game.ts": "export function update(state, dt, input, kit) {\n"
-                   "  kit.moveTopDown3(state.player, input, dt, 8);\n}\n",
-    })
-    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path))
-    errs = _detect_single_mover(None, None, ctx)
-    assert len(errs) == 1 and errs[0].code == "single_mover" and "moveTopDown3" in errs[0].message
-    # seek3/AI movers and non-input calls don't trigger
-    _write_files(tmp_path, {"game.ts": "kit.seek3(e, target, 4, dt);\nkit.drive(p, fakeInput, dt);\n"})
-    assert _detect_single_mover(None, None, ctx) == []
-
-
-def test_detect_single_mover_sees_input_guards_and_register_handlers(tmp_path):
-    """The two shipped blind spots: `input` BEFORE the mover in a guard, and a mover inside a
-    kit.register handler (input-driven by construction, no `input` token near the call)."""
-    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path))
-    _write_files(tmp_path, {
-        "game.ts": "export function update(state, dt, input, kit) {\n"
-                   "  if (input.pressed(\"w\") && kit.gridMove(state.player, 0, -1, cell, pass)) moved = true;\n"
-                   "}\n"})
-    errs = _detect_single_mover(None, None, ctx)
-    assert len(errs) == 1 and "gridMove" in errs[0].message
-
-    _write_files(tmp_path, {
-        "game.ts": "export function init(state, kit) {\n"
-                   "  kit.register(\"move_up\", [\"w\"], () => {\n"
-                   "    if (!state.inCombat && kit.gridMove(state.player, 0, -1, cell, pass)) { }\n"
-                   "  });\n"
-                   "}\n"})
-    errs = _detect_single_mover(None, None, ctx)
-    assert len(errs) == 1 and "gridMove" in errs[0].message
-
-    # An NPC mover after a CLOSED register handler stays legal.
-    _write_files(tmp_path, {
-        "game.ts": "export function init(state, kit) {\n"
-                   "  kit.register(\"interact\", [\"e\"], () => { state.talking = true; });\n"
-                   "  kit.gridMove(state.npc, 1, 0, cell, pass);\n"
-                   "}\n"})
-    assert _detect_single_mover(None, None, ctx) == []
-
-    # A register-wrapped mover on a key the scaffold does NOT bind is that key's ONLY wiring —
-    # the correct realization of a spec control like Q, not a double-move.
-    _write_files(tmp_path, {
-        "game.ts": "export function init(state, kit) {\n"
-                   "  kit.register(\"move_left\", [\"q\"], () => {\n"
-                   "    kit.gridMove(state.player, -1, 0, cell, pass);\n"
-                   "  });\n"
-                   "}\n"})
-    assert _detect_single_mover(None, None, ctx) == []
-
-
-def test_strip_deletes_scaffold_key_register_handlers_and_keeps_the_rest(tmp_path):
-    """The LLM lane relocates instead of deleting, so the register-wrapped double-move must fall to
-    the deterministic pass: scaffold-key handlers deleted whole, the q handler and interact kept."""
-    from maestro.codegen.fix_classes import _strip_redundant_movers
-    src = ("export function init(state, kit) {\n"
-           "  kit.register(\"move_up\", [\"w\"], () => {\n"
-           "    if (kit.gridMove(state.player, 0, -1, cell, pass)) { check(state); }\n"
-           "  });\n"
-           "  kit.register(\"move_left\", [\"q\"], () => {\n"
-           "    kit.gridMove(state.player, -1, 0, cell, pass);\n"
-           "  });\n"
-           "  kit.register(\"interact\", [\"e\"], () => { state.talking = true; });\n"
-           "}\n")
-    _write_files(tmp_path, {"game.ts": src})
-    res = _strip_redundant_movers(tmp_path, None)
-    assert res and res["count"] == 1
-    body = (tmp_path / "game" / "game.ts").read_text()
-    assert "move_up" not in body
-    assert "move_left" in body and "interact" in body
-    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path))
-    assert _detect_single_mover(None, None, ctx) == []
 
 
 # ── write-time strip of unplanned imports ─────────────────────────────────────

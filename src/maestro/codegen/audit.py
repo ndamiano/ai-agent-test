@@ -2,13 +2,11 @@
 time against the game's source, so a build ends on spec-exhausted rather than errors-zero — the
 gates prove a game RUNS, not that its declared mechanics exist.
 
-Claims are enumerated MECHANICALLY from the spec's fields — asked to choose its own checklist, a
-small model returns one finding and stops. Each claim is judged by a bounded read→verdict subloop
-(the fix loop's grounding, transplanted): the judge reads the files it needs and must cite the
-traced path. Single-shot judging over pasted sources was measured wrong BOTH ways on the same code
-— unanimous "broken" on a working mechanic, "delivered" swinging 11/12→5/12 between sweeps — and
-tracing corrected both. Each failed claim becomes a human-note-shaped fix on the fix_from_note
-lane; the driver re-gates, re-audits, and finalizes on a clean sweep or the round/step caps.
+Claims are enumerated MECHANICALLY from the spec's fields, never chosen by the model. Each is judged
+by a read→verdict subloop: the judge reads the files it needs and must cite the traced path, which is
+what grounds the verdict — judging pasted sources goes wrong in both directions. Each failed claim
+becomes a human-note-shaped fix on the fix_from_note lane; the driver re-gates, re-audits, and
+finalizes on a clean sweep or the round/step caps.
 
 FAIL-OPEN is law: a claim with no verdict inside its turn cap is skipped (never a finding), an
 exhausted budget finalizes ok. A game that never finishes is worse than an incomplete one that
@@ -27,17 +25,16 @@ from maestro.codegen.module import _PROMPTS, _READ_SCHEMA, _design_block
 
 _AUDIT_MAX_TOKENS = 3000
 MAX_FINDINGS_PER_ROUND = 5
-CLAIM_TURN_CAP = 6       # inference turns one claim may spend before it is skipped
-READS_BEFORE_VERDICT = 4  # reads before the read tool is dropped and a verdict is forced
+# Runaway backstop — the judge commits via `verdict` when it has traced enough.
+CLAIM_TURN_CAP = 20
 
 _FAIL_STATUSES = ("broken", "stub", "missing")
 _STATUSES = ("delivered",) + _FAIL_STATUSES + ("blocked",)
 
 
-# Movement controls are scaffold-owned law, already gated by single_mover — an
-# audit verdict on them re-judges the pipeline's own wiring (the same reason authoring skips
-# movement keys). Matched on the description: the spec may put movement on a
-# key the scheme doesn't bind, and it is still not the game code's claim to deliver.
+# Movement is scaffold-owned law — an audit verdict on it re-judges the pipeline's own wiring.
+# Matched on the description: the spec may put movement on a key the scheme doesn't bind, and
+# it is still not the game code's claim to deliver.
 _MOVEMENT_CLAIM = re.compile(r"\b(move|walk|steer|drive|turn|jump)\b", re.I)
 
 
@@ -72,11 +69,24 @@ def claim_prompt(spec: dict, run_dir, claim: str, anchored: bool) -> (str, str):
     return system, "\n\n".join(parts)
 
 
+VERDICT_SCHEMA = {"type": "function", "function": {
+    "name": "verdict",
+    "description": "Commit your judgement on the claim. Call this once you have traced enough — "
+                   "read as many files as you need first.",
+    "parameters": {"type": "object", "properties": {
+        "status": {"type": "string", "enum": sorted(_STATUSES),
+                   "description": "delivered | broken | stub | missing"},
+        "evidence": {"type": "string",
+                     "description": "file:line plus one sentence on what the traced code does"},
+        "fix_note": {"type": "string",
+                     "description": "empty when delivered, else one imperative sentence naming the "
+                                    "smallest change that delivers the claim"},
+    }, "required": ["status", "evidence"]}}}
+
+
 def read_schemas(nreads: int) -> List[dict]:
-    """The judge's toolset: read_file until it has read enough, then nothing — an empty toolset
-    forces the verdict (the fix loop's force-act, repurposed: claim 12 in the validation run spent
-    10 reads and never committed)."""
-    return [] if nreads >= READS_BEFORE_VERDICT else [_READ_SCHEMA]
+    """Both tools stay offered: the judge reads until it decides it can commit."""
+    return [_READ_SCHEMA, VERDICT_SCHEMA]
 
 
 def parse_verdict(text: str) -> Optional[Dict]:

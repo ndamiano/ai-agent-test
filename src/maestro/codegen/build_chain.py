@@ -42,8 +42,7 @@ logger = logging.getLogger(__name__)
 _TYPE_RANK = {ErrorType.HUMAN: 0, ErrorType.BUILD: 1, ErrorType.FIX: 2}
 _STUCK_WINDOW = 40
 _STUCK_REPEATS = 20
-# How many sweeps an error may recur across before the CONTRACT gets a chance to be the thing that
-# is wrong. Well under _STUCK_REPEATS: parking gives up on an error, amend still tries to fix it.
+# Attempts on one error before the CONTRACT gets a chance to be the thing that is wrong.
 _AMEND_RECURRENCES = 3
 
 # error.code -> fix shape (build_steps). Everything else is a read→edit subloop.
@@ -333,12 +332,8 @@ def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, sta
                     for k, v in res.get("changes", [])[:8])
                 _emit_step(run_id, cursor, f"[{cls.id}] deterministic pass ({res['count']} edit(s): {summary})")
                 return False
-        # RECURRENCE, not just a repeated snapshot: two errors that each re-cause the other
-        # oscillate, so the to-do changes every sweep and `stalled` never trips — which is exactly
-        # the shape a wrong contract makes, because neither file is the one that is wrong.
-        # Counted over errors this build actually TRIED to fix, never over the to-do: a sweep's
-        # snapshot lists every failing error, so an error merely waiting its turn behind higher
-        # priority ones would otherwise earn a contract ruling before one line of it was ever edited.
+        # Recurrence over fixes ENTERED, not the to-do: two errors that re-cause each other
+        # oscillate without `stalled` ever tripping, and an error waiting its turn has not been tried.
         cursor.attempted.append(idkey(error))
         recurred = cursor.attempted.count(idkey(error)) >= _AMEND_RECURRENCES
         if ((stalled or recurred) and idkey(error) not in cursor.amend_tried

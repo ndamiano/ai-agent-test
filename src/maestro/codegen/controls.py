@@ -4,9 +4,8 @@ that actually exist.
 The runtime's whole input surface is `down(key)` / `pressed(key)` / `pointer` (+ mouse-look
 deltas): there is no gamepad. But a spec asking for `A_BUTTON: swing weapon` has stated a
 perfectly clear intent, so the pipeline MAPS it rather than refusing it — the same way authoring
-already folds `LEFT_CLICK`/`Spacebar`/`Up` into the tokens it understands. Refusing instead of
-mapping cost one measured build its entire step budget: the scaffold could not bind
-`LEFT_STICK`, which no edit can ever satisfy.
+already folds `LEFT_CLICK`/`Spacebar`/`Up` into the tokens it understands. An unmapped control
+leaves the scaffold with nothing to bind, which no edit downstream can satisfy.
 """
 
 import re

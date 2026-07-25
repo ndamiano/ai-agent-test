@@ -18,7 +18,6 @@ from maestro.codegen.gates import (
 from maestro.codegen.module import (
     CodegenModule,
     _authoring_order,
-    _detect_contracted,
 )
 from maestro.codegen.scaffold import (
     _interact_keys,
@@ -551,18 +550,6 @@ def test_contract_assertion_clean_hooks_typecheck_green(tmp_path):
     assert typecheck(tmp_path) == []
 
 
-def test_contracted_check_demands_the_assertion_line(tmp_path):
-    _assert_run(tmp_path, _HOOKS_OK.replace(
-        "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };\n", ""))
-    ctx = SimpleNamespace(state=SimpleNamespace(run_dir=tmp_path),
-                          spec={"design": {"control": {"scheme": "top-down"}}})
-    errs = _detect_contracted(None, None, ctx)
-    assert len(errs) == 1 and errs[0].path == "game.ts"
-    assert "_scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud }" in errs[0].message
-    _assert_run(tmp_path, _HOOKS_OK)   # with the line present the check is clean
-    assert _detect_contracted(None, None, ctx) == []
-
-
 def test_required_state_fields_come_from_the_scheme_s_own_template():
     """Read off the template that will actually be seeded, so it cannot drift from the scaffold."""
     from maestro.codegen.scaffold import required_state_fields
@@ -611,3 +598,33 @@ def test_state_contract_notes_keep_whole_comment_blocks():
         {"mode": "2d", "design": {"control": {"scheme": "platformer"}}}))
     assert "state.cell? (defaults to" in notes
     assert "tilemap.tile or 32" in notes          # the continuation line, which says no `state.`
+
+
+def test_contract_assertion_is_held_only_for_the_typecheck(tmp_path):
+    """The line is dead code that exists so a hook signature drift lands in game.ts instead of the
+    GENERATED scaffold. tsc is the only thing that sees it; it is never left on disk."""
+    from types import SimpleNamespace
+    from maestro.codegen.module import _with_contract_assert
+    from maestro.codegen.scaffold import contract_assert_line, has_contract_assert
+
+    _assert_run(tmp_path, _HOOKS_OK.replace(
+        "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };\n", ""))
+    spec = {"design": {"control": {"scheme": "top-down"}}}
+    before = (tmp_path / "game" / "game.ts").read_text()
+    assert not has_contract_assert(tmp_path)
+
+    with _with_contract_assert(tmp_path, spec):
+        assert contract_assert_line(spec) in (tmp_path / "game" / "game.ts").read_text()
+
+    assert (tmp_path / "game" / "game.ts").read_text() == before   # restored exactly
+
+
+def test_contract_assertion_left_alone_when_the_game_already_has_it(tmp_path):
+    from maestro.codegen.module import _with_contract_assert
+
+    _assert_run(tmp_path, _HOOKS_OK)
+    spec = {"design": {"control": {"scheme": "top-down"}}}
+    before = (tmp_path / "game" / "game.ts").read_text()
+    with _with_contract_assert(tmp_path, spec):
+        pass
+    assert (tmp_path / "game" / "game.ts").read_text() == before

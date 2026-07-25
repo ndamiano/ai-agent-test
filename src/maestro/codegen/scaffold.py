@@ -1,11 +1,8 @@
 """Control scaffold — the PIPELINE wires the controls; the model authors gameplay behind hooks.
 
-WHY this stage exists: two live builds shipped games where opening them did nothing. One never read
-a movement key at all, yet nothing caught it because a space-attack still mutated state. One
-wired kit.moveTopDown correctly and then a hand-rolled collision loop undid the movement every
-frame. Both share a root: controls are the one part of a game with exactly ONE correct realization
-given the frozen spec's control scheme, so model-authored glue there is pure downside. This
-generalizes the worldgen precedent (pipeline-seeded world.ts) to the control layer.
+Controls are the one part of a game with exactly ONE correct realization given the frozen spec's
+control scheme, so model-authored glue there is pure downside — the same reason worldgen seeds
+world.ts.
 
 `seed_scaffold` writes a GENERATED `game/main.ts` from a per-scheme template
 (`scaffold_templates/<scheme>.ts.tmpl` — real TypeScript we own, hill-climbable). The scaffold owns
@@ -73,10 +70,8 @@ _INTERACT_WHAT = re.compile(r"interact|talk|dialog|speak", re.I)
 
 def _interact_keys(spec: dict) -> list:
     """The keys the scaffold's interact action binds: the spec's own interact-shaped control when it
-    names one, else E. Hardcoding E cost a live build its whole step budget — the spec bound
-    interact to SPACE, the hook registered it correctly on space, and the scaffold's later
-    same-name register replaced that binding (register replaces by name), silently unbinding the
-    spec's own key."""
+    names one, else E. A hardcoded E would silently unbind a spec that put interact elsewhere — the
+    scaffold's later register replaces the hook's by name."""
     controls = (spec.get("design") or {}).get("controls") or {}
     for raw, what in controls.items():
         if not _INTERACT_WHAT.search(str(what)):
@@ -100,10 +95,9 @@ _HOOK_EXPORT = r"export\s+(?:async\s+)?(?:function\s+{name}\b|const\s+{name}\b)|
 def reexport_hooks(run_dir) -> dict:
     """Deterministic bridge for hooks the model authored in the WRONG file: a scaffold hook missing
     from game.ts but exported by exactly one sibling gets a one-line re-export appended to game.ts.
-    The model's placement was a reasonable decision (createState beside the world builder); the
-    scaffold's import path is the only thing that's law — bridge them instead of making the model
-    move code (measured: a capped run diagnosed this exact split correctly and still couldn't land
-    the move by hand). Returns {changes, count}."""
+    The model's placement is a reasonable decision (createState beside the world builder); only the
+    scaffold's import path is law — bridge them rather than make the model move code.
+    Returns {changes, count}."""
     files = game_files(run_dir)
     hook_src = files.get(ENTRY_HOOK)
     if hook_src is None:
@@ -164,10 +158,8 @@ def _scaffold_source(spec: dict) -> str:
 def required_state_fields(spec: dict) -> list:
     """The state fields THIS spec's scaffold touches, read off the template it will actually seed.
 
-    The scaffold steers the game through these — `state.player` is asserted at init — but the
-    architecture turn runs before main.ts is written and is never told, so it omits them and the gap
-    surfaces as a runtime assert twenty steps later, in a contract no fix loop can widen (state.ts is
-    GENERATED). Derived from the template so it cannot drift from the scaffold it describes.
+    The scaffold steers the game through these and asserts `state.player` at init. Derived from the
+    template so it cannot drift from the scaffold it describes.
     """
     return sorted(set(_STATE_REF_RE.findall(_scaffold_source(spec))))
 
@@ -175,14 +167,11 @@ def required_state_fields(spec: dict) -> list:
 def state_contract_notes(spec: dict) -> list:
     """The template's OWN comment lines documenting what those fields must be.
 
-    Names alone are not enough: told only that `ground` exists, the architecture declared it
-    `Entity | null` and the scaffold called it as `state.ground(x, z)` — a frame-0 TypeError. The
-    templates already document each field's shape beside the code that uses it, so the prompt quotes
-    them rather than restating a contract that could drift.
+    A name alone does not give the field's shape. The templates document each one beside the code
+    that uses it, so the prompt quotes them rather than restating a contract that could drift.
     """
-    # Whole contiguous comment BLOCKS, not the lines that happen to say `state.`: these notes wrap,
-    # and taking matching lines only cut one mid-sentence at "state.cell? (defaults to" — the model
-    # never saw "tilemap.tile or 32", so it declared `cell: {w, h}` where the scaffold wants a number.
+    # Whole comment BLOCKS, not the lines that mention `state.` — these notes wrap, and a
+    # continuation line carrying the type often names no field.
     notes, block, hit = [], [], False
     for line in _scaffold_source(spec).splitlines() + [""]:
         stripped = line.strip()

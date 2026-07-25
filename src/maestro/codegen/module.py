@@ -20,11 +20,13 @@ transcript memory.
 
 import json
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 from maestro.codegen import conform, data_files, interfaces
 from maestro.codegen.gates import (
     RUNTIME_DIR,
+    game_dir,
     game_files,
     read_manifest,
     run_headless,
@@ -50,9 +52,8 @@ def _kit_doc(spec: dict) -> str:
     doc = "kit_api_3d.md" if spec.get("mode") == "3d" else "kit_api.md"
     text = (RUNTIME_DIR / doc).read_text(encoding="utf-8")
     # The worldgen sections (heightAt/WORLD/spawnWorld) only exist when world.ts is seeded. Injected
-    # into a NON-world game they are hallucination bait: a measured build oscillated 10+ steps because
-    # a runtime fix obediently added `heightAt(...)` (per the doc) and the typecheck fix then stripped
-    # the undefined name — two fixers undoing each other.
+    # into a NON-world game they are hallucination bait — one fixer adds `heightAt(...)` per the doc
+    # and the next strips it as an undefined name.
     if not spec.get("world"):
         text = re.sub(r"<!-- world -->.*?<!-- /world -->\n?", "", text, flags=re.S)
     return text
@@ -250,82 +251,28 @@ def _detect_authored(check, module, context):
     return []
 
 
-def _detect_contracted(check, module, context):
-    """A scaffolded game.ts must carry the contract assertion — the line that makes every hook
-    signature drift a LOCAL tsc error in game.ts (the shape the model fixes reliably) instead of an
-    error at the GENERATED scaffold's import site. Its absence is silent to tsc, so this gate
-    demands it; the MODEL appends it via the edit subloop (a prompting fix — the pipeline never
-    edits game.ts)."""
-    run_dir = context.state.run_dir
-    if not (game_files(run_dir).get(ENTRY_HOOK) or "").strip() or has_contract_assert(run_dir):
-        return []
-    line = contract_assert_line(context.spec)
-    return [Error(type=ErrorType.FIX, code="contracted", component="game", path=ENTRY_HOOK,
-                  message=f"{ENTRY_HOOK} is missing the scaffold contract assertion — read the file, "
-                          f"then append EXACTLY this line at the end (ONE edit hunk with an EMPTY "
-                          f"old_string appends):\n{line}")]
+@contextmanager
+def _with_contract_assert(run_dir, spec):
+    """Hold the scaffold contract assertion in game.ts for the duration of a typecheck.
+
+    The line is dead code whose only effect is to make a hook signature drift a LOCAL tsc error in
+    game.ts, instead of an error at the GENERATED scaffold's import site that the tools refuse to
+    edit. It exists for tsc and nothing else, so tsc is the only thing that ever sees it.
+    """
+    path = game_dir(run_dir) / ENTRY_HOOK
+    src = path.read_text(encoding="utf-8") if path.exists() else ""
+    added = bool(src.strip()) and not has_contract_assert(run_dir)
+    if added:
+        path.write_text(f"{src.rstrip()}\n{contract_assert_line(spec)}\n", encoding="utf-8")
+    try:
+        yield
+    finally:
+        if added and path.exists():
+            path.write_text(src, encoding="utf-8")
 
 
 _MOVER_RE = re.compile(r"kit\s*\.\s*(drive|moveTopDown3?|moveTank3|moveRelative|moveFP|walk|gridMove)\s*\(")
 
-
-# The keys every scaffold's movement pass reads. A register-wrapped mover on any of these
-# double-moves (the scaffold already moves on the press); on any OTHER key the handler is the
-# key's ONLY wiring — the correct realization of a spec control the scaffold doesn't bind
-# (e.g. Q for move-left), and the scaffold owns movement wiring anyway.
-_SCAFFOLD_MOVE_KEYS = {"w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"}
-_REGISTER_KEYS_RE = re.compile(r"kit\s*\.\s*register\s*\(\s*\"[^\"]*\"\s*,\s*\[([^\]]*)\]")
-
-
-def _mover_is_input_driven(src: str, m) -> bool:
-    """True when the mover call double-applies player input: `input` anywhere in its statement (a
-    guard like `if (input.pressed(..) && kit.gridMove(..))` puts it BEFORE the call, so a
-    call-forward window alone misses it), or the call sits inside a still-open kit.register handler
-    whose keys the scaffold's movement pass also reads. A mover steering an NPC from plain code
-    matches neither."""
-    line_start = src.rfind("\n", 0, m.start()) + 1
-    stmt_end = src.find(";", m.end())
-    stmt = src[line_start:stmt_end if stmt_end != -1 else m.end() + 150]
-    if re.search(r"\binput\b", stmt):
-        return True
-    back = src[max(0, line_start - 400):line_start]
-    reg = back.rfind("kit.register")
-    if reg == -1 or "});" in back[reg:]:
-        return False
-    keys_m = _REGISTER_KEYS_RE.search(back[reg:])
-    if not keys_m:
-        return True
-    keys = {k.strip().strip("'\"").lower() for k in keys_m.group(1).split(",") if k.strip()}
-    return bool(keys & _SCAFFOLD_MOVE_KEYS)
-
-
-def _detect_single_mover(check, module, context):
-    """Movement is wired ONCE, in the GENERATED main.ts. A model file calling an input-driven kit
-    mover AGAIN double-moves the player (2x speed) or fights the scaffold — one measured build
-    shipped a knight at double speed (game.ts ran moveTopDown3 on top of the scaffold's kit.drive)
-    and no runtime gate can see it. Static and cheap,
-    so it runs between typecheck and the runtime gates."""
-    run_dir = context.state.run_dir
-    errors = []
-    for name, src in game_files(run_dir).items():
-        if src.lstrip().startswith("// GENERATED"):
-            continue
-        for m in _MOVER_RE.finditer(src):
-            if not _mover_is_input_driven(src, m):
-                continue
-            ln = src[:m.start()].count("\n") + 1
-            errors.append(Error(
-                type=ErrorType.FIX, code="single_mover", component="game", path=name,
-                message=f"{name} line {ln}: `kit.{m.group(1)}(..., input, ...)` — but this is a "
-                        f"SCAFFOLDED game: the GENERATED main.ts already applies the spec's control "
-                        f"scheme to state.player EVERY frame, before your update runs. A second "
-                        f"input-driven movement call double-moves the player (or fights the "
-                        f"scaffold's move). DELETE the whole call statement (a mover inside a "
-                        f"kit.register movement handler: delete that whole register call); keep any "
-                        f"bounds/ground clamps that run after it. Movement speed is tuned via "
-                        f"state.player.speed, never by re-wiring input."))
-            break   # one per file — the fix strips every occurrence anyway
-    return errors
 
 
 def _contract_block(run_dir, exclude: str) -> str:
@@ -351,12 +298,13 @@ def _detect_typechecks(check, module, context):
     An error tsc blames on a GENERATED file (the control scaffold's import of a hook that game.ts
     fails to export, a hud whose items don't typecheck at the scaffold's call site) is RE-ATTRIBUTED
     to the hook file: the generated side is law and the tools refuse to edit it, so routing the
-    error there strands the fix (measured: a capped run spent ~130 calls on main.ts errors it was
-    forbidden from touching)."""
+    error there strands the fix on a file it may not touch."""
     run_dir = context.state.run_dir
     files = game_files(run_dir)
     by_file = {}
-    for f, msg in typecheck(run_dir):
+    with _with_contract_assert(run_dir, context.spec):
+        raw = typecheck(run_dir)
+    for f, msg in raw:
         if f != ENTRY_HOOK and files.get(f, "").startswith("// GENERATED"):
             msg = (f"(reported in {f}, a GENERATED file whose contract is law — the real fix is "
                    f"making {ENTRY_HOOK}'s exports/signatures satisfy it) {msg}")
@@ -465,13 +413,9 @@ _WRITE_SCHEMA = {"type": "function", "function": {
                    "properties": {"file": {"type": "string"},
                                   "code": {"type": "string", "description": "the complete file source"}},
                    "required": ["file", "code"]}}}
-# Diagnosis is READING, and cutting it short is what strands a fix. Measured on one crash: the model
-# had the right line at turn 3, argued itself out of it by turn 6, and the old 8-turn cap ended the
-# fix there; given room it read 11 files and landed the correct 2-hunk edit on turn 12. The caps are
-# a runaway backstop, not a budget — the step cap already bounds the build.
+# Runaway backstops, not budgets — the build's step cap is what bounds cost.
 _FIX_LOOP_MAX_TURNS = 25
-_READS_BEFORE_FORCE_ACT = 15  # after N reads with no write, drop read so the fix must ACT (kills the
-                              # read-thrash where a big/corrupt file eats every turn and none writes
+_READS_BEFORE_FORCE_ACT = 15  # reads with no write before the read tool drops and the fix must ACT
 
 _STUB_RE = re.compile(r"placeholder|do not use|will be replaced|fill (?:this|it|in) (?:later|next)"
                       r"|actual (?:file|fix|implementation) (?:first|later)", re.I)
@@ -491,9 +435,8 @@ def _fix_schemas(escalate: bool, nreads: int) -> list:
     change an existing file, so dropping it would strand the fix. WRITE is always offered for the one
     legitimate case (a planned file absent from disk); the tool itself refuses an overwrite. READ drops
     only once THIS fix has read enough without writing (`_READS_BEFORE_FORCE_ACT`) — never on the outer
-    stall: edits are grounded in reads, and an escalated fix that cannot read can only guess anchors
-    (measured: a stalled target spiraled — blind edit-misses, nothing ever landed, stall persisted).
-    Escalation's lever is the Services reasoning bump, not the toolset."""
+    stall: edits are grounded in reads, so a fix that cannot read can only guess anchors. Escalation's
+    lever is the reasoning bump, not the toolset."""
     schemas = [_READ_SCHEMA, _EDIT_SCHEMA, _WRITE_SCHEMA]
     if nreads >= _READS_BEFORE_FORCE_ACT:
         schemas = [s for s in schemas if s is not _READ_SCHEMA]
@@ -512,10 +455,8 @@ class CodegenModule(Module):
         Check(code="reviewed", detect=_detect_reviewed, job="author", blocking=True),
         Check(code="data", detect=_detect_data, job="author", blocking=True),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True),
-        Check(code="contracted", detect=_detect_contracted, job="fix", blocking=True),
         Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True),
         Check(code="conforms", detect=_detect_conforms, job="fix"),
-        Check(code="single_mover", detect=_detect_single_mover, job="fix"),
         Check(code="runs", detect=_detect_runs, job="fix"),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True),
     ]

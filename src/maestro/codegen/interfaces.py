@@ -78,14 +78,8 @@ def _list(v) -> List:
 
 
 # ── the kit's law: signatures the architecture does not get to choose ─────────
-# The architecture turn runs before any code exists and sees only the spec, so it invents the types
-# it needs. The entry hooks and the draw surface are not inventable: `main.ts` is GENERATED and calls
-# the hooks with fixed arity, and the game never touches the DOM — it draws through the kit's
-# DrawApi. A declaration that disagrees is authored faithfully into every file, and the mismatch only
-# surfaces at tsc, in the one file that was right, with no shape able to say the contract was wrong.
-#
-# So the hook signatures are read from `engine.d.ts` (the same types tsc checks against) and written
-# over whatever the model declared, on every save.
+# main.ts is GENERATED and calls the hooks with fixed arity; the game draws through DrawApi, never
+# the DOM. Both are read from engine.d.ts and written over the declaration on every save.
 _DOM_DRAW_TYPES = {
     "CanvasRenderingContext2D": "DrawApi",
     "OffscreenCanvasRenderingContext2D": "DrawApi",

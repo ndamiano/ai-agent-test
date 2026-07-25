@@ -242,9 +242,8 @@ def check(iface: Dict, sources: Dict[str, str]) -> List[Dict]:
         elif name in unexported:
             violations.append({
                 "kind": "UNEXPORTED", "file": unexported[name], "line": 0,
-                "msg": (f"you declared {name}() in the architecture, so it is part of this game's "
-                        f"wiring, but {unexported[name]} implements it without exporting it — no "
-                        f"other file can reach it.")})
+                "msg": (f"you declared {name}() in the architecture, but {unexported[name]} "
+                        f"implements it without exporting it — no other file can reach it.")})
 
     # One report per (kind, message): the same line often trips several patterns.
     seen, unique = set(), []

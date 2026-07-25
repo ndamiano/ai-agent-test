@@ -298,9 +298,8 @@ def reconcile_types(run_dir, include_fields: bool = True) -> dict:
 
 # ── duplicate-declaration dedupe ──────────────────────────────────────────────
 # Two complete implementations of the same top-level function (TS2323/TS2393) are trivial under a
-# whole-file rewrite but EDIT-HOSTILE: deleting a whole duplicate body needs one giant exact hunk,
-# which small models fumble (measured: ~70 calls churned on one duplicate `init`). Deterministic
-# collapse instead: keep the LAST complete implementation (latest intent), delete the earlier ones.
+# whole-file rewrite but EDIT-HOSTILE: deleting a whole duplicate body needs one giant exact hunk.
+# Deterministic collapse instead: keep the LAST complete implementation, delete the earlier ones.
 _FN_DECL = re.compile(r"^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(", re.M)
 
 

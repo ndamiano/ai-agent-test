@@ -56,7 +56,10 @@ class Infer:
     messages: List[dict]
     schemas: List[dict]
     max_tokens: int
-    reasoning: Optional[str] = None
+    # "none" is the floor for every build turn. Passing None instead reaches the connector as an
+    # explicit "let the model pick", which skips the enable_thinking switch — a measured authoring
+    # turn then spent 16000 tokens reasoning and never called `write`.
+    reasoning: Optional[str] = "none"
     report: Optional[str] = None      # progress line emitted when this turn is enqueued
 
 
@@ -437,9 +440,7 @@ def read_write_start(spec, run_dir, fc) -> Infer:
 def _read_write_infer(fc) -> Infer:
     schemas = _fix_schemas(fc.escalate, fc.nreads)
     msgs = MessageBuilder(fc.system).extend(fc.history).build()
-    # reasoning OFF: the fix is a bounded read→act loop; thinking-on burns the token budget and
-    # starves the tool call. The reads do the diagnosis empirically.
-    return Infer(msgs, schemas, _CODE_MAX_TOKENS, reasoning="none",
+    return Infer(msgs, schemas, _CODE_MAX_TOKENS,
                  report=f"fixing (turn {fc.turn + 1}/{_FIX_LOOP_MAX_TURNS})")
 
 
@@ -592,7 +593,7 @@ def _audit_claim_start(audit, spec, run_dir, claims, fc) -> Infer:
 
 def _audit_claim_infer(audit, claims, fc) -> Infer:
     msgs = MessageBuilder(fc.system).extend(fc.history).build()
-    return Infer(msgs, audit.read_schemas(fc.nreads), audit._AUDIT_MAX_TOKENS, reasoning="none",
+    return Infer(msgs, audit.read_schemas(fc.nreads), audit._AUDIT_MAX_TOKENS,
                  report=f"audit claim {fc.claim_idx + 1}/{len(claims)} (turn {fc.turn + 1})")
 
 

@@ -342,3 +342,16 @@ def test_a_refused_turn_with_nothing_to_preempt_still_fails(env, monkeypatch):
 
     assert db_store.game(run_id)["status"] == "failed"
     assert build_state.load(run_dir).ok is False
+
+
+def test_every_build_turn_disables_thinking():
+    """A build turn that reaches the connector with reasoning=None skips the enable_thinking
+    switch, and the model reasons instead of calling its tool — measured at 16000 tokens and no
+    `write`. The floor belongs to Infer's default, so no call site can forget it."""
+    from llm_clients.connector import LLMConnector
+    from maestro.codegen.build_steps import Infer
+
+    conn = LLMConnector(model="m", reasoning="none")
+    inf = Infer([{"role": "user", "content": "author it"}], [], 100)
+    payload, _ = conn.build_llm_job(inf.messages, inf.schemas, inf.max_tokens, inf.reasoning)
+    assert payload["body"]["chat_template_kwargs"] == {"enable_thinking": False}

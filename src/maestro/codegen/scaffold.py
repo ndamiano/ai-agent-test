@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 from maestro.codegen.controls import ACTIVATE_WHAT
+from maestro.codegen.data_files import generate_data_ts
 from maestro.codegen.gates import entry_src_path, game_dir, game_files
 from maestro.templating import render_template
 
@@ -264,6 +265,10 @@ def seed_scaffold(state, spec: dict) -> None:
                              "//                                                                    "
                              "the entity kit.focus targeted")
     game_dir(state.run_dir).mkdir(parents=True, exist_ok=True)
+    # main.ts imports ROWS from data.ts, so the pair must land together: the data stage rewrites
+    # this file the moment a design exists, and until then it is an empty index rather than an
+    # unresolvable import in a file the model is not allowed to edit.
+    generate_data_ts(state.run_dir)
     main.write_text(render_template(tmpl, {"activate": activate, "activate_init": activate_init,
                                            "activate_import": activate_import,
                                            "activate_contract": activate_contract,

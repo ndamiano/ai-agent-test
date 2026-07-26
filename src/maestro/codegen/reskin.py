@@ -30,7 +30,7 @@ from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import asset_chain
 from maestro.codegen.data_files import sprite_plan_from_data
 from maestro.codegen.gates import extract_code, game_dir, game_files
-from maestro.codegen.run import run_build
+from maestro.codegen.run import BuildResult, run_build
 from maestro.codegen.worldgen_bridge import _write_world_ts
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -72,20 +72,23 @@ _MODE_3D = re.compile(r"""mode\s*:\s*["']3d["']""")
 
 
 _GENERATED = "// GENERATED"
-_SPAWN_DATA = re.compile(r"kit\s*\.\s*spawnData\s*\(")
-_DRAWS_ASSET = re.compile(r"kit\s*\.\s*drawEntity\s*\(")
+_TYPE_LITERAL = re.compile(r"""\btype\s*:\s*["']([A-Za-z0-9_]+)["']""")
 
 
-def _binds_data_assets(files: dict, mode_3d: bool) -> bool:
-    """Whether the source already binds its rows' asset ids, making the reskin rewrite unnecessary.
+def _binds_data_assets(files: dict, ids: list) -> bool:
+    """Whether the game's own entities already carry their rows' asset ids, making the rewrite moot.
 
-    kit.spawnData binds them at runtime. A game that hand-built entities with kit.spawn, or (2D)
-    hand-drew with g.rect, never binds them and would orphan the generated art — only the rewrite
-    wires that. 2D also needs the draw side, since the game owns draw()."""
+    kit.spawn binds them: an entity whose `type` names a data row is built from that row, asset id
+    included. So the question is no longer WHICH call the game used — there is only one — but
+    whether it spawns anything the planned art actually depicts. A game that names none of the row
+    ids would still orphan every render, and only the rewrite can wire that.
+
+    (Both halves of the old test are gone: `kit.spawnData` no longer exists, and the `kit.drawEntity`
+    clause dated from when the game owned draw() — the engine's renderScene calls it now, so no
+    authored file ever held one and every 2D game was classed unbound.)"""
     authored = [src for name, src in files.items() if not src.lstrip().startswith(_GENERATED)]
-    if not any(_SPAWN_DATA.search(src) for src in authored):
-        return False
-    return True if mode_3d else any(_DRAWS_ASSET.search(src) for src in authored)
+    spawned = {m.group(1) for src in authored for m in _TYPE_LITERAL.finditer(src)}
+    return bool(spawned & set(ids))
 
 
 def _content(resp) -> str:
@@ -415,10 +418,24 @@ def _make_infer():
 
 
 def _regate(run_id, state, max_steps) -> object:
-    """Re-gate with no rewrite — the path where kit.spawnData already bound every asset id.
-    (state is unused; kept for call-site symmetry with _reskin_and_gate.)"""
+    """Confirm the game is still green — the path where kit.spawn already bound every asset id.
+
+    NOTHING was rewritten here, so there is nothing for a build to fix: a full run_build re-ran the
+    entire chain, spec audit included, to answer a question the gates answer on their own. Measured:
+    two asset runs on one game spent a 7-claim audit each (~50 llm turns) to enqueue 8 images that
+    needed no model call at all. A gate SWEEP is the honest check — deterministic, zero llm, and it
+    still catches a game that was never green to begin with. (max_steps is unused: a sweep does not
+    step.)"""
+    from maestro.codegen.build_chain import collect_errors   # noqa: PLC0415 — build_chain imports us
+    from maestro.codegen.module import CodegenModule          # noqa: PLC0415
+    from maestro.modules.context import build_context         # noqa: PLC0415
+
     logger.info("assets %s: data-bound — no reskin rewrite needed", run_id)
-    return run_build(run_id, max_steps=max_steps)
+    errors = [e for _, e in collect_errors(CodegenModule(), build_context(state.read_spec(), state))]
+    if errors:
+        logger.warning("assets %s: game is not green (%d unmet): %s", run_id, len(errors),
+                       ", ".join(e.code for e in errors))
+    return BuildResult(not errors, 0, 0.0, errors)
 
 
 def _reskin_and_gate(run_id, state, infer, files, ids, detect, reskin, max_steps) -> object:
@@ -455,7 +472,7 @@ def _skin_2d(run_id, state, spec, infer, files, max_steps, build_id=None) -> dic
 
     # Skip the LLM rewrite only when the game ALREADY binds its assets through the kit; a hand-drawn
     # draw() still needs wiring or the sprites we just planned would never appear.
-    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, False) \
+    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, ids) \
         else _reskin_and_gate(run_id, state, infer, files, ids, _draws, reskin_file, max_steps)
 
     # The manifest is a pure function of the plan, so it lands now rather than at finalize — a
@@ -532,9 +549,9 @@ def _skin_3d(run_id, state, spec, infer, files, max_steps, build_id=None) -> dic
     ids = [m["id"] for m in meshes]
     logger.info("assets %s: planned %d mesh(es): %s", run_id, len(meshes), ", ".join(ids))
 
-    # Skip the tagging LLM call only when the game already spawns through kit.spawnData (which binds
+    # Skip the tagging LLM call only when the game already spawns the planned ids (kit.spawn binds
     # `mesh: <row id>`); a hand-spawned entity still needs the model to tag it.
-    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, True) \
+    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, ids) \
         else _reskin_and_gate(run_id, state, infer, files, ids, _tags_shapes, reskin_mesh_file, max_steps)
 
     write_mesh_manifest(state.run_dir, meshes)
@@ -591,7 +608,7 @@ def auto_skin(run_id: str, early_batch: Optional[str] = None, max_steps: int = 4
 
     No early batch → the classic full skin (plan → wire → render), exactly what the Skin button
     did. Early batch → the renders exist or are in flight, so all that can be missing is WIRING
-    (a game that hand-draws/hand-spawns instead of binding through kit.spawnData) and, in 3D,
+    (a game that spawns none of the planned ids, so nothing carries them) and, in 3D,
     mesh ids tagged during authoring that the data-time plan couldn't see — top up just those."""
     if is_skinning(run_id):
         return   # an in-flight skin owns the endgame; its own re-gate build re-enters here
@@ -630,11 +647,11 @@ def auto_skin(run_id: str, early_batch: Optional[str] = None, max_steps: int = 4
                 if start_asset_chain(run_id, missing, "3d", gate_ok=True,
                                      build_id=build_id) is None:
                     db_store.build_finished(build_id, "failed")
-        if from_data and _binds_data_assets(files, mode3d):
-            return   # bound through the kit — the early renders wire themselves
         ids = [p["id"] for p in plan]
         if not ids:
             return
+        if from_data and _binds_data_assets(files, ids):
+            return   # bound through the kit — the early renders wire themselves
         infer = _make_infer()
         with run_scope(run_id):
             if mode3d:

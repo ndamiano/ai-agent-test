@@ -82,6 +82,13 @@ and local by construction.
 ```
 runtime/                 The primitive KIT (hand/frontier-authored offline, run local)
   engine.js              kit v1: clamp, entities/spawn/cull, integrate(+3), aabb,
+                         ONE spawn: an entity whose `type` names a data row is BUILT from that row
+                         (size/shape/color/parts + the row id as its sprite/mesh), a type with no
+                         row is the literal you wrote, and the caller's fields always win. There is
+                         no second spawn call to forget: a measured build read its tables for their
+                         numbers, hand-built every entity with a colour literal, and rendered eight
+                         generated sprites onto nothing. GENERATED main.ts hands the kit data.ts's
+                         ROWS index (kit.useData); the game never calls it.
                          tilemap, walk/jump/physics, collideWorld (the ONE 2D solid pass: tile
                          pushout + solid-pair separation; entities tag `solid: true`),
                          register/bindings (named key-press actions — fired on the pressed edge
@@ -328,12 +335,14 @@ src/
                          optional; every row carries an implicit envelope id/name?/look?/presence?/
                          size?/shape?/color?/parts? — pipeline fields, nullable so no-asset still
                          renders as shapes. size/shape/color/parts + the id ARE the row's whole
-                         VISUAL: kit.spawnData builds the entity from them and binds the row id as
-                         its asset id, so the skin stage needs no source rewrite; `parts` keeps a
+                         VISUAL: kit.spawn builds the entity from them whenever its `type` is the
+                         row id and binds that id as its asset id, so the skin stage needs no source
+                         rewrite; `parts` keeps a
                          COMPOUND look (hull+fin, eyes) in data, so hand-drawn art stays skinnable),
                          game/data/<name>.json holds flat rows. Owns validate_data (type/id/ref/
                          envelope violations as FIX errors → one-shot rows rewrite via fix_data.txt),
-                         the GENERATED typed game/data.ts (marker-protected like world.ts; games
+                         the GENERATED typed game/data.ts — ALWAYS written, empty index and all,
+                         since GENERATED main.ts imports its ROWS (marker-protected like world.ts; games
                          import it, tsc typechecks content natively), the GAME DATA prompt summary,
                          and the deterministic sprite/mesh plan from rows.
       prompts/           spec_draft · design_interfaces · review_find · review_patch ·
@@ -353,10 +362,13 @@ src/
                          rewrite draw onto kit.drawEntity (shape fallback is the kit's) → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
                          (TRELLIS). The TAGGING rewrite is skipped entirely when the plan came from
-                         data AND the source binds through the kit (_binds_data_assets: spawnData,
-                         plus drawEntity in 2D) — a data-driven skin
-                         spends ZERO LLM calls; a hand-drawn/hand-spawned game still gets the
-                         rewrite or its art would be orphaned.
+                         data AND the source spawns the ids it planned (_binds_data_assets: a `type:`
+                         literal matching a planned id — kit.spawn binds it from there, so WHICH call
+                         was used is no longer the question) — a data-driven skin
+                         spends ZERO LLM calls; a game naming none of them still gets the
+                         rewrite or its art would be orphaned. The old test demanded `kit.drawEntity`
+                         in 2D, from when the game owned draw(): renderScene calls it now, so no
+                         authored file ever held one and EVERY 2D game was classed unbound.
                          The plan is DETERMINISTIC whenever any data row carries `look`
                          (sprite_plan_from_data: 2D all look rows, 3D look + presence world/both;
                          prompts from look, sizes from size — no 3-8 sprite cap); the LLM plan is

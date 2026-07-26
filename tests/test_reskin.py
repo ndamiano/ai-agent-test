@@ -350,14 +350,67 @@ def test_green_lane_noops_when_already_skinned(lane_env, monkeypatch):
 
 
 def test_green_lane_skips_the_rewrite_when_data_bound(lane_env, monkeypatch):
-    """A game that binds through kit.spawnData (+ drawEntity in 2D) wires the early renders
-    itself — the green lane must spend zero LLM calls on it."""
+    """A game that spawns the things the plan depicts binds them through kit.spawn itself — the
+    green lane must spend zero LLM calls on it."""
     _write_data(lane_env, [{"id": "goblin", "look": "a green goblin"}])
     (game_dir(lane_env) / "game.ts").write_text(
-        "kit.spawnData('units');\nkit.drawEntity(g, e);\n", encoding="utf-8")
+        'kit.spawn(state.world, { type: "goblin", x: 1, y: 2 });\n', encoding="utf-8")
     monkeypatch.setattr(reskin, "_reskin_and_gate",
                         lambda *a, **k: pytest.fail("bound game must not be rewritten"))
     reskin.auto_skin("rid", early_batch="b1")
+
+
+def test_a_game_is_bound_when_it_spawns_what_the_plan_depicts(lane_env):
+    """kit.spawn binds a row-typed entity itself, so the question is no longer which call was used
+    but whether the game names the ids the art depicts. A game naming none of them would orphan
+    every render, and only the rewrite can wire that."""
+    ids = ["goblin"]
+    assert reskin._binds_data_assets({"game.ts": 'kit.spawn(w, { type: "goblin", x: 1 });'}, ids)
+    assert not reskin._binds_data_assets({"game.ts": 'kit.spawn(w, { x: 1, color: "#f00" });'}, ids)
+    assert not reskin._binds_data_assets({"game.ts": 'kit.spawn(w, { type: "bullet", x: 1 });'}, ids)
+    # a GENERATED file's own spawns are not the authored game binding anything
+    assert not reskin._binds_data_assets({"world.ts": '// GENERATED\ntype: "goblin"'}, ids)
+
+
+def test_a_data_bound_skin_never_runs_a_build(lane_env, monkeypatch):
+    """Nothing is rewritten on this path, so there is nothing for a build to fix. run_build here
+    re-ran the whole chain — spec audit included — to answer a question the gates answer alone:
+    measured, two asset runs on one game each spent a 7-claim audit to enqueue 8 images that needed
+    no model call at all."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(reskin, "run_build",
+                        lambda *a, **k: pytest.fail("a stage that rewrote nothing must not build"))
+    swept = []
+
+    def fake_collect(module, ctx):
+        swept.append(ctx)
+        return []
+
+    monkeypatch.setattr("maestro.codegen.build_chain.collect_errors", fake_collect)
+    monkeypatch.setattr("maestro.modules.context.build_context", lambda spec, state: "ctx")
+    state = SimpleNamespace(run_dir=lane_env, read_spec=lambda: {"design": {}})
+
+    result = reskin._regate("rid", state, 40)
+
+    assert result.ok is True and result.steps == 0
+    assert swept == ["ctx"]                       # the gates were swept, not re-built
+
+
+def test_a_data_bound_skin_reports_a_game_that_was_never_green(lane_env, monkeypatch):
+    from types import SimpleNamespace
+
+    from maestro.modules.module import Error, ErrorType
+
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", message="boom")
+    monkeypatch.setattr("maestro.codegen.build_chain.collect_errors",
+                        lambda module, ctx: [(None, err)])
+    monkeypatch.setattr("maestro.modules.context.build_context", lambda spec, state: "ctx")
+    state = SimpleNamespace(run_dir=lane_env, read_spec=lambda: {"design": {}})
+
+    result = reskin._regate("rid", state, 40)
+
+    assert result.ok is False and result.failures == [err]
 
 
 def test_green_lane_wires_an_unbound_game(lane_env, monkeypatch):

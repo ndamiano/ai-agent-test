@@ -16,6 +16,7 @@
 // + state.cell? (px per cell, defaults to tilemap.tile or 32) — absent ⇒ pair separation only.
 // Tag blocking entities `solid: true`; bullets/pickups stay untagged.
 import { createState, init as initGame, update as updateGame, hud as hudGame{activate_import} } from "./game.ts";
+import { ROWS } from "./data.ts";
 
 const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111" };
 
@@ -27,6 +28,7 @@ export function createGame(kit: Kit): GameObject {
     config: CONFIG,
     state,
     init(kit: Kit) {
+      kit.useData(ROWS);   // an entity whose `type` names a data row is spawned with that row's look
 {activate_init}
       initGame(state, kit);
       if (!state.player) throw new Error(

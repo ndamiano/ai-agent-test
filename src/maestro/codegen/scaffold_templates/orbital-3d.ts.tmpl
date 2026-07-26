@@ -18,6 +18,7 @@
 // state.ground? ((x, z) => number — terrain height the player is stood on). Set either in init and
 // the scaffold applies it every frame; on a generated world the scaffold sets both itself.
 import { createState, init as initGame, update as updateGame, hud as hudGame{activate_import} } from "./game.ts";
+import { ROWS } from "./data.ts";
 {world_import}
 
 const CONFIG: Config = { width: 1280, height: 720, mode: "3d", background: "{background}", controls: "orbital" };
@@ -30,6 +31,7 @@ export function createGame(kit: Kit): GameObject {
     config: CONFIG,
     state,
     init(kit: Kit) {
+      kit.useData(ROWS);   // an entity whose `type` names a data row is spawned with that row's look
 {activate_init}
       initGame(state, kit);
       if (!state.player) throw new Error(

@@ -342,8 +342,9 @@ import { makeKit } from "./engine.js";
 const kit = makeKit({});
 const world = [];
 const row = { id: "player_bullet", size: { w: 8, h: 8 }, color: "#ff0" };
-const shot = kit.spawnData(world, row, { x: 10, y: 20 });
-const named = kit.spawnData(world, row, { x: 0, y: 0, type: "friendly" });
+kit.useData({ [row.id]: row });
+const shot = kit.spawn(world, { type: row.id, x: 10, y: 20 });
+const named = kit.spawn(world, { type: "friendly", row, x: 0, y: 0 });
 console.log(JSON.stringify({ type: shot.type, sprite: shot.sprite, override: named.type,
                             matches: world.filter(e => e.type === "player_bullet").length }));
 """)

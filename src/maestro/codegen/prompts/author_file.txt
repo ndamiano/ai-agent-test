@@ -21,9 +21,11 @@ Rules:
 - To add typed gameplay fields, EXTEND the kit type in types.ts — do NOT redefine it from scratch:
   `export interface Enemy extends Kit.Entity { hp: number; kind: "goblin" | "orc" }`. `Entity`
   already has an open index signature, so `e.type`/`e.hp` also work without extending. Either is fine.
-- A data-backed thing is SPAWNED through the kit, never built by hand: `kit.spawnData(world, row,
-  {x, y})` builds it from the row (size/shape/color/parts) and binds its art id. It is then visible
-  because it is in `state.world` — the engine renders it, sprite when one exists, the row's
+- An entity's `type` IS its data row's id, and that is what makes it look like the thing:
+  `kit.spawn(world, { type: "goblin", x, y })` builds it from the row (size/shape/color/parts) and
+  binds its art. Reading a row for its NUMBERS and then hand-building the entity with a colour of
+  your own leaves the generated art attached to nothing — the game renders as bare rectangles. It is
+  visible because it is in `state.world`: the engine draws it, the sprite when one exists, the row's
   shape/parts when not. Do NOT re-scale a row's `size`.
 - When a GAME DATA block is present, import its typed consts from "./data.ts"
   (`import { ENEMIES } from "./data.ts"`) and read them — NEVER re-declare those tables inline or

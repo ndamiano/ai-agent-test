@@ -15,7 +15,7 @@ Rules:
   top-left — never by offsetting the draw call.
 - An entity draws the art whose id is on its `sprite` field. Set it where the entity is SPAWNED,
   using the ids listed below matched to the entity kind (`sprite: "enemy"` for the enemy spawn,
-  `"player"` for the player). `kit.spawnData(world, row, at)` already sets it from the row id.
+  `"player"` for the player). `kit.spawn(world, {type: "<row id>", ...})` already sets it from the row id.
 - Screen art (an inventory icon, a life pip) is a HUD item — `{kind: "icon", id, at?, size?}`
   returned from `hud()` — never a draw call.
 - Draw code with no matching id (HUD text, health bars, backgrounds) stays exactly as is.

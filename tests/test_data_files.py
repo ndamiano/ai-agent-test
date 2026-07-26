@@ -54,7 +54,7 @@ ITEMS = [{"id": "coin", "name": "Coin", "look": "a gold coin, plain background",
 
 
 def test_shape_and_color_are_envelope_fields(tmp_path):
-    """A row owns its whole VISUAL — size + shape + color — so kit.spawnData can build the entity and
+    """A row owns its whole VISUAL — size + shape + color — so kit.spawn can build the entity and
     the skin stage never has to rewrite source to tag it."""
     _write_data(tmp_path, rows={"enemies": [
         {"id": "orc", "shape": "box", "color": "#3c7a38", "size": {"w": 1, "h": 2, "d": 1},
@@ -98,7 +98,7 @@ def test_data_summary_tells_the_author_to_spawn_through_the_kit(tmp_path):
     units live here — a live build scaled size by /100 because the units never reached the author."""
     _write_data(tmp_path)
     summary = data_summary(tmp_path)
-    assert "kit.spawnData" in summary and "kit.drawEntity" in summary
+    assert "kit.spawn(state.world, { type:" in summary
     assert "never scale it" in summary.lower() or "never scale" in summary.lower()
 
 
@@ -227,13 +227,17 @@ def test_generate_is_idempotent(tmp_path):
     assert p.stat().st_mtime == 1              # unchanged content → not rewritten
 
 
-def test_generate_removes_file_when_no_datasets(tmp_path):
+def test_generate_empties_the_index_but_keeps_the_file(tmp_path):
+    """The GENERATED main.ts imports ROWS from data.ts, so deleting the file would leave an
+    unresolvable import in a file the model may not edit. An empty design gets an empty index —
+    refusing that design is the data GATE's job, not this writer's."""
     _write_data(tmp_path)
     generate_data_ts(tmp_path)
-    assert (tmp_path / "game" / "data.ts").exists()
+    assert "ENEMIES" in (tmp_path / "game" / "data.ts").read_text()
     _write_data(tmp_path, manifest={"datasets": []}, rows={})
     generate_data_ts(tmp_path)
-    assert not (tmp_path / "game" / "data.ts").exists()
+    src = (tmp_path / "game" / "data.ts").read_text()
+    assert "export const ROWS" in src and "ENEMIES" not in src
 
 
 def test_generated_row_keys_are_envelope_then_declared_order(tmp_path):
@@ -492,7 +496,7 @@ def test_design_fix_fallback_writes_empty_design_on_garbage(tmp_path):
     _write_planned_game(tmp_path)
     _design_apply(tmp_path, "I think the game needs, hmm, ```ts\nconst x = 1;\n```")
     assert json.loads(data_manifest_path(tmp_path).read_text()) == {"datasets": []}
-    assert not (tmp_path / "game" / "data.ts").exists()
+    assert "export const ROWS" in (tmp_path / "game" / "data.ts").read_text()   # empty index, still importable
     errs = CodegenModule().get_errors(_ctx(tmp_path))
     assert [e.code for e in errs] == ["data"] and "empty" in errs[0].message
 
@@ -518,15 +522,15 @@ def _boom(*a, **k):
 
 
 def test_skin_2d_prefers_the_data_plan(tmp_path, monkeypatch):
-    """Data-planned: no LLM plan AND no LLM rewrite. kit.spawnData already put `sprite: <row id>` on
-    the entity and kit.drawEntity prefers it, so there is nothing left to rewrite."""
+    """Data-planned: no LLM plan AND no LLM rewrite. kit.spawn already put `sprite: <row id>` on the
+    entity from its type, and the engine draws that, so there is nothing left to rewrite."""
     _write_planned_game(tmp_path)
     _write_data(tmp_path)
     monkeypatch.setattr(reskin, "plan_assets", _boom)
     monkeypatch.setattr(reskin, "_reskin_and_gate", _boom)      # must NOT be reached
     monkeypatch.setattr(reskin, "_regate", lambda *a, **k: _Result())
     monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
-    files = {"game.ts": "kit.spawnData(state.world, ORC, {x:1,y:1});\nkit.drawEntity(g, e);"}
+    files = {"game.ts": 'kit.spawn(state.world, { type: "orc", x: 1, y: 1 });'}
     out = reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None, files, 1)
     assert [s["id"] for s in out["sprites"]] == ["orc", "coin"]
 
@@ -580,7 +584,7 @@ def test_skin_3d_data_plan_unions_required_mesh_tags(tmp_path, monkeypatch):
     monkeypatch.setattr(reskin, "_regate", lambda *a, **k: _Result())
     monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
     files = {"game.ts": 'config: { mode: "3d" }\nworld.push({ shape: "box", mesh: "old_barn" });\n'
-                        'kit.spawnData(state.world, ORC, {x:1,y:1,z:1});'}
+                        'kit.spawn(state.world, { type: "orc", x: 1, y: 1, z: 1 });'}
     out = reskin._skin_3d("rid", RunState(tmp_path), {"design": {}}, None, files, 1)
     ids = [m["id"] for m in out["meshes"]]
     assert ids == ["orc", "old_barn"]          # data rows + the source's required tag, none dropped

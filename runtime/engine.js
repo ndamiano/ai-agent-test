@@ -58,11 +58,16 @@ export function dataVisual(row, mode) {
   return vis;
 }
 
-// `at` supplies position, and overrides anything else. `type` defaults to the row id: gameplay
-// branches on `e.type`, and a row-spawned entity with none is invisible to every one of them —
-// measured, a game's own bullets passed through the boss because their type was undefined.
-export function spawnData(world, row, at, mode) {
-  return spawn(world, { type: row.id, ...dataVisual(row, mode), ...(at || {}) });
+// Spawn, resolving the entity's LOOK from the data row its `type` names (or an explicit `row`).
+// ONE way to make an entity, so a thing that HAS a row cannot be spawned unbound: a measured build
+// read its data tables for their numbers, hand-built every entity with a colour literal, and
+// rendered eight generated sprites onto nothing. A `type` with no row (a bullet, a particle) is a
+// plain entity exactly as before, and the caller's own fields always win.
+export function spawnRow(world, ent, rows, mode) {
+  const row = ent.row || (ent.type && rows ? rows[ent.type] : null);
+  if (!row) return spawn(world, ent);
+  const { row: _drop, ...rest } = ent;
+  return spawn(world, { type: row.id, ...dataVisual(row, mode), ...rest });
 }
 
 // Draw one entity (2D): its loaded sprite, else its shape/parts. 3D needs no equivalent — the
@@ -832,6 +837,7 @@ export function makeKit(config) {
   let sprites = {}; // id -> loaded Image; empty headless (kit.sprite always null -> game falls to shapes)
   let toasts = []; // transient notify() messages; stepped+drawn by the frame loop, inert headless
   let focused = null; // last kit.focus() result; the frame loop draws its prompt like a toast
+  let rows = {};      // id -> data row (from the GENERATED main.ts); what `spawn` resolves a type against
   // Registered ACTIONS (name -> {keys, fn}). Registration makes the spec's key bindings
   // machine-readable: a binding's keys can be listed, remapped or shown in a HUD
   // (a shipped game had a full melee implementation behind a key read that never fired), and a
@@ -848,7 +854,7 @@ export function makeKit(config) {
   return {
     config,
     clamp: V.clamp,
-    spawn, cull, integrate, integrate3, heading3, flyer, aabb, resolveAabb, makeTilemap,
+    cull, integrate, integrate3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, collideWorld, seek, wander, astar,
     seek3, wander3, patrol3, avoidRects, wallsFromTilemap,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
@@ -872,7 +878,10 @@ export function makeKit(config) {
     _fireActions(input) {
       for (const [, a] of actions) if (a.keys.some((k) => input.pressed(k))) a.fn();
     },
-    spawnData: (world, row, at) => spawnData(world, row, at, config.mode),
+    spawn: (world, ent) => spawnRow(world, ent, rows, config.mode),
+    // The GENERATED main.ts hands the kit its data.ts rows so `spawn` can resolve a `type` to its
+    // row. The game never calls this.
+    useData(index) { rows = index || {}; },
     drawEntity: (g, e) => drawEntity(g, e, sprites),
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

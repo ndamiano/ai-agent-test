@@ -240,14 +240,18 @@ its `id` is ALSO the art id the asset stage renders to. So spawn from the row an
 kit, and the game is skinnable with no code change:
 ```ts
 import { ENEMIES } from "./data.ts";
-const row = ENEMIES[0];
-const e = kit.spawnData(state.world, row, { x: 100, y: 60 });   // size/shape/color + sprite: row.id
-// nothing else to do: it is in state.world, so the engine renders it — sprite if the art
-// exists, the row's shape+color if it does not
+const e = kit.spawn(state.world, { type: "goblin", x: 100, y: 60 });  // "goblin" is a row id
+// the row's size/shape/color came with it, and so did `sprite: "goblin"`. Nothing else to do:
+// it is in state.world, so the engine renders it — the sprite if the art exists, the row's
+// shape+color if it does not.
 ```
-- `kit.spawnData(world, row, {x, y, ...})` — spawn an entity FROM a row. Anything in the third arg
-  overrides (position, velocity, per-instance stats). The entity's `type` IS the row id, so match it
-  with `e.type === "goblin"` — never invent a second naming scheme for the same thing.
+- **`type` is the row id.** That is the whole binding: name the row and the entity IS that thing,
+  look and art included. Match it the same way — `e.type === "goblin"` — and never invent a second
+  naming scheme for something that already has one.
+- Anything you pass alongside WINS: position, velocity, per-instance stats, an override colour.
+- A `type` with no row (a bullet, a particle) spawns exactly what you wrote — one call for
+  everything, so there is no second spawn to remember and no way to build a row's entity unbound.
+- Need a row whose id is not the type you want? Pass it: `kit.spawn(world, { row: ENEMIES[0], x, y })`.
 A COMPOUND look is data too — `parts` (sub-shapes in fractions of the box) draws a ship's hull+fin
 or a slime's eyes, and the engine renders them, so it is STILL skinnable (one sprite replaces
 every part). NEVER re-scale a row's `size`, and never

@@ -384,10 +384,12 @@ appearance — `size` (WORLD UNITS in 3D: a person is `{w:0.8,h:1.7,d:0.8}`, use
 Spawn from the row and the entity is skinnable with no code change:
 ```ts
 import { ENEMIES } from "./data.ts";
-const e = kit.spawnData(state.world, ENEMIES[0], { x, y: heightAt(x, z) + 0.85, z });
-// -> { shape, w,h,d, color, mesh: "<row id>", x, y, z } — the renderer swaps in the GLB when it exists
+const e = kit.spawn(state.world, { type: "goblin", x, y: heightAt(x, z) + 0.85, z });
+// -> { shape, w,h,d, color, mesh: "goblin", x, y, z } — the renderer swaps in the GLB when it exists
 ```
-- `kit.spawnData(world, row, {x,y,z, ...})` — anything in the third arg overrides.
+- **`type` is the row id** — naming it is what binds the row's look AND its mesh. Anything you pass
+  alongside overrides. A `type` with no row spawns exactly what you wrote, so ONE call makes every
+  entity and a row's entity can never be built unbound.
 NEVER re-scale a row's `size` (no `/100`), and never hand-pick a color for a row that has one.
 There is no `drawEntity` in 3D — the scene renders from the shape tag, and `mesh` is one.
 <!-- /data -->

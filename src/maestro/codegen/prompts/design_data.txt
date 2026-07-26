@@ -50,7 +50,7 @@ declaration: a category field ("chase"/"wander"/"ranged") is just "string".
 or color in "fields" — they are the envelope: put them straight in the rows.
 
 size + shape + color + the row id ARE the thing's whole appearance: the game spawns it with
-kit.spawnData(world, row, {x,y,z}) and the art pipeline renders `look` to that same id. Fill them
+kit.spawn(world, {type: row.id, x, y}) and the art pipeline renders `look` to that same id. Fill them
 in for every row the player SEES.
 
 Rules:

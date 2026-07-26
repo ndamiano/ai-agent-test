@@ -14,7 +14,7 @@ lowercase slug), `name?`, `look?` (an image-gen art prompt), `presence?` ("world
 serves the PIPELINE (assets/gates); custom fields serve the game and the pipeline never interprets
 them.
 
-`size`/`shape`/`color` + `id` are the row's WHOLE VISUAL: `kit.spawnData(world, row, {x,y,z})`
+`size`/`shape`/`color` + `id` are the row's WHOLE VISUAL: `kit.spawn(world, {type: row.id, x, y})`
 builds the entity from them and binds the asset id (`mesh` in 3D, `sprite` in 2D), so the skin
 stage never has to rewrite source to tag an entity — the row it came from already says what it
 looks like, skinned or not.
@@ -285,13 +285,12 @@ def _ts_type(base: str) -> str:
 
 def generate_data_ts(run_dir) -> None:
     """(Re)write game/data.ts from the JSON — deterministic, idempotent (writes only on change).
-    An empty datasets list removes data.ts."""
+
+    ALWAYS written, even with no datasets: the GENERATED main.ts imports ROWS from it, so a missing
+    file is an unresolvable import in a file the model may not touch. An empty game gets an empty
+    index (the data gate is what refuses an empty design — this only keeps the bundle buildable)."""
     datasets = _valid_decls(read_data_manifest(run_dir))
     path = game_dir(run_dir) / "data.ts"
-    if not datasets:
-        if path.exists():
-            path.unlink()
-        return
     lines = [_HEADER,
              'export type Presence = "world" | "ui" | "both";',
              "export interface Size { w: number; h: number; d?: number }",
@@ -327,6 +326,15 @@ def generate_data_ts(run_dir) -> None:
             ordered.update({k: v for k, v in row.items() if k not in ordered})
             lines.append(f"  {json.dumps(ordered, ensure_ascii=False)},")
         lines.append("];")
+    # The id -> row index kit.spawn resolves a `type` against. GENERATED main.ts hands it over, so
+    # an entity whose type names a row carries that row's look and asset id without the game
+    # spelling any of it out.
+    names = [ds["name"] for ds in datasets]
+    lines += ["",
+              "// Every row by id — the GENERATED main.ts hands this to the kit, so kit.spawn can",
+              "// resolve an entity's `type` to its row. Never read this directly; use the tables above.",
+              "export const ROWS: Record<string, any> = Object.fromEntries(",
+              "  [" + ", ".join(n.upper() for n in names) + "].flat().map((r) => [r.id, r]));"]
     content = "\n".join(lines) + "\n"
     if path.exists() and path.read_text(encoding="utf-8") == content:
         return
@@ -342,11 +350,11 @@ def data_summary(run_dir) -> str:
         return ""
     out = ['# GAME DATA (import from "./data.ts" — typed, GENERATED; never redefine these '
            "tables inline)",
-           "SPAWN FROM A ROW — never hand-build a row's entity: `kit.spawnData(state.world, ROW, "
-           "{ x, y, z })` takes the row's size/shape/color AND binds its art (the row id), so the "
-           "asset stage skins it with no code change. 2D: draw it with `kit.drawEntity(g, e)`, "
-           "which prefers the sprite and falls back to the shape. `size` is already in the right "
-           "units (2D pixels, 3D world units) — never scale it."]
+           "SPAWN BY TYPE — an entity whose `type` is a row id IS that row: "
+           "`kit.spawn(state.world, { type: \"goblin\", x, y })` takes the row's size/shape/color "
+           "AND binds its art, so the asset stage skins it with no code change. Never hand-build a "
+           "row's entity with a colour of your own — the generated art would have nothing to attach "
+           "to. `size` is already in the right units (2D pixels, 3D world units) — never scale it."]
     for ds in datasets:
         name = ds["name"]
         fields = ds.get("fields") if isinstance(ds.get("fields"), dict) else {}

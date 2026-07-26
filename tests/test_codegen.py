@@ -476,16 +476,40 @@ def test_spawn_data_binds_the_row_s_visual_and_asset_id():
     assert r["bare2d"]["shape"] == "rect" and r["bare2d"]["sprite"] == "bare"
 
 
-def test_spawn_data_position_overrides_and_lands_in_the_world():
+def test_a_row_typed_spawn_takes_the_rows_look_and_the_callers_fields():
     r = _node_eval("""
-      import {spawnData} from "./engine.js";
+      import {spawnRow} from "./engine.js";
+      const rows = { wolf: { id: "wolf", size: { w: 1, h: 1, d: 2 }, color: "#777777" } };
       const world = [];
-      const e = spawnData(world, { id: "wolf", size: { w: 1, h: 1, d: 2 }, color: "#777777" },
-                          { x: 5, y: 0.5, z: -3, hp: 20 }, "3d");
+      const e = spawnRow(world, { type: "wolf", x: 5, y: 0.5, z: -3, hp: 20 }, rows, "3d");
       console.log(JSON.stringify({ n: world.length, same: world[0] === e,
                                    x: e.x, y: e.y, z: e.z, hp: e.hp, mesh: e.mesh }));
     """)
     assert r == {"n": 1, "same": True, "x": 5, "y": 0.5, "z": -3, "hp": 20, "mesh": "wolf"}
+
+
+def test_a_type_with_no_row_spawns_exactly_what_was_written():
+    """One spawn for everything: a bullet or a particle names no row, so nothing is resolved and the
+    entity is the literal the game wrote."""
+    r = _node_eval("""
+      import {spawnRow} from "./engine.js";
+      const rows = { wolf: { id: "wolf", color: "#777" } };
+      const world = [];
+      const e = spawnRow(world, { type: "bullet", x: 1, y: 2, w: 4, color: "#ff0" }, rows, "2d");
+      console.log(JSON.stringify({ type: e.type, w: e.w, color: e.color,
+                                   sprite: e.sprite ?? null, n: world.length }));
+    """)
+    assert r == {"type": "bullet", "w": 4, "color": "#ff0", "sprite": None, "n": 1}
+
+
+def test_the_callers_own_fields_beat_the_row():
+    r = _node_eval("""
+      import {spawnRow} from "./engine.js";
+      const rows = { wolf: { id: "wolf", size: { w: 16, h: 16 }, color: "#777" } };
+      const e = spawnRow([], { type: "wolf", x: 0, y: 0, color: "#gold", w: 99 }, rows, "2d");
+      console.log(JSON.stringify({ color: e.color, w: e.w, sprite: e.sprite }));
+    """)
+    assert r == {"color": "#gold", "w": 99, "sprite": "wolf"}
 
 
 def test_draw_entity_renders_a_compound_look_from_parts():

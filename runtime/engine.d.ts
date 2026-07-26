@@ -37,7 +37,9 @@ interface Entity {
   action?: string;   // the verb `activate` performs on this entity; kit.focus only ever targets these
   label?: string;    // what the activate prompt calls it (falls back to `name`, then `action`)
   reach?: number;    // how close activate must be for THIS entity (default kit.focus's range)
-  sprite?: string;   // asset id; kit.spawnData sets it from the data row
+  sprite?: string;   // asset id; kit.spawn sets it from the entity's data row
+  type?: string;     // WHAT this is. Names a data row ⇒ spawn takes that row's look and asset id
+  row?: DataRow;     // spawn from this row explicitly, when `type` is not the row's id
   [k: string]: any;
 }
 type World = Entity[];
@@ -114,6 +116,12 @@ interface Kit {
   config: Config;
   clamp(v: number, lo: number, hi: number): number;
   // entities + physics
+  // THE way to make an entity. When `type` names a data row (or `row` is given) the row's shape,
+  // size, colour, parts and asset id come with it — so a thing that has a row can never be spawned
+  // unbound, and its generated art can never be orphaned. No matching row: a plain entity. Your own
+  // fields always win.
+  //   spawn(world, { type: "turnip", x, y })        ← look + sprite:"turnip" from the row
+  //   spawn(world, { type: "bullet", x, y, w: 4 })  ← no such row: exactly what you wrote
   spawn(world: World, ent: Partial<Entity>): Entity;
   cull(world: World): void;
   integrate(e: Entity, dt: number, gravity?: number): void;
@@ -219,7 +227,8 @@ interface Kit {
   // A row's `id` is its asset id AND its `type`, so a row-spawned entity carries `mesh` (3D) /
   // `sprite` (2D) — the renderer swaps in the GLB/PNG when one exists — and is matchable by
   // `e.type === "<row id>"` in gameplay. Pass `type` in `at` to override.
-  spawnData(world: World, row: DataRow, at: Partial<Entity>): Entity;
+  // The GENERATED main.ts hands the kit its data rows; the game never calls this.
+  useData(index: Record<string, DataRow>): void;
   win(msg?: string): void;
   lose(msg?: string): void;
   readonly over: null | { won: boolean; msg: string };

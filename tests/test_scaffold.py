@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from build_harness import canned_prelude, run_build_to_completion, seed_interfaces
+from maestro.codegen.data_files import generate_data_ts
 from maestro.codegen.fix_classes import classify
 from maestro.codegen.gates import (
     run_headless,
@@ -130,6 +131,7 @@ def _hook_game(tmp_path, spec, game_ts):
         {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}), encoding="utf-8")
     (d / "data" / "things.json").write_text(json.dumps(
         [{"id": "thing_a", "hp": 1}]), encoding="utf-8")
+    generate_data_ts(tmp_path)      # the GENERATED main.ts imports ROWS from it
     seed_interfaces(tmp_path)
 
 
@@ -421,6 +423,7 @@ def _manifest(tmp_path, names):
         {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}), encoding="utf-8")
     (d / "data" / "things.json").write_text(json.dumps(
         [{"id": "thing_a", "hp": 1}]), encoding="utf-8")
+    generate_data_ts(tmp_path)      # the GENERATED main.ts imports ROWS from it
 
 
 def test_authoring_order_puts_game_ts_last(tmp_path):

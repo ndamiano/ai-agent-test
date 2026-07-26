@@ -486,11 +486,15 @@ def _design_apply(tmp_path, content):
 
 
 def test_design_fix_fallback_writes_empty_design_on_garbage(tmp_path):
+    """Garbage still lands as an empty design rather than a crash — but empty is not a design, so
+    the gate stays red and the turn runs again. Every game's content belongs in data: the rows carry
+    the `look` prompts the art stage renders straight from, with no model call and no source rewrite."""
     _write_planned_game(tmp_path)
     _design_apply(tmp_path, "I think the game needs, hmm, ```ts\nconst x = 1;\n```")
     assert json.loads(data_manifest_path(tmp_path).read_text()) == {"datasets": []}
     assert not (tmp_path / "game" / "data.ts").exists()
-    assert CodegenModule().get_errors(_ctx(tmp_path)) == []   # build proceeds on the empty design
+    errs = CodegenModule().get_errors(_ctx(tmp_path))
+    assert [e.code for e in errs] == ["data"] and "empty" in errs[0].message
 
 
 def test_design_fix_lands_a_valid_design(tmp_path):

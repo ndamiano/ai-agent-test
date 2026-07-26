@@ -314,7 +314,7 @@ def test_missing_name_leaves_hook_params_and_ambiguity_alone(tmp_path):
     rd = _write_files(tmp_path, {
         "a.ts": "export const boom = 1;\n",
         "c.ts": "export const boom = 2;\n",
-        "b.ts": "export function step(): void { boom; kit.rng(); }\n",
+        "b.ts": "export function step(): void { boom; kit.spawn(); }\n",
     })
     e = Error(type=ErrorType.FIX, code="typechecks", component="game", path="b.ts",
               message="b.ts(1,1): error TS2304: Cannot find name 'boom'\n"

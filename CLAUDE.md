@@ -81,7 +81,7 @@ and local by construction.
 
 ```
 runtime/                 The primitive KIT (hand/frontier-authored offline, run local)
-  engine.js              kit v1: rng, vec math, entities/spawn/cull, integrate(+3), aabb,
+  engine.js              kit v1: vec math, entities/spawn/cull, integrate(+3), aabb,
                          tilemap, walk/jump/physics, collideWorld (the ONE 2D solid pass: tile
                          pushout + solid-pair separation; entities tag `solid: true`),
                          register/bindings (named key-press actions — fired on the pressed edge
@@ -91,9 +91,17 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          avoidRects building collision); wallsFromTilemap (a walled 3D level —
                          ground + wall boxes + the collision rects — in ONE call, so a dungeon is
                          never half-built). DEPTH primitives: talkOpen/talkStep/talkHud
-                         (the whole dialogue/shop loop), kit.quest (add/complete/log — milestones
+                         (the whole dialogue/shop loop; `state.talk` is TYPED, so a game inventing a
+                         member of it fails typecheck instead of painting "undefined" on screen),
+                         kit.quest (add/complete/log — milestones
                          that do NOT end the game; win/lose reserved for the spec's ending),
-                         kit.notify (engine-drawn toasts). run() preloads the game's assets.json
+                         kit.notify (engine-drawn toasts). focus/facing — WHAT the ONE `activate`
+                         key acts on (facing cone + reach + nearest, on either plane): entities opt
+                         in with `action`/`label`, the engine draws the prompt naming the REGISTERED
+                         key, and the game writes only the verb's effect (onActivate). Targeting was
+                         hand-written per verb before, and a build let the farmer tend a cow standing
+                         behind him. Boxed HUD items (panel/menu) STACK per anchor — placing each by
+                         anchor alone drew a choice menu over the line it was answering. run() preloads the game's assets.json
                          sprites. renderScene() draws the 2D world (entities by `layer`, the
                          tilemap, config.backdrop) — the game has NO draw surface at all: no draw
                          hook, no DrawApi, no sprite call. An entity is visible because it is in
@@ -254,8 +262,12 @@ src/
                          deterministic pre-pass): any gate can be failing because a file was authored
                          FAITHFULLY to a wrong declaration, and editing that file forever cannot fix
                          it — amend is the only shape allowed to say the contract is the bug.
-                         DATA = the model designs per-game datasets ONCE (design_data.txt;
-                         {"datasets":[]} legal — arcade games opt out), then deterministic row
+                         DATA = the model designs per-game datasets ONCE (design_data.txt; EVERY
+                         game owes at least one — an empty design leaves the gate red and re-runs the
+                         turn with the rejection quoted back. Rows are what make content editable,
+                         typed and DETERMINISTICALLY skinnable: their `look` prompts are the art
+                         plan, so a data-less game paid two model calls and a re-gate for art it
+                         could have had free), then deterministic row
                          validation + typed data.ts regeneration (data_files.py); authoring/fix prompts
                          carry a GAME DATA summary (schema + ONE example row), never the rows.
                          AUDIT = the terminal shape: one llm turn judges the source against the frozen
@@ -375,22 +387,30 @@ src/
                          a measured build used the whole WORLD API correctly yet never assigned
                          them, so the player walked through buildings in mid-air and no gate could
                          see it. A hook that sets its own wins (the scaffold only fills a blank).
-                         And — when the
-                         spec uses dialogue — the whole kit talk loop (talkStep update-side, the OPEN
-                         half a registered "interact" action bound to the SPEC's interact key, not a
-                         hardcoded E, and registered BEFORE the hook init so a game registering its
-                         own "interact" replaces the default (register replaces by name; a measured
-                         build bound interact to space correctly and the scaffold's post-init E
-                         register clobbered it, silently unbinding the spec's own key);
-                         choice → state.talkPick). The model
-                         authors the hooks in game.ts (createState/init/update/hud). WHY:
+                         And — when the spec has any verb aimed at a THING (a depth block, or a
+                         control matching controls.ACTIVATE_WHAT) — the ONE `activate` key: kit.focus
+                         each frame, the kit talk loop (talkStep update-side, passed the activate key
+                         so a conversation is advanced by the key that opened it), and a registered
+                         "activate" action bound to the SPEC's key, not a hardcoded E, registered
+                         BEFORE the hook init so a game registering its own replaces the default
+                         (register replaces by name; a measured build bound interact to space
+                         correctly and the scaffold's post-init E register clobbered it, silently
+                         unbinding the spec's own key). It DISPATCHES: a talkable target opens
+                         itself, everything else goes to the game's onActivate(state, target, kit)
+                         with the target already chosen; choice → state.talkPick. WHY one key: the
+                         verb the player wants is unambiguous from what they are facing, and a spec
+                         spending four keys on talk/use/tend/sleep gave the player four things to
+                         remember, the build four bindings to get right, and one of them (Tab) the
+                         browser takes anyway. The model
+                         authors the hooks in game.ts (createState/init/update/hud [+ onActivate]). WHY:
                          two live builds shipped dead controls out of model-authored glue (one never
                          read a movement key, one zeroed the wired movement every frame). `mode` (not
                          the scheme name) decides 3D-ness, so an unknown scheme on a 3D spec lands on
                          orbital-3d rather than the 2D default. Seeded only when main.ts is absent.
       scaffold_templates/ the per-scheme scaffold sources (top-down/platformer/grid-turn/
-                         orbital-3d/vehicle-3d/first-person-3d/follow-3d + default + interact
-                         partials) — real TypeScript we own, hill-climbable like prompts.
+                         orbital-3d/vehicle-3d/first-person-3d/follow-3d + default + the activate
+                         partials, one pair for both modes since kit.focus works out the plane
+                         itself) — real TypeScript we own, hill-climbable like prompts.
       worldgen_bridge.py the WORLD pre-seed: when the frozen spec sets `world`, run_build seeds
                          world.ts from src/worldgen before authoring — the town (heightfield +
                          buildings) inside a WILDERNESS RING (forest trees, 3 POIs w/ set dressing,
@@ -405,7 +425,9 @@ src/
       controls.py        the spec's CONTROL VOCABULARY: normalize_controls maps every control name
                          onto a key the runtime can BIND — single lowercase chars (`pressed` matches
                          the keymap exactly, so "W" is a control nothing can press), Arrow*,
-                         Escape/Tab/Shift/Enter. Word forms (Spacebar/ESC/Up Arrow), gamepad names
+                         Escape/Shift/Enter — NOT Tab, which the browser spends on focus, so a spec
+                         binding it ships a key that opens the address bar (both runners also
+                         preventDefault space/arrows/Tab). Word forms (Spacebar/ESC/Up Arrow), gamepad names
                          (stick→W/A/S/D, right stick→Mouse, A/B/X/Y→e/q/f/r), alternates
                          ("Right Click / Key Q"→q) and movement aggregates (WASD, W/Up, Arrow Keys →
                          the W/A/S/D sentinel, since movement is the scaffold's). The mouse is
@@ -416,7 +438,15 @@ src/
                          be wired to anything and prose cannot fix it — measured over 112 real
                          specs, 52% of non-movement entries named a key that does not exist, 45 of
                          them mouse entries two hard spec_draft rules already forbade. So map the
-                         vocabulary, never forbid it and never DROP an entry. Called at the SPEC
+                         vocabulary, never forbid it and never DROP an entry — ANY collision rehomes
+                         to a free key (two entries resolving to one key used to leave the last
+                         writer holding it and the other verb gone), except the movement/mouse
+                         sentinels, where several spellings MEAN one binding.
+                         Then _collapse_activate MERGES every control matching ACTIVATE_WHAT onto ONE
+                         key: kit.focus already decides which verb applies from what the player
+                         faces, so the spec only ever needed one — and the merged text keeps every
+                         promise, so the audit still judges them all. A self-verb (jump/shoot/dash/
+                         cycle tool) has no target and keeps its own key. Called at the SPEC
                          boundary (draft + freeze) so the human review, the prompts and the scaffold
                          all read the same key.
       run.py             create_run / draft_spec / freeze / run_build (CLI: kickoff + block-poll the

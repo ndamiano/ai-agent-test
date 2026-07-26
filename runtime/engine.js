@@ -16,34 +16,6 @@
 //     onWin?() / onLose?() // optional; the game decides when to call kit.win()/lose()
 //   }
 
-// ── deterministic RNG (seeded — headless runs must reproduce) ─────────────────
-export function makeRng(seed = 1) {
-  let s = seed >>> 0 || 1;
-  // The rng IS a function — `kit.rng()` returns a float in [0,1) — and also carries the named
-  // helpers (`.next/.range/.int/.pick/.chance`). Both forms work: the model reaches for `kit.rng()`
-  // as often as `kit.rng.next()`, so meet it instead of tripping a not-callable error.
-  const next = () => {
-    // xorshift32
-    s ^= s << 13; s >>>= 0;
-    s ^= s >> 17;
-    s ^= s << 5;  s >>>= 0;
-    return s / 0xffffffff;
-  };
-  next.next = next;
-  next.range = (lo, hi) => lo + next() * (hi - lo);
-  next.int = (lo, hi) => Math.floor(lo + next() * (hi - lo + 1));
-  next.pick = (arr) => arr[Math.floor(next() * arr.length)];
-  next.chance = (p) => next() < p;
-  next.shuffle = (arr) => {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(next() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-  };
-  return next;
-}
-
 // ── vec2 helpers ─────────────────────────────────────────────────────────────
 export const V = {
   add: (a, b) => ({ x: a.x + b.x, y: a.y + b.y }),
@@ -256,8 +228,8 @@ export function pursue(e, target, speed, lead = 0.3) {   // seek where a moving 
                 w: target.w, h: target.h };
   return seek(e, aim, speed);
 }
-export function wander(e, speed, rng, turn = 3) {        // drift, turning by up to `turn` rad/step
-  e._heading = (e._heading ?? (rng ? rng.next() * 6.283 : 0)) + (rng ? (rng.next() - 0.5) * turn : 0);
+export function wander(e, speed, turn = 3) {             // drift, turning by up to `turn` rad/step
+  e._heading = (e._heading ?? Math.random() * 6.283) + (Math.random() - 0.5) * turn;
   e.vx = Math.cos(e._heading) * speed; e.vy = Math.sin(e._heading) * speed;
 }
 
@@ -279,8 +251,8 @@ export function flee3(e, threat, speed, dt) {      // walk directly away from th
   e.x += dx / d * speed * dt; e.z += dz / d * speed * dt;
   e.ry = Math.atan2(-dx / d, -dz / d);
 }
-export function wander3(e, speed, dt, rng, turn = 2) {   // amble: drift on x/z, slowly turning
-  e._heading = (e._heading ?? (rng ? rng.next() * 6.283 : 0)) + (rng ? (rng.next() - 0.5) * turn * dt * 6 : 0);
+export function wander3(e, speed, dt, turn = 2) {        // amble: drift on x/z, slowly turning
+  e._heading = (e._heading ?? Math.random() * 6.283) + (Math.random() - 0.5) * turn * dt * 6;
   const dx = Math.sin(e._heading), dz = Math.cos(e._heading);
   e.x += dx * speed * dt; e.z += dz * speed * dt;
   e.ry = Math.atan2(-dx, -dz);
@@ -383,10 +355,10 @@ export function gridMove(e, dx, dy, cell, passable = () => true) {
 }
 
 // ── particles / juice (feel — cheap quality; the game draws them as small rects) ──
-// Spawn a radial burst of short-lived particles into `world`. Pass kit.rng for varied spread.
-export function burst(world, x, y, n = 12, { speed = 120, life = 0.5, color = "#fd0", size = 3, rng } = {}) {
+// Spawn a radial burst of short-lived particles into `world`.
+export function burst(world, x, y, n = 12, { speed = 120, life = 0.5, color = "#fd0", size = 3 } = {}) {
   for (let i = 0; i < n; i++) {
-    const a = (rng ? rng.next() : i / n) * 6.283, s = speed * (rng ? 0.4 + rng.next() * 0.6 : 1);
+    const a = Math.random() * 6.283, s = speed * (0.4 + Math.random() * 0.6);
     spawn(world, { x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, w: size, h: size,
                    life, maxLife: life, color, particle: true });
   }
@@ -607,6 +579,44 @@ export function menuPick(input) {
   return -1;
 }
 
+// ── focus: WHAT the player is about to act on ────────────────────────────────────────────────
+// ONE activate key can only mean the right thing if something decides what is in front of the
+// player. That decision — inside the facing cone, within reach, nearest wins — is identical in
+// every game, and hand-writing it per verb is where generation goes wrong: a measured build
+// checked the cone for tool use and forgot it for animals, so the farmer tended a cow standing
+// behind him. An entity opts in by carrying `action` (the verb id the game switches on) and an
+// optional `label` (what the prompt calls it).
+const _FOCUS_RANGE = 3, _FOCUS_CONE = 0.35;
+
+// Unit facing on the entity's OWN plane, from whichever heading field its movement scheme sets:
+// `ry` (3D mesh facing, points to (-sin, -cos)), `yaw` (first-person aim, (sin, -cos)) or `angle`
+// (2D travel direction). Zero-length when the entity has never faced anywhere.
+export function facing(e) {
+  if (e.ry != null) return { x: -Math.sin(e.ry), z: -Math.cos(e.ry) };
+  if (e.yaw != null) return { x: Math.sin(e.yaw), z: -Math.cos(e.yaw) };
+  if (e.angle != null) return { x: Math.cos(e.angle), z: Math.sin(e.angle) };
+  return { x: 0, z: 0 };
+}
+
+export function focusTarget(state, opts = {}) {
+  const p = state && state.player;
+  if (!p || state.talk) return null;              // no target while a dialogue owns the screen
+  const range = opts.range ?? _FOCUS_RANGE, cone = opts.cone ?? _FOCUS_CONE;
+  const flat = typeof p.z !== "number";           // 2D games act on the x/y plane, 3D on x/z
+  const f = facing(p), fx = f.x, fy = f.z;        // `facing` names the second axis z; in 2D it is y
+  const aimed = Math.hypot(fx, fy) > 0.001;       // never faced anywhere yet ⇒ distance alone decides
+  let best = null, bestD = Infinity;
+  for (const e of state.world ?? []) {
+    if (e === p || e.dead || !e.action) continue;
+    const dx = e.x - p.x, dy = flat ? (e.y ?? 0) - (p.y ?? 0) : (e.z ?? 0) - p.z;
+    const d = Math.hypot(dx, dy);
+    if (d > (e.reach ?? range) || d >= bestD) continue;
+    if (aimed && d > 0.001 && (dx * fx + dy * fy) / d < cone) continue;
+    best = e; bestD = d;
+  }
+  return best;
+}
+
 // ── dialogue / shop (the WHOLE talk loop as one primitive — open, advance, choose, close) ──────
 // State lives in `state.talk` (plain data, sim-pure). The speaker is any object with
 // { name, lines: string[] } and optionally { options: string[] } (the choices offered after the
@@ -783,27 +793,34 @@ function _hudBox(draw, x, y, w, h) {
   draw.rect(x, y, w, t, b); draw.rect(x, y + h - t, w, t, b);
   draw.rect(x, y, t, h, b); draw.rect(x + w - t, y, t, h, b);
 }
-function _hudBoxPos(anchor, W, H, bw, bh) {
-  const pad = 24;
+// Boxes STACK like every other HUD item: a dialogue panel and its choice menu are two items, and
+// placing each by anchor alone drew them on top of each other (shipped: an options box over the
+// line it was answering). `stack` carries the next free y per anchor across one render.
+function _hudBoxPos(anchor, W, H, bw, bh, stack = {}) {
+  const pad = 24, gap = 8;
   const x = anchor.endsWith("left") ? pad : anchor.endsWith("right") ? W - pad - bw : (W - bw) / 2;
-  const y = anchor.startsWith("top") ? pad : anchor.startsWith("bottom") ? H - pad - bh : (H - bh) / 2;
+  const up = anchor.startsWith("bottom");
+  if (stack[anchor] == null)
+    stack[anchor] = anchor.startsWith("top") ? pad : up ? H - pad : (H - bh) / 2;
+  const y = up ? stack[anchor] - bh : stack[anchor];
+  stack[anchor] = up ? y - gap : y + bh + gap;
   return { x, y };
 }
-function _drawPanel(draw, it, W, H) {
+function _drawPanel(draw, it, W, H, stack) {
   const lines = String(it.text).split("\n");
   const bw = Math.min(W - 48, 680), titleH = it.title ? 30 : 0;
   const bh = 24 + titleH + lines.length * 24;
-  const { x, y } = _hudBoxPos(it.at || "bottom", W, H, bw, bh);
+  const { x, y } = _hudBoxPos(it.at || "bottom", W, H, bw, bh, stack);
   _hudBox(draw, x, y, bw, bh);
   let ty = y + 22;
   if (it.title) { draw.text(String(it.title), x + 18, ty, it.color || "#ffd27a", 20, "left"); ty += 30; }
   for (const ln of lines) { draw.text(ln, x + 18, ty, "#f2ead8", 16, "left"); ty += 24; }
 }
-function _drawMenu(draw, it, W, H) {
+function _drawMenu(draw, it, W, H, stack) {
   const opts = it.options.map(String);
   const bw = Math.min(W - 48, 560), titleH = it.title ? 32 : 0;
   const bh = 20 + titleH + opts.length * 30;
-  const { x, y } = _hudBoxPos(it.at || "center", W, H, bw, bh);
+  const { x, y } = _hudBoxPos(it.at || "center", W, H, bw, bh, stack);
   _hudBox(draw, x, y, bw, bh);
   let ty = y + 22;
   if (it.title) { draw.text(String(it.title), x + 18, ty, it.color || "#ffd27a", 20, "left"); ty += 32; }
@@ -818,6 +835,7 @@ function _drawMenu(draw, it, W, H) {
 export function renderHud(draw, items, W, H) {
   if (!Array.isArray(items)) return;
   const cursor = {};   // anchor -> next y (top anchors grow down, bottom anchors grow up)
+  const boxes = {};    // the same, for the boxed items (panel/menu), which have their own metrics
   const xOf = (anchor) => anchor.endsWith("left") ? { x: _HUD_PAD, align: "left" }
     : anchor.endsWith("right") ? { x: W - _HUD_PAD, align: "right" }
       : { x: W / 2, align: "center" };
@@ -828,8 +846,8 @@ export function renderHud(draw, items, W, H) {
       draw.text(String(it.text), W / 2, H / 2, it.color || "#fff", 32, "center");
       continue;
     }
-    if (it.kind === "panel") { _drawPanel(draw, it, W, H); continue; }
-    if (it.kind === "menu") { _drawMenu(draw, it, W, H); continue; }
+    if (it.kind === "panel") { _drawPanel(draw, it, W, H, boxes); continue; }
+    if (it.kind === "menu") { _drawMenu(draw, it, W, H, boxes); continue; }
     const anchor = it.at || "top-left";
     const down = !anchor.startsWith("bottom");
     if (cursor[anchor] == null) cursor[anchor] = down ? _HUD_PAD + 16 : H - _HUD_PAD;
@@ -853,10 +871,11 @@ export function renderHud(draw, items, W, H) {
 }
 
 // ── the runner: shared control surface the kit hands the game ─────────────────
-export function makeKit(config, rng) {
+export function makeKit(config) {
   let over = null; // null | {won:bool, msg}
   let sprites = {}; // id -> loaded Image; empty headless (kit.sprite always null -> game falls to shapes)
   let toasts = []; // transient notify() messages; stepped+drawn by the frame loop, inert headless
+  let focused = null; // last kit.focus() result; the frame loop draws its prompt like a toast
   // Registered ACTIONS (name -> {keys, fn}). Registration makes the spec's key bindings
   // machine-readable: a binding's keys can be listed, remapped or shown in a HUD
   // (a shipped game had a full melee implementation behind a key read that never fired), and a
@@ -872,7 +891,6 @@ export function makeKit(config, rng) {
   };
   return {
     config,
-    rng,
     V,
     spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
     physics, walk, jump, collideWorld, seek, flee, arrive, pursue, wander, astar, cellCenter,
@@ -880,7 +898,14 @@ export function makeKit(config, rng) {
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
     chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
     drive: (e, input, dt, speed) => driveScheme(config.controls, e, input, dt, speed),
-    menuPick, talkOpen, talkStep, talkHud,
+    menuPick, talkOpen, talkStep, talkHud, facing,
+    // The one thing `activate` would act on right now, also parked on state.focus for the game to
+    // switch on. The engine draws its prompt, so the player is never guessing what the key does.
+    focus(state, opts) {
+      focused = focusTarget(state, opts);
+      state.focus = focused;
+      return focused;
+    },
     quest: makeQuestApi(notify),
     notify,
     register(name, keys, fn) {
@@ -899,6 +924,17 @@ export function makeKit(config, rng) {
     _setSprites(map) { sprites = map || {}; },
     _stepToasts(dt) { for (const t of toasts) t.ttl -= dt; toasts = toasts.filter((t) => t.ttl > 0); },
     _toastItems: () => toasts.map((t) => ({ kind: "text", text: t.msg, at: "top", color: "#ffe9b0", size: 18 })),
+    // The activate prompt is the ENGINE's, not the game's: the key it names is the one actually
+    // registered, so a rebind can never leave the screen telling the player to press the old key.
+    _focusItems() {
+      if (!focused) return [];
+      const a = actions.get("activate");
+      const key = a && a.keys[0];
+      const name = key === " " ? "Space" : key ? (key.length === 1 ? key.toUpperCase() : key) : "";
+      const what = focused.label || focused.name || focused.action;
+      return [{ kind: "text", text: name ? `${name} — ${what}` : String(what),
+                at: "bottom", color: "#ffe9b0", size: 18 }];
+    },
     win: (msg = "You win") => { if (!over) over = { won: true, msg }; },
     lose: (msg = "Game over") => { if (!over) over = { won: false, msg }; },
     get over() { return over; },
@@ -941,16 +977,16 @@ export function fitToWindow(canvas, aspect) {
   fit();
 }
 
-// Build a game instance holding a REAL kit. The kit needs the game's config (seed, size), but config
+// Build a game instance holding a REAL kit. The kit needs the game's config (size), but config
 // lives inside createGame — so peek it with a throwaway null-kit instance, build the kit from it, then
 // re-instantiate WITH the kit. This is why createGame(kit) receives a live kit: a helper that closes
 // over the `kit` parameter works, not just the kit passed into init/update. (Don't touch kit at the
 // createGame top level — it runs during the config peek, before the kit exists; use it in init/update
 // and in helpers those call.)
-export function realize(factory, defaults = {}, seed = 1) {
+export function realize(factory, defaults = {}) {
   const peek = typeof factory === "function" ? factory(null) : factory;
   const config = { ...defaults, ...(peek.config || {}) };
-  const kit = makeKit(config, makeRng(config.seed || seed));
+  const kit = makeKit(config);
   const g = typeof factory === "function" ? factory(kit) : peek;
   return { g, config, kit };
 }
@@ -966,7 +1002,12 @@ export async function run(game, canvas, assetBase) {
   kit._setSprites(await loadSprites(assetBase));
 
   const keymap = (e) => e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  addEventListener("keydown", (e) => input._set(keymap(e), true));
+  // The browser's own meaning for these steals the game: space scrolls, arrows scroll, Tab moves
+  // focus off the canvas mid-play.
+  addEventListener("keydown", (e) => {
+    input._set(keymap(e), true);
+    if (e.key.startsWith("Arrow") || e.key === " " || e.key === "Tab") e.preventDefault();
+  });
   addEventListener("keyup", (e) => input._set(keymap(e), false));
   canvas.addEventListener("mousemove", (e) => {
     const r = canvas.getBoundingClientRect();
@@ -986,7 +1027,7 @@ export async function run(game, canvas, assetBase) {
     input._endFrame();
     kit._stepToasts(dt);
     renderScene(draw, g, kit, config);
-    const hudItems = [...(g.hud ? g.hud(kit) || [] : []), ...kit._toastItems()];
+    const hudItems = [...(g.hud ? g.hud(kit) || [] : []), ...kit._focusItems(), ...kit._toastItems()];
     if (hudItems.length) renderHud(draw, hudItems, config.width, config.height);
     if (kit.over) draw.text(kit.over.msg, config.width / 2, config.height / 2, "#fff", 32, "center");
     requestAnimationFrame(frame);
@@ -999,8 +1040,8 @@ export async function run(game, canvas, assetBase) {
 // Runs `frames` updates at a fixed dt with scripted (or empty) input, watchdogs
 // every entity/state number for NaN/Infinity, and reports the first crash.
 // Zero deps — pure Node. An outer process timeout catches infinite loops.
-export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [] } = {}) {
-  const { g, config, kit } = realize(game, { width: 640, height: 480, gravity: 0 }, seed);
+export function simulate(game, { frames = 600, dt = 1 / 60, script = [] } = {}) {
+  const { g, config, kit } = realize(game, { width: 640, height: 480, gravity: 0 });
   const input = makeInput();
   try {
     if (g.init) g.init(kit);
@@ -1046,8 +1087,8 @@ export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [
 // state.world — so this runs that render (a malformed entity crashes it) plus hud(), which is the
 // only screen-space DATA the game still authors. It does NOT judge whether the game painted
 // "enough": an idle/menu/text game legitimately paints no world.
-export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
-  const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 }, seed);
+export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60 } = {}) {
+  const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 });
   const hasHud = typeof g.hud === "function";
   const is3d = config.mode === "3d";
   if (typeof g.draw === "function") {

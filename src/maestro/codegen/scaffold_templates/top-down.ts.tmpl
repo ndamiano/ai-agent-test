@@ -10,13 +10,14 @@
 //   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
 //   update(state: GameState, dt: number, input: Input, kit: Kit): void gameplay, runs AFTER movement
 //   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
+{activate_contract}
 // Scaffold-read state fields: state.player (required), state.player.speed? (px/s, default 150),
 // and for the solid pass: state.solidAt?(cx, cy) (solid cells; defaults to state.tilemap.solidAt)
 // + state.cell? (px per cell, defaults to tilemap.tile or 32) — absent ⇒ pair separation only.
 // Tag blocking entities `solid: true`; bullets/pickups stay untagged.
-import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
+import { createState, init as initGame, update as updateGame, hud as hudGame{activate_import} } from "./game.ts";
 
-const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 };
+const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111" };
 
 export function createGame(kit: Kit): GameObject {
   // realize() peeks config via createGame(null) before the kit exists — createState must not run then.
@@ -26,14 +27,14 @@ export function createGame(kit: Kit): GameObject {
     config: CONFIG,
     state,
     init(kit: Kit) {
-{interact_init}
+{activate_init}
       initGame(state, kit);
       if (!state.player) throw new Error(
         "game.ts init(state, kit) must create state.player (spawn it into state.world) — " +
         "the control scaffold steers state.player.");
     },
     update(dt: number, input: Input, kit: Kit) {
-{interact}
+{activate}
       if (!state.talk)   // movement pauses while a kit dialogue is open
         kit.moveTopDown(state.player, input, dt, state.player.speed ?? 150);
       updateGame(state, dt, input, kit);

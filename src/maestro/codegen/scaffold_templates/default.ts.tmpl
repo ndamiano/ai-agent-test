@@ -9,11 +9,12 @@
 //   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
 //   update(state: GameState, dt: number, input: Input, kit: Kit): void the whole per-frame game step
 //   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
+{activate_contract}
 // state.player is still required (the renderer and the scaffold key on it) — for a game with no
 // avatar, spawn the "cursor"/protagonist entity and reference it as state.player.
-import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
+import { createState, init as initGame, update as updateGame, hud as hudGame{activate_import} } from "./game.ts";
 
-const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 };
+const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111" };
 
 export function createGame(kit: Kit): GameObject {
   // realize() peeks config via createGame(null) before the kit exists — createState must not run then.
@@ -23,13 +24,13 @@ export function createGame(kit: Kit): GameObject {
     config: CONFIG,
     state,
     init(kit: Kit) {
-{interact_init}
+{activate_init}
       initGame(state, kit);
       if (!state.player) throw new Error(
         "game.ts init(state, kit) must create state.player (spawn it into state.world).");
     },
     update(dt: number, input: Input, kit: Kit) {
-{interact}
+{activate}
       updateGame(state, dt, input, kit);
     },
     hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },

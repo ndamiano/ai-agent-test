@@ -67,3 +67,47 @@ def test_freeze_spec_roundtrips_frozen_flag(tmp_path, events, stub_draft):
         assert result == {"ok": True, "frozen": True}
         assert RunState(run_id).read_spec()["frozen"] is True
     assert ("spec_frozen", run_id, {"title": "Stub Game"}) in events
+
+
+def test_cli_draft_leaves_spec_unfrozen_for_editing(tmp_path, events, stub_draft, monkeypatch, capsys):
+    """--draft stops after stage 1 so a human can edit spec.json before the build."""
+    monkeypatch.setattr(run_mod.store, "list_users", lambda: [type("U", (), {"id": "u1"})()])
+    monkeypatch.setattr(run_mod.db_store, "create_game", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.db_store, "charge_game", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.db_store, "update_spec_meta", lambda *a, **k: None)
+
+    with execution_context(working_directory=str(tmp_path)):
+        assert run_mod._cli_draft("a farm game") == 0
+        run_id = capsys.readouterr().out.split("run: ")[1].split("\n")[0]
+        spec = RunState(run_id).read_spec()
+
+    assert spec["frozen"] is False
+    assert spec["design"]["seen"] == "a farm game"
+
+
+def test_cli_build_freezes_the_spec_on_disk(tmp_path, events, monkeypatch):
+    """--build freezes whatever spec.json says now — the hand edit, not the drafted text."""
+    monkeypatch.setattr(run_mod.db_store, "update_spec_meta", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.db_store, "create_game", lambda *a, **k: None)
+    built = []
+    monkeypatch.setattr(run_mod, "run_build",
+                        lambda rid, **k: built.append(rid) or run_mod.BuildResult(True, 3, 1.0, []))
+
+    with execution_context(working_directory=str(tmp_path)):
+        run_id = run_mod.create_run("u1")
+        state = RunState(run_id)
+        state.write_spec({"request": "r", "title": "T", "mode": "2d",
+                          "design": {"controls": {"Spacebar": "jump"}}, "frozen": False})
+
+        assert run_mod._cli_build(run_id) == 0
+
+        spec = state.read_spec()
+    assert built == [run_id]
+    assert spec["frozen"] is True
+    assert spec["design"]["controls"] == {" ": "jump"}     # hand-edited keys still normalize
+
+
+def test_cli_build_refuses_an_unknown_run(tmp_path, capsys):
+    with execution_context(working_directory=str(tmp_path)):
+        assert run_mod._cli_build("nosuchrun") == 1
+    assert "no spec" in capsys.readouterr().out

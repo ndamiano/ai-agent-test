@@ -34,20 +34,13 @@ interface Entity {
   color?: string;
   shape?: "rect" | "circle" | "box" | "sphere" | "ground" | "heightfield" | "grassfield";
   layer?: number;    // 2D draw order within state.world; higher paints later. Default 0.
+  action?: string;   // the verb `activate` performs on this entity; kit.focus only ever targets these
+  label?: string;    // what the activate prompt calls it (falls back to `name`, then `action`)
+  reach?: number;    // how close activate must be for THIS entity (default kit.focus's range)
   sprite?: string;   // asset id; kit.spawnData sets it from the data row
   [k: string]: any;
 }
 type World = Entity[];
-
-interface Rng {
-  (): number;                 // kit.rng() → float in [0,1); same as kit.rng.next()
-  next(): number;
-  range(lo: number, hi: number): number;
-  int(lo: number, hi: number): number;
-  pick<T>(arr: T[]): T;
-  chance(p: number): boolean;
-  shuffle<T>(arr: T[]): T[];
-}
 
 interface V {
   add(a: Vec2, b: Vec2): Vec2;
@@ -114,16 +107,20 @@ interface Camera3 { x: number; y: number; z: number; tx: number; ty: number; tz:
 
 // Anything kit.talkOpen can converse as — usually an NPC entity carrying these fields.
 interface Talker { name?: string; lines: string[]; options?: string[]; [k: string]: any; }
+// The open dialogue in state.talk. The KIT owns every field: talkOpen writes it, talkStep advances
+// and clears it, talkHud renders it. Typed (not `any`) so a game that invents a member of it —
+// a shipped build read `state.talk.currentLine` and drew the string "undefined" over the screen —
+// fails at the typecheck gate instead of at the player.
+interface Talk { npc: Talker; line: number; options: string[] | null; }
 // A quest in state.quests (managed via kit.quest.*).
 interface Quest { id: string; title: string; reward: number; done: boolean; [k: string]: any; }
 
 interface FlyerOpts { thrust?: number; turn?: number; climb?: number; drag?: number; keys?: Record<string, string>; }
-interface BurstOpts { speed?: number; life?: number; color?: string; size?: number; rng?: Rng; }
+interface BurstOpts { speed?: number; life?: number; color?: string; size?: number; }
 interface AstarOpts { cols?: number; rows?: number; diagonal?: boolean; }
 
 interface Kit {
   config: Config;
-  rng: Rng;
   V: V;
   // entities + physics
   spawn(world: World, ent: Partial<Entity>): Entity;
@@ -148,12 +145,12 @@ interface Kit {
   flee(e: Entity, target: Vec2, speed: number): void;
   arrive(e: Entity, target: Vec2, speed: number, slow?: number): number;
   pursue(e: Entity, target: Entity, speed: number, lead?: number): number;
-  wander(e: Entity, speed: number, rng?: Rng, turn?: number): void;
+  wander(e: Entity, speed: number, turn?: number): void;
   // 3D steering (NPCs on the ground plane): these move x/z, APPLY dt themselves (no integrate3
   // needed) and set e.ry to face travel. Keep y on the terrain after: e.y = heightAt(e.x,e.z)+halfH.
   seek3(e: Entity, target: { x: number; z: number }, speed: number, dt: number): number;
   flee3(e: Entity, threat: { x: number; z: number }, speed: number, dt: number): void;
-  wander3(e: Entity, speed: number, dt: number, rng?: Rng, turn?: number): void;
+  wander3(e: Entity, speed: number, dt: number, turn?: number): void;
   patrol3(e: Entity, points: ({ x: number; z: number } | [number, number])[], speed: number, dt: number, arriveAt?: number): void;
   // push an entity out of centered footprint rects (e.g. WORLD.buildings) — call AFTER moving it,
   // so walkers (player included) slide around buildings instead of through them.
@@ -191,6 +188,15 @@ interface Kit {
   talkOpen(state: any, npc: Talker, options?: string[]): void;
   talkStep(state: any, input: Input, advanceKey?: string): null | { npc: Talker; pick: number };
   talkHud(state: any): HudItem[];
+
+  // ── focus: WHAT one `activate` key acts on right now ──
+  // The scaffold calls focus() every frame and the engine draws the prompt ("E — Talk to Oren"),
+  // so the game writes only the EFFECT of a verb, never the targeting and never the prompt. An
+  // entity opts in by carrying `action` (the id onActivate switches on) and an optional `label`.
+  //   spawn(world, {..., action: "harvest", label: "Ripe crop"})
+  //   onActivate(state, target, kit) { if (target.action === "harvest") ... }
+  focus(state: any, opts?: { range?: number; cone?: number }): Entity | null;
+  facing(e: Entity): { x: number; z: number };
   // ── quests: milestone progression WITHOUT ending the game. Completing a quest notifies and play
   // continues — reserve kit.win/lose for the spec's DEFINITE ending. Quests live in state.quests.
   quest: {
@@ -239,7 +245,7 @@ interface Kit {
 
 interface Config {
   width?: number; height?: number; title?: string; background?: string;
-  gravity?: number; seed?: number; mode?: "2d" | "3d";
+  gravity?: number; mode?: "2d" | "3d";
   backdrop?: string;                    // 2D: asset id drawn behind the scene, screen-sized
   tileColors?: Record<string, string>;  // 2D: tilemap glyph -> fill; solid cells default to #555
   pointerLock?: boolean;   // 3D: click captures the mouse for first-person look (fills input.lookDX/DY)
@@ -261,6 +267,12 @@ interface GameHooks<S> {
   init(state: S, kit: Kit): void;
   update(state: S, dt: number, input: Input, kit: Kit): void;
   hud(state: S, kit: Kit): HudItem[];
+  // Fired by the scaffold's ONE activate key, on whatever kit.focus targeted. Dialogue is already
+  // handled before this runs — a talkable target opens itself — so this is the game's other verbs.
+  // Optional: a game whose spec has no verb aimed at anything is scaffolded without an activate key
+  // at all. When the scaffold DOES dispatch it, game.ts's contract line names it, so a missing or
+  // mis-signed hook is an error inside game.ts rather than at the GENERATED import.
+  onActivate?(state: S, target: Entity, kit: Kit): void;
 }
 
 interface GameObject {
@@ -277,5 +289,5 @@ interface GameObject {
 // `Kit.Config` (declaration merging with the `Kit` interface above). Both `Entity` and `Kit.Entity`
 // name the same type — supports the natural "extend the kit's entity with my fields" pattern.
 declare namespace Kit {
-  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, Camera, Camera3, Rng, V, GameObject, HudItem, HudAnchor, Talker, Quest };
+  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, Camera, Camera3, V, GameObject, HudItem, HudAnchor, Talker, Talk, Quest };
 }

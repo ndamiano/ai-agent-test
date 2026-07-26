@@ -203,31 +203,60 @@ def _await_build(run_id: str) -> BuildResult:
     return BuildResult(bool(cursor.ok), cursor.step, elapsed, failures)
 
 
-def _cli(request: str) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-
+def _draft_run(request: str) -> Optional[str]:
+    """A fresh run with its drafted, unfrozen spec on disk. None when there is no account to own it."""
     # TODO Think through this. The CLI is only used by employees.
     # We should probably require an account
     users = store.list_users()
     if not users:
         print("no accounts yet — create one first: python -m auth.cli create <handle>")
-        return 1
-    owner = users[0].id
+        return None
 
-    run_id = create_run(owner)
+    run_id = create_run(users[0].id)
     # The CLI is the employee path — no credit charge, but the compute budget still gates every
     # enqueue, so grant the same seconds a charged build would get or step 1 is refused.
     db_store.charge_game(run_id, 0, SECONDS_PER_CREDIT)
     print(f"run: {run_id}\ndrafting spec for: {request!r}\n")
     spec = draft_spec(request)
-    state = RunState(run_id)
-    state.write_spec(spec)
+    RunState(run_id).write_spec(spec)
     print(json.dumps(spec["design"], indent=2, ensure_ascii=False))
+    return run_id
 
+
+def _cli_draft(request: str) -> int:
+    """Stage 1 alone: draft the spec and STOP, leaving spec.json on disk for a human edit. The
+    build half is `--build <run_id>`, which freezes whatever the file says (freeze_spec
+    re-normalizes controls, so a hand-edited key still binds)."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    run_id = _draft_run(request)
+    if run_id is None:
+        return 1
+    print(f"\nspec: {RunState(run_id).spec_path.resolve()}")
+    print(f"edit it, then: python -m maestro.codegen.run --build {run_id}")
+    return 0
+
+
+def _cli_build(run_id: str) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    state = RunState(run_id)
+    if state.read_spec() is None:
+        print(f"no spec for run {run_id!r}")
+        return 1
     freeze_spec(run_id)
-    print("\nfrozen — building...\n")
-    result = run_build(run_id)
+    print("frozen — building...\n")
+    return _report(run_id, state, run_build(run_id))
 
+
+def _cli(request: str) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    run_id = _draft_run(request)
+    if run_id is None:
+        return 1
+    print()
+    return _cli_build(run_id)
+
+
+def _report(run_id: str, state: RunState, result: BuildResult) -> int:
     mins, secs = divmod(int(result.elapsed), 60)
     print(f"\nok={result.ok}  steps={result.steps}  elapsed={mins}m{secs:02d}s")
     if not result.ok:
@@ -310,6 +339,8 @@ _HELP = """maestro codegen — draft a spec, build a game, skin it with assets.
 
 usage:
   python -m maestro.codegen.run "<request>"   draft → freeze → build → play
+  python -m maestro.codegen.run --draft "<request>"       draft the spec and stop (edit spec.json)
+  python -m maestro.codegen.run --build <run_id>          freeze the spec on disk → build
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
   python -m maestro.codegen.run --audit <run_id>          audit a built run against its frozen spec
   python -m maestro.codegen.run --assets <run_id>         run the asset (reskin) stage on a built run
@@ -321,6 +352,14 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
         print(_HELP)
         sys.exit(0)
+    if len(sys.argv) >= 2 and sys.argv[1] == "--draft":
+        if len(sys.argv) < 3:
+            sys.exit('usage: python -m maestro.codegen.run --draft "<request>"')
+        sys.exit(_cli_draft(" ".join(sys.argv[2:])))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--build":
+        if len(sys.argv) < 3:
+            sys.exit("usage: python -m maestro.codegen.run --build <run_id>")
+        sys.exit(_cli_build(sys.argv[2]))
     if len(sys.argv) >= 2 and sys.argv[1] == "--fix":
         if len(sys.argv) < 4:
             sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')

@@ -102,6 +102,32 @@ _SCAFFOLD_STATE = {
                "meaning": "the avatar the control scaffold steers; init must spawn it",
                "mutators": ["init", "update"], "readers": []},
 }
+
+# The state the KIT ITSELF reads and writes — not the architecture's to omit. The engine renders the
+# scene from state.world (an entity is visible because it is IN there), and kit.talkOpen/kit.quest.*
+# ASSIGN state.talk / state.quests directly. A GameState missing one forbids the game from calling
+# the primitive its own spec composed, and no edit to a game file can fix that: a measured build
+# declared neither `world` nor `talk`, and burned 90 steps on tsc blaming game.ts for using both.
+# `optional` because the kit creates them on demand — only `world` must exist from frame 0. A field
+# whose primitive this spec never composes is NOT declared: an unused row in the state table is one
+# more thing for a small model to build to.
+_KIT_STATE = {
+    "world": {"type": "World", "lifetime": "run", "owner": "init", "uses": (),
+              "meaning": "every entity the engine renders; init spawns into it",
+              "mutators": ["init", "update"], "readers": []},
+    "talk": {"type": "Talk", "lifetime": "turn", "owner": "update", "optional": True,
+             "uses": ("dialogue", "shop"),
+             "meaning": "the open dialogue, written by kit.talkOpen and cleared by kit.talkStep",
+             "mutators": ["update"], "readers": ["hud"]},
+    "focus": {"type": "Entity", "lifetime": "turn", "owner": "update", "optional": True,
+              "uses": ("dialogue", "shop", "quest"),
+              "meaning": "what the activate key would act on, chosen by kit.focus each frame",
+              "mutators": ["update"], "readers": ["hud"]},
+    "quests": {"type": "Quest[]", "lifetime": "run", "owner": "init", "optional": True,
+               "uses": ("quest",),
+               "meaning": "the quest log kit.quest.add/complete maintains",
+               "mutators": ["init", "update"], "readers": ["hud"]},
+}
 _HOOKS_IFACE_RE = re.compile(r"interface\s+GameHooks<(\w+)>\s*\{(.*?)\n\}", re.S)
 _HOOK_MEMBER_RE = re.compile(r"^\s*(\w+)\??\s*(\([^;]*\)\s*:\s*[^;]+);", re.M)
 _ENGINE_DTS = "engine.d.ts"
@@ -171,7 +197,25 @@ def enforce_kit_contract(run_dir, iface: Dict) -> List[str]:
         iface.setdefault("state", []).append({"field": name, **entry})
         fixed.append(f"{name}: main.ts asserts state.{name} — declared {entry['type']}, "
                      f"owned by {entry['owner']}()")
+    uses = _spec_uses(run_dir)
+    for name, entry in _KIT_STATE.items():
+        wanted = entry["uses"]
+        if name in declared or (wanted and not (set(wanted) & uses)):
+            continue
+        iface.setdefault("state", []).append({"field": name, **{k: v for k, v in entry.items()
+                                                                if k != "uses"}})
+        fixed.append(f"{name}: the kit reads and writes state.{name} — declared {entry['type']}")
     return fixed
+
+
+def _spec_uses(run_dir) -> set:
+    """The catalog blocks the frozen spec composes, lowercased. Read off spec.json: `save` is called
+    from paths that hold no spec, and the run dir is where the spec durably lives."""
+    p = Path(run_dir) / "spec.json"
+    if not p.exists():
+        return set()
+    design = (json.loads(p.read_text(encoding="utf-8")) or {}).get("design") or {}
+    return {str(u).lower() for u in _list(design.get("uses"))}
 
 
 def hooks_block(run_dir, spec: Optional[Dict] = None) -> str:
@@ -181,12 +225,16 @@ def hooks_block(run_dir, spec: Optional[Dict] = None) -> str:
     would contradict the rule the same prompt states two lines earlier.
     """
     from maestro.codegen.module import _hook_exports
-    from maestro.codegen.scaffold import required_state_fields, state_contract_notes
+    from maestro.codegen.scaffold import is_3d, required_state_fields, state_contract_notes
 
     hooks = hook_signatures(run_dir)
     if not hooks:
         return ""
     wanted = _hook_exports(spec or {})
+    # A place in a 3D game has three coordinates. Declared as Vec2 the whole game is authored
+    # against a type with no `z`, and every site that needs one is a tsc error no edit can settle.
+    dims = ("\n\n# THIS GAME IS 3D — a position in the world is Vec3 {x, y, z}. Vec2 has no z.\n"
+            if is_3d(spec or {}) else "")
     return ("\n\n# THE ENTRY HOOKS — main.ts is GENERATED and calls these. Their signatures are FIXED;\n"
             "# declare them EXACTLY as written, on game.ts.\n"
             + "\n".join(f"  {s}" for n, s in hooks.items() if n in wanted)
@@ -202,7 +250,8 @@ def hooks_block(run_dir, spec: Optional[Dict] = None) -> str:
               "# builtins. They are AMBIENT: they already exist everywhere, so never import them — not\n"
               "# from './state.ts', not from a 'kit' module, not as members of a Kit namespace.\n"
               "# There is no DOM either: the game never sees a canvas or a rendering context.\n  "
-            + ", ".join(kit_types(run_dir)))
+            + ", ".join(kit_types(run_dir))
+            + dims)
 
 
 # ── prompt renderings ─────────────────────────────────────────────────────────
@@ -255,7 +304,8 @@ def _render_type(node, indent: int) -> str:
                                     f"(lifetime={child.get('lifetime', '?')}, "
                                     f"owner={child.get('owner', '?')})"] if x)
         out.append(f"{pad}  /** {note} */")
-        out.append(f"{pad}  {name}: {child.get('type') or 'any'};")
+        opt = "?" if child.get("optional") else ""
+        out.append(f"{pad}  {name}{opt}: {child.get('type') or 'any'};")
     out.append(pad + "}")
     return "\n".join(out)
 

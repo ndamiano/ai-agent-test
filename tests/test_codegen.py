@@ -43,7 +43,7 @@ from maestro.state import RunState
 # (this.state.p) are allowed without over-annotating each fixture.
 GOOD = """export function createGame(kit: Kit): GameObject {
   return {
-    config: { width: 200, height: 200, seed: 1 },
+    config: { width: 200, height: 200 },
     state: { world: [] as World, p: null as any },
     init(kit) { this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 10, h: 10 }); },
     update(dt, input, kit) {
@@ -203,7 +203,9 @@ def _write_hook_game(tmp_path, game_ts=HOOKS_GOOD, extra=None, spec=None):
         files.append({"name": name, "purpose": "", "exports": []})
     (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
-    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    (d / "data" / "manifest.json").write_text(json.dumps(
+        {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}), encoding="utf-8")
+    (d / "data" / "things.json").write_text(json.dumps([{"id": "thing_a", "hp": 1}]), encoding="utf-8")
     seed_interfaces(tmp_path)
     return spec
 
@@ -225,7 +227,9 @@ def _write_game(tmp_path, code, extra=None):
         files.append({"name": name, "purpose": "", "exports": []})
     (d / "manifest.json").write_text(json.dumps({"files": files}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
-    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    (d / "data" / "manifest.json").write_text(json.dumps(
+        {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}), encoding="utf-8")
+    (d / "data" / "things.json").write_text(json.dumps([{"id": "thing_a", "hp": 1}]), encoding="utf-8")
     seed_interfaces(tmp_path)
 
 
@@ -259,8 +263,8 @@ def test_steering_seek_reaches_target(tmp_path):
 
 def test_flyer_thrusts_forward_and_stays_finite():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const input = { down:(k)=>k===" ", pressed:()=>false };
       const e = {x:0,y:5,z:0,yaw:0,pitch:0};
       for (let i=0;i<120;i++) kit.flyer(e, input, 1/60, {thrust:40});
@@ -271,8 +275,8 @@ def test_flyer_thrusts_forward_and_stays_finite():
 
 def test_astar_routes_around_a_wall():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const blocked = (x,y)=> x===2 && y<4;            // a wall with a gap at y=4
       const path = kit.astar({x:0,y:0}, {x:4,y:0}, (x,y)=>!blocked(x,y), {cols:5, rows:5});
       const last = path[path.length-1];
@@ -287,8 +291,8 @@ def test_astar_routes_around_a_wall():
 
 def test_astar_returns_empty_when_unreachable():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const wall = (x,y)=> x===2;                       // a full wall — no gap
       const path = kit.astar({x:0,y:0}, {x:4,y:0}, (x,y)=>!wall(x,y), {cols:5, rows:5});
       console.log(JSON.stringify({len: path.length}));
@@ -298,8 +302,8 @@ def test_astar_returns_empty_when_unreachable():
 
 def test_gridmove_steps_into_open_and_blocks_on_walls():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const cell = 32;
       const pass = (x,y) => !(x===1 && y===0);         // a wall one cell to the right
       const e = {x:0, y:0};
@@ -313,10 +317,10 @@ def test_gridmove_steps_into_open_and_blocks_on_walls():
 
 def test_particles_burst_then_expire_and_cull():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const world = [];
-      kit.burst(world, 100, 100, 10, {life:0.2, rng:kit.rng});
+      kit.burst(world, 100, 100, 10, {life:0.2});
       const spawned = world.length;
       for (let i=0;i<30;i++) kit.stepParticles(world, 1/60);   // 0.5s > life -> all expire
       console.log(JSON.stringify({spawned, remaining: world.length}));
@@ -326,8 +330,8 @@ def test_particles_burst_then_expire_and_cull():
 
 def test_physics3_falls_and_lands_on_ground():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const b = {x:0,y:50,z:0,vy:0};
       for (let i=0;i<600;i++) kit.physics3(b, 1/60, 20, 0);
       console.log(JSON.stringify({y:b.y, grounded:b.grounded}));
@@ -339,8 +343,8 @@ def test_move_relative_follows_camera_yaw():
     # W drives along the camera's heading (input.camYaw), not a world axis: at yaw 0, W = -z (into a
     # screen whose chase camera sits at +z); rotate the camera 90deg and the SAME W key drives +x.
     r = _node_eval("""
-      import {makeKit, makeRng, makeInput} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit, makeInput} from "./engine.js";
+      const kit = makeKit({});
       const input = makeInput(); input._set("w", true);
       const a = {x:0,y:0,z:0}; input.camYaw = 0;
       kit.moveRelative(a, input, 1, 10);
@@ -355,8 +359,8 @@ def test_move_relative_follows_camera_yaw():
 # ── collideWorld: the ONE 2D solid pass (tile pushout + pair separation) ──────
 def test_collide_world_pushes_solid_entity_out_of_solid_tile():
     r = _node_eval("""
-      import {makeKit, makeRng} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit} from "./engine.js";
+      const kit = makeKit({});
       const solidAt = (cx, cy) => cx === 2 && cy === 1;      // one wall cell: x 64..96, y 32..64
       const e = { x: 60, y: 40, w: 20, h: 20, vx: 50, solid: true };
       kit.collideWorld([e], solidAt, 32);
@@ -393,11 +397,13 @@ def test_collide_world_leaves_non_solid_untouched():
 
 def test_collide_world_is_deterministic():
     r = _node_eval("""
-      import {collideWorld, makeRng} from "./engine.js";
+      import {collideWorld} from "./engine.js";
       const build = () => {
-        const rng = makeRng(7), w = [];
+        let s = 7;
+        const next = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+        const w = [];
         for (let i = 0; i < 30; i++)
-          w.push({ x: rng.int(0, 300), y: rng.int(0, 300), w: 20, h: 20, solid: true });
+          w.push({ x: Math.floor(next() * 300), y: Math.floor(next() * 300), w: 20, h: 20, solid: true });
         return w;
       };
       const solidAt = (cx, cy) => (cx + cy) % 7 === 0;
@@ -411,8 +417,8 @@ def test_collide_world_is_deterministic():
 # ── action registry: register / bindings / edge-fire ──────────────────────────
 def test_register_edge_fires_once_per_press_and_rereg_replaces():
     r = _node_eval("""
-      import {makeKit, makeRng, makeInput} from "./engine.js";
-      const kit = makeKit({}, makeRng(1));
+      import {makeKit, makeInput} from "./engine.js";
+      const kit = makeKit({});
       const input = makeInput();
       let hits = 0, other = 0;
       kit.register("attack", ["F"], () => { hits++; });      // "F" normalizes like the key listener
@@ -435,7 +441,7 @@ def test_simulate_fires_registered_actions():
     r = _node_eval("""
       import {simulate} from "./engine.js";
       const game = (kit) => ({
-        config: { width: 100, height: 100, seed: 1 },
+        config: { width: 100, height: 100 },
         state: { world: [], score: 0 },
         init(kit) {
           kit.register("attack", [" "], () => {
@@ -549,20 +555,29 @@ def test_gamepad_controls_normalize_to_real_keys():
 
 
 def test_gamepad_alias_never_collides_with_a_key_the_spec_already_uses():
-    d = {"controls": {"E": "open door", "A_BUTTON": "interact", "Start": "pause"}}
+    d = {"controls": {"F": "throw a grenade", "A_BUTTON": "jump", "Start": "pause"}}
     controls_mod.normalize_controls(d)
-    assert d["controls"]["e"] == "open door"          # the real key keeps its meaning
-    assert d["controls"]["q"] == "interact"           # the pad button moves to a free one
+    assert d["controls"]["f"] == "throw a grenade"    # the real key keeps its meaning
+    assert d["controls"]["e"] == "jump"               # the pad button moves to a free one
     assert d["controls"]["Escape"] == "pause"
     assert len(d["controls"]) == 3                    # nothing silently dropped
 
 
 def test_keys_already_in_the_runtime_vocabulary_pass_through():
-    d = {"controls": {"e": "use", " ": "jump", "ArrowLeft": "left", "Escape": "pause",
-                      "Tab": "map", "Shift": "run", "Enter": "confirm", "1": "slot one"}}
+    d = {"controls": {"e": "throw", " ": "jump", "ArrowLeft": "left", "Escape": "pause",
+                      "Shift": "run", "Enter": "confirm", "1": "slot one"}}
     before = dict(d["controls"])
     controls_mod.normalize_controls(d)
     assert d["controls"] == before
+
+
+def test_tab_is_never_a_binding_because_the_browser_takes_it():
+    """Tab moves focus off the canvas mid-play: a spec that spends it on "sleep" ships a key that
+    opens the address bar instead."""
+    d = {"controls": {"Tab": "check the map", "TAB": "cycle weapon"}}
+    controls_mod.normalize_controls(d)
+    assert "Tab" not in d["controls"]
+    assert len(d["controls"]) == 2                    # rehomed, never dropped
 
 
 def test_single_letter_keys_fold_to_the_case_the_runtime_binds():
@@ -577,7 +592,7 @@ def test_single_letter_keys_fold_to_the_case_the_runtime_binds():
     ("SPACE", " "), ("Spacebar", " "), ("Space", " "), ("spacebar", " "),
     ("ESC", "Escape"), ("Escape", "Escape"),
     ("Enter", "Enter"), ("Return", "Enter"),
-    ("TAB", "Tab"), ("SHIFT", "Shift"),
+    ("SHIFT", "Shift"),
     ("Up", "ArrowUp"), ("Up Arrow", "ArrowUp"), ("UP_ARROW", "ArrowUp"),
     ("DOWN", "ArrowDown"), ("LEFT_ARROW", "ArrowLeft"), ("Right Arrow", "ArrowRight"),
     ("Key Q", "q"), ("1-5", "1"),
@@ -777,7 +792,9 @@ def test_authored_in_dependency_order_contract_first_entry_last(tmp_path):
         {"name": "game.ts", "purpose": "entry", "exports": ["createState"]},
         {"name": "combat.ts", "purpose": "combat", "exports": ["attack"]}]}))
     (d / "data").mkdir()
-    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}))
+    (d / "data" / "manifest.json").write_text(json.dumps(
+        {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}))
+    (d / "data" / "things.json").write_text(json.dumps([{"id": "thing_a", "hp": 1}]))
     seed_interfaces(tmp_path)
     order = [f["name"] for f in _authoring_order(_run_dir(tmp_path).run_dir)]
     assert order == ["types.ts", "combat.ts", "game.ts"]   # contract first, systems, entry LAST

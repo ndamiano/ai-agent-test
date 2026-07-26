@@ -37,6 +37,7 @@ from maestro.codegen.scaffold import (
     ENTRY_HOOK,
     contract_assert_line,
     has_contract_assert,
+    wants_activate,
     scheme_of,
 )
 from maestro.modules.module import Check, Error, ErrorType, Module
@@ -77,7 +78,7 @@ def _kit_surface_block() -> str:
 
 # The model called kit API that does not exist (hallucinated names / members). TS2304/TS2552 =
 # unknown name; TS2339/TS2551 on a KIT type = unknown member of the kit surface.
-_KIT_TYPE_NAMES = ("'Kit'", "'DrawApi'", "'Input'", "'World'", "'Rng'", "'Camera'", "'Tilemap'")
+_KIT_TYPE_NAMES = ("'Kit'", "'DrawApi'", "'Input'", "'World'", "'Camera'", "'Tilemap'")
 
 
 def _is_kit_surface_error(msg: str) -> bool:
@@ -205,12 +206,24 @@ def _detect_conforms(check, module, context):
 
 
 def _detect_data(check, module, context):
-    """The DATA gate: a planned game must have its data files DESIGNED (even if the design is
-    empty), then valid — and a valid design keeps data.ts in sync before typecheck sees it."""
+    """The DATA gate: a planned game must have its data files DESIGNED, then valid — and a valid
+    design keeps data.ts in sync before typecheck sees it.
+
+    An EMPTY design is not a design. Datasets are what make a game's content editable, typed and
+    skinnable: rows carry the `look` prompts the art stage renders deterministically (no LLM plan,
+    no source rewrite) and the id that binds each render to the thing it depicts. A game that
+    declared none sent its whole skin down the fallback path and paid two model calls plus a
+    re-gate for art it could have had for free."""
     run_dir = context.state.run_dir
-    if not data_files.data_manifest_path(run_dir).exists():
+    manifest = data_files.data_manifest_path(run_dir)
+    if not manifest.exists():
         return [Error(type=ErrorType.BUILD, code="data", component="game",
                       message="no data design yet — decide this game's data files from the spec")]
+    if not (json.loads(manifest.read_text(encoding="utf-8")) or {}).get("datasets"):
+        return [Error(type=ErrorType.BUILD, code="data", component="game",
+                      message="the data design is empty — every game has content that varies "
+                              "(the things it spawns, their looks and numbers). Name at least one "
+                              "dataset and give it rows.")]
     violations = data_files.validate_data(run_dir)
     if violations:
         return [Error(type=ErrorType.FIX, code="data", component="game",
@@ -362,7 +375,12 @@ def _detect_renders(check, module, context):
 
 # ── fixes ─────────────────────────────────────────────────────────────────────
 def _hook_exports(spec: dict) -> list:
-    return ["createState", "init", "update", "hud"]
+    """The hooks game.ts owes THIS spec. main.ts is GENERATED and imports exactly these, so a hook
+    the scaffold dispatches but the list omits is an unresolved import, not a missing feature."""
+    hooks = ["createState", "init", "update", "hud"]
+    if wants_activate(spec):
+        hooks.append("onActivate")
+    return hooks
 
 
 def _json_from(text: str):

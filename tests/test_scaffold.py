@@ -20,7 +20,7 @@ from maestro.codegen.module import (
     _authoring_order,
 )
 from maestro.codegen.scaffold import (
-    _interact_keys,
+    _activate_keys,
     reexport_hooks,
     seed_scaffold,
 )
@@ -79,17 +79,19 @@ export function update(state: GameState, dt: number, input: Input, kit: Kit): vo
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
 const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
-# A talker NPC in interact range — the dialogue scaffold's registered "interact" must open it.
+# A talker NPC in activate range — the scaffold's registered "activate" must open it. `action` is
+# what opts an entity into kit.focus at all.
 GAME_TS_TALK = """export interface GameState { world: World; player: Entity | null; }
 export function createState(kit: Kit): GameState { return { world: [], player: null }; }
 export function init(state: GameState, kit: Kit): void {
-  state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });
-  kit.spawn(state.world, { x: 130, y: 100, w: 10, h: 10, color: "#fa0",
+  state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff", angle: 0 });
+  kit.spawn(state.world, { x: 130, y: 100, w: 10, h: 10, color: "#fa0", action: "talk",
     talk: { name: "Elder", lines: ["Hello."] } });
 }
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
+export function onActivate(state: GameState, target: Entity, kit: Kit): void { }
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud, onActivate };
 """
 # A 3D hook module — no draw; the player is a shape-tagged member of state.world.
 GAME_TS_3D = """export interface GameState { world: World; player: Entity | null; }
@@ -124,7 +126,10 @@ def _hook_game(tmp_path, spec, game_ts):
         {"name": "game.ts", "purpose": "the whole game behind the scaffold hooks",
          "exports": ["createState", "init", "update", "hud"]}]}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
-    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    (d / "data" / "manifest.json").write_text(json.dumps(
+        {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}), encoding="utf-8")
+    (d / "data" / "things.json").write_text(json.dumps(
+        [{"id": "thing_a", "hp": 1}]), encoding="utf-8")
     seed_interfaces(tmp_path)
 
 
@@ -144,7 +149,7 @@ def test_scaffold_renders_each_scheme(tmp_path, scheme, movement, config_bits):
     assert movement in src
     for bit in config_bits:
         assert bit in src
-    assert "{interact}" not in src           # placeholder consumed
+    assert "{activate}" not in src           # placeholder consumed
     assert 'from "./game.ts"' in src         # hooks imported — tsc enforces the contract
     if scheme.endswith("-3d"):
         assert "draw(" not in src.split("export function createGame")[1]   # 3D scaffold has NO draw hook
@@ -179,13 +184,13 @@ def test_world_less_3d_keeps_the_dark_background(tmp_path):
     assert 'background: "#101018"' in src
 
 
-def test_dialogue_use_adds_the_interact_block(tmp_path):
+def test_dialogue_use_adds_the_activate_block(tmp_path):
     src = _seed(tmp_path, _spec("top-down", uses=["dialogue"])).read_text()
     assert "kit.talkOpen" in src and "kit.talkStep" in src and "state.talkPick" in src
-    assert "{interact}" not in src
+    assert "{activate}" not in src
 
 
-def test_no_dialogue_use_no_interact_block(tmp_path):
+def test_no_interaction_no_activate_block(tmp_path):
     src = _seed(tmp_path, _spec("top-down", uses=["tilemap", "particles"])).read_text()
     assert "kit.talkOpen" not in src
 
@@ -347,30 +352,30 @@ def test_scaffolded_solid_game_passes_all_gates(tmp_path):
     assert errs == []
 
 
-def test_scaffold_dialogue_interact_satisfies_spec_key_and_probe(tmp_path):
+def test_scaffold_activate_satisfies_spec_key(tmp_path):
     # The dialogue scaffold registers "interact" on the spec's key, not a hardcoded E.
     spec = _spec("top-down", uses=["dialogue"])
     spec["design"]["controls"] = {"WASD": "move", "E": "talk to villagers"}
     _hook_game(tmp_path, spec, GAME_TS_TALK)
     main = (tmp_path / "game" / "main.ts").read_text()
-    assert 'kit.register("interact", ["e"]' in main
+    assert 'kit.register("activate", ["e"]' in main
     assert typecheck(tmp_path) == []
 
 
-def test_interact_keys_bind_the_spec_control():
+def test_activate_keys_bind_the_spec_control():
     def spec(controls):
         return {"design": {"controls": controls}}
-    assert _interact_keys(spec({"WASD": "move", "SPACE": "interact / start dialogue"})) == [" "]
-    assert _interact_keys(spec({"E": "talk to villagers"})) == ["e"]
-    assert _interact_keys(spec({"Enter": "speak"})) == ["Enter"]
+    assert _activate_keys(spec({"WASD": "move", "SPACE": "interact / start dialogue"})) == [" "]
+    assert _activate_keys(spec({"E": "talk to villagers"})) == ["e"]
+    assert _activate_keys(spec({"Enter": "speak"})) == ["Enter"]
     # multi-token keys keep every real key; movement/mouse tokens fall out
-    assert _interact_keys(spec({"E/Space": "interact"})) == ["e", " "]
-    assert _interact_keys(spec({"LEFT_CLICK": "talk"})) == ["e"]   # no mouse keys to bind → default
-    assert _interact_keys(spec({"F": "attack"})) == ["e"]          # nothing interact-shaped → default
-    assert _interact_keys(spec({})) == ["e"]
+    assert _activate_keys(spec({"E/Space": "interact"})) == ["e", " "]
+    assert _activate_keys(spec({"LEFT_CLICK": "talk"})) == ["e"]   # no mouse keys to bind → default
+    assert _activate_keys(spec({"F": "attack"})) == ["e"]          # nothing interact-shaped → default
+    assert _activate_keys(spec({})) == ["e"]
 
 
-def test_scaffold_dialogue_interact_binds_a_space_spec_key(tmp_path):
+def test_scaffold_activate_binds_a_space_spec_key(tmp_path):
     # The shipped incident: the spec bound interact to SPACE, the scaffold hardcoded E and its
     # post-init register REPLACED the hook's correct space binding by name (register replaces by
     # name) — unbound_control on " " became unfixable by construction and the build burned its
@@ -379,11 +384,11 @@ def test_scaffold_dialogue_interact_binds_a_space_spec_key(tmp_path):
     spec["design"]["controls"] = {"WASD": "move", "SPACE": "interact / start dialogue"}
     _hook_game(tmp_path, spec, GAME_TS_TALK)
     main = (tmp_path / "game" / "main.ts").read_text()
-    assert 'kit.register("interact", [" "]' in main
+    assert 'kit.register("activate", [" "]' in main
     assert typecheck(tmp_path) == []
 
 
-def test_hook_own_interact_register_wins_over_the_scaffold(tmp_path):
+def test_hook_own_activate_register_wins_over_the_scaffold(tmp_path):
     # Same incident, other half: the scaffold registers BEFORE the hook init runs, so a game that
     # registers its own "interact" (dialogue + combat in one handler) replaces the scaffold's
     # default instead of being clobbered by it — the scaffold only fills a blank.
@@ -392,12 +397,12 @@ def test_hook_own_interact_register_wins_over_the_scaffold(tmp_path):
     game = GAME_TS_TALK.replace(
         'talk: { name: "Elder", lines: ["Hello."] } });\n}',
         'talk: { name: "Elder", lines: ["Hello."] } });\n'
-        '  kit.register("interact", [" "], () => { (state as any).presses = '
+        '  kit.register("activate", [" "], () => { (state as any).presses = '
         '((state as any).presses ?? 0) + 1; });\n}')
     assert 'presses' in game   # the replace landed
     _hook_game(tmp_path, spec, game)
     main = (tmp_path / "game" / "main.ts").read_text()
-    assert main.index('kit.register("interact"') < main.index("initGame(state, kit);")
+    assert main.index('kit.register("activate"') < main.index("initGame(state, kit);")
     assert typecheck(tmp_path) == []
 
 
@@ -412,7 +417,10 @@ def _manifest(tmp_path, names):
     (d / "manifest.json").write_text(json.dumps(
         {"files": [{"name": n, "purpose": "", "exports": []} for n in names]}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
-    (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
+    (d / "data" / "manifest.json").write_text(json.dumps(
+        {"datasets": [{"name": "things", "fields": {"hp": "number"}}]}), encoding="utf-8")
+    (d / "data" / "things.json").write_text(json.dumps(
+        [{"id": "thing_a", "hp": 1}]), encoding="utf-8")
 
 
 def test_authoring_order_puts_game_ts_last(tmp_path):

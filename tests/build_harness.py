@@ -66,6 +66,11 @@ def canned_prelude(messages, hooks=_HOOKS, file="game.ts"):
                                      "invariants": []} for n in hooks]})
     if "Find the issues in the architecture" in system:
         return _json({"problems_found": []})
+    # Every game owes at least one dataset, so the data turn is part of the prelude now: without an
+    # answer the gate stays red and the build spends its cap re-asking.
+    if "game data designer" in system:
+        return _json({"datasets": [{"name": "things", "fields": {"hp": "number"},
+                                    "rows": [{"id": "thing_a", "hp": 1}]}]})
     return None
 
 

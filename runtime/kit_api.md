@@ -6,7 +6,7 @@ The game object has this exact shape:
 ```js
 export function createGame(kit) {
   return {
-    config: { width: 960, height: 540, title: "", background: "#111", gravity: 0, seed: 1 },
+    config: { width: 960, height: 540, title: "", background: "#111", gravity: 0 },
     state:  { world: [] },          // EVERYTHING VISIBLE lives in state.world — that is what renders
     init(kit)              { },      // one-time setup; spawn entities into state.world
     update(dt, input, kit) { },      // advance the sim ONE step (dt = seconds)
@@ -23,7 +23,7 @@ and the arena border are all entities, not draw calls. `layer` (default 0) order
 `config.backdrop` is an asset id painted behind everything.
 
 **Law: update mutates state; hud reads state and never mutates.** The sim must run with no canvas
-(it's tested headless). Keep all randomness in `kit.rng` (seeded/reproducible).
+(it's tested headless).
 
 **HUD (score, health, timers, banners):** RETURN them from `hud(kit)`
 as data and the engine draws them (anchored, no pixel math, can't occlude the scene). Items:
@@ -100,7 +100,7 @@ Set an entity's velocity toward or away from a target, then `kit.integrate` it. 
 - `kit.flee(e, target, speed)` — steer directly away.
 - `kit.arrive(e, target, speed, slow=80)` — seek but ease to a stop within `slow` px (no jitter).
 - `kit.pursue(e, target, speed, lead=0.3)` — aim where a moving target is heading (intercept).
-- `kit.wander(e, speed, rng, turn=3)` — random drift (idle patrol); pass `kit.rng`.
+- `kit.wander(e, speed, turn=3)` — random drift (idle patrol).
 ```js
 for (const ghost of this.state.enemies) {
   const dist = kit.seek(ghost, this.state.player, 90);   // chase the player at 90 px/s
@@ -139,12 +139,11 @@ update(dt, input, kit) {
 ```
 
 ## Particles / juice  (feel — cheap quality)
-- `kit.burst(world, x, y, n=12, {speed,life,color,size,rng})` — spawn a radial burst of short-lived
-  particles (pass `kit.rng` for varied spread).
+- `kit.burst(world, x, y, n=12, {speed,life,color,size})` — spawn a radial burst of short-lived particles.
 - `kit.stepParticles(world, dt)` — advance + cull them each update. Draw survivors (`e.particle`)
   as `e.w`×`e.h` rects; fade with `e.life / e.maxLife`. Great for hits, pickups, explosions.
 ```js
-if (hit) kit.burst(this.state.world, enemy.x, enemy.y, 16, { rng: kit.rng, color: "#f80" });
+if (hit) kit.burst(this.state.world, enemy.x, enemy.y, 16, { color: "#f80" });
 kit.stepParticles(this.state.world, dt);
 ```
 
@@ -173,19 +172,40 @@ charging may still read `input.down` per frame; registration targets EDGE action
 init(state, kit) {
   kit.register("attack", [" "], () => {           // spec: "SPACE: attack"
     const foe = nearestEnemy(state);              // handlers may read state for range/aim
-    if (foe) { foe.hp -= 1; kit.burst(state.world, foe.x, foe.y, 10, { rng: kit.rng }); }
+    if (foe) { foe.hp -= 1; kit.burst(state.world, foe.x, foe.y, 10); }
   });
-  kit.register("interact", ["e"], () => {         // spec: "E: talk" (skip if the scaffold wires dialogue)
-    if (!state.talk && state.nearNpc) kit.talkOpen(state, state.nearNpc);
-  });
+  // NOTE: an interact/use/talk key is the SCAFFOLD's `activate` — see "Activate" below. Register
+  // your own only for a verb with no target (a self-verb like dash), never to re-do targeting.
 }
 ```
 
-## Randomness
-- `kit.rng.next()` 0..1 · `.range(lo,hi)` FLOAT (never an array index) · `.int(lo,hi)` inclusive ints
-  · `.pick(arr)` a random ELEMENT (use for "a random card/enemy") · `.chance(p)` bool
-  · `.shuffle(arr)` in-place (decks, spawn orders). NEVER `Math.random()`/`Date.now()` — they break
-  the deterministic gates.
+## Activate — ONE key, whatever the player is facing
+The scaffold owns a single `activate` key. Every frame the kit works out WHAT it would act on
+(inside the player's facing cone, within reach, nearest wins) and the engine draws the prompt
+("E — Talk to Oren"). You never write proximity maths, never read the key, never draw the prompt.
+
+An entity opts in by carrying two fields:
+```ts
+kit.spawn(state.world, { ...visual, action: "harvest", label: "Ripe crop" });   // label is optional
+kit.spawn(state.world, { ...visual, action: "talk", name: "Oren", lines: ["..."] });
+```
+- `action` — the verb id your `onActivate` switches on. No `action` ⇒ never targeted.
+- `label` — what the prompt calls it (falls back to `name`, then `action`).
+- `reach` — optional per-entity range, for something big like a bed or a door.
+
+A talkable target (one carrying `lines`) opens ITSELF — dialogue is entirely the kit's. Every other
+verb arrives at your hook with the target already chosen:
+```ts
+export function onActivate(state: GameState, target: Entity, kit: Kit): void {
+  if (target.action === "harvest") { state.bag.produce++; target.dead = true; kit.notify("Harvested"); }
+  if (target.action === "sleep") advanceDay(state, kit);
+}
+```
+`state.focus` holds the same target (or null) if hud() wants to say more about it.
+
+WHY one key: a spec that spends four keys on talk / use tool / tend animal / sleep gives the player
+four things to remember and the build four bindings to get right — and the verb the player wants is
+already unambiguous from what they are standing in front of.
 
 ## Vectors  `kit.V`
 - `add,sub,scale(a,k),len(a),norm(a)` and `clamp(v,lo,hi)` (clamp a scalar).
@@ -193,8 +213,11 @@ init(state, kit) {
 ## Dialogue, quests & toasts  (depth without ending the game)
 - `kit.talkOpen(state, npc, options?)` / `kit.talkStep(state, input)` / `kit.talkHud(state)` — the
   WHOLE talk loop as one primitive: npc = `{name, lines:[...], options?:[...]}`; talkStep (call every
-  frame) advances on E, returns `{npc, pick}` when a choice is made, closes on Escape; spread
-  `...kit.talkHud(state)` into hud(). A shop = talkOpen with priced options.
+  frame) advances on the activate key, returns `{npc, pick}` when a choice is made, closes on Escape;
+  spread `...kit.talkHud(state)` into hud(). A shop = talkOpen with priced options.
+  The scaffold already calls talkStep and opens a talkable target for you. `state.talk` belongs to
+  the kit — `{npc, line, options}` — so never read a field of your own off it and never draw the
+  dialogue yourself: one build invented `state.talk.currentLine` and painted "undefined" on screen.
 - `kit.quest.add(state, {id,title,reward})` · `.complete(state,id)` (announces itself; returns the
   quest — pay its reward yourself) · `.isDone(state,id)` · `...kit.quest.log(state)` in hud().
 - `kit.notify(msg)` — transient toast the engine draws for a few seconds ("Got 10 gold").

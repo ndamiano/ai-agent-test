@@ -96,7 +96,7 @@ Rules:
   control scheme; never register them. If the scaffold wires dialogue, "interact" is already
   registered — do not re-register it.
 - Honor the kit laws: update mutates state, hud only reads it; velocities are
-  pixels per SECOND (integrate/physics apply dt); randomness only via `kit.rng`.
+  pixels per SECOND (integrate/physics apply dt).
 - Prefer real types over `any` — the whole point is that the compiler catches a file disagreeing
   with another about a data shape.
 

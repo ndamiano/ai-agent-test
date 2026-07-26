@@ -12,14 +12,15 @@
 //   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
 //   update(state: GameState, dt: number, input: Input, kit: Kit): void gameplay, runs AFTER movement
 //   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
+{activate_contract}
 // Scaffold-read state fields: state.player (required — a shape-tagged member of state.world),
 // state.player.speed? (units/s, default 8), state.walls? (Rect[] the player is kept out of),
 // state.ground? ((x, z) => number — terrain height the player is stood on). Set either in init and
 // the scaffold applies it every frame; on a generated world the scaffold sets both itself.
-import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
+import { createState, init as initGame, update as updateGame, hud as hudGame{activate_import} } from "./game.ts";
 {world_import}
 
-const CONFIG: Config = { width: 1280, height: 720, mode: "3d", background: "{background}", seed: 1, controls: "vehicle" };
+const CONFIG: Config = { width: 1280, height: 720, mode: "3d", background: "{background}", controls: "vehicle" };
 
 export function createGame(kit: Kit): GameObject {
   // realize() peeks config via createGame(null) before the kit exists — createState must not run then.
@@ -29,7 +30,7 @@ export function createGame(kit: Kit): GameObject {
     config: CONFIG,
     state,
     init(kit: Kit) {
-{interact_init}
+{activate_init}
       initGame(state, kit);
       if (!state.player) throw new Error(
         "game.ts init(state, kit) must create state.player (a shape-tagged entity spawned into " +
@@ -37,7 +38,7 @@ export function createGame(kit: Kit): GameObject {
 {world_init}
     },
     update(dt: number, input: Input, kit: Kit) {
-{interact}
+{activate}
       if (!state.talk)   // movement pauses while a kit dialogue is open
         kit.drive(state.player, input, dt, state.player.speed ?? 8);
       updateGame(state, dt, input, kit);

@@ -54,8 +54,10 @@ kit.spawnData(world, row, {x,y,z}) and the art pipeline renders `look` to that s
 in for every row the player SEES.
 
 Rules:
-- Only datasets THIS game's systems actually read; 3-30 rows per dataset. A simple arcade game
-  (pong, breakout, snake) has no content tables — output {"datasets": []}.
+- EVERY game has at least one dataset. Only datasets THIS game's systems actually read; 3-30 rows
+  per dataset. Even the simplest arcade game has content: breakout's brick types (colour, hits,
+  points), snake's pickups, pong's difficulty tiers. If the game shows the player a THING or a
+  NUMBER that varies, that variation is a table — not constants buried in the code.
 - Rows are FLAT objects: no nested objects or arrays-of-objects beyond the size envelope. A range
   is two number fields (`drop_min`, `drop_max`), never `{ "min": ..., "max": ... }`.
 - NEVER write null. A row without a value for an optional field OMITS the field entirely.

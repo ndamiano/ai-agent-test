@@ -195,7 +195,7 @@ export async function run3d(game, canvas, assetBase) {
   const cam = { x: 0, y: 30, z: 60, tx: 0, ty: 0, tz: 0 };
 
   const keymap = (e) => e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  addEventListener("keydown", (e) => { input._set(keymap(e), true); if (e.key.startsWith("Arrow") || e.key === " ") e.preventDefault(); });
+  addEventListener("keydown", (e) => { input._set(keymap(e), true); if (e.key.startsWith("Arrow") || e.key === " " || e.key === "Tab") e.preventDefault(); });
   addEventListener("keyup", (e) => input._set(keymap(e), false));
 
   // HUD overlay: a 2D canvas over the WebGL canvas. The game's draw(g, kit) paints screen-space UI
@@ -309,7 +309,7 @@ export async function run3d(game, canvas, assetBase) {
     // engine draws them. The game never touches this canvas, so it can't clear/occlude the 3D scene.
     // `marker` items are world-anchored — project each to a screen label (clamped to the screen edge
     // with a direction hint when the target is off-screen/behind), so quests have wayfinding.
-    const items = [...(g.hud ? g.hud(kit) || [] : []), ...kit._toastItems()];
+    const items = [...(g.hud ? g.hud(kit) || [] : []), ...kit._focusItems(), ...kit._toastItems()];
     placeHud(); hctx.clearRect(0, 0, hud.width, hud.height);   // always clear — items come and go
     if (items.length) {
       const W = config.width, H = config.height, pad = 46;

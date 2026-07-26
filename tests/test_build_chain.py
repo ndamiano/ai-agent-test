@@ -192,11 +192,43 @@ def test_a_stalled_code_fix_gets_one_contract_ruling(env, monkeypatch):
     # Stalled on the same to-do: rule on the contract first.
     assert _start_fix(run_id, rs, cursor, err, stalled=True) is True
     assert cursor.fix_cursor().shape == "amend"
-    assert idkey(err) in cursor.amend_tried
+    assert cursor.amend_tried
 
     # The ruling is spent — a still-stalled fix goes back to editing code, never loops on amend.
     assert _start_fix(run_id, rs, cursor, err, stalled=True) is True
     assert cursor.fix_cursor().shape == "read_write"
+
+
+def test_a_different_conflict_in_the_same_file_gets_its_own_ruling(env):
+    """Every tsc error in game.ts carries the SAME identity, so one ruling per identity spends the
+    build's only ruling on its first type error. Measured: a build settled `produce` against a
+    closed union in code, hit `animal_feed` against that same union, and ground out its step cap
+    with no ruling left to give."""
+    from maestro.codegen import interfaces
+    from maestro.codegen.build_chain import _start_fix
+    from maestro.modules.module import Error, ErrorType
+
+    run_id, tmp_path = env
+    rs = RunState(run_id)
+    interfaces.save(tmp_path, {"state": [], "invariants": [], "functions": [
+        {"name": "f", "file": "game.ts", "signature": "f(): void", "purpose": "p",
+         "reads": [], "writes": [], "calls": [], "invariants": []}]})
+    cursor = build_state.BuildCursor(build_id="b1")
+
+    def err(msg):
+        return Error(type=ErrorType.FIX, code="typechecks", component="game", message=msg,
+                     path="game.ts")
+
+    _start_fix(run_id, rs, cursor, err("line 12: 'produce' not in the union"), stalled=True)
+    assert cursor.fix_cursor().shape == "amend"
+
+    # The SAME conflict, a few lines down: still one conflict, still one ruling.
+    _start_fix(run_id, rs, cursor, err("line 40: 'produce' not in the union"), stalled=True)
+    assert cursor.fix_cursor().shape == "read_write"
+
+    # A genuinely different conflict in the same file earns its own.
+    _start_fix(run_id, rs, cursor, err("line 40: 'animal_feed' not in the union"), stalled=True)
+    assert cursor.fix_cursor().shape == "amend"
 
 
 def test_two_errors_that_oscillate_still_reach_the_contract_ruling(env):
@@ -220,7 +252,7 @@ def test_two_errors_that_oscillate_still_reach_the_contract_ruling(env):
         assert cursor.fix_cursor().shape == "read_write"
     assert _start_fix(run_id, rs, cursor, a, stalled=False) is True   # third attempt on `a`
     assert cursor.fix_cursor().shape == "amend"
-    assert idkey(a) in cursor.amend_tried
+    assert cursor.amend_tried
 
 
 def test_an_error_waiting_its_turn_never_earns_a_contract_ruling(env):

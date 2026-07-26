@@ -18,7 +18,9 @@ the control-plane process (the completion handler + the reaper) — an in-proces
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
@@ -44,6 +46,21 @@ _STUCK_WINDOW = 40
 _STUCK_REPEATS = 20
 # Attempts on one error before the CONTRACT gets a chance to be the thing that is wrong.
 _AMEND_RECURRENCES = 3
+_LINE_NO_RE = re.compile(r"line \d+")
+
+
+def _amend_key(error: Error) -> str:
+    """One contract ruling per DISTINCT conflict, not per error identity.
+
+    Every tsc error in a file shares one identity (type/code/component/path), so keying the ruling
+    on the identity alone spends a whole build's single ruling on its FIRST type error and leaves
+    every later contract conflict in that file unrulable. Measured: a build widened its declared
+    `inventory` union in code for `produce`, hit the same closed union again for `animal_feed`, and
+    ground its entire step cap on the one thing only the contract could settle. Line numbers are
+    normalised out — the same conflict re-reported a few lines down is the same conflict, and must
+    still spend its ruling only once."""
+    digest = hashlib.sha1(_LINE_NO_RE.sub("line", error.message or "").encode()).hexdigest()
+    return f"{idkey(error)}|{digest[:12]}"
 
 # error.code -> fix shape (build_steps). Everything else is a read→edit subloop.
 _SHAPE_BY_CODE = {"interfaced": "interfaces", "reviewed": "review", "data": "data",
@@ -336,7 +353,7 @@ def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, sta
         # oscillate without `stalled` ever tripping, and an error waiting its turn has not been tried.
         cursor.attempted.append(idkey(error))
         recurred = cursor.attempted.count(idkey(error)) >= _AMEND_RECURRENCES
-        if ((stalled or recurred) and idkey(error) not in cursor.amend_tried
+        if ((stalled or recurred) and _amend_key(error) not in cursor.amend_tried
                 and interfaces.load(rs.run_dir)):
             # A code fix that made no progress may be unfixable in the code: the architecture was
             # declared before any of it existed, and a file authored faithfully to a wrong contract
@@ -345,7 +362,7 @@ def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, sta
             # grinds against a declaration it is not allowed to contradict. One ruling per error
             # identity — a `code` verdict falls straight through to the read→edit subloop, so a
             # wrong guess costs one turn.
-            cursor.amend_tried.append(idkey(error))
+            cursor.amend_tried.append(_amend_key(error))
             shape = "amend"
     cursor.set_fix(FixCursor(shape=shape, error=error_to_dict(error), escalate=stalled))
     cursor.phase = "fix"

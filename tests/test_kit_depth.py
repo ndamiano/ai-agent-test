@@ -16,8 +16,8 @@ def _node_eval(js: str) -> dict:
 
 def test_talk_loop_advances_picks_and_closes():
     r = _node_eval("""
-import { makeKit, makeRng, makeInput } from "./engine.js";
-const kit = makeKit({}, makeRng(1)), input = makeInput(), state = {};
+import { makeKit, makeInput } from "./engine.js";
+const kit = makeKit({}), input = makeInput(), state = {};
 const npc = { name: "Elder", lines: ["Hi.", "Beast bad."], options: ["Accept", "Leave"] };
 kit.talkOpen(state, npc);
 const hudMid = kit.talkHud(state);
@@ -39,8 +39,8 @@ console.log(JSON.stringify({
 
 def test_talk_without_options_closes_on_advance():
     r = _node_eval("""
-import { makeKit, makeRng, makeInput } from "./engine.js";
-const kit = makeKit({}, makeRng(1)), input = makeInput(), state = {};
+import { makeKit, makeInput } from "./engine.js";
+const kit = makeKit({}), input = makeInput(), state = {};
 kit.talkOpen(state, { name: "Guard", lines: ["Move along."] });
 input._set("e", true);
 kit.talkStep(state, input);
@@ -51,8 +51,8 @@ console.log(JSON.stringify({ closed: state.talk === null }));
 
 def test_quest_add_complete_and_toasts():
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1)), state = {};
+import { makeKit } from "./engine.js";
+const kit = makeKit({}), state = {};
 kit.quest.add(state, { id: "beast", title: "Slay the beast", reward: 50 });
 const dup = kit.quest.add(state, { id: "beast", title: "dup" });
 const q = kit.quest.complete(state, "beast");
@@ -68,8 +68,8 @@ console.log(JSON.stringify({
 
 def test_notify_toasts_expire():
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1));
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
 kit.notify("hello", 1);
 const before = kit._toastItems().length;
 kit._stepToasts(2);
@@ -80,8 +80,8 @@ console.log(JSON.stringify({ before, after: kit._toastItems().length }));
 
 def test_seek3_moves_on_ground_plane_and_faces():
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1));
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
 const e = { x: 0, y: 5, z: 0 };
 let d = 0;
 for (let i = 0; i < 100; i++) d = kit.seek3(e, { x: 10, z: 0 }, 5, 1 / 30);
@@ -92,13 +92,13 @@ console.log(JSON.stringify({ x: Math.round(e.x), y: e.y, close: d < 0.1, faced: 
 
 def test_patrol3_loops_waypoints_and_wander3_stays_finite():
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1));
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
 const g = { x: 0, y: 0, z: 0 };
 let maxWp = 0;
 for (let i = 0; i < 600; i++) { kit.patrol3(g, [[0, 0], [4, 0], [4, 4]], 6, 1 / 30); maxWp = Math.max(maxWp, g._wp); }
 const w = { x: 0, y: 0, z: 0 };
-for (let i = 0; i < 300; i++) kit.wander3(w, 2, 1 / 30, kit.rng);
+for (let i = 0; i < 300; i++) kit.wander3(w, 2, 1 / 30);
 console.log(JSON.stringify({
   looped: maxWp > 0, gOk: Number.isFinite(g.x) && Number.isFinite(g.z),
   wOk: Number.isFinite(w.x) && Number.isFinite(w.z) && Number.isFinite(w.ry),
@@ -109,8 +109,8 @@ console.log(JSON.stringify({
 
 def test_avoid_rects_pushes_walker_out():
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1));
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
 const e = { x: 0.5, z: 0.2, w: 1, d: 1 };
 kit.avoidRects(e, [{ x: 0, z: 0, w: 6, d: 6 }]);
 const inside = Math.abs(e.x) < 3 && Math.abs(e.z) < 3;
@@ -273,8 +273,8 @@ _VOID_3D_GAME = """(kit) => {
 
 def test_walls_from_tilemap_builds_level():
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1));
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
 const world = [];
 const level = kit.wallsFromTilemap(world, ["####", "#..#", "####"], { tile: 4, height: 3 });
 const grounds = world.filter(e => e.shape === "ground").length;
@@ -292,14 +292,14 @@ def test_draw_sprite_resolves_an_asset_id_through_the_kit():
     """The engine-internal sprite call takes an id: drawEntity and the HUD both pass one, and a real
     ctx.drawImage THROWS on a string rather than drawing nothing."""
     r = _node_eval("""
-import { makeKit, makeRng, makeDraw } from "./engine.js";
+import { makeKit, makeDraw } from "./engine.js";
 const drawn = [];
 const ctx = { canvas: { width: 64, height: 64 }, fillRect() {}, save() {}, restore() {}, translate() {},
               drawImage: (img, x, y, w, h) => {
                 if (typeof img !== "object") throw new TypeError("drawImage: not a CanvasImageSource");
                 drawn.push([img.tag, x, y, w, h]);
               } };
-const kit = makeKit({}, makeRng(1));
+const kit = makeKit({});
 const img = { tag: "hero", width: 16, height: 16 };
 kit._setSprites({ hero: img });
 const g = makeDraw(ctx, kit);
@@ -315,12 +315,12 @@ console.log(JSON.stringify({ drawn }));
 def test_hud_icon_draws_screen_art_by_id():
     """Screen art is a HUD item, not a draw call: the game names an asset id and the engine places it."""
     r = _node_eval("""
-import { makeKit, makeRng, makeDraw, renderHud, validateHud } from "./engine.js";
+import { makeKit, makeDraw, renderHud, validateHud } from "./engine.js";
 const drawn = [];
 const ctx = { canvas: { width: 640, height: 480 }, fillRect() {}, fillText() {}, save() {}, restore() {},
               translate() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, stroke() {},
               drawImage: (img, x, y, w, h) => drawn.push([img.tag, w, h]) };
-const kit = makeKit({}, makeRng(1));
+const kit = makeKit({});
 kit._setSprites({ potion: { tag: "potion", width: 32, height: 32 } });
 const g = makeDraw(ctx, kit);
 const items = [{ kind: "icon", id: "potion", at: "top-right", size: 20 },
@@ -338,8 +338,8 @@ def test_spawn_data_types_the_entity_by_its_row_id():
     """Gameplay branches on e.type. A row-spawned entity with no type is invisible to every one of
     them — measured: a game's own bullets flew through the boss because their type was undefined."""
     r = _node_eval("""
-import { makeKit, makeRng } from "./engine.js";
-const kit = makeKit({}, makeRng(1));
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
 const world = [];
 const row = { id: "player_bullet", size: { w: 8, h: 8 }, color: "#ff0" };
 const shot = kit.spawnData(world, row, { x: 10, y: 20 });
@@ -349,3 +349,77 @@ console.log(JSON.stringify({ type: shot.type, sprite: shot.sprite, override: nam
 """)
     assert r == {"type": "player_bullet", "sprite": "player_bullet",
                  "override": "friendly", "matches": 1}
+
+
+# ── focus: one activate key, whatever the player faces ────────────────────────
+def test_focus_targets_what_the_player_faces_and_nothing_else():
+    """The targeting every game used to hand-write per verb — and got wrong: a shipped build let
+    the farmer tend a cow standing behind him because that verb's copy of the check omitted the
+    facing cone."""
+    r = _node_eval("""
+import { focusTarget } from "./engine.js";
+const p = { x: 0, y: 1, z: 0, ry: 0 };                       // ry 0 faces -z
+const state = { player: p, world: [
+  { x: 0, y: 1, z: -2, action: "harvest", label: "Ripe crop" },
+  { x: 0, y: 1, z: 2,  action: "tend",    label: "Cow" },
+  { x: 0, y: 1, z: -20, action: "talk",   label: "Distant elder" },
+  { x: 0, y: 1, z: -1 },                                     // no action ⇒ never a target
+]};
+const ahead = focusTarget(state);
+p.ry = Math.PI;                                              // turn around
+const behind = focusTarget(state);
+console.log(JSON.stringify({
+  ahead: ahead && ahead.label,
+  turned: behind && behind.label,
+  outOfRange: !focusTarget({ player: p, world: [{ x: 0, y: 1, z: 20, action: "talk" }] }),
+  whileTalking: focusTarget({ ...state, talk: {} }) === null,
+  noPlayer: focusTarget({ world: [] }) === null,
+}));
+""")
+    assert r == {"ahead": "Ripe crop", "turned": "Cow", "outOfRange": True,
+                 "whileTalking": True, "noPlayer": True}
+
+
+def test_focus_works_on_the_2d_plane_too():
+    r = _node_eval("""
+import { focusTarget } from "./engine.js";
+const p = { x: 0, y: 0, angle: 0 };                          // 2D faces +x
+const world = [{ x: 30, y: 0, action: "open", label: "Chest" },
+               { x: -30, y: 0, action: "open", label: "Behind me" }];
+const hit = focusTarget({ player: p, world }, { range: 50 });
+console.log(JSON.stringify({ hit: hit && hit.label }));
+""")
+    assert r == {"hit": "Chest"}
+
+
+def test_the_engine_names_the_real_activate_key_in_the_prompt():
+    """The prompt is the ENGINE's, so a spec that bound activate to Space can never show "E"."""
+    r = _node_eval("""
+import { makeKit } from "./engine.js";
+const kit = makeKit({});
+kit.register("activate", [" "], () => {});
+const state = { player: { x: 0, y: 1, z: 0, ry: 0 },
+                world: [{ x: 0, y: 1, z: -2, action: "harvest", label: "Ripe crop" }] };
+kit.focus(state);
+console.log(JSON.stringify({ prompt: kit._focusItems()[0].text,
+                             onState: state.focus && state.focus.label,
+                             goneWhenNothingNear: (kit.focus({ player: state.player, world: [] }),
+                                                   kit._focusItems().length) }));
+""")
+    assert r == {"prompt": "Space — Ripe crop", "onState": "Ripe crop", "goneWhenNothingNear": 0}
+
+
+def test_dialogue_boxes_stack_instead_of_covering_each_other():
+    """The shipped screenshot: the choice menu drawn on top of the line it was answering, with an
+    `undefined` panel behind both."""
+    r = _node_eval("""
+import { renderHud } from "./engine.js";
+const rects = [];
+const draw = { rect: (x, y, w, h) => rects.push({ x, y, w, h }), text: () => {}, sprite: () => {} };
+renderHud(draw, [{ kind: "panel", title: "Oren", text: "I need to finish my chores.", at: "center" },
+                 { kind: "menu", options: ["Accept quest", "Anything else?"], at: "center" }], 1280, 720);
+const cards = rects.filter(r => r.w > 300 && r.h > 20);      // the fill rect of each card
+console.log(JSON.stringify({ cards: cards.length,
+                             overlap: cards[0].y + cards[0].h > cards[1].y }));
+""")
+    assert r == {"cards": 2, "overlap": False}

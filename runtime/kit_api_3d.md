@@ -7,7 +7,7 @@ You write PURE simulation — mutate entity positions in 3D — and TAG each ent
 ```js
 export function createGame(kit) {
   return {
-    config: { mode: "3d", width: 1280, height: 720, background: "#101018", seed: 1 },
+    config: { mode: "3d", width: 1280, height: 720, background: "#101018" },
     state:  { world: [] },
     init(kit)              { },   // spawn entities into state.world (each tagged with a shape)
     update(dt, input, kit) { },   // advance the sim: mutate e.x,e.y,e.z,e.vx,e.vy,e.vz. NO rendering.
@@ -123,17 +123,18 @@ meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground
      }
    }
    if (this.state.talk) return;                          // movement paused while talking
-   const near = this.state.npcs.find(n => Math.hypot(n.x - p.x, n.z - p.z) < 3);
-   if (near && input.pressed("e"))
-     kit.talkOpen(this.state, near);                     // near = {name, lines:[...], options?:[...]}
-   // a SHOP is talkOpen with priced options: kit.talkOpen(this.state, vendor,
-   //   ["Health potion (10g)", "Sharper sword (25g)", "Leave"])
+   // OPENING a conversation is not yours to write: the scaffold's activate key does it for any
+   // entity carrying lines. A SHOP is the same loop with priced options —
+   //   kit.talkOpen(state, vendor, ["Health potion (10g)", "Sharper sword (25g)", "Leave"])
+   // is the ONE case you call yourself, from onActivate when the target is your vendor.
    // hud(): spread the ready-made items in — the panel/menu render themselves:
    hud(kit: Kit): Kit.HudItem[] {
      return [
        { kind: "text", text: `Gold: ${this.state.gold}`, at: "top-left" },
        ...kit.quest.log(this.state),                     // the quest list panel (auto-hides when empty)
        ...kit.talkHud(this.state),                       // the dialogue panel + choice menu while talking
+       // NEVER build the dialogue overlay yourself: state.talk is the KIT's ({npc, line, options}),
+       // and a game that read its own invented field off it drew the word "undefined" over the screen.
      ];
    }
    ```
@@ -162,7 +163,7 @@ update(dt, input, kit) {
     const c = s.combat, n = c.hand.length;
     if (input.pressed("ArrowLeft"))  c.selected = (c.selected - 1 + n) % n;
     if (input.pressed("ArrowRight")) c.selected = (c.selected + 1) % n;
-    if (input.pressed(" ")) { /* play c.hand[c.selected], then the foe answers (kit.rng.pick) */ }
+    if (input.pressed(" ")) { /* play c.hand[c.selected], then the foe answers */ }
     if (c.foeHp <= 0) { s.mode = "world"; s.combat = null; kit.notify("Won! +10g"); }  // NOT kit.win
     if (c.myHp <= 0) kit.lose("Slain.");     // kit.win/lose ONLY for the spec's real ending
     return;                                   // ← the return IS the mode switch
@@ -209,20 +210,16 @@ fixed 3/4 view.
 - `kit.integrate3(e, dt, gravity=0)` — `y` is up; gravity pulls -y. Moves x/y/z by v*dt (dt handled).
 - `kit.physics3(e, dt, gravity=20, ground=0)` — integrate3 + land on the y=ground plane; sets
   `e.grounded`. For a 3D platformer/collectathon where things fall and stand on the floor.
-- `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.rng`, `kit.V` (clamp/len/norm), `kit.aabb`
+- `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.V` (clamp/len/norm), `kit.aabb`
   (works on x/y as before — for 3D distance use `Math.hypot(dx,dy,dz)`), `kit.win(msg)/kit.lose(msg)`.
-- Randomness ONLY via `kit.rng` — `kit.rng.range(lo,hi)` (FLOAT — never an array index),
-  `kit.rng.int(lo,hi)` inclusive ints, `kit.rng.pick(arr)` (a random ELEMENT — use this for "a random
-  card/enemy/point"), `kit.rng.chance(p)`, `kit.rng.shuffle(arr)`. NEVER `Math.random()`/`Date.now()`
-  (they break the deterministic gates).
 
 ## NPC / creature steering (3D — do NOT hand-roll dx/dz chase math or reuse the 2D seek/wander,
 they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the entity to its travel:
 - `kit.seek3(e, target, speed, dt)` — walk straight at target's `(x,z)`; returns distance left.
   A wolf: `if (kit.seek3(wolf, player, 4, dt) < 1.5) bite();`
 - `kit.flee3(e, threat, speed, dt)` — run directly away.
-- `kit.wander3(e, speed, dt, kit.rng)` — amble around, slowly turning (a villager mooching about).
-  Leash it home: `if (Math.hypot(v.x-v.homeX, v.z-v.homeZ) > 6) kit.seek3(v, {x:v.homeX, z:v.homeZ}, 2, dt); else kit.wander3(v, 1.2, dt, kit.rng);`
+- `kit.wander3(e, speed, dt)` — amble around, slowly turning (a villager mooching about).
+  Leash it home: `if (Math.hypot(v.x-v.homeX, v.z-v.homeZ) > 6) kit.seek3(v, {x:v.homeX, z:v.homeZ}, 2, dt); else kit.wander3(v, 1.2, dt);`
 - `kit.patrol3(e, points, speed, dt)` — walk a looping route of `{x,z}` (or `[x,z]`) points (a guard).
 - After ANY steering, keep the entity's `y` on the ground: on FLAT ground (no world.ts) that is a
   CONSTANT — `e.y = halfHeight` — never a function call.
@@ -265,7 +262,7 @@ they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the
 
 ## Composing a 3D scene that READS as its subject (the gates can't see "looks good" — you must)
 The scene is ONLY your shape-tagged entities, so BUILD it deliberately — a flat monochrome grid reads
-as nothing. For a town: a grass `ground`, gray road strips, and buildings that VARY (`kit.rng` their
+as nothing. For a town: a grass `ground`, gray road strips, and buildings that VARY (randomize their
 size + pick from a palette of 4–6 warm colors), each a body `box` + a wider thin `box` roof + a small
 dark door box. Scatter trees (brown trunk `box` + green `sphere` foliage) and lampposts (thin `box` +
 small bright `sphere`) along the streets, and a landmark at the center (fountain/square). Tens of
@@ -371,7 +368,7 @@ init(kit) {
     const foe = nearestEnemy(this.state);         // handlers may read state for range/aim
     if (foe && Math.hypot(foe.x - this.state.player.x, foe.z - this.state.player.z) < 3) foe.hp -= 1;
   });
-  kit.register("interact", ["e"], () => {         // spec: "E: talk" (skip if the scaffold wires dialogue)
+  kit.register("interact", ["e"], () => {         // ONLY for a game the scaffold gave no activate key
     const near = this.state.npcs.find((n) => Math.hypot(n.x - this.state.player.x, n.z - this.state.player.z) < 3);
     if (!this.state.talk && near) kit.talkOpen(this.state, near);
   });
@@ -380,7 +377,7 @@ init(kit) {
 
 ## Law
 `update` mutates state and never renders; the runtime handles all drawing. Keep the sim pure so it
-runs headless. Randomness only via `kit.rng`. `kit.win`/`kit.lose` END the game — milestones along
+runs headless. `kit.win`/`kit.lose` END the game — milestones along
 the way are `kit.quest.complete` / `kit.notify`, which keep it running.
 
 <!-- data -->
@@ -399,3 +396,31 @@ const e = kit.spawnData(state.world, ENEMIES[0], { x, y: heightAt(x, z) + 0.85, 
 NEVER re-scale a row's `size` (no `/100`), and never hand-pick a color for a row that has one.
 There is no `drawEntity` in 3D — the scene renders from the shape tag, and `mesh` is one.
 <!-- /data -->
+
+## Activate — ONE key, whatever the player is facing
+The scaffold owns a single `activate` key. Every frame the kit works out WHAT it would act on
+(inside the player's facing cone, within reach, nearest wins) and the engine draws the prompt
+("E — Talk to Oren"). You never write proximity maths, never read the key, never draw the prompt.
+
+An entity opts in by carrying two fields:
+```ts
+kit.spawn(state.world, { ...visual, action: "harvest", label: "Ripe crop" });   // label is optional
+kit.spawn(state.world, { ...visual, action: "talk", name: "Oren", lines: ["..."] });
+```
+- `action` — the verb id your `onActivate` switches on. No `action` ⇒ never targeted.
+- `label` — what the prompt calls it (falls back to `name`, then `action`).
+- `reach` — optional per-entity range, for something big like a bed or a door.
+
+A talkable target (one carrying `lines`) opens ITSELF — dialogue is entirely the kit's. Every other
+verb arrives at your hook with the target already chosen:
+```ts
+export function onActivate(state: GameState, target: Entity, kit: Kit): void {
+  if (target.action === "harvest") { state.bag.produce++; target.dead = true; kit.notify("Harvested"); }
+  if (target.action === "sleep") advanceDay(state, kit);
+}
+```
+`state.focus` holds the same target (or null) if hud() wants to say more about it.
+
+WHY one key: a spec that spends four keys on talk / use tool / tend animal / sleep gives the player
+four things to remember and the build four bindings to get right — and the verb the player wants is
+already unambiguous from what they are standing in front of.

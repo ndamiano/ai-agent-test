@@ -55,6 +55,10 @@ class RunState:
         return [p.stem for p in sorted(self.run_dir.glob("*.json")) if p.name not in _RESERVED]
 
     # ── spec ────────────────────────────────────────────────────────────────
+    @property
+    def spec_path(self) -> Path:
+        return self.run_dir / SPEC_FILE
+
     def write_spec(self, spec: Dict) -> None:
         self._write(SPEC_FILE, spec)
 

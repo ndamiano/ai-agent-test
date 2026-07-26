@@ -39,6 +39,10 @@ HARD RULES — the spec describes WHAT the game does, never HOW to code it:
   velocities or accelerations. Those are the implementer's job. Describe momentum as "has momentum,
   can't stop instantly" — a feeling, not a formula.
 - Entities describe WHAT + size + look only. Movement comes from the control scheme, not per entity.
+- "controls": ONE entry for everything the player does TO the world — the runtime has a single
+  activate key whose meaning follows what the player is facing ("act on what you are facing: talk to
+  a villager, harvest a crop, feed an animal, sleep"). Separate keys are only for verbs with no
+  target (jump, shoot, cycle the held tool).
 - COVER the request: every creature/character/item CLASS the request names gets an entity ("roaming
   monsters" = a monster entity besides any boss; "villagers with quests" = a villager entity). Never
   silently drop one.

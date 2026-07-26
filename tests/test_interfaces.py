@@ -257,7 +257,7 @@ def test_a_hook_name_in_another_file_is_left_alone(tmp_path):
     """Only game.ts carries the scaffold's hooks; a local `update` elsewhere is the game's own."""
     sig = "update(world: World): void"
     iface = _hook_iface(sig, name="update", file="level.ts")
-    assert interfaces.enforce_kit_contract(tmp_path, iface) == []
+    assert not [c for c in interfaces.enforce_kit_contract(tmp_path, iface) if "update" in c]
     assert iface["functions"][0]["signature"] == sig
 
 
@@ -308,7 +308,7 @@ def test_a_player_the_model_declared_itself_is_left_alone(tmp_path):
     mine = {"field": "player", "type": "Ship", "meaning": "the ship", "lifetime": "level",
             "owner": "startFight", "mutators": [], "readers": []}
     iface["state"].append(mine)
-    assert interfaces.enforce_kit_contract(tmp_path, iface) == []
+    assert not [c for c in interfaces.enforce_kit_contract(tmp_path, iface) if "player" in c]
     assert [f for f in iface["state"] if f["field"] == "player"] == [mine]
 
 
@@ -345,13 +345,73 @@ def test_save_appends_the_scaffolds_state(tmp_path):
     """Every write of the architecture goes through save, so no path can bypass this either."""
     _seed(tmp_path)
     interfaces.save(tmp_path, {"state": [], "functions": [], "invariants": []})
-    assert [f["field"] for f in interfaces.load(tmp_path)["state"]] == ["player"]
+    assert [f["field"] for f in interfaces.load(tmp_path)["state"]] == ["player", "world"]
 
 
 def test_nothing_is_appended_before_the_scaffold_is_seeded(tmp_path):
     iface = _iface()
-    assert interfaces.enforce_kit_contract(tmp_path, iface) == []
+    interfaces.enforce_kit_contract(tmp_path, iface)
     assert not [f for f in iface["state"] if f["field"] == "player"]
+
+
+# ── the kit's own state, which the architecture does not get to omit ──────────
+def _spec_on_disk(tmp_path, uses):
+    (tmp_path / "spec.json").write_text(json.dumps(
+        {"mode": "3d", "design": {"control": {"scheme": "orbital-3d"}, "uses": uses}}))
+
+
+def test_the_state_the_engine_renders_from_is_always_declared(tmp_path):
+    """An entity is visible because it is in state.world. A GameState without it is a contract the
+    game cannot be written against: a measured build burned 90 steps on `Property 'world' does not
+    exist on type 'GameState'`, which no edit to game.ts can settle."""
+    _seed(tmp_path)
+    iface = _iface()
+    fixed = interfaces.enforce_kit_contract(tmp_path, iface)
+    world = next(f for f in iface["state"] if f["field"] == "world")
+    assert world["type"] == "World" and world["owner"] == "init"
+    assert any("world" in c for c in fixed)
+
+
+def test_the_dialogue_state_the_kit_writes_is_declared_when_the_spec_talks(tmp_path):
+    """kit.talkOpen ASSIGNS state.talk — the game only reads it, so nothing in the code declares it."""
+    _seed(tmp_path, "orbital-3d", world=True, design={"uses": ["dialogue"]})
+    _spec_on_disk(tmp_path, ["dialogue"])
+    iface = _iface()
+    interfaces.enforce_kit_contract(tmp_path, iface)
+    assert [f["field"] for f in iface["state"] if f["field"] in ("talk", "quests")] == ["talk"]
+
+
+def test_a_kit_field_whose_primitive_the_spec_never_composes_is_not_declared(tmp_path):
+    """An unused row in the state table is one more thing for a small model to build to."""
+    _seed(tmp_path)
+    _spec_on_disk(tmp_path, ["particles"])
+    iface = _iface()
+    interfaces.enforce_kit_contract(tmp_path, iface)
+    assert not [f for f in iface["state"] if f["field"] in ("talk", "quests")]
+
+
+def test_a_kit_field_the_model_declared_itself_is_left_alone(tmp_path):
+    _seed(tmp_path)
+    iface = _iface()
+    mine = {"field": "world", "type": "Entity[]", "meaning": "everything alive", "lifetime": "level",
+            "owner": "startFight", "mutators": [], "readers": []}
+    iface["state"].append(mine)
+    interfaces.enforce_kit_contract(tmp_path, iface)
+    assert [f for f in iface["state"] if f["field"] == "world"] == [mine]
+
+
+def test_the_kit_state_the_kit_creates_on_demand_is_optional_in_the_generated_type(tmp_path):
+    """`world` exists from frame 0; `talk` does not exist until the player talks, so a required
+    `talk` would force every createState to invent one."""
+    _game_dir(tmp_path)
+    _seed(tmp_path, "orbital-3d", world=True, design={"uses": ["dialogue"]})
+    _spec_on_disk(tmp_path, ["dialogue", "quest"])
+    iface = _iface()
+    interfaces.enforce_kit_contract(tmp_path, iface)
+    interfaces.generate_state_ts(tmp_path, iface)
+    src = _state_ts(tmp_path)
+    assert "world: World;" in src
+    assert "talk?: Talk;" in src and "quests?: Quest[];" in src
 
 
 def test_hooks_block_gives_the_architecture_turn_the_signatures_and_the_vocabulary(tmp_path):
@@ -385,6 +445,13 @@ def test_hooks_block_omits_draw_for_a_3d_game(tmp_path):
     block = interfaces.hooks_block(tmp_path, {"mode": "3d"})
     assert "draw(" not in block
     assert "hud(state: GameState, kit: Kit): HudItem[]" in block
+
+
+def test_hooks_block_says_a_3d_position_has_three_coordinates(tmp_path):
+    """A measured 3D build declared its plot/animal positions Vec2, authored the whole game against
+    it, and every site needing a z was a tsc error the fix loop could not settle."""
+    assert "Vec3" in interfaces.hooks_block(tmp_path, {"mode": "3d"})
+    assert "Vec3 {x, y, z}" not in interfaces.hooks_block(tmp_path, {"mode": "2d"})
 
 
 # ── conform ───────────────────────────────────────────────────────────────────

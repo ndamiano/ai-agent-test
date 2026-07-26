@@ -32,6 +32,15 @@ The CAMERA comes WITH the control scheme — never design a camera separately.
 A game with these gets DEPTH from different NPC ROLES: design each named NPC with its own role
 (vendor / quest-giver / craftsman) and its own voice, never one shared script.
 
+## Controls — ONE activate key for everything the player does TO the world
+The runtime gives the player a single **activate** key. What it does depends on what they are
+FACING: the same key talks to the villager, harvests the crop in front of them, feeds the animal,
+opens the chest, sleeps at the bed. So describe the controls as ONE entry ("act on what you are
+facing: talk, harvest, tend, sleep"), never one key per verb — separate keys for separate verbs are
+merged anyway, and the player only ever needed the one.
+A key of its own is for a verb with NO target: jump, shoot, dash, brake, cycle the held tool.
+Movement is never a control entry either — the control scheme owns it.
+
 ## Everything else = plain behavior rules
 Spawning cadence, scoring, win/lose, timers, collectibles, doors, waves — state the RULE and the
 OUTCOME in plain language ("a new enemy appears every 2 seconds", "collecting all coins wins"). The

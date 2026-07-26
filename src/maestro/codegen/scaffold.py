@@ -22,6 +22,7 @@ import logging
 import re
 from pathlib import Path
 
+from maestro.codegen.controls import ACTIVATE_WHAT
 from maestro.codegen.gates import entry_src_path, game_dir, game_files
 from maestro.templating import render_template
 
@@ -41,17 +42,24 @@ def scheme_of(spec: dict) -> str:
     return ((design.get("control") or {}).get("scheme") or "").lower().strip()
 
 
-def _is_3d(spec: dict) -> bool:
+def is_3d(spec: dict) -> bool:
     """`mode` is the authority on 3D-ness, not the scheme name: it routes the renderer and the kit
     doc, so a spec whose scheme drifted from its mode must still get a 3D scaffold."""
     return spec.get("mode") == "3d" or scheme_of(spec).endswith("-3d")
 
 
-def _wants_interact(spec: dict) -> bool:
-    # Conservative v1 trigger: only the spec's `uses` naming dialogue. Entity-desc sniffing invites
-    # false positives, and widening later is a one-line change here.
-    uses = (spec.get("design") or {}).get("uses") or []
-    return any("dialogue" in str(u).lower() for u in uses)
+def wants_activate(spec: dict) -> bool:
+    """Does this game let the player act on THINGS in the world?
+
+    Every depth block does by definition, and so does any control whose intent is a verb aimed at
+    something in front of the player. A self-verb (jump, shoot, dash, brake) is not one: it has no
+    target, so focus/activate would have nothing to name and the prompt nothing to say.
+    """
+    design = spec.get("design") or {}
+    uses = {str(u).lower() for u in (design.get("uses") or [])}
+    if uses & {"dialogue", "shop", "quest"}:
+        return True
+    return any(ACTIVATE_WHAT.search(str(what)) for what in (design.get("controls") or {}).values())
 
 
 # Tokenized the same way the spec's control vocabulary is normalized, so the key the scaffold
@@ -65,16 +73,13 @@ _KEY_ALIAS = {"space": " ", "spacebar": " ", "esc": "Escape", "escape": "Escape"
 _MOVEMENT_TOKENS = {"w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright",
                     "wasd", "arrows", "arrowkeys", "arrow"}
 _MOUSE_TOKEN = re.compile(r"mouse|click|pointer|cursor|drag|wheel|scroll|lmb|rmb|mmb")
-_INTERACT_WHAT = re.compile(r"interact|talk|dialog|speak", re.I)
-
-
-def _interact_keys(spec: dict) -> list:
-    """The keys the scaffold's interact action binds: the spec's own interact-shaped control when it
-    names one, else E. A hardcoded E would silently unbind a spec that put interact elsewhere — the
+def _activate_keys(spec: dict) -> list:
+    """The keys the scaffold's activate action binds: the spec's own activate-shaped control when it
+    names one, else E. A hardcoded E would silently unbind a spec that put it elsewhere — the
     scaffold's later register replaces the hook's by name."""
     controls = (spec.get("design") or {}).get("controls") or {}
     for raw, what in controls.items():
-        if not _INTERACT_WHAT.search(str(what)):
+        if not ACTIVATE_WHAT.search(str(what)):
             continue
         keys = []
         for tok in re.split(r"[\s/+,|]+", str(raw)):
@@ -125,10 +130,14 @@ def reexport_hooks(run_dir) -> dict:
 # fix, not a deterministic healer).
 CONTRACT_ASSERT = ("const _scaffoldContract: GameHooks<GameState> = "
                    "{ createState, init, update, hud };")
+# A game whose scaffold dispatches `activate` owes one more hook, and the same line is what makes a
+# wrong onActivate signature a tsc error in game.ts rather than at the GENERATED call site.
+CONTRACT_ASSERT_ACTIVATE = ("const _scaffoldContract: GameHooks<GameState> = "
+                            "{ createState, init, update, hud, onActivate };")
 
 
 def contract_assert_line(spec: dict) -> str:
-    return CONTRACT_ASSERT
+    return CONTRACT_ASSERT_ACTIVATE if wants_activate(spec) else CONTRACT_ASSERT
 
 
 def has_contract_assert(run_dir) -> bool:
@@ -144,11 +153,10 @@ def _scaffold_source(spec: dict) -> str:
     scheme = scheme_of(spec)
     tmpl = _TEMPLATES / f"{scheme}.ts.tmpl"
     if not tmpl.exists():
-        tmpl = _TEMPLATES / ("orbital-3d.ts.tmpl" if _is_3d(spec) else "default.ts.tmpl")
+        tmpl = _TEMPLATES / ("orbital-3d.ts.tmpl" if is_3d(spec) else "default.ts.tmpl")
     src = tmpl.read_text(encoding="utf-8")
-    if _wants_interact(spec):
-        mode = "3d" if _is_3d(spec) else "2d"
-        for part in (f"interact_{mode}", f"interact_init_{mode}"):
+    if wants_activate(spec):
+        for part in ("activate", "activate_init"):
             src += (_TEMPLATES / f"{part}.ts.tmpl").read_text(encoding="utf-8")
     return src
 
@@ -229,27 +237,36 @@ def seed_scaffold(state, spec: dict) -> None:
     if not tmpl.exists():
         # The default template is 2D — falling to it on a 3D spec would render the game as a flat
         # canvas. orbital is the neutral third-person 3D camera to land on instead.
-        tmpl = _TEMPLATES / ("orbital-3d.ts.tmpl" if _is_3d(spec) else "default.ts.tmpl")
+        tmpl = _TEMPLATES / ("orbital-3d.ts.tmpl" if is_3d(spec) else "default.ts.tmpl")
     world_import = world_init = ""
     if spec.get("world"):
         # world.ts is seeded before this file, so the scaffold can import it directly — the terrain
         # and building passes stop depending on the model opting in.
         world_import = (_TEMPLATES / "world_import.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
         world_init = (_TEMPLATES / "world_init.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
-    interact = interact_init = ""
-    if _wants_interact(spec):
-        # Two halves of one feature: the update-side talk loop (advance/choose/close) and the
-        # init-side kit.register("interact", ...) that OPENS it — registered so the binding is
-        # machine-readable (bindings/remap) while talkStep keeps the per-frame key reads.
+    activate = activate_init = activate_import = activate_contract = ""
+    if wants_activate(spec):
+        # Two halves of one feature: the update-side focus + talk loop, and the init-side
+        # kit.register("activate", ...) that dispatches it — registered so the binding is
+        # machine-readable (bindings/remap) while talkStep keeps the per-frame key reads. One
+        # partial for both modes: kit.focus works out the plane from the player's own coordinates.
         # The keys are substituted here, not by render_template: the partial rides in as a VALUE,
         # and values are never re-scanned for {tokens}.
-        mode = "3d" if _is_3d(spec) else "2d"
-        keys = json.dumps(_interact_keys(spec))
-        interact = (_TEMPLATES / f"interact_{mode}.ts.tmpl").read_text(encoding="utf-8").rstrip("\n")
-        interact_init = (_TEMPLATES / f"interact_init_{mode}.ts.tmpl").read_text(
-            encoding="utf-8").rstrip("\n").replace("{interact_keys}", keys)
+        key_list = _activate_keys(spec)
+        keys = json.dumps(key_list)
+        activate = (_TEMPLATES / "activate.ts.tmpl").read_text(encoding="utf-8").rstrip("\n").replace(
+            "{advance_key}", json.dumps(key_list[0]))
+        activate_init = (_TEMPLATES / "activate_init.ts.tmpl").read_text(
+            encoding="utf-8").rstrip("\n").replace("{activate_keys}", keys)
+        activate_import = ", onActivate as onActivateGame"
+        activate_contract = ("//   onActivate(state: GameState, target: Entity, kit: Kit): void    "
+                             "the activate key's verb, on\n"
+                             "//                                                                    "
+                             "the entity kit.focus targeted")
     game_dir(state.run_dir).mkdir(parents=True, exist_ok=True)
-    main.write_text(render_template(tmpl, {"interact": interact, "interact_init": interact_init,
+    main.write_text(render_template(tmpl, {"activate": activate, "activate_init": activate_init,
+                                           "activate_import": activate_import,
+                                           "activate_contract": activate_contract,
                                            "world_import": world_import, "world_init": world_init,
                                            "background": _SKY if spec.get("world") else _DARK_3D}),
                     encoding="utf-8")

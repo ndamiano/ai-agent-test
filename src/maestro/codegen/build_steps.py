@@ -82,17 +82,20 @@ def data_step(spec, run_dir, tools, fc, result) -> Outcome:
     if not fc.started:
         fc.started = True
         if is_design:
-            return _data_design_request(spec, run_dir)
+            return _data_design_request(spec, run_dir, fc.error.get("message") or "")
         return _data_fix_request(run_dir) or Done(
             "data invalid but no dataset attributable — regenerate the design")
     return _data_design_apply(run_dir, result) if is_design else _data_fix_apply(run_dir, result)
 
 
-def _data_design_request(spec, run_dir) -> Infer:
+def _data_design_request(spec, run_dir, why: str = "") -> Infer:
     system = (_PROMPTS / "design_data.txt").read_text(encoding="utf-8")
     filelist = "\n".join(f"- {f['name']}: {f.get('purpose', '')}"
                          for f in _manifest_files(run_dir)) or "(none planned yet)"
-    user = (f"{_design_block(spec)}\n\n# PLANNED FILES\n{filelist}\n\n"
+    # A re-run with the identical prompt gets the identical answer, so the gate's own words ride in:
+    # the only reason this turn repeats is that the last design was empty or unusable.
+    retry = f"\n\n# YOUR LAST ATTEMPT WAS REJECTED\n{why}\n" if data_files.data_manifest_path(run_dir).exists() else ""
+    user = (f"{_design_block(spec)}\n\n# PLANNED FILES\n{filelist}{retry}\n\n"
             "Design the data files. Output ONLY one ```json block.")
     return Infer(MessageBuilder(system).add_user(user).build(), [], _DATA_MAX_TOKENS,
                  report="designing the data files")

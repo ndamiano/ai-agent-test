@@ -1,0 +1,20 @@
+      // ONE key for everything the player does TO the world, because what it does depends on what
+      // they are looking at, not on which key they remembered. kit.focus names the target; a
+      // talkable one opens itself (the kit owns the whole dialogue loop) and every other verb is
+      // the game's, handed to onActivate with the target already chosen.
+      //
+      // A REGISTERED action (machine-readable: kit.bindings names it, a future remap can rebind
+      // it), bound to the SPEC's activate key, registered BEFORE the hook init so a game
+      // registering its own "activate" REPLACES this default — the scaffold only fills a blank.
+      // It fires on the pressed edge AFTER update, so talkStep (update-side) owns advance/choose/
+      // close and the two halves share the key without double-handling.
+      kit.register("activate", {activate_keys}, () => {
+        if (state.talk) return;
+        const target: any = kit.focus(state);
+        if (!target) return;
+        if (target.talk || target.lines) {
+          kit.talkOpen(state, (target.talk && target.talk.lines) ? target.talk : target);
+          return;
+        }
+        onActivateGame(state, target, kit);
+      });

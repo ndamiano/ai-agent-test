@@ -86,9 +86,11 @@ export function dataVisual(row, mode) {
   return vis;
 }
 
-// `at` supplies position, and overrides anything else.
+// `at` supplies position, and overrides anything else. `type` defaults to the row id: gameplay
+// branches on `e.type`, and a row-spawned entity with none is invisible to every one of them —
+// measured, a game's own bullets passed through the boss because their type was undefined.
 export function spawnData(world, row, at, mode) {
-  return spawn(world, { ...dataVisual(row, mode), ...(at || {}) });
+  return spawn(world, { type: row.id, ...dataVisual(row, mode), ...(at || {}) });
 }
 
 // Draw one entity (2D): its loaded sprite, else its shape/parts. 3D needs no equivalent — the

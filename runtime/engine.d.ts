@@ -227,8 +227,9 @@ interface Kit {
   fpCam(cam: Camera3, player: Entity, opts?: { eye?: number }): void;
   moveFP(player: Entity, input: Input, dt: number, speed?: number): void;
   audio: { play(name?: string): void };
-  // A row's `id` is its asset id, so a row-spawned entity carries `mesh` (3D) / `sprite` (2D) and
-  // the renderer swaps in the GLB/PNG when one exists.
+  // A row's `id` is its asset id AND its `type`, so a row-spawned entity carries `mesh` (3D) /
+  // `sprite` (2D) — the renderer swaps in the GLB/PNG when one exists — and is matchable by
+  // `e.type === "<row id>"` in gameplay. Pass `type` in `at` to override.
   spawnData(world: World, row: DataRow, at: Partial<Entity>): Entity;
   dataVisual(row: DataRow): Partial<Entity>;
   win(msg?: string): void;

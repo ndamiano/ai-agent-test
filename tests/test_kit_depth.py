@@ -332,3 +332,20 @@ console.log(JSON.stringify({ bad, drawn, rejects: validateHud([{ kind: "icon" }]
     assert r["bad"] is None
     assert r["drawn"] == [["potion", 20, 20]]      # missing art draws nothing, no crash
     assert "id" in r["rejects"]
+
+
+def test_spawn_data_types_the_entity_by_its_row_id():
+    """Gameplay branches on e.type. A row-spawned entity with no type is invisible to every one of
+    them — measured: a game's own bullets flew through the boss because their type was undefined."""
+    r = _node_eval("""
+import { makeKit, makeRng } from "./engine.js";
+const kit = makeKit({}, makeRng(1));
+const world = [];
+const row = { id: "player_bullet", size: { w: 8, h: 8 }, color: "#ff0" };
+const shot = kit.spawnData(world, row, { x: 10, y: 20 });
+const named = kit.spawnData(world, row, { x: 0, y: 0, type: "friendly" });
+console.log(JSON.stringify({ type: shot.type, sprite: shot.sprite, override: named.type,
+                            matches: world.filter(e => e.type === "player_bullet").length }));
+""")
+    assert r == {"type": "player_bullet", "sprite": "player_bullet",
+                 "override": "friendly", "matches": 1}

@@ -225,7 +225,8 @@ const e = kit.spawnData(state.world, row, { x: 100, y: 60 });   // size/shape/co
 // exists, the row's shape+color if it does not
 ```
 - `kit.spawnData(world, row, {x, y, ...})` — spawn an entity FROM a row. Anything in the third arg
-  overrides (position, velocity, per-instance stats).
+  overrides (position, velocity, per-instance stats). The entity's `type` IS the row id, so match it
+  with `e.type === "goblin"` — never invent a second naming scheme for the same thing.
 - `kit.dataVisual(row)` — just the visual fields, when you need to build the entity yourself.
 A COMPOUND look is data too — `parts` (sub-shapes in fractions of the box) draws a ship's hull+fin
 or a slime's eyes, and the engine renders them, so it is STILL skinnable (one sprite replaces

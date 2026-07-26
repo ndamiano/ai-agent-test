@@ -204,17 +204,59 @@ CONTRACT = FixClass(
 _AMBIENT_CODES = ("TS2459", "TS2708")
 _KIT_IMPORT = re.compile(r"^[ \t]*import[^\n]*\bKit\b[^\n]*from[^\n]*\n", re.M)
 _KIT_NAMESPACE = re.compile(r"(?:/\*\*(?:[^*]|\*(?!/))*\*/\s*)?declare\s+namespace\s+Kit\s*\{")
+# `import { Entity, Kit } from "./state.ts"` — state.ts exports GameState and nothing else, so tsc
+# reports the ambient names as missing members. Named ones are dropped from the specifier list.
+_MISSING_MEMBER = re.compile(r"TS2305: Module '\"[^\"]+\"' has no exported member '(\w+)'")
+_NAMED_IMPORT = re.compile(
+    r"^[ \t]*import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*[\"'][^\"']+[\"'];?[^\n]*\n", re.M)
+
+
+_REPO_KIT_TYPES = None
+
+
+def _ambient_names(run_dir, error) -> set:
+    """The ambient kit types this error says were imported — they need no import at all."""
+    from maestro.codegen.interfaces import kit_types
+
+    named = set(_MISSING_MEMBER.findall(error.message or ""))
+    return named & set(kit_types(run_dir)) if named else set()
+
+
+def _repo_kit_types() -> set:
+    """Ambient type names from the repo's engine.d.ts — matching happens before a run_dir is in hand,
+    and every run is checked against a copy of this file."""
+    from maestro.codegen.interfaces import kit_types
+
+    global _REPO_KIT_TYPES
+    if _REPO_KIT_TYPES is None:
+        _REPO_KIT_TYPES = set(kit_types(Path(__file__).resolve().parents[3]))
+    return _REPO_KIT_TYPES
 
 
 def _matches_ambient(error) -> bool:
     msg = error.message or ""
-    return any(c in msg for c in _AMBIENT_CODES) or ("TS2307" in msg and "'./kit'" in msg)
+    return (any(c in msg for c in _AMBIENT_CODES) or ("TS2307" in msg and "'./kit'" in msg)
+            or bool(set(_MISSING_MEMBER.findall(msg)) & _repo_kit_types()))
+
+
+def _drop_ambient_specifiers(src: str, names: set) -> str:
+    def rewrite(m):
+        kept = [p for p in (x.strip() for x in m.group(1).split(","))
+                if p and p.split()[-1] not in names]
+        if not kept:
+            return ""
+        return m.group(0).replace(m.group(1), " " + ", ".join(kept) + " ")
+
+    return _NAMED_IMPORT.sub(rewrite, src)
 
 
 def _strip_kit_shadow(run_dir, error) -> Optional[dict]:
     changes, count = [], 0
+    ambient = _ambient_names(run_dir, error)
     for name, src in game_files(run_dir).items():
         new = _KIT_IMPORT.sub("", src)
+        if ambient:
+            new = _drop_ambient_specifiers(new, ambient)
         m = _KIT_NAMESPACE.search(new)
         if m:
             depth, j = 0, new.find("{", m.start())
@@ -247,7 +289,7 @@ AMBIENT = FixClass(
 # the off-plan file forever (first prod build stalled here on `./types` in a single-file game).
 # Deterministically strip the phantom import; the names it bound go undefined, which the next fix
 # resolves the only way left — defining them inline.
-_PHANTOM = re.compile(r"TS2307: Cannot find module '(\.\/[\w.-]+)'")
+_PHANTOM = re.compile(r"TS2307: Cannot find module '([^']+)'")
 
 
 def _matches_phantom(error) -> bool:
@@ -257,8 +299,9 @@ def _matches_phantom(error) -> bool:
 def _strip_phantom_imports(run_dir, error) -> Optional[dict]:
     changes, count = [], 0
     modules = set(_PHANTOM.findall(error.message or ""))
+    # Non-relative = always phantom: a game imports its own siblings and nothing else.
     missing = {m for m in modules
-               if not (game_dir(run_dir) / (m[2:] + ".ts")).exists()}
+               if not m.startswith("./") or not (game_dir(run_dir) / (m[2:] + ".ts")).exists()}
     if not missing:
         return None
     for name, src in game_files(run_dir).items():
@@ -500,7 +543,9 @@ DEFAULT = FixClass(id="default", matches=lambda e: True)
 # First match wins; `default` is last and matches everything. arg-mismatch / link / missing-behavior /
 # draw / crash are not split out yet — they fall to `default` (today's generic loop) until each earns
 # its own authority. Adding one = insert a FixClass before DEFAULT.
-FIX_CLASSES = [AMBIENT, PHANTOM, MISSING_HOOK, DUPLICATE,
+# MISSING_HOOK before AMBIENT: a hook parked in a sibling is TS2305 too, and its repair is the
+# re-export bridge, not stripping the import.
+FIX_CLASSES = [MISSING_HOOK, AMBIENT, PHANTOM, DUPLICATE,
                MISSING_NAME, CONTRACT, DEFAULT]
 
 

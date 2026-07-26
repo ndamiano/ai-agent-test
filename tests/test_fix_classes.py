@@ -366,3 +366,60 @@ def test_kit_type_is_never_widened(tmp_path):
     })
     e = _err("game.ts(2,3): error TS2339: Property 'mana' does not exist on type 'Entity'")
     assert _append_dominant_fields(rd, e) == []          # Entity is ambient — not declared in game files
+
+
+def test_ambient_names_imported_from_state_ts_are_dropped(tmp_path):
+    """state.ts exports GameState and nothing else, so `import { Entity, Kit } from "./state.ts"` is
+    TS2305 on every ambient name. Stripping the specifier is the only repair — the names are global."""
+    from maestro.codegen.fix_classes import classify
+
+    d = tmp_path / "game"
+    d.mkdir()
+    (d / "items.ts").write_text(
+        'import type { GameState } from "./state.ts";\n'
+        'import type { Entity, Kit, Vec2 } from "./state.ts";\n'
+        'export function use(e: Entity, kit: Kit): void {}\n', encoding="utf-8")
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", path="items.ts",
+                message=("items.ts has 2 type error(s):\n"
+                         "  - line 2: error TS2305: Module '\"./state.ts\"' has no exported member 'Entity'.\n"
+                         "  - line 2: error TS2305: Module '\"./state.ts\"' has no exported member 'Kit'."))
+    fc = classify(err)
+    assert fc.id == "ambient-shadow"
+    assert fc.deterministic(tmp_path, err)["count"] == 1
+    src = (d / "items.ts").read_text()
+    assert 'import type { GameState } from "./state.ts";' in src   # the real export survives
+    assert "Entity" not in src.split("export function")[0]         # the ambient import is gone
+    assert "export function use(e: Entity, kit: Kit)" in src
+
+
+def test_a_bare_module_specifier_is_a_phantom_import(tmp_path):
+    """`from "ambient-globals"` — a game imports its own relative siblings and nothing else, so a
+    non-relative module can never resolve and the import line goes."""
+    from maestro.codegen.fix_classes import _strip_phantom_imports
+
+    d = tmp_path / "game"
+    d.mkdir()
+    (d / "physics.ts").write_text(
+        'import type { GameState } from "./state.ts";\n'
+        'import type { Entity, Kit } from "ambient-globals";\n'
+        'export function step(s: GameState): void {}\n', encoding="utf-8")
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", path="physics.ts",
+                message=("physics.ts has 1 type error(s):\n"
+                         "  - line 2: error TS2307: Cannot find module 'ambient-globals' or its "
+                         "corresponding type declarations."))
+    assert _strip_phantom_imports(tmp_path, err)["count"] == 1
+    src = (d / "physics.ts").read_text()
+    assert "ambient-globals" not in src
+    assert 'import type { GameState } from "./state.ts";' in src
+
+
+def test_a_sibling_missing_export_is_not_an_ambient_import(tmp_path):
+    """TS2305 for a name the game owns is a contract mismatch — only the KIT's ambient names route
+    to the strip, or every real missing export would be silently deleted at the call site."""
+    from maestro.codegen.fix_classes import classify
+
+    err = Error(type=ErrorType.FIX, code="typechecks", component="game", path="game.ts",
+                message=("game.ts has 1 type error(s):\n"
+                         "  - line 3: error TS2305: Module '\"./scoring.ts\"' has no exported "
+                         "member 'awardPoints'."))
+    assert classify(err).id != "ambient-shadow"

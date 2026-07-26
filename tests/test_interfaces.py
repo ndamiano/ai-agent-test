@@ -695,3 +695,27 @@ def test_flattened_files_group_into_one_manifest_entry(tmp_path):
     m = interfaces.manifest_from(iface, tmp_path, ["createState"])
     beat = [f for f in m["files"] if f["name"] == "beat.ts"]
     assert len(beat) == 1 and set(beat[0]["exports"]) == {"a", "b"}
+
+
+def test_a_replace_state_missing_owner_is_rejected():
+    """replace swaps the WHOLE entry, so an omitted key deletes a contract. One measured review
+    dropped `owner` from every field, silently disarming conform's ownership + lifetime rules."""
+    iface = {"state": [{"field": "score", "type": "number", "lifetime": "run", "owner": "init",
+                        "mutators": ["addScore"], "readers": ["hud"]}], "functions": []}
+    errs = interfaces.apply_patches(iface, [
+        {"op": "replace_state", "field": "score",
+         "value": {"field": "score", "type": "number", "lifetime": "run",
+                   "mutators": ["addScore", "resetScore"], "readers": ["hud"]}}])
+    assert errs and "owner" in errs[0]
+    assert iface["state"][0]["owner"] == "init"      # the original survives untouched
+
+
+def test_a_complete_replace_state_still_applies():
+    iface = {"state": [{"field": "score", "type": "number", "lifetime": "run", "owner": "init",
+                        "mutators": [], "readers": []}], "functions": []}
+    errs = interfaces.apply_patches(iface, [
+        {"op": "replace_state", "field": "score",
+         "value": {"field": "score", "type": "number", "lifetime": "session", "owner": "reset",
+                   "mutators": ["addScore"], "readers": ["hud"]}}])
+    assert errs == []
+    assert iface["state"][0]["lifetime"] == "session" and iface["state"][0]["owner"] == "reset"

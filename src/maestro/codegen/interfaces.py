@@ -357,6 +357,10 @@ def interfaces_block(iface: Optional[Dict]) -> str:
 # ── review: patch ops ─────────────────────────────────────────────────────────
 # Re-emitting the whole architecture to change one entry is what blows the token cap on any large
 # game (a 38-function RPG is ~28KB of JSON), so the review edits by OP instead.
+# A state entry is only a contract while it carries these. A replace swaps the WHOLE entry, so an
+# omitted key is a silent deletion — one measured review dropped `owner` from all 9 fields, which
+# left conform's OWNERSHIP and LIFETIME rules with nothing to check for the rest of the build.
+_STATE_KEYS = ("field", "type", "lifetime", "owner")
 STATE_OPS = {"replace_state": "replace", "delete_state": "delete", "add_state": "add"}
 FUNC_OPS = {"replace_function": "replace", "delete_function": "delete", "add_function": "add"}
 OP_LIST = ", ".join(sorted(list(STATE_OPS) + list(FUNC_OPS) + ["set_invariants"]))
@@ -389,11 +393,23 @@ def apply_patches(iface: Dict, patches: List, dry: bool = False) -> List[str]:
             errs.append(f"unknown op {op!r}. Use one of: {OP_LIST}")
             continue
         val = p.get("value")
+
+        def incomplete():
+            """A state entry is only a contract while it carries every key; replace swaps the WHOLE
+            entry, so an omitted one is a silent deletion."""
+            if op not in STATE_OPS or not isinstance(val, dict):
+                return None
+            gaps = [k for k in _STATE_KEYS if not val.get(k)]
+            return (f"{op}: the value is the COMPLETE entry — it is missing {', '.join(gaps)}"
+                    if gaps else None)
+
         if kind == "add":
             if not isinstance(val, dict) or not val.get(idk):
                 errs.append(f"{op}: value must be a complete object with a {idk!r} key")
             elif any(x.get(idk) == val[idk] for x in lst):
                 errs.append(f"{op}: '{val[idk]}' already exists — use a replace op instead")
+            elif incomplete():
+                errs.append(incomplete())
             elif not dry:
                 lst.append(val)
             continue
@@ -409,6 +425,8 @@ def apply_patches(iface: Dict, patches: List, dry: bool = False) -> List[str]:
                 del lst[at]
         elif not isinstance(val, dict) or not val.get(idk):
             errs.append(f"{op}: value must be the COMPLETE replacement object, with its {idk!r} key")
+        elif incomplete():
+            errs.append(incomplete())
         elif not dry:
             lst[at] = val
     return errs

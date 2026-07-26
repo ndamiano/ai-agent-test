@@ -42,15 +42,6 @@ interface Entity {
 }
 type World = Entity[];
 
-interface V {
-  add(a: Vec2, b: Vec2): Vec2;
-  sub(a: Vec2, b: Vec2): Vec2;
-  scale(a: Vec2, k: number): Vec2;
-  len(a: Vec2): number;
-  norm(a: Vec2): Vec2;
-  clamp(v: number, lo: number, hi: number): number;
-}
-
 interface Rect { x: number; y: number; w: number; h: number; }
 
 interface Tilemap {
@@ -121,13 +112,12 @@ interface AstarOpts { cols?: number; rows?: number; diagonal?: boolean; }
 
 interface Kit {
   config: Config;
-  V: V;
+  clamp(v: number, lo: number, hi: number): number;
   // entities + physics
   spawn(world: World, ent: Partial<Entity>): Entity;
   cull(world: World): void;
   integrate(e: Entity, dt: number, gravity?: number): void;
   integrate3(e: Entity, dt: number, gravity?: number): void;
-  physics3(e: Entity, dt: number, gravity?: number, ground?: number): void;
   heading3(yaw: number, pitch: number): Vec3;
   flyer(e: Entity, input: Input, dt: number, opts?: FlyerOpts): Entity;
   aabb(a: Rect | Entity, b: Rect | Entity): boolean;
@@ -142,14 +132,10 @@ interface Kit {
   collideWorld(world: World, solidAt?: (cx: number, cy: number) => boolean, cell?: number): void;
   // steering
   seek(e: Entity, target: Vec2, speed: number): number;
-  flee(e: Entity, target: Vec2, speed: number): void;
-  arrive(e: Entity, target: Vec2, speed: number, slow?: number): number;
-  pursue(e: Entity, target: Entity, speed: number, lead?: number): number;
   wander(e: Entity, speed: number, turn?: number): void;
   // 3D steering (NPCs on the ground plane): these move x/z, APPLY dt themselves (no integrate3
   // needed) and set e.ry to face travel. Keep y on the terrain after: e.y = heightAt(e.x,e.z)+halfH.
   seek3(e: Entity, target: { x: number; z: number }, speed: number, dt: number): number;
-  flee3(e: Entity, threat: { x: number; z: number }, speed: number, dt: number): void;
   wander3(e: Entity, speed: number, dt: number, turn?: number): void;
   patrol3(e: Entity, points: ({ x: number; z: number } | [number, number])[], speed: number, dt: number, arriveAt?: number): void;
   // push an entity out of centered footprint rects (e.g. WORLD.buildings) — call AFTER moving it,
@@ -161,7 +147,6 @@ interface Kit {
         at(c: number, r: number): { x: number; z: number }; w: number; h: number; tile: number };
   // grid / pathfinding
   astar(start: Vec2, goal: Vec2, passable: (x: number, y: number) => boolean, opts?: AstarOpts): Vec2[];
-  cellCenter(cx: number, cy: number, cell: number): Vec2;
   gridMove(e: Entity, dx: number, dy: number, cell: number, passable?: (x: number, y: number) => boolean): boolean;
   // particles
   burst(world: World, x: number, y: number, n?: number, opts?: BurstOpts): void;
@@ -219,10 +204,9 @@ interface Kit {
   bindings(): { name: string; keys: string[] }[];
   // movement controllers — the individual movers kit.drive dispatches to. Prefer kit.drive; reach for
   // these only for a bespoke rig. input → motion, dt-correct, no key latching. Call one per controlled
-  // entity in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y); moveTopDown3 = 3D omni on
-  // the ground plane (x/z, faces travel via ry); moveTank3 = W/S drive along facing, A/D turn.
+  // entity in update(); DON'T hand-roll WASD/dt. moveTopDown = 2D omni (x/y);
+  // moveTank3 = W/S drive along facing, A/D turn.
   moveTopDown(e: Entity, input: Input, dt: number, speed?: number): void;
-  moveTopDown3(e: Entity, input: Input, dt: number, speed?: number): void;
   moveTank3(e: Entity, input: Input, dt: number, opts?: { speed?: number; turn?: number; back?: number }): void;
   // third-person ORBITAL: WASD relative to the camera (input.camYaw), not the world — W drives into
   // the screen, A/D strafe. Pair with a chase camera; drag orbits the view and movement follows it.
@@ -232,12 +216,10 @@ interface Kit {
   mouseLook(player: Entity, input: Input, sens?: number): void;
   fpCam(cam: Camera3, player: Entity, opts?: { eye?: number }): void;
   moveFP(player: Entity, input: Input, dt: number, speed?: number): void;
-  audio: { play(name?: string): void };
   // A row's `id` is its asset id AND its `type`, so a row-spawned entity carries `mesh` (3D) /
   // `sprite` (2D) — the renderer swaps in the GLB/PNG when one exists — and is matchable by
   // `e.type === "<row id>"` in gameplay. Pass `type` in `at` to override.
   spawnData(world: World, row: DataRow, at: Partial<Entity>): Entity;
-  dataVisual(row: DataRow): Partial<Entity>;
   win(msg?: string): void;
   lose(msg?: string): void;
   readonly over: null | { won: boolean; msg: string };
@@ -289,5 +271,5 @@ interface GameObject {
 // `Kit.Config` (declaration merging with the `Kit` interface above). Both `Entity` and `Kit.Entity`
 // name the same type — supports the natural "extend the kit's entity with my fields" pattern.
 declare namespace Kit {
-  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, Camera, Camera3, V, GameObject, HudItem, HudAnchor, Talker, Talk, Quest };
+  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, Camera, Camera3, GameObject, HudItem, HudAnchor, Talker, Talk, Quest };
 }

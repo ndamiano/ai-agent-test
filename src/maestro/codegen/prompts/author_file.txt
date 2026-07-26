@@ -88,7 +88,7 @@ Rules:
   walls and entity pairs every frame. NEVER hand-roll blocking, zero velocities, or snap positions
   back to fake collision. There is NO 3D solid-collision primitive: in 3D never write an AABB loop
   over the world to block the player (it pins them against road/ground slabs); leave the town open
-  or clamp bounds with kit.V.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
+  or clamp bounds with kit.clamp, and collect/trigger on Math.hypot distance. See the 3D kit surface.
 - ACTIONS: for the spec's `controls` entries that are NOT movement, prefer
   `kit.register(name, keys, fn)` in init — e.g. kit.register("attack", [" "], () => { ... }) for
   "SPACE: attack" — so the binding is named and remappable. Held mechanics (charging, sprint) read

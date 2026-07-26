@@ -208,16 +208,13 @@ fixed 3/4 view.
 
 ## Sim helpers (same kit as 2D; the 3D-specific ones)
 - `kit.integrate3(e, dt, gravity=0)` — `y` is up; gravity pulls -y. Moves x/y/z by v*dt (dt handled).
-- `kit.physics3(e, dt, gravity=20, ground=0)` — integrate3 + land on the y=ground plane; sets
-  `e.grounded`. For a 3D platformer/collectathon where things fall and stand on the floor.
-- `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.V` (clamp/len/norm), `kit.aabb`
+- `kit.spawn(world, {...})`, `kit.cull(world)`, `kit.clamp(v,lo,hi)`, `kit.aabb`
   (works on x/y as before — for 3D distance use `Math.hypot(dx,dy,dz)`), `kit.win(msg)/kit.lose(msg)`.
 
 ## NPC / creature steering (3D — do NOT hand-roll dx/dz chase math or reuse the 2D seek/wander,
 they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the entity to its travel:
 - `kit.seek3(e, target, speed, dt)` — walk straight at target's `(x,z)`; returns distance left.
   A wolf: `if (kit.seek3(wolf, player, 4, dt) < 1.5) bite();`
-- `kit.flee3(e, threat, speed, dt)` — run directly away.
 - `kit.wander3(e, speed, dt)` — amble around, slowly turning (a villager mooching about).
   Leash it home: `if (Math.hypot(v.x-v.homeX, v.z-v.homeZ) > 6) kit.seek3(v, {x:v.homeX, z:v.homeZ}, 2, dt); else kit.wander3(v, 1.2, dt);`
 - `kit.patrol3(e, points, speed, dt)` — walk a looping route of `{x,z}` (or `[x,z]`) points (a guard).
@@ -254,7 +251,7 @@ they move the WRONG axis; y is UP in 3D). These apply dt themselves and face the
   player in place (the #1 broken-3D-movement bug). For buildings/obstacles call
   `kit.avoidRects(e, rects)` AFTER moving (`rects` = `WORLD.buildings` in a world game, else your own
   `[{x,z,w,d}]` obstacle list); to keep the player inside the map clamp with
-  `player.x = kit.V.clamp(player.x, -HALF, HALF)` (same for z). Collect/trigger on DISTANCE only:
+  `player.x = kit.clamp(player.x, -HALF, HALF)` (same for z). Collect/trigger on DISTANCE only:
   `if (Math.hypot(px-e.x, py-e.y, pz-e.z) < R) { ...collect... }`.
 - **Animate decoration/pickups by MUTATING position** (allowed live; color/size bake). A floating
   balloon or a hovering marker bobs: `e.y = baseY + Math.sin(kit's t * 2) * 0.5` (keep a `t += dt` in
@@ -307,7 +304,6 @@ update(dt, input, kit) {
 camera. That is the whole control rig — do not also write a `camera()` hook or call a raw mover unless
 you need a bespoke rig. The raw movers `kit.drive` dispatches to (for that rare bespoke case):
 - `kit.moveRelative(e, input, dt, speed=8)` — WASD relative to `input.camYaw`; W into the screen, A/D strafe.
-- `kit.moveTopDown3(e, input, dt, speed=8)` — omni on the x/z plane in WORLD axes; sets `e.ry` to face travel.
 - `kit.moveTank3(e, input, dt, {speed, turn, back})` — W/S drive along `e.ry`, A/D turn.
 - For a flyer with pitch, use `kit.flyer` (below). These read HELD keys and apply dt for you — never
   reach into `input.pressed` for movement, and never accumulate keys into a set. Momentum/physics ball?
@@ -392,7 +388,6 @@ const e = kit.spawnData(state.world, ENEMIES[0], { x, y: heightAt(x, z) + 0.85, 
 // -> { shape, w,h,d, color, mesh: "<row id>", x, y, z } — the renderer swaps in the GLB when it exists
 ```
 - `kit.spawnData(world, row, {x,y,z, ...})` — anything in the third arg overrides.
-- `kit.dataVisual(row)` — just the visual fields, when you need to build the entity yourself.
 NEVER re-scale a row's `size` (no `/100`), and never hand-pick a color for a row that has one.
 There is no `drawEntity` in 3D — the scene renders from the shape tag, and `mesh` is one.
 <!-- /data -->

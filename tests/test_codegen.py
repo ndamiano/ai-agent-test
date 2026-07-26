@@ -49,7 +49,7 @@ GOOD = """export function createGame(kit: Kit): GameObject {
     update(dt, input, kit) {
       if (input.down("d")) kit.walk(this.state.p, 1, 150); else kit.walk(this.state.p, 0, 150);
       kit.integrate(this.state.p, dt);
-      this.state.p.x = kit.V.clamp(this.state.p.x, 0, 190);   // confined to one screen
+      this.state.p.x = kit.clamp(this.state.p.x, 0, 190);   // confined to one screen
     },
   };
 }"""
@@ -326,17 +326,6 @@ def test_particles_burst_then_expire_and_cull():
       console.log(JSON.stringify({spawned, remaining: world.length}));
     """)
     assert r["spawned"] == 10 and r["remaining"] == 0
-
-
-def test_physics3_falls_and_lands_on_ground():
-    r = _node_eval("""
-      import {makeKit} from "./engine.js";
-      const kit = makeKit({});
-      const b = {x:0,y:50,z:0,vy:0};
-      for (let i=0;i<600;i++) kit.physics3(b, 1/60, 20, 0);
-      console.log(JSON.stringify({y:b.y, grounded:b.grounded}));
-    """)
-    assert abs(r["y"]) < 0.001 and r["grounded"] is True
 
 
 def test_move_relative_follows_camera_yaw():

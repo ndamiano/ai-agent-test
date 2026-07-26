@@ -98,16 +98,6 @@ export function integrate3(e, dt, gravity = 0) {
   e.y += (e.vy || 0) * dt;
   e.z += (e.vz || 0) * dt;
 }
-// 3D ground physics: integrate + land on the y=ground plane (sets e.grounded). For a 3D
-// platformer/collectathon where things fall and stand on the floor.
-export function physics3(e, dt, gravity = 20, ground = 0) {
-  e.vy = (e.vy || 0) - gravity * dt;
-  e.x += (e.vx || 0) * dt; e.y += (e.vy || 0) * dt; e.z += (e.vz || 0) * dt;
-  // y is the entity CENTER (that's where the mesh renders), so rest the BOTTOM on the ground —
-  // landing the center at `ground` would half-bury every entity.
-  const rest = ground + (e.h != null ? e.h / 2 : (e.r || 0));
-  if (e.y <= rest) { e.y = rest; e.vy = 0; e.grounded = true; } else e.grounded = false;
-}
 // Unit facing vector from yaw (around +y) and pitch (up/down). +z is "forward" at yaw 0.
 export function heading3(yaw = 0, pitch = 0) {
   const cp = Math.cos(pitch);
@@ -214,20 +204,6 @@ export function seek(e, target, speed) {                 // steer straight at th
   const d = V.sub(center(target), center(e)); const n = V.norm(d);
   e.vx = n.x * speed; e.vy = n.y * speed; return V.len(d);
 }
-export function flee(e, target, speed) {                 // steer directly away
-  const n = V.norm(V.sub(center(e), center(target)));
-  e.vx = n.x * speed; e.vy = n.y * speed;
-}
-export function arrive(e, target, speed, slow = 80) {    // seek, but ease to a stop within `slow` px
-  const d = V.sub(center(target), center(e)); const dist = V.len(d); const n = V.norm(d);
-  const s = dist < slow ? speed * (dist / slow) : speed;
-  e.vx = n.x * s; e.vy = n.y * s; return dist;
-}
-export function pursue(e, target, speed, lead = 0.3) {   // seek where a moving target is headed
-  const aim = { x: target.x + (target.vx || 0) * lead, y: target.y + (target.vy || 0) * lead,
-                w: target.w, h: target.h };
-  return seek(e, aim, speed);
-}
 export function wander(e, speed, turn = 3) {             // drift, turning by up to `turn` rad/step
   e._heading = (e._heading ?? Math.random() * 6.283) + (Math.random() - 0.5) * turn;
   e.vx = Math.cos(e._heading) * speed; e.vy = Math.sin(e._heading) * speed;
@@ -245,11 +221,6 @@ export function seek3(e, target, speed, dt) {      // walk straight at target's 
     e.ry = Math.atan2(-dx, -dz);
   }
   return d;
-}
-export function flee3(e, threat, speed, dt) {      // walk directly away from threat's (x,z)
-  const dx = e.x - threat.x, dz = e.z - threat.z, d = Math.hypot(dx, dz) || 1;
-  e.x += dx / d * speed * dt; e.z += dz / d * speed * dt;
-  e.ry = Math.atan2(-dx / d, -dz / d);
 }
 export function wander3(e, speed, dt, turn = 2) {        // amble: drift on x/z, slowly turning
   e._heading = (e._heading ?? Math.random() * 6.283) + (Math.random() - 0.5) * turn * dt * 6;
@@ -342,9 +313,6 @@ export function astar(start, goal, passable, { cols = 1e4, rows = 1e4, diagonal 
   }
   return [];
 }
-// px point at the centre of cell (cx,cy) — move an actor toward path[0] with kit.seek + this.
-export function cellCenter(cx, cy, cell) { return { x: (cx + 0.5) * cell, y: (cy + 0.5) * cell }; }
-
 // ── grid / turn movement (roguelike, sokoban, tactics — discrete, one step per input) ──
 // Snap-move an entity ONE cell in (dx,dy) if the destination is passable; returns whether it moved.
 // A turn game reads input.pressed (one move per key press) and positions entities on cell*cell px.
@@ -427,17 +395,6 @@ export function moveTopDown(e, input, dt, speed = 150) {
   e.angle = Math.atan2(d.y, d.x);
 }
 
-// 3D top-down / omni: move on the ground plane (x/z; y is up, untouched), face travel via `e.ry`.
-// speed = world-units/second. The natural control for a walker/creature you steer directly.
-export function moveTopDown3(e, input, dt, speed = 8) {
-  const d = inputDir(input);
-  if (!d.moving) return;
-  e.x += d.x * speed * dt; e.z += d.y * speed * dt;
-  // face travel: a mesh at rotation.y=ry points to world (-sin ry, -cos ry), so this yaw makes the
-  // model look where it moves.
-  e.ry = Math.atan2(-d.x, -d.y);
-}
-
 // 3D tank: W/S drive forward/back along the current facing, A/D turn. opts {speed, turn(rad/s), back}.
 export function moveTank3(e, input, dt, opts = {}) {
   const speed = opts.speed ?? 8, turn = opts.turn ?? 2.5, back = opts.back ?? 0.5;
@@ -485,7 +442,6 @@ export function moveFP(player, input, dt, speed = 6) {
 // W drives away from the camera (into the screen), S toward it, A/D strafe. Pairs with any chase
 // camera (chaseCam / the default follow) — movement and camera share one yaw, so they stay tied no
 // matter where the player rotates the view. Sets e.ry to face travel. This is the "3D platformer"
-// feel; use moveTopDown3 instead when the camera should just trail travel with no manual orbit.
 export function moveRelative(e, input, dt, speed = 8) {
   const yaw = input.camYaw || 0;
   let f = 0, s = 0;
@@ -891,12 +847,12 @@ export function makeKit(config) {
   };
   return {
     config,
-    V,
-    spawn, cull, integrate, integrate3, physics3, heading3, flyer, aabb, resolveAabb, makeTilemap,
-    physics, walk, jump, collideWorld, seek, flee, arrive, pursue, wander, astar, cellCenter,
-    seek3, flee3, wander3, patrol3, avoidRects, wallsFromTilemap,
+    clamp: V.clamp,
+    spawn, cull, integrate, integrate3, heading3, flyer, aabb, resolveAabb, makeTilemap,
+    physics, walk, jump, collideWorld, seek, wander, astar,
+    seek3, wander3, patrol3, avoidRects, wallsFromTilemap,
     gridMove, burst, stepParticles, makeCamera: () => makeCamera(config),
-    chaseCam, moveTopDown, moveTopDown3, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
+    chaseCam, moveTopDown, moveTank3, moveRelative, mouseLook, fpCam, moveFP,
     drive: (e, input, dt, speed) => driveScheme(config.controls, e, input, dt, speed),
     menuPick, talkOpen, talkStep, talkHud, facing,
     // The one thing `activate` would act on right now, also parked on state.focus for the game to
@@ -916,9 +872,7 @@ export function makeKit(config) {
     _fireActions(input) {
       for (const [, a] of actions) if (a.keys.some((k) => input.pressed(k))) a.fn();
     },
-    audio: { play: () => {} }, // stub; real backend wired later
     spawnData: (world, row, at) => spawnData(world, row, at, config.mode),
-    dataVisual: (row) => dataVisual(row, config.mode),
     drawEntity: (g, e) => drawEntity(g, e, sprites),
     sprite: (id) => sprites[id] || null,
     _setSprites(map) { sprites = map || {}; },

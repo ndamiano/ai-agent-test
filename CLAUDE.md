@@ -81,7 +81,7 @@ and local by construction.
 
 ```
 runtime/                 The primitive KIT (hand/frontier-authored offline, run local)
-  engine.js              kit v1: vec math, entities/spawn/cull, integrate(+3), aabb,
+  engine.js              kit v1: clamp, entities/spawn/cull, integrate(+3), aabb,
                          tilemap, walk/jump/physics, collideWorld (the ONE 2D solid pass: tile
                          pushout + solid-pair separation; entities tag `solid: true`),
                          register/bindings (named key-press actions — fired on the pressed edge
@@ -125,9 +125,12 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          control schemes, behaviors and depth blocks a spec may compose — plus the
                          CANNOT list, which is the only thing standing between a request and a spec
                          that promises what the runtime has no way to deliver. A live request asked
-                         for beat-synced scoring and a synthwave soundtrack; `kit.audio.play` is a
-                         no-op stub, so the whole game was unbuildable and nothing downstream could
-                         see it. Widening the kit means widening this too, or specs never reach it.
+                         for beat-synced scoring and a synthwave soundtrack, and the kit answered
+                         with a no-op `audio.play` stub: the whole game was unbuildable and nothing
+                         downstream could see it. The stub is GONE — there is no audio call to make,
+                         so a game reaching for one fails typecheck instead of shipping silence it
+                         believes is sound. Widening the kit means widening this too, or specs
+                         never reach it.
   headless.mjs / render.mjs   node runners for the two runtime gates
   index.html             browser harness (loads games/<slug>/main.js bundle; 3D → run3d else run)
   games/, specs/         sample games + specs (fixtures/reference)

@@ -93,13 +93,10 @@ state.solidAt = (cx, cy) => state.tilemap.solidAt(cx, cy);   // or omit and keep
 **Law: gameplay must never zero velocities or snap positions back to fake collision** — the pass
 resolves overlap by pushing OUT; a hand-rolled undo kills movement.
 
-## Steering  (enemy/NPC movement — chase, flee, patrol; velocities in px/SECOND)
+## Steering  (enemy/NPC movement — chase, patrol; velocities in px/SECOND)
 Set an entity's velocity toward or away from a target, then `kit.integrate` it. A `target` is any
 `{x,y}` (an entity or a point); sized entities aim at each other's centres automatically.
 - `kit.seek(e, target, speed)` — steer straight at the target. Returns the distance to it.
-- `kit.flee(e, target, speed)` — steer directly away.
-- `kit.arrive(e, target, speed, slow=80)` — seek but ease to a stop within `slow` px (no jitter).
-- `kit.pursue(e, target, speed, lead=0.3)` — aim where a moving target is heading (intercept).
 - `kit.wander(e, speed, turn=3)` — random drift (idle patrol).
 ```js
 for (const ghost of this.state.enemies) {
@@ -114,15 +111,16 @@ for (const ghost of this.state.enemies) {
   CELL coords; `passable(cx,cy)` → bool (a wall is not passable). Returns the cell path (each `{x,y}`)
   from start to goal, EXCLUDING start / INCLUDING goal, or `[]` if unreachable. Recompute when the
   target moves; small grids only.
-- `kit.cellCenter(cx, cy, cell)` → the px point at a cell's centre — steer an actor toward the next
-  path cell with `kit.seek`.
 ```js
 const cols = tm.w, rows = tm.h, cell = tm.tile;
 const passable = (x, y) => !tm.solidAt(x, y);
 const from = { x: Math.floor(creep.x / cell), y: Math.floor(creep.y / cell) };
 const goal = { x: Math.floor(base.x / cell),  y: Math.floor(base.y / cell) };
 const path = kit.astar(from, goal, passable, { cols, rows });
-if (path.length) { kit.seek(creep, kit.cellCenter(path[0].x, path[0].y, cell), 60); kit.integrate(creep, dt); }
+if (path.length) {
+  const to = { x: (path[0].x + 0.5) * cell, y: (path[0].y + 0.5) * cell };   // cell -> px centre
+  kit.seek(creep, to, 60); kit.integrate(creep, dt);
+}
 ```
 
 ## Grid / turn games  (roguelike, sokoban, tactics — discrete, one step per key press)
@@ -207,8 +205,8 @@ WHY one key: a spec that spends four keys on talk / use tool / tend animal / sle
 four things to remember and the build four bindings to get right — and the verb the player wants is
 already unambiguous from what they are standing in front of.
 
-## Vectors  `kit.V`
-- `add,sub,scale(a,k),len(a),norm(a)` and `clamp(v,lo,hi)` (clamp a scalar).
+## Scalars
+- `kit.clamp(v, lo, hi)` — keep a number in range. Distances are `Math.hypot(dx, dy)`.
 
 ## Dialogue, quests & toasts  (depth without ending the game)
 - `kit.talkOpen(state, npc, options?)` / `kit.talkStep(state, input)` / `kit.talkHud(state)` — the
@@ -250,11 +248,8 @@ const e = kit.spawnData(state.world, row, { x: 100, y: 60 });   // size/shape/co
 - `kit.spawnData(world, row, {x, y, ...})` — spawn an entity FROM a row. Anything in the third arg
   overrides (position, velocity, per-instance stats). The entity's `type` IS the row id, so match it
   with `e.type === "goblin"` — never invent a second naming scheme for the same thing.
-- `kit.dataVisual(row)` — just the visual fields, when you need to build the entity yourself.
 A COMPOUND look is data too — `parts` (sub-shapes in fractions of the box) draws a ship's hull+fin
 or a slime's eyes, and the engine renders them, so it is STILL skinnable (one sprite replaces
 every part). NEVER re-scale a row's `size`, and never
 hand-pick a color for a row that has one.
 
-## Audio  (stub for now — safe to call)
-- `kit.audio.play(name)` — no-op until a backend is wired; never crashes.

@@ -1,5 +1,7 @@
 # Create-Game UX — Research Deep-Dive
 
+Verified: 2026-07-25
+
 **Type: research, not build.** The ask is not "implement screens" — it's *figure out what a GOOD
 experience for creating a game should be*. This file frames the research question and its
 deliverable. Build tasks get carved out AFTER the research lands (they'll likely extend or

@@ -1,5 +1,7 @@
 # Unit Economics — Cost per Game & Credit Pricing
 
+Verified: 2026-07-25
+
 ## Why
 Know COGS and set a pricing hypothesis so credits are priced above cost. Not an MVP blocker (validate
 demand first), but the number that decides whether this is a business at all and what a credit costs.
@@ -15,7 +17,7 @@ demand first), but the number that decides whether this is a business at all and
   These are separate levers with separate COGS; a build could be faster, better, or both. Price each
   axis (or a combined premium tier) once the cost of each is measured.
 - **Model: credit-per-GAME, not time-metered.** Matches the Steam "buy a game" vibe — a credit buys a
-  finished artifact, not minutes. (Locks the `auth_and_billing.md` cost-formula direction: base =
+  finished artifact, not minutes. (Locks the `src/auth/billing.py` cost-formula direction: base =
   1 credit/game; premium tiers = more credits.)
 - **Validate before committing:** put it in front of a few people first; confirm demand + real
   cost/time/failure before setting a public price. MVP does NOT require pricing figured out.
@@ -84,20 +86,27 @@ Sell already-generated games from a catalog at some price, and pay the creator a
 ## Tasks
 - [ ] **Measure real cost/time per game** across a few genres on the actual rental (5090), not the
       estimate — including asset generation, not just the LLM loop.
+      → done when: a dated cost/time-per-genre table is recorded in this section
 - [ ] **Measure failure/retry rate** — how often a build thrashes or produces a bad game needing a
       re-run. This sets effective COGS and the refund rate.
+      → done when: a dated failure/retry-rate percentage is recorded in this section
 - [ ] **Verify the premium tiers** — (a) faster: A100 $/hr × build time vs the credit price;
       (b) higher-quality: larger-LLM + stronger-image-model COGS (GPU/VRAM/time or API) vs its credit
       price. Confirm each is actually better/faster AND still profitable.
+      → done when: dated $/hr and margin figures for both the faster and higher-quality axes are recorded here
 - [ ] **Add the per-game hidden costs** — download egress, any per-asset API calls, payment processor
-      fees, idle GPU / warm-pool cost (`scaleout.md` S3 tradeoff).
+      fees, idle GPU / warm-pool cost (warm-pool vs cold-start tradeoff — `src/scaler/`).
+      → done when: a dated per-game hidden-cost total (egress+API+fees+idle) is recorded in this section
 - [ ] **Model the FIXED monthly costs + break-even** — site hosting (scaling), asset/game
       storage+egress (scope this — currently unplanned), runpod network volume (~$20), DB, misc.
       Compute games/mo to break even; set a retention policy so storage doesn't accrue forever.
+      → done when: a dated fixed-$/mo total and a break-even games/mo figure are recorded in this section
 - [ ] **Set the launch price** from the above (validate the $5 hypothesis), and define the credit
       pack sizes.
-- [ ] **Feed the numbers** into `auth_and_billing.md` (cost formula: 1 base / 2 speed-up) and
-      `scaleout.md` S3 (metering) and `launch_plan.md` (viability gate).
+      → done when: a launch price and a credit pack-size list are recorded in this section
+- [ ] **Feed the numbers** into `src/auth/billing.py` (cost formula: 1 base / 2 speed-up) and
+      `launch_plan.md` (viability gate).
+      → done when: `src/auth/billing.py`'s `cost()`/`SECONDS_PER_CREDIT` match the figures recorded above
 
 ## Ordering
 Not an MVP blocker — validate demand in the private alpha first (manual credit grants, no real

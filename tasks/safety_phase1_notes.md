@@ -112,7 +112,7 @@ the refusal message tells the user exactly what to change and try again themselv
 - **No legal sign-off** on reporting/preservation obligations — flagged, not resolved.
 - **Violations are logged, not persisted for account action** — `maestro.safety` logger only, no
   database row keyed to the user for a future ban/review workflow. Cheap to add once there's an
-  actual moderation queue to feed (a Phase 2 item, ties to `auth_and_billing.md`'s user model).
+  actual moderation queue to feed (a Phase 2 item, ties to the `src/auth/` user model).
 
 ## Recommendation for Phase 2 sequencing
 

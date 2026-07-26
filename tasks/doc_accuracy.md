@@ -1,5 +1,7 @@
 # Doc Accuracy — Audit & Anti-Drift Governance
 
+Verified: 2026-07-25
+
 ## Why
 The codebase moves fast (module rewrite, combat/Godot, 3D, HD-2D all landed recently) and docs rot
 behind it. `CLAUDE.md` mandates "update docs in the same commit as the code," but drift already
@@ -33,32 +35,34 @@ representing current state.
   vision, deploy).
 - **`tasks/*`** — active work plans; **`finished.md`** — shipped ledger.
 
-## T1 — Initial audit (do once) — DONE 2026-07-08, SUPERSEDED
-Audited all living docs against `src/` at HEAD; drift report produced; every finding fixed inline.
-SUPERSEDED: that audit covered the pre-codegen-rebuild tree (IR/renpy/godot era) and most of the
-docs it fixed are since deleted. A fresh pass is due — run it with T2's method.
-- [x] **`CLAUDE.md`** — accurate except one stale API listing: fixed (`Preset/PRESETS` removed from
-      module.py contents, real selection API named). Auth/tenancy section VERIFIED real (not
-      aspirational) — every file it names exists.
-- [x] **`docs/ROADMAP.md`** — accurate; no `[x]` items, all forward task-file refs resolve. No change.
-- [x] **`docs/VISION.md`** — added a reconciling line (local-first architecture vs hosted paid delivery).
-- [x] **`README.md`** — fixed: dead Genres table → module-catalog framing; `web` engine → `godot`;
-      `validate`/`executor`/`web/` layout → `agent_loop`/`modules/`/`godot/`; "decided by validate"
-      → modules' `get_errors`.
-- [x] **`docs/*`** — fixed: `ir_architecture.md` Module contract (get_errors → checks-list);
-      `game_creation_walkthrough.md` (`create_guards` → check's `guard`; dead `awaiting_human`/cancel);
-      `tool_granularity.md` (dead `matches` component); `hitl_architecture.md` (`dirty` sidecar, not
-      schema); `hitl_vision.md` D1 marked SUPERSEDED + cross-linked (resolves the awaiting_human
-      contradiction).
-- [x] **Drift report produced** — 4 HIGH / 4 MEDIUM / 3 LOW, all verified against code, all fixed inline.
+## T1 — Post-rebuild audit (due) — KNOWN DRIFT, verified 2026-07-25
+The 2026-07-08 audit is retired (it covered the pre-codegen-rebuild tree; most docs it fixed are
+deleted). Concrete drift already confirmed against HEAD — the gate list and the draw surface both
+changed and the docs did not follow:
+- [ ] **`README.md`** — `:9` names the gate chain "typecheck → headless → **probe** → render →
+      **scroll**" and `:80-81` lists `probe`/`scroll` runners; both gates were deleted (commit
+      `0ef019f`, `CLAUDE.md` § THE GATES DETECT BROKEN). Also still says an "executor" drives the
+      build (it's a completion-driven job chain now) and describes a `draw` hook the game no longer
+      has.
+      → done when: `grep -c "probe\|scroll\|executor" README.md` is 0 (currently 4 matching lines)
+- [ ] **`docs/ROADMAP.md`** — `:17`, `:56`, `:67`, `:73`, `:80-81`, `:103` all plan probe work
+      (`dead_movement`, `dead_action`, `unbound_control`, "harden the probe"); the probe is gone.
+      `:56` also lists `draw` among the authored hooks.
+      → done when: `grep -c "probe" docs/ROADMAP.md` is 0 (currently 7 matching lines)
+- [ ] **Sweep the rest** with T2's method (`CLAUDE.md`, `docs/VISION.md`, `docs/DEPLOY.md`,
+      `docs/codegen_rebuild_plan.md`) for the same two changes, then produce a drift report.
+      → done when: `grep -c "probe\|scroll" docs/VISION.md docs/DEPLOY.md` is 0 for both (clean today)
 
 ## T2 — Anti-drift governance (standing)
 - [ ] **Reinforce the same-commit rule** as a review checklist item (`CLAUDE.md` already mandates it
       under Documentation — make it explicit at review time).
+      → done when: `grep -A3 "### Code review" CLAUDE.md` mentions "docs" or "documentation"
 - [ ] **Periodic doc-audit cadence** — a recon pass (this file's T1 is the template) each milestone,
       cross-checking doc claims vs code. Cheap to run as an agent.
+      → done when: a recon entry dated after 2026-07-25 appears in this file's T1 section
 - [ ] **Keep the source-of-truth map above current** — when a new doc appears, assign it an owner
       scope so facts don't get duplicated across docs.
+      → done when: `grep -c "narrative_design" tasks/doc_accuracy.md` is ≥1 (currently 0 — missing)
 
 ## Ordering
 T1 is a single audit pass (can run as one recon agent). T2 is ongoing. Low coupling to other

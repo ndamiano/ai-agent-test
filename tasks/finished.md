@@ -8,6 +8,23 @@ Format: `- **YYYY-MM-DD** — <what shipped> (<key files/settings>)`
 
 ---
 
+## Drained sections (2026-07-25)
+
+Cut from their active files after a per-file audit against HEAD; the work is in the code, the
+plan text was dead weight.
+
+- **2026-07-25** — `auth_and_billing.md` + `build_deploy.md` + `scaleout.md` + `production_hardening.md` merged into `platform_polish.md`: each had shrunk to 3–4 open items behind its own Why/Background/Guardrails, and two owned the same queue-fairness task
+- **2026-07-25** — `tasks/build_loop.md` opened: the codegen loop had no task file (it lived in `docs/codegen_rebuild_plan.md`, which has 0 checkboxes and names `AgentLoop`/branch `codegen-rebuild`/a `draw` hook — history, not a plan)
+- **2026-07-25** — every open item across `tasks/` given a falsifiable `→ done when:` check + a `Verified:` stamp per file; lifecycle rule changed to prune-on-land (README)
+
+- **2026-07-25** — auth_and_billing T1/T2/T3/T5 + the compute-budget layer: login gate on every route, run ownership, credit ledger (charge-once, manual refund), frontend login+balance, `SECONDS_PER_CREDIT` reserve/admit/debit (`src/auth/`, `src/db/store.py`, `frontend/src/contexts/AuthContext.tsx`)
+- **2026-07-25** — build_deploy T1 suite+frontend CI, T2 backend image/compose, T3 persistence (`data_dir` sqlite + named volumes), T4 alpha deploy (`.github/workflows/ci.yml`, `Dockerfile`, `docker-compose.yml`, `scripts/deploy.sh`)
+- **2026-07-25** — scaleout S1 build queue/WS routing/chat isolation, S2 parallel assets, S3 backend abstraction + runpod scale + cost metering (`src/db/`, `src/worker/`, `src/scaler/`, `codegen/asset_chain.py`)
+- **2026-07-25** — safety_filter Phase 1 research + the pre-alpha basic block: input screening (chat + spec) and pre-gen image-prompt screening, logging with attribution (`src/tools/safety.py`, `tests/test_safety.py`)
+- **2026-07-25** — production_hardening H2 chat cap (30 turns/hour, 429) + H3 API surface (`MAESTRO_DEV`-only docs, 7d session TTL) (`src/auth/ratelimit.py`, `src/api/app.py`, `src/auth/store.py`)
+- **2026-07-25** — legal_ops private-alpha tier: operator-favorable terms + privacy note, 18+ affirmation on login (`frontend/public/terms.html`, `privacy.html`)
+- **2026-07-25** — doc_accuracy T1 (the 2026-07-08 audit) retired: it covered the pre-codegen tree; replaced by a fresh post-rebuild pass with the drift already located
+
 ## Retired workstreams (2026-07-23)
 
 - **2026-07-23** — storyline_pivot.md retired: plan targeted the deleted IR story/scenes stack; the reusable narrative-design conclusions (theme+tone spine, graph-of-linear-storylines, code-guarded termini, single-ending open worlds) distilled to `docs/narrative_design.md`

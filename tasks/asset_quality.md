@@ -1,5 +1,7 @@
 # Asset Quality — better prompting + the right model per asset type
 
+Verified: 2026-07-25
+
 ## Why
 Art quality is a ship-lever with two knobs, per asset type: **prompt better** and **use the
 right model for the need**. Generation now lives in the codegen reskin pipeline; today ONE
@@ -48,9 +50,11 @@ here).
       planners (`prompts/plan_assets.txt`, `plan_meshes.txt`): concrete subject, material,
       view/framing per asset kind. Verify: before/after renders on one game, judged
       side-by-side (quality_backlog Q2 discipline).
+      → done when: a dated before/after verdict for this item is recorded in this file (A1)
 - [ ] Prompt-lint at plan time: warn when a `look` names a creature inside an environment
       prompt or a scene around an object (the subject-drift class). Files: `reskin.py`.
       Test: unit on the lint with fixture plans.
+      → done when: `pytest tests/test_reskin.py -k lint` passes (currently: 0 tests collected)
 
 ### A2 — Per-asset-type jobs (the current single-workflow bug)
 - [ ] Split `build_item_job` into typed builders: character sprite (full-body, transparent),
@@ -59,24 +63,30 @@ here).
       kind (2D rows vs mesh plan already distinguishes). Files: `src/tools/comfyui_tools.py`,
       `src/config/workflows/*.json`, `reskin.py` plan entries. Test: each builder unit-tested
       on workflow shape (pattern: existing comfyui tests).
+      → done when: `grep -c '^def build_.*_job' src/tools/comfyui_tools.py` is >= 4 (currently
+      2) and `pytest tests/test_comfyui_prompt.py` passes
 
 ### A3 — Model bake-offs per type (the bigger lever)
 - [ ] Audit + bake-off per asset type on a fixed set of real game objects (the proven 3D
       bake-off method): flux-schnell vs anima vs a current SOTA per need; judge, record the
       call HERE, wire the winner as that type's workflow json (the workflow file IS the
       selectable-backend seam). Local-first.
+      → done when: a dated per-asset-type bake-off verdict is recorded in this file (A3)
 
 ### A4 — Mesh polish
 - [ ] Re-verify the TRELLIS plinth-slab / black-bake artifacts on the current 4B server +
       50k pipeline; if still present, attack via mesh-source image prompts (A2's builder)
       before touching the server. Files: `src/tools/trellis_server.py` only if image-side
       fails. Verify: building/char/foliage set renders clean in `run3d`.
+      → done when: a dated verdict on the building/char/foliage `run3d` render is recorded in
+      this file (A4)
 
 ### A5 — Consistency
 - [ ] Character identity: a game's character re-renders (regenerate endpoint) should keep
       reading as the same entity — carry the full original `look` + style brief into
       regenerate prompts rather than the user's bare replacement text. Files: `reskin.py`
       `regenerate_asset`. Test: unit — regenerate prompt contains the brief.
+      → done when: `pytest tests/test_reskin.py -k brief` passes (currently: 0 tests collected)
 
 ## Parked
 - Which asset types most need a model upgrade — decide from the A3 audit.

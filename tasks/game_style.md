@@ -1,5 +1,7 @@
 # Game Style — per-game visual identity
 
+Verified: 2026-07-25
+
 ## Why
 Every generated game reads visually samey: shapes on a dark ground (2D) or sky-fog primitives
 (3D), sprites/meshes rendered by one shared workflow with no per-game art direction. A horror
@@ -41,15 +43,20 @@ pending) — derive the game's identity once, compose it into every asset prompt
       title/genre/mechanics (deterministic template or one small LLM call), saved to
       `runs/<id>/game/style.json`. Files: `src/maestro/codegen/reskin.py`, new
       `prompts/style_brief.txt`. Test: brief exists after `--assets`, stable across re-runs.
+      → done when: prompts/style_brief.txt exists and reskin.py writes game/style.json
+        (grep -n "style.json" src/maestro/codegen/reskin.py is non-empty)
 - [ ] Compose the brief into every asset prompt (data-plan and LLM-plan paths both) before
       `build_item_payload`; the composed prompt is what lands in `assets.json` so regenerate
       reuses it. Files: `reskin.py`. Test: two assets of one game share the brief's palette
       words; existing reskin tests stay green.
+      → done when: pytest tests/test_reskin.py passes and grep -n "style" reskin.py shows the
+        brief composed in both the data-plan and plan_assets/plan_meshes paths
 
 ### S2 — Coherent row visuals
 - [ ] `prompts/design_data.txt`: ask for a coherent palette across a game's rows (`color`
       values from one stated palette, `look` strings sharing the game's art direction).
       Verify: unskinned build reads tonally coherent (shapes share a palette).
+      → done when: grep -n "palette" src/maestro/codegen/prompts/design_data.txt is non-empty
 
 ### S3 — Scaffold mood config
 - [ ] Let the spec carry an optional mood/palette hint that maps to scaffold config: 2D
@@ -57,11 +64,14 @@ pending) — derive the game's identity once, compose it into every asset prompt
       `prompts/spec_draft.txt`, `src/maestro/codegen/scaffold.py`,
       `scaffold_templates/*.tmpl` config blocks. Test: scaffold unit test — a "horror" hint
       lands a dark background on a world game instead of sky.
+      → done when: a test in tests/test_scaffold.py asserts a horror-hint world spec renders
+        `background: "#101018"` (not sky), and passes
 
 ### S4 — Distinctness gate (manual)
 - [ ] Battery check after S1–S3: build horror vs cozy vs sci-fi specs, screenshot each — they
       must read as visually distinct games. Record verdicts here; this is the workstream's
       done-condition.
+      → done when: this file's S4 section contains a dated verdict table/line for all three specs
 
 ## Parked
 - Generated UI chrome (fonts, panels, HUD skins) — the HUD is engine-drawn text today; revisit

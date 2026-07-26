@@ -1,5 +1,7 @@
 # Quality Backlog — from RUNS to GOOD
 
+Verified: 2026-07-25
+
 ## Why
 The north star is *good* output, not *valid* output. The local gates
 (`src/maestro/codegen/module.py`: planned → data → authored → contracted → typechecks →
@@ -50,35 +52,45 @@ bug until the exact prompt has been dumped and read.
       monitor `runs/<id>/build_state.json` + gate output, keep the /proc-not-pgrep liveness
       rule and the blame-context discipline verbatim. Verify: run one build end-to-end by the
       skill's own text.
+      → done when: `python -m maestro.codegen.run "<req>"` finishes and `runs/<id>/build_state.json` has `"phase": "done"`
 - [ ] `.claude/skills/grade-scenes/SKILL.md`: keep the calibrated bar + why-chain test; point
       it at generated games' dialogue (`talkOpen` option/line content in `game/game.ts` +
       `game/data/*.json` rows) and playable feel via `runtime/index.html?game=<slug>`. Drop
       the `eval.slop_scan` / `one_last_lan.md` references or restore a gold example first.
+      → done when: `grep -c "slop_scan\|one_last_lan" .claude/skills/grade-scenes/SKILL.md` is 0
 - [ ] Pick ONE gold spec per genre-battery slot and record it in the skill (the old gold A/B
       premise pattern). Verify: two graders (you, cold) reach the same verdict on one build.
+      → done when: the skill file has a dated table naming one spec each for platformer/top-down/grid-turn/3D-RPG
 
 ### Q2 — Prompt hill-climb (the standing grind)
 - [ ] Build the tracking table here: every file in the Background prompt-surface list →
       what call it backs → last climbed → verdict. Include kit_api*.md and scaffold templates.
+      → done when: this file has a table row for every file in src/maestro/codegen/prompts/*.txt, scaffold_templates/*.tmpl and runtime/kit_api*.md/kit_catalog.md
 - [ ] One climb pass per prompt: baseline build → grade (Q1 skills) → hypothesis → change →
       rebuild → keep only if better across the battery. Use `eval/build_trace.py` to attribute
       changes. Files: the prompt under test only.
+      → done when: the Q2 tracking table has a non-empty "last climbed"/"verdict" for ≥1 file
 - [ ] `spec_draft.txt` first — a wrong spec is a wrong everything, and it's human-gated so a
       better draft is pure win. Watch for the known variance flipping `world`/scheme.
+      → done when: the tracking table's `spec_draft.txt` row has a non-empty verdict
 
 ### Q3 — Cheap local "good" heuristics (Phase 7 T7.1, early slice)
-- [ ] Self-play depth probe: extend `runtime/probe.mjs` with a scripted-input run that checks
-      the game is non-trivial (e.g. random-input run should LOSE more often than no-input;
-      win requires acting). Wire as a non-blocking `Check` in `module.py`. Test: fixture game
-      in `runtime/games/` that trivially wins fails the heuristic.
-- [ ] Report, don't gate, at first — collect verdicts across builds before making any
-      heuristic blocking.
+- [ ] Self-play depth heuristic: a NEW runner (`runtime/depth.mjs` — the old `probe.mjs` was
+      deleted with the probe gate) doing a scripted-input run that checks the game is non-trivial
+      (e.g. random-input run should LOSE more often than no-input; win requires acting). Test:
+      fixture game in `runtime/games/` that trivially wins fails the heuristic.
+      → done when: `runtime/depth.mjs` exists and a trivially-winning fixture in `runtime/games/` fails it
+- [ ] Report, NEVER gate. "The game must be non-trivial" is a DOES-X constraint, so it can only
+      ever be a report — making it blocking is the exact shape `CLAUDE.md` forbids (it is why the
+      probe is gone). Collect verdicts across builds; a blocking version is not a later phase.
+      → done when: verdicts appear in `events_for` (db/store.py) for ≥3 builds and no `Check` in `module.py` wires it
 
 ### Q4 — Play-critic (deferred, cloud — comes LAST)
 - [ ] Design only when Q1–Q3 plateau: vision+control agent plays the staged `/play` build,
       judges fun/feel against a rubric, emits fix notes into the existing
       `--fix <run_id> "<note>"` path (the human-note fix already classifies to `default`).
       Do not start before the local surface is climbed.
+      → done when: `docs/codegen_rebuild_plan.md`'s T7.2 bullet is expanded into a rubric + architecture section
 
 ## Parked
 - VN-era items (per-branch continuity, combat/economy depth checks, puzzle-depth, revise_node

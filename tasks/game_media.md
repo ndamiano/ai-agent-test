@@ -1,5 +1,7 @@
 # Game Media — audio (music + SFX) and animation
 
+Verified: 2026-07-25
+
 ## Why
 A game needs a soundscape and motion to feel alive. Today `kit.audio.play` is an explicit
 no-op stub (`runtime/engine.js:872` — "stub; real backend wired later"); there is no music,
@@ -43,33 +45,41 @@ before any model existed, and that ordering is the keeper lesson.
       unchanged headless. Files: `runtime/engine.js`, `runtime/engine3d.js`,
       `runtime/engine.d.ts`, `runtime/kit_api*.md`. Test: node unit — headless sim with audio
       calls is deterministic; a game calling an unknown id doesn't crash render gate.
+      → done when: `grep -n "audio: { play: () => {} }" runtime/engine.js` returns nothing
 
 ### M2 — SFX (procedural first)
 - [ ] A small synthesized SFX set (hit/pickup/ui/step — WebAudio oscillators or tiny baked
       wavs we own) as kit-provided defaults, triggered from game code at `kit.register`
       actions and collisions. Files: `runtime/engine.js`, kit docs + a worked example.
-      Verify: a build's actions audibly fire; probe/headless unaffected.
+      Verify: a build's actions audibly fire; the headless gate is unaffected.
+      → done when: a test named test_default_sfx_exist in tests/test_kit_depth.py passes
 
 ### M3 — Music generation pipeline
 - [ ] Derive the track plan deterministically (no LLM call): one ambient bed keyed off the
       spec's genre/mood (+ per-region beds for a `world` game) — the old per-place derivation
       lesson. Files: `src/maestro/codegen/reskin.py` (plan alongside sprites/meshes).
+      → done when: a test named test_track_plan_is_deterministic in tests/test_reskin.py passes
 - [ ] New job kind through the existing chain: a ComfyUI audio workflow under
       `src/config/workflows/`, payload built in `src/tools/comfyui_tools.py`, a `save_audio`
       OPERATION in `asset_chain.py`, estimate entry in `db/estimates.py`. Rides the `skin`
       finalize so staging/bundling is untouched. Test: unit on the chain op (mirrors
       save_sprite tests); fail ⇒ silent game, batch still finalizes.
+      → done when: `grep -n "save_audio" src/maestro/codegen/asset_chain.py` is non-empty
 - [ ] Model choice bake-off (stable-audio vs ACE-Step vs MusicGen, local) — record the call
       here; wire the winner's workflow json. Note VRAM fit vs the image queue's card.
+      → done when: a dated bake-off verdict line (model + reason) is written under this item
 
 ### M4 — Animation
 - [ ] Procedural first: 2D kit tween helpers (squash on land, hit-flash, idle bob — mirrors
-      engine3d's walk-bob) applied render-side in `drawEntity`. Files: `runtime/engine.js`,
+      engine3d's walk-bob) applied render-side in `renderScene` (the game has no draw surface —
+      the engine draws each entity from its own look). Files: `runtime/engine.js`,
       kit docs. Verify: movers visibly animate in a build; sim state untouched.
+      → done when: `grep -nE "squash|hit-flash" runtime/engine.js` inside renderScene is non-empty
 - [ ] Generated frames later: N-frame sprite variants per `look` row through the EXISTING
       image pipeline (same `build_item_payload`, frame suffix ids), kit-side frame cycling on
       entity `anim` tags. Only after procedural proves insufficient — generated frames cost a
       render per frame per entity.
+      → done when: `grep -n "anim" runtime/engine.d.ts` shows a frame-cycling entity tag
 
 ## Parked
 - Voice/TTS — no dialogue audio until world_first.md's dialogue-as-data lands.

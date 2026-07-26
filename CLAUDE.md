@@ -697,6 +697,10 @@ keyed on `metadata.stage` in the `/worker/complete` dispatch — the queue stays
 **Play a build:** open `runtime/index.html?game=<path-or-slug>` in a browser (2D or 3D auto-routed).
 **Run backend:** `source venv/bin/activate && python run.py`  •  **Frontend:** `cd frontend && npm run dev`
 **Run tests:** `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
+**Run the llm worker's target:** `llama-server` needs
+`--chat-template-kwargs '{"enable_thinking":false}'` — load-bearing, and `--reasoning-budget 0`
+alone is a no-op: without it Qwen3.6 thinks in `content` and authoring turns truncate at the output
+cap before the tool call. Full invocation + the other local services: `tasks/nicknotes.md`.
 
 ---
 

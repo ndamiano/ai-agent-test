@@ -1,5 +1,7 @@
 # World-First — residents, quests, ambient dialogue on the codegen stack
 
+Verified: 2026-07-25
+
 ## Why
 A world game should be a PLACE where people live, not a room with a win condition. Worldgen
 now delivers the place (town + wilderness ring + POIs + roads), the kit delivers the
@@ -27,8 +29,9 @@ next".
   `kit.spawnData` builds entities from rows and binds the row id as asset id (so residents
   authored as rows are skinnable for free). Dataset design prompt:
   `src/maestro/codegen/prompts/design_data.txt`.
-- Probe already enforces `player_not_in_world`, `dead_action`, `unbound_control`
-  (`runtime/probe.mjs`, spec controls ride in via `gates.run_probe`).
+- There is NO probe gate any more (`player_not_in_world`/`dead_action`/`unbound_control` were
+  deleted with it — `CLAUDE.md` § THE GATES DETECT BROKEN). Nothing checks that a resident is
+  reachable or that a quest is completable; that gap is deliberate and human-owned.
 
 ## Guardrails
 - **Residents and quest content are DATA ROWS, not code.** The fix loop sees schema + one
@@ -49,37 +52,45 @@ next".
       (name, look, a `home` naming a WORLD poi/building index or region, optional `stance`).
       Files: `src/maestro/codegen/prompts/design_data.txt`. Verify: two world builds produce
       a residents dataset with ≥4 rows, placed via `WORLD.buildings`/`WORLD.pois`.
+      → done when: grep -n "residents" src/maestro/codegen/prompts/design_data.txt is non-empty
 - [ ] Worked example in `runtime/kit_api_3d.md`: spawn residents from rows with
       `kit.spawnData`, positioned off `WORLD` + `heightAt`. Verify: a build places residents
       on the ground, inside/near their home.
+      → done when: grep -n "resident" runtime/kit_api_3d.md shows a kit.spawnData(...) example
 
 ### W2 — Dialogue as data
 - [ ] A `dialogue` dataset convention: rows `ref:residents` + lines/options, optional
       `requires`-style gate on quest state; a worked `talkOpen(state, npc, options)` example
       reading rows in `kit_api_3d.md`. Files: `design_data.txt`, `runtime/kit_api_3d.md`.
       Verify: talking to a resident shows row-authored lines; grade with `grade-scenes`.
+      → done when: grep -n "ref:residents" src/maestro/codegen/prompts/design_data.txt matches
 - [ ] Ambient register: cheap per-resident one-liners (a `talkOpen` with no options, or
       `kit.notify` barks on proximity) so verisimilitude residents aren't mute. Verify: a
       non-quest resident says something.
+      → done when: grep -n "ambient" runtime/kit_api_3d.md is non-empty
 
 ### W3 — Quest graphs on kit.quest
 - [ ] Widen `kit.quest` with `prereq` (an add whose HUD entry and giver offer gate on a prior
       quest's completion) — code-owned semantics, model fills titles/rewards. Files:
-      `runtime/engine.js`, `runtime/engine.d.ts`, `runtime/kit_api*.md`, probe untouched.
+      `runtime/engine.js`, `runtime/engine.d.ts`, `runtime/kit_api*.md`; gates untouched.
       Test: a node unit run in `runtime/` — prereq quest hidden until parent completes.
+      → done when: grep -n "prereq" runtime/engine.js matches, and tests/test_kit_depth.py passes
 - [ ] Giver-acknowledges-completion as the documented pattern: the giver's dialogue rows
       carry a completed-state variant. Verify on a build: turn-in line changes after
       `quest.complete`.
+      → done when: grep -n "completed-state" runtime/kit_api_3d.md is non-empty
 - [ ] Static check (new non-blocking `Check` in `src/maestro/codegen/module.py`): every
       `kit.quest.complete(state,"id")` string in `game/*.ts` has a matching `quest.add` with
       that id, and ≥1 quest exists when the spec sets `world`. Test: tests/ unit on the check
       with a fixture source.
+      → done when: `cd src && python -m pytest ../tests/test_codegen.py -q -k quest` passes
 
 ### W4 — Gold world game
 - [ ] Hand-author one reference world game in `runtime/games/` (residents + 2–3 chained
       quests + ambient barks over a worldgen world.ts). It defines the bar and becomes the
       grading gold for world builds. Verify: playable via `runtime/index.html?game=<slug>`,
       "what do I do next" always answerable.
+      → done when: runtime/games/world_gold/main.ts exists (hand-authored, not a build output)
 
 ## Parked
 - Schedules / day-night movement for residents — needs a time primitive in the kit first.

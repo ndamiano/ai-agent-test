@@ -6,16 +6,19 @@ detail under it.
 
 ## Active
 
-Grouped by theme. Generation-quality work makes the output good; platform work makes it
-shippable to many users. All files re-baselined 2026-07-23 against the codegen architecture
-(the IR-era workstreams were retired to `finished.md`).
+Grouped by theme. Generation quality makes the output good; platform work makes it shippable to
+many users. Re-baselined 2026-07-23 against the codegen architecture (IR-era workstreams retired
+to `finished.md`), then re-audited per file 2026-07-25: drained sections cut, the four
+paid-beta engineering files merged into one, and `build_loop.md` opened for the core work that
+had no file at all (see `finished.md` § Drained sections).
 
 **Generation quality**
 | File | Workstream | Status |
 |------|-----------|--------|
-| [quality_backlog.md](quality_backlog.md) | Gate/prompt hill-climbing toward "good, not just valid"; play-critic last | Judge is the lever; Q1 retargets the stale grading skills |
-| [world_first.md](world_first.md) | World-first content on the live seams: residents-as-data, kit.quest, dialogue | Rewritten 2026-07-23 — residents dataset first |
-| [game_style.md](game_style.md) | Per-game visual identity: style brief composed into every asset prompt | Rewritten — styled-prompt stage (S1) first |
+| [build_loop.md](build_loop.md) | **The core**: gates, fix shapes, kit surface, step economics, the audit | New 2026-07-25 — B2 step-economics baseline first |
+| [quality_backlog.md](quality_backlog.md) | Judging output quality: grading skills, prompt hill-climbing, play-critic last | Judge is the lever; Q1 retargets the stale grading skills |
+| [world_first.md](world_first.md) | World-first content on the live seams: residents-as-data, kit.quest, dialogue | Residents dataset first |
+| [game_style.md](game_style.md) | Per-game visual identity: style brief composed into every asset prompt | Styled-prompt stage (S1) first |
 | [game_media.md](game_media.md) | Audio backend for the kit + music/SFX/animation pipelines | kit.audio is a stub; wiring-first, generation later |
 | [asset_quality.md](asset_quality.md) | Art quality: per-asset-type models + prompt lint + identity-stable regen | Typed job builders (A2) first |
 
@@ -29,24 +32,22 @@ shippable to many users. All files re-baselined 2026-07-23 against the codegen a
 **Platform / launch**
 | File | Workstream | Status |
 |------|-----------|--------|
-| [production_hardening.md](production_hardening.md) | Pre-beta security: game sandbox, chat rate limit, API surface, sessions | H1 (sandbox) is the big one |
-| [auth_and_billing.md](auth_and_billing.md) | Login gate, ownership, credit ledger + compute budget (NO self-serve signup) | Core landed; T4 payments open |
-| [scaleout.md](scaleout.md) | Queue/scaler follow-ups: connector singleton, fair scheduling | Spine landed (queue + autoscaler); polish open |
-| [build_deploy.md](build_deploy.md) | CI, containerize, persistence, deploy pipeline | Landed through deploy; CI lint/docker-build + T5 versioning open |
-| [safety_filter.md](safety_filter.md) | Illegal-content filter over text + (uncensored) image gen | Phase 1 + partial 2 landed; tests + classifier open |
+| [platform_polish.md](platform_polish.md) | The paid-beta residue: payments, origin isolation, inference globals, fair scheduling, release hygiene | Merged 2026-07-25 from auth_and_billing + build_deploy + scaleout + production_hardening |
+| [safety_filter.md](safety_filter.md) | Illegal-content filter over text + (uncensored) image gen | Input side landed; output side (hooks 3/5/6) open |
 
 **Research / governance**
 | File | Workstream | Status |
 |------|-----------|--------|
 | [create_ux_research.md](create_ux_research.md) | Research: what a *good* create-game UX is (deep-dive, not build) | Research not started |
-| [test_health.md](test_health.md) | Test governance (618 tests / 52 files, green) | Re-reconned 2026-07-23; T1 shared fixtures first |
-| [doc_accuracy.md](doc_accuracy.md) | Doc audit + anti-drift governance (CLAUDE/README/ROADMAP/VISION/docs) | T1 superseded by rebuild; rerun via T2 method |
+| [test_health.md](test_health.md) | Test governance (812 tests / 57 files, green) | Nothing landed yet; T1 shared fixtures first |
+| [doc_accuracy.md](doc_accuracy.md) | Doc audit + anti-drift governance (CLAUDE/README/ROADMAP/VISION/docs) | T1 drift LOCATED 2026-07-25: README+ROADMAP still describe the deleted probe/scroll gates |
 
 ## Reference
 
 | File | What |
 |------|------|
 | [finished.md](finished.md) | Append-only ledger of shipped work (retired checklists land here) |
+| [safety_phase1_notes.md](safety_phase1_notes.md) | Research backing for `safety_filter.md` Phase 1 (policy scope, hook map, tool survey) |
 | [nicknotes.md](nicknotes.md) | Scratch: prompts to try + local-service startup commands |
 
 ---
@@ -57,22 +58,35 @@ So an agent (or you, cold) can execute with zero prior conversation:
 
 ```
 # <Workstream> — Work Plan
+Verified: YYYY-MM-DD    — when Background was last checked against the code
+
 ## Why          — rationale + decisions already made ("do not re-litigate")
-## Background    — self-contained; VERIFIED file paths + real API signatures
-## Guardrails    — reject-if rules (keep scope honest)
-## Tasks         — ### T1 … with [ ] atomic subtasks, files-touched, and the test that proves it
-## Parked        — logged, not lost
+## Background   — POINTS AT code (file:line); never restates what the code says
+## Guardrails   — reject-if rules (keep scope honest)
+## Tasks        — ### T1 … with [ ] atomic subtasks, each with a "→ done when:" check
+## Parked       — logged, not lost
 ```
 
 Rules that make a file drainable:
-- **Each subtask names the files it touches + how to verify** (which test). That's what lets an
-  agent go cold-start → checked box without asking.
+- **Every `[ ]` carries a `→ done when:` check that a script or a person can evaluate to
+  true/false with no judgement.** Best is a shell command with an expected result
+  (`grep -n "X" path` is empty, a named test passes, a file exists). For a decision or a
+  measurement, the check is that the recorded result exists in the file. This is what makes
+  auditing this directory mechanical instead of seventeen LLM agents reading prose.
+- **A check must be FALSE today.** If it already passes, the item is done — delete it.
+- **`Verified:` stamp at the top.** Background rots silently; a date makes the rot visible
+  without reading. Stamp it when you re-check, not when you edit.
+- **Background points at code, it does not copy it.** Copied facts are the drift.
 - **List verified real APIs up front** — kills hallucinated signatures.
-- **State ordering + coordination** — what lands before what; worktree hints for parallel work.
+
+No `## Ordering` section: sequencing across workstreams lives in `launch_plan.md`, and inside a
+file the task numbers carry it.
 
 ## Lifecycle
 
-- Working a task: check the box `[x]` as subtasks land.
-- A whole **section** goes all-`[x]`: cut it, add one line to [finished.md](finished.md). Keeps
-  active files free of dead checklists.
+- **An item lands → delete the line and add its `finished.md` entry in the same commit.** Do not
+  leave `[x]` behind: a section that is half-shipped accumulates dead prose that reads as active
+  work, which is exactly how 418 lines of it built up before the 2026-07-25 audit.
 - Workstream fully done: remove it from the Active table, one summary line in `finished.md`.
+- A file down to 3–4 items behind its own Why/Background/Guardrails is overhead — merge it into a
+  sibling (that is what `platform_polish.md` is).

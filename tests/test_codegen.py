@@ -819,6 +819,19 @@ def test_typecheck_catches_a_draw_hook_in_game_ts(tmp_path):
     assert "draw" in errs[0].message
 
 
+def test_a_2d_entity_may_carry_its_2d_shape(tmp_path):
+    """The engine renders state.world from each entity's `shape`, and the 2D shapes are rect/circle.
+    They were missing from Entity.shape (3D tags only), so every 2D game hit TS2322 on a type only
+    the kit can change — a fix loop cannot converge on that."""
+    game = HOOKS_GOOD.replace(
+        'state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff" });',
+        'state.player = kit.spawn(state.world, { x: 100, y: 100, w: 10, h: 10, color: "#fff",\n'
+        '    shape: "rect" });\n'
+        '  kit.spawn(state.world, { x: 50, y: 50, w: 8, h: 8, shape: "circle", layer: 2 });')
+    _write_hook_game(tmp_path, game)
+    assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []
+
+
 def test_clean_game_has_no_errors(tmp_path):
     _write_hook_game(tmp_path)
     assert CodegenModule().get_errors(_ctx(_run_dir(tmp_path))) == []

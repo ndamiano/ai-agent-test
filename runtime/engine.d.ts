@@ -30,7 +30,9 @@ interface Entity {
   dead?: boolean; grounded?: boolean;
   solid?: boolean;   // participates in kit.collideWorld (tile pushout + pair separation)
   yaw?: number; pitch?: number; ry?: number;
-  color?: string; shape?: "box" | "sphere" | "ground" | "heightfield" | "grassfield";
+  // "rect"/"circle" are the 2D shapes drawEntity dispatches on; the rest are 3D scene tags.
+  color?: string;
+  shape?: "rect" | "circle" | "box" | "sphere" | "ground" | "heightfield" | "grassfield";
   layer?: number;    // 2D draw order within state.world; higher paints later. Default 0.
   sprite?: string;   // asset id; kit.spawnData sets it from the data row
   [k: string]: any;

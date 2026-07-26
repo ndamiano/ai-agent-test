@@ -93,7 +93,7 @@ def kickoff(run_id: str, *, kind: str = "build", note: str = "", auto_pause: boo
     """Create the build attempt row and start the build. Returns the build_id. The single entry the
     API and the CLI both call; `start_build` does the actual seeding + first advance."""
     if max_steps is None:
-        max_steps = 40 if kind == "fix" else 200 if kind == "audit" else 60
+        max_steps = 200
     build_id = db_store.create_build(run_id, kind=kind)
     db_store.build_started(build_id)
     start_build(run_id, build_id, kind=kind, note=note, auto_pause=auto_pause, max_steps=max_steps)
@@ -125,7 +125,7 @@ def status_of(run_id: str) -> Optional[Dict]:
 
 
 def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = "",
-                auto_pause: bool = False, max_steps: int = 60) -> None:
+                auto_pause: bool = False, max_steps: int = 200) -> None:
     """Kick a build off: seed the scaffolds, write the initial cursor, and advance once (which
     collects the gates, picks the first fix, and enqueues its first llm turn — then returns). A
     human-note fix seeds the cursor straight into a read→edit fix on the note, after which the outer

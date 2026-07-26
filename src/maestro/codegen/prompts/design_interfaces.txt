@@ -54,11 +54,11 @@ Rules for your answer:
 - Give every function a `file`, grouping them by system. One file per system; a small game may put
   everything in one file.
 - `game.ts` is the entry file. Declare its hooks as functions on it, with the EXACT signatures given
-  below — they are not yours to choose, because the generated scaffold already calls them. A 3D game
-  has no draw, since the renderer draws the entities itself.
+  below — they are not yours to choose, because the generated scaffold already calls them. No game
+  has a draw hook: the engine renders state.world itself, so declare no rendering function at all.
 - You are writing a game against a kit, not against a browser. There is no DOM, no canvas and no
-  rendering context: everything a function draws with, or is handed, is a kit type. Name a type from
-  the kit's list below, a type you declare yourself, or a TypeScript builtin — nothing else.
+  rendering context. Name a type from the kit's list below, a type you declare yourself, or a
+  TypeScript builtin — nothing else.
 - Only declare what the game needs. An architecture with more parts than the design calls for is a
   worse architecture, not a more thorough one.
 

@@ -159,7 +159,7 @@ def _mirror_spec_meta(run_id: str, spec: dict) -> None:
                               bool(spec.get("frozen")))
 
 
-def run_build(run_id: str, max_steps: int = 60) -> BuildResult:
+def run_build(run_id: str, max_steps: Optional[int] = None) -> BuildResult:
     """Stage 2 (CLI/blocking): kick the build off, then poll the durable cursor to completion. The
     build itself is fire-and-forget — build_chain enqueues each llm turn and the control-plane's
     completion handler drives the next — so this only WAITS. The API server must be up (that is where

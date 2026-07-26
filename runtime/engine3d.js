@@ -205,7 +205,7 @@ export async function run3d(game, canvas, assetBase) {
   hud.style.cssText = "position:fixed;pointer-events:none";
   document.body.appendChild(hud);
   const hctx = hud.getContext("2d");
-  const hudDraw = makeDraw(hctx);
+  const hudDraw = makeDraw(hctx, kit);
   const placeHud = () => {
     const r = canvas.getBoundingClientRect();
     hud.style.left = `${r.left}px`; hud.style.top = `${r.top}px`;

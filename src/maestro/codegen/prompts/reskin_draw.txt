@@ -1,26 +1,26 @@
 You are skinning ONE TypeScript file of a game that already runs and passes its gates. Sprites have
-been generated for the game's entity kinds. Rewrite this file's DRAW code so each entity kind is drawn
-as its sprite when the sprite is loaded, and as the EXISTING colored shape when it is not.
+been generated for the game's entity kinds. Rewrite this file's DRAW code so each entity kind draws
+through the kit, which uses the sprite when it is loaded and the entity's shape when it is not.
 
 You get the available sprite ids and the file's current source.
 
 Rules:
 - Output ONLY one ```ts block — the file's COMPLETE new source. Change ONLY draw code.
-- The kit exposes `kit.sprite(id: string)`: it returns the loaded sprite image, or `null` when no
-  asset is loaded (headless gates, or a missing file). So every skinned draw MUST keep the shape as
-  the fallback — never remove the rect/circle, guard it:
-      const img = kit.sprite("enemy");
-      if (img) g.sprite(img, e.x - e.w / 2, e.y - e.h / 2, e.w, e.h);
-      else g.rect(e.x - e.w / 2, e.y - e.h / 2, e.w, e.h, "#f00");
-  `g.sprite(img, x, y, w, h)` draws the image with its TOP-LEFT at (x,y). A shape drawn CENTERED at
-  (e.x,e.y) — a circle of radius r, or a rect you centered — must become a sprite offset to top-left
-  (x = e.x - w/2, y = e.y - h/2) so it lands in the same place. A rect already drawn from its
-  top-left corner keeps that same (x,y).
-- Use ONLY the sprite ids listed below, matched to the entity kind each draw loop renders (the loop
-  over enemies uses `"enemy"`, the player draw uses `"player"`, …). If a piece of draw code has no
-  matching id (HUD text, health bars, particles, background), leave it exactly as is.
-- Do not touch update/sim code, imports, exports, types, or spawn logic. Do not change entity sizes.
-  Keep the file otherwise byte-for-byte intact. Honor the kit laws: draw reads state, never mutates.
+- `kit.drawEntity(g, e)` is the ONLY way to draw an entity. It draws `e`'s sprite when the art
+  exists and its shape + color when it does not, so the fallback is automatic — delete the
+  hand-written rect/circle for that entity, do not guard it:
+      for (const e of state.enemies) kit.drawEntity(g, e);
+  It draws the entity's own box: top-left at (e.x, e.y), size (e.w, e.h). A shape currently drawn
+  CENTERED on (e.x, e.y) must have its entity box corrected instead — the entity's x/y IS its
+  top-left — never by offsetting the draw call.
+- An entity draws the art whose id is on its `sprite` field. Set it where the entity is SPAWNED,
+  using the ids listed below matched to the entity kind (`sprite: "enemy"` for the enemy spawn,
+  `"player"` for the player). `kit.spawnData(world, row, at)` already sets it from the row id.
+- Screen art (an inventory icon, a life pip) is a HUD item — `{kind: "icon", id, at?, size?}`
+  returned from `hud()` — never a draw call.
+- Draw code with no matching id (HUD text, health bars, backgrounds) stays exactly as is.
+- Do not touch update/sim code, imports, exports or types. Do not change entity sizes. Keep the
+  file otherwise byte-for-byte intact. Honor the kit laws: draw reads state, never mutates.
 - If this file contains no drawing of a listed kind, return it UNCHANGED.
 
 Rewrite the file now.

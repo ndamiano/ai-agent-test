@@ -286,3 +286,49 @@ console.log(JSON.stringify({ grounds, boxes, rects: level.rects.length, cx: c.x,
     assert r["w"] == 4 and r["h"] == 3
     # corner-origin like cellCenter: tile (1,1) center = ((1+.5)*4, (1+.5)*4)
     assert r["cx"] == 6.0 and r["cz"] == 6.0
+
+
+def test_draw_sprite_resolves_an_asset_id_through_the_kit():
+    """The engine-internal sprite call takes an id: drawEntity and the HUD both pass one, and a real
+    ctx.drawImage THROWS on a string rather than drawing nothing."""
+    r = _node_eval("""
+import { makeKit, makeRng, makeDraw } from "./engine.js";
+const drawn = [];
+const ctx = { canvas: { width: 64, height: 64 }, fillRect() {}, save() {}, restore() {}, translate() {},
+              drawImage: (img, x, y, w, h) => {
+                if (typeof img !== "object") throw new TypeError("drawImage: not a CanvasImageSource");
+                drawn.push([img.tag, x, y, w, h]);
+              } };
+const kit = makeKit({}, makeRng(1));
+const img = { tag: "hero", width: 16, height: 16 };
+kit._setSprites({ hero: img });
+const g = makeDraw(ctx, kit);
+g.sprite("hero", 1, 2, 16, 16);        // by id -> resolved
+g.sprite(img, 3, 4, 16, 16);           // by image -> passed through
+g.sprite("missing", 5, 6, 16, 16);     // unknown id -> no-op, no throw
+g.sprite(undefined, 7, 8, 16, 16);     // no id at all -> no-op, no throw
+console.log(JSON.stringify({ drawn }));
+""")
+    assert r["drawn"] == [["hero", 1, 2, 16, 16], ["hero", 3, 4, 16, 16]]
+
+
+def test_hud_icon_draws_screen_art_by_id():
+    """Screen art is a HUD item, not a draw call: the game names an asset id and the engine places it."""
+    r = _node_eval("""
+import { makeKit, makeRng, makeDraw, renderHud, validateHud } from "./engine.js";
+const drawn = [];
+const ctx = { canvas: { width: 640, height: 480 }, fillRect() {}, fillText() {}, save() {}, restore() {},
+              translate() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, stroke() {},
+              drawImage: (img, x, y, w, h) => drawn.push([img.tag, w, h]) };
+const kit = makeKit({}, makeRng(1));
+kit._setSprites({ potion: { tag: "potion", width: 32, height: 32 } });
+const g = makeDraw(ctx, kit);
+const items = [{ kind: "icon", id: "potion", at: "top-right", size: 20 },
+               { kind: "icon", id: "no_art_yet" }];
+const bad = validateHud(items);
+renderHud(g, items, 640, 480);
+console.log(JSON.stringify({ bad, drawn, rejects: validateHud([{ kind: "icon" }]) }));
+""")
+    assert r["bad"] is None
+    assert r["drawn"] == [["potion", 20, 20]]      # missing art draws nothing, no crash
+    assert "id" in r["rejects"]

@@ -7,24 +7,31 @@ The game object has this exact shape:
 export function createGame(kit) {
   return {
     config: { width: 960, height: 540, title: "", background: "#111", gravity: 0, seed: 1 },
-    state:  { world: [] },          // anything; put entities in state.world (or state.entities)
+    state:  { world: [] },          // EVERYTHING VISIBLE lives in state.world — that is what renders
     init(kit)              { },      // one-time setup; spawn entities into state.world
-    update(dt, input, kit) { },      // advance the sim ONE step (dt = seconds). NEVER draw here.
-    draw(g, kit)           { },      // render the SCENE via `g` (sprites/shapes). NEVER change state.
+    update(dt, input, kit) { },      // advance the sim ONE step (dt = seconds)
     hud(kit)               { return []; },  // OPTIONAL: RETURN screen-space HUD items (see HUD below).
   };
 }
 ```
 
-**Law: update mutates state and never draws; draw/hud read state and never mutate.** The sim must
-run with no canvas (it's tested headless). Keep all randomness in `kit.rng` (seeded/reproducible).
+**THE GAME NEVER DRAWS.** There is no draw hook and no canvas — the ENGINE renders `state.world`
+each frame, drawing every entity from its own `sprite` (asset id), `shape`, `color` and `parts`.
+So an entity is visible IF AND ONLY IF it is in `state.world`: bullets, pickups, particles, walls
+and the arena border are all entities, not draw calls. `layer` (default 0) orders them, low first.
+`state.cam` (from `kit.makeCamera()`) scrolls the view, `state.tilemap` renders behind them,
+`config.backdrop` is an asset id painted behind everything.
 
-**HUD (score, health, timers, banners):** don't hand-draw these in `draw` — RETURN them from `hud(kit)`
+**Law: update mutates state; hud reads state and never mutates.** The sim must run with no canvas
+(it's tested headless). Keep all randomness in `kit.rng` (seeded/reproducible).
+
+**HUD (score, health, timers, banners):** RETURN them from `hud(kit)`
 as data and the engine draws them (anchored, no pixel math, can't occlude the scene). Items:
 `{kind:"text", text, at?, color?, size?}` · `{kind:"bar", value, max, at?, color?, label?}` ·
-`{kind:"banner", text, color?}` (centered). `at` anchors to a screen region — `"top-left"` (default),
+`{kind:"banner", text, color?}` (centered) · `{kind:"icon", id, at?, size?}` (screen art — an
+inventory icon, a life pip; `id` is a data row's id). `at` anchors to a screen region — `"top-left"` (default),
 `"top"`, `"top-right"`, `"bottom-left"`, `"center"`, … — and same-anchor items stack. This is the
-SAME HUD in 2D and 3D; a 3D game has no `draw` at all (its scene renders from entities) and uses only `hud`.
+SAME HUD in 2D and 3D.
 
 ## UNITS — read this first
 **All velocities are pixels per SECOND. All accelerations are pixels per second².** The kit
@@ -144,8 +151,7 @@ kit.stepParticles(this.state.world, dt);
 ## Camera  (world larger than the screen)
 - `kit.makeCamera()` → `{ x, y, follow(target, worldW?, worldH?) }`. Call `cam.follow(player,
   levelWidth, levelHeight)` in update; it centers on the target and clamps to the world bounds.
-- In `draw`: `g.push(cam)` before drawing WORLD-space things, `g.pop()` before HUD/score. Store the
-  camera in `this.state.cam`.
+- Store it in `state.cam` — the engine renders the scene through it. The HUD is unaffected.
 
 ## Input  (read in update)
 - `input.down(key)` — held right now. Use THIS for continuous movement (`if (input.down("d")) x += …`).
@@ -199,11 +205,12 @@ init(state, kit) {
   for the spec's definite ending — a quest/milestone completing is `kit.quest.complete`/`kit.notify`
   and play continues.
 
-## Draw api  `g`  (draw only)
-- `g.clear(color)` — fill the screen. (The runner already clears to `config.background`.)
-- `g.rect(x,y,w,h,color)` · `g.circle(x,y,r,color)` · `g.line(x1,y1,x2,y2,color,width=1)`
-- `g.text(str,x,y,color="#fff",size=16,align="left")`  (align: "left"|"center"|"right")
-- `g.sprite(img,x,y,w,h)` — draw a loaded image (asset pipeline supplies these later).
+## Making something visible
+There is no draw api. An entity renders because it is IN `state.world` and carries its own look:
+- `shape` ("rect"|"circle") + `color`, or `parts` for a compound look, or `sprite` (an asset id).
+- `w`/`h` size it, `x`/`y` are its TOP-LEFT, `layer` orders it (low first).
+A thing that is not an entity cannot be drawn, so make it one — the arena border, a health pip in
+the world, an explosion flash are all entities with a `shape` and a lifetime.
 
 ## Data-driven entities  (a data row IS the thing's look)
 When the game has DATA (`game/data/*.json` → `./data.ts`), a row already describes its own
@@ -214,18 +221,15 @@ kit, and the game is skinnable with no code change:
 import { ENEMIES } from "./data.ts";
 const row = ENEMIES[0];
 const e = kit.spawnData(state.world, row, { x: 100, y: 60 });   // size/shape/color + sprite: row.id
-// draw(g, kit): prefers the loaded sprite, falls back to the row's shape+color
-for (const e of state.world) kit.drawEntity(g, e);
+// nothing else to do: it is in state.world, so the engine renders it — sprite if the art
+// exists, the row's shape+color if it does not
 ```
 - `kit.spawnData(world, row, {x, y, ...})` — spawn an entity FROM a row. Anything in the third arg
   overrides (position, velocity, per-instance stats).
-- `kit.drawEntity(g, e)` — draw ONE entity: its sprite when the art exists, else its shape+color.
-  Use it in your `draw` loop instead of hand-writing `kit.sprite(...)` + `g.rect(...)` per kind.
 - `kit.dataVisual(row)` — just the visual fields, when you need to build the entity yourself.
 A COMPOUND look is data too — `parts` (sub-shapes in fractions of the box) draws a ship's hull+fin
-or a slime's eyes, and `kit.drawEntity` renders them, so it is STILL skinnable (one sprite replaces
-every part). Never hand-draw a data-backed entity with `g.rect`/`g.circle`: art that lives in
-drawing code can never be replaced by a generated sprite. NEVER re-scale a row's `size`, and never
+or a slime's eyes, and the engine renders them, so it is STILL skinnable (one sprite replaces
+every part). NEVER re-scale a row's `size`, and never
 hand-pick a color for a row that has one.
 
 ## Audio  (stub for now — safe to call)

@@ -1,5 +1,5 @@
-// render.mjs — render smoke gate. Exercises the draw() path (2D) that headless can't see:
-// catches draw-time crashes and blank screens. Prints a JSON verdict, exit 1 on any violation.
+// render.mjs — render smoke gate: the screen-space path headless can't see. Runs the engine's
+// scene render over state.world plus hud(). Prints a JSON verdict, exit 1 on any violation.
 //   node render.mjs games/pong.js
 import { renderSmoke } from "./engine.js";
 

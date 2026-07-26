@@ -31,10 +31,12 @@ generators. Every hard/ambiguous mechanic (physics, collision, tilemaps, pathfin
 call, so generation is composition-of-primitives in small chunks — where the gap between a 30B and a
 frontier model collapses. Widen the kit to absorb a hard mechanic; never hope the model hand-rolls it.
 
-**Sim/render split (load-bearing law):** `update(dt, input, kit)` mutates plain state and never
-draws; `draw(g, kit)` reads state and never mutates. So the sim runs **headless in pure Node, zero
-deps** — the local gradient — and render is the only engine-specific layer. This carries 2D → 3D
-with no change to the gradient. Never violate it.
+**Sim/render split (load-bearing law):** the game writes ONLY the sim. `update(dt, input, kit)`
+mutates plain state; `hud(kit)` returns overlay DATA. THE GAME HAS NO DRAW HOOK in either mode —
+the engine renders `state.world`, drawing each entity from its own `sprite`/`shape`/`color`/`parts`
+(`layer` orders, `state.cam` scrolls, `state.tilemap` and `config.backdrop` sit behind). So the sim
+runs **headless in pure Node, zero deps** — the local gradient — and render is entirely ours. 2D and
+3D are now the SAME contract. Never violate it.
 
 **The local gradient (no frontier critic):** the gates decide "done", not the model, in order:
 - **typecheck** (`tsc --noEmit`) — the CONTRACT gate. Catches cross-file/type bugs (missing exports,
@@ -42,8 +44,8 @@ with no change to the gradient. Never violate it.
   Games are checked against `runtime/engine.d.ts` (ambient kit types). This is the deterministic fix
   for a whole class of silent cross-file bugs that no runtime gate can see.
 - **headless** — bundle (esbuild) then step the sim N frames, catch crashes/divergence.
-- **render** — call `draw()`/`hud()` against a recording mock: catch draw-time crashes and malformed
-  HUD data.
+- **render** — run the engine's scene render over `state.world` + call `hud()` against a recording
+  mock: catch screen-space crashes, malformed HUD data, and a game that defines a draw hook.
 
 **THE GATES DETECT BROKEN, NEVER "BAD"** (the law that decides what may become a gate). A constraint
 the model builds to satisfy is only safe when satisfying it IS the goal: "must not crash" can only be
@@ -92,8 +94,13 @@ runtime/                 The primitive KIT (hand/frontier-authored offline, run 
                          (the whole dialogue/shop loop), kit.quest (add/complete/log — milestones
                          that do NOT end the game; win/lose reserved for the spec's ending),
                          kit.notify (engine-drawn toasts). run() preloads the game's assets.json
-                         sprites; kit.sprite(id) → the loaded image or null (null headless ⇒ the
-                         game draws its shape).
+                         sprites. renderScene() draws the 2D world (entities by `layer`, the
+                         tilemap, config.backdrop) — the game has NO draw surface at all: no draw
+                         hook, no DrawApi, no sprite call. An entity is visible because it is in
+                         state.world and carries its own look; screen art is a {kind:"icon"} HUD
+                         item. A draw-any-image-anywhere call carries no intent, so a wrong id
+                         painted nothing and no gate could see it — measured: one build shipped a
+                         black screen with 1303 no-op draw calls per frame.
   engine3d.js            run3d — three.js renderer; the model writes NO three.js, only pure 3D
                          sim + shape tags (box/sphere/ground) + an optional camera(cam,kit) hook.
                          Hemisphere light + distance fog (config.fog), procedural walk-bob on moving
@@ -152,17 +159,16 @@ src/
                          invented GameState, and burned 44 steps on a mismatch neither file owned.
                          An empty architecture is never written (it declares no game), so
                          `interfaced` stays red and the turn re-runs. THE KIT'S LAW: the entry hook
-                         signatures and the draw surface are not the architecture's to choose —
-                         main.ts is GENERATED and calls the hooks with fixed arity, and the game
-                         draws through `DrawApi`, never the DOM. So `hooks_block` injects the hook
-                         signatures + the kit's type vocabulary (both PARSED from engine.d.ts, the
-                         same types tsc checks against) into the design turn, and
-                         `enforce_kit_contract` — run inside `save`, so no path can bypass it —
-                         overwrites a hook signature the model invented and rewrites DOM draw types
-                         to DrawApi. Without it a measured build declared
-                         `draw(state, ctx: CanvasRenderingContext2D)`, authored render.ts faithfully
-                         to it, and burned its whole step cap on tsc blaming game.ts — the one file
-                         that was right. It also APPENDS the state the seeded main.ts asserts or
+                         signatures are not the architecture's to choose — main.ts is GENERATED and
+                         calls them with fixed arity, and there is no rendering function to declare
+                         at all. So `hooks_block` injects the hook signatures + the kit's type
+                         vocabulary (both PARSED from engine.d.ts, the same types tsc checks
+                         against) into the design turn, and `enforce_kit_contract` — run inside
+                         `save`, so no path can bypass it — overwrites a hook signature the model
+                         invented and rewrites DOM draw types to DrawApi. Without it a measured
+                         build declared `draw(state, ctx: CanvasRenderingContext2D)`, authored
+                         render.ts faithfully to it, and burned its whole step cap on tsc blaming
+                         game.ts — the one file that was right. It also APPENDS the state the seeded main.ts asserts or
                          dereferences unguarded (`scaffold.unguarded_state_fields` reads it off the
                          file on disk — today `player: Entity`, owned by init; `state.world ?? []`
                          and `if (state.ground)` are optional by construction and never forced).
@@ -329,11 +335,11 @@ src/
                          (unbound hand-drawn/hand-spawned games get the rewrite) + a 3D top-up of
                          mesh ids tagged during authoring. A per-run guard (AlreadySkinning)
                          serializes all skin entry points. Mode-dispatched: 2D → plan sprites →
-                         rewrite draw to prefer kit.sprite(id) w/ shape fallback → render (ComfyUI);
+                         rewrite draw onto kit.drawEntity (shape fallback is the kit's) → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
                          (TRELLIS). The TAGGING rewrite is skipped entirely when the plan came from
                          data AND the source binds through the kit (_binds_data_assets: spawnData,
-                         plus drawEntity/sprite in 2D since the game owns draw) — a data-driven skin
+                         plus drawEntity in 2D) — a data-driven skin
                          spends ZERO LLM calls; a hand-drawn/hand-spawned game still gets the
                          rewrite or its art would be orphaned.
                          The plan is DETERMINISTIC whenever any data row carries `look`
@@ -377,7 +383,7 @@ src/
                          build bound interact to space correctly and the scaffold's post-init E
                          register clobbered it, silently unbinding the spec's own key);
                          choice → state.talkPick). The model
-                         authors the hooks in game.ts (createState/init/update/draw(2D)/hud). WHY:
+                         authors the hooks in game.ts (createState/init/update/hud). WHY:
                          two live builds shipped dead controls out of model-authored glue (one never
                          read a movement key, one zeroed the wired movement every frame). `mode` (not
                          the scheme name) decides 3D-ness, so an unknown scheme on a 3D spec lands on

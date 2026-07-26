@@ -195,22 +195,6 @@ export function physics(e, dt, solids = [], gravity = 2000) {
   }
 }
 
-// ── solid collision (top-down/2D): ONE pass resolves both response cases ─────
-// Live-run evidence for why this is a kit primitive: a shipped game had a solidAt() lookup that was
-// never applied to movement (the knight walked through walls), and another let enemies stack under
-// the player (no pair separation). Both are the same missing pass. The scaffold calls this AFTER
-// gameplay each frame; game code composes it for free by tagging entities `solid: true`.
-// Participants: entities with `e.solid` truthy, not `e.dead`, with a real AABB (w,h > 0).
-//   1. entity-vs-entity: each overlapping solid pair gets a symmetric half-and-half push apart on
-//      the minimal axis (no masses). Broadphase = sort by x + sweep (stable, worlds are tens of
-//      entities). Velocities untouched — steering re-sets them each frame anyway.
-//   2. entity-vs-tile (when solidAt given): full pushout of the entity's AABB from solid cells via
-//      resolveAabb (minimal axis, zeroes the blocked velocity component — same resolution as the
-//      platformer physics). Tiles resolve LAST so walls win: a pair push can't leave anyone inside
-//      a wall this frame. Deterministic: stable order, no randomness.
-// Iterated to convergence: one pass fully separates a pair, but a chain push can re-overlap an
-// already-processed neighbor, and steering re-compresses clusters every frame — a single pass
-// leaves steady-state residuals that jitter visibly (a parked live build).
 export function collideWorld(world, solidAt = null, cell = 32) {
   const solids = world.filter((e) => e.solid && !e.dead && e.w > 0 && e.h > 0);
   for (let pass = 0; pass < 8; pass++) {
@@ -220,7 +204,7 @@ export function collideWorld(world, solidAt = null, cell = 32) {
       const a = order[i];
       for (let j = i + 1; j < order.length; j++) {
         const b = order[j];
-        if (b.x >= a.x + a.w) break;               // sweep: no later entity can overlap a
+        if (b.x >= a.x + a.w) break;
         if (!aabb(a, b)) continue;
         const px = Math.min(a.x + a.w - b.x, b.x + b.w - a.x);
         const py = Math.min(a.y + a.h - b.y, b.y + b.h - a.y);
@@ -701,7 +685,7 @@ function makeQuestApi(notify) {
 }
 
 // ── draw api (canvas2d) — the render surface (2D games: the screen; 3D games: the HUD overlay) ──
-export function makeDraw(ctx) {
+export function makeDraw(ctx, kit = null) {
   return {
     ctx,
     clear: (color = "#000") => { ctx.fillStyle = color; ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); },
@@ -715,11 +699,41 @@ export function makeDraw(ctx) {
       ctx.fillStyle = color; ctx.font = `${size}px monospace`; ctx.textAlign = align;
       ctx.fillText(str, x, y);
     },
-    sprite: (img, x, y, w, h) => { if (img) ctx.drawImage(img, x, y, w, h); },
+    // ENGINE-INTERNAL (drawEntity + the HUD icon item); not on the game's typed surface.
+    sprite: (img, x, y, w, h) => {
+      const im = typeof img === "string" ? (kit ? kit.sprite(img) : null) : img;
+      if (im) ctx.drawImage(im, x, y, w, h);
+    },
     // camera offset: push(cam) before drawing WORLD-space things, pop() before HUD/screen-space.
     push: (cam) => { ctx.save(); ctx.translate(-(cam?.x || 0), -(cam?.y || 0)); },
     pop: () => ctx.restore(),
   };
+}
+
+// ── 2D scene render (engine-owned; games have no draw hook) ──────────────────
+function drawTilemap(draw, map, config) {
+  const colors = config.tileColors || {};
+  for (let cy = 0; cy < map.h; cy++) {
+    for (let cx = 0; cx < map.w; cx++) {
+      const color = colors[map.at(cx, cy)] || (map.solidAt(cx, cy) ? "#555" : null);
+      if (color) draw.rect(cx * map.tile, cy * map.tile, map.tile, map.tile, color);
+    }
+  }
+}
+
+export function renderScene(draw, g, kit, config) {
+  const state = g.state || {};
+  draw.clear(config.background || "#000");
+  if (config.backdrop) draw.sprite(config.backdrop, 0, 0, config.width, config.height);
+  const cam = state.cam && typeof state.cam.x === "number" ? state.cam : { x: 0, y: 0 };
+  draw.push(cam);
+  const map = state.tilemap;
+  if (map && typeof map.at === "function") drawTilemap(draw, map, config);
+  const world = Array.isArray(state.world) ? state.world : [];
+  let live = world.filter((e) => e && !e.dead);
+  if (live.some((e) => e.layer)) live = [...live].sort((a, b) => (a.layer || 0) - (b.layer || 0));
+  for (const e of live) kit.drawEntity(draw, e);
+  draw.pop();
 }
 
 // ── HUD: a DATA-defined screen-space overlay, identical in 2D and 3D ──────────
@@ -747,8 +761,10 @@ export function validateHud(items) {
     } else if (it.kind === "marker") {
       if (typeof it.x !== "number" || typeof it.z !== "number")
         return "hud marker item needs numeric world 'x' and 'z'";
+    } else if (it.kind === "icon") {
+      if (typeof it.id !== "string" || !it.id) return "hud icon item needs an asset 'id' string";
     } else {
-      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner | panel | menu | marker`;
+      return `unknown hud item kind ${JSON.stringify(it.kind)} — use text | bar | banner | panel | menu | marker | icon`;
     }
     if (it.at != null && !HUD_ANCHORS.has(it.at))
       return `unknown hud anchor ${JSON.stringify(it.at)} — use e.g. "top-left", "top", "bottom-right"`;
@@ -819,6 +835,10 @@ export function renderHud(draw, items, W, H) {
     const { x, align } = xOf(anchor);
     if (it.kind === "text") {
       draw.text(String(it.text), x, y, it.color || "#fff", it.size || 16, align);
+    } else if (it.kind === "icon") {
+      const s = it.size || 24;
+      const ix = align === "right" ? x - s : align === "center" ? x - s / 2 : x;
+      draw.sprite(it.id, ix, y - s + 4, s, s);
     } else if (it.kind === "bar") {
       const bx = align === "right" ? x - _BAR_W : align === "center" ? x - _BAR_W / 2 : x;
       const frac = Math.max(0, Math.min(1, (it.value || 0) / (it.max || 1)));
@@ -939,7 +959,7 @@ export async function run(game, canvas, assetBase) {
   canvas.width = config.width; canvas.height = config.height;
   fitToWindow(canvas, config.width / config.height);
   const ctx = canvas.getContext("2d");
-  const draw = makeDraw(ctx);
+  const draw = makeDraw(ctx, kit);
   const input = makeInput();
   kit._setSprites(await loadSprites(assetBase));
 
@@ -963,8 +983,7 @@ export async function run(game, canvas, assetBase) {
     if (!kit.over) { g.update(dt, input, kit); kit._fireActions(input); }
     input._endFrame();
     kit._stepToasts(dt);
-    draw.clear(config.background);
-    if (g.draw) g.draw(draw, kit);
+    renderScene(draw, g, kit, config);
     const hudItems = [...(g.hud ? g.hud(kit) || [] : []), ...kit._toastItems()];
     if (hudItems.length) renderHud(draw, hudItems, config.width, config.height);
     if (kit.over) draw.text(kit.over.msg, config.width / 2, config.height / 2, "#fff", 32, "center");
@@ -1020,26 +1039,21 @@ export function simulate(game, { frames = 600, dt = 1 / 60, seed = 1, script = [
 }
 
 
-// ── render smoke: exercise the draw() path headless can't otherwise see ───────
-// simulate() steps update() ONLY; a game can pass it yet CRASH in screen-space code. Exercise both
-// screen-space paths each frame against recording mocks:
-//   - 2D SCENE: draw(g) must not throw (draw_crash).
-//   - HUD (both modes): hud(kit) must return a valid item array (hud_bad) and not throw (hud_crash).
-// What it does NOT judge is whether the game painted "enough". A 2D game that draws no world is an
-// idle/menu/text game, not a broken one, and the 3D scene is never exercised here at all — it
-// renders from entity shape tags through run3d, which this mock cannot see. Both were previously
-// enforced, and both are the model's design call, not ours.
+// ── render smoke: exercise the screen-space path headless can't otherwise see ─
+// simulate() steps update() ONLY. The game itself never draws — the ENGINE renders the scene from
+// state.world — so this runs that render (a malformed entity crashes it) plus hud(), which is the
+// only screen-space DATA the game still authors. It does NOT judge whether the game painted
+// "enough": an idle/menu/text game legitimately paints no world.
 export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 } = {}) {
   const { g, config, kit } = realize(gameFactory, { width: 640, height: 480, gravity: 0 }, seed);
-  const has2dScene = typeof g.draw === "function";
   const hasHud = typeof g.hud === "function";
-  if (config.mode === "3d" && has2dScene) {
-    return { ok: false, violations: [{ kind: "draw_in_3d",
-      detail: `a 3D game must NOT define draw() — the scene renders from world entity shape tags, and `
-        + `the HUD is DATA returned from hud(kit). A draw() here is dead code (the 3D renderer ignores `
-        + `it) and any g.clear in it would blank the scene. Delete draw(); move HUD into hud().` }] };
+  const is3d = config.mode === "3d";
+  if (typeof g.draw === "function") {
+    return { ok: false, violations: [{ kind: "draw_hook",
+      detail: `a game must NOT define draw() — the engine renders the scene from state.world, using `
+        + `each entity's sprite/shape/color. Delete draw(); spawn what should be visible into `
+        + `state.world, and return screen overlay from hud(kit).` }] };
   }
-  if (!has2dScene && !hasHud) return { ok: true, skipped: true };
   const input = makeInput();
   const noop = () => {};
   const rec = { ctx: {}, clear: noop, push: noop, pop: noop,
@@ -1050,7 +1064,7 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
     for (let f = 0; f < frames; f++) {
       if (!kit.over) { g.update(dt, input, kit); kit._fireActions(input); }
       input._endFrame();
-      if (has2dScene) g.draw(rec, kit);
+      if (!is3d) renderScene(rec, g, kit, config);
       if (hasHud) {
         const items = g.hud(kit);
         const bad = validateHud(items);
@@ -1061,7 +1075,7 @@ export function renderSmoke(gameFactory, { frames = 120, dt = 1 / 60, seed = 1 }
       }
     }
   } catch (e) {
-    const which = has2dScene ? "draw()/hud()" : "hud()";
+    const which = is3d ? "hud()" : "the scene render/hud()";
     return { ok: false, violations: [{ kind: "draw_crash",
       detail: `${which} threw during render: ${String(e && e.stack || e)}. These must only READ state; `
         + `never mutate state or read undefined fields.` }] };

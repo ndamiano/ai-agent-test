@@ -73,7 +73,7 @@ _MODE_3D = re.compile(r"""mode\s*:\s*["']3d["']""")
 
 _GENERATED = "// GENERATED"
 _SPAWN_DATA = re.compile(r"kit\s*\.\s*spawnData\s*\(")
-_DRAWS_ASSET = re.compile(r"kit\s*\.\s*(drawEntity|sprite)\s*\(")
+_DRAWS_ASSET = re.compile(r"kit\s*\.\s*drawEntity\s*\(")
 
 
 def _binds_data_assets(files: dict, mode_3d: bool) -> bool:

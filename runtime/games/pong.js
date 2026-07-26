@@ -1,5 +1,6 @@
 // pong.js — hand-written demo. Proves the kit surface is real and composable.
-// This is the SHAPE a generated game takes: config + state + init/update/draw.
+// This is the SHAPE a generated game takes: config + state + init/update/hud. Nothing draws: the
+// entities in state.world carry their own look and the engine renders them.
 
 export function createGame(kit) {
   return {
@@ -8,9 +9,10 @@ export function createGame(kit) {
 
     init(kit) {
       const s = this.state;
-      s.player = kit.spawn(s.world, { x: 20, y: 200, w: 12, h: 80, tag: "paddle" });
-      s.cpu = kit.spawn(s.world, { x: 608, y: 200, w: 12, h: 80, tag: "paddle" });
-      s.ball = kit.spawn(s.world, { x: 316, y: 236, w: 8, h: 8, vx: 220, vy: 140, tag: "ball" });
+      kit.spawn(s.world, { x: 319, y: 0, w: 2, h: 480, color: "#222", layer: -1 });   // net
+      s.player = kit.spawn(s.world, { x: 20, y: 200, w: 12, h: 80, color: "#e8e8f0", tag: "paddle" });
+      s.cpu = kit.spawn(s.world, { x: 608, y: 200, w: 12, h: 80, color: "#e8e8f0", tag: "paddle" });
+      s.ball = kit.spawn(s.world, { x: 316, y: 236, w: 8, h: 8, vx: 220, vy: 140, color: "#e8e8f0", tag: "ball" });
     },
 
     update(dt, input, kit) {
@@ -44,12 +46,10 @@ export function createGame(kit) {
       b.x = 316; b.y = 236; b.vx = 220 * dir; b.vy = kit.rng.range(-160, 160);
     },
 
-    draw(g, kit) {
-      const s = this.state, cfg = this.config;
-      g.line(cfg.width / 2, 0, cfg.width / 2, cfg.height, "#222", 2);
-      for (const e of s.world) g.rect(e.x, e.y, e.w, e.h, "#e8e8f0");
-      g.text(`${s.score[0]}`, cfg.width / 2 - 40, 50, "#8ff", 40, "center");
-      g.text(`${s.score[1]}`, cfg.width / 2 + 40, 50, "#f8f", 40, "center");
+    hud(kit) {
+      const s = this.state;
+      return [{ kind: "text", text: `${s.score[0]}`, at: "top", color: "#8ff", size: 40 },
+              { kind: "text", text: `${s.score[1]}`, at: "top-right", color: "#f8f", size: 40 }];
     },
   };
 }

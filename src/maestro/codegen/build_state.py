@@ -93,7 +93,7 @@ class BuildCursor:
     kind: str = "build"                           # "build" | "fix" (human-note seeded)
     phase: str = "outer"                          # "outer" | "fix" | "done"
     step: int = 0
-    max_steps: int = 60
+    max_steps: int = 200
     t0: float = 0.0
     ok: Optional[bool] = None
     # outer stall/park/milestone bookkeeping (was AgentLoop._recent/_parked/prev/passed)

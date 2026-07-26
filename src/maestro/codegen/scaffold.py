@@ -9,7 +9,7 @@ world.ts.
 config (deterministic from the scheme: 2D size defaults, 3D `controls:` name), the scheme's
 movement (run BEFORE the hook update, so gameplay may adjust/clamp after), and the frame loop; it
 delegates everything else to the hook module the model authors — `game.ts` exporting
-createState/init/update/draw (2D only)/hud. init asserts `state.player` exists so a hook that
+createState/init/update/hud. init asserts `state.player` exists so a hook that
 forgets the contract fails loudly at the headless gate.
 
 EVERY game is scaffolded, world-flagged ones included: worldgen seeds the PLACE (world.ts) and the
@@ -43,7 +43,7 @@ def scheme_of(spec: dict) -> str:
 
 def _is_3d(spec: dict) -> bool:
     """`mode` is the authority on 3D-ness, not the scheme name: it routes the renderer and the kit
-    doc, so a spec whose scheme drifted from its mode must still get a 3D scaffold (no draw hook)."""
+    doc, so a spec whose scheme drifted from its mode must still get a 3D scaffold."""
     return spec.get("mode") == "3d" or scheme_of(spec).endswith("-3d")
 
 
@@ -103,7 +103,7 @@ def reexport_hooks(run_dir) -> dict:
     if hook_src is None:
         return {"changes": [], "count": 0}
     changes = []
-    for hook in ("createState", "init", "update", "draw", "hud"):
+    for hook in ("createState", "init", "update", "hud"):
         rx = re.compile(_HOOK_EXPORT.format(name=hook))
         if rx.search(hook_src):
             continue
@@ -123,14 +123,12 @@ def reexport_hooks(run_dir) -> dict:
 # line, naming the exact member and expected signature — the local, precise error shape the model
 # fixes reliably. The pipeline never edits signatures; it only demands this line exist (a prompting
 # fix, not a deterministic healer).
-CONTRACT_ASSERT_2D = ("const _scaffoldContract: GameHooks<GameState> = "
-                      "{ createState, init, update, draw, hud };")
-CONTRACT_ASSERT_3D = ("const _scaffoldContract: GameHooks<GameState> = "
-                      "{ createState, init, update, hud };")
+CONTRACT_ASSERT = ("const _scaffoldContract: GameHooks<GameState> = "
+                   "{ createState, init, update, hud };")
 
 
 def contract_assert_line(spec: dict) -> str:
-    return CONTRACT_ASSERT_3D if _is_3d(spec) else CONTRACT_ASSERT_2D
+    return CONTRACT_ASSERT
 
 
 def has_contract_assert(run_dir) -> bool:

@@ -8,11 +8,10 @@
 //   createState(kit: Kit): GameState                                   build the initial state
 //   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
 //   update(state: GameState, dt: number, input: Input, kit: Kit): void the whole per-frame game step
-//   draw(g: DrawApi, state: GameState, kit: Kit): void                 paint the scene
 //   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
 // state.player is still required (the renderer and the scaffold key on it) — for a game with no
 // avatar, spawn the "cursor"/protagonist entity and reference it as state.player.
-import { createState, init as initGame, update as updateGame, draw as drawGame, hud as hudGame } from "./game.ts";
+import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
 
 const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 };
 
@@ -33,7 +32,6 @@ export function createGame(kit: Kit): GameObject {
 {interact}
       updateGame(state, dt, input, kit);
     },
-    draw(g: DrawApi, kit: Kit) { drawGame(g, state, kit); },
     hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },
   };
 }

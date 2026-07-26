@@ -247,10 +247,10 @@ def test_hook_signatures_are_read_from_the_kit_types(tmp_path):
 def test_a_declared_hook_signature_is_overwritten_by_the_kit_s(tmp_path):
     """main.ts is GENERATED and calls the hooks with fixed arity, so a hook signature the
     architecture invents is authored faithfully into every file and only surfaces at tsc."""
-    iface = _hook_iface("draw(state: GameState, ctx: CanvasRenderingContext2D): void")
+    iface = _hook_iface("hud(state: GameState, ctx: CanvasRenderingContext2D): HudItem[]", name="hud")
     fixed = interfaces.enforce_kit_contract(tmp_path, iface)
-    assert iface["functions"][0]["signature"] == interfaces.hook_signatures(tmp_path)["draw"]
-    assert fixed and "draw" in fixed[0]
+    assert iface["functions"][0]["signature"] == interfaces.hook_signatures(tmp_path)["hud"]
+    assert fixed and "hud" in fixed[0]
 
 
 def test_a_hook_name_in_another_file_is_left_alone(tmp_path):

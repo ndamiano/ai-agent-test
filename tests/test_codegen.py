@@ -51,31 +51,29 @@ GOOD = """export function createGame(kit: Kit): GameObject {
       kit.integrate(this.state.p, dt);
       this.state.p.x = kit.V.clamp(this.state.p.x, 0, 190);   // confined to one screen
     },
-    draw(g) { g.clear("#000"); g.rect(this.state.p.x, this.state.p.y, 10, 10, "#fff"); },
   };
 }"""
 # init throws — a runtime headless crash.
 BROKEN = """export function createGame(kit: Kit): GameObject {
   return { config: {}, state: {} as any, init(kit) { throw new Error("boom"); }, update(dt, input, kit) {} };
 }"""
-# Passes headless + probe (moves on 'd'), but draw() throws at RUNTIME (not a type error) — a browser
-# crash the sim gates can't see.
+# Passes headless, but hud() throws at RUNTIME (not a type error) — a browser crash the sim can't see.
 DRAW_CRASH = """export function createGame(kit: Kit): GameObject {
   return {
     config: { width: 200, height: 200 }, state: { world: [] as World, p: null as any },
     init(kit) { this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 10, h: 10 }); },
     update(dt, input, kit) { if (input.down("d")) kit.walk(this.state.p, 1, 150); else kit.walk(this.state.p, 0, 150); kit.integrate(this.state.p, dt); },
-    draw(g) { const z: any = null; z.nope(); },
+    hud(kit): HudItem[] { const z: any = null; return z.nope(); },
   };
 }"""
-# Passes headless + probe, but draw() paints nothing — a blank screen.
-DRAW_BLANK = """export function createGame(kit: Kit): GameObject {
+# A game that defines a draw hook: rejected outright — the engine owns the scene.
+DRAW_HOOK = """export function createGame(kit: Kit): GameObject {
   return {
-    config: { width: 200, height: 200 }, state: { world: [] as World, p: null as any },
-    init(kit) { this.state.p = kit.spawn(this.state.world, { x: 50, y: 50, w: 10, h: 10 }); },
-    update(dt, input, kit) { if (input.down("d")) kit.walk(this.state.p, 1, 150); else kit.walk(this.state.p, 0, 150); kit.integrate(this.state.p, dt); },
-    draw(g) {},
-  };
+    config: { width: 200, height: 200 }, state: { world: [] as World },
+    init(kit) {},
+    update(dt, input, kit) {},
+    draw(g: any) { g.rect(0, 0, 10, 10, "#fff"); },
+  } as any;
 }"""
 # A 3D game with no draw() — render smoke skips it (render is mesh-sync from shape tags).
 GAME_3D = """export function createGame(kit: Kit): GameObject {
@@ -118,7 +116,7 @@ CANVAS_MISUSE_2D = """export function createGame(kit: Kit): GameObject {
     config: { width: 200, height: 200 }, state: { world: [] as World },
     init(kit) {},
     update(dt, input, kit) {},
-    draw(g) { g.fillRect(10, 10, 50, 20); },
+    draw(g: DrawApi) { g.rect(0, 0, 10, 10, "#fff"); },
   };
 }"""
 # A 3D HUD whose hud() returns a malformed item — caught by the render gate's data validation.
@@ -137,7 +135,6 @@ WIDE_NO_CAMERA = """export function createGame(kit: Kit): GameObject {
     config: { width: 320, height: 240 }, state: { world: [] as World, p: null as any },
     init(kit) { this.state.p = kit.spawn(this.state.world, { x: 0, y: 100, w: 10, h: 10 }); },
     update(dt, input, kit) { if (input.down("d") || input.down("ArrowRight")) this.state.p.x += 300 * dt; },
-    draw(g) { g.rect(this.state.p.x, this.state.p.y, 10, 10, "#fff"); },
   };
 }"""
 # Same wide world, but a follow camera pans with the player.
@@ -146,7 +143,6 @@ WIDE_WITH_CAMERA = """export function createGame(kit: Kit): GameObject {
     config: { width: 320, height: 240 }, state: { world: [] as World, p: null as any, cam: null as any },
     init(kit) { this.state.p = kit.spawn(this.state.world, { x: 0, y: 100, w: 10, h: 10 }); this.state.cam = kit.makeCamera(); },
     update(dt, input, kit) { if (input.down("d") || input.down("ArrowRight")) this.state.p.x += 300 * dt; this.state.cam.follow(this.state.p, 4000, 240); },
-    draw(g) { g.push(this.state.cam); g.rect(this.state.p.x, this.state.p.y, 10, 10, "#fff"); g.pop(); },
   };
 }"""
 # A deliberate TYPE error — caught by the typecheck gate before the game ever runs.
@@ -167,34 +163,30 @@ export function init(state: GameState, kit: Kit): void {
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
   if (input.pressed(" ")) state.score += 1;
 }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void {
-  g.clear("#000");
-  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
-}
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 # init throws — a runtime headless crash behind the hooks.
 HOOKS_BROKEN = """export interface GameState { world: World; player: Entity | null; }
 export function createState(kit: Kit): GameState { return { world: [], player: null }; }
 export function init(state: GameState, kit: Kit): void { throw new Error("boom"); }
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void { g.clear("#000"); }
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
-# typechecks + runs + plays clean; draw() throws at RUNTIME — only the render gate sees it.
+# typechecks + runs clean; hud() throws at RUNTIME — only the render gate sees it.
 HOOKS_DRAW_CRASH = HOOKS_GOOD.replace(
-    'g.clear("#000");\n  g.rect(state.player.x, state.player.y, 10, 10, "#fff");',
-    "const z: any = null; z.nope();")
+    "export function hud(state: GameState, kit: Kit): HudItem[] { return []; }",
+    "export function hud(state: GameState, kit: Kit): HudItem[] { const z: any = null; return z.nope(); }")
 HOOKS_TYPE_ERROR = HOOKS_GOOD.replace(
     "  if (input.pressed(\" \")) state.score += 1;",
     "  const n: number = \"not a number\"; state.score += n;")
-# `g` is ANNOTATED DrawApi (the author prompt requires annotating exported params), so a canvas call
-# that isn't on DrawApi is a type error before the run.
-HOOKS_CANVAS_MISUSE = HOOKS_GOOD.replace(
-    'g.rect(state.player.x, state.player.y, 10, 10, "#fff");',
-    "(g as any as { fillRect: unknown }); g.fillRect(0, 0, 10, 10);")
+# A game.ts that still exports a draw hook: GameHooks has no such member, so the contract assertion
+# at the end of the file is a type error naming it.
+HOOKS_WITH_DRAW = HOOKS_GOOD.replace(
+    "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };",
+    "export function draw(g: any, state: GameState, kit: Kit): void { g.rect(0, 0, 1, 1, \"#fff\"); }\n"
+    "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };")
 
 
 def _write_hook_game(tmp_path, game_ts=HOOKS_GOOD, extra=None, spec=None):
@@ -205,7 +197,7 @@ def _write_hook_game(tmp_path, game_ts=HOOKS_GOOD, extra=None, spec=None):
     d = tmp_path / "game"
     (d / "game.ts").write_text(game_ts, encoding="utf-8")
     files = [{"name": "game.ts", "purpose": "the whole game behind the scaffold hooks",
-              "exports": ["createState", "init", "update", "draw", "hud"]}]
+              "exports": ["createState", "init", "update", "hud"]}]
     for name, src in (extra or {}).items():
         (d / name).write_text(src, encoding="utf-8")
         files.append({"name": name, "purpose": "", "exports": []})
@@ -255,7 +247,6 @@ SEEK_GAME = """export function createGame(kit: Kit): GameObject {
     state: { world: [] as World, player: { x: 250, y: 250, w: 8, h: 8 } as any, e: null as any },
     init(kit) { this.state.e = kit.spawn(this.state.world, { x: 0, y: 0, w: 8, h: 8 }); },
     update(dt, input, kit) { const d = kit.seek(this.state.e, this.state.player, 120); kit.integrate(this.state.e, dt); if (d < 10) kit.win("caught"); },
-    draw(g) { g.rect(this.state.player.x, this.state.player.y, 8, 8, "#0f0"); g.rect(this.state.e.x, this.state.e.y, 8, 8, "#f00"); },
   };
 }"""
 
@@ -697,10 +688,9 @@ def test_run_render_catches_draw_crash(tmp_path):
 
 
 
-def test_run_render_skips_3d_without_draw(tmp_path):
+def test_run_render_green_on_a_3d_game(tmp_path):
     _write_game(tmp_path, GAME_3D)
-    rr = run_render(tmp_path)
-    assert rr["ok"] is True and rr.get("skipped") is True
+    assert run_render(tmp_path)["ok"] is True
 
 
 def test_run_render_runs_3d_hud(tmp_path):
@@ -710,12 +700,13 @@ def test_run_render_runs_3d_hud(tmp_path):
     assert rr.get("ok") is True and not rr.get("skipped")
 
 
-def test_run_render_rejects_draw_in_3d(tmp_path):
-    # the shipped bug's vector: a 3D game with draw() (a g.clear there blanks the scene). The render
-    # gate now rejects any draw() in a 3D game — the whole occlusion class is impossible.
-    _write_game(tmp_path, HUD_DRAW_IN_3D)
-    rr = run_render(tmp_path)
-    assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_in_3d"
+def test_run_render_rejects_a_draw_hook(tmp_path):
+    # no game draws, in either mode: the engine renders state.world. A draw hook is dead code that
+    # would also blank the scene, so the gate rejects it outright.
+    for src in (HUD_DRAW_IN_3D, DRAW_HOOK):
+        _write_game(tmp_path, src)
+        rr = run_render(tmp_path)
+        assert rr["ok"] is False and rr["violations"][0]["kind"] == "draw_hook"
 
 
 def test_run_render_catches_bad_hud_data(tmp_path):
@@ -725,7 +716,7 @@ def test_run_render_catches_bad_hud_data(tmp_path):
     assert rr["ok"] is False and rr["violations"][0]["kind"] == "hud_bad"
 
 
-def test_draw_crash_passes_headless_and_probe_but_not_render(tmp_path):
+def test_screen_space_crash_passes_headless_but_not_render(tmp_path):
     # the whole point of the render gate: the sim gates alone give a false green here.
     _write_game(tmp_path, DRAW_CRASH)
     assert run_headless(tmp_path).get("ok") is True
@@ -819,14 +810,13 @@ def test_typecheck_catches_cross_file_shape_mismatch(tmp_path):
     assert errs[0].path == "game.ts"
 
 
-def test_typecheck_catches_canvas_api_on_drawapi(tmp_path):
-    # the compile-time catch for the shipped bug: the author prompt requires annotating every
-    # exported param, so draw's `g` is a DrawApi and g.fillRect (not on DrawApi) is a type error
-    # before the run. An explicit `g: any` defeats it, which is why render is the reliable backstop.
-    _write_hook_game(tmp_path, HOOKS_CANVAS_MISUSE)
+def test_typecheck_catches_a_draw_hook_in_game_ts(tmp_path):
+    # the compile-time half of "no game draws": GameHooks has no draw member, so the contract
+    # assertion fails INSIDE game.ts naming it, before the render gate ever runs.
+    _write_hook_game(tmp_path, HOOKS_WITH_DRAW)
     errs = CodegenModule().get_errors(_ctx(_run_dir(tmp_path)))
     assert [e.code for e in errs] == ["typechecks"]
-    assert "fillRect" in errs[0].message
+    assert "draw" in errs[0].message
 
 
 def test_clean_game_has_no_errors(tmp_path):

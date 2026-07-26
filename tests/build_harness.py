@@ -45,7 +45,7 @@ def seed_interfaces(run_dir, iface=None):
     interfaces.save(run_dir, iface)
 
 
-_HOOKS = ("createState", "init", "update", "draw", "hud")
+_HOOKS = ("createState", "init", "update", "hud")
 
 
 def canned_prelude(messages, hooks=_HOOKS, file="game.ts"):

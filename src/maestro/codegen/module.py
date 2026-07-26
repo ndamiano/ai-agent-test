@@ -362,10 +362,7 @@ def _detect_renders(check, module, context):
 
 # ── fixes ─────────────────────────────────────────────────────────────────────
 def _hook_exports(spec: dict) -> list:
-    hooks = ["createState", "init", "update", "draw", "hud"]
-    if spec.get("mode") == "3d":
-        hooks.remove("draw")   # a 3D game has no draw — the scene renders from entity shape tags
-    return hooks
+    return ["createState", "init", "update", "hud"]
 
 
 def _json_from(text: str):

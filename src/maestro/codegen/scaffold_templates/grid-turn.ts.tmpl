@@ -9,13 +9,12 @@
 //   createState(kit: Kit): GameState                                   build the initial state
 //   init(state: GameState, kit: Kit): void                             spawn entities; MUST set state.player
 //   update(state: GameState, dt: number, input: Input, kit: Kit): void gameplay, runs AFTER movement
-//   draw(g: DrawApi, state: GameState, kit: Kit): void                 paint the scene
 //   hud(state: GameState, kit: Kit): HudItem[]                         screen overlay (return [] for none)
 // Scaffold-read state fields: state.player (required), state.cell? (px per cell, default 32), and
 // state.passable?(cx: number, cy: number): boolean (cell walkability; absent = every cell passable).
 // state.moved is set true on the frame the player stepped — drive the enemies' turn off it.
 // Entities tagged `solid: true` get pair separation (no solidAt: walls are gridMove's passable job).
-import { createState, init as initGame, update as updateGame, draw as drawGame, hud as hudGame } from "./game.ts";
+import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";
 
 const CONFIG: Config = { width: 960, height: 540, mode: "2d", background: "#111", seed: 1 };
 
@@ -50,7 +49,6 @@ export function createGame(kit: Kit): GameObject {
       // cell snap); this just unstacks solid entities sharing a cell.
       kit.collideWorld(state.world ?? []);
     },
-    draw(g: DrawApi, kit: Kit) { drawGame(g, state, kit); },
     hud(kit: Kit): HudItem[] { return [...hudGame(state, kit), ...kit.talkHud(state)]; },
   };
 }

@@ -38,12 +38,8 @@ export function init(state: GameState, kit: Kit): void {
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
   if (input.pressed(" ")) state.score += 1;
 }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void {
-  g.clear("#000");
-  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
-}
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 # THE shipped incident's shape: movement wired (by the scaffold) but a hand-rolled "collision"
 # undoes it every frame, while an action key still mutates state — dead_controls stays green.
@@ -55,9 +51,8 @@ GAME_TS_NO_PLAYER = """export interface GameState { world: World; }
 export function createState(kit: Kit): GameState { return { world: [] }; }
 export function init(state: GameState, kit: Kit): void { }
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void { g.rect(0, 0, 5, 5, "#fff"); }
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 # THE two-incident fixture: tilemap walls + enemies spawned STACKED, everything tagged solid, plus a
 # spec-bound attack registered in init. The scaffold's collideWorld pass must resolve both (walls
@@ -81,12 +76,8 @@ export function init(state: GameState, kit: Kit): void {
   kit.register("attack", ["f"], () => { state.score += 1; });
 }
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void {
-  g.clear("#000");
-  for (const e of state.world) g.rect(e.x, e.y, e.w, e.h, e.color ?? "#999");
-}
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 # A talker NPC in interact range — the dialogue scaffold's registered "interact" must open it.
 GAME_TS_TALK = """export interface GameState { world: World; player: Entity | null; }
@@ -97,12 +88,8 @@ export function init(state: GameState, kit: Kit): void {
     talk: { name: "Elder", lines: ["Hello."] } });
 }
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void { }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void {
-  g.clear("#000");
-  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
-}
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 # A 3D hook module — no draw; the player is a shape-tagged member of state.world.
 GAME_TS_3D = """export interface GameState { world: World; player: Entity | null; }
@@ -135,7 +122,7 @@ def _hook_game(tmp_path, spec, game_ts):
     (d / "game.ts").write_text(game_ts, encoding="utf-8")
     (d / "manifest.json").write_text(json.dumps({"files": [
         {"name": "game.ts", "purpose": "the whole game behind the scaffold hooks",
-         "exports": ["createState", "init", "update", "draw", "hud"]}]}), encoding="utf-8")
+         "exports": ["createState", "init", "update", "hud"]}]}), encoding="utf-8")
     (d / "data").mkdir(exist_ok=True)
     (d / "data" / "manifest.json").write_text(json.dumps({"datasets": []}), encoding="utf-8")
     seed_interfaces(tmp_path)
@@ -465,7 +452,7 @@ def test_reexport_hooks_bridges_sibling_owned_hook(tmp_path):
     (d / "game.ts").write_text(
         "export function init(s: any, kit: Kit): void {}\n"
         "export function update(s: any, dt: number, input: Input, kit: Kit): void {}\n"
-        "export function draw(g: DrawApi, s: any, kit: Kit): void {}\n"
+        ""
         "export function hud(s: any, kit: Kit): HudItem[] { return []; }\n", encoding="utf-8")
     (d / "world.ts").write_text(
         "export function createState(kit: Kit): any { return { world: [] }; }\n", encoding="utf-8")
@@ -506,18 +493,17 @@ def _assert_run(tmp_path, game_ts):
     d.mkdir(exist_ok=True)
     (d / "main.ts").write_text(
         '// GENERATED control scaffold — never edit; gameplay lives in game.ts and its siblings.\n'
-        'import { createState, init as initGame, update as updateGame, draw as drawGame, hud as hudGame } from "./game.ts";\n'
+        'import { createState, init as initGame, update as updateGame, hud as hudGame } from "./game.ts";\n'
         'export function createGame(kit: Kit): GameObject {\n'
         '  const state: any = createState(kit);\n'
         '  return { config: { width: 100, height: 100 }, state,\n'
         '    init(kit) { initGame(state, kit); },\n'
         '    update(dt, input, kit) { updateGame(state, dt, input, kit); },\n'
-        '    draw(g, kit) { drawGame(g, state, kit); },\n'
         '    hud(kit) { return hudGame(state, kit); } };\n'
         '}\n', encoding="utf-8")
     (d / "game.ts").write_text(game_ts, encoding="utf-8")
     (d / "manifest.json").write_text(json.dumps({"files": [
-        {"name": "game.ts", "purpose": "hooks", "exports": ["createState", "init", "update", "draw", "hud"]}]}),
+        {"name": "game.ts", "purpose": "hooks", "exports": ["createState", "init", "update", "hud"]}]}),
         encoding="utf-8")
     return tmp_path
 
@@ -527,22 +513,20 @@ _HOOKS_OK = (
     "export function createState(kit: Kit): GameState { return { world: [], player: null }; }\n"
     "export function init(state: GameState, kit: Kit): void { state.player = { x: 0, y: 0, w: 8, h: 8 }; }\n"
     "export function update(state: GameState, dt: number, input: Input, kit: Kit): void {}\n"
-    "export function draw(g: DrawApi, state: GameState, kit: Kit): void { g.clear(\"#000\"); }\n"
     "export function hud(state: GameState, kit: Kit): HudItem[] { return []; }\n"
-    "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };\n")
+    "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };\n")
 
 
 def test_contract_assertion_localizes_signature_drift_to_game_ts(tmp_path):
-    """The run-7 terminal failure: draw's params in the wrong ORDER surfaced as an error at the
+    """The run-7 terminal failure: a hook's params in the wrong ORDER surfaced as an error at the
     GENERATED scaffold's call site. With the assertion, tsc reports it INSIDE game.ts."""
     bad = _HOOKS_OK.replace(
-        "export function draw(g: DrawApi, state: GameState, kit: Kit): void",
-        "export function draw(g: DrawApi, kit: Kit, state: GameState): void")
+        "export function update(state: GameState, dt: number, input: Input, kit: Kit): void",
+        "export function update(state: GameState, input: Input, dt: number, kit: Kit): void")
     _assert_run(tmp_path, bad)
     errs = typecheck(tmp_path)
-    assert errs, "expected a type error from the swapped draw params"
-    assert any(f == "game.ts" and "_scaffoldContract" not in m and "draw" in m or f == "game.ts"
-               for f, m in errs), errs
+    assert errs, "expected a type error from the swapped update params"
+    assert any(f == "game.ts" for f, m in errs), errs
 
 
 def test_contract_assertion_clean_hooks_typecheck_green(tmp_path):
@@ -608,7 +592,7 @@ def test_contract_assertion_is_held_only_for_the_typecheck(tmp_path):
     from maestro.codegen.scaffold import contract_assert_line, has_contract_assert
 
     _assert_run(tmp_path, _HOOKS_OK.replace(
-        "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };\n", ""))
+        "const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };\n", ""))
     spec = {"design": {"control": {"scheme": "top-down"}}}
     before = (tmp_path / "game" / "game.ts").read_text()
     assert not has_contract_assert(tmp_path)

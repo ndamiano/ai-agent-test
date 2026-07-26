@@ -36,12 +36,8 @@ export function init(state: GameState, kit: Kit): void {
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
   if (input.pressed(" ")) state.score += 1;
 }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void {
-  g.clear("#000");
-  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
-}
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 
 MANIFEST = {"datasets": [
@@ -123,7 +119,7 @@ def _write_planned_game(tmp_path, code=GOOD_GAME):
     (d / "game.ts").write_text(code, encoding="utf-8")
     (d / "manifest.json").write_text(
         json.dumps({"files": [{"name": "game.ts", "purpose": "game",
-                               "exports": ["createState", "init", "update", "draw", "hud"]}]}),
+                               "exports": ["createState", "init", "update", "hud"]}]}),
         encoding="utf-8")
     seed_interfaces(tmp_path)
     return tmp_path
@@ -469,12 +465,8 @@ export function init(state: GameState, kit: Kit): void {
 export function update(state: GameState, dt: number, input: Input, kit: Kit): void {
   if (input.pressed(" ")) state.hp -= 1;
 }
-export function draw(g: DrawApi, state: GameState, kit: Kit): void {
-  g.clear("#000");
-  g.rect(state.player.x, state.player.y, 10, 10, "#fff");
-}
 export function hud(state: GameState, kit: Kit): HudItem[] { return []; }
-const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };
+const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };
 """
 
 def test_game_importing_data_ts_passes_every_gate(tmp_path):

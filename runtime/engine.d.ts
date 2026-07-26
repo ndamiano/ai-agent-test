@@ -31,6 +31,8 @@ interface Entity {
   solid?: boolean;   // participates in kit.collideWorld (tile pushout + pair separation)
   yaw?: number; pitch?: number; ry?: number;
   color?: string; shape?: "box" | "sphere" | "ground" | "heightfield" | "grassfield";
+  layer?: number;    // 2D draw order within state.world; higher paints later. Default 0.
+  sprite?: string;   // asset id; kit.spawnData sets it from the data row
   [k: string]: any;
 }
 type World = Entity[];
@@ -63,13 +65,13 @@ interface Tilemap {
   w: number; h: number; tile: number;
 }
 
+// Engine-internal; no hook hands one to a game.
 interface DrawApi {
   clear(color?: string): void;
   rect(x: number, y: number, w: number, h: number, color: string): void;
   circle(x: number, y: number, r: number, color: string): void;
   line(x1: number, y1: number, x2: number, y2: number, color: string, width?: number): void;
   text(str: string, x: number, y: number, color?: string, size?: number, align?: string): void;
-  sprite(img: unknown, x: number, y: number, w: number, h: number): void;
   push(cam: { x: number; y: number }): void;
   pop(): void;
 }
@@ -93,7 +95,9 @@ type HudItem =
   | { kind: "menu"; options: string[]; selected?: number; title?: string; at?: HudAnchor; color?: string }
   // a WORLD-ANCHORED waypoint label (3D): the engine projects world (x,z) to the screen each frame,
   // clamping to the screen edge with a direction hint when off-screen — quest/objective wayfinding.
-  | { kind: "marker"; x: number; z: number; y?: number; text?: string; color?: string };
+  | { kind: "marker"; x: number; z: number; y?: number; text?: string; color?: string }
+  // screen art — inventory icon, life pip, portrait. `id` is a data row's id; nothing until art exists.
+  | { kind: "icon"; id: string; at?: HudAnchor; size?: number };
 
 interface Input {
   down(key: string): boolean;
@@ -225,11 +229,6 @@ interface Kit {
   // the renderer swaps in the GLB/PNG when one exists.
   spawnData(world: World, row: DataRow, at: Partial<Entity>): Entity;
   dataVisual(row: DataRow): Partial<Entity>;
-  // 2D only; 3D renders from the shape tag.
-  drawEntity(g: DrawApi, e: Entity): void;
-  // The skin: returns the preloaded sprite image for an entity's `sprite` id, or null if no
-  // asset was generated (headless, or an unskinned game) — draw the placeholder shape then.
-  sprite(id: string): unknown;
   win(msg?: string): void;
   lose(msg?: string): void;
   readonly over: null | { won: boolean; msg: string };
@@ -238,6 +237,8 @@ interface Kit {
 interface Config {
   width?: number; height?: number; title?: string; background?: string;
   gravity?: number; seed?: number; mode?: "2d" | "3d";
+  backdrop?: string;                    // 2D: asset id drawn behind the scene, screen-sized
+  tileColors?: Record<string, string>;  // 2D: tilemap glyph -> fill; solid cells default to #555
   pointerLock?: boolean;   // 3D: click captures the mouse for first-person look (fills input.lookDX/DY)
   // 3D control scheme — picks the mover (kit.drive) AND the camera (runtime) as one coherent pair.
   controls?: "orbital" | "follow" | "vehicle" | "fp";
@@ -247,8 +248,8 @@ interface Config {
 // The object `createGame(kit)` returns. Give `state` a concrete type (declare it in types.ts and
 // use it here) to get cross-file state access checked; `any` is allowed but unchecked.
 // The control scaffold's hook contract. A scaffolded game.ts declares
-// `const _scaffoldContract: GameHooks<GameState> = { createState, init, update, draw, hud };`
-// (draw omitted in 3D) so any signature drift is a tsc error INSIDE game.ts at that line, naming
+// `const _scaffoldContract: GameHooks<GameState> = { createState, init, update, hud };`
+// so any signature drift is a tsc error INSIDE game.ts at that line, naming
 // the member — local and precise, instead of surfacing at the GENERATED scaffold's import site.
 // GENERIC in the state type: with `any` a swapped param order is silently assignable (any absorbs
 // both directions); binding the game's own GameState makes drift visible.
@@ -256,7 +257,6 @@ interface GameHooks<S> {
   createState(kit: Kit): S;
   init(state: S, kit: Kit): void;
   update(state: S, dt: number, input: Input, kit: Kit): void;
-  draw?(g: DrawApi, state: S, kit: Kit): void;
   hud(state: S, kit: Kit): HudItem[];
 }
 
@@ -265,10 +265,7 @@ interface GameObject {
   state: any;
   init?(kit: Kit): void;
   update(dt: number, input: Input, kit: Kit): void;
-  // 2D SCENE: paint the game world onto the canvas. 3D games omit this — the scene renders from
-  // world entities. NEVER draw the HUD here in a way that clears the screen; return HUD from hud().
-  draw?(g: DrawApi, kit: Kit): void;
-  // HUD (2D and 3D): RETURN screen-space overlay items; the engine draws them. Read-only, like draw.
+  // Screen overlay as DATA; the engine draws it. The scene renders from state.world.
   hud?(kit: Kit): HudItem[];
   camera?(cam: Camera3, kit: Kit): void;
 }
@@ -277,5 +274,5 @@ interface GameObject {
 // `Kit.Config` (declaration merging with the `Kit` interface above). Both `Entity` and `Kit.Entity`
 // name the same type — supports the natural "extend the kit's entity with my fields" pattern.
 declare namespace Kit {
-  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, DrawApi, Camera, Camera3, Rng, V, GameObject, HudItem, HudAnchor, Talker, Quest };
+  export { Entity, Config, Vec2, Vec3, World, Rect, Tilemap, Input, Camera, Camera3, Rng, V, GameObject, HudItem, HudAnchor, Talker, Quest };
 }

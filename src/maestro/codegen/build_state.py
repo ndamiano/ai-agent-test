@@ -110,7 +110,6 @@ class BuildCursor:
     asset_batch: Optional[str] = None
     # the spec-vs-code audit (runs when the gates are green, before finalizing)
     audit_round: int = 0                          # sweeps already run
-    audit_pending: List[Dict] = field(default_factory=list)   # findings awaiting their fix
     audit_done: bool = False                      # a sweep returned zero findings — spec clean
     audit_delivered: List[str] = field(default_factory=list)  # claims the last sweep verified
     # the current fix

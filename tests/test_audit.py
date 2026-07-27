@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from maestro.codegen import audit, build_state, build_steps
-from maestro.codegen.build_chain import _advance_audit, _AUDIT_ROUNDS
+from maestro.codegen.build_chain import _advance_audit
 from maestro.codegen.build_state import BuildCursor, FixCursor, error_to_dict
 from maestro.modules.module import Error, ErrorType
 
@@ -254,33 +254,34 @@ def finalized(monkeypatch):
     return calls
 
 
-def test_green_gates_arm_an_audit_sweep_then_finalize_at_round_cap(finalized):
+def test_green_gates_arm_ONE_audit_sweep_then_finalize(finalized):
+    """The audit reports; it does not iterate. Rounds of judge-then-fix edited one file until a
+    judge was satisfied — 208 of 227 steps on the measured run, with round 2 scoring worse than
+    round 1 — and the artifact was sediment."""
     cursor = BuildCursor(build_id="b", kind="build")
-    for round_no in range(1, _AUDIT_ROUNDS + 1):
-        assert _advance_audit("r", None, cursor) is True
-        assert cursor.phase == "fix" and cursor.fix["shape"] == "audit"
-        assert cursor.audit_round == round_no
-        cursor.set_fix(None)
-        cursor.phase = "outer"
-    assert _advance_audit("r", None, cursor) is False
+    assert _advance_audit("r", None, cursor) is True
+    assert cursor.phase == "fix" and cursor.fix["shape"] == "audit"
+    assert cursor.audit_round == 1
+    cursor.set_fix(None)
+    cursor.phase = "outer"
+
+    assert _advance_audit("r", None, cursor) is False      # no second round, ever
     assert finalized == [True]
 
 
-def test_a_clean_sweep_ends_the_audit_before_the_round_cap(finalized):
+def test_a_clean_sweep_ends_the_audit(finalized):
     cursor = BuildCursor(build_id="b", kind="build", audit_round=1, audit_done=True)
     assert _advance_audit("r", None, cursor) is False
     assert finalized == [True]
 
 
-def test_pending_findings_are_fixed_one_per_iteration(finalized):
-    cursor = BuildCursor(build_id="b", kind="build", audit_round=1,
-                         audit_pending=[{"claim": "c1", "note": "n1"},
-                                        {"claim": "c2", "note": "n2"}])
-    assert _advance_audit("r", None, cursor) is True
-    assert cursor.fix["shape"] == "read_write"
-    assert cursor.fix["error"]["code"] == "audit" and cursor.fix["error"]["message"] == "n1"
-    assert cursor.audit_pending == [{"claim": "c2", "note": "n2"}]
-    assert finalized == []
+def test_findings_never_arm_a_fix(finalized):
+    """A finding is a line in the report for the human, not work for the loop — there is no pending
+    queue for one to land in."""
+    cursor = BuildCursor(build_id="b", kind="build", audit_round=1, audit_done=True)
+    assert not hasattr(cursor, "audit_pending")
+    assert _advance_audit("r", None, cursor) is False
+    assert finalized == [True]
 
 
 def test_step_cap_and_fix_kind_skip_the_audit(finalized):
@@ -314,9 +315,9 @@ def test_audit_kickoff_gets_the_200_step_default(monkeypatch):
 
 
 def test_audit_cursor_fields_survive_the_json_round_trip(tmp_path):
-    cursor = BuildCursor(build_id="b", audit_round=1,
-                         audit_pending=[{"claim": "c", "note": "n"}])
+    cursor = BuildCursor(build_id="b", audit_round=1, audit_done=True,
+                         audit_delivered=["Gold is earned by winning battles."])
     build_state.save(tmp_path, cursor)
     loaded = build_state.load(tmp_path)
-    assert loaded.audit_round == 1
-    assert loaded.audit_pending == [{"claim": "c", "note": "n"}]
+    assert loaded.audit_round == 1 and loaded.audit_done is True
+    assert loaded.audit_delivered == ["Gold is earned by winning battles."]

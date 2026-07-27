@@ -66,13 +66,9 @@ def _amend_key(error: Error) -> str:
 _SHAPE_BY_CODE = {"interfaced": "interfaces", "reviewed": "review", "data": "data",
                   "authored": "author"}
 
-# The spec-vs-code audit: after the gates go green, sweep the frozen spec's claims against the
-# source and fix what isn't delivered — "done" means the spec is exhausted (or the caps are), never
-# just errors-zero. Sweeps repeat until one returns ZERO findings (the spec-clean signal); the round
-# cap is a backstop against a judge that never converges, not the intended exit. A human-note fix
-# stays scoped to its note, so no audit there.
+# The spec-vs-code audit: once the gates go green, judge the frozen spec's claims against the source
+# and REPORT what isn't delivered. A human-note fix stays scoped to its note, so no audit there.
 _AUDIT_KINDS = ("build", "audit")
-_AUDIT_ROUNDS = 10
 
 # One advance at a time per run — the completion handler and the reaper both call advance, and only
 # the control-plane process ever does, so an in-process lock is sufficient mutual exclusion.
@@ -276,13 +272,15 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
             if cursor.phase != "done":   # a refused budget finalizes inside _enqueue_turn
                 _emit_step(run_id, cursor, outcome.report)
             return
-        # Done: the fix finished — back to the outer gate sweep. A finished audit sweep hands its
-        # findings to the pending queue; the outer loop fixes them one per iteration (re-gating
-        # between, so a fix that regresses a gate is repaired before the next finding runs).
+        # Done: the fix finished — back to the outer gate sweep.
         if fc.shape == "audit":
-            cursor.audit_pending = list(fc.findings or [])
-            cursor.audit_done = not cursor.audit_pending
+            # A REPORT, not a work queue: the verdicts land in audit_verdicts.jsonl and the build
+            # finishes on them. Nothing here re-enters a fix.
+            cursor.audit_done = True
             cursor.audit_delivered = list(fc.delivered or [])
+            if fc.findings:
+                _emit_step(run_id, cursor,
+                           f"audit: {len(fc.findings)} claim(s) not delivered — see audit_verdicts.jsonl")
         cursor.set_fix(None)
         cursor.phase = "outer"
         build_state.save(rs.run_dir, cursor)
@@ -290,23 +288,20 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
 
 
 def _advance_audit(run_id: str, rs: RunState, cursor: BuildCursor) -> bool:
-    """The gates are green — decide what greenness means. Arm the next pending finding's fix, else
-    the next audit sweep, and return True; when the audit is exhausted (clean sweep, round cap, step
-    cap, or a kind that doesn't audit) finalize ok and return False. Every limit here FAILS OPEN to
-    a successful build: an incomplete audit ships the game, it never strands it."""
-    if cursor.audit_pending and cursor.step < cursor.max_steps:
-        finding = cursor.audit_pending.pop(0)
-        error = Error(type=ErrorType.HUMAN, code="audit", component="game",
-                      message=finding["note"])
-        cursor.prev = []
-        cursor.set_fix(FixCursor(shape="read_write", error=error_to_dict(error)))
-        cursor.phase = "fix"
-        return True
+    """The gates are green — decide what greenness means. Run the spec-vs-code audit ONCE and
+    finalize on what it says; the verdicts are a REPORT for the human, never a fix loop.
+
+    The audit judges whether a claim is delivered, which is a judgement, and a build that edits one
+    file until a judge is satisfied does not converge on a game. Measured on the run this changed:
+    227 steps, of which 19 reached green gates and 208 were the audit and its fixes — four rounds
+    over seven claims, round 2 scoring WORSE than round 1 because each fix broke a claim that
+    already worked, and the artifact at the end was sediment. The signal ("does it include X?") is
+    worth having; acting on it automatically is not."""
     if (cursor.kind in _AUDIT_KINDS and not cursor.audit_done
-            and cursor.audit_round < _AUDIT_ROUNDS and cursor.step < cursor.max_steps):
+            and cursor.audit_round < 1 and cursor.step < cursor.max_steps):
         cursor.audit_round += 1
         sweep = Error(type=ErrorType.BUILD, code="audit_sweep", component="game",
-                      message=f"spec-vs-code audit (round {cursor.audit_round}/{_AUDIT_ROUNDS})")
+                      message="spec-vs-code audit")
         cursor.prev = []
         cursor.set_fix(FixCursor(shape="audit", error=error_to_dict(sweep),
                                  anchors=list(cursor.audit_delivered)))

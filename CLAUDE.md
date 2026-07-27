@@ -274,7 +274,13 @@ src/
                          AUDIT = the terminal shape: one llm turn judges the source against the frozen
                          spec's claims (see audit.py).
       audit.py           the spec-vs-code AUDIT — the gates prove a game RUNS, not that its declared
-                         mechanics exist, so a build ends on SPEC-EXHAUSTED, not errors-zero. Claims
+                         mechanics exist, so a green build still reports what the spec promised and
+                         the code does not do. It RUNS ONCE and REPORTS; it never drives a fix. Rounds
+                         of judge-then-fix spent 208 of one build's 227 steps (19 reached green
+                         gates), scored WORSE in round 2 than round 1 because each fix broke a claim
+                         that already worked, and left an artifact that was sediment rather than a
+                         game. The signal is worth having; acting on it automatically is not — an
+                         undelivered claim is a line in the report for the human. Claims
                          are enumerated MECHANICALLY from the spec (controls/mechanics/win/lose;
                          movement controls excluded — scaffold law). `render` is NOT a claim: it is a
                          look description the skin stage rewrites, so "delivered" is a taste verdict.
@@ -353,13 +359,12 @@ src/
                          rewrite draw onto kit.drawEntity (shape fallback is the kit's) → render (ComfyUI);
                          3D → plan meshes → tag entities `mesh:"id"` → render image (ComfyUI) → GLB
                          (TRELLIS). The TAGGING rewrite is skipped entirely when the plan came from
-                         data AND the source spawns the ids it planned (_binds_data_assets: a `type:`
-                         literal matching a planned id — kit.spawn binds it from there, so WHICH call
-                         was used is no longer the question) — a data-driven skin
-                         spends ZERO LLM calls; a game naming none of them still gets the
-                         rewrite or its art would be orphaned. The old test demanded `kit.drawEntity`
-                         in 2D, from when the game owned draw(): renderScene calls it now, so no
-                         authored file ever held one and EVERY 2D game was classed unbound.
+                         DATA — kit.spawn binds a row-typed entity's asset id itself, so a
+                         data-driven skin spends ZERO LLM calls. Whether the game actually spawns
+                         the things the art depicts is NOT tested: that was a static guess at a
+                         runtime fact (it read a variable `type` as "unbound" and cost one build 140
+                         steps down a rewrite it never needed), and an orphaned sprite is a thing a
+                         human sees and asks for. The LLM plan (no data) still gets the rewrite.
                          The plan is DETERMINISTIC whenever any data row carries `look`
                          (sprite_plan_from_data: 2D all look rows, 3D look + presence world/both;
                          prompts from look, sizes from size — no 3-8 sprite cap); the LLM plan is

@@ -220,7 +220,7 @@ src/
                          machine the old resident AgentLoop was: OUTER (rebuild context from disk, sweep
                          CodegenModule's gates, cross-fix stall/park bookkeeping, pick the top error,
                          START its fix — and when the gates are GREEN, run the spec-vs-code audit
-                         (audit.py) before finalizing, fixing failed claims one per iteration) and FIX
+                         (audit.py) ONCE and finalize on its REPORT, never fixing from it) and FIX
                          (a build_steps shape; apply the turn, enqueue the next or return to outer).
                          The outer sweep also fires the EARLY asset lane (reskin.start_assets_early,
                          once the data lands — batch id on the cursor), an ok finalize absorbs
@@ -298,14 +298,14 @@ src/
                          tracing corrected both. Read cap forces the verdict (empty toolset); a
                          claim with no verdict inside its turn cap is SKIPPED, never a finding.
                          Verdicts append to runs/<id>/audit_verdicts.jsonl (durable — "which claim
-                         failed?" must never be unanswerable). ANCHORING: delivered claims carry
-                         into later rounds and across builds (audit_delivered on the cursor); an
-                         anchored claim only flips with cited regression evidence, so rounds ratchet
-                         (measured: unanchored 5→7→3→2, anchored 4→4→6→9). Failed claims become
-                         human-note-shaped fixes on the fix_from_note lane, then re-gate → re-audit
-                         until a round returns zero findings (round + step caps as backstops). Every
-                         failure path FAILS OPEN to a finished build — a game that never finishes is
-                         worse than an incomplete one that ships. CLI: run.py --audit <run_id>.
+                         failed?" must never be unanswerable) and THAT IS THE OUTPUT: a failed claim
+                         is reported, never auto-fixed. Delivered claims still carry across builds
+                         (audit_delivered on the cursor) so a later run reads as a diff, not a
+                         re-litigation. Every failure path FAILS OPEN to a finished build — a game
+                         that never finishes is worse than an incomplete one that ships, and a claim
+                         with no verdict inside its turn cap is SKIPPED, never a finding. To act on
+                         a report, the human says what to change: run.py --fix <run_id> "<note>".
+                         CLI: run.py --audit <run_id>.
       fix_classes.py     the error-class → fixer MAP (codegen analog of IR's per-check owner). A GATE
                          detects a raw failure; a FIX CLASS resolves it — chosen by matching the Error
                          (its `kind` for our gates, the TS code in its message for tsc). A class owns

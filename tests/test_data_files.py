@@ -535,26 +535,6 @@ def test_skin_2d_prefers_the_data_plan(tmp_path, monkeypatch):
     assert [s["id"] for s in out["sprites"]] == ["orc", "coin"]
 
 
-def test_skin_2d_hand_drawn_game_still_gets_the_rewrite(tmp_path, monkeypatch):
-    """A data-planned game that hand-draws never consults the sprite, so the generated art would be
-    orphaned — the rewrite is still the only thing that wires it."""
-    _write_planned_game(tmp_path)
-    _write_data(tmp_path)
-    monkeypatch.setattr(reskin, "plan_assets", _boom)
-    monkeypatch.setattr(reskin, "_regate", _boom)
-    called = {}
-
-    def _spy(*a, **k):
-        called["yes"] = True
-        return _Result()
-
-    monkeypatch.setattr(reskin, "_reskin_and_gate", _spy)
-    monkeypatch.setattr(reskin, "start_asset_chain", lambda *a, **k: None)
-    reskin._skin_2d("rid", RunState(tmp_path), {"design": {}}, None,
-                    {"game.ts": "g.rect(0,0,1,1,'#fff')"}, 1)
-    assert called == {"yes": True}
-
-
 def test_skin_2d_without_data_still_rewrites_draw(tmp_path, monkeypatch):
     """The data-less fallback keeps the LLM plan + rewrite — an arcade game with no datasets still
     needs the model to wire kit.sprite into its draw()."""

@@ -360,18 +360,6 @@ def test_green_lane_skips_the_rewrite_when_data_bound(lane_env, monkeypatch):
     reskin.auto_skin("rid", early_batch="b1")
 
 
-def test_a_game_is_bound_when_it_spawns_what_the_plan_depicts(lane_env):
-    """kit.spawn binds a row-typed entity itself, so the question is no longer which call was used
-    but whether the game names the ids the art depicts. A game naming none of them would orphan
-    every render, and only the rewrite can wire that."""
-    ids = ["goblin"]
-    assert reskin._binds_data_assets({"game.ts": 'kit.spawn(w, { type: "goblin", x: 1 });'}, ids)
-    assert not reskin._binds_data_assets({"game.ts": 'kit.spawn(w, { x: 1, color: "#f00" });'}, ids)
-    assert not reskin._binds_data_assets({"game.ts": 'kit.spawn(w, { type: "bullet", x: 1 });'}, ids)
-    # a GENERATED file's own spawns are not the authored game binding anything
-    assert not reskin._binds_data_assets({"world.ts": '// GENERATED\ntype: "goblin"'}, ids)
-
-
 def test_a_data_bound_skin_never_runs_a_build(lane_env, monkeypatch):
     """Nothing is rewritten on this path, so there is nothing for a build to fix. run_build here
     re-ran the whole chain — spec audit included — to answer a question the gates answer alone:
@@ -411,18 +399,6 @@ def test_a_data_bound_skin_reports_a_game_that_was_never_green(lane_env, monkeyp
     result = reskin._regate("rid", state, 40)
 
     assert result.ok is False and result.failures == [err]
-
-
-def test_green_lane_wires_an_unbound_game(lane_env, monkeypatch):
-    """Hand-drawn draw(): the early renders would be orphaned — the green lane must run the
-    rewrite (which re-gates internally)."""
-    _write_data(lane_env, [{"id": "goblin", "look": "a green goblin"}])
-    wired = []
-    monkeypatch.setattr(reskin, "_make_infer", lambda: None)
-    monkeypatch.setattr(reskin, "_reskin_and_gate",
-                        lambda rid, state, infer, files, ids, *a, **k: wired.append(ids))
-    reskin.auto_skin("rid", early_batch="b1")
-    assert wired == [["goblin"]]
 
 
 def test_green_lane_defers_to_an_inflight_skin(lane_env, monkeypatch):

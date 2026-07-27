@@ -72,25 +72,6 @@ _MODE_3D = re.compile(r"""mode\s*:\s*["']3d["']""")
 
 
 _GENERATED = "// GENERATED"
-_TYPE_LITERAL = re.compile(r"""\btype\s*:\s*["']([A-Za-z0-9_]+)["']""")
-
-
-def _binds_data_assets(files: dict, ids: list) -> bool:
-    """Whether the game's own entities already carry their rows' asset ids, making the rewrite moot.
-
-    kit.spawn binds them: an entity whose `type` names a data row is built from that row, asset id
-    included. So the question is no longer WHICH call the game used — there is only one — but
-    whether it spawns anything the planned art actually depicts. A game that names none of the row
-    ids would still orphan every render, and only the rewrite can wire that.
-
-    (Both halves of the old test are gone: `kit.spawnData` no longer exists, and the `kit.drawEntity`
-    clause dated from when the game owned draw() — the engine's renderScene calls it now, so no
-    authored file ever held one and every 2D game was classed unbound.)"""
-    authored = [src for name, src in files.items() if not src.lstrip().startswith(_GENERATED)]
-    spawned = {m.group(1) for src in authored for m in _TYPE_LITERAL.finditer(src)}
-    return bool(spawned & set(ids))
-
-
 def _content(resp) -> str:
     return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
 
@@ -472,7 +453,11 @@ def _skin_2d(run_id, state, spec, infer, files, max_steps, build_id=None) -> dic
 
     # Skip the LLM rewrite only when the game ALREADY binds its assets through the kit; a hand-drawn
     # draw() still needs wiring or the sprites we just planned would never appear.
-    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, ids) \
+    # A data plan needs no rewrite: kit.spawn binds a row-typed entity's asset id itself. Whether
+    # the game actually spawns the things the art depicts is NOT tested — that was a static guess at
+    # a runtime fact, it read a variable `type` as "unbound", and it cost a build 140 steps down a
+    # rewrite path it never needed. An unbound sprite is a thing a human sees and asks for.
+    result = _regate(run_id, state, max_steps) if from_data \
         else _reskin_and_gate(run_id, state, infer, files, ids, _draws, reskin_file, max_steps)
 
     # The manifest is a pure function of the plan, so it lands now rather than at finalize — a
@@ -551,7 +536,7 @@ def _skin_3d(run_id, state, spec, infer, files, max_steps, build_id=None) -> dic
 
     # Skip the tagging LLM call only when the game already spawns the planned ids (kit.spawn binds
     # `mesh: <row id>`); a hand-spawned entity still needs the model to tag it.
-    result = _regate(run_id, state, max_steps) if from_data and _binds_data_assets(files, ids) \
+    result = _regate(run_id, state, max_steps) if from_data \
         else _reskin_and_gate(run_id, state, infer, files, ids, _tags_shapes, reskin_mesh_file, max_steps)
 
     write_mesh_manifest(state.run_dir, meshes)
@@ -650,8 +635,8 @@ def auto_skin(run_id: str, early_batch: Optional[str] = None, max_steps: int = 4
         ids = [p["id"] for p in plan]
         if not ids:
             return
-        if from_data and _binds_data_assets(files, ids):
-            return   # bound through the kit — the early renders wire themselves
+        if from_data:
+            return   # a data plan binds through kit.spawn — the early renders wire themselves
         infer = _make_infer()
         with run_scope(run_id):
             if mode3d:

@@ -200,7 +200,10 @@ def _interfaces_request(spec, run_dir, report: str) -> Infer:
 
 # ── review (rounds of find-then-patch over the architecture) ──────────────────
 _REVIEW_ROUNDS = 3
-_REVIEW_BATCH = 2
+# The patch turn ships the WHOLE architecture either way, so a small batch re-sends it once per
+# chunk and buys nothing — and two patch turns hitting the same subsystem redo each other's work
+# (measured: one round re-owned `crops` twice and rewrote six functions it had just rewritten).
+_REVIEW_BATCH = 8
 
 
 def review_step(spec, run_dir, tools, fc, result) -> Outcome:

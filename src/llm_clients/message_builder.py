@@ -173,39 +173,16 @@ class MessageBuilder:
         if not omit:
             return messages
 
-        # Pass 5: prune assistant messages whose tool_calls are fully or partially omitted.
-        # Build set of omitted tool_call_ids for fast lookup.
-        omitted_call_ids: set = set()
-        for i in omit:
-            omitted_call_ids.add(messages[i].get("tool_call_id", ""))
-
-        result = []
-        for i, msg in enumerate(messages):
-            if i in omit:
-                result.append({
-                    **msg,
-                    "content": f"[output omitted — superseded by later call to {omit[i]}]",
-                })
-            elif msg.get("role") == "assistant" and msg.get("tool_calls"):
-                remaining = [
-                    tc for tc in msg["tool_calls"]
-                    if tc.get("id") not in omitted_call_ids
-                ]
-                if len(remaining) == len(msg["tool_calls"]):
-                    # Nothing omitted — keep as-is.
-                    result.append(msg)
-                elif remaining:
-                    # Some calls omitted — keep msg with pruned tool_calls.
-                    result.append({**msg, "tool_calls": remaining})
-                else:
-                    # All calls omitted — keep msg shell only if it has content.
-                    pruned = {k: v for k, v in msg.items() if k != "tool_calls"}
-                    if pruned.get("content"):
-                        result.append(pruned)
-                    # else: drop the message entirely — empty shell, no content.
-            else:
-                result.append(msg)
-        return result
+        # Pass 5: replace the omitted RESULT bodies, and only those. The call that produced each
+        # one stays: dropping it while keeping its result orphans the result, and a chat template
+        # is entitled to refuse that — MiniMax-M3's raises "Message has tool role, but there was no
+        # previous assistant message with a tool call!" and 500s the whole turn. Qwen's tolerated
+        # it silently, which is why the malformed transcript went unnoticed.
+        return [
+            {**msg, "content": f"[output omitted — superseded by later call to {omit[i]}]"}
+            if i in omit else msg
+            for i, msg in enumerate(messages)
+        ]
 
     def _cap_tool_results(
         self, messages: List[Dict[str, Any]]

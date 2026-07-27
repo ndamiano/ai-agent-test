@@ -156,6 +156,55 @@ def test_dedup_omits_failed_result_superseded_by_success(mb):
     assert tool_msgs[1]["content"] == "actual file body"
 
 
+def test_dedup_never_orphans_a_tool_result(mb):
+    # WHY: a tool result whose call is missing is a MALFORMED transcript, and a chat template may
+    # refuse it outright — MiniMax-M3's raises "Message has tool role, but there was no previous
+    # assistant message with a tool call!" and 500s the turn. The superseded call must survive its
+    # own omitted result. Empty assistant content is the case that used to drop the whole message.
+    msgs = [
+        _assistant_call("c1", "read_file", '{"file": "a.ts"}', content=""),
+        _tool_result("c1", "OLD BODY"),
+        _assistant_call("c2", "read_file", '{"file": "a.ts"}', content=""),
+        _tool_result("c2", "NEW BODY"),
+    ]
+    out = mb._deduplicate_tool_results(msgs)
+
+    open_calls = set()
+    for m in out:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                open_calls.add(tc["id"])
+        elif m.get("role") == "tool":
+            assert m["tool_call_id"] in open_calls, f"orphaned tool result {m['tool_call_id']}"
+    assert {"c1", "c2"} <= open_calls
+
+
+def test_dedup_keeps_surviving_call_when_sibling_in_same_message_is_omitted(mb):
+    # WHY: one assistant turn may batch several calls. Omitting one result must not prune its
+    # sibling's call — pass 5 used to rebuild the tool_calls list and could drop either.
+    msgs = [
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "read_file", "arguments": '{"file": "a.ts"}'}},
+            {"id": "c2", "type": "function",
+             "function": {"name": "read_file", "arguments": '{"file": "b.ts"}'}},
+        ]},
+        _tool_result("c1", "A OLD"),
+        _tool_result("c2", "B ONLY"),
+        _assistant_call("c3", "read_file", '{"file": "a.ts"}', content=""),
+        _tool_result("c3", "A NEW"),
+    ]
+    out = mb._deduplicate_tool_results(msgs)
+
+    ids = {tc["id"] for m in out if m.get("role") == "assistant"
+           for tc in m.get("tool_calls") or []}
+    assert ids == {"c1", "c2", "c3"}
+    by_id = {m["tool_call_id"]: m["content"] for m in out if m.get("role") == "tool"}
+    assert "omitted" in by_id["c1"]
+    assert by_id["c2"] == "B ONLY"
+    assert by_id["c3"] == "A NEW"
+
+
 # ── _cap_tool_results ────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("length,expect_truncated", [

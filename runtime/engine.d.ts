@@ -176,7 +176,8 @@ interface Kit {
   // update(): const pick = kit.talkStep(state, input); if (pick) act on pick.pick;
   //           if (state.talk) return;   // paused while talking
   //           if (near && input.pressed("e")) kit.talkOpen(state, near);
-  // hud():    items.push(...kit.talkHud(state))
+  // hud():    nothing to do — GENERATED main.ts already appends kit.talkHud(state) after your
+  //           items. Spreading it yourself as well is harmless; the kit draws the talk UI once.
   // A SHOP is the same loop with priced options passed to talkOpen.
   talkOpen(state: any, npc: Talker, options?: string[]): void;
   talkStep(state: any, input: Input, advanceKey?: string): null | { npc: Talker; pick: number };

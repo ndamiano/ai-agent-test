@@ -79,7 +79,7 @@ meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground
 **Use the WHOLE map — this is what makes it a place and not a room:**
 - **Every building gets a function.** Put an NPC in front of each one, matched to its `label` (a
   vendor at a market stall selling from a priced talk menu, a smith at a workshop, an elder by the
-  well). Each NPC gets ITS OWN name and its own `kit.talkOpen` lines — never one shared script.
+  well). Each NPC gets ITS OWN name and its own `lines` at spawn — never one shared script.
 - **Send the player OUT.** Put at least one objective — the spec's boss/goal/destination — at or
   near a `WORLD.pois` entry, out past `WORLD.gate`, never in the plaza. Spawn roaming or hostile
   creatures at `WORLD.regions.forest` points and scatter items over both town grass and meadows.
@@ -124,10 +124,17 @@ meadow:[[x,z],…]}` — wilderness spawn points). `heightAt(x,z)` is the ground
    }
    if (this.state.talk) return;                          // movement paused while talking
    // OPENING a conversation is not yours to write: the scaffold's activate key does it for any
-   // entity carrying lines. A SHOP is the same loop with priced options —
+   // entity carrying lines. THE DIALOGUE LIVES ON THE ENTITY — spawn it with `lines`, which is
+   // what makes it talkable at all:
+   //   kit.spawn(state.world, { ...visual, action: "talk", name: "Oren",
+   //                            lines: ["Morning!", "The north field floods in spring."] });
+   // talkOpen's third argument is the OPTIONS MENU, never the dialogue. A SHOP is the same loop
+   // with priced options —
    //   kit.talkOpen(state, vendor, ["Health potion (10g)", "Sharper sword (25g)", "Leave"])
-   // is the ONE case you call yourself, from onActivate when the target is your vendor.
-   // hud(): spread the ready-made items in — the panel/menu render themselves:
+   // is the ONE case you call yourself, from onActivate when the target is your vendor; `vendor`
+   // still had to be spawned with its own `lines`, or it is not a Talker and will not typecheck.
+   // hud(): GENERATED main.ts already appends kit.talkHud(state), so you need not (spreading it too
+   // is harmless — the kit draws it once). Spread the rest in — the panel/menu render themselves:
    hud(kit: Kit): Kit.HudItem[] {
      return [
        { kind: "text", text: `Gold: ${this.state.gold}`, at: "top-left" },

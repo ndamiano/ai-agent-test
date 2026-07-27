@@ -614,10 +614,12 @@ export function talkHud(state) {
   const t = state.talk;
   if (!t) return [];
   const lines = t.npc.lines || [""], last = t.line >= lines.length - 1;
-  const items = [{ kind: "panel", title: t.npc.name || "…", at: "bottom",
+  // src:"talk" makes these items IDEMPOTENT — renderHud keeps the first of each kind, so the
+  // scaffold's spread and a game that also spreads it collapse to one dialogue, not two.
+  const items = [{ kind: "panel", src: "talk", title: t.npc.name || "…", at: "bottom",
                    text: String(lines[Math.min(t.line, lines.length - 1)]) }];
   if (last && t.options && t.options.length)
-    items.push({ kind: "menu", options: t.options, at: "center" });
+    items.push({ kind: "menu", src: "talk", options: t.options, at: "center" });
   return items;
 }
 
@@ -800,8 +802,13 @@ export function renderHud(draw, items, W, H) {
   const xOf = (anchor) => anchor.endsWith("left") ? { x: _HUD_PAD, align: "left" }
     : anchor.endsWith("right") ? { x: W - _HUD_PAD, align: "right" }
       : { x: W / 2, align: "center" };
+  const talkDrawn = {};   // kind -> already drawn: the talk UI renders ONCE however many times it is spread
   for (const it of items) {
     if (!it || typeof it !== "object") continue;
+    if (it.src === "talk") {
+      if (talkDrawn[it.kind]) continue;
+      talkDrawn[it.kind] = 1;
+    }
     if (it.kind === "marker") continue;   // world-anchored; run3d projects it to a screen label first
     if (it.kind === "banner") {
       draw.text(String(it.text), W / 2, H / 2, it.color || "#fff", 32, "center");

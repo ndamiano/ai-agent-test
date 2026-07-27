@@ -212,7 +212,8 @@ already unambiguous from what they are standing in front of.
 - `kit.talkOpen(state, npc, options?)` / `kit.talkStep(state, input)` / `kit.talkHud(state)` — the
   WHOLE talk loop as one primitive: npc = `{name, lines:[...], options?:[...]}`; talkStep (call every
   frame) advances on the activate key, returns `{npc, pick}` when a choice is made, closes on Escape;
-  spread `...kit.talkHud(state)` into hud(). A shop = talkOpen with priced options.
+  GENERATED main.ts already appends `kit.talkHud(state)` after your items, so hud() need not — and
+  spreading it too is harmless, the kit draws the talk UI once. A shop = talkOpen with priced options.
   The scaffold already calls talkStep and opens a talkable target for you. `state.talk` belongs to
   the kit — `{npc, line, options}` — so never read a field of your own off it and never draw the
   dialogue yourself: one build invented `state.talk.currentLine` and painted "undefined" on screen.

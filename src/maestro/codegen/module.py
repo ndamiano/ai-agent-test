@@ -23,7 +23,7 @@ import re
 from contextlib import contextmanager
 from pathlib import Path
 
-from maestro.codegen import conform, data_files, interfaces
+from maestro.codegen import data_files, interfaces
 from maestro.codegen.gates import (
     RUNTIME_DIR,
     game_dir,
@@ -170,39 +170,6 @@ def _detect_reviewed(check, module, context):
     return [Error(type=ErrorType.BUILD, code="reviewed", component="game",
                   message="the architecture has not been reviewed — find and patch its "
                           "contradictions before any code is written")]
-
-
-_CONFORM_HINT = {
-    "OWNERSHIP": "Mutate the field in place, move the assignment into its declared owner, or amend "
-                 "the declaration if the implementation names the real owner.",
-    "LIFETIME": "A run-lifetime field carries progression. Rebuild nothing — mutate it in place.",
-    "ELEMTYPE": "One end is wrong: either store the whole object or look the id up before use.",
-    "MISSING": "Implement the declared function, or delete it from the architecture if the design "
-               "no longer needs it.",
-    "UNEXPORTED": "Add `export` to the implementation, or delete the function from the architecture "
-                  "if nothing outside its file needs it.",
-}
-
-
-def _detect_conforms(check, module, context):
-    """The code against the contracts the MODEL declared. Grouped by file so one fix addresses all of
-    a file's violations; a MISSING function has no file to blame and rides its own error."""
-    run_dir = context.state.run_dir
-    iface = interfaces.load(run_dir)
-    if not iface:
-        return []
-    by_file = {}
-    for v in conform.check(iface, game_files(run_dir)):
-        by_file.setdefault(v["file"], []).append(v)
-    errors = []
-    for f, vs in by_file.items():
-        lines = "\n".join(f"  - [{v['kind']}] line {v['line']}: {v['msg']}" for v in vs)
-        hints = "\n".join(f"  {_CONFORM_HINT[k]}" for k in dict.fromkeys(v["kind"] for v in vs)
-                          if k in _CONFORM_HINT)
-        errors.append(Error(type=ErrorType.FIX, code="conforms", component="game",
-                            path=f if f != "-" else None, kind=vs[0]["kind"].lower(),
-                            message=f"{f} breaks {len(vs)} contract(s) you declared:\n{lines}\n{hints}"))
-    return errors
 
 
 def _detect_data(check, module, context):
@@ -471,7 +438,6 @@ class CodegenModule(Module):
         Check(code="data", detect=_detect_data, job="author", blocking=True),
         Check(code="authored", detect=_detect_authored, job="author", blocking=True),
         Check(code="typechecks", detect=_detect_typechecks, job="fix", blocking=True),
-        Check(code="conforms", detect=_detect_conforms, job="fix"),
         Check(code="runs", detect=_detect_runs, job="fix"),
         Check(code="renders", detect=_detect_renders, job="fix", when_clean=True),
     ]

@@ -306,10 +306,10 @@ def _review_done(run_dir, iface, fc, report: str) -> Done:
     return Done(report)
 
 
-# ── amend (rule on a conformance violation, then fix whichever side was wrong) ─
+# ── amend (rule on which side of a stalled fix is wrong, then fix that side) ───
 def amend_step(spec, run_dir, tools, fc, result) -> Outcome:
-    """A conformance violation is the code disagreeing with a contract the model wrote before it knew
-    what the code would look like, so the first turn RULES on which side is wrong. `contract` patches
+    """A stalled fix may be the code disagreeing with a contract the model wrote before it knew what
+    the code would look like, so the first turn RULES on which side is wrong. `contract` patches
     interfaces.json and the fix is over; `code` falls through to the read→edit subloop."""
     if fc.mode == "fix":
         return read_write_apply(spec, run_dir, tools, fc, result)

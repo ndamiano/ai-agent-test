@@ -26,9 +26,8 @@ def seed_interfaces(run_dir, iface=None):
     check it is actually about.
 
     The default declares exactly the functions the fixture's sources already export, with no state:
-    that satisfies `interfaced` (an empty architecture does not — it declares no game) while leaving
-    `conform` nothing to report. Before any source exists the fallback keeps the gate satisfied;
-    `authored` is blocking and fires first there, so `conform` never runs on it.
+    that satisfies `interfaced` (an empty architecture does not — it declares no game). Before any
+    source exists the fallback keeps the gate satisfied; `authored` is blocking and fires first there.
     """
     if iface is None:
         import re

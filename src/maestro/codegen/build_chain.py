@@ -64,7 +64,7 @@ def _amend_key(error: Error) -> str:
 
 # error.code -> fix shape (build_steps). Everything else is a read→edit subloop.
 _SHAPE_BY_CODE = {"interfaced": "interfaces", "reviewed": "review", "data": "data",
-                  "authored": "author", "conforms": "amend"}
+                  "authored": "author"}
 
 # The spec-vs-code audit: after the gates go green, sweep the frozen spec's claims against the
 # source and fix what isn't delivered — "done" means the spec is exhausted (or the caps are), never
@@ -358,8 +358,8 @@ def _start_fix(run_id: str, rs: RunState, cursor: BuildCursor, error: Error, sta
             # A code fix that made no progress may be unfixable in the code: the architecture was
             # declared before any of it existed, and a file authored faithfully to a wrong contract
             # is the file the gate blames. `amend` is the only shape that can rule the CONTRACT
-            # wrong; without this it fires on conformance alone, so every other gate's fix loop
-            # grinds against a declaration it is not allowed to contradict. One ruling per error
+            # wrong; without this every gate's fix loop grinds against a declaration it is not
+            # allowed to contradict. One ruling per error
             # identity — a `code` verdict falls straight through to the read→edit subloop, so a
             # wrong guess costs one turn.
             cursor.amend_tried.append(_amend_key(error))

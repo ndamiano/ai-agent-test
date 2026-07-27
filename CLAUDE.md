@@ -200,25 +200,17 @@ src/
                          set_invariants — re-emitting a 28KB architecture to change one entry blows
                          the token cap), the review's function-slicing, and the prompt renderings
                          (state table + signatures) authoring/fix turns read.
-      conform.py         the CONFORMANCE gate: does the code obey the contracts the MODEL declared?
-                         Every rule comes out of interfaces.json — no game knowledge, so a violation
-                         is only ever the model contradicting itself. OWNERSHIP (a function replaces
-                         a field it doesn't own) · LIFETIME (a run-lifetime field replaced, so
-                         progression is destroyed) · ELEMTYPE (a value out of a T[] pushed into a U[]
-                         — silent at runtime: the reader gets undefined and draws nothing) · MISSING
-                         (a declared function nothing implements) · UNEXPORTED (a declared function
-                         implemented WITHOUT `export`, so the file the architecture says calls it
-                         cannot import it — MISSING alone is satisfied by a local, and the gap only
-                         shows up as tsc blaming the CALLER for a name the callee owns). tsc sees
-                         none of the others: every one
-                         is type-correct code that wires the game wrong. Only REPLACEMENT of a
-                         CONTAINER counts — `x = x.filter(…)` is an update, and scalars are
-                         recomputed constantly. GENERATED files are skipped.
       module.py          CodegenModule = the GATE LIST (detection only): interfaced → reviewed →
-                         data → authored → contracted → typechecks → conforms → single_mover → runs →
-                         renders (blocking where noted; single_mover is a STATIC
-                         check — a scaffolded game re-driving the player from input double-moves it,
-                         and no runtime gate can see that). Authoring order keys entry-last on
+                         data → authored → typechecks → runs → renders (blocking where noted).
+                         A GATE MAY ONLY BLOCK ON A CERTAINTY: no files, does not compile, does not
+                         run. Nothing else. A check that is USUALLY right is worse than no check —
+                         when it is wrong it costs a hundred steps and says nothing about being
+                         unsure. `conforms` (code vs the model's own declaration) and `single_mover`
+                         (a static scan) are GONE: both blocked on a judgement, both fired on legal
+                         code, and conforms ping-ponged one ownership conflict through 27 contract
+                         rulings before killing a build at step 76. Anything past "it runs" is the
+                         HUMAN's call — a game that works but looks wrong is DONE, and the person
+                         playing it says what to change. Authoring order keys entry-last on
                          game.ts. Each error's FIX is owned by the DRIVER, routed by `Error.code` —
                          the checks carry no `run`. Also holds the shared prompt-building helpers +
                          tool schemas build_steps imports.
@@ -263,13 +255,12 @@ src/
                          unapplicable ops). Converges when a round reports nothing NEW — problem keys
                          dedupe across rounds, since each round re-reads the same architecture. The
                          round cap is the backstop for a reviewer that keeps inventing work.
-                         AMEND = a conformance violation is the code disagreeing with a contract
+                         AMEND = a stalled fix may be the code disagreeing with a contract
                          written before the code existed, so one turn RULES on which side is wrong:
                          `contract` patches interfaces.json and the fix is over, `code` falls through
-                         to the read→edit subloop. Without it `conforms` would be exactly the
-                         unsatisfiable gate the model can neither fix nor argue with. It is also
-                         where a STALLED read→edit fix is routed (once per error identity, after the
-                         deterministic pre-pass): any gate can be failing because a file was authored
+                         to the read→edit subloop. Reached ONLY from a stalled read→edit fix (once
+                         per conflict, after the deterministic pre-pass) — it is a fix strategy, not
+                         a gate: any gate can be failing because a file was authored
                          FAITHFULLY to a wrong declaration, and editing that file forever cannot fix
                          it — amend is the only shape allowed to say the contract is the bug.
                          DATA = the model designs per-game datasets ONCE (design_data.txt; EVERY

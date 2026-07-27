@@ -1,5 +1,5 @@
 """The interface contract: the artifact, the derived manifest, the review's patch ops and slicing,
-`conform.py`'s violations, and the review/amend step machines driven turn by turn."""
+and the review/amend step machines driven turn by turn."""
 
 import json
 import sys
@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from maestro.codegen import build_steps, conform, interfaces, scaffold
+from maestro.codegen import build_steps, interfaces, scaffold
 from maestro.codegen.scaffold import seed_scaffold
 from maestro.codegen.build_state import FixCursor, error_to_dict
 from maestro.modules.module import Error, ErrorType
@@ -454,78 +454,6 @@ def test_hooks_block_says_a_3d_position_has_three_coordinates(tmp_path):
     assert "Vec3 {x, y, z}" not in interfaces.hooks_block(tmp_path, {"mode": "2d"})
 
 
-# ── conform ───────────────────────────────────────────────────────────────────
-def test_replacing_a_field_you_do_not_own_is_ownership_and_lifetime():
-    src = "export function startFight(): void {\n  state.deck = [];\n}\n"
-    vs = conform.check(_iface(), {"combat.ts": src})
-    kinds = {v["kind"] for v in vs}
-    assert "OWNERSHIP" in kinds
-    assert "LIFETIME" in kinds        # deck is lifetime=run, so progress is destroyed
-    assert "startFight()" in next(v for v in vs if v["kind"] == "OWNERSHIP")["msg"]
-
-
-def test_owner_replacing_its_own_field_is_clean():
-    src = "export function initGame(): void {\n  state.deck = [];\n}\n"
-    assert [v for v in conform.check(_iface(), {"game.ts": src}) if v["kind"] != "MISSING"] == []
-
-
-def test_self_referencing_assignment_is_an_update_not_a_replacement():
-    """`state.hand = state.hand.filter(...)` preserves what accumulated."""
-    src = "export function drawCard(): void {\n  state.hand = state.hand.filter(c => c);\n}\n"
-    assert [v for v in conform.check(_iface(), {"combat.ts": src}) if v["kind"] != "MISSING"] == []
-
-
-def test_scalar_assignment_is_never_a_violation():
-    src = "export function startFight(): void {\n  state.hp = 100;\n}\n"
-    assert [v for v in conform.check(_iface(), {"combat.ts": src}) if v["kind"] != "MISSING"] == []
-
-
-def test_element_type_mismatch_between_declared_arrays():
-    src = ("export function drawCard(): void {\n"
-           "  const id = state.deck.pop();\n"
-           "  state.hand.push(id);\n"
-           "}\n")
-    vs = conform.check(_iface(), {"combat.ts": src})
-    assert any(v["kind"] == "ELEMTYPE" and "expect a Card" in v["msg"] for v in vs)
-
-
-def test_missing_reports_every_undeclared_implementation():
-    vs = conform.check(_iface(), {"game.ts": "export function initGame(): void {}\n"})
-    missing = {v["msg"] for v in vs if v["kind"] == "MISSING"}
-    assert len(missing) == 2 and any("startFight()" in m for m in missing)
-
-
-def test_a_declared_function_that_is_not_exported_is_unreachable():
-    """The architecture says who calls what across files; a local implementation satisfies MISSING
-    while nothing can actually import it."""
-    src = "export function startFight(): void {}\nfunction drawCard(): void {}\n"
-    vs = conform.check(_iface(), {"combat.ts": src})
-    assert [v["kind"] for v in vs if "drawCard" in v["msg"]] == ["UNEXPORTED"]
-    assert not any("startFight" in v["msg"] for v in vs)
-
-
-def test_a_separate_export_statement_counts_as_exported():
-    src = "function drawCard(): void {}\nexport { drawCard as draw2, startFight };\n"
-    assert not any(v["kind"] == "UNEXPORTED" for v in conform.check(_iface(), {"combat.ts": src}))
-
-
-def test_generated_files_are_never_checked():
-    src = "// GENERATED\nexport function tick(): void {\n  state.deck = [];\n}\n"
-    assert [v for v in conform.check(_iface(), {"main.ts": src}) if v["kind"] != "MISSING"] == []
-
-
-def test_arrow_function_bodies_are_checked():
-    src = "export const startFight = (): void => {\n  state.deck = [];\n}\n"
-    assert any(v["kind"] == "OWNERSHIP" for v in conform.check(_iface(), {"combat.ts": src}))
-
-
-def test_snake_case_declaration_matches_camel_case_source():
-    iface = {"state": [{"field": "draw_pile", "type": "CardId[]", "lifetime": "run",
-                        "owner": "initGame", "mutators": [], "readers": []}], "functions": []}
-    src = "export function startFight(): void {\n  state.drawPile = [];\n}\n"
-    assert any(v["kind"] == "OWNERSHIP" for v in conform.check(iface, {"combat.ts": src}))
-
-
 # ── review step machine ───────────────────────────────────────────────────────
 def _reply(obj):
     return {"choices": [{"message": {"content": "```json\n" + json.dumps(obj) + "\n```"}}]}
@@ -680,7 +608,7 @@ def test_interfaced_gate_is_unsatisfied_by_an_empty_architecture(tmp_path):
 def test_amend_verdict_contract_patches_the_architecture(tmp_path):
     _game_dir(tmp_path)
     interfaces.save(tmp_path, _iface())
-    fc = _fix("amend", "conforms", path="combat.ts")
+    fc = _fix("amend", "typechecks", path="combat.ts")
     assert isinstance(build_steps.amend_step(_SPEC, tmp_path, {}, fc, {}), build_steps.Infer)
     out = build_steps.amend_step(_SPEC, tmp_path, {}, fc, _reply({
         "verdict": "contract", "reason": "startFight is the real owner",
@@ -710,7 +638,7 @@ def test_amend_regenerates_the_state_type_after_patching(tmp_path):
 def test_amend_verdict_code_falls_through_to_the_read_edit_subloop(tmp_path):
     _game_dir(tmp_path)
     interfaces.save(tmp_path, _iface())
-    fc = _fix("amend", "conforms", path="combat.ts")
+    fc = _fix("amend", "typechecks", path="combat.ts")
     build_steps.amend_step(_SPEC, tmp_path, {}, fc, {})
     out = build_steps.amend_step(_SPEC, tmp_path, {}, fc,
                                  _reply({"verdict": "code", "reason": "the code broke it"}))
@@ -723,7 +651,7 @@ def test_amend_falls_through_when_the_contract_verdict_lands_no_patches(tmp_path
     nothing — the violation would still be there and the loop would re-enter forever."""
     _game_dir(tmp_path)
     interfaces.save(tmp_path, _iface())
-    fc = _fix("amend", "conforms", path="combat.ts")
+    fc = _fix("amend", "typechecks", path="combat.ts")
     build_steps.amend_step(_SPEC, tmp_path, {}, fc, {})
     out = build_steps.amend_step(_SPEC, tmp_path, {}, fc, _reply({
         "verdict": "contract",
@@ -766,7 +694,7 @@ def test_flattened_files_group_into_one_manifest_entry(tmp_path):
 
 def test_a_replace_state_missing_owner_is_rejected():
     """replace swaps the WHOLE entry, so an omitted key deletes a contract. One measured review
-    dropped `owner` from every field, silently disarming conform's ownership + lifetime rules."""
+    dropped `owner` from every field, so the generated state.ts documented none."""
     iface = {"state": [{"field": "score", "type": "number", "lifetime": "run", "owner": "init",
                         "mutators": ["addScore"], "readers": ["hud"]}], "functions": []}
     errs = interfaces.apply_patches(iface, [

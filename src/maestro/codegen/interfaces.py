@@ -4,8 +4,8 @@
 and its ONE owner, every function with what it reads/writes/calls, and the whole-game invariants.
 The frozen spec says what the game IS; this says how it is WIRED.
 
-`conform.py` checks the code against these declarations and nothing else, and `manifest.json` is
-derived from them. The review phase (`build_steps.review_step`) runs before any code exists: a
+`manifest.json` and the GENERATED `game/state.ts` are derived from these declarations, so tsc
+enforces them natively. The review phase (`build_steps.review_step`) runs before any code exists: a
 contradiction here — a field two functions both own — costs one turn to patch in JSON and a whole
 build to unpick once it has spread across a dozen modules.
 
@@ -95,8 +95,7 @@ _DOM_DRAW_TYPES = {
 # The state entries the scaffold's own code decides. state.ts is GENERATED from this table, so an
 # architecture that omits a field main.ts asserts describes a GameState the game cannot be written
 # against: the model widens GameState locally to compile, the declaration stops describing the real
-# state (conform can no longer see the field at all), and the next file authored against the
-# generated type dies on it.
+# state, and the next file authored against the generated type dies on it.
 _SCAFFOLD_STATE = {
     "player": {"type": "Entity", "lifetime": "run", "owner": "init",
                "meaning": "the avatar the control scaffold steers; init must spawn it",
@@ -408,8 +407,8 @@ def interfaces_block(iface: Optional[Dict]) -> str:
 # Re-emitting the whole architecture to change one entry is what blows the token cap on any large
 # game (a 38-function RPG is ~28KB of JSON), so the review edits by OP instead.
 # A state entry is only a contract while it carries these. A replace swaps the WHOLE entry, so an
-# omitted key is a silent deletion — one measured review dropped `owner` from all 9 fields, which
-# left conform's OWNERSHIP and LIFETIME rules with nothing to check for the rest of the build.
+# omitted key is a silent deletion — one measured review dropped `owner` from all 9 fields, so the
+# generated state.ts documented no owner for any of them for the rest of the build.
 _STATE_KEYS = ("field", "type", "lifetime", "owner")
 STATE_OPS = {"replace_state": "replace", "delete_state": "delete", "add_state": "add"}
 FUNC_OPS = {"replace_function": "replace", "delete_function": "delete", "add_function": "add"}

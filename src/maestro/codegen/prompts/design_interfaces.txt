@@ -35,6 +35,14 @@ Answer as JSON with exactly these keys:
 }
 ```
 
+EVERY value above is a JSON STRING. A `type` is TypeScript written INSIDE the quotes, however
+complex — an object or array type is still ONE quoted string, never a JSON object:
+
+    "type": "{ id: string; x: number; kind: 'roam' | 'coop' }[]"
+
+Write string-literal types with single quotes so the value never needs escaping. A `type` that opens
+with a bare `{` is not JSON and the whole architecture is discarded unread.
+
 LIFETIME means how long a field's contents must survive:
 - `run`     — the whole run, across levels and fights. Progression lives here.
 - `session` — one play session; reset when a new game starts.

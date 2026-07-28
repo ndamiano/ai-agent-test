@@ -14,6 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-request
     && rm -rf /var/lib/apt/lists/*
 
 COPY src/worker /opt/maestro/src/worker
+# handlers.llm translates the canonical request into its target's dialect, so wire.py ships with
+# it. Only these two files: the rest of llm_clients is control-plane code that would drag in
+# pydantic and the settings manager, which this image has no reason to carry.
+COPY src/llm_clients/__init__.py src/llm_clients/wire.py /opt/maestro/src/llm_clients/
 COPY scripts/worker-llm-entrypoint.sh /opt/maestro/entrypoint.sh
 RUN chmod +x /opt/maestro/entrypoint.sh
 

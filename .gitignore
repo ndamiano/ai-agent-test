@@ -57,7 +57,7 @@ runtime/games/*/
 runtime/games/cardbound_proof/*
 !runtime/games/cardbound_proof/main.ts
 
-# node deps (runtime toolchain: typescript, esbuild)
+# node deps (runtime/decimate.mjs: gltf-transform, meshoptimizer)
 node_modules/
 
 scratchpad/

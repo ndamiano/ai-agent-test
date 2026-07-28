@@ -9,20 +9,20 @@ COPY frontend/ ./
 RUN npm run build
 
 
-# Stage 2 — the codegen gate toolchain (tsc + esbuild + gltf tooling), resolved for linux in a
-# node stage so the platform-specific binaries (esbuild, native tsc) land correctly.
-FROM node:20-slim AS gate-toolchain
+# Stage 2 — the mesh toolchain (gltf-transform + meshoptimizer, for runtime/decimate.mjs),
+# resolved for linux in a node stage so the platform-specific native binaries land correctly.
+FROM node:20-slim AS mesh-toolchain
 WORKDIR /toolchain
 COPY runtime/package.json runtime/package-lock.json ./
 RUN npm ci
 
 
 # Stage 3 — CPU-only Python runtime. The container is the CONTROL PLANE: API + SPA + the job
-# queue + the node-based build gates (tsc/esbuild/headless sim as subprocesses). GPU inference
-# happens on worker agents that PULL jobs over /worker — nothing GPU-shaped lives here.
+# queue. GPU inference happens on worker agents that PULL jobs over /worker — nothing GPU-shaped
+# lives here. The one subprocess is node, decimating a finished TRELLIS GLB to game weight.
 FROM python:3.12-slim AS runtime
 
-# curl for the compose healthcheck; node for the gate subprocesses.
+# curl for the compose healthcheck; node for runtime/decimate.mjs.
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
@@ -38,11 +38,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Preserve the layout app.py's static-mount math depends on:
 # Path(__file__).resolve().parents[2] from /app/src/api/app.py == /app, so dist lands at
-# /app/frontend/dist, the kit at /app/runtime, and run.py inserts /app/src on sys.path.
+# /app/frontend/dist, runtime/ at /app/runtime, and run.py inserts /app/src on sys.path.
+# runtime/ carries the vendored three.js that every game folder is seeded from.
 COPY run.py ./
 COPY src/ ./src/
 COPY runtime/ ./runtime/
-COPY --from=gate-toolchain /toolchain/node_modules ./runtime/node_modules
+COPY --from=mesh-toolchain /toolchain/node_modules ./runtime/node_modules
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 
 # Durable state lives OUTSIDE the source tree on named volumes: /data (runs/ + private/ dbs) and

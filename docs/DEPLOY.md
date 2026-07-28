@@ -114,14 +114,19 @@ weights), so a pod boots without re-downloading 60 GB.
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v3 .
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v4 .
 docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v3 .
 docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v10 .
 docker push ndamiano100/maestro-worker:mesh-v10   # etc.
 ```
 
-Current tags: `llm-v3`, `image-v3`, `mesh-v10`. Bump the tag on every push — RunPod caches images
+Deployed tags: `llm-v3`, `image-v3`, `mesh-v10`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
+
+**`llm-v4` is built but not pushed.** The llm image at `llm-v3` predates wire translation moving
+into the worker, so it serves stale code; anything built from that Dockerfile before this fix
+`ModuleNotFoundError`s on `llm_clients` at the first job, because only `src/worker` was copied.
+Pushing it means bumping the llm queue's `template_id` to the new tag.
 
 The mesh image is the fussy one; its runtime deps are the home-verified TRELLIS stack exactly
 (see Dockerfile.worker-mesh): pinned transformers/timm/einops/kornia, the local TRELLIS.2 patch

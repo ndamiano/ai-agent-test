@@ -1,23 +1,20 @@
 // A "game" is one build run (runs/<run_id>/), surfaced read-only by /api/games.
 
-export type GameMode = '2d' | '3d'
-
 export interface Game {
     run_id: string
     title: string
-    mode: GameMode
+    mode: string
     frozen: boolean
     built: boolean
     building: boolean
     mtime: number
 }
 
-// The codegen spec (runs/<id>/spec.json) — `design` is freeform (genre/entities/controls/
-// mechanics/win-lose/...), rendered read-only. There is no engine/substrate/modules/params.
+// The brief (runs/<id>/spec.json) — `design` is freeform (genre/look/audio/scope/mechanics/
+// win-lose), rendered read-only.
 export interface Spec {
     request: string
     title: string
-    mode: GameMode
     design: Record<string, any>
     frozen: boolean
 }
@@ -27,7 +24,6 @@ export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 
 export interface GameDetail {
     run_id: string
     spec: Spec
-    mode: GameMode
     frozen: boolean
     built: boolean
     building: boolean
@@ -54,18 +50,86 @@ export interface DurableEventRow {
     created_at: number
 }
 
-// An asset the built game uses (GET /api/games/:id/assets). The bytes are fetched separately from
-// the authed blob route (never the public /play mount), so there is no url here — the gallery builds
-// an object URL from an authed fetch. `status`: ready (on disk), rendering (a skin batch is live),
-// or pending (planned, not yet rendered).
-export type AssetKind = 'sprite' | 'mesh'
+// An asset the game declared in its own assets.json (GET /api/games/:id/assets). The bytes are
+// fetched separately from the authed blob route (never the public /play mount), so there is no url
+// here — the gallery builds an object URL from an authed fetch. `status`: ready (on disk),
+// rendering (a batch is live), or pending (declared, not yet rendered).
+export type AssetKind = 'image' | 'mesh'
 export type AssetStatus = 'ready' | 'rendering' | 'pending'
 export interface GameAsset {
     id: string
     kind: AssetKind
     status: AssetStatus
-    w?: number
-    h?: number
+    prompt: string
+}
+
+// The prompt log (admin-only): every llm turn any game spent, reconstructed from the durable jobs
+// rows. The index carries sizes and the head of the system prompt; the bodies are tens of KB each,
+// so a turn's full text is fetched on click.
+export type PromptScope = 'all' | 'game' | 'platform'
+
+// A bucket is one game's turns; game_id null is the platform's own (chat + spec drafting, which
+// run before a game exists), so those turns are reachable too.
+export interface PromptBucket {
+    game_id: string | null
+    turns: number
+    first_at: number
+    last_at: number
+    exec_seconds: number
+    title: string | null
+    mode: string | null
+    status: string | null
+    user_id: string | null
+}
+
+export interface PromptTurn {
+    id: string
+    game_id: string | null
+    build_id: string | null
+    status: string
+    model: string | null
+    created_at: number
+    started_at: number | null
+    finished_at: number | null
+    exec_seconds: number | null
+    error: string | null
+    metadata: Record<string, any>
+    payload_chars: number | null
+    // A turn's system prompt is its prompt FILE rendered, so the hash groups a log into the handful
+    // of prompts that produced it — the file name itself is never recorded anywhere.
+    system_hash: string
+    system_head: string | null
+    system_chars: number
+    n_messages: number | null
+}
+
+export interface PromptMessage {
+    role: string
+    kind: 'text' | 'tool_call' | 'tool_result'
+    name: string | null
+    text: string
+}
+
+export interface PromptDetail {
+    id: string
+    game_id: string | null
+    build_id: string | null
+    status: string
+    model: string | null
+    created_at: number
+    exec_seconds: number | null
+    error: string | null
+    stage: string | null
+    reasoning: string | null
+    max_output_tokens: number | null
+    system: string
+    messages: PromptMessage[]
+    tools: { name: string; description: string; parameters: Record<string, any> }[]
+    response: {
+        text: string
+        tool_calls: { name: string; arguments: string }[]
+        usage: Record<string, any>
+    } | null
 }
 
 export interface SystemStatus {
@@ -137,7 +201,7 @@ export type WebSocketMessage = {
     steps?: number
     // spec_proposed / spec_frozen
     title?: string
-    mode?: GameMode
+    mode?: string
     // assets_done
     rendered?: number
     [key: string]: any

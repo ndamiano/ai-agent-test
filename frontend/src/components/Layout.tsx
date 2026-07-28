@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react'
 import ChatPanel from './ChatPanel'
 import GamesPanel from './GamesPanel'
 import AdminPanel from './AdminPanel'
+import PromptsPanel from './PromptsPanel'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import { useAuth } from '../contexts/AuthContext'
 
-type Tab = 'chat' | 'games' | 'admin'
+type Tab = 'chat' | 'games' | 'admin' | 'prompts'
 
 const Layout: React.FC = () => {
     const [tab, setTab] = useState<Tab>('chat')
@@ -16,7 +17,7 @@ const Layout: React.FC = () => {
 
     // The admin tab is operator-only. The server enforces it (require_admin → 403); this just hides
     // the entry point from ordinary users so it never shows.
-    const tabs: Tab[] = user?.role === 'admin' ? ['chat', 'games', 'admin'] : ['chat', 'games']
+    const tabs: Tab[] = user?.role === 'admin' ? ['chat', 'games', 'admin', 'prompts'] : ['chat', 'games']
 
     // F2 — chat→build continuity: a chat request that drafts a spec emits `spec_proposed` (carrying
     // the new run_id) over the WebSocket. Surface it: jump to the games view and focus the run, so
@@ -72,6 +73,7 @@ const Layout: React.FC = () => {
                 {tab === 'chat' && <ChatPanel />}
                 {tab === 'games' && <GamesPanel focusRunId={focusRun} />}
                 {tab === 'admin' && <AdminPanel />}
+                {tab === 'prompts' && <PromptsPanel />}
             </div>
         </div>
     )

@@ -9,6 +9,7 @@ Plain parameterized SQL, short-lived connections, WAL. No sqlite-isms in the DML
 Postgres port is DDL + driver work, not a rewrite.
 """
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -498,6 +499,69 @@ def batch_jobs(batch_id: str) -> List[Dict]:
         rows = conn.execute(
             "SELECT * FROM jobs WHERE batch_id = ? ORDER BY created_at", (batch_id,)).fetchall()
     return [_job_dict(r) for r in rows]
+
+
+# The prompt log's index columns. The payload/result bodies stay in the db — one build's payloads
+# run to megabytes — so a listing carries only sizes plus the head of the system prompt, and the
+# reader pulls one turn's full text at a time.
+_TURN_COLUMNS = (
+    "id, game_id, build_id, status, model, created_at, started_at, finished_at, "
+    "exec_seconds, error, metadata, length(payload) AS payload_chars, "
+    "json_extract(payload, '$.body.instructions') AS system, "
+    "json_array_length(json_extract(payload, '$.body.input')) AS n_messages"
+)
+
+_SYSTEM_HEAD_CHARS = 160
+
+
+def _llm_turns(where: str, params: tuple, limit: int) -> List[Dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            f"SELECT {_TURN_COLUMNS} FROM jobs WHERE queue = 'llm' AND {where} "
+            # Newest-first under the cap, reversed after: a log past the cap loses its OLDEST
+            # turns, never the ones the reader came for.
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?", params + (limit,)).fetchall()
+    out = []
+    for row in reversed(rows):
+        turn = dict(row)
+        # A turn's system prompt is its prompt FILE rendered — measured over a 661-turn build, 8
+        # distinct texts covered every turn. Hashing it is what lets the reader collapse a log into
+        # the handful of prompts that actually produced it; the file name itself is never recorded.
+        system = turn.pop("system") or ""
+        turn["system_hash"] = hashlib.sha1(system.encode("utf-8")).hexdigest()[:12]
+        turn["system_head"] = system[:_SYSTEM_HEAD_CHARS]
+        turn["system_chars"] = len(system)
+        turn["metadata"] = json.loads(turn["metadata"]) if turn["metadata"] else {}
+        out.append(turn)
+    return out
+
+
+def llm_turns_for_game(game_id: str, limit: int = 2000) -> List[Dict]:
+    """Every llm turn one game spent, oldest first."""
+    return _llm_turns("game_id = ?", (game_id,), limit)
+
+
+def llm_turns_platform(limit: int = 2000) -> List[Dict]:
+    """The turns no game owns: chat and spec drafting run before a game exists to bill, so they
+    enqueue outside a run_scope. Nothing else records them — without this they are unreadable."""
+    return _llm_turns("game_id IS NULL", (), limit)
+
+
+def llm_turns_all(limit: int = 2000) -> List[Dict]:
+    return _llm_turns("1 = 1", (), limit)
+
+
+def llm_turn_buckets() -> List[Dict]:
+    """One row per game that has spent llm turns (plus a game_id=None row for the platform's own),
+    newest activity first — the pick list for the prompt log."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT j.game_id AS game_id, COUNT(*) AS turns, MIN(j.created_at) AS first_at, "
+            "MAX(j.created_at) AS last_at, SUM(COALESCE(j.exec_seconds, 0)) AS exec_seconds, "
+            "g.title AS title, g.mode AS mode, g.status AS status, g.user_id AS user_id "
+            "FROM jobs j LEFT JOIN games g ON g.id = j.game_id "
+            "WHERE j.queue = 'llm' GROUP BY j.game_id ORDER BY last_at DESC").fetchall()
+    return [dict(r) for r in rows]
 
 
 # ── reaper sweeps ─────────────────────────────────────────────────────────────

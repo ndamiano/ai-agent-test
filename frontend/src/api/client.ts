@@ -1,4 +1,4 @@
-import type { AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, SystemStatus } from '../types'
+import type { AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn, SystemStatus } from '../types'
 import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
@@ -185,8 +185,8 @@ export const api = {
     // event-id cursor (0 = from the start); the rows carry `id` for incremental follow-up.
     getGameEvents: (runId: string, after = 0) =>
         request<DurableEventRow[]>(`/games/${runId}/events?after=${after}`),
-    // The built game's asset manifest with per-asset render status. Authed + ownership-checked;
-    // returns [] before the game is skinned.
+    // The game's own asset manifest with per-asset render status. Authed + ownership-checked;
+    // returns [] before the game declares any art.
     getGameAssets: (runId: string) =>
         request<GameAsset[]>(`/games/${runId}/assets`),
     // Fetch one asset's bytes through the authed blob route and hand back an object URL — <img>/
@@ -213,10 +213,10 @@ export const api = {
     // Free-text patch of a built game — re-runs the build loop from a human note.
     fixGame: (runId: string, note: string) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/fix`, { method: 'POST', body: JSON.stringify({ note }) }),
-    // Skin the shapes: plan + render assets for a built game (additive, re-gates after).
-    skinAssets: (runId: string) =>
+    // Render the art the game declared in its assets.json (additive; missing art renders as shapes).
+    renderAssets: (runId: string) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/assets`, { method: 'POST' }),
-    // Re-render ONE asset with a new prompt — a single-asset swap, no whole-game re-skin. The
+    // Re-render ONE asset from a change note — a single-asset swap, no whole-game re-render. The
     // batch's assets_done fires on completion, which is what refetches the gallery.
     regenerateAsset: (runId: string, assetId: string, prompt: string, mode: 'full' | 'img2img' = 'full') =>
         request<{ status: string; run_id: string; asset_id: string }>(
@@ -229,6 +229,16 @@ export const api = {
     // Admin (role-gated server-side; a 403 means not an admin)
     getAdminQueues: () =>
         request<AdminQueues>('/admin/queues'),
+
+    // The prompt log — every llm turn any game spent. The index is cheap; one turn's full text
+    // (system + messages + tools + reply) is its own fetch.
+    getPromptBuckets: () =>
+        request<PromptBucket[]>('/admin/prompts/games'),
+    getPromptTurns: (scope: PromptScope, gameId?: string | null) =>
+        request<PromptTurn[]>(`/admin/prompts/turns?scope=${scope}` +
+            (scope === 'game' && gameId ? `&game_id=${encodeURIComponent(gameId)}` : '')),
+    getPromptTurn: (jobId: string) =>
+        request<PromptDetail>(`/admin/prompts/turns/${jobId}`),
 
     // Chat
     streamChatMessage,

@@ -1,16 +1,18 @@
-"""The spec-vs-code AUDIT: after the gates go green, the frozen spec's claims are judged one at a
-time against the game's source, so a build ends on spec-exhausted rather than errors-zero — the
-gates prove a game RUNS, not that its declared mechanics exist.
+"""The brief-vs-code AUDIT: once the build says it is finished, the frozen brief's claims are judged
+one at a time against the game's source.
 
-Claims are enumerated MECHANICALLY from the spec's fields, never chosen by the model. Each is judged
-by a read→verdict subloop: the judge reads the files it needs and must cite the traced path, which is
-what grounds the verdict — judging pasted sources goes wrong in both directions. Each failed claim
-becomes a human-note-shaped fix on the fix_from_note lane; the driver re-gates, re-audits, and
-finalizes on a clean sweep or the round/step caps.
+It RUNS ONCE and REPORTS. It never drives a fix — an undelivered claim is a line in the report for
+the human, because a build that edits one file until a judge is satisfied does not converge on a
+game.
 
-FAIL-OPEN is law: a claim with no verdict inside its turn cap is skipped (never a finding), an
-exhausted budget finalizes ok. A game that never finishes is worse than an incomplete one that
-ships.
+Claims are enumerated MECHANICALLY from the brief's own fields, never chosen by the model. Each is
+judged by a read→verdict subloop: the judge reads the files it needs and must cite the traced path,
+which is what grounds the verdict — judging pasted sources was measured wrong in both directions on
+the same code.
+
+FAIL-OPEN is law: a claim with no verdict inside its turn cap is SKIPPED (never a finding), and every
+failure path ends in a finished build. A game that never finishes is worse than an incomplete one
+that ships.
 """
 
 from __future__ import annotations
@@ -20,26 +22,23 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from maestro.codegen.gates import game_files
-from maestro.codegen.module import _PROMPTS, _READ_SCHEMA, _design_block
+from llm_clients.message_builder import MessageBuilder
+from maestro.codegen.build_steps import READ_SCHEMA, Done, Infer
+from maestro.codegen.staging import game_files
+from maestro.services import parse_args
 
-_AUDIT_MAX_TOKENS = 3000
-MAX_FINDINGS_PER_ROUND = 5
+_PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+_MAX_TOKENS = 3000
 # Runaway backstop — the judge commits via `verdict` when it has traced enough.
 CLAIM_TURN_CAP = 20
 
 _FAIL_STATUSES = ("broken", "stub", "missing")
 _STATUSES = ("delivered",) + _FAIL_STATUSES + ("blocked",)
 
-
-# Movement is scaffold-owned law — an audit verdict on it re-judges the pipeline's own wiring.
-# Matched on the description: the spec may put movement on a key the scheme doesn't bind, and
-# it is still not the game code's claim to deliver.
-_MOVEMENT_CLAIM = re.compile(r"\b(move|walk|steer|drive|turn|jump)\b", re.I)
-
 _ENDING_VOCAB = re.compile(r"\b(wins?|winning|loses?|losing|lost|game\s+over|victory|"
                            r"defeat(?:s|ed|ing)?)\b", re.I)
-# "condition" is spec boilerplate ("Lose condition: …"), not something the game delivers.
+# "condition" is brief boilerplate ("Lose condition: …"), not something the game delivers.
 _STOPWORDS = frozenset("""a an the and or but if of to in on at by for with from into onto over
 under as is are was were be been being it its this that these those they them their you your
 player players game games when while until once each every all any some no not do does did can
@@ -74,38 +73,18 @@ def _restates_ending(mechanic: str, endings: List[set]) -> bool:
 
 
 def claims_of(spec: dict) -> List[str]:
-    """The claim list, enumerated mechanically from the frozen spec's own fields. The spec is the
-    contract — a shallow spec yields a short list and that's as-designed; the audit never invents
-    requirements the spec didn't make. `render` is a look description, so whether code "delivered"
-    it is a taste verdict; it stays a spec field for the data/asset stage but is never a claim."""
+    """The claim list, enumerated mechanically from the frozen brief. A shallow brief yields a short
+    list and that is as-designed — the audit never invents requirements the brief didn't make.
+    `look` and `audio` are style directions, so whether code "delivered" one is a taste verdict."""
     design = (spec or {}).get("design") or {}
-    claims = [f"Control '{k}': {v}" for k, v in (design.get("controls") or {}).items()
-              if isinstance(v, str) and not _MOVEMENT_CLAIM.search(v)]
     endings = [_significant(design[f]) for f in ("win", "lose")
                if isinstance(design.get(f), str) and design[f]]
-    claims += [m for m in (design.get("mechanics") or [])
-               if isinstance(m, str) and not _restates_ending(m, endings)]
+    claims = [m for m in (design.get("mechanics") or [])
+              if isinstance(m, str) and m.strip() and not _restates_ending(m, endings)]
     for field, label in (("win", "WIN"), ("lose", "LOSE")):
         if design.get(field):
             claims.append(f"{label}: {design[field]}")
     return claims
-
-
-def claim_prompt(spec: dict, run_dir, claim: str, anchored: bool) -> (str, str):
-    """(system, first user message) for one claim's read→verdict subloop. No sources ride along —
-    the judge reads its way in, which is what grounds the verdict."""
-    system = (_PROMPTS / "audit_claim.txt").read_text(encoding="utf-8")
-    filelist = "\n".join(f"- {name} ({len(src.splitlines())} lines)"
-                         for name, src in game_files(run_dir).items()
-                         if not name.endswith(".d.ts"))
-    parts = [f"# CLAIM\n{claim}"]
-    if anchored:
-        parts.append("# ANCHOR — a previous audit verified this claim delivered against this same "
-                     "code. Judge it failed ONLY if you can cite a specific regression (changed "
-                     "lines that broke it); a new opinion is not a regression.")
-    parts.append(_design_block(spec))
-    parts.append(f"# FILES (read what you need)\n{filelist}")
-    return system, "\n\n".join(parts)
 
 
 VERDICT_SCHEMA = {"type": "function", "function": {
@@ -121,11 +100,6 @@ VERDICT_SCHEMA = {"type": "function", "function": {
                      "description": "empty when delivered, else one imperative sentence naming the "
                                     "smallest change that delivers the claim"},
     }, "required": ["status", "evidence"]}}}
-
-
-def read_schemas(nreads: int) -> List[dict]:
-    """Both tools stay offered: the judge reads until it decides it can commit."""
-    return [_READ_SCHEMA, VERDICT_SCHEMA]
 
 
 def parse_verdict(text: str) -> Optional[Dict]:
@@ -155,20 +129,107 @@ def is_failed(entry: Dict) -> bool:
 
 
 def log_verdicts(run_dir, verdicts: List[Dict]) -> None:
-    """Append the round's per-claim verdicts to the run's audit_verdicts.jsonl — a sweep's judgment
-    must be recoverable after the cursor moves on."""
+    """Append the round's per-claim verdicts to the run's audit_verdicts.jsonl — "which claim
+    failed?" must never be unanswerable after the cursor moves on."""
     with (Path(run_dir) / "audit_verdicts.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps({"verdicts": verdicts}, ensure_ascii=False) + "\n")
 
 
-def note_for(claim: str, entry: Dict) -> str:
-    parts = [f"AUDIT — the game passes the functional gates, but this frozen-spec promise is not "
-             f"delivered to the player:\n{claim}"]
-    if entry.get("evidence"):
-        parts.append(f"What the code does now: {entry['evidence']}")
-    if entry.get("fix_note"):
-        parts.append(f"Fix: {entry['fix_note']}")
-    parts.append("Deliver the spec's promise with the smallest change that makes it real at "
-                 "runtime. Never remove or stub a working mechanic to satisfy the letter of the "
-                 "claim.")
-    return "\n".join(parts)
+# ── the turn ──────────────────────────────────────────────────────────────────
+def step(spec, rs, cursor, tools, result):
+    claims = claims_of(spec)
+    ac = cursor.audit_cursor()
+    if not ac.history:
+        out = _claim_start(spec, rs.run_dir, claims, ac)
+        cursor.set_audit(ac)
+        return out
+
+    message = (result.get("choices") or [{}])[0].get("message", {}) or {}
+    content = message.get("content") or ""
+    if len(content) > 2000:
+        content = "[…truncated…]\n" + content[-2000:]
+    calls = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
+    ac.turn += 1
+
+    # A model that answers with the JSON in content instead still lands via parse_verdict below.
+    committed = next((tc for tc in calls if tc["function"]["name"] == "verdict"), None)
+    if committed:
+        content = json.dumps(parse_args(committed["function"].get("arguments")))
+
+    reads = [tc for tc in calls if tc["function"]["name"] == "read_file"]
+    if reads and not committed and ac.turn < CLAIM_TURN_CAP:
+        ac.history.append({"role": "assistant", "content": content, "tool_calls": reads})
+        for tc in reads:
+            args = parse_args(tc["function"].get("arguments"))
+            res = tools["read_file"](path=args.get("path") or args.get("file"))
+            ac.nreads += 1
+            ac.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                               "content": json.dumps(res)})
+        out = _claim_infer(claims, ac)
+        cursor.set_audit(ac)
+        return out
+
+    verdict = parse_verdict(content)
+    if verdict is None and ac.turn < CLAIM_TURN_CAP:
+        ac.history.append({"role": "assistant", "content": content})
+        ac.history.append({"role": "user",
+                           "content": "Call read_file to trace further, or call verdict to commit."})
+        out = _claim_infer(claims, ac)
+        cursor.set_audit(ac)
+        return out
+
+    claim = claims[ac.claim_idx]
+    if verdict is None:
+        ac.verdicts.append({"claim": claim, "status": "skipped", "evidence": ""})
+    else:
+        status = str(verdict.get("status", "")).lower()
+        ac.verdicts.append({"claim": claim, "status": status,
+                            "evidence": verdict.get("evidence", "")})
+        if status == "delivered":
+            ac.delivered.append(claim)
+        elif is_failed(verdict):
+            ac.findings.append({"claim": claim, "note": verdict.get("fix_note", ""),
+                                "evidence": verdict.get("evidence", "")})
+    ac.claim_idx += 1
+    if ac.claim_idx < len(claims):
+        out = _claim_start(spec, rs.run_dir, claims, ac)
+        cursor.set_audit(ac)
+        return out
+
+    log_verdicts(rs.run_dir, ac.verdicts)
+    cursor.audit_done = True
+    cursor.audit_delivered = list(ac.delivered)
+    cursor.phase = "build"
+    cursor.set_audit(None)
+    skipped = sum(1 for v in ac.verdicts if v["status"] == "skipped")
+    report = f"audit: {len(ac.delivered)}/{len(claims)} delivered"
+    if ac.findings:
+        report += (f", {len(ac.findings)} not delivered — see audit_verdicts.jsonl: "
+                   + "; ".join(f["claim"][:60] for f in ac.findings[:3]))
+    if skipped:
+        report += f", {skipped} skipped"
+    return Done(report)
+
+
+def _claim_start(spec, run_dir, claims, ac) -> Infer:
+    claim = claims[ac.claim_idx]
+    ac.system = (_PROMPTS / "audit_claim.txt").read_text(encoding="utf-8")
+    filelist = "\n".join(f"- {name} ({len(src.splitlines())} lines)"
+                         for name, src in game_files(run_dir).items())
+    parts = [f"# CLAIM\n{claim}"]
+    if claim in ac.anchors:
+        parts.append("# ANCHOR — a previous audit verified this claim delivered against this same "
+                     "code. Judge it failed ONLY if you can cite a specific regression (changed "
+                     "lines that broke it); a new opinion is not a regression.")
+    parts.append(f"# THE BRIEF\n{json.dumps((spec or {}).get('design') or {}, indent=1, ensure_ascii=False)}")
+    parts.append(f"# FILES (read what you need)\n{filelist}")
+    ac.history = [{"role": "user", "content": "\n\n".join(parts)}]
+    ac.turn = 0
+    ac.nreads = 0
+    return _claim_infer(claims, ac)
+
+
+def _claim_infer(claims, ac) -> Infer:
+    msgs = MessageBuilder(ac.system).extend(ac.history).build()
+    return Infer(msgs, [READ_SCHEMA, VERDICT_SCHEMA], _MAX_TOKENS,
+                 report=f"audit claim {ac.claim_idx + 1}/{len(claims)} (turn {ac.turn + 1})")

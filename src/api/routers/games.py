@@ -25,8 +25,8 @@ from auth.store import User
 from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
-from maestro.codegen.gates import RUNTIME_DIR, game_dir
-from maestro.codegen.reskin import AlreadySkinning, add_assets, regenerate_asset
+from maestro.codegen.assets import AlreadyRendering, add_assets, read_manifest, regenerate_asset
+from maestro.codegen.staging import game_dir, is_staged
 from maestro.codegen.run import freeze_spec
 from maestro.run_control import get as get_control
 from maestro.state import RunState
@@ -60,7 +60,7 @@ _active: set = set()
 
 
 def _built(run_id: str) -> bool:
-    return (RUNTIME_DIR / "games" / run_id / "main.js").exists()
+    return is_staged(run_id)
 
 
 def _require_state(run_id: str, user: User):
@@ -123,7 +123,6 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     return {
         "run_id": run_id,
         "spec": spec_data,
-        "mode": spec_data.get("mode", ""),
         "frozen": bool(spec_data.get("frozen")),
         "built": built,
         "building": active is not None,
@@ -131,7 +130,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "queue_position": None,   # builds no longer queue behind each other; kept for the client shape
         "auto_pause": ctrl.auto_pause if ctrl else False,
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
-        "play_url": f"/play/index.html?game={run_id}" if built else None,
+        "play_url": f"/play/games/{run_id}/index.html" if built else None,
         "credits_spent": row.get("credits_spent", 0),
         # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
         # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
@@ -147,36 +146,28 @@ def _budget_pct(row: Dict, run_id: str) -> Optional[float]:
 
 
 _ASSET_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
-# (kind, manifest key, file extension, media type)
-_ASSET_KINDS = (
-    ("sprite", "sprites", "png", "image/png"),
-    ("mesh", "meshes", "glb", "model/gltf-binary"),
-)
+_MEDIA = {"png": "image/png", "glb": "model/gltf-binary"}
+
+
+def _ext(entry: Dict) -> str:
+    return "glb" if entry.get("kind") == "mesh" else "png"
 
 
 @router.get("/{run_id}/assets", response_model=List[Dict])
 async def game_assets(run_id: str, user: User = Depends(get_current_user)):
-    """The built game's asset manifest with per-asset render status. Empty until the game is
-    skinned. `status`: ready (the file is on disk), rendering (a skin batch is in flight), or
-    pending (planned but not yet rendered). The bytes come from the sibling blob route, so the
-    frontend never touches the public /play mount."""
+    """The game's own asset manifest with per-asset render status. Empty until the game declares
+    one. `status`: ready (the file is on disk), rendering (a batch is in flight), or pending. The
+    bytes come from the sibling blob route, so the frontend never touches the public /play mount."""
     state = _require_state(run_id, user)
-    manifest_path = game_dir(state.run_dir) / "assets.json"
-    if not manifest_path.exists():
-        return []
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assets_dir = game_dir(state.run_dir) / "assets"
     rendering = db_store.has_active_batch(run_id)
     out: List[Dict] = []
-    for kind, key, ext, _media in _ASSET_KINDS:
-        for entry in manifest.get(key, []):
-            aid = entry["id"]
-            ready = (assets_dir / f"{aid}.{ext}").exists()
-            out.append({
-                "id": aid, "kind": kind,
-                "status": "ready" if ready else ("rendering" if rendering else "pending"),
-                "w": entry.get("w"), "h": entry.get("h"),
-            })
+    for entry in read_manifest(state.run_dir):
+        aid = entry["id"]
+        ready = (assets_dir / f"{aid}.{_ext(entry)}").exists()
+        out.append({"id": aid, "kind": entry.get("kind") or "image",
+                    "status": "ready" if ready else ("rendering" if rendering else "pending"),
+                    "prompt": entry["prompt"]})
     return out
 
 
@@ -188,7 +179,7 @@ async def game_asset_blob(run_id: str, asset_id: str, user: User = Depends(get_c
     if not _ASSET_ID.match(asset_id):
         raise HTTPException(status_code=400, detail="bad asset id")
     assets_dir = game_dir(state.run_dir) / "assets"
-    for _kind, _key, ext, media in _ASSET_KINDS:
+    for ext, media in _MEDIA.items():
         path = assets_dir / f"{asset_id}.{ext}"
         if path.exists():
             return FileResponse(path, media_type=media)
@@ -198,24 +189,19 @@ async def game_asset_blob(run_id: str, asset_id: str, user: User = Depends(get_c
 @router.post("/{run_id}/assets/{asset_id}/regenerate", response_model=Dict)
 async def regenerate_game_asset(run_id: str, asset_id: str, body: RegenerateBody,
                                 user: User = Depends(get_current_user)):
-    """Re-render ONE asset of a built game with a new prompt, without re-skinning the whole game.
-    Enqueues a single image job that saves the new png/glb and re-stages it through the same `skin`
-    finalize a full re-skin uses — so assets_done fires and the gallery refetches. A build row of
-    kind 'assets' tracks it (the finalize closes it out)."""
+    """Re-render ONE asset with a change note, without re-rendering the whole game. Enqueues a
+    single image job through the same finalize a full render uses, so assets_done fires and the
+    gallery refetches."""
     _require_state(run_id, user)
     if not _ASSET_ID.match(asset_id):
         raise HTTPException(status_code=400, detail="bad asset id")
-    prompt = body.prompt.strip()
-    if not prompt:
+    note = body.prompt.strip()
+    if not note:
         raise HTTPException(status_code=400, detail="a prompt is required")
     _require_compute(run_id)
-    build_id = db_store.create_build(run_id, kind="assets")
-    db_store.build_started(build_id)
-    batch_id = await asyncio.to_thread(regenerate_asset, run_id, asset_id, prompt, body.mode,
-                                       build_id)
-    if batch_id is None:
-        db_store.build_finished(build_id, "failed")
-        raise HTTPException(status_code=400, detail="prompt blocked by the safety filter")
+    out = await asyncio.to_thread(regenerate_asset, run_id, asset_id, note, body.mode)
+    if not out["ok"]:
+        raise HTTPException(status_code=400, detail=out["error"])
     return {"status": "regenerating", "run_id": run_id, "asset_id": asset_id}
 
 
@@ -323,8 +309,8 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
 
 @router.post("/{run_id}/assets", response_model=Dict)
 async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
-    """Skin the built game's placeholder shapes with generated sprites/meshes, on a background
-    thread. Emits assets_started / assets_done over the websocket."""
+    """Render the art the game declared in assets.json, on a background thread. Emits
+    assets_started / assets_done over the websocket."""
     _require_state(run_id, user)
     _require_compute(run_id)
     key = f"assets:{run_id}"
@@ -332,10 +318,10 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     # half, the batch query covers the queued half. Without the second, a double-click enqueues a
     # second full set of image/mesh jobs and pays for them.
     if db_store.has_active_batch(run_id):
-        raise HTTPException(status_code=409, detail="assets are already being skinned for this run")
+        raise HTTPException(status_code=409, detail="assets are already rendering for this run")
     with _active_lock:
         if key in _active:
-            raise HTTPException(status_code=409, detail="assets are already being skinned for this run")
+            raise HTTPException(status_code=409, detail="assets are already rendering for this run")
         _active.add(key)
 
     def _run(build_id: str):
@@ -345,12 +331,12 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             # Returns once the asset jobs are ENQUEUED. assets_done and build_finished are the
             # batch finalize's job, since the render outlives this thread by minutes.
             add_assets(run_id, build_id=build_id)
-        except AlreadySkinning:
-            # Lost the race to the build's own auto-skin — that skin owns the endgame.
+        except AlreadyRendering:
+            # Lost the race to the build's own asset lane — that batch owns the endgame.
             db_store.build_finished(build_id, "failed")
         except Exception:
-            logger.exception("asset skin failed for %s", run_id)
-            _emit("assets_done", run_id, ok=False, mode=None, rendered=[])
+            logger.exception("asset render failed for %s", run_id)
+            _emit("assets_done", run_id, ok=False, rendered=[])
             db_store.build_finished(build_id, "failed")
         finally:
             with _active_lock:

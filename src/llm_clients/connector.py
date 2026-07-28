@@ -1,9 +1,8 @@
-"""LLM inference: chat-shaped calls in, Responses-API payloads out, executed by a worker agent.
+"""LLM inference: chat-shaped calls in, chat-shaped results out, executed by a worker agent.
 
-Callers speak the OpenAI chat shape (messages/tools, {choices, usage} back). The wire format is
-the Responses API (/v1/responses) — the one local endpoint that honors reasoning.effort. The
-payload lands as a jobs row and a worker forwards it verbatim to ITS local server, so model
-routing lives with the GPU, not here.
+Callers speak the OpenAI chat shape and so does the queue: the payload this builds is CANONICAL, and
+the worker translates it for whatever its own target serves (see `llm_clients/wire.py`). Nothing here
+knows or cares which engine is behind a queue — adding one is a worker change.
 """
 
 import logging
@@ -14,6 +13,7 @@ from typing import Optional
 from config.settings_manager import settings_manager
 from db import queue_client
 from llm_clients.rate_limiter import get_llm_rate_limiter
+from llm_clients.wire import REASONING_EFFORTS as _REASONING_EFFORTS
 
 logger = logging.getLogger(__name__)
 
@@ -25,90 +25,18 @@ def _log_call(model: str, n_msgs: int, has_tools: bool, dt: float, result) -> No
                 model, n_msgs, has_tools, dt, usage.get("completion_tokens", "?"))
 
 
-# Valid `reasoning.effort` values for the Responses API (per LM Studio's enum). "off" is NOT
-# valid — it errors; use "none" to disable reasoning entirely.
-_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
-# LM Studio's NATIVE chat API uses on/off; people reach for those here too. Map them to the
-# Responses effort enum so a setting of "on"/"off" works instead of being silently dropped
-# (a dropped value = no reasoning field = the model reasons unbounded again).
+# on/off are what people reach for; map them onto the effort enum so a setting of "off" disables
+# reasoning instead of being silently dropped (dropped = no field = unbounded reasoning again).
 _REASONING_ALIASES = {"on": "high", "off": "none"}
 
 # Sentinel: caller did not pass a per-call reasoning override, so fall back to self.reasoning.
-# Distinct from None/"none" which are explicit values ("none" = reasoning off).
 _REASONING_UNSET = object()
 
 
 def _resolve_effort(value):
-    """Map a reasoning value (incl. on/off aliases) to the Responses effort enum, or None."""
     if isinstance(value, str):
         value = _REASONING_ALIASES.get(value, value)
     return value
-
-
-def _chat_tools_to_responses(tools):
-    """OpenAI chat tool schema -> Responses tool schema (flat: no `function` nesting)."""
-    out = []
-    for t in tools or []:
-        fn = t.get("function", t)
-        out.append({"type": "function", "name": fn.get("name"),
-                    "description": fn.get("description", ""),
-                    "parameters": fn.get("parameters", {})})
-    return out
-
-
-def _chat_messages_to_responses_input(messages):
-    """OpenAI chat messages[] -> (instructions, Responses input[]).
-
-    system -> instructions; assistant tool_calls -> function_call items; role:tool results ->
-    function_call_output items; plain text -> role+content items. Stateless: the whole history
-    is re-sent each call, matching how the executor rebuilds context (no previous_response_id).
-    """
-    instructions = None
-    items = []
-    for m in messages:
-        role = m.get("role")
-        content = m.get("content")
-        if role == "system":
-            instructions = f"{instructions}\n\n{content}" if instructions else (content or "")
-        elif role == "tool":
-            items.append({"type": "function_call_output",
-                          "call_id": m.get("tool_call_id"), "output": content or ""})
-        elif role == "assistant":
-            if content:
-                items.append({"type": "message", "role": "assistant",
-                              "content": [{"type": "output_text", "text": content}]})
-            for tc in m.get("tool_calls") or []:
-                fn = tc.get("function", {})
-                items.append({"type": "function_call", "call_id": tc.get("id"),
-                              "name": fn.get("name"), "arguments": fn.get("arguments", "")})
-        else:  # user / other
-            items.append({"type": "message", "role": role or "user", "content": content or ""})
-    return instructions, items
-
-
-def _responses_to_chat(resp):
-    """Responses output[] -> OpenAI chat {choices:[{message}], usage} so callers are unchanged."""
-    text_parts, tool_calls = [], []
-    for o in resp.get("output", []) or []:
-        t = o.get("type")
-        if t == "message":
-            for c in o.get("content", []) or []:
-                if c.get("type") == "output_text":
-                    text_parts.append(c.get("text", ""))
-        elif t == "function_call":
-            tool_calls.append({"id": o.get("call_id"), "type": "function",
-                               "function": {"name": o.get("name"),
-                                            "arguments": o.get("arguments", "")}})
-    msg = {"role": "assistant", "content": "".join(text_parts) or None}
-    if tool_calls:
-        msg["tool_calls"] = tool_calls
-    u = resp.get("usage", {}) or {}
-    od = u.get("output_tokens_details", {}) or {}
-    usage = {"prompt_tokens": u.get("input_tokens"),
-             "completion_tokens": u.get("output_tokens"),
-             "total_tokens": u.get("total_tokens"),
-             "completion_tokens_details": {"reasoning_tokens": od.get("reasoning_tokens")}}
-    return {"choices": [{"message": msg}], "usage": usage, "id": resp.get("id")}
 
 
 class LLMConnector:
@@ -142,25 +70,26 @@ class LLMConnector:
             logger.warning(error_msg)
             return {"error": error_msg}
 
-        payload = self._responses_payload(messages, tools, response_format, max_tokens,
-                                          reasoning=reasoning, model=model)
+        payload = self._payload(messages, tools, response_format, max_tokens,
+                                reasoning=reasoning, model=model)
         t0 = time.perf_counter()
         job = self._run_job(payload)
         if job["status"] == "done":
-            result = _responses_to_chat(job["result"])
+            result = self.to_chat(job["result"])
             _log_call(payload["model"], len(messages), bool(tools),
                       time.perf_counter() - t0, result)
             return result
-        # Worker reported an upstream error. A server that rejects text.format degrades to
-        # free-form rather than failing the whole call.
+        # Worker reported an upstream error. A server that rejects the structured-output field
+        # degrades to free-form rather than failing the whole call.
         error = job.get("error") or "job lost"
         if response_format and "format" in error:
-            logger.warning("Endpoint does not support text.format, retrying without it")
+            logger.warning("Endpoint does not support structured output, retrying without it")
             self._response_format_supported = False
             payload.pop("text", None)
+            payload.pop("response_format", None)
             job = self._run_job(payload)
             if job["status"] == "done":
-                return _responses_to_chat(job["result"])
+                return self.to_chat(job["result"])
             error = job.get("error") or "job lost"
         logger.error("LLM call (%s) failed: %s", self.model_name, error)
         return {"error": error}
@@ -181,60 +110,47 @@ class LLMConnector:
         yield {"usage": result.get("usage", {}),
                "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
 
-    def _responses_payload(self, messages: list, tools: list, response_format: Optional[dict],
-                           max_tokens: Optional[int], reasoning=_REASONING_UNSET,
-                           model: str = None) -> dict:
-        """Build the Responses-API request body from chat-shaped inputs."""
-        instructions, input_items = _chat_messages_to_responses_input(messages)
+    def _payload(self, messages: list, tools: list, response_format, max_tokens,
+                 reasoning=_REASONING_UNSET, model: str = None) -> dict:
+        """The CANONICAL request body — OpenAI chat shape, plus `reasoning` as a plain effort
+        string. The worker turns this into whatever its target serves."""
         payload = {
             "model": model or self.model_name,
-            "input": input_items,
+            "messages": messages,
             "temperature": 0.7,
-            "max_output_tokens": max_tokens if max_tokens is not None else self.max_tokens,
+            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
             "frequency_penalty": self.frequency_penalty,
-            "stream": False,
         }
-        if instructions:
-            payload["instructions"] = instructions
-        # Per-call override (the executor escalates effort when a target stalls) falls back to
-        # the connector's configured effort when unset.
+        # Per-call override falls back to the connector's configured effort when unset.
         effort = self.reasoning if reasoning is _REASONING_UNSET else _resolve_effort(reasoning)
-        if effort in _REASONING_EFFORTS:
-            payload["reasoning"] = {"effort": effort}
-        if effort == "none":
-            # llama.cpp ignores reasoning.effort "none" — the model thinks anyway and can burn
-            # the whole output budget before any text. The chat-template switch actually
-            # disables it (verified: Qwen3.6 output drops from 2500 truncated to instant text);
-            # servers that don't know the field ignore it.
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if effort:
+            payload["reasoning"] = effort
         if tools:
-            payload["tools"] = _chat_tools_to_responses(tools)
+            payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        # JSON / structured output lives under text.format on the Responses API, not the
-        # chat/completions top-level response_format field.
         if response_format and self._response_format_supported:
-            payload["text"] = {"format": response_format}
+            payload["response_format"] = response_format
         return payload
 
     def _run_job(self, payload: dict) -> dict:
-        """Enqueue one Responses request and wait for a worker to land it. Returns the job row;
-        status 'failed' with an error on timeout, so callers have one shape to branch on."""
+        """Enqueue one request and wait for a worker to land it. Returns the job row; status
+        'failed' with an error on timeout, so callers have one shape to branch on."""
         return queue_client.run_job(
-            self.queue, {"path": "/v1/responses", "body": payload},
+            self.queue, {"kind": "llm", "body": payload},
             model=payload.get("model"), timeout_seconds=self.job_timeout_seconds)
 
     def build_llm_job(self, messages: list, tools: list = None, max_tokens: int = None,
                       reasoning=_REASONING_UNSET) -> tuple:
-        """Build the (queue payload, model) for one Responses request WITHOUT enqueuing or waiting —
-        the fire-and-forget seam the build chain uses: it lands the job itself (with build metadata)
-        and drives the next turn from the completion, rather than blocking on run_job."""
-        body = self._responses_payload(messages, tools, None, max_tokens, reasoning=reasoning)
-        return {"path": "/v1/responses", "body": body}, body.get("model")
+        """Build the (queue payload, model) for one request WITHOUT enqueuing or waiting — the
+        fire-and-forget seam the build chain uses: it lands the job itself (with build metadata) and
+        drives the next turn from the completion, rather than blocking on run_job."""
+        body = self._payload(messages, tools, None, max_tokens, reasoning=reasoning)
+        return {"kind": "llm", "body": body}, body.get("model")
 
     def to_chat(self, result: dict) -> dict:
-        """Normalize a worker's Responses result back to chat shape — the build chain applies the
-        completion's raw result, which arrives in Responses form off the queue."""
-        return _responses_to_chat(result)
+        """Results come off the queue already canonical — the worker translated them. Kept as the
+        seam callers go through, so a future dialect has one place to land."""
+        return result or {}
 
 
 _cached_connector: Optional[LLMConnector] = None

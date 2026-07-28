@@ -95,7 +95,7 @@ const CardShell: React.FC<{
     )
 }
 
-const SpriteCard: React.FC<{
+const ImageCard: React.FC<{
     runId: string; asset: GameAsset; version: number; regenerating: boolean
     onRegenerate: (prompt: string, mode: RegenMode) => void
 }> = ({ runId, asset, version, regenerating, onRegenerate }) => {
@@ -103,7 +103,7 @@ const SpriteCard: React.FC<{
     const url = useAssetBlob(runId, asset, version)
     return (
         <CardShell id={asset.id} status={status} onRegenerate={onRegenerate}
-            right={asset.w && asset.h ? <span className="text-gray-600 text-[10px] font-mono shrink-0">{asset.w}×{asset.h}</span> : undefined}>
+            right={undefined}>
             {url && status === 'ready'
                 ? <img src={url} alt={asset.id} className="max-w-full max-h-full object-contain [image-rendering:pixelated]" />
                 : <StatusNote status={status} />}
@@ -138,16 +138,16 @@ const MeshCard: React.FC<{
     )
 }
 
-// `version` bumps when a skin/regen run finishes (assets_done) so the gallery re-reads the manifest
+// `version` bumps when a render/regen run finishes (assets_done) so the gallery re-reads the manifest
 // AND every ready card refetches its bytes — a regenerated file swaps under an unchanged id/status.
 export const AssetGallery: React.FC<{
     runId: string
     version: number
-    skinning: boolean
-    canSkin: boolean
-    onSkin: () => void
+    rendering: boolean
+    canRender: boolean
+    onRender: () => void
     acting: boolean
-}> = ({ runId, version, skinning, canSkin, onSkin, acting }) => {
+}> = ({ runId, version, rendering, canRender, onRender, acting }) => {
     const [assets, setAssets] = useState<GameAsset[] | null>(null)
     // Assets the user just asked to regenerate — shown as 'rendering' until the next assets_done
     // (version bump) clears the optimism and the refetched manifest + bytes take over.
@@ -176,16 +176,16 @@ export const AssetGallery: React.FC<{
             <div className="flex items-center gap-2">
                 <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Assets</h3>
                 {has && <span className="text-gray-600 text-[11px]">{assets!.length}</span>}
-                {canSkin && (
-                    <button onClick={onSkin} disabled={acting || skinning}
+                {canRender && (
+                    <button onClick={onRender} disabled={acting || rendering}
                         title={has ? 're-plan + re-render all assets' : 'plan + render assets for this game'}
                         className="ml-auto bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-40 text-gray-200 px-2.5 py-1 rounded text-[11px] font-medium">
-                        {skinning ? 'Skinning…' : has ? 'Re-skin' : 'Skin assets'}
+                        {rendering ? 'Rendering…' : has ? 'Re-render' : 'Render art'}
                     </button>
                 )}
             </div>
 
-            {skinning && (
+            {rendering && (
                 <div className="text-amber-400 text-xs flex items-center gap-2">
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                     rendering assets on the GPU…
@@ -196,12 +196,12 @@ export const AssetGallery: React.FC<{
                 <div className="text-gray-600 text-xs">loading assets…</div>
             ) : !has ? (
                 <div className="text-gray-600 text-xs italic">
-                    {skinning ? 'No assets yet — first renders will appear here.' : 'This game renders as shapes — Skin it to generate art.'}
+                    {rendering ? 'No assets yet — first renders will appear here.' : 'This game asked for no art.'}
                 </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {assets!.map(a => a.kind === 'sprite'
-                        ? <SpriteCard key={a.id} runId={runId} asset={a} version={version}
+                    {assets!.map(a => a.kind === 'image'
+                        ? <ImageCard key={a.id} runId={runId} asset={a} version={version}
                             regenerating={regenerating.has(a.id)} onRegenerate={(p, m) => regenerate(a, p, m)} />
                         : <MeshCard key={a.id} runId={runId} asset={a}
                             regenerating={regenerating.has(a.id)} onRegenerate={(p, m) => regenerate(a, p, m)} />)}

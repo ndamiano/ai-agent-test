@@ -43,12 +43,13 @@ def test_execute_forwards_body_and_strips_the_worker_token():
         return _Resp(200, {"ok": True})
 
     a.session.post.side_effect = post
-    a.execute({"id": "j1", "payload": {"path": "/v1/responses", "body": {"model": "m"}}})
+    a.execute({"id": "j1", "payload": {"kind": "llm", "body": {"model": "m", "messages": []}}})
     a._drain_uploads()   # completions ship in the background — flush before asserting
 
     (gpu_url, gpu_kw) = calls[0]
-    assert gpu_url == "http://gpu/v1/responses"
-    assert gpu_kw["json"] == {"model": "m"}
+    assert gpu_url == "http://gpu/v1/chat/completions"
+    # the worker translated the canonical body for its dialect before sending
+    assert gpu_kw["json"]["model"] == "m" and gpu_kw["json"]["messages"] == []
     assert gpu_kw["headers"]["Authorization"] is None   # platform token never reaches the GPU
 
     (srv_url, srv_kw) = calls[1]

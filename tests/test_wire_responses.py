@@ -3,11 +3,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from llm_clients.connector import (
-    LLMConnector,
-    _chat_messages_to_responses_input,
-    _chat_tools_to_responses,
-    _responses_to_chat,
+from llm_clients.wire import (
+    chat_messages_to_responses_input as _chat_messages_to_responses_input,
+    chat_tools_to_responses as _chat_tools_to_responses,
+    responses_to_chat as _responses_to_chat,
 )
 
 
@@ -63,19 +62,3 @@ def test_responses_output_to_chat_shape():
     # usage normalized so the existing log line / callers keep working
     assert chat["usage"]["completion_tokens"] == 5
     assert chat["usage"]["completion_tokens_details"]["reasoning_tokens"] == 2
-
-
-def test_reasoning_aliases_on_off_to_effort_enum():
-    # LM Studio native-API spellings map to valid Responses effort values, not dropped.
-    assert LLMConnector(reasoning="on").reasoning == "high"
-    assert LLMConnector(reasoning="off").reasoning == "none"
-    assert LLMConnector(reasoning="low").reasoning == "low"
-
-
-def test_json_mode_maps_to_text_format():
-    # JSON/structured output lives under text.format on the Responses API, not response_format.
-    c = LLMConnector(model="m")
-    payload = c._responses_payload([{"role": "user", "content": "hi"}], None,
-                                   {"type": "json_object"}, None)
-    assert payload["text"] == {"format": {"type": "json_object"}}
-    assert "response_format" not in payload

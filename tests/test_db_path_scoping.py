@@ -1,5 +1,5 @@
 """The datastores must ignore the execution_context working directory: a tool that repoints it
-(reskin points it at game/assets/ for ComfyUI output) must not fork an empty db under that dir."""
+(the asset stage points it at game/assets/ for ComfyUI output) must not fork an empty db under that dir."""
 
 from pathlib import Path
 

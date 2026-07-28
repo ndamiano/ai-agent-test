@@ -39,7 +39,7 @@ def test_propose_spec_persists_and_emits(tmp_path, events, stub_draft):
         assert spec["title"] == "Stub Game"
         assert RunState(run_id).read_spec() == spec
         assert spec["frozen"] is False
-    assert ("spec_proposed", run_id, {"title": "Stub Game", "mode": "2d"}) in events
+    assert ("spec_proposed", run_id, {"title": "Stub Game", "mode": ""}) in events
 
 
 def test_amend_spec_rewrites_unfrozen_and_emits(tmp_path, events, stub_draft):
@@ -91,23 +91,22 @@ def test_cli_build_freezes_the_spec_on_disk(tmp_path, events, monkeypatch):
     monkeypatch.setattr(run_mod.db_store, "create_game", lambda *a, **k: None)
     built = []
     monkeypatch.setattr(run_mod, "run_build",
-                        lambda rid, **k: built.append(rid) or run_mod.BuildResult(True, 3, 1.0, []))
+                        lambda rid, **k: built.append(rid) or run_mod.BuildResult(True, 3, 1.0))
 
     with execution_context(working_directory=str(tmp_path)):
         run_id = run_mod.create_run("u1")
         state = RunState(run_id)
-        state.write_spec({"request": "r", "title": "T", "mode": "2d",
-                          "design": {"controls": {"Spacebar": "jump"}}, "frozen": False})
+        state.write_spec({"request": "r", "title": "T",
+                          "design": {"genre": "arcade"}, "frozen": False})
 
         assert run_mod._cli_build(run_id) == 0
 
         spec = state.read_spec()
     assert built == [run_id]
     assert spec["frozen"] is True
-    assert spec["design"]["controls"] == {" ": "jump"}     # hand-edited keys still normalize
 
 
 def test_cli_build_refuses_an_unknown_run(tmp_path, capsys):
     with execution_context(working_directory=str(tmp_path)):
         assert run_mod._cli_build("nosuchrun") == 1
-    assert "no spec" in capsys.readouterr().out
+    assert "no brief" in capsys.readouterr().out

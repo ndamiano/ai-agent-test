@@ -68,7 +68,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const [building, setBuilding] = useState(false)
     const [status, setStatus] = useState<string>('idle')
     const [acting, setActing] = useState(false)
-    const [skinPending, setSkinPending] = useState(false)
+    const [renderPending, setRenderPending] = useState(false)
     const [fixNote, setFixNote] = useState('')
     const [autoPause, setAutoPause] = useState(false)
     const [elapsedSec, setElapsedSec] = useState(0)
@@ -88,7 +88,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
     // Detail (built/status/budget) reloads on run change; feed/progress now come from the persistent
     // stream, so they survive tab switches and reloads with no local reset here.
-    useEffect(() => { setSkinPending(false); return load() }, [load])
+    useEffect(() => { setRenderPending(false); return load() }, [load])
 
     // A running elapsed timer while building — ticks locally off the stream's authoritative start.
     useEffect(() => {
@@ -128,14 +128,14 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'build_done':
                     setBuilding(false); setStatus('built'); load(); onChanged(); break
                 case 'assets_done':
-                    setSkinPending(false); setAssetsVersion(v => v + 1); load(); onChanged(); break
+                    setRenderPending(false); setAssetsVersion(v => v + 1); load(); onChanged(); break
             }
         })
         return unsub
     }, [runId, subscribe, load, onChanged])
 
-    // Once the real skin signal is live, drop the optimistic pending flag.
-    useEffect(() => { if (stream.skinning) setSkinPending(false) }, [stream.skinning])
+    // Once the real render signal is live, drop the optimistic pending flag.
+    useEffect(() => { if (stream.skinning) setRenderPending(false) }, [stream.skinning])
 
     const act = async (fn: () => Promise<unknown>, errMsg: string, reload = true) => {
         setActing(true); setError(null)
@@ -165,7 +165,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     }
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
-    const skin = () => act(async () => { setSkinPending(true); await api.skinAssets(runId) }, 'Skin failed', false)
+    const renderArt = () => act(async () => { setRenderPending(true); await api.renderAssets(runId) }, 'Render failed', false)
     const submitFix = () => {
         const note = fixNote.trim()
         if (!note) return
@@ -179,7 +179,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
     const stage = stageFor(detail.frozen, building, detail.built)
     const statusTone: 'amber' | 'gray' = (status === 'paused' || building) ? 'amber' : 'gray'
-    const skinning = stream.skinning || skinPending
+    const rendering = stream.skinning || renderPending
     const showBuildArea = stage === 'building' || stage === 'built' || stream.feed.length > 0
 
     return (
@@ -187,7 +187,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
             <div className="flex-shrink-0 border-b border-white/[0.08] px-5 pt-3 pb-3 space-y-3">
                 <div className="flex items-center gap-2 flex-wrap">
                     <h2 className="text-white text-base font-semibold">{detail.spec.title || detail.run_id}</h2>
-                    <Badge label={detail.mode.toUpperCase()} tone="blue" />
                     {detail.frozen ? <Badge label="frozen" tone="blue" /> : <Badge label="draft" tone="gray" />}
                     {detail.built ? <Badge label="built" tone="green" /> : null}
                     {stream.parked ? <Badge label="parked" tone="red" /> : null}
@@ -260,8 +259,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
             <div className="flex-1 flex flex-col min-h-0">
                 <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
                     {(stage === 'built' || detail.assets_exist) && (
-                        <AssetGallery runId={runId} version={assetsVersion} skinning={skinning}
-                            canSkin={stage === 'built'} onSkin={skin} acting={acting} />
+                        <AssetGallery runId={runId} version={assetsVersion} rendering={rendering}
+                            canRender={stage === 'built'} onRender={renderArt} acting={acting} />
                     )}
                     <SpecCard spec={detail.spec} />
                 </div>

@@ -15,17 +15,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from db import store as db_store
-from maestro.codegen.gates import build_bundle, game_dir, stage_for_play
+from maestro.codegen.assets import asset_path, autocrop
+from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
 
 logger = logging.getLogger(__name__)
-
-
-def _asset_path(run_id: str, asset_id: str, ext: str) -> Path:
-    assets = game_dir(RunState(run_id).run_dir) / "assets"
-    assets.mkdir(parents=True, exist_ok=True)
-    return assets / f"{asset_id}.{ext}"
 
 
 def _first_image(result: Optional[Dict]) -> Optional[str]:
@@ -44,7 +39,7 @@ def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
         return None
     data = Path(src).read_bytes()
     # keep the mesh's source render: an img2img regenerate needs an image to seed, and a GLB isn't one
-    _asset_path(md["run_id"], md["asset_id"], "src.png").write_bytes(data)
+    asset_path(md["run_id"], md["asset_id"], "src.png").write_bytes(data)
     b64 = base64.b64encode(data).decode("ascii")
     return {"queue": "mesh",
             "payload": {"kind": "trellis_mesh", "image_b64": b64},
@@ -57,14 +52,13 @@ CONTINUATIONS = {"mesh_from_image": _mesh_from_image}
 
 # ── operations: what to do with THIS job's result ─────────────────────────────
 def _save_sprite(md: Dict, result: Dict) -> None:
-    from maestro.codegen.reskin import _autocrop
     src = _first_image(result)
     if src is None:
         return
-    dst = _asset_path(md["run_id"], md["asset_id"], "png")
+    dst = asset_path(md["run_id"], md["asset_id"], "png")
     Path(src).replace(dst)
     try:
-        _autocrop(dst)
+        autocrop(dst)
     except Exception as e:
         logger.warning("autocrop %s failed: %s", md["asset_id"], e)
 
@@ -74,7 +68,7 @@ def _decimate(md: Dict, result: Dict) -> None:
     src = (result or {}).get("glb_file")
     if not src:
         return
-    dst = _asset_path(md["run_id"], md["asset_id"], "glb")
+    dst = asset_path(md["run_id"], md["asset_id"], "glb")
     Path(dst).write_bytes(Path(src).read_bytes())
     _decimate_glb(str(dst))
 
@@ -83,41 +77,33 @@ OPERATIONS = {"save_sprite": _save_sprite, "decimate": _decimate}
 
 
 # ── finalize: the batch is done ───────────────────────────────────────────────
-def _rendered(run_id: str, ids: List[str], ext: str) -> List[str]:
-    return sorted(i for i in ids if _asset_path(run_id, i, ext).exists())
-
-
-def _finalize_skin(md: Dict, jobs: List[Dict]) -> None:
-    from maestro.codegen.reskin import fit_building_boxes
-    run_id, mode = md["run_id"], md["mode"]
+def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
+    run_id = md["run_id"]
     state = RunState(run_id)
-    ext = "glb" if mode == "3d" else "png"
-    ids = sorted({j["metadata"].get("asset_id") for j in jobs
-                  if j["metadata"].get("asset_id")})
-    rendered = _rendered(run_id, ids, ext)
+    ids, rendered = [], []
+    for j in jobs:
+        aid = j["metadata"].get("asset_id")
+        if not aid or aid in ids:
+            continue
+        ids.append(aid)
+        ext = "glb" if j["metadata"].get("kind") == "mesh" else "png"
+        if asset_path(run_id, aid, ext).exists():
+            rendered.append(aid)
 
-    # gate_ok is the ENQUEUE-time verdict; an early batch enqueues mid-build (gate_ok False), so
-    # the game's CURRENT status decides staging. Mid-build, staging — and the 3D box-fit, which
-    # rewrites world.ts under the build's feet — defer to the build's own finalize.
+    # A batch enqueued mid-build must not stage the game out from under the build's own finalize.
     status = (db_store.game(run_id) or {}).get("status")
-    stage = bool(md.get("gate_ok")) or status == "built"
-    if mode == "3d" and stage:
-        fitted = fit_building_boxes(state.run_dir)
-        if fitted:
-            logger.info("assets %s: fitted %d building box(es) to their meshes", run_id, fitted)
-            build_bundle(state.run_dir)
-    if stage:
+    if status == "built":
         stage_for_play(state.run_dir, run_id)
 
-    ok = stage or status == "building"   # renders landed mid-build: the build stages them later
+    ok = status in ("built", "building")
     logger.info("assets %s: rendered %d/%d asset(s)", run_id, len(rendered), len(ids))
-    _emit("assets_done", run_id, ok=ok, mode=mode, rendered=rendered)
+    _emit("assets_done", run_id, ok=ok, rendered=sorted(rendered))
     build_id = next((j["build_id"] for j in jobs if j["build_id"]), None)
     if build_id:
         db_store.build_finished(build_id, "succeeded" if ok else "failed")
 
 
-FINALIZERS = {"skin": _finalize_skin}
+FINALIZERS = {"assets": _finalize_assets}
 
 
 # ── the completion hook ───────────────────────────────────────────────────────

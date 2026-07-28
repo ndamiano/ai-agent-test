@@ -37,7 +37,8 @@ app.add_middleware(
 import tools.chat_tools  # noqa: F401  — the @tool decorators register on import
 import tools.comfyui_tools  # noqa: F401
 import tools.system_tools  # noqa: F401
-from api.routers import admin, agents, billing, chat, games, system, websocket, workqueue
+from api.routers import (admin, agents, billing, chat, games, prompts, system, websocket,
+                         workqueue)
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
@@ -106,6 +107,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(prompts.router, prefix="/api/admin/prompts", tags=["admin"])
 # Outside the /api user gate on purpose — workers auth with the shared workqueue token.
 app.include_router(workqueue.router, prefix="/worker", tags=["workqueue"])
 
@@ -115,7 +117,7 @@ from pathlib import Path
 
 from fastapi.staticfiles import StaticFiles
 
-# Serve the runtime harness so the SPA can open a built game (mounted before the SPA catch-all).
+# Serve staged games so the SPA can open a built one (mounted before the SPA catch-all).
 # /play runs MODEL-AUTHORED JS, so every response carries a CSP that pins all loads and network
 # to this origin: generated code cannot exfiltrate anywhere or pull external scripts. It shares
 # the app origin (ownership-gated — a game only ever runs in its owner's browser), so this is

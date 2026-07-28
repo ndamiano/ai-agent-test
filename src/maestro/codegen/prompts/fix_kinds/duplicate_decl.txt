@@ -1,8 +1,0 @@
-# ROOT CAUSE — the file defines the same symbol TWICE
-The named symbol has two complete top-level definitions in the same file (an old version and a
-"rewritten" one). TypeScript forbids this; every other error in the file may be a symptom of it.
-
-The fix is DELETION, not modification: pick the definition that matches what the rest of the game
-calls (usually the later, more complete one), fold in anything only the other version had, then
-delete the ENTIRE other definition — its `function` keyword through its closing brace — as ONE
-edit hunk. Do not rename one of them, do not comment one out, do not merge them into a third copy.

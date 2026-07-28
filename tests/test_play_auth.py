@@ -92,24 +92,14 @@ def test_play_game_file_requires_owning_session(client, game_bundle):
     assert r.text == "// fake bundle"
 
 
-def test_play_shared_harness_needs_session_not_ownership(client):
-    _, tok = _user("alice")
-
-    # No cookie → 401 even for the shared harness.
-    assert client.get("/play/index.html").status_code == 401
-    # Any valid session serves the shared harness (no ownership check — it's not a per-game path).
-    r = client.get("/play/index.html", cookies={"maestro_play": tok})
-    assert r.status_code == 200
-
-
 def test_play_responses_carry_the_no_exfil_csp(client):
     """/play runs model-authored JS: every response (including a 401) pins loads + network to this
     origin so generated code can't exfiltrate or pull external scripts. /api stays CSP-free —
     the policy is containment for the game surface only."""
     _, tok = _user("alice")
 
-    csp = client.get("/play/index.html", cookies={"maestro_play": tok}).headers.get(
-        "content-security-policy", "")
+    csp = client.get("/play/games/nosuchgame/index.html",
+                     cookies={"maestro_play": tok}).headers.get("content-security-policy", "")
     assert "default-src 'self'" in csp
     # blob: (GLB texture object URLs) + data: (the webp support-detection probe image) are required
     # by GLTFLoader — images + fetch only.
@@ -119,5 +109,5 @@ def test_play_responses_carry_the_no_exfil_csp(client):
     # blob: must never reach script-src — a blob: script would let generated code sidestep 'self'.
     assert "script-src 'self' 'unsafe-inline';" in csp
 
-    assert "content-security-policy" in client.get("/play/index.html").headers  # 401 too
+    assert "content-security-policy" in client.get("/play/games/g/index.html").headers  # 401 too
     assert "content-security-policy" not in client.get("/api/games").headers

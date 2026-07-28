@@ -1,630 +1,275 @@
-"""The fix-shape step machines — the old synchronous fix bodies, re-expressed as resumable steps.
+"""The build's turn machine, as a resumable step.
 
-Each shape is a function `step(spec, run_dir, tools, fc, result) -> Infer | Done`. When the fix has
-no LLM result to apply yet (`fc.started` is False) it builds and returns the FIRST inference request;
-otherwise it applies the completed turn's `result` and either returns the NEXT request (the fix isn't
-done) or `Done` (back to the outer gate sweep). The driver (build_chain) enqueues each `Infer` as one
-`llm` job, dies, and re-enters this function on the completion — so a shape's whole loop is spread
-across process deaths, its scratch carried in `fc` (build_state.json).
+`step(spec, run_dir, tools, cursor, result) -> Infer | Done`. With no LLM result to apply yet it
+builds and returns the FIRST inference request; otherwise it applies the completed turn's tool calls
+and either returns the NEXT request or `Done`. The driver (build_chain) enqueues each `Infer` as one
+`llm` job, dies, and re-enters this function on the completion — so the whole loop is spread across
+process deaths, its scratch carried in the durable cursor.
 
-This is a faithful port of module.py's `_plan_fix` / `_data_fix` / `_author_via_write` /
-`_read_write_loop_fix`: same prompts, same parsing, same break-out conditions — only the control flow
-is inverted from "call infer and use the return" to "return the request, resume with the result." All
-the prompt-building + parsing helpers are imported from module.py unchanged.
+The transcript IS the memory. It is trimmed (oldest whole rounds first, then re-grounded on the file
+listing) rather than allowed to hit the context window.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
-from maestro.codegen import data_files, interfaces
-from maestro.codegen.fix_classes import (
-    classify,
-    strip_dead_creategame,
-    strip_unplanned_imports,
-)
-from maestro.codegen.gates import extract_code, game_files, manifest_path
-from maestro.codegen.module import (
-    _CODE_MAX_TOKENS,
-    _DATA_MAX_TOKENS,
-    _IFACE_MAX_TOKENS,
-    _REVIEW_MAX_TOKENS,
-    _PROMPTS,
-    _WRITE_SCHEMA,
-    _FIX_LOOP_MAX_TURNS,
-    _contract_block,
-    _design_block,
-    _fix_schemas,
-    _hook_exports,
-    _is_contract,
-    _is_stub,
-    _json_from,
-    _manifest_files,
-    _seeded_block,
-    _sibling_lines,
-)
-from maestro.services import parse_args, salvage_tool_call
+from maestro.codegen.staging import game_dir
+from maestro.services import parse_args
+from maestro.tool_calls import parse_tool_calls
+
+logger = logging.getLogger(__name__)
+
+_PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+MAX_TURNS = 80
+MAX_TOKENS = 16_000
+# Compact when the last prompt crossed this fraction of the window, leaving room for the reply and
+# the next tool result; keep this fraction of it afterwards.
+_COMPACT_AT = 0.62
+_COMPACT_KEEP = 0.33
+# Consecutive turns with no tool call before the build gives up. Each nudge is DIFFERENT — repeating
+# one verbatim reproduces the reply that earned it.
+_NO_CALL_GIVE_UP = 4
+_NUDGES = [
+    "Keep going. Use a tool, or call done if the game is finished.",
+    "That reply contained no tool call, so nothing was saved. Emit an actual tool call.",
+    "Still no tool call landed. Call write_file with path \"index.html\" and a minimal page as "
+    "content, then build the rest.",
+]
+
+
+def _nudge(streak: int) -> str:
+    return _NUDGES[min(streak, len(_NUDGES)) - 1]
 
 
 # ── step outcomes ─────────────────────────────────────────────────────────────
 @dataclass
 class Infer:
-    """Suspend the fix here: enqueue one `llm` job with these messages, die, resume on completion."""
+    """Suspend here: enqueue one `llm` job with these messages, die, resume on completion."""
     messages: List[dict]
     schemas: List[dict]
     max_tokens: int
-    # "none" is the floor for every build turn. Passing None instead reaches the connector as an
-    # explicit "let the model pick", which skips the enable_thinking switch — a measured authoring
-    # turn then spent 16000 tokens reasoning and never called `write`.
+    # "none" is the floor. Passing None instead reaches the connector as an explicit "let the model
+    # pick", which skips the enable_thinking switch — a measured turn then spent 16000 tokens
+    # reasoning and never called a tool.
     reasoning: Optional[str] = "none"
     report: Optional[str] = None      # progress line emitted when this turn is enqueued
 
 
 @dataclass
 class Done:
-    """The fix is finished — return to the outer gate sweep."""
     report: str
 
 
 Outcome = Union[Infer, Done]
 
 
-def _content(result) -> str:
-    return ((result.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
+# ── tool schemas ──────────────────────────────────────────────────────────────
+# Verbatim the five the grid measured. Descriptions stay this short on purpose: every extra clause
+# is another instruction competing with the request on every single turn.
+LIST_SCHEMA = {"type": "function", "function": {
+    "name": "list_files",
+    "description": "List the files in the project directory.",
+    "parameters": {"type": "object", "properties": {}, "required": []}}}
+READ_SCHEMA = {"type": "function", "function": {
+    "name": "read_file",
+    "description": "Read a file from the project directory.",
+    "parameters": {"type": "object",
+                   "properties": {"path": {"type": "string"}},
+                   "required": ["path"]}}}
+WRITE_SCHEMA = {"type": "function", "function": {
+    "name": "write_file",
+    "description": "Write a file to the project directory, replacing it if it exists.",
+    "parameters": {"type": "object",
+                   "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                   "required": ["path", "content"]}}}
+EDIT_SCHEMA = {"type": "function", "function": {
+    "name": "edit_file",
+    "description": ("Change part of an existing file. Replaces the exact text in old_text with "
+                    "new_text. old_text must appear exactly once in the file. Use this instead of "
+                    "rewriting a whole file to change a small part of it."),
+    "parameters": {"type": "object",
+                   "properties": {"path": {"type": "string"},
+                                  "old_text": {"type": "string", "description": "Exact text to replace."},
+                                  "new_text": {"type": "string", "description": "Text to put in its place."}},
+                   "required": ["path", "old_text", "new_text"]}}}
+DONE_SCHEMA = {"type": "function", "function": {
+    "name": "done",
+    "description": "Call when the project is finished and playable.",
+    "parameters": {"type": "object",
+                   "properties": {"summary": {"type": "string"}},
+                   "required": ["summary"]}}}
+
+SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, DONE_SCHEMA]
 
 
-# ── data (design | fix rows) ──────────────────────────────────────────────────
-def data_step(spec, run_dir, tools, fc, result) -> Outcome:
-    is_design = fc.error.get("type") == "build"
-    if not fc.started:
-        fc.started = True
-        if is_design:
-            return _data_design_request(spec, run_dir, fc.error.get("message") or "")
-        return _data_fix_request(run_dir) or Done(
-            "data invalid but no dataset attributable — regenerate the design")
-    return _data_design_apply(run_dir, result) if is_design else _data_fix_apply(run_dir, result)
+def _n_ctx() -> int:
+    from config.settings_manager import settings_manager
+    return int((settings_manager.get_settings().get("llm") or {}).get("n_ctx") or 32768)
 
 
-def _data_design_request(spec, run_dir, why: str = "") -> Infer:
-    system = (_PROMPTS / "design_data.txt").read_text(encoding="utf-8")
-    filelist = "\n".join(f"- {f['name']}: {f.get('purpose', '')}"
-                         for f in _manifest_files(run_dir)) or "(none planned yet)"
-    # A re-run with the identical prompt gets the identical answer, so the gate's own words ride in:
-    # the only reason this turn repeats is that the last design was empty or unusable.
-    retry = f"\n\n# YOUR LAST ATTEMPT WAS REJECTED\n{why}\n" if data_files.data_manifest_path(run_dir).exists() else ""
-    user = (f"{_design_block(spec)}\n\n# PLANNED FILES\n{filelist}{retry}\n\n"
-            "Design the data files. Output ONLY one ```json block.")
-    return Infer(MessageBuilder(system).add_user(user).build(), [], _DATA_MAX_TOKENS,
-                 report="designing the data files")
+# ── the turn ──────────────────────────────────────────────────────────────────
+def step(spec, run_dir, tools, cursor, result) -> Outcome:
+    """One turn: apply the completed turn's tool calls, then ask for the next."""
+    if not cursor.started:
+        cursor.started = True
+        cursor.system = (_PROMPTS / "build.txt").read_text(encoding="utf-8")
+        cursor.history = [{"role": "user", "content": cursor.request or _request_from(spec)}]
+        return _infer(run_dir, cursor)
 
-
-def _data_design_apply(run_dir, result) -> Done:
-    try:
-        design = _json_from(_content(result))
-        datasets = design.get("datasets")
-        assert isinstance(datasets, list)
-    except Exception:
-        datasets = []
-    dropped = data_files.write_design(run_dir, datasets)
-    data_files.generate_data_ts(run_dir)
-    kept = [d["name"] for d in data_files.read_data_manifest(run_dir).get("datasets", [])]
-    msg = f"designed {len(kept)} dataset(s): {', '.join(kept) or '(none)'}"
-    if dropped:
-        msg += f" — dropped invalid: {', '.join(dropped)}"
-    return Done(msg)
-
-
-def _data_fix_request(run_dir) -> Optional[Infer]:
-    manifest = data_files.read_data_manifest(run_dir)
-    violations = data_files.validate_data(run_dir)
-    declared = {d.get("name") for d in (manifest.get("datasets") or []) if isinstance(d, dict)}
-    offending = data_files.offending_datasets(violations, declared)
-    if not offending:
-        return None
-    target = offending[0]
-    rows_path = data_files.data_dir(run_dir) / f"{target}.json"
-    raw = rows_path.read_text(encoding="utf-8") if rows_path.exists() else "[]"
-    system = (_PROMPTS / "fix_data.txt").read_text(encoding="utf-8")
-    user = "\n\n".join([
-        f"# DATA MANIFEST (declared fields — the types are law)\n```json\n"
-        f"{json.dumps(manifest, indent=1, ensure_ascii=False)}\n```",
-        f"# CURRENT ROWS: data/{target}.json\n```json\n{raw}\n```",
-        "# VIOLATIONS\n" + "\n".join(f"- {v}" for v in violations),
-        f"Fix dataset '{target}'. Output ONLY one ```json block: the corrected rows array.",
-    ])
-    return Infer(MessageBuilder(system).add_user(user).build(), [], _DATA_MAX_TOKENS,
-                 report=f"fixing data/{target}.json")
-
-
-def _data_fix_apply(run_dir, result) -> Done:
-    violations = data_files.validate_data(run_dir)
-    manifest = data_files.read_data_manifest(run_dir)
-    declared = {d.get("name") for d in (manifest.get("datasets") or []) if isinstance(d, dict)}
-    offending = data_files.offending_datasets(violations, declared)
-    if not offending:
-        return Done("data invalid but no dataset attributable — regenerate the design")
-    target = offending[0]
-    rows_path = data_files.data_dir(run_dir) / f"{target}.json"
-    try:
-        rows = _json_from(_content(result))
-        assert isinstance(rows, list)
-    except Exception:
-        return Done(f"data fix for '{target}' returned no rows array")
-    rows_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
-    remaining = data_files.validate_data(run_dir)
-    if not remaining:
-        data_files.generate_data_ts(run_dir)
-    return Done(f"rewrote data/{target}.json ({len(rows)} rows), {len(remaining)} violation(s) remain")
-
-
-# ── interfaces (the architecture, one turn) ───────────────────────────────────
-def interfaces_step(spec, run_dir, tools, fc, result) -> Outcome:
-    if not fc.started:
-        fc.started = True
-        return _interfaces_request(spec, run_dir, report="declaring the architecture")
-    try:
-        iface = interfaces.normalize(_json_from(_content(result)))
-    except Exception:
-        iface = interfaces.normalize({})
-    # An architecture with no functions is not a smaller architecture, it is no game: nothing to
-    # author, no contracts to check. Leave it unwritten so `interfaced` stays red and the outer loop
-    # runs the turn again — bounded by the step cap and the stall detector, which fail the build
-    # rather than shipping one with no contracts.
-    if not iface["functions"]:
-        return Done("the architecture came back empty — declaring it again")
-    corrected = interfaces.enforce_kit_contract(run_dir, iface)
-    interfaces.save(run_dir, iface)
-    # state.ts first: manifest_from drops GENERATED files, so it must be on disk before the manifest
-    # is derived or the model would be asked to author it.
-    interfaces.generate_state_ts(run_dir, iface)
-    manifest = interfaces.manifest_from(iface, run_dir, _hook_exports(spec))
-    manifest_path(run_dir).parent.mkdir(parents=True, exist_ok=True)
-    manifest_path(run_dir).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return Done(f"declared {len(iface['state'])} state field(s), {len(iface['functions'])} "
-                f"function(s) across {len(manifest['files'])} file(s)"
-                + (f"; corrected {len(corrected)} against the kit: " + "; ".join(corrected[:4])
-                   if corrected else ""))
-
-
-def _interfaces_request(spec, run_dir, report: str) -> Infer:
-    system = (_PROMPTS / "design_interfaces.txt").read_text(encoding="utf-8")
-    user = (f"{_design_block(spec)}{_seeded_block(run_dir)}"
-            f"{interfaces.hooks_block(run_dir, spec)}\n\n"
-            "Declare the architecture. Output ONLY one ```json block.")
-    return Infer(MessageBuilder(system).add_user(user).build(), [], _IFACE_MAX_TOKENS,
-                 report=report)
-
-
-# ── review (rounds of find-then-patch over the architecture) ──────────────────
-_REVIEW_ROUNDS = 3
-# The patch turn ships the WHOLE architecture either way, so a small batch re-sends it once per
-# chunk and buys nothing — and two patch turns hitting the same subsystem redo each other's work
-# (measured: one round re-owned `crops` twice and rewrote six functions it had just rewritten).
-_REVIEW_BATCH = 8
-
-
-def review_step(spec, run_dir, tools, fc, result) -> Outcome:
-    """The model reviews the declarations it just wrote, patching by op rather than re-emitting the
-    architecture. Converges when a whole round reports nothing new; `_REVIEW_ROUNDS` is the backstop
-    for a reviewer that keeps inventing work, not the intended exit."""
-    iface = interfaces.load(run_dir) or {"state": [], "functions": [], "invariants": []}
-    if not fc.started:
-        fc.started = True
-        fc.rnd = 1
-        return _review_find_infer(iface, fc)
-    if fc.mode == "patch":
-        return _review_patch_apply(run_dir, iface, fc, result)
-    return _review_find_apply(run_dir, iface, fc, result)
-
-
-def _review_find_infer(iface, fc) -> Infer:
-    fc.mode = "find"
-    parts = list(interfaces.slices(iface))
-    sl = parts[fc.slice_idx]
-    system = (_PROMPTS / "review_find.txt").read_text(encoding="utf-8")
-    body = [f"# ARCHITECTURE\n```json\n{json.dumps(sl, indent=1, ensure_ascii=False)}\n```"]
-    if len(parts) > 1:
-        body.append(f"The state table and invariants above are COMPLETE. Only batch "
-                    f"{fc.slice_idx + 1} of {len(parts)} of the functions is shown. Judge these "
-                    f"functions against the full state table; do not report a function as missing "
-                    f"merely because it is not in this batch.")
-    if fc.seen:
-        body.append("Problems already found and corrected in an earlier pass. They are fixed; do "
-                    "not report them again:\n"
-                    + "\n".join(f"  - {t}" for t in fc.seen[-20:]))
-    return Infer(MessageBuilder(system).add_user("\n\n".join(body)).build(), [], _REVIEW_MAX_TOKENS,
-                 report=f"reviewing the architecture (round {fc.rnd}, batch {fc.slice_idx + 1}/{len(parts)})")
-
-
-def _review_find_apply(run_dir, iface, fc, result) -> Outcome:
-    try:
-        fc.found += [p for p in (_json_from(_content(result)).get("problems_found") or [])]
-    except Exception:
-        pass
-    fc.slice_idx += 1
-    if fc.slice_idx < len(interfaces.slices(iface)):
-        return _review_find_infer(iface, fc)
-
-    fresh = []
-    for p in fc.found:
-        key = interfaces.problem_key(p)
-        if key and key not in fc.seen:
-            fc.seen.append(key)
-            fresh.append(p)
-    fc.slice_idx, fc.found = 0, []
-    if not fresh:
-        return _review_done(run_dir, iface, fc, f"architecture clean after {fc.rnd} round(s)")
-    fc.fresh, fc.patch_idx = fresh, 0
-    return _review_patch_infer(iface, fc)
-
-
-def _review_patch_infer(iface, fc) -> Infer:
-    fc.mode = "patch"
-    chunk = fc.fresh[fc.patch_idx:fc.patch_idx + _REVIEW_BATCH]
-    system = (_PROMPTS / "review_patch.txt").read_text(encoding="utf-8")
-    body = ["# PROBLEMS TO FIX\n" + "\n".join(f"- {json.dumps(p, ensure_ascii=False)}" for p in chunk),
-            f"# FULL ARCHITECTURE\n```json\n{json.dumps(iface, indent=1, ensure_ascii=False)}\n```"]
-    if fc.feedback:
-        body.append(fc.feedback)
-    return Infer(MessageBuilder(system).add_user("\n\n".join(body)).build(), [], _REVIEW_MAX_TOKENS,
-                 report=f"patching the architecture (round {fc.rnd}, "
-                        f"{fc.patch_idx + len(chunk)}/{len(fc.fresh)})")
-
-
-def _review_patch_apply(run_dir, iface, fc, result) -> Outcome:
-    try:
-        patches = _json_from(_content(result)).get("patches") or []
-    except Exception:
-        patches = []
-    errs = interfaces.apply_patches(iface, patches, dry=True)
-    if errs and not fc.patch_retry:
-        fc.patch_retry = 1
-        fc.feedback = ("Your previous patches could not be applied:\n"
-                       + "\n".join(f"- {e}" for e in errs) + "\nSend corrected patches.")
-        return _review_patch_infer(iface, fc)
-    rejected = interfaces.apply_patches(iface, patches)
-    interfaces.save(run_dir, iface)
-    interfaces.log_review(run_dir, fc.rnd, fc.fresh[fc.patch_idx:fc.patch_idx + _REVIEW_BATCH],
-                          patches, rejected)
-    fc.patch_retry, fc.feedback = 0, ""
-    fc.patch_idx += _REVIEW_BATCH
-    if fc.patch_idx < len(fc.fresh):
-        return _review_patch_infer(iface, fc)
-    fc.fresh, fc.patch_idx = [], 0
-    fc.rnd += 1
-    if fc.rnd > _REVIEW_ROUNDS:
-        return _review_done(run_dir, iface, fc,
-                            f"review hit the {_REVIEW_ROUNDS}-round cap "
-                            f"({len(fc.seen)} problem(s) corrected)")
-    return _review_find_infer(iface, fc)
-
-
-def _review_done(run_dir, iface, fc, report: str) -> Done:
-    iface["reviewed"] = True
-    interfaces.save(run_dir, iface)
-    interfaces.generate_state_ts(run_dir, iface)   # the review patches state; the type follows it
-    return Done(report)
-
-
-# ── amend (rule on which side of a stalled fix is wrong, then fix that side) ───
-def amend_step(spec, run_dir, tools, fc, result) -> Outcome:
-    """A stalled fix may be the code disagreeing with a contract the model wrote before it knew what
-    the code would look like, so the first turn RULES on which side is wrong. `contract` patches
-    interfaces.json and the fix is over; `code` falls through to the read→edit subloop."""
-    if fc.mode == "fix":
-        return read_write_apply(spec, run_dir, tools, fc, result)
-    if not fc.started:
-        fc.started = True
-        return _amend_request(spec, run_dir, fc)
-
-    try:
-        ruling = _json_from(_content(result))
-    except Exception:
-        ruling = {}
-    if str(ruling.get("verdict", "")).lower() == "contract":
-        iface = interfaces.load(run_dir) or {}
-        patches = ruling.get("patches") or []
-        rejected = interfaces.apply_patches(iface, patches)
-        interfaces.save(run_dir, iface)
-        # The GENERATED state type follows the declaration — a ruling on a shape is inert until it does.
-        interfaces.generate_state_ts(run_dir, iface)
-        landed = len(patches) - len(rejected)
-        if landed:
-            return Done(f"amended the contract ({landed} op(s)): {str(ruling.get('reason', ''))[:120]}")
-    fc.mode = "fix"
-    return read_write_start(spec, run_dir, fc)
-
-
-def _amend_request(spec, run_dir, fc) -> Infer:
-    from maestro.codegen.build_state import error_from_dict
-    error = error_from_dict(fc.error)
-    iface = interfaces.load(run_dir) or {}
-    files = game_files(run_dir)
-    body = (files.get(error.path) or "") if error.path else ""
-    system = (_PROMPTS / "amend_contract.txt").read_text(encoding="utf-8")
-    parts = [
-        _design_block(spec),
-        f"# THE ARCHITECTURE YOU DECLARED\n```json\n"
-        f"{json.dumps(iface, indent=1, ensure_ascii=False)}\n```",
-        f"# THE CONFLICT\n{error.message}",
-    ]
-    if body:
-        parts.append(f"# YOUR IMPLEMENTATION: {error.path}\n```ts\n{body}\n```")
-    parts.append("Rule on which side is wrong. Output ONLY one ```json block.")
-    return Infer(MessageBuilder(system).add_user("\n\n".join(parts)).build(), [], _REVIEW_MAX_TOKENS,
-                 report="ruling on a contract conflict")
-
-
-# ── author (one file, ≤2 turns) ───────────────────────────────────────────────
-def author_step(spec, run_dir, tools, fc, result) -> Outcome:
-    name = fc.error.get("path")
-    if not fc.started:
-        fc.started = True
-        return _author_request(spec, run_dir, name, report=f"authoring {name}")
-    code = _extract_write_code(result)
-    if not code.strip() and fc.attempt < 1:
-        # The model thinks in-content and a long think can truncate the tool call mid-arg → no code.
-        # One retry usually lands, exactly as _author_via_write's range(2).
-        fc.attempt = 1
-        return _author_request(spec, run_dir, name, report=f"authoring {name} (retry)")
-    res = tools["write"](code=code, file=name)
-    detail = res.get("error") or f"{res.get('chars')} chars"
-    if not res.get("error"):
-        planned = {f["name"] for f in _manifest_files(run_dir)}
-        if strip_unplanned_imports(run_dir, planned):
-            detail += " (stripped unplanned import)"
-        if strip_dead_creategame(run_dir):
-            detail += " (stripped dead createGame)"
-    return Done(f"authored {name}: {detail}")
-
-
-def _author_request(spec, run_dir, name, report) -> Infer:
-    files = _manifest_files(run_dir)
-    me = next((f for f in files if f["name"] == name),
-              {"name": name, "purpose": "", "exports": []})
-    system = (_PROMPTS / "author_file.txt").read_text(encoding="utf-8")
-    parts = [
-        f"# KIT API\n{_kit_doc_for(spec)}",
-        _design_block(spec),
-        interfaces.interfaces_block(interfaces.load(run_dir)),
-        interfaces.state_ts_block(run_dir),
-        f"# THIS FILE: {me['name']}\npurpose: {me.get('purpose', '')}\n"
-        f"must export: {', '.join(me.get('exports') or []) or '(none)'}",
-    ]
-    contract = _contract_block(run_dir, me["name"])
-    if contract:
-        parts.append("# SHARED TYPES — author against these EXACT shapes; do NOT invent fields that "
-                     f"aren't here (import the types you need from their file)\n{contract}")
-    data = data_files.data_summary(run_dir)
-    if data:
-        parts.append(data)
-    parts.append(f"# OTHER FILES you may import (signatures only)\n{_sibling_lines(run_dir, me['name'])}")
-    if _is_contract(me):
-        parts.append((_PROMPTS / "contract_rules.txt").read_text(encoding="utf-8"))
-    parts.append(f"Call write to create ./{me['name']} now — the whole file as the `code` arg.")
-    msgs = MessageBuilder(system).add_user("\n\n".join(parts)).build()
-    return Infer(msgs, [_WRITE_SCHEMA], _CODE_MAX_TOKENS, report=report)
-
-
-def _extract_write_code(result) -> str:
+    usage = result.get("usage") or {}
+    cursor.prompt_tokens = usage.get("prompt_tokens") or cursor.prompt_tokens
     message = (result.get("choices") or [{}])[0].get("message", {}) or {}
-    content = message.get("content", "") or ""
-    tcs = [tc for tc in (message.get("tool_calls") or [])
-           if tc.get("function", {}).get("name") == "write"]
-    if not tcs:
-        salvaged = salvage_tool_call(content, [_WRITE_SCHEMA])
-        tcs = [salvaged] if salvaged else []
-    return parse_args(tcs[0]["function"].get("arguments")).get("code", "") if tcs else extract_code(content)
+    content = message.get("content") or ""
+    calls = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
+    if not calls:
+        # The server's parser didn't claim the model's tool-call syntax — recover it from the text.
+        calls = parse_tool_calls(content, SCHEMAS)
+    cursor.turn += 1
 
+    # A reply that ran out of output tokens saved NOTHING — the tool call was cut off mid-argument.
+    # Say so, rather than letting the model believe the file landed.
+    if not calls and (usage.get("completion_tokens") or 0) >= MAX_TOKENS - 32:
+        cursor.history.append({"role": "assistant", "content": content[-2000:]})
+        cursor.history.append({"role": "user", "content":
+                               "Your last response was cut off by the output token limit, so "
+                               "nothing was saved. Write the file in smaller pieces: split the game "
+                               "across several files, or write one section at a time. Do not repeat "
+                               "a whole large file to change a small part of it."})
+        return _infer(run_dir, cursor)
 
-# ── read_write (the ≤8-turn read→edit subloop) ────────────────────────────────
-def read_write_start(spec, run_dir, fc) -> Infer:
-    """The file list, the failure, and the tools. Nothing else — the kit surface, the state contract
-    and the data tables are files the fix reads when it wants them."""
-    from maestro.codegen.build_state import error_from_dict
-    error = error_from_dict(fc.error)
-    cls = classify(error)
-    # Everything readable, not just the manifest's model-authored files: the GENERATED ones and
-    # engine.d.ts are what a fix traces through.
-    filelist = ", ".join(sorted(set(game_files(run_dir)) | {"engine.d.ts"}))
-    system = (_PROMPTS / "fix_loop.txt").read_text(encoding="utf-8")
-    user = "\n\n".join(p for p in [
-        f"# FILES (read any of these)\n{filelist}",
-        f"# FAILING GATE\n{error.message}",
-        cls.authority(spec, run_dir, error) if cls.authority else "",
-        cls.directive or "",
-    ] if p)
-    fc.system = system
-    fc.history = [{"role": "user", "content": user}]
-    fc.started = True
-    return _read_write_infer(fc)
-
-
-def _read_write_infer(fc) -> Infer:
-    schemas = _fix_schemas(fc.escalate, fc.nreads)
-    msgs = MessageBuilder(fc.system).extend(fc.history).build()
-    return Infer(msgs, schemas, _CODE_MAX_TOKENS,
-                 report=f"fixing (turn {fc.turn + 1}/{_FIX_LOOP_MAX_TURNS})")
-
-
-def read_write_apply(spec, run_dir, tools, fc, result) -> Outcome:
-    message = (result.get("choices") or [{}])[0].get("message", {}) or {}
-    content = message.get("content", "") or ""
-    tcs = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
-    if not tcs:
-        salvaged = salvage_tool_call(content, _fix_schemas(fc.escalate, fc.nreads))
-        tcs = [salvaged] if salvaged else []
-    if len(content) > 2000:
-        content = "[…analysis truncated…]\n" + content[-2000:]
-    if not tcs:
-        fc.history.append({"role": "assistant", "content": content})
-        fc.history.append({"role": "user",
-                           "content": "Call a tool: read_file to inspect a file, edit to apply "
-                                      "hunks, or write to create a missing file."})
+    if not calls:
+        # A no-tool-call turn answered with the same nudge produces the same reply: measured, a
+        # model emitted the byte-identical message 60 times to the turn cap. Escalate instead.
+        cursor.no_call_streak += 1
+        cursor.history.append({"role": "assistant", "content": content})
+        cursor.history.append({"role": "user", "content": _nudge(cursor.no_call_streak)})
+        if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
+            return Done(f"stalled: {cursor.no_call_streak} turns with no tool call")
     else:
-        fc.history.append({"role": "assistant", "content": content, "tool_calls": tcs})
-        for tc in tcs:
-            _apply_tool_call(tools, fc, tc)
-        if fc.wrote:
-            return Done(f"patched {fc.wrote} via {fc.mode} "
-                        f"(read {fc.nreads}, edit-miss {fc.edit_fails})")
-    fc.turn += 1
-    if fc.turn >= _FIX_LOOP_MAX_TURNS:
-        return Done(f"fix loop ended without a write (read {fc.nreads}, edit-miss {fc.edit_fails})")
-    return _read_write_infer(fc)
+        if len(content) > 2000:
+            content = "[…analysis truncated…]\n" + content[-2000:]
+        cursor.no_call_streak = 0
+        cursor.history.append({"role": "assistant", "content": content, "tool_calls": calls})
+        for tc in calls:
+            if tc["function"]["name"] == "done":
+                args = parse_args(tc["function"].get("arguments"))
+                cursor.finished = True
+                cursor.summary = str(args.get("summary", ""))[:400]
+                cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                       "content": "ok"})
+                continue
+            _apply(tools, cursor, tc)
+        if cursor.finished:
+            return Done(f"done after {cursor.turn} turn(s): {cursor.summary}")
+
+    if cursor.turn >= MAX_TURNS:
+        return Done(f"hit the {MAX_TURNS}-turn cap")
+    return _infer(run_dir, cursor)
 
 
-def _apply_tool_call(tools, fc, tc) -> None:
+def _apply(tools, cursor, tc) -> None:
+    try:
+        res = _dispatch(tools, cursor, tc)
+    except Exception as e:
+        # A tool argument is untrusted input, so each tool validates its own. This is the backstop
+        # for the case that slips through: an exception here would otherwise escape the completion
+        # handler and strand the build until the reaper re-drives it, with the model never learning
+        # what went wrong. It surfaces as a tool error and is logged as the bug it is.
+        logger.exception("tool %s raised", tc["function"]["name"])
+        res = {"ok": False, "error": f"{tc['function']['name']} failed: {e}"}
+    cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                           "content": json.dumps(res)[:20_000]})
+
+
+def _dispatch(tools, cursor, tc) -> dict:
     name = tc["function"]["name"]
     args = parse_args(tc["function"].get("arguments"))
-    if name == "write":
-        code = args.get("code", "")
-        if _is_stub(code):
-            res = {"ok": False, "error": "that is a stub/placeholder, not the complete file — "
-                   "resend the ENTIRE working source in `code`."}
-        else:
-            res = tools["write"](code=code, file=args.get("file", "main.ts"))
-            if res.get("ok"):
-                fc.wrote, fc.mode = res.get("file"), "write"
-        fc.history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(res)})
-    elif name == "edit":
-        res = tools["edit"](file=args.get("file", "main.ts"), edits=args.get("edits") or [])
-        if res.get("ok"):
-            fc.wrote, fc.mode = res.get("file"), "edit"
-        else:
-            fc.edit_fails += 1
-        fc.history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(res)})
+    fn = tools.get(name)
+    if fn is None:
+        res = {"ok": False, "error": f"unknown tool: {name!r}"}
     elif name == "read_file":
-        read_args = {"file": args.get("file", "main.ts")}
-        if args.get("offset") is not None:
-            read_args["offset"] = args["offset"]
-        if args.get("limit") is not None:
-            read_args["limit"] = args["limit"]
-        res = tools["read_file"](**read_args)
-        fc.nreads += 1
-        fc.history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(res)})
+        res = fn(path=args.get("path"))
+        cursor.nreads += 1
+    elif name == "write_file":
+        res = fn(path=args.get("path"), content=args.get("content"))
+    elif name == "edit_file":
+        res = fn(path=args.get("path"), old_text=args.get("old_text"),
+                 new_text=args.get("new_text"))
+        if not res.get("ok"):
+            cursor.edit_fails += 1
     else:
-        fc.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                           "content": f"unknown tool: {name!r}"})
+        res = fn()
+    return res
 
 
-# ── audit (the spec-vs-code sweep, one turn + one retry) ──────────────────────
-def audit_step(spec, run_dir, tools, fc, result) -> Outcome:
-    """One audit round: every spec claim judged by a read→verdict subloop that must cite the traced
-    path. A claim with no verdict inside its turn cap is SKIPPED, never a finding — an audit failure
-    must not strand a green build."""
-    from maestro.codegen import audit
-    claims = audit.claims_of(spec)
-    if not claims:
-        return Done("audit: spec enumerates no claims — passing")
-    if not fc.started:
-        fc.started = True
-        return _audit_claim_start(audit, spec, run_dir, claims, fc)
-
-    message = (result.get("choices") or [{}])[0].get("message", {}) or {}
-    content = message.get("content", "") or ""
-    if len(content) > 2000:
-        content = "[…truncated…]\n" + content[-2000:]
-    calls = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
-    fc.turn += 1
-
-    # A model that answers with the JSON in content instead still lands via parse_verdict below.
-    committed = next((tc for tc in calls if tc["function"]["name"] == "verdict"), None)
-    if committed:
-        content = json.dumps(parse_args(committed["function"].get("arguments")))
-
-    tcs = [tc for tc in calls if tc["function"]["name"] == "read_file"]
-    if tcs and not committed and fc.turn < audit.CLAIM_TURN_CAP:
-        fc.history.append({"role": "assistant", "content": content, "tool_calls": tcs})
-        for tc in tcs:
-            args = parse_args(tc["function"].get("arguments"))
-            read_args = {"file": args.get("file", "")}
-            if args.get("offset") is not None:
-                read_args["offset"] = args["offset"]
-            if args.get("limit") is not None:
-                read_args["limit"] = args["limit"]
-            res = tools["read_file"](**read_args)
-            fc.nreads += 1
-            fc.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                               "content": json.dumps(res)})
-        return _audit_claim_infer(audit, claims, fc)
-
-    verdict = audit.parse_verdict(content)
-    if verdict is None and fc.turn < audit.CLAIM_TURN_CAP:
-        fc.history.append({"role": "assistant", "content": content})
-        fc.history.append({"role": "user",
-                           "content": "Call read_file to trace further, or call verdict to commit."})
-        return _audit_claim_infer(audit, claims, fc)
-
-    claim = claims[fc.claim_idx]
-    if verdict is None:
-        fc.verdicts.append({"claim": claim, "status": "skipped", "evidence": ""})
-    else:
-        status = str(verdict.get("status", "")).lower()
-        fc.verdicts.append({"claim": claim, "status": status,
-                            "evidence": verdict.get("evidence", "")})
-        if status == "delivered":
-            fc.delivered.append(claim)
-        elif audit.is_failed(verdict):
-            fc.findings.append({"claim": claim, "note": audit.note_for(claim, verdict)})
-    fc.claim_idx += 1
-    if fc.claim_idx < len(claims):
-        return _audit_claim_start(audit, spec, run_dir, claims, fc)
-
-    audit.log_verdicts(run_dir, fc.verdicts)
-    dropped = max(0, len(fc.findings) - audit.MAX_FINDINGS_PER_ROUND)
-    fc.findings = fc.findings[:audit.MAX_FINDINGS_PER_ROUND]
-    skipped = sum(1 for v in fc.verdicts if v["status"] == "skipped")
-    report = (f"audit: {len(fc.delivered)}/{len(claims)} delivered, "
-              f"{len(fc.findings)} finding(s) queued")
-    if skipped:
-        report += f", {skipped} skipped"
-    if dropped:
-        report += f" ({dropped} more over the per-round cap — next round)"
-    return Done(report)
+def _infer(run_dir, cursor) -> Infer:
+    ctx = _n_ctx()
+    if cursor.prompt_tokens > int(ctx * _COMPACT_AT):
+        dropped = compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4)
+        if dropped:
+            cursor.compacted += dropped
+            cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
+    msgs = MessageBuilder(cursor.system).extend(cursor.history).build()
+    report = f"building (turn {cursor.turn + 1}/{MAX_TURNS})"
+    if cursor.compacted:
+        report += f", {cursor.compacted} round(s) compacted"
+    return Infer(msgs, SCHEMAS, MAX_TOKENS, report=report)
 
 
-def _audit_claim_start(audit, spec, run_dir, claims, fc) -> Infer:
-    claim = claims[fc.claim_idx]
-    system, user = audit.claim_prompt(spec, run_dir, claim, anchored=claim in fc.anchors)
-    fc.system = system
-    fc.history = [{"role": "user", "content": user}]
-    fc.turn = 0
-    fc.nreads = 0
-    return _audit_claim_infer(audit, claims, fc)
+# ── compaction ────────────────────────────────────────────────────────────────
+def rounds(history: List[dict]) -> List[List[dict]]:
+    """Split the transcript into whole rounds — one assistant message plus the tool results
+    answering it. Dropping must never split one: a `tool` message whose matching assistant
+    `tool_calls` is gone is an orphan, and a chat template is entitled to refuse it."""
+    out, cur = [], []
+    for m in history[1:]:            # history[0] is the request, never dropped
+        if m["role"] != "tool" and cur:
+            out.append(cur)
+            cur = []
+        cur.append(m)
+    if cur:
+        out.append(cur)
+    return out
 
 
-def _audit_claim_infer(audit, claims, fc) -> Infer:
-    msgs = MessageBuilder(fc.system).extend(fc.history).build()
-    return Infer(msgs, audit.read_schemas(fc.nreads), audit._AUDIT_MAX_TOKENS,
-                 report=f"audit claim {fc.claim_idx + 1}/{len(claims)} (turn {fc.turn + 1})")
+def compact(run_dir, cursor, keep_chars: int) -> int:
+    """Drop the OLDEST whole rounds until the tail fits, then RE-GROUND on the file list.
+
+    Re-grounding matters more than the trim: the dropped rounds are where the model watched itself
+    write the files, so after a trim it is editing code it no longer remembers. The listing costs a
+    few dozen tokens and turns "edit blind" back into "read, then edit"."""
+    groups = rounds(cursor.history)
+    total = sum(len(json.dumps(m)) for g in groups for m in g)
+    dropped = 0
+    while groups and total > keep_chars:
+        g = groups.pop(0)
+        total -= sum(len(json.dumps(m)) for m in g)
+        dropped += 1
+    if not dropped:
+        return 0
+    root = game_dir(run_dir)
+    listing = "\n".join(
+        f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
+        for p in sorted(root.rglob("*")) if p.is_file() and not p.name.startswith("_")) or "(empty)"
+    note = {"role": "user", "content":
+            f"[Earlier steps were dropped to save room; {dropped} of them. You cannot see what you "
+            f"wrote before, so do not assume — read a file before you edit it.]\n\n"
+            f"Files in the project directory right now:\n{listing}"}
+    cursor.history = cursor.history[:1] + [note] + [m for g in groups for m in g]
+    return dropped
 
 
-# ── kit doc helper (author needs the full 2D/3D doc, not the error-scoped surface) ────
-def _kit_doc_for(spec) -> str:
-    from maestro.codegen.module import _kit_doc
-    return _kit_doc(spec)
+def _request_from(spec) -> str:
+    """The build's one user message: the person's request, as they wrote it.
 
-
-# ── shape dispatch ────────────────────────────────────────────────────────────
-def step(shape: str, spec, run_dir, tools, fc, result) -> Outcome:
-    if shape == "interfaces":
-        return interfaces_step(spec, run_dir, tools, fc, result)
-    if shape == "review":
-        return review_step(spec, run_dir, tools, fc, result)
-    if shape == "amend":
-        return amend_step(spec, run_dir, tools, fc, result)
-    if shape == "data":
-        return data_step(spec, run_dir, tools, fc, result)
-    if shape == "author":
-        return author_step(spec, run_dir, tools, fc, result)
-    if shape == "read_write":
-        if not fc.started:
-            return read_write_start(spec, run_dir, fc)
-        return read_write_apply(spec, run_dir, tools, fc, result)
-    if shape == "audit":
-        return audit_step(spec, run_dir, tools, fc, result)
-    raise ValueError(f"unknown fix shape {shape!r}")
+    The brief is NOT prepended. It exists for the human to review and for the audit to judge
+    against; feeding its restated mechanics back to the model puts a second, more concrete
+    instruction beside the request on every turn, which is the failure mode small models have."""
+    return str((spec or {}).get("request") or "").strip() or "Make a small, playable browser game."

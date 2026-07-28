@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import maestro.state
 from api.app import app
 from maestro.codegen import build_chain
-from maestro.codegen.gates import game_dir
+from maestro.codegen.staging import game_dir
 from auth import store as auth_store
 from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
@@ -150,7 +150,7 @@ def _write_assets(run_id, manifest, files=()):
         (gd / "assets" / name).write_bytes(data)
 
 
-def test_assets_empty_before_skin(client):
+def test_assets_empty_before_the_game_declares_any(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
     assert client.get(f"/api/games/{run_id}/assets", headers=headers).json() == []
@@ -161,20 +161,21 @@ def test_assets_report_per_asset_status(client):
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
     # hero.png is on disk (rendered), slime.png is planned but not yet rendered → pending.
     _write_assets(run_id,
-                  {"sprites": [{"id": "hero", "file": "assets/hero.png", "w": 32, "h": 48},
-                               {"id": "slime", "file": "assets/slime.png", "w": 16, "h": 16}]},
+                  {"images": [{"id": "hero", "file": "assets/hero.png", "prompt": "a hero"},
+                              {"id": "slime", "file": "assets/slime.png", "prompt": "a slime"}]},
                   files=[("hero.png", b"PNGDATA")])
 
     assets = client.get(f"/api/games/{run_id}/assets", headers=headers).json()
     by_id = {a["id"]: a for a in assets}
-    assert by_id["hero"] == {"id": "hero", "kind": "sprite", "status": "ready", "w": 32, "h": 48}
+    assert by_id["hero"] == {"id": "hero", "kind": "image", "status": "ready", "prompt": "a hero"}
     assert by_id["slime"]["status"] == "pending"
 
 
 def test_asset_blob_streams_and_guards(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
-    _write_assets(run_id, {"sprites": [{"id": "hero", "file": "assets/hero.png"}]},
+    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
+                                      "prompt": "a hero"}]},
                   files=[("hero.png", b"PNGDATA")])
 
     ok = client.get(f"/api/games/{run_id}/assets/hero", headers=headers)
@@ -190,15 +191,21 @@ def test_asset_blob_streams_and_guards(client):
 
 
 def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
-    """A single-asset regen puts ONE image job on the queue carrying the new prompt (in the comfy
-    workflow) + the asset_id/mode/gate_ok/then in metadata — the batch's `skin` finalize saves and
-    re-stages it. No whole-game re-skin."""
+    """A single-asset regen puts ONE image job on the queue carrying the merged prompt (in the
+    comfy workflow) + the asset_id/then in metadata — the batch's finalize saves and re-stages it.
+    No whole-game re-render."""
+    import maestro.codegen.assets as assets_mod
+
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"title": "Moon Miner", "frozen": True})
+    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
+                                      "prompt": "a hero"}]})
     db_store.charge_game(run_id, 1, 10_000.0)   # grant compute so the enqueue is admitted
+    # The merge is an LLM call; the note-vs-original contract is tested on _merge_prompt itself.
+    assets_mod._merge_prompt = lambda original, note: "a brave knight, pixel art"
 
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
-                    json={"prompt": "a brave knight, pixel art"})
+                    json={"prompt": "make him a knight"})
     assert r.status_code == 200
     assert r.json() == {"status": "regenerating", "run_id": run_id, "asset_id": "hero"}
 
@@ -207,9 +214,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
     assert job["payload"]["workflow"]["6"]["inputs"]["text"] == "a brave knight, pixel art"
     meta = json.loads(job["metadata"])
     assert meta["asset_id"] == "hero"
-    assert meta["mode"] == "2d"
-    assert meta["gate_ok"] is True
-    assert meta["then"] == {"operations": ["save_sprite"], "finalize": "skin"}
+    assert meta["then"] == {"operations": ["save_sprite"], "finalize": "assets"}
 
 
 def test_regenerate_cross_user_is_403(client):

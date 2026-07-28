@@ -9,99 +9,33 @@ architecture + how it works, see `CLAUDE.md`.
 
 ---
 
-## Current architecture — the codegen rebuild (branch `codegen-rebuild`)
+## Current architecture — the model writes the game
 
-The universal Game IR was retired: it was a {VN, point-click, walking-RPG} engine faking
-universality, topped out at "valid" not "good", and couldn't express most games. The model now
-writes **real TypeScript game code against a fat primitive kit**, gated by a pure-Node local gradient
-(headless + probe). This buys **any game + local** (bending "good" for now). Full plan +
-task breakdown: **`docs/codegen_rebuild_plan.md`**.
+The fat primitive kit was retired (2026-07-28), and the interface-first pipeline with it. Measured
+over a 25-game grid across two local models: given the whole problem and five tools, a local model
+writes working browser games in 2–4 minutes, 4/4; given a declared architecture to fill in, the same
+model produced unplayable ones in 5–37 minutes. So the model now writes **plain HTML/CSS/JS with no
+engine of ours between it and the screen**, and the platform's job is everything around that —
+the brief, the queue, the compute budget, the art, the audit, the human's review.
 
-- **Phase 1 (DONE):** productized the codegen loop (`src/maestro/codegen/`) on the surviving
-  `AgentLoop`; live parity on asteroids/pacman/platformer/collect3d(3D).
-- **Phase 2 (DONE):** demolished the IR — deleted `renpy/`, `godot/`, the IR (`ir_assemble`/
-  `ir_crossref`/schema), every mechanic module, and their tests; kept the `Module`/`Check`/`Error`
-  ABC + `AgentLoop` + `Services`.
-- **Phase 6 frontend (DONE):** retargeted `api/` + the SPA to codegen. The games router is
-  codegen-only (list/detail/freeze/build/pause/resume/auto-pause/fix/assets → `maestro.codegen.run`);
-  chat drafts specs via `tools/chat_tools.py`; build/spec progress emits through `tools/build_events.py`;
-  a built run stages to `runtime/games/<id>/` served at `/play`. The GamesPanel reviews the codegen
-  spec read-only, drives freeze→build→skin→fix→play, and the IR component/asset browser is deleted.
-  Also finished the demolition: removed the leftover `renpy/`/`godot/`/`utils/` dirs, `maestro/spec.py`,
-  `tools/tts_tools.py`, and the dead IR asset generators in `comfyui_tools.py`.
-- **Phase 5 assets (IN PROGRESS):** skin the placeholder shapes — now with NO click: the build's
-  outer sweep starts rendering a data game's assets the moment its `look` rows land (the EARLY
-  lane), and every ok build finalize finishes the story (the GREEN lane: full skin for data-less
-  games, wiring/top-up otherwise), so a finished game is playable WITH its art. A refused build
-  turn preempts still-queued renders — gameplay beats skin. The manual stage remains
-  (`maestro/codegen/reskin.py`, CLI `--assets <run_id>`): plans a sprite set from the spec + source,
-  rewrites the draw code to prefer `kit.sprite(id)` with the shape as fallback, re-gates, then renders
-  the sprites (ComfyUI) into `game/assets/` + `assets.json`; the runtime preloads them. Purely
-  additive — a run with no images still passes every gate and renders as shapes. Mode-dispatched:
-  3D games instead plan meshes, tag entities `mesh:"id"`, render an image (ComfyUI) → GLB (TRELLIS),
-  which `engine3d` preloads + scales to each entity's box. 2D sprites + 3D meshes done; also bumped
-  render to 16:9 HD filling the window. Styled-prompt stage pending.
-  *(Swapped ahead of frontend: a skinned game validates via the runtime harness; in-app UX is
-  scaffolding.)*
-- **Data-file stage (IN PROGRESS):** content out of code. The model designs per-game datasets
-  (`game/data/manifest.json` + rows; every row carries an implicit id/name/look/presence/size
-  envelope), a deterministic gate validates them and generates a typed `game/data.ts` games import
-  (a new blocking `data` check between plan and authoring). Fixes three things at once: content
-  edits become row edits, the fix loop sees schema + one example row instead of inline stat blocks,
-  and asset planning becomes deterministic enumeration from `look` rows (kills the 3–8 sprite
-  ceiling). Design + task breakdown: `docs/codegen_rebuild_plan.md` § Data files.
-- **Control-scaffold stage (landed):** the pipeline, not the model, wires controls. EVERY
-  build seeds a GENERATED `game/main.ts` from a per-scheme template (config + movement + frame
-  loop + the dialogue loop when the spec uses it); the model authors gameplay behind the `game.ts`
-  hooks (createState/init/update/draw/hud), and the probe gains a scheme-aware `dead_movement`
-  invariant (movement keys must displace the steered entity — an action key mutating state can no
-  longer green a game the player can't steer, the failure two live builds shipped). Design +
-  breakdown: `docs/codegen_rebuild_plan.md` § Control scaffold.
-- **Worldgen × scaffold merged (landed):** the two pre-seeds were rival owners of `main.ts`, so a
-  world spec took the older path and lost every control-layer guarantee. They are now orthogonal
-  axes — worldgen seeds the PLACE (`world.ts`), the scaffold seeds the CONTROLS (`main.ts`) — and a
-  village RPG plans, decomposes and gates exactly like every other game. Terrain following and
-  building collision became scaffold passes (`state.ground` / `state.walls`), wired by main.ts
-  itself on a world game — a live build proved prompting for them isn't enough: it used the whole
-  WORLD API correctly and still never assigned them, leaving the player walking through buildings in
-  mid-air with every gate green. Next: a probe invariant for "the player is on the ground", so this
-  class of defect is caught rather than prevented only by construction.
-- **Gamepad controls normalize (landed):** a spec may describe a gamepad; the runtime has none
-  (`Input` is keys + pointer), so `draft_spec`/`freeze_spec` MAP the intent onto real keys —
-  stick→WASD, right stick→Mouse, A/B/X/Y→E/Q/F/R, colliding aliases moved to a free key. A live
-  build drew `LEFT_STICK`/`A_BUTTON` and `unbound_control` became unsatisfiable, grinding the fix
-  loop to the step cap. Same shape as the probe's existing mouse-token normalization: map the
-  vocabulary, never forbid it.
-- **Collision + actions (landed):** two kit widenings behind the scaffold. `kit.collideWorld` is
-  the ONE 2D solid pass (tile pushout + solid-pair separation; entities tag `solid: true`; the 2D
-  scaffold templates call it after the hook update) — the shipped walk-through-walls and
-  enemies-stack incidents were both this missing pass. `kit.register`/`kit.bindings` make spec key
-  bindings machine-readable: every runner fires registered handlers on the pressed edge, and the
-  probe gains `dead_action` (every binding must act), `unbound_control` (every non-movement spec
-  control must be registered — the spec's controls map now rides into the probe) and
-  `solid_overlap` (no solid entities interpenetrate at rest). Design:
-  `docs/codegen_rebuild_plan.md` § Collision + actions.
-- **Spec-vs-code audit (landed 2026-07-23):** the gates prove a game RUNS, not that its declared
-  mechanics exist — a live build shipped every gate green with dead gold, unreachable floors and
-  zero-damage combat. A build now ends on SPEC-EXHAUSTED, not errors-zero: when the gates go green,
-  the frozen spec's mechanically-enumerated claims (controls/mechanics/win/lose; movement excluded —
-  scaffold law; render excluded — a taste verdict; mechanics that restate win/lose excluded — one
-  promise judged twice cannot converge) are each judged by a bounded read→verdict subloop
-  (`maestro/codegen/audit.py`, shape `audit` in `build_steps`): the judge reads the files it needs
-  and cites the traced path, per-claim verdicts logged durably to `audit_verdicts.jsonl`. Validated
-  against human play-notes: single-shot judging over pasted sources was wrong both ways (unanimous
-  "broken" on working mechanics; 11/12→5/12 swings on unchanged code) and 3-vote majorities did NOT
-  fix the bias — grounding did (traced judge agreed with the human on ~6/7 confident claims).
-  Delivered claims ANCHOR later rounds and future builds (flip only with cited regression
-  evidence), so rounds ratchet. Failed claims become fixes on the `fix_from_note` lane, then
-  re-gate → re-audit until a round returns zero findings (round + step caps as fail-open backstops;
-  audit builds default 200 steps). CLI: `--audit <run_id>`. Also widened `single_mover` to the two
-  shipped blind spots (input-guard movers, movers inside `kit.register` handlers), register-strip
-  deterministic. Known ceiling: the audit certifies the spec AS WRITTEN — a shallow spec certifies
-  shallow (the unwinnable-fight case: no claim promises winnable combat); spec richness is a
-  stage-1 lever.
-- **Next:** finish the data-file stage → Phase 3 harden the probe → Phase 4 widen the kit → finish
-  Phase 5 assets (styled-prompt stage) → Phase 7 the "good" tier (deferred cloud play-critic).
+What that deleted: `runtime/engine.js` + `engine3d.js` + `engine.d.ts` + the kit_api docs, the
+headless/render/typecheck gates, `interfaces.py` (the declared architecture), `module.py` (the gate
+list), `fix_classes.py`, `data_files.py`, `scaffold.py` + its templates, `controls.py`, and
+`reskin.py`'s planning half — about 5,000 lines, replaced by ~600.
+
+What survived, and why:
+- **The job chain.** A build is still a linear chain of `llm` jobs driven by `/worker/complete`, with
+  the whole loop's state in a durable cursor. Nothing about that depended on the kit.
+- **The audit.** The brief's claims judged against the source by a read→verdict subloop, once, as a
+  REPORT. It is the only "did you deliver" signal there is.
+- **The human freeze.** A brief is reviewed and frozen before a build may run.
+- **The asset chain.** Unchanged transport; what changed is that the GAME declares its own art in
+  `assets.json` while writing the code that uses it, so the stage costs zero planning calls.
+- **`src/worldgen/`** — unwired. It produced the one thing nothing else did (real scale), and
+  re-pointing it to emit data a game reads is an open decision.
+
+The one gate left is `index.html` exists. Everything past that is a human judgement, deliberately
+left visible rather than filled with a proxy. See `CLAUDE.md` for the full contract.
 
 ---
 

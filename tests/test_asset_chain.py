@@ -31,12 +31,12 @@ def _game(seconds: float = 10_000.0, game_id: str = "g1") -> str:
 def _image_job(batch: str, asset_id: str = "goblin", game_id: str = "g1") -> str:
     return store.enqueue_job(
         "image", {"kind": "comfy_image"}, game_id=game_id, batch_id=batch,
-        metadata={"run_id": game_id, "asset_id": asset_id, "mode": "3d", "gate_ok": True,
-                  "then": {"enqueue": "mesh_from_image", "finalize": "skin"}})
+        metadata={"run_id": game_id, "asset_id": asset_id, "kind": "mesh",
+                  "then": {"enqueue": "mesh_from_image", "finalize": "assets"}})
 
 
 _MESH = {"queue": "mesh", "payload": {"kind": "trellis_mesh", "image_b64": "x"},
-         "metadata": {"then": {"operations": ["decimate"], "finalize": "skin"}}}
+         "metadata": {"then": {"operations": ["decimate"], "finalize": "assets"}}}
 
 
 def _complete(job_id: str, worker: str = "w1", continuation=None, error=None):
@@ -85,7 +85,7 @@ def test_a_continuation_inherits_its_parent_game_batch_and_build():
     the books."""
     _game()
     parent = store.enqueue_job("image", {"k": 1}, game_id="g1", build_id="bld1", batch_id="b1",
-                               metadata={"then": {"finalize": "skin"}})
+                               metadata={"then": {"finalize": "assets"}})
     out = _complete(parent, continuation=_MESH)
     child = store.get_job(out["continuation_id"])
     assert (child["game_id"], child["build_id"], child["batch_id"]) == ("g1", "bld1", "b1")
@@ -132,7 +132,7 @@ def test_batch_jobs_returns_parsed_metadata():
     assert [j["metadata"]["asset_id"] for j in jobs] == ["goblin"]
 
 
-# ── the second skin guard ─────────────────────────────────────────────────────
+# ── the second batch guard ─────────────────────────────────────────────────────
 def test_a_game_with_queued_batch_work_reads_as_active():
     _game()
     _image_job("b1")
@@ -189,9 +189,9 @@ def test_a_batch_with_work_left_is_never_offered():
     assert store.batches_awaiting_finalize(-1.0) == []
 
 
-# ── the skin finalize vs the build's lifecycle ───────────────────────────────
+# ── the asset finalize vs the build's lifecycle ───────────────────────────────
 @pytest.fixture
-def _skin_env(monkeypatch, tmp_path):
+def _asset_env(monkeypatch, tmp_path):
     from maestro.codegen import asset_chain
 
     staged, events = [], []
@@ -203,36 +203,36 @@ def _skin_env(monkeypatch, tmp_path):
     return asset_chain, staged, events
 
 
-def _skin_md(gate_ok):
-    return {"run_id": "g1", "mode": "2d", "gate_ok": gate_ok, "then": {"finalize": "skin"}}
+def _md():
+    return {"run_id": "g1", "then": {"finalize": "assets"}}
 
 
-def test_early_finalize_mid_build_defers_staging(_skin_env):
-    """An early batch lands while the build is still running: renders are on disk, but staging is
-    the build finalize's job — and the outcome is a success, not a failed skin."""
-    asset_chain, staged, events = _skin_env
+def test_early_finalize_mid_build_defers_staging(_asset_env):
+    """A batch lands while the build is still running: renders are on disk, but staging is the
+    build finalize's job — and the outcome is a success, not a failure."""
+    asset_chain, staged, events = _asset_env
     _game()                                            # status defaults to non-built
     store.set_status("g1", "building")
-    asset_chain._finalize_skin(_skin_md(gate_ok=False), [{"metadata": {}, "build_id": None}])
+    asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
-    assert events == [("assets_done", {"ok": True, "mode": "2d", "rendered": []})]
+    assert events == [("assets_done", {"ok": True, "rendered": []})]
 
 
-def test_finalize_after_green_stages_even_without_gate_ok(_skin_env):
-    """The batch outlives the build: gate_ok was False at enqueue, but the game is BUILT by the
-    time the last render lands — the finalize must stage, or the art never reaches /play."""
-    asset_chain, staged, events = _skin_env
+def test_finalize_after_a_built_game_stages(_asset_env):
+    """The batch outlives the build: the game is BUILT by the time the last render lands, so the
+    finalize must stage, or the art never reaches /play."""
+    asset_chain, staged, events = _asset_env
     _game()
     store.set_status("g1", "built")
-    asset_chain._finalize_skin(_skin_md(gate_ok=False), [{"metadata": {}, "build_id": None}])
+    asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == ["g1"]
     assert events[0][1]["ok"] is True
 
 
-def test_finalize_on_a_failed_build_neither_stages_nor_claims_ok(_skin_env):
-    asset_chain, staged, events = _skin_env
+def test_finalize_on_a_failed_build_neither_stages_nor_claims_ok(_asset_env):
+    asset_chain, staged, events = _asset_env
     _game()
     store.set_status("g1", "failed")
-    asset_chain._finalize_skin(_skin_md(gate_ok=False), [{"metadata": {}, "build_id": None}])
+    asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
     assert events[0][1]["ok"] is False

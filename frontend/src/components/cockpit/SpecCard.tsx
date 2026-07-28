@@ -75,8 +75,7 @@ export const SpecCard: React.FC<{ spec: GameDetail['spec'] }> = ({ spec }) => {
     return (
         <section className="space-y-3">
             <div className="flex items-center gap-2">
-                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Spec</h3>
-                <Badge label={spec.mode.toUpperCase()} tone="blue" />
+                <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Brief</h3>
                 {spec.frozen ? <Badge label="frozen" tone="blue" /> : <Badge label="draft" tone="gray" />}
             </div>
 

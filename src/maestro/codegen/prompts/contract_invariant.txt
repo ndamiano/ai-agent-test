@@ -1,8 +1,0 @@
-# SHARED CONTRACT — if your fix touches types.ts (the shared contract), PRESERVE these invariants;
-breaking one forces casts and re-patches in every other file:
-- Entity types EXTEND the kit type — `export interface Player extends Kit.Entity {…}`. NEVER re-declare
-  `Entity`/`World`/`Vec2`/`Vec3` (they are ambient globals); a local `interface Entity` shadows the kit
-  one and nothing you build is a real Kit.Entity anymore.
-- NEVER weaken a shared field to `any` to silence an error — type the real field.
-- Keep the player's SINGLE home (either `state.player` or a `state.world` entry — not both).
-- Do NOT drop a field another file still reads; add missing fields, don't remove used ones.

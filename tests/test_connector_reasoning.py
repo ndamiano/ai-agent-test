@@ -19,34 +19,49 @@ def _run(connector, monkeypatch, **kwargs):
     return captured
 
 
-def test_responses_path_sends_reasoning_effort(monkeypatch):
+def test_the_canonical_payload_carries_a_plain_effort_string(monkeypatch):
     payload = _run(LLMConnector(model="m", reasoning="low"), monkeypatch)
-    assert payload["reasoning"] == {"effort": "low"}
-    assert "input" in payload and "messages" not in payload      # Responses shape
+    assert payload["reasoning"] == "low"
+    # canonical = the chat shape; the worker turns it into whatever its target serves
+    assert "messages" in payload and "input" not in payload
 
 
-def test_responses_omits_reasoning_when_unset(monkeypatch):
+def test_reasoning_omitted_when_unset(monkeypatch):
     assert "reasoning" not in _run(LLMConnector(model="m"), monkeypatch)
 
 
 def test_per_call_reasoning_overrides_configured(monkeypatch):
     # The executor escalates effort on a stalled target regardless of the configured floor.
     c = LLMConnector(model="m", reasoning="none")
-    assert _run(c, monkeypatch, reasoning="high")["reasoning"] == {"effort": "high"}
+    assert _run(c, monkeypatch, reasoning="high")["reasoning"] == "high"
 
 
 def test_per_call_reasoning_aliases_resolve(monkeypatch):
     c = LLMConnector(model="m", reasoning="none")
-    assert _run(c, monkeypatch, reasoning="on")["reasoning"] == {"effort": "high"}
+    assert _run(c, monkeypatch, reasoning="on")["reasoning"] == "high"
 
 
 def test_per_call_none_disables_configured_reasoning(monkeypatch):
     # "none" is the explicit OFF effort (the API rejects omitting it as "off"), so a per-call
     # "none" must send effort:none even when the connector is configured high.
     c = LLMConnector(model="m", reasoning="high")
-    assert _run(c, monkeypatch, reasoning="none")["reasoning"] == {"effort": "none"}
+    assert _run(c, monkeypatch, reasoning="none")["reasoning"] == "none"
 
 
 def test_unset_per_call_falls_back_to_configured(monkeypatch):
     payload = _run(LLMConnector(model="m", reasoning="low"), monkeypatch)
-    assert payload["reasoning"] == {"effort": "low"}
+    assert payload["reasoning"] == "low"
+
+
+def test_reasoning_aliases_on_off_to_effort_enum():
+    assert LLMConnector(reasoning="on").reasoning == "high"
+    assert LLMConnector(reasoning="off").reasoning == "none"
+    assert LLMConnector(reasoning="low").reasoning == "low"
+
+
+def test_json_mode_maps_to_response_format():
+    """Structured output rides the canonical field; the worker maps it per dialect."""
+    c = LLMConnector(model="m")
+    fmt = {"type": "json_object"}
+    body = c._payload([{"role": "user", "content": "x"}], None, fmt, 100)
+    assert body["response_format"] == fmt

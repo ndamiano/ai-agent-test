@@ -1,17 +1,16 @@
 """LLM tool-call parsing helpers shared by the codegen fix shapes.
 
-Local models are loose about tool calls — arguments arrive already-parsed, wrapped in a stray single
-key, or as raw JSON in message content instead of a function call. `parse_args` normalizes any
-argument shape to a dict; `salvage_tool_call` rebuilds a call from content JSON when it uniquely fits
-one offered tool's parameters, so the work isn't thrown away.
+Local models are loose about tool calls: arguments arrive already-parsed, or wrapped in a stray
+single key. `parse_args` normalizes any argument shape to a dict.
 
-(The old `Services` gateway + `AgentLoop` that owned the synchronous fix loop are gone — a build is
-now a chain of `llm` jobs driven by build_chain, so nothing dispatches "through Services" any more.)
+Recovering a call the model wrote as TEXT is `maestro.tool_calls` — it owns every encoding.
 """
 
 import json
 import logging
 from typing import Dict, Optional
+
+from maestro.tool_calls import parse_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -39,23 +38,9 @@ def parse_args(raw) -> Dict:
 
 
 def salvage_tool_call(content: str, schemas) -> Optional[Dict]:
-    """Local models sometimes emit a tool's arguments as raw JSON in message content instead of as a
-    function call. If that JSON uniquely fits one available tool's parameters, rebuild the call so the
-    work isn't thrown away (and we skip a wasted nudge round-trip). Bail when ambiguous — let the
-    nudge path handle it."""
-    args = parse_args(content) if content else {}
-    if not isinstance(args, dict) or not args:
-        return None
-    keys = set(args)
-    matches = []
-    for s in schemas or []:
-        f = s.get("function", {})
-        params = f.get("parameters", {}) or {}
-        props = set(params.get("properties", {}) or {})
-        required = set(params.get("required", []) or [])
-        if required <= keys <= props:
-            matches.append(f.get("name"))
-    if len(matches) != 1:
-        return None
-    return {"id": "salvaged", "type": "function",
-            "function": {"name": matches[0], "arguments": json.dumps(args, ensure_ascii=False)}}
+    """The FIRST tool call the model wrote as text instead of as a function call, or None.
+
+    Kept for callers that can only apply one call; `maestro.tool_calls.parse_tool_calls` returns
+    them all and owns every encoding."""
+    calls = parse_tool_calls(content, schemas)
+    return calls[0] if calls else None

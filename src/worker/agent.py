@@ -35,11 +35,13 @@ HEARTBEAT_INTERVAL = 45.0
 
 
 class Agent:
-    def __init__(self, server: str, target: str, queue: str, token: str,
+    def __init__(self, server: str, target: str, queue: str, token: str, api: str = "chat",
                  worker_id: str = None, gpu_type: str = None, source: str = "local",
                  idle_exit_seconds: float = 0.0):
         self.server = server.rstrip("/")
         self.target = target.rstrip("/")
+        # The dialect this worker's target speaks. Known only here — a queue owns its backend.
+        self.api = api
         self.queue = queue
         self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.gpu_type = gpu_type
@@ -122,7 +124,7 @@ class Agent:
     # ── execution ─────────────────────────────────────────────────────────────
     def execute(self, job: dict) -> None:
         payload = job["payload"]
-        handler = HANDLERS[payload.get("kind", "http")]
+        handler = HANDLERS[payload.get("kind", "llm")]
         done = threading.Event()
         hb = threading.Thread(target=self._heartbeat_until, args=(job["id"], done), daemon=True)
         hb.start()
@@ -172,6 +174,8 @@ def main(argv=None) -> int:
     parser.add_argument("--server", default="http://localhost:8000")
     parser.add_argument("--target", default="http://localhost:1234")
     parser.add_argument("--queue", default="llm")
+    parser.add_argument("--api", default="chat", choices=("chat", "responses"),
+                        help="wire format the target serves (llm queue only)")
     parser.add_argument("--token", default=os.environ.get("WORKER_TOKEN", ""))
     parser.add_argument("--worker-id", default=None)
     parser.add_argument("--gpu-type", default=None)
@@ -185,7 +189,7 @@ def main(argv=None) -> int:
         parser.error("--token (or WORKER_TOKEN) is required")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    agent = Agent(args.server, args.target, args.queue, args.token,
+    agent = Agent(args.server, args.target, args.queue, args.token, api=args.api,
                   worker_id=args.worker_id, gpu_type=args.gpu_type, source=args.source,
                   idle_exit_seconds=args.idle_exit_seconds)
 

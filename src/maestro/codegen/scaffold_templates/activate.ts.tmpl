@@ -1,8 +1,0 @@
-      // Dialogue (scaffold-owned): the kit talk loop advances/chooses/closes every frame, on the
-      // SAME key that opened it — talkStep's default advance key is E, so a spec that put activate
-      // elsewhere could open a conversation it could never advance. A completed choice lands in
-      // state.talkPick ({npc, pick} | null) for the hook update to act on.
-      state.talkPick = kit.talkStep(state, input, {advance_key});
-      // WHAT the activate key would act on this frame — the kit decides (facing cone, reach,
-      // nearest wins) and the engine draws the prompt, so neither is the game's to get wrong.
-      kit.focus(state);

@@ -288,11 +288,12 @@ def fake_worker():
 
 def test_connector_round_trip(fake_worker):
     def respond(payload):
-        assert payload["path"] == "/v1/responses"
+        assert payload["kind"] == "llm"
         assert payload["body"]["model"] == "test-model"
-        return {"output": [{"type": "message", "content":
-                            [{"type": "output_text", "text": "hello"}]}],
-                "usage": {"input_tokens": 3, "output_tokens": 1}}, None
+        assert "messages" in payload["body"]        # canonical, not a dialect
+        # a worker returns CANONICAL chat — it already translated for its own target
+        return {"choices": [{"message": {"role": "assistant", "content": "hello"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1}}, None
 
     fake_worker(respond)
     result = _connector().generate_with_tools(
@@ -304,7 +305,7 @@ def test_connector_round_trip(fake_worker):
 def test_connector_attributes_jobs_to_the_run_scope(fake_worker):
     store.create_game("g9", "u1")
     store.charge_game("g9", 1, 1000.0)
-    fake_worker(lambda p: ({"output": []}, None))
+    fake_worker(lambda p: ({"choices": [{"message": {"content": ""}}]}, None))
     with run_scope("g9"):
         _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])
     assert store.game("g9")["seconds_used"] == 1.0

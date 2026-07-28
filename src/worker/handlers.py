@@ -1,6 +1,7 @@
 """What a worker DOES with a claimed payload, keyed by `payload["kind"]`.
 
-The llm queue is a verbatim forward (no kind), so its handler is one POST. The image queue is not:
+The llm queue takes a CANONICAL chat request and translates it for whatever the worker's target
+speaks (`--api`), so the control plane never encodes a backend's dialect. The image queue is not:
 ComfyUI is submit → poll history → fetch each image. Payloads carry no endpoints; the target is the
 worker's own CLI config. A queue owns its GPU.
 
@@ -31,10 +32,22 @@ def _get(agent, url, headers=None, **kw):
     return agent.session.get(url, headers=_headers(headers), **kw)
 
 
-def http_passthrough(agent, payload):
-    """The llm queue: forward the body verbatim to the local inference server."""
-    url = f"{agent.target}{payload.get('path', '/v1/responses')}"
-    r = _post(agent, url, json=payload.get("body"), timeout=900)
+def llm(agent, payload):
+    """The llm queue. The request arrives CANONICAL (OpenAI chat shape); this translates it into
+    whatever dialect `agent.api` says the local server speaks, and translates the reply back.
+
+    The control plane never learns what engine is behind a worker — that is the whole point of
+    putting this here. Adding an engine is a branch in this function plus an `--api` value."""
+    from llm_clients import wire
+    body = payload.get("body") or {}
+    if agent.api == "responses":
+        r = _post(agent, f"{agent.target}/v1/responses",
+                  json=wire.chat_to_responses_body(body), timeout=900)
+        if r.status_code != 200:
+            return None, f"Status {r.status_code}: {r.text[:2000]}"
+        return wire.responses_to_chat(r.json()), None
+    r = _post(agent, f"{agent.target}/v1/chat/completions",
+              json=wire.chat_body_for_wire(body), timeout=900)
     if r.status_code != 200:
         return None, f"Status {r.status_code}: {r.text[:2000]}"
     return r.json(), None
@@ -110,7 +123,7 @@ def trellis_mesh(agent, payload):
 
 
 HANDLERS = {
-    "http": http_passthrough,
+    "llm": llm,
     "comfy_image": comfy_image,
     "trellis_mesh": trellis_mesh,
 }

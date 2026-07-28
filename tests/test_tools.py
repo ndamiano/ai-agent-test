@@ -1,197 +1,148 @@
-"""Tests for ToolManager"""
+"""The five tools (maestro/codegen/tools.py) — deliberately the smallest surface that works."""
+import json
 
 import pytest
 
-from tools.tool_manager import ToolManager, tool_manager
+from maestro.codegen.tools import MAX_READ_CHARS, build_tools
+from maestro.state import RunState
+
+SRC = "const a = 1;\nconst b = 2;\nconst a2 = 1;\n"
+
+
+def _game(tmp_path, files):
+    d = tmp_path / "game"
+    d.mkdir(exist_ok=True)
+    for name, body in files.items():
+        p = d / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body, encoding="utf-8")
 
 
 @pytest.fixture
-def manager():
-    """A ToolManager with a clean registry.
-
-    Since ToolManager is a singleton, we clear the registry to ensure clean state.
-    """
-    mgr = ToolManager()
-    mgr._tools_registry = {}
-    return mgr
+def tools(tmp_path):
+    _game(tmp_path, {"game.js": SRC})
+    return build_tools(RunState(tmp_path))
 
 
-def test_register_tool(manager):
-    """Test registering a tool with the manager."""
-    def test_function(a: int, b: int) -> int:
-        return a + b
-
-    parameters = {
-        "type": "object",
-        "properties": {
-            "a": {"type": "integer", "description": "First number"},
-            "b": {"type": "integer", "description": "Second number"}
-        },
-        "required": ["a", "b"]
-    }
-
-    manager.register_tool(
-        name="test_add",
-        description="Test addition function",
-        parameters=parameters,
-        fn=test_function
-    )
-
-    # Verify tool was registered
-    tools = manager.getTools()
-    assert len(tools) == 1
-
-    tool = tools[0]
-    assert tool['name'] == 'test_add'
-    assert tool['description'] == 'Test addition function'
-    assert tool['parameters'] == parameters
-    assert tool['function'] == test_function
+# ── the path guard (the one thing that is never relaxed) ──────────────────────
+@pytest.mark.parametrize("path", ["../escaped.js", "../../etc/passwd", "a/../../out.js"])
+def test_a_path_cannot_escape_the_game_folder(tools, tmp_path, path):
+    assert tools["write_file"](path=path, content="x")["ok"] is False
+    assert not (tmp_path.parent / "escaped.js").exists()
 
 
-def test_get_tools_empty(manager):
-    """Test getting tools when none are registered."""
-    tools = manager.getTools()
-    assert len(tools) == 0
-    assert tools == []
+def test_nested_paths_are_allowed(tools, tmp_path):
+    assert tools["write_file"](path="assets/cards.json", content="[]")["ok"] is True
+    assert (tmp_path / "game" / "assets" / "cards.json").read_text() == "[]"
 
 
-def test_get_tool_info(manager):
-    """Test getting information about a specific tool."""
-    def test_function() -> str:
-        return "test"
-
-    manager.register_tool(
-        name="test_tool",
-        description="Test tool",
-        parameters={"type": "object", "properties": {}, "required": []},
-        fn=test_function
-    )
-
-    tool_info = manager.get_tool_info("test_tool")
-    assert tool_info is not None
-    assert tool_info['name'] == 'test_tool'
-
-    # Test getting info for non-existent tool
-    non_existent = manager.get_tool_info("non_existent")
-    assert non_existent is None
+# ── write_file ────────────────────────────────────────────────────────────────
+def test_write_overwrites(tools, tmp_path):
+    tools["write_file"](path="game.js", content="const x = 1;\n")
+    assert (tmp_path / "game" / "game.js").read_text() == "const x = 1;\n"
 
 
-def test_use_tool_valid_args(manager):
-    """Test executing a tool with valid arguments."""
-    def test_function(a: int, b: int) -> int:
-        return a + b
-
-    manager.register_tool(
-        name="test_add",
-        description="Test addition",
-        parameters={
-            "type": "object",
-            "properties": {
-                "a": {"type": "integer"},
-                "b": {"type": "integer"}
-            },
-            "required": ["a", "b"]
-        },
-        fn=test_function
-    )
-
-    result = manager.useTool("test_add", a=5, b=3)
-    assert result == 8
+def test_write_serializes_an_object_body(tools, tmp_path):
+    """A model writing a .json file sends the object — that is what it meant."""
+    r = tools["write_file"](path="assets.json", content={"images": [{"id": "hero"}]})
+    assert r["ok"] is True
+    assert json.loads((tmp_path / "game" / "assets.json").read_text())["images"][0]["id"] == "hero"
 
 
-def test_use_tool_missing_required_args(manager):
-    """Test executing a tool with missing required arguments."""
-    def test_function(a: int, b: int) -> int:
-        return a + b
-
-    manager.register_tool(
-        name="test_add",
-        description="Test addition",
-        parameters={
-            "type": "object",
-            "properties": {
-                "a": {"type": "integer"},
-                "b": {"type": "integer"}
-            },
-            "required": ["a", "b"]
-        },
-        fn=test_function
-    )
-
-    with pytest.raises(ValueError) as exc_info:
-        manager.useTool("test_add", a=5)  # Missing 'b'
-
-    assert "Missing required parameter 'b'" in str(exc_info.value)
+def test_write_rejects_an_unusable_body_without_raising(tools):
+    r = tools["write_file"](path="game.js", content=object())
+    assert r["ok"] is False and "expected text" in r["error"]
 
 
-def test_use_tool_unknown_tool(manager):
-    """Test executing a non-existent tool."""
-    with pytest.raises(ValueError) as exc_info:
-        manager.useTool("non_existent_tool", arg1="value")
-
-    assert "Tool 'non_existent_tool' not found" in str(exc_info.value)
-
-
-def test_use_tool_with_extra_args(manager):
-    """Test executing a tool with extra arguments (should be filtered)."""
-    def test_function(a: int) -> int:
-        return a * 2
-
-    manager.register_tool(
-        name="test_double",
-        description="Test doubling",
-        parameters={
-            "type": "object",
-            "properties": {
-                "a": {"type": "integer"}
-            },
-            "required": ["a"]
-        },
-        fn=test_function
-    )
-
-    # Should work with extra argument 'b' (it will be filtered out)
-    result = manager.useTool("test_double", a=5, b="extra")
-    assert result == 10
+# ── edit_file ─────────────────────────────────────────────────────────────────
+def test_edit_replaces_a_unique_snippet(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="const b = 3;")
+    assert r["ok"] is True
+    assert "const b = 3;" in (tmp_path / "game" / "game.js").read_text()
 
 
-def test_use_tool_execution_error(manager):
-    """Test handling tool execution errors."""
-    def failing_function() -> None:
-        raise RuntimeError("Tool execution failed")
-
-    manager.register_tool(
-        name="failing_tool",
-        description="Tool that always fails",
-        parameters={"type": "object", "properties": {}, "required": []},
-        fn=failing_function
-    )
-
-    with pytest.raises(RuntimeError) as exc_info:
-        manager.useTool("failing_tool")
-
-    assert "Tool execution failed for 'failing_tool'" in str(exc_info.value)
+def test_edit_needs_no_prior_read(tools):
+    """The grid harness had no read-before-edit rule; adding one only invents a failure mode."""
+    assert tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="x")["ok"] is True
 
 
-def test_global_tool_manager_instance():
-    """Test that the global tool_manager instance works correctly."""
-    # Clear any existing tools
-    original_tools = tool_manager.getTools()
+def test_edit_refuses_an_ambiguous_snippet(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="const a", new_text="const z")
+    assert r["ok"] is False and "appears 2 times" in r["error"]
+    assert (tmp_path / "game" / "game.js").read_text() == SRC
 
-    def test_function() -> str:
-        return "global test"
 
-    tool_manager.register_tool(
-        name="global_test",
-        description="Global test tool",
-        parameters={"type": "object", "properties": {}, "required": []},
-        fn=test_function
-    )
+def test_edit_refuses_a_missing_snippet(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="nope", new_text="x")
+    assert r["ok"] is False and "not found" in r["error"]
+    assert (tmp_path / "game" / "game.js").read_text() == SRC
 
-    # Verify it's registered in the global instance
-    tools = tool_manager.getTools()
-    assert len(tools) == len(original_tools) + 1
 
-    # Test using the global instance
-    result = tool_manager.useTool("global_test")
-    assert result == "global test"
+def test_edit_refuses_an_empty_anchor(tools):
+    r = tools["edit_file"](path="game.js", old_text="", new_text="tail")
+    assert r["ok"] is False and "old_text" in r["error"]
+
+
+def test_edit_on_a_missing_file_is_an_error(tools):
+    assert tools["edit_file"](path="nope.js", old_text="a", new_text="b")["ok"] is False
+
+
+# ── read_file / list_files ────────────────────────────────────────────────────
+def test_read_returns_the_whole_file(tools):
+    assert tools["read_file"](path="game.js")["content"] == SRC
+
+
+def test_read_truncates_only_past_the_ceiling(tmp_path):
+    _game(tmp_path, {"big.js": "x" * (MAX_READ_CHARS + 500)})
+    r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
+    assert r["ok"] and "truncated" in r["content"]
+    assert len(r["content"]) < MAX_READ_CHARS + 200
+
+
+def test_a_long_single_line_is_not_elided_below_the_ceiling(tmp_path):
+    """Mid-file elision broke edit anchors; the harness only ever truncated the tail."""
+    line = "const DATA = [" + ",".join(str(i) for i in range(2000)) + "];\n"
+    _game(tmp_path, {"data.js": line})
+    r = build_tools(RunState(tmp_path))["read_file"](path="data.js")
+    assert r["content"] == line
+
+
+def test_read_missing_file_is_an_error(tools):
+    assert tools["read_file"](path="nope.js")["ok"] is False
+
+
+def test_list_files_skips_scratch(tools, tmp_path):
+    (tmp_path / "game" / "_transcript.jsonl").write_text("x")
+    assert [f["path"] for f in tools["list_files"]()["files"]] == ["game.js"]
+
+
+# ── a missing required argument is an error, never a default ─────────────────
+def test_write_without_a_path_is_an_error_not_a_default(tools, tmp_path):
+    """This is THE regression. Defaulting a missing `path` to index.html meant every write in a run
+    landed on the same file and the last one — the game's JavaScript — won, so index.html held no
+    HTML and the page rendered its own source."""
+    r = tools["write_file"](content="const x = 1;")
+    assert r["ok"] is False and "missing required argument: path" in r["error"]
+    assert not (tmp_path / "game" / "index.html").exists()
+
+
+def test_write_without_content_is_an_error(tools):
+    r = tools["write_file"](path="game.js")
+    assert r["ok"] is False and "missing required argument: content" in r["error"]
+
+
+@pytest.mark.parametrize("tool,kw", [("read_file", {}), ("edit_file", {"old_text": "a"})])
+def test_every_tool_reports_a_missing_path(tools, tool, kw):
+    r = tools[tool](**kw)
+    assert r["ok"] is False and "missing required argument: path" in r["error"]
+
+
+def test_edit_without_old_text_is_an_error(tools):
+    r = tools["edit_file"](path="game.js", new_text="x")
+    assert r["ok"] is False and "missing required argument: old_text" in r["error"]
+
+
+def test_a_path_escape_is_reported_not_raised(tools):
+    """The guard still holds; it just answers the model instead of killing the completion."""
+    r = tools["write_file"](path="../escaped.js", content="x")
+    assert r["ok"] is False and "escapes" in r["error"]

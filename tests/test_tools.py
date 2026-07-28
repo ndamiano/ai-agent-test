@@ -108,10 +108,24 @@ def test_write_without_a_path_is_an_error_not_a_default(tools, tmp_path):
 
 
 @pytest.mark.parametrize("tool,kw", [
-    ("write_file", {"content": "x"}), ("read_file", {}), ("edit_file", {"old_text": "a"})])
+    ("write_file", {"content": "x"}), ("write_file", {"path": "a.js"}),
+    ("read_file", {}), ("edit_file", {"old_text": "a"}),
+    ("edit_file", {"path": "game.js", "new_text": "x"})])
 def test_a_missing_argument_is_reported_never_guessed(tools, tool, kw):
     r = tools[tool](**kw)
     assert r["ok"] is False and r["error"]
+
+
+def test_an_omitted_new_text_does_not_silently_delete(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="const b = 2;")
+    assert r["ok"] is False and "new_text" in r["error"]
+    assert (tmp_path / "game" / "game.js").read_text() == SRC
+
+
+def test_an_explicit_empty_new_text_still_deletes(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="const b = 2;\n", new_text="")
+    assert r["ok"] is True
+    assert "const b" not in (tmp_path / "game" / "game.js").read_text()
 
 
 def test_a_wrong_type_is_reported_not_coerced(tools, tmp_path):

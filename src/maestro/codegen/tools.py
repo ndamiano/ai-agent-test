@@ -60,7 +60,11 @@ def build_tools(state) -> dict:
             return {"ok": False, "error": f"no such file: {path}"}
         if old_text is None:
             raise KeyError("old_text")
-        old, new = old_text, new_text if new_text is not None else ""
+        if new_text is None:
+            # An omitted new_text would silently DELETE the matched region. Deleting is legitimate,
+            # but only when the model sends "" and means it.
+            raise KeyError("new_text")
+        old, new = old_text, new_text
         body = p.read_text(encoding="utf-8")
         n = body.count(old)
         if n == 0:

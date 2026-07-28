@@ -162,8 +162,8 @@ def test_measured_overrun_can_push_remaining_negative_but_still_refuses():
 
 
 def test_concurrent_enqueues_cannot_all_take_the_same_headroom():
-    """parallel_fixes enqueues from several threads at once. A check-then-insert that is not one
-    transaction lets every thread read the same remaining seconds and each spend it."""
+    """Several threads enqueue at once. A check-then-insert that is not one transaction lets every
+    thread read the same remaining seconds and each spend it."""
     fits = 4
     _game(estimate_seconds("llm") * fits)
     admitted, refused = [], []

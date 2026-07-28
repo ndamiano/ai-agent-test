@@ -42,20 +42,12 @@ pipeline_inputs/
 # RenPy template binary assets (copy from any SDK-generated project)
 src/pipelines/*/renpy_templates/**/*.png
 
-# Compiled/generated game build outputs (regenerable)
+# Compiled/generated game build outputs (regenerable). CAUTION: this bare rule silently untracks
+# ANY source dir named build/ — never name one that.
 build/
 
-# Staged build copies for browser play (run-id named); the sample games stay tracked.
-runtime/games/*.js
-!runtime/games/pong.js
-!runtime/games/pacman.js
-!runtime/games/asteroids.js
-!runtime/games/platformer.js
-!runtime/games/collect3d.js
-runtime/games/*/
-!runtime/games/cardbound_proof/
-runtime/games/cardbound_proof/*
-!runtime/games/cardbound_proof/main.ts
+# Staged games (runtime/games/<run_id>/) — local build output, republished by staging on demand.
+runtime/games/
 
 # node deps (runtime/decimate.mjs: gltf-transform, meshoptimizer)
 node_modules/

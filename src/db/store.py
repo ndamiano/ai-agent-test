@@ -315,8 +315,8 @@ def enqueue_job(queue: str, payload: Dict, game_id: Optional[str] = None,
                 build_id: Optional[str] = None, model: Optional[str] = None,
                 batch_id: Optional[str] = None, metadata: Optional[Dict] = None) -> str:
     """Land a job as pending, ADMITTING it against its game's compute budget first. The check and
-    the insert share one write transaction, so concurrent enqueues (parallel_fixes) can't each see
-    the same headroom and all take it. Raises InsufficientCompute when the queue's estimate does
+    the insert share one write transaction, so concurrent enqueues can't each see the same
+    headroom and all take it. Raises InsufficientCompute when the queue's estimate does
     not fit in what's left.
 
     A job with no game — chat, spec drafting — is platform cost rather than a game's, so it is

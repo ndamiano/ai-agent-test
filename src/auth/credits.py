@@ -5,9 +5,9 @@ The webhook does NOT trust the payload: it hands the raw bytes + headers to the 
 `CreditProvider`, which verifies the provider's own signature and returns who to credit and how
 much. An event that fails verification yields None and credits nothing.
 
-The concrete provider verify is deliberately unbuilt (owner's call) — it's a TODO wired to this
-seam, so the ledger and webhook never change when a real provider drops in. Until one is set,
-`UnconfiguredProvider` refuses every event, so there is no unsigned path to credits.
+The active provider is `UnconfiguredProvider`, which refuses every event: credits reach the ledger
+only through the admin CLI. Wiring a concrete provider is a change to this seam alone — the ledger
+and the webhook stay as they are.
 """
 
 from abc import ABC, abstractmethod
@@ -30,15 +30,14 @@ class CreditProvider(ABC):
 
 
 class UnconfiguredProvider(CreditProvider):
-    """Default until a real provider is wired — verifying anything is a TODO, so no event can
-    reach the ledger."""
+    """Refuses every event, so no webhook payload can reach the ledger."""
 
     def verify(self, payload: bytes, headers: Mapping[str, str]) -> Optional[PurchaseEvent]:
         # TODO: implement a concrete provider (Stripe/Paddle) — verify the signature header
         # against the raw payload, parse the event, map its customer/price to (user_id, credits).
-        raise NotImplementedError(
-            "no payment provider configured — wire a concrete CreditProvider (Stripe/Paddle)"
-        )
+        # Refuses by RETURNING None, never by raising: the webhook is public (a provider can't
+        # carry a user token), so a raise here is a 500 + traceback any caller can trigger.
+        return None
 
 
 _provider: CreditProvider = UnconfiguredProvider()

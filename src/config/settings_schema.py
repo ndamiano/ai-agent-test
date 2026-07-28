@@ -88,9 +88,6 @@ class AppSettings(BaseModel):
     # Control-plane state (platform.db + auth.db) — NOT under working_directory: artifact output
     # is the wrong home for the datastore.
     data_dir: Optional[str] = "data"
-    # Concurrent build fixes (parallel LLM calls per loop step). >1 needs an inference server that
-    # batches concurrent requests (LM Studio does); tool writes stay serialized either way.
-    parallel_fixes: int = Field(1, ge=1, le=8)
     model_category: Literal["large", "medium", "small"] = "large"
     llm: LLMSettings
     workqueue: Optional[WorkQueueSettings] = None

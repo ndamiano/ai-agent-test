@@ -63,8 +63,7 @@ class LLMRateLimiter:
             self.last_update = self._clock()
 
 
-# Capacity covers the largest parallel-fix batch (settings parallel_fixes <= 8), so a whole batch
-# starts unthrottled; the rate only paces sustained bursts.
+# Capacity covers a burst of concurrent calls unthrottled; the rate only paces sustained ones.
 _llm_rate_limiter = LLMRateLimiter(rate=2.0, capacity=8)
 
 

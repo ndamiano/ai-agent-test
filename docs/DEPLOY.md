@@ -7,7 +7,7 @@ The container path is the alternative to the manual runbook below: one Docker im
 edits to deploy.
 
 **One decision, one container.** The image is CPU-only — the control plane: API + SPA + the job
-queue + the node-based build gates. Every GPU backend is driven by **worker agents**
+queue. Every GPU backend is driven by **worker agents**
 (`worker/agent.py`) that PULL jobs over `/worker` from wherever the GPUs live (home box, RunPod
 pod), authed by `WORKQUEUE_TOKEN`. One worker process per queue:
 
@@ -24,10 +24,11 @@ means every job on it times out, so all three workers are mandatory, not optiona
 
 ### Files
 
-- `Dockerfile` — multi-stage: node builds `frontend/dist`, then a `python:3.12-slim` runtime installs
-  deps + engine runtime libs, copies `run.py` + `src/` + the built SPA, and runs as non-root.
-- `docker-compose.yml` — the single `app` service (build, `.env`, named volume, engine bind mounts,
-  healthcheck).
+- `Dockerfile` — multi-stage: node builds `frontend/dist`, a second node stage resolves the mesh
+  toolchain, then a `python:3.12-slim` runtime installs deps and copies `run.py` + `src/` +
+  `runtime/` + the built SPA, and runs as non-root.
+- `docker-compose.yml` — the single `app` service (build, `.env`, the two named volumes, the
+  `settings.json` bind mount, healthcheck).
 - `.env.example` — every knob; copy to `.env` and edit.
 - `scripts/provision.sh` — one-time host setup.
 - `scripts/deploy.sh` — ship dev → prod.
@@ -45,12 +46,12 @@ Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY
 `MAESTRO_DATA_DIR` off `/data`, and never `docker volume rm` either volume — that wipes accounts
 and games.
 
-### Build toolchain
+### Node in the image
 
-The codegen build gates run a Node toolchain (`tsc` + `esbuild`) against the game folder — no game
-engines. The image bakes `node` plus `runtime/node_modules` (npm-ci'd in a linux build stage so the
-platform-specific binaries resolve). Generated games are plain TypeScript bundled to JS and served
-as static files at `/play`.
+Games are plain HTML/CSS/JS: staging copies the folder straight to `/play`. Node is in the image for
+one subprocess — `runtime/decimate.mjs`, which cuts a finished TRELLIS GLB down to game weight. It
+needs `runtime/node_modules` (gltf-transform + meshoptimizer), npm-ci'd in a linux build stage so the
+platform-specific binaries resolve.
 
 ### Brand-new box (provision → configure → deploy)
 

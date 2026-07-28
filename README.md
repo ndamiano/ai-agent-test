@@ -1,14 +1,18 @@
 # Maestro
 
-An AI platform that makes things. The user says "make me a game" — an hour later, a good game exists. AI output quality is the product; everything else is scaffolding.
+An AI platform that makes things. The user says "make me a game" — a while later, a good game exists. AI output quality is the product; everything else is scaffolding.
 
 See `docs/VISION.md` for the philosophy, `docs/ROADMAP.md` for the plan and current state, and `CLAUDE.md` for architecture and code standards.
 
 ## How it works
 
-You talk to Maestro through a chat interface. When you ask for something, Maestro does **not** write the game by hand and does **not** run a fixed pipeline. It drafts a per-game **spec** — title / genre / entities / controls / mechanics / win-lose — for you to review and freeze. Once frozen, a non-LLM **executor** drives the local model to author a folder of **TypeScript modules** against a primitive **kit**, patching until the local gates pass. "Done" means the artifact passes the gates (typecheck → headless → probe → render → scroll) — never the model claiming it.
+You talk to Maestro through a chat interface. When you ask for a game, the chat model turns the request into a short **BRIEF** — title / genre / look / audio / scope / mechanics / win-lose — which you review and **freeze**. The brief answers what a one-line request leaves open ("a rhythm RPG" — synthwave or hand-drawn folk?); how the game works is decided in the build.
 
-The model writes **real TypeScript game code**, not an intermediate representation. Breadth comes from the model COMPOSING kit primitives (physics, collision, tilemaps, pathfinding, 3D) rather than from per-genre generators. `update(dt, input, kit)` mutates plain state and never draws; `draw(g, kit)` reads state and never mutates — so the sim runs headless in pure Node, and render (2D canvas or three.js) is the only engine-specific layer.
+Once frozen, a non-LLM **driver** hands the model six tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. A 3D game imports the vendored three.js copied into every game folder.
+
+A build reaches `built` when `index.html` exists — a gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. After `done`, an **audit** judges each of the brief's claims against the source and writes a report to `audit_verdicts.jsonl`. To act on it, say what to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
+
+The game asks for its own art as it writes the code that uses it: `generate_media(id, prompt, kind)` enqueues one render and answers immediately with the path the file will appear at, so the GPU draws while the model keeps writing.
 
 ## Setup
 
@@ -26,15 +30,31 @@ npm install
 npm run dev
 ```
 
-Settings live in `src/config/settings.json` (gitignored) and can also be edited from the web UI. Maestro talks to any OpenAI-compatible endpoint (LM Studio, etc.) via its Responses API; image generation uses ComfyUI and 3D meshes use a TRELLIS server. Set `model_category` to `small` when running local models.
+Settings live in `src/config/settings.json` (gitignored). Set `model_category` to `small` when running local models.
+
+**Accounts are provisioned manually — there is no signup route.**
+
+```bash
+cd src
+python -m auth.cli create <handle>      # prompts for a password
+python -m auth.cli grant  <handle> <n>  # accounts start at 0 credits
+```
+
+### Workers (the only path to a GPU)
+
+The queue is the only transport to a GPU. Every backend — LLM, images, meshes — is a worker agent that PULLS jobs over `/worker`, authed by the shared `workqueue.token`. **A queue with no worker running means every job on it times out**, so the `llm` worker is mandatory for chat and builds alike.
+
+```bash
+python -m worker.agent --server http://localhost:8000 --token <token> --queue llm   --target http://localhost:8080
+python -m worker.agent --server http://localhost:8000 --token <token> --queue image --target http://localhost:8188  # ComfyUI
+python -m worker.agent --server http://localhost:8000 --token <token> --queue mesh  --target http://localhost:8189  # TRELLIS
+```
+
+The control plane enqueues one canonical chat request; the worker translates it for whatever its target serves (`worker.agent --api chat|responses`).
 
 ### Local model server
 
-Maestro speaks the OpenAI-compatible `/v1/responses` API. The `llm` settings block points at whichever server serves it. Two known-good ones:
-
-**LM Studio** — load a model, start its local server, point `llm.base_url` at it (default `http://localhost:1234`).
-
-**llama.cpp** (`llama-server`) — run in **router mode**, so the model id is a filename stem rather than baked into the launch flags.
+`llama-server` in **router mode**, so the model id is a filename stem rather than baked into the launch flags:
 
 ```bash
 llama-server \
@@ -43,16 +63,19 @@ llama-server \
   -ngl 99 \
   -c 32768 \
   --jinja \
-  --reasoning-budget 0
+  --reasoning-budget 0 \
+  --chat-template-kwargs '{"enable_thinking":false}'
 ```
+
+`--chat-template-kwargs` is load-bearing: without it Qwen3.6 thinks in `content` until authoring turns truncate at the output cap before the tool call, and `--reasoning-budget 0` alone does not stop it.
 
 The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). Set the block to:
 
 ```json
 "llm": {
-  "base_url": "http://localhost:8080",
   "model": "Qwen3.6-35B-A3B-UD-Q4_K_XL",
-  "reasoning": "none"
+  "reasoning": "none",
+  "n_ctx": 32768
 }
 ```
 
@@ -64,7 +87,7 @@ A GPU serves one backend. Running the LLM and ComfyUI on one card means both mus
 cd src && python -m maestro.codegen.run "<request>"   # draft → freeze → build
 ```
 
-Play a build by opening `runtime/index.html?game=<slug>` in a browser (2D or 3D auto-routed).
+Play a build by opening `runtime/games/<run_id>/index.html`. Serve a 3D one over http rather than `file://` — `<script type="module">` is CORS-blocked from a file origin.
 
 ## Tests
 
@@ -72,27 +95,33 @@ Play a build by opening `runtime/index.html?game=<slug>` in a browser (2D or 3D 
 cd src && python -m pytest ../tests/ --ignore=../tests/integration -q
 ```
 
-Integration tests in `tests/integration/` require live LLM services.
+Integration tests in `tests/integration/` require live services.
 
 ## Repository layout
 
 ```
-runtime/        the primitive KIT (engine.js/engine3d.js), the game gates (headless/probe/
-                render/scroll), ambient TS types (engine.d.ts), kit_api*.md, browser harness
+runtime/
+  vendor/       vendored three.js + GLTFLoader, copied into every game folder at seed
+  games/        staged games, served at /play
+  decimate.mjs  node: a finished TRELLIS GLB decimated to game weight
 src/
-  agents/       MainAgent (chat persona — drafts/amends specs) + agent configs
+  agents/       MainAgent (chat persona — drafts/amends briefs) + agent configs
   api/          FastAPI routers + WebSocket event bus
+  auth/         identity, sessions, credit ledger, admin CLI
   config/       settings schema/manager
-  llm_clients/  connectors, message builder, strip_fences helper
+  db/           games/builds/events/jobs/workers + the compute budget, queue client, reaper
+  llm_clients/  connector, message builder, wire translation
   maestro/
-    codegen/    the build path — gates, tools (write/read/edit_game_file), module (the
-                CodegenModule), fix_classes, prompts/, reskin (assets), run, worldgen_bridge
-    agent_loop.py  the non-LLM executor that drives the module
-    services.py    the bounded gateway a fix calls through
-    modules/, state.py, run_control.py
-  auth/         identity, sessions, credit ledger
+    codegen/    the build path — build_chain (driver), build_steps (turn machine),
+                build_state (cursor), tools, staging, audit, assets, asset_chain,
+                prompts/, run (CLI)
+    services.py, state.py, run_control.py, tool_calls.py
+  scaler/       the RunPod autoscaler
   tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
+  worker/       the pull-side GPU worker agent
+  worldgen/     standalone procedural world generator
+eval/           the harness × model battery grid
 frontend/       chat-first React + Vite UI
 tests/          pytest suite
-docs/           vision, roadmap, plan, deploy
+docs/           vision, roadmap, deploy
 ```

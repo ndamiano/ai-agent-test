@@ -64,7 +64,7 @@ taste, never claims) is judged against the source by a bounded read→verdict su
 the traced path. It RUNS ONCE and REPORTS to `audit_verdicts.jsonl`; it NEVER drives a fix. Rounds of
 judge-then-fix were measured to spend 208 of one build's 227 steps and score WORSE in round 2 than
 round 1, because each fix broke a claim that already worked. To act on a report, the human says what
-to change: `run.py --fix <run_id> "<note>"`.
+to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
 
 **The game asks for its own art, as it writes the code that uses it.** `generate_media(id, prompt,
 kind)` enqueues one render and answers IMMEDIATELY with the path the file will appear at

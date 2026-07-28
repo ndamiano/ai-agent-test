@@ -1,9 +1,9 @@
 {
-  "parallel_fixes": 4,
+  "model_category": "small",
   "llm": {
     "model": "local-model",
     "max_tokens": 50000,
-    "reasoning": "low",
+    "reasoning": "none",
     "n_ctx": 32768
   },
   "workqueue": {

@@ -1,0 +1,45 @@
+{
+  "_comment": "Per-model settings for the grid. Keys are regexes matched against the model name; the longest match wins. `request` values are written onto the request by sampler_proxy.py, overriding whatever the harness hardcoded. `server_args` are llama-server CLI flags - some settings (notably --reasoning-budget) are ONLY honoured at server level, so run_battery.py restarts the server when they change. `max_tokens_floor` only raises a harness's ceiling, never lowers it.",
+
+  "default": {
+    "server_args": ["--top-k", "20", "--top-p", "0.95"],
+    "request": {}
+  },
+
+  "models": {
+    "Ornith-1\\.0": {
+      "_why": "Reasoning model; published sampling is temp 0.6 / top_p 0.95 / top_k 20 with thinking ON. Thinking must be BOUNDED or it never answers: unbounded it spent 111-116K characters inside <think> and emitted zero content on 3 of 4 runs of the iface phase-1 prompt. Temperature matters independently - 0.3 and 1.0 both failed where 0.6 succeeded. The budget is charged on EVERY call, including the ones the 27B answers in 17 tokens, so it sets the price of the whole run: 3000 cost ~25min per game and is not worth it on a 9B.",
+      "server_args": ["--top-k", "20", "--top-p", "0.95",
+                      "--reasoning-budget", "500",
+                      "--reasoning-budget-message", "Time to answer. Output the answer now."],
+      "request": {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "max_tokens_floor": 32000}
+    },
+
+    "Qwen3\\.6-27B-NInfer": {
+      "_why": "The SAME Qwen3.6-27B weights served by ninfer instead of llama.cpp, at MTP3 speculative decoding. Measured on the iface phase-1 prompt: 170.2 tok/s vs llama.cpp's 60 (2.8x), valid JSON, load 5.5s vs 34s. Served separately on :8090, so `upstream` routes there and `model` is rewritten to the id ninfer registered. It runs NO llama-server, hence empty server_args. The artifact must live on ext4 - ninfer opens it O_DIRECT, which the ecryptfs /home rejects with EINVAL. presence_penalty is pinned to 0 because ninfer's OWN default is 1.0 (llama.cpp's is 0.0): the harness never sends one, so that default silently stood and penalised the repeated structural tokens JSON is made of - the same way a frequency penalty corrupted Ornith's JSON. Pinning it also makes the two engines a fair comparison on identical weights.",
+      "server_args": [],
+      "request": {"model": "qwen3.6-27b", "upstream": "http://127.0.0.1:8090",
+                  "presence_penalty": 0, "frequency_penalty": 0}
+    },
+
+    "gemma-4-31B": {
+      "_why": "Published sampling is temp 1.0 / top_p 0.95 / top_k 64 - the harness's hardcoded 0.3 is far below it. Thinking is OPT-IN (a <|think|> token at the start of the system prompt), so it costs nothing here and no reasoning flags are needed.",
+      "server_args": ["--top-k", "64", "--top-p", "0.95"],
+      "request": {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
+    },
+
+    "granite-4\\.1": {
+      "_why": "Not a reasoning model and publishes no sampling settings, so the harness's own values stand. Needs --jinja, which every server here already gets.",
+      "server_args": [],
+      "request": {}
+    },
+
+    "Qwen3\\.6": {
+      "_why": "Its reasoning switch is a no-op - it thinks in `content` in 16K blobs rather than a reasoning field - so thinking is turned off at the template instead. The 27B battery ran at these settings.",
+      "server_args": ["--top-k", "20", "--top-p", "0.95",
+                      "--reasoning-budget", "0",
+                      "--chat-template-kwargs", "{\"enable_thinking\":false}"],
+      "request": {}
+    }
+  }
+}

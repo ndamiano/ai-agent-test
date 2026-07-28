@@ -1,0 +1,10 @@
+[
+  {
+    "slug": "fps3d",
+    "request": "A first-person 3D game: you walk around a small level with walls and obstacles using WASD and the mouse to look, collect pickups scattered around it, and avoid or shoot enemies that chase you. three.js is already in your working directory as `three.module.js` — import it with `import * as THREE from './three.module.js'` in a `<script type=\"module\">`. Do not fetch anything from the network; the page must work offline from the local file."
+  },
+  {
+    "slug": "world3d",
+    "request": "A third-person 3D game: you control a character seen from behind in a small outdoor world with ground, scattered buildings or rocks, and a few things to interact with. Move with WASD, the camera follows you, and there is a goal to reach or something to collect. three.js is already in your working directory as `three.module.js` — import it with `import * as THREE from './three.module.js'` in a `<script type=\"module\">`. Do not fetch anything from the network; the page must work offline from the local file."
+  }
+]

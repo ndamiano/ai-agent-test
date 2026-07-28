@@ -59,8 +59,6 @@ class BuildCursor:
     audit: Optional[Dict] = None
     audit_done: bool = False
     audit_delivered: List[str] = field(default_factory=list)
-    # the asset batch, once the game's assets.json has been enqueued
-    asset_batch: Optional[str] = None
 
     def audit_cursor(self) -> Optional[AuditCursor]:
         return AuditCursor(**self.audit) if self.audit else None

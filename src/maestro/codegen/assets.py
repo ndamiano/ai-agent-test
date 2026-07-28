@@ -1,23 +1,26 @@
 """The asset stage: render the art the game asked for.
 
-The GAME declares its own art. It writes `game/assets.json` —
+The GAME asks for its own art, mid-build, by calling `generate_media` — one call per image or mesh,
+answered immediately with the path the file will appear at. `request_media` is what that tool runs:
+it enqueues one `image` job (a mesh chains image → TRELLIS) and RECORDS the request in
+`game/assets.json` —
 
     {"images": [{"id": "goblin", "file": "assets/goblin.png", "prompt": "a snarling goblin ..."},
                 {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut"}]}
 
-— and renders each entry with a fallback for when the file is missing, so a game with no art still
-plays. This module turns that manifest into real files through the same queue everything else uses:
-one `image` job per entry, enqueued all at once as a batch, `asset_chain` finalizing when the last
-one lands. A mesh entry chains image → TRELLIS.
+The model never writes that file. It is the durable RECORD of what was asked for: what the gallery
+lists, what a top-up re-renders, what a regenerate re-prompts against. Nothing here plans, rewrites
+or inspects the game's source.
 
-Nothing here plans, rewrites or inspects the game's source. The manifest is the whole contract, which
-is what makes the stage free: the model already knew what art it wanted while it was writing the code.
+One request is one BATCH, so each asset finalizes on its own and reaches `/play` as it lands rather
+than when the slowest render in a set does.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -95,10 +98,75 @@ def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
     return out
 
 
-def start_from_manifest(run_id: str, run_dir, build_id: Optional[str] = None) -> Optional[str]:
-    """Enqueue every missing asset at once and return the batch id.
+# An id names a file and is handed back to the asset routes, so it carries only what both accept.
+_MEDIA_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
-    `None` means "no manifest yet, ask again next turn"; `""` means settled with nothing to do.
+
+def _record(run_dir, entry: Dict) -> None:
+    """Append one requested asset to the manifest, AFTER its enqueue lands — the file records what
+    was actually asked of the queue."""
+    p = manifest_path(run_dir)
+    data = {}
+    if p.exists():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = {}
+    images = data.get("images") if isinstance(data, dict) else None
+    if not isinstance(images, list):
+        images = []
+    data = {"images": images + [entry]}
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = "image") -> Dict:
+    """ONE asset. Enqueues the render and answers with the path the file will appear at, so the
+    model can write code against it on the same turn.
+
+    Every refusal is REPORTED: a build that cannot have art must be told to draw one rather than
+    left waiting for a file that is never coming."""
+    if not _MEDIA_ID.match(asset_id or ""):
+        return {"ok": False, "error": "id must be 1-64 characters of letters, digits, - or _"}
+    if not (prompt or "").strip():
+        return {"ok": False, "error": "prompt is required: describe what to draw"}
+    if kind not in ("image", "mesh"):
+        return {"ok": False, "error": f"kind must be 'image' or 'mesh', not {kind!r}"}
+
+    mesh = kind == "mesh"
+    ext = "glb" if mesh else "png"
+    rel = f"assets/{asset_id}.{ext}"
+    if asset_path(run_id, asset_id, ext).exists():
+        return {"ok": True, "path": rel, "status": "ready"}
+    # One id is one render, however many times it is asked for.
+    if any(e["id"] == asset_id for e in read_manifest(run_dir)):
+        return {"ok": True, "path": rel, "status": "rendering"}
+
+    payload = build_item_payload(prompt)
+    if payload is None:
+        return {"ok": False, "error": "that prompt was refused by the safety filter — "
+                                      "draw this one with code instead"}
+    then = ({"enqueue": "mesh_from_image", "finalize": "assets"} if mesh
+            else {"operations": ["save_sprite"], "finalize": "assets"})
+    try:
+        # No build_id: this batch's finalize would otherwise close the BUILD's row the moment the
+        # first sprite lands, while the model is still writing the game.
+        db_store.enqueue_job("image", payload, game_id=run_id, batch_id=uuid.uuid4().hex[:16],
+                             metadata={"run_id": run_id, "asset_id": asset_id, "kind": kind,
+                                       "then": then})
+    except db_store.InsufficientCompute:
+        return {"ok": False, "error": "no compute left for art — draw this one with code instead"}
+    _record(run_dir, {"id": asset_id, "file": rel, "prompt": prompt,
+                      **({"kind": "mesh"} if mesh else {})})
+    logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
+    return {"ok": True, "path": rel, "status": "rendering"}
+
+
+def start_from_manifest(run_id: str, run_dir, build_id: Optional[str] = None) -> Optional[str]:
+    """Enqueue every missing asset at once and return the batch id — the TOP-UP path, for a run
+    whose renders failed or were never paid for.
+
+    `None` means there is no manifest to top up; `""` means settled with nothing to do.
     NOTHING WAITS: each job carries what follows it (for a mesh, the TRELLIS job its image feeds)
     and the batch's finalize, so the stage lives in the queue where its depth is real work the
     scaler can act on."""

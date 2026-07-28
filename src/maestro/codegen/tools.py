@@ -1,4 +1,4 @@
-"""The five tools the build dispatches: list_files, read_file, write_file, edit_file, done.
+"""The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media, done.
 
 Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.
@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 
+from maestro.codegen.assets import request_media
 from maestro.codegen.staging import game_dir
 
 MAX_READ_CHARS = 60_000   # whole-file ceiling; past this the read returns the head and says so
@@ -76,6 +77,10 @@ def build_tools(state) -> dict:
         p.write_text(body.replace(old, new), encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(new)}
 
+    def generate_media(id=None, prompt=None, kind="image", **_) -> dict:
+        # `kind` is the one argument with a default, because the schema offers it as optional.
+        return request_media(state.run_id, state.run_dir, id, prompt, kind or "image")
+
     def _reported(fn):
         """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
         act on. Never substitute a default for a bad argument — the report is what lets it retry."""
@@ -88,4 +93,5 @@ def build_tools(state) -> dict:
 
     return {name: _reported(fn) for name, fn in
             {"list_files": list_files, "read_file": read_file,
-             "write_file": write_file, "edit_file": edit_file}.items()}
+             "write_file": write_file, "edit_file": edit_file,
+             "generate_media": generate_media}.items()}

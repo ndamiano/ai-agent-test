@@ -99,6 +99,18 @@ EDIT_SCHEMA = {"type": "function", "function": {
                                   "old_text": {"type": "string", "description": "Exact text to replace."},
                                   "new_text": {"type": "string", "description": "Text to put in its place."}},
                    "required": ["path", "old_text", "new_text"]}}}
+MEDIA_SCHEMA = {"type": "function", "function": {
+    "name": "generate_media",
+    "description": ("Have an artist draw an image or a 3D model for the game. Returns the path the "
+                    "file will appear at, right away — the drawing itself takes about a minute."),
+    "parameters": {"type": "object",
+                   "properties": {"id": {"type": "string",
+                                         "description": "Short name: letters, digits, - and _."},
+                                  "prompt": {"type": "string",
+                                             "description": "What to draw, described for an artist."},
+                                  "kind": {"type": "string", "enum": ["image", "mesh"],
+                                           "description": "image (a .png) or mesh (a .glb model)."}},
+                   "required": ["id", "prompt"]}}}
 DONE_SCHEMA = {"type": "function", "function": {
     "name": "done",
     "description": "Call when the project is finished and playable.",
@@ -106,7 +118,7 @@ DONE_SCHEMA = {"type": "function", "function": {
                    "properties": {"summary": {"type": "string"}},
                    "required": ["summary"]}}}
 
-SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, DONE_SCHEMA]
+SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, MEDIA_SCHEMA, DONE_SCHEMA]
 
 
 def _n_ctx() -> int:
@@ -200,6 +212,8 @@ def _dispatch(tools, cursor, tc) -> dict:
     elif name == "edit_file":
         res = fn(path=args.get("path"), old_text=args.get("old_text"),
                  new_text=args.get("new_text"))
+    elif name == "generate_media":
+        res = fn(id=args.get("id"), prompt=args.get("prompt"), kind=args.get("kind"))
     else:
         res = fn()
     return res

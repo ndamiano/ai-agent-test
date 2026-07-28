@@ -29,8 +29,10 @@ What survived, and why:
 - **The audit.** The brief's claims judged against the source by a read→verdict subloop, once, as a
   REPORT. It is the only "did you deliver" signal there is.
 - **The human freeze.** A brief is reviewed and frozen before a build may run.
-- **The asset chain.** Unchanged transport; what changed is that the GAME declares its own art in
-  `assets.json` while writing the code that uses it, so the stage costs zero planning calls.
+- **The asset chain.** Unchanged transport; what changed is that the GAME asks for its own art with
+  `generate_media` while writing the code that uses it — one call, one render, the path back
+  immediately — so the stage costs zero planning calls. (On trial since 2026-07-28; see CLAUDE.md
+  § Adding a capability for what settles it.)
 - **`src/worldgen/`** — unwired. It produced the one thing nothing else did (real scale), and
   re-pointing it to emit data a game reads is an open decision.
 

@@ -2,9 +2,9 @@
 
 A build is a linear chain of `llm`-queue jobs. Each job carries `metadata.stage="build"`; when a
 worker completes it, `/worker/complete` routes here. `advance()` applies the completed turn, runs all
-local work (tool dispatch, staging, the asset hand-off) synchronously, and SUSPENDS only at a real
-inference: it enqueues one `llm` job and returns; the process is free to die. The next completion
-reloads build_state.json and calls `advance` again.
+local work (tool dispatch, staging) synchronously, and SUSPENDS only at a real inference: it enqueues
+one `llm` job and returns; the process is free to die. The next completion reloads build_state.json
+and calls `advance` again.
 
 Two phases: `build` (the turn machine writes the game until it calls done or hits the cap) and
 `audit` (the frozen brief's claims judged against the source, once, as a REPORT). There is never more
@@ -112,10 +112,10 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
 
 
 def _seed(rs: RunState) -> None:
-    """An empty game folder. Nothing is pre-placed in it — anything here shows up in the model's
-    first `list_files` and steers what it builds."""
-    from maestro.codegen.staging import game_dir
-    game_dir(rs.run_dir).mkdir(parents=True, exist_ok=True)
+    """The game folder, holding only the vendored renderer. Everything placed here shows up in the
+    model's first `list_files` and steers what it builds, so nothing else is."""
+    from maestro.codegen.staging import seed_vendor
+    seed_vendor(rs.run_dir)
 
 
 def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Optional[str]) -> None:
@@ -160,8 +160,6 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
         outcome = audit_mod.step(spec, rs, cursor, tools, result or {})
     else:
         outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result or {})
-        if cursor.asset_batch is None:
-            _maybe_start_assets(run_id, rs, cursor)
 
     if isinstance(outcome, build_steps.Infer):
         cursor.step += 1
@@ -197,19 +195,6 @@ def _start_audit(rs: RunState, cursor: BuildCursor) -> bool:
     cursor.phase = "audit"
     cursor.set_audit(AuditCursor(anchors=list(cursor.audit_delivered)))
     return True
-
-
-def _maybe_start_assets(run_id: str, rs: RunState, cursor: BuildCursor) -> None:
-    """Fire the asset lane the moment the game's assets.json exists, so the GPU renders art while
-    the build keeps writing code."""
-    from maestro.codegen import assets
-    try:
-        batch = assets.start_from_manifest(run_id, rs.run_dir)
-    except Exception:
-        logger.exception("asset lane failed for %s", run_id)
-        batch = ""   # never retry a lane that throws
-    if batch is not None:
-        cursor.asset_batch = batch
 
 
 def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:

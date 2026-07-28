@@ -21,11 +21,12 @@ step, no engine of ours between it and the screen. Two stages:
    genre, **look**, **audio**, **scope**, plus only the mechanics the request actually asked for.
    The human reviews and **freezes** it. The brief answers the questions a one-line request leaves
    open ("a rhythm RPG" — synthwave or hand-drawn folk?); it does NOT design the game.
-2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model five
-   tools — `list_files`, `read_file`, `write`, `edit`, `done` — and a running transcript, and lets it
-   write the game. It decides the file layout, the data shapes, the systems. It calls `done` when the
-   game is playable. The build is not a resident loop: each llm turn is a job on the `llm` queue and
-   its completion drives the next turn, so the driver holds no state between turns.
+2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model six
+   tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — and a running
+   transcript, and lets it write the game. It decides the file layout, the data shapes, the systems,
+   and what art gets drawn. It calls `done` when the game is playable. The build is not a resident
+   loop: each llm turn is a job on the `llm` queue and its completion drives the next turn, so the
+   driver holds no state between turns.
 
 **Why no kit, no contract, no gates.** Measured over a 25-game grid across two local models
 (2026-07-27): given the same requests, this shape produced working games in 2–4 minutes, 4/4, while
@@ -65,11 +66,18 @@ judge-then-fix were measured to spend 208 of one build's 227 steps and score WOR
 round 1, because each fix broke a claim that already worked. To act on a report, the human says what
 to change: `run.py --fix <run_id> "<note>"`.
 
-**The game declares its own art.** It writes `game/assets.json` — `{"images": [{id, file, prompt,
-kind?}]}` — while it is writing the code that uses it, and renders a shape when the file is missing.
-The asset stage is then free: no planning call, no source rewrite, no static analysis of what the
-game spawns. The moment the manifest appears on disk the build fires the render lane, so the GPU
-draws art while the llm turns keep writing code.
+**The game asks for its own art, as it writes the code that uses it.** `generate_media(id, prompt,
+kind)` enqueues one render and answers IMMEDIATELY with the path the file will appear at
+(`assets/<id>.png`, or `.glb` for `kind: "mesh"`); the model writes that path into the game and draws
+its own shape until the file lands. The asset stage is then free: no planning call, no source
+rewrite, no static analysis of what the game spawns, and the GPU draws art while the llm turns keep
+writing code. `game/assets.json` is written by `request_media`, never by the model: it is the record
+the gallery lists, the top-up re-renders from, and the regenerate re-prompts against. One request is
+one BATCH, so each asset re-stages as it lands.
+
+The compute budget is the only cap on how much art a build may ask for, and a refused enqueue is
+REPORTED to the model as "draw this one with code instead" — a build that cannot have art has to be
+told to draw one rather than left waiting for a file that is never coming.
 
 ---
 
@@ -88,7 +96,7 @@ src/
                          chain of `llm` jobs tagged metadata.stage="build"; /worker/complete routes
                          here. Two phases: `build` (the turn machine writes the game) and `audit`
                          (the brief's claims judged, once, as a report). advance() runs ALL local
-                         work — tool dispatch, staging, the asset hand-off — synchronously and
+                         work — tool dispatch, staging — synchronously and
                          SUSPENDS only at a real inference (enqueue one llm job + return; the
                          process is free to die). Never more than one turn in flight per run, and
                          advance runs only in the control-plane process (completion handler +
@@ -96,7 +104,7 @@ src/
                          status_of are the API/CLI entry points. A refused compute budget PREEMPTS
                          the run's still-pending asset jobs before giving up — gameplay beats art.
       build_steps.py     the turn MACHINE: step(spec, run_dir, tools, cursor, result) -> Infer|Done.
-                         Owns the five tool schemas, the transcript, compaction, and the
+                         Owns the six tool schemas, the transcript, compaction, and the
                          out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
                          than letting the model believe the file landed).
       build_state.py     the durable build CURSOR (runs/<id>/build_state.json) — phase, step count,
@@ -104,25 +112,30 @@ src/
                          build_tools each completion (a fresh process would else refuse a resumed
                          edit). Job metadata carries only {stage,run_id,build_id}; this file is the
                          single source the completion reloads, advances, rewrites.
-      tools.py           list_files / read_file / write_file / edit_file — the smallest surface
-                         that works, and kept that way. A path is resolved and must land inside the
-                         game folder. Every failure is REPORTED to the model as text (a missing
-                         argument names itself) and never guessed at: substituting a default for a
-                         missing `path` sent every write in a run to one file.
+      tools.py           list_files / read_file / write_file / edit_file / generate_media — the
+                         smallest surface that works, and kept that way. A path is resolved and must
+                         land inside the game folder. Every failure is REPORTED to the model as text
+                         (a missing argument names itself) and never guessed at: substituting a
+                         default for a missing `path` sent every write in a run to one file.
       staging.py         where a game lives (runs/<id>/game/) and how it reaches the browser: copy
-                         the folder to runtime/games/<slug>/. No bundle, no transform.
+                         the folder to runtime/games/<slug>/. No bundle, no transform. Also the SEED
+                         (seed_vendor): the game folder starts holding the vendored renderer and
+                         nothing else, since everything placed there steers the first list_files.
       audit.py           the brief-vs-code AUDIT (see above). Verdicts append to
                          runs/<id>/audit_verdicts.jsonl — "which claim failed?" must never be
                          unanswerable. Delivered claims carry across builds (audit_delivered on the
                          cursor) so a later run reads as a diff, not a re-litigation. Every failure
                          path FAILS OPEN to a finished build; a claim with no verdict inside its
                          turn cap is SKIPPED, never a finding.
-      assets.py          the ASSET stage — read the game's OWN assets.json, enqueue one `image` job
-                         per missing entry as a batch, return. Nothing plans, rewrites or inspects
-                         the game's source. `kind: "mesh"` chains image → TRELLIS. Also owns the
-                         single-asset regenerate: the user's text is a CHANGE NOTE merged (one small
-                         llm call) with the entry's original prompt, so "give him a red cape" keeps
-                         the goblin; img2img seeds from the existing render.
+      assets.py          the ASSET stage — `request_media` is what the game's generate_media call
+                         runs: enqueue ONE `image` job, record the ask in assets.json, answer with
+                         the path. Nothing plans, rewrites or inspects the game's source. `kind:
+                         "mesh"` chains image → TRELLIS. A repeated id, an already-rendered file, a
+                         blocked prompt and a refused budget are all answered, never retried blind.
+                         Also owns start_from_manifest (the TOP-UP: re-render what the record says
+                         is still missing) and the single-asset regenerate — the user's text is a
+                         CHANGE NOTE merged (one small llm call) with the entry's original prompt,
+                         so "give him a red cape" keeps the goblin; img2img seeds from the render.
       asset_chain.py     what a finished asset job does NEXT — the names in its `metadata.then`: a
                          CONTINUATION to enqueue (mesh_from_image), OPERATIONS on this result
                          (save_sprite / decimate), and the batch's FINALIZE. This module owns those
@@ -171,6 +184,11 @@ up front.
 line has failed twice, across two models. Open ledger from the 2026-07-27 grid, none yet earning
 more than a prompt line: 3D scenes lit near-black (2/4, both models), fixed canvas with no window
 scaling (every 2D game), silent games (all four arcade + the deck-builder), arrow-keys-only input.
+
+`generate_media` entered UNMEASURED (2026-07-28) — art is the one capability no `write_file` can
+stand in for. What settles it is a battery run against the manifest prompt line in `eval/arms/`:
+whether the model calls it, uses the returned path verbatim, and still draws a fallback shape. An
+unused schema costs every turn of every build, so a tool that fails that comes back out.
 
 **Adding a build STAGE** (beyond build/asset): register a driver keyed on `metadata.stage` in the
 `/worker/complete` dispatch — the queue stays a generic transport.

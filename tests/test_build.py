@@ -82,17 +82,20 @@ def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
     assert isinstance(out, build_steps.Infer)
     assert out.messages[-1]["content"] == "a card game"
     assert {t["function"]["name"] for t in out.schemas} == {
-        "list_files", "read_file", "write_file", "edit_file", "done"}
+        "list_files", "read_file", "write_file", "edit_file", "generate_media", "done"}
 
 
 def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     """Every line here is read on every turn of every build. Additions regressed the artifact once
-    already, so the prompt is pinned to what the 25-game grid actually measured."""
+    already, so the prompt is pinned: the grid's six rules, plus the renderer and the media tool —
+    the two things in the project the model cannot infer from a file listing."""
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 6            # exactly the six rules
-    for absent in ("three.js", "assets.json", "WASD", "window"):
+    assert system.count("\n- ") == 8            # exactly the eight rules
+    assert "three.module.js" in system and "generate_media" in system
+    # assets.json is written by the platform, so naming it here would invite the model to write it.
+    for absent in ("assets.json", "WASD", "window"):
         assert absent not in system
 
 
@@ -144,6 +147,44 @@ def test_no_tool_call_is_nudged_not_failed(tmp_path, tools):
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(content="I will now write it."))
     assert isinstance(out, build_steps.Infer)
     assert "Keep going" in cursor.history[-1]["content"]
+
+
+def test_generate_media_reaches_the_tool_and_its_path_reaches_the_transcript(tmp_path):
+    """The model writes code against the path it gets back on the same turn, so the tool result has
+    to carry it."""
+    seen = {}
+
+    def _spy(**kw):
+        seen.update(kw)
+        return {"ok": True, "path": "assets/goblin.glb", "status": "rendering"}
+
+    cursor = _cursor()
+    spy_tools = {"generate_media": _spy}
+    build_steps.step({}, tmp_path, spy_tools, cursor, {})
+    build_steps.step({}, tmp_path, spy_tools, cursor, _reply(calls=[
+        ("generate_media", {"id": "goblin", "prompt": "a snarling goblin", "kind": "mesh"})]))
+    assert seen == {"id": "goblin", "prompt": "a snarling goblin", "kind": "mesh"}
+    assert "assets/goblin.glb" in cursor.history[-1]["content"]
+
+
+# ── the seed ──────────────────────────────────────────────────────────────────
+def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
+    """A game fetches nothing at runtime, so the renderer has to be in the folder before the model
+    starts writing. A re-seed (a fix, a resumed build) must not overwrite what is there."""
+    from maestro.codegen import staging
+    monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
+    vendor = tmp_path / "runtime" / "vendor"
+    vendor.mkdir(parents=True)
+    (vendor / "three.module.js").write_text("// three")
+    staging.seed_vendor(tmp_path)
+    assert (tmp_path / "game" / "three.module.js").read_text() == "// three"
+
+    (tmp_path / "game" / "index.html").write_text("<h1>hi</h1>")
+    staging.seed_vendor(tmp_path)
+    assert (tmp_path / "game" / "index.html").read_text() == "<h1>hi</h1>"
+    assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["index.html", "three.module.js"]
+    # The audit judges the game, not the renderer it imports.
+    assert list(staging.game_files(tmp_path)) == ["index.html"]
 
 
 # ── staging ───────────────────────────────────────────────────────────────────

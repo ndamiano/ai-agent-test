@@ -1,13 +1,7 @@
 """The five tools the build dispatches: list_files, read_file, write_file, edit_file, done.
 
-These are deliberately the SMALLEST tools that work, and they are kept that way. A 25-game grid
-measured this exact surface producing playable games; every refinement layered on afterwards — read
-grounding, atomic multi-hunk edits, whitespace-fuzzy anchoring, mid-file elision — was added for the
-old kit pipeline and, carried over here, coincided with a regression. Each is re-addable, but only
-one at a time and only when a measurement says it earned its place.
-
-The one thing that is NOT negotiable is the path guard: a path is resolved and must land inside the
-game folder, so no write can escape it.
+Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
+And every failure is REPORTED to the model rather than guessed at — see `_reported`.
 """
 
 import json
@@ -19,48 +13,18 @@ from maestro.codegen.staging import game_dir
 MAX_READ_CHARS = 60_000   # whole-file ceiling; past this the read returns the head and says so
 
 
-class MissingArg(Exception):
-    """A required tool argument the model didn't send."""
-
-
-def _require(name: str, value):
-    """A missing required argument is an ERROR the model gets told about, never a default.
-
-    Measured: `write_file` quietly defaulting a missing `path` to "index.html" meant every write in
-    a run landed on the same file and the last one — the game's JavaScript — won, so index.html held
-    no HTML and the page rendered its own source. The model omits `path` on roughly a quarter of
-    calls; told so, it immediately resends the call correctly."""
-    if value is None or (isinstance(value, str) and not value.strip()):
-        raise MissingArg(name)
-    return value
-
-
 def _safe(root: Path, path: str) -> Path:
-    """A path inside the game folder. Resolved, so `../` can never escape."""
-    p = (root / _require("path", path)).resolve()
+    """A path inside the game folder. Resolved, so `../` can never escape. A missing path raises
+    KeyError('path') so the reported error names the argument that was left out."""
+    if not path:
+        raise KeyError("path")
+    p = (root / path).resolve()
     if not str(p).startswith(str(root.resolve()) + os.sep):
         raise ValueError(f"path escapes the project directory: {path!r}")
     return p
 
 
-def _as_text(value) -> tuple:
-    """(text, error) for a string argument the model sent. A wrong TYPE comes back as a tool error
-    it can act on — raising kills the completion that would have told it. A dict/list is
-    JSON-serialized: a model writing a .json file sends the object, and that is what it meant."""
-    if isinstance(value, str):
-        return value, ""
-    if value is None:
-        return "", ""
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, indent=2, ensure_ascii=False), ""
-    if isinstance(value, (int, float, bool)):
-        return str(value), ""
-    return "", f"expected text, got {type(value).__name__}"
-
-
-def build_tools(state, versions: dict = None, seen: dict = None) -> dict:
-    # versions/seen are unused now that reads don't gate edits; the build cursor still carries them
-    # so an in-flight build survives this change, and they cost nothing.
+def build_tools(state) -> dict:
     root = game_dir(state.run_dir)
 
     def list_files(**_) -> dict:
@@ -82,29 +46,23 @@ def build_tools(state, versions: dict = None, seen: dict = None) -> dict:
                     + f"\n\n[truncated: file is {len(body)} chars, showed the first {MAX_READ_CHARS}]"}
         return {"ok": True, "path": path, "content": body}
 
-    def write_file(path: str = None, content=None, **_) -> dict:
-        text, err = _as_text(_require("content", content))
-        if err:
-            return {"ok": False, "error": f"`content` {err}. Send the complete file as a string."}
+    def write_file(path=None, content=None, **_) -> dict:
         p = _safe(root, path)
+        if content is None:
+            raise KeyError("content")
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
-        return {"ok": True, "path": path, "chars": len(text)}
+        p.write_text(content, encoding="utf-8")
+        return {"ok": True, "path": path, "chars": len(content)}
 
     def edit_file(path: str = None, old_text=None, new_text=None, **_) -> dict:
         p = _safe(root, path)
         if not p.exists():
             return {"ok": False, "error": f"no such file: {path}"}
-        old, err = _as_text(_require("old_text", old_text))
-        if err:
-            return {"ok": False, "error": f"`old_text` {err}."}
-        new, err = _as_text(new_text if new_text is not None else "")
-        if err:
-            return {"ok": False, "error": f"`new_text` {err}."}
+        if old_text is None:
+            raise KeyError("old_text")
+        old, new = old_text, new_text if new_text is not None else ""
         body = p.read_text(encoding="utf-8")
-        n = body.count(old) if old else 0
-        if not old:
-            return {"ok": False, "error": "old_text is empty — send the exact text to replace."}
+        n = body.count(old)
         if n == 0:
             return {"ok": False, "error": "old_text was not found in the file. Read the file and "
                                           "copy the exact text, including whitespace."}
@@ -115,14 +73,13 @@ def build_tools(state, versions: dict = None, seen: dict = None) -> dict:
         return {"ok": True, "path": path, "chars": len(new)}
 
     def _reported(fn):
+        """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
+        act on. Never substitute a default for a bad argument — the report is what lets it retry."""
         def call(**kw):
             try:
                 return fn(**kw)
-            except MissingArg as e:
-                return {"ok": False, "error": f"missing required argument: {e}. "
-                                              "Send the call again with every argument."}
-            except ValueError as e:
-                return {"ok": False, "error": str(e)}
+            except Exception as e:
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return call
 
     return {name: _reported(fn) for name, fn in

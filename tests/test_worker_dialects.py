@@ -54,8 +54,9 @@ def test_chat_passes_messages_and_tools_through_untranslated():
     assert sent["messages"] == CANONICAL["messages"]
     assert sent["tools"] == CANONICAL["tools"]
     assert "reasoning" not in sent                    # meaningless on this endpoint
-    assert sent["enable_thinking"] is False           # the template switch is what disables it
-    assert sent["presence_penalty"] == 0              # never inherit ninfer's 1.0 default
+    # Nothing else is added: thinking and sampling are LAUNCH FLAGS on the server this worker
+    # points at, so a request-level default here would override whatever the operator chose.
+    assert set(sent) == set(CANONICAL) - {"reasoning"}
 
 
 def test_responses_dialect_translates_both_ways():
@@ -89,11 +90,16 @@ def test_the_canonical_body_is_never_mutated():
     assert json.dumps(body, sort_keys=True) == before
 
 
-@pytest.mark.parametrize("effort,expected", [("none", True), ("high", False)])
-def test_reasoning_none_is_the_template_switch_on_both_dialects(effort, expected):
+@pytest.mark.parametrize("effort", ["none", "high"])
+def test_reasoning_reaches_only_the_dialect_that_has_it(effort):
+    """`reasoning.effort` is a Responses field. On chat it is dropped — thinking is a server flag
+    there (`llama-server --chat-template-kwargs`, `ninfer-serve --no-thinking`)."""
     body = {**CANONICAL, "reasoning": effort}
-    for api in ("chat", "responses"):
-        a = _agent(api, CHAT_REPLY if api == "chat" else RESPONSES_REPLY)
-        llm(a, {"body": dict(body)})
-        sent = a.session.post.call_args[1]["json"]
-        assert ("chat_template_kwargs" in sent) is expected
+    a = _agent("responses", RESPONSES_REPLY)
+    llm(a, {"body": dict(body)})
+    assert a.session.post.call_args[1]["json"]["reasoning"] == {"effort": effort}
+
+    a = _agent("chat", CHAT_REPLY)
+    llm(a, {"body": dict(body)})
+    sent = a.session.post.call_args[1]["json"]
+    assert "reasoning" not in sent and "chat_template_kwargs" not in sent

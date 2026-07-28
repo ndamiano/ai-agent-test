@@ -1,16 +1,13 @@
 """Recovering a tool call the model wrote as TEXT.
 
 The server is supposed to parse the model's tool-call syntax and hand back `message.tool_calls`. It
-often doesn't: the engine's parser knows one template, the model was tuned on another, or the engine
-has no parser at all. What arrives is a perfectly good call sitting in `content` — measured on
-ninfer/Qwen3.6-35B-A3B, which returned `<function=write><parameter=code>…` as text with `tool_calls`
-empty, after which the build nudged and the model re-emitted the byte-identical message 60 times to
-its turn cap.
+often doesn't — the engine's parser knows one template, the model was tuned on another, or there is
+no parser at all — and a perfectly good call arrives sitting in `content`.
 
-So: try the known encodings in order and take the first that yields calls the model was actually
-offered. Adding an engine or a model family means adding a PARSER here, never a branch at a call
-site. Parsers run cheapest-and-strictest first; the loose schema-shaped fallback runs last because
-it guesses a name from argument keys and could otherwise shadow an explicit one.
+Try the known encodings in order, take the first that yields calls the model was actually offered.
+Adding an engine or a model family means adding a PARSER here, never a branch at a call site.
+Parsers run strictest first; the schema-shaped fallback runs last because it guesses a name from
+argument keys and would otherwise shadow an explicit one.
 
 Every parser returns OpenAI-shaped calls: [{"id", "type": "function", "function": {"name",
 "arguments"}}] with `arguments` a JSON string.
@@ -199,10 +196,8 @@ def _required_of(schemas) -> Dict[str, set]:
 def _usable(call: Dict, required: Dict[str, set]) -> bool:
     """A recovered call must name an offered tool AND carry that tool's required arguments.
 
-    Half a call is worse than none: it looks like progress. Measured — a parser recovered 80
-    `write`s that had a `file` but no `code` (the model wrote `< code>` where the parser expected
-    `<parameter=code>`), each landed as an "empty code" tool error, and the model spent the whole
-    build cap arguing with itself about tool syntax."""
+    Half a call is worse than none — it looks like progress, and the model spends its budget on the
+    resulting tool errors instead of on the game."""
     name = call["function"]["name"]
     if name not in required:
         return False

@@ -1,18 +1,17 @@
-"""Central message builder — single place where LLM message arrays are constructed."""
+"""Central message builder — the single seam every LLM message array passes through.
+
+Message CONTENT is never edited here. The only transform is the budget backstop, which drops whole
+messages and never breaks tool_call linkage.
+"""
 
 import json
 import logging
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from config.settings_manager import settings_manager
 from llm_clients.connector import get_connector
 
 logger = logging.getLogger(__name__)
-
-# Tools whose result carries the full current file body — deduped by file, so the newest body of a
-# file supersedes every earlier read/edit body of it.
-_FILE_BODY_TOOLS = {"read_file", "edit"}
 
 
 class MessageBuilder:
@@ -30,7 +29,6 @@ class MessageBuilder:
         messages = MessageBuilder(system_prompt).extend(history).build()
     """
 
-    TOOL_RESULT_MAX_CHARS: int = 32_000
 
     def __init__(self, system_prompt: str) -> None:
         budget = settings_manager.get_category_settings().message_budget_chars
@@ -103,109 +101,6 @@ class MessageBuilder:
         return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
 
     # ── Context optimisation ───────────────────────────────────────────────
-
-    def _deduplicate_tool_results(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        For any tool called multiple times with identical (name, args), replace
-        all but the most recent result with a short placeholder.  Keeps context
-        lean when an agent re-reads the same file or re-runs the same search.
-        """
-        # Pass 1: map tool_call_id → (tool_name, normalised_args_str)
-        call_info: Dict[str, Tuple[str, str]] = {}
-        for msg in messages:
-            if msg.get("role") != "assistant":
-                continue
-            for tc in msg.get("tool_calls") or []:
-                if tc.get("type") != "function":
-                    continue
-                fn = tc.get("function", {})
-                name = fn.get("name", "")
-                raw_args = fn.get("arguments", "")
-                try:
-                    parsed = json.loads(raw_args)
-                    norm_args = json.dumps(parsed, sort_keys=True)
-                except (json.JSONDecodeError, TypeError):
-                    parsed, norm_args = None, raw_args
-                # A FULL read_file and every edit return the CURRENT file body; key them by
-                # file (not name+args) so a fresh read/edit of a file supersedes every earlier body
-                # of it — old_string/new_string differ per edit, so name+args would never collapse.
-                # A PARTIAL read (offset/limit) is only a slice — key it normally so it neither
-                # supersedes nor is superseded by the full body.
-                is_partial_read = (name == "read_file" and isinstance(parsed, dict)
-                                   and (parsed.get("offset") is not None or parsed.get("limit") is not None))
-                if name in _FILE_BODY_TOOLS and not is_partial_read \
-                        and isinstance(parsed, dict) and parsed.get("file"):
-                    call_info[tc.get("id", "")] = ("__filebody__", parsed["file"])
-                else:
-                    call_info[tc.get("id", "")] = (name, norm_args)
-
-        # Pass 2: group tool-result message indices by (name, args)
-        groups: Dict[Tuple[str, str], List[int]] = defaultdict(list)
-        for i, msg in enumerate(messages):
-            if msg.get("role") != "tool":
-                continue
-            key = call_info.get(msg.get("tool_call_id", ""))
-            if key:
-                groups[key].append(i)
-
-        # Pass 3: mark all but the last index in each group for omission (duplicate dedup)
-        omit: Dict[int, str] = {}  # index → tool_name
-        for (tool_name, _), indices in groups.items():
-            if len(indices) > 1:
-                for idx in indices[:-1]:
-                    omit[idx] = tool_name
-
-        # Pass 4: if any later result for same (tool, args) succeeded, also omit prior
-        # failed results (even if they weren't exact duplicates of the successful one).
-        def _is_failed(content: str) -> bool:
-            return content.startswith("Tool '") and "failed:" in content or content.startswith("Error")
-
-        for (tool_name, _), indices in groups.items():
-            contents = [messages[i].get("content") or "" for i in indices]
-            any_success = any(not _is_failed(c) for c in contents)
-            if any_success:
-                for idx, content in zip(indices, contents):
-                    if _is_failed(content) and idx not in omit:
-                        omit[idx] = tool_name
-
-        if not omit:
-            return messages
-
-        # Pass 5: replace the omitted RESULT bodies, and only those. The call that produced each
-        # one stays: dropping it while keeping its result orphans the result, and a chat template
-        # is entitled to refuse that — MiniMax-M3's raises "Message has tool role, but there was no
-        # previous assistant message with a tool call!" and 500s the whole turn. Qwen's tolerated
-        # it silently, which is why the malformed transcript went unnoticed.
-        return [
-            {**msg, "content": f"[output omitted — superseded by later call to {omit[i]}]"}
-            if i in omit else msg
-            for i, msg in enumerate(messages)
-        ]
-
-    def _cap_tool_results(
-        self, messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Truncate any tool result content exceeding TOOL_RESULT_MAX_CHARS.
-        Keeps the first and last half, with an omission notice in the middle.
-        """
-        result = []
-        half = self.TOOL_RESULT_MAX_CHARS // 2
-        for msg in messages:
-            if msg.get("role") == "tool":
-                content = msg.get("content") or ""
-                if len(content) > self.TOOL_RESULT_MAX_CHARS:
-                    omitted = len(content) - self.TOOL_RESULT_MAX_CHARS
-                    content = (
-                        content[:half]
-                        + f"\n[... {omitted} characters truncated ...]\n"
-                        + content[-half:]
-                    )
-                    msg = {**msg, "content": content}
-            result.append(msg)
-        return result
 
     def _enforce_budget(
         self, messages: List[Dict[str, Any]]
@@ -295,7 +190,4 @@ class MessageBuilder:
 
     def build(self) -> List[Dict[str, Any]]:
         """Return the complete messages list: [system] + accumulated messages."""
-        messages = self._deduplicate_tool_results(self._messages)
-        messages = self._cap_tool_results(messages)
-        messages = self._enforce_budget(messages)
-        return [{"role": "system", "content": self._system}] + messages
+        return [{"role": "system", "content": self._system}] + self._enforce_budget(self._messages)

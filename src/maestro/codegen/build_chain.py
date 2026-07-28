@@ -112,8 +112,8 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
 
 
 def _seed(rs: RunState) -> None:
-    """An empty game folder. Nothing is pre-placed in it: a vendored three.js sitting there shows up
-    in the model's first `list_files` and steers a 2D request toward 3D."""
+    """An empty game folder. Nothing is pre-placed in it — anything here shows up in the model's
+    first `list_files` and steers what it builds."""
     from maestro.codegen.staging import game_dir
     game_dir(rs.run_dir).mkdir(parents=True, exist_ok=True)
 
@@ -154,7 +154,7 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
         build_state.save(rs.run_dir, cursor)
         _emit("build_paused", run_id, step=cursor.step)
         return
-    tools = build_tools(rs, versions=cursor.tool_versions, seen=cursor.tool_seen)
+    tools = build_tools(rs)
 
     if cursor.phase == "audit":
         outcome = audit_mod.step(spec, rs, cursor, tools, result or {})
@@ -189,9 +189,8 @@ def _playable(run_dir) -> bool:
 def _start_audit(rs: RunState, cursor: BuildCursor) -> bool:
     """The build says it is finished — judge the brief's claims against the source, ONCE, and report.
 
-    Rounds of judge-then-fix were measured to spend 208 of one build's 227 steps and score WORSE in
-    round 2 than round 1, because each fix broke a claim that already worked. The signal is worth
-    having; acting on it automatically is not."""
+    Never a fix loop: each fix breaks a claim that already worked, so rounds of judge-then-fix
+    converge on sediment rather than a game."""
     if (cursor.kind != "build" or cursor.audit_done or not cursor.finished
             or cursor.step >= cursor.max_steps or not audit_mod.claims_of(rs.read_spec())):
         return False

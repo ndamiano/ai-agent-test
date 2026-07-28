@@ -6,8 +6,8 @@ and either returns the NEXT request or `Done`. The driver (build_chain) enqueues
 `llm` job, dies, and re-enters this function on the completion — so the whole loop is spread across
 process deaths, its scratch carried in the durable cursor.
 
-The transcript IS the memory. It is trimmed (oldest whole rounds first, then re-grounded on the file
-listing) rather than allowed to hit the context window.
+The transcript IS the memory: compaction (drop the oldest whole rounds, re-ground on the file
+listing) is what keeps it inside the context window.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ MAX_TOKENS = 16_000
 # the next tool result; keep this fraction of it afterwards.
 _COMPACT_AT = 0.62
 _COMPACT_KEEP = 0.33
-# Consecutive turns with no tool call before the build gives up. Each nudge is DIFFERENT — repeating
-# one verbatim reproduces the reply that earned it.
+# Consecutive turns with no tool call before the build gives up. Each nudge differs: repeating one
+# verbatim reproduces the reply that earned it.
 _NO_CALL_GIVE_UP = 4
 _NUDGES = [
     "Keep going. Use a tool, or call done if the game is finished.",
@@ -71,8 +71,8 @@ Outcome = Union[Infer, Done]
 
 
 # ── tool schemas ──────────────────────────────────────────────────────────────
-# Verbatim the five the grid measured. Descriptions stay this short on purpose: every extra clause
-# is another instruction competing with the request on every single turn.
+# Descriptions stay short: every clause is another instruction competing with the request, on every
+# turn.
 LIST_SCHEMA = {"type": "function", "function": {
     "name": "list_files",
     "description": "List the files in the project directory.",
@@ -145,8 +145,7 @@ def step(spec, run_dir, tools, cursor, result) -> Outcome:
         return _infer(run_dir, cursor)
 
     if not calls:
-        # A no-tool-call turn answered with the same nudge produces the same reply: measured, a
-        # model emitted the byte-identical message 60 times to the turn cap. Escalate instead.
+        # The same nudge produces the same reply, so each one differs and the streak gives up.
         cursor.no_call_streak += 1
         cursor.history.append({"role": "assistant", "content": content})
         cursor.history.append({"role": "user", "content": _nudge(cursor.no_call_streak)})
@@ -196,14 +195,11 @@ def _dispatch(tools, cursor, tc) -> dict:
         res = {"ok": False, "error": f"unknown tool: {name!r}"}
     elif name == "read_file":
         res = fn(path=args.get("path"))
-        cursor.nreads += 1
     elif name == "write_file":
         res = fn(path=args.get("path"), content=args.get("content"))
     elif name == "edit_file":
         res = fn(path=args.get("path"), old_text=args.get("old_text"),
                  new_text=args.get("new_text"))
-        if not res.get("ok"):
-            cursor.edit_fails += 1
     else:
         res = fn()
     return res
@@ -267,9 +263,6 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
 
 
 def _request_from(spec) -> str:
-    """The build's one user message: the person's request, as they wrote it.
-
-    The brief is NOT prepended. It exists for the human to review and for the audit to judge
-    against; feeding its restated mechanics back to the model puts a second, more concrete
-    instruction beside the request on every turn, which is the failure mode small models have."""
+    """The build's one user message: the person's request, as they wrote it. The brief is not
+    prepended — it is for the human to review and for the audit to judge against."""
     return str((spec or {}).get("request") or "").strip() or "Make a small, playable browser game."

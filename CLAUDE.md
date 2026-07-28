@@ -104,17 +104,11 @@ src/
                          build_tools each completion (a fresh process would else refuse a resumed
                          edit). Job metadata carries only {stage,run_id,build_id}; this file is the
                          single source the completion reloads, advances, rewrites.
-      tools.py           list_files / read_file (whole file, or an offset/limit line window) /
-                         write (whole file, overwrite allowed) / edit (ATOMIC multi-hunk — every
-                         hunk validated against the original body: found, unique, no overlap; all
-                         land or none, one version bump; an exact-anchor miss falls back to
-                         whitespace-tolerant line matching, since measured misses were mostly
-                         indentation drift on otherwise-correct hunks). Paths are relative, at most
-                         one directory deep, no traversal. Reads are bounded IN THE TOOL: a
-                         >2000-char physical line collapses to its head (a line-window can't slice
-                         inside one line) and the result caps at 16KB head+tail — without it a 104KB
-                         file blows the message budget, gets dropped whole, and the model re-reads
-                         it forever without ever writing.
+      tools.py           list_files / read_file / write_file / edit_file — the smallest surface
+                         that works, and kept that way. A path is resolved and must land inside the
+                         game folder. Every failure is REPORTED to the model as text (a missing
+                         argument names itself) and never guessed at: substituting a default for a
+                         missing `path` sent every write in a run to one file.
       staging.py         where a game lives (runs/<id>/game/) and how it reaches the browser: copy
                          the folder to runtime/games/<slug>/. No bundle, no transform.
       audit.py           the brief-vs-code AUDIT (see above). Verdicts append to
@@ -138,13 +132,15 @@ src/
       run.py             create_run / draft_spec / freeze_spec / run_build (CLI: kickoff +
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is
                          fire-and-forget through build_chain.kickoff, not run.py.
-    services.py          the two LLM tool-call PARSERS: parse_args (any argument shape → dict) +
-                         salvage_tool_call (rebuild a call from content JSON when it uniquely fits
-                         one offered tool).
+    services.py          parse_args — any argument shape a local model returns → a dict.
+    tool_calls.py        recovering a tool call the model wrote as TEXT, when the server's own
+                         parser didn't claim it. A registry of encodings (Hermes/Qwen, DeepSeek,
+                         Mistral, Llama python-tag, two XML forms, named object, arg-shape), tried
+                         strictest first. A parser only wins if EVERY call it found names an offered
+                         tool and carries that tool's required arguments.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
                          game/ folder). Ownership + charge state live in db/, not the run dir.
     run_control.py       cross-thread pause/resume signal channel.
-    templating.py        render_template ({{include}} partials + {key} subst) — engine-neutral.
   worldgen/              a standalone procedural world generator (heightfield town inside a
                          wilderness ring: forest, POIs, roads, named regions). Currently UNWIRED —
                          it was the one thing that produced real scale, and re-pointing it to emit

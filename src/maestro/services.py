@@ -8,9 +8,8 @@ Recovering a call the model wrote as TEXT is `maestro.tool_calls` — it owns ev
 
 import json
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
-from maestro.tool_calls import parse_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +34,3 @@ def parse_args(raw) -> Dict:
         logger.warning("unparseable tool args: %r", raw)
         return {}
     return parsed if isinstance(parsed, dict) else {}
-
-
-def salvage_tool_call(content: str, schemas) -> Optional[Dict]:
-    """The FIRST tool call the model wrote as text instead of as a function call, or None.
-
-    Kept for callers that can only apply one call; `maestro.tool_calls.parse_tool_calls` returns
-    them all and owns every encoding."""
-    calls = parse_tool_calls(content, schemas)
-    return calls[0] if calls else None

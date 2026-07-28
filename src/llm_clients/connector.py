@@ -41,11 +41,10 @@ def _resolve_effort(value):
 
 class LLMConnector:
     def __init__(self, model: str = "default", max_tokens: int = 50000,
-                 frequency_penalty: float = 0.5, reasoning: Optional[str] = None,
+                 reasoning: Optional[str] = None,
                  queue: str = "llm", job_timeout_seconds: float = 900):
         self.model_name = model
         self.max_tokens = max_tokens
-        self.frequency_penalty = frequency_penalty
         # Reasoning-effort for reasoning models, sent as reasoning.effort. "none" disables
         # reasoning; None lets the model pick. on/off aliased to the effort enum.
         self.reasoning = _resolve_effort(reasoning)
@@ -112,14 +111,15 @@ class LLMConnector:
 
     def _payload(self, messages: list, tools: list, response_format, max_tokens,
                  reasoning=_REASONING_UNSET, model: str = None) -> dict:
-        """The CANONICAL request body — OpenAI chat shape, plus `reasoning` as a plain effort
-        string. The worker turns this into whatever its target serves."""
+        """The CANONICAL request body — OpenAI chat shape, plus `reasoning` as a plain effort string.
+
+        Sampling is the SERVER's: penalties and template switches are launch flags, so a default
+        here would silently override whatever the operator chose."""
         payload = {
             "model": model or self.model_name,
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
-            "frequency_penalty": self.frequency_penalty,
         }
         # Per-call override falls back to the connector's configured effort when unset.
         effort = self.reasoning if reasoning is _REASONING_UNSET else _resolve_effort(reasoning)
@@ -127,7 +127,6 @@ class LLMConnector:
             payload["reasoning"] = effort
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
         if response_format and self._response_format_supported:
             payload["response_format"] = response_format
         return payload
@@ -165,7 +164,6 @@ def get_connector() -> LLMConnector:
         _cached_connector = LLMConnector(
             model=llm.get("model", "default"),
             max_tokens=llm.get("max_tokens", 50000),
-            frequency_penalty=llm.get("frequency_penalty", 0.5),
             reasoning=llm.get("reasoning"),
             job_timeout_seconds=workqueue.get("job_timeout_seconds", 900))
     return _cached_connector

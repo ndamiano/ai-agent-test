@@ -89,9 +89,7 @@ def chat_to_responses_body(body: Dict) -> Dict:
     instructions, items = chat_messages_to_responses_input(body.get("messages") or [])
     out = {"model": body.get("model"), "input": items,
            "temperature": body.get("temperature", 0.7),
-           "max_output_tokens": body.get("max_tokens"),
-           "frequency_penalty": body.get("frequency_penalty", 0.5),
-           "stream": False}
+           "max_output_tokens": body.get("max_tokens")}
     if instructions:
         out["instructions"] = instructions
     effort = body.get("reasoning")
@@ -103,22 +101,12 @@ def chat_to_responses_body(body: Dict) -> Dict:
         out["chat_template_kwargs"] = {"enable_thinking": False}
     if body.get("tools"):
         out["tools"] = chat_tools_to_responses(body["tools"])
-        out["tool_choice"] = "auto"
     if body.get("response_format"):
         out["text"] = {"format": body["response_format"]}
     return out
 
 
 def chat_body_for_wire(body: Dict) -> Dict:
-    """A canonical chat request body -> a Chat Completions request body (nearly identity)."""
-    out = {k: v for k, v in body.items() if k != "reasoning"}
-    effort = body.get("reasoning")
-    if effort == "none":
-        # `reasoning` has no meaning on this endpoint; the template switch is what disables thinking.
-        out["chat_template_kwargs"] = {"enable_thinking": False}
-        out["enable_thinking"] = False
-    # Sent explicitly because a server default here is not neutral: ninfer defaults presence_penalty
-    # to 1.0, which degrades long structured output.
-    out.setdefault("presence_penalty", 0)
-    out.setdefault("stream", False)
-    return out
+    """A canonical chat request body -> a Chat Completions request body: identity, minus `reasoning`
+    (a Responses-only field). Sampling and thinking are launch flags on the target server."""
+    return {k: v for k, v in body.items() if k != "reasoning"}

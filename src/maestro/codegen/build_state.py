@@ -6,9 +6,6 @@ step count, the growing transcript, the read→edit grounding — must survive p
 in `runs/<id>/build_state.json`, the same run dir that owns the spec and the game folder. Job
 metadata carries only `{stage, run_id, build_id}`; this file is the single source of truth the
 completion reloads, advances, and rewrites.
-
-`tool_versions`/`tool_seen` are the read→edit grounding. A resumed `edit` would otherwise be refused
-("you didn't read before editing") because a fresh process forgot the read.
 """
 
 from __future__ import annotations
@@ -49,8 +46,6 @@ class BuildCursor:
     # the build turn machine
     started: bool = False
     turn: int = 0
-    nreads: int = 0
-    edit_fails: int = 0
     # what the SERVER reported for the last turn — an estimate of ours that drifts low would hit the
     # context window with no warning.
     prompt_tokens: int = 0
@@ -66,9 +61,6 @@ class BuildCursor:
     audit_delivered: List[str] = field(default_factory=list)
     # the asset batch, once the game's assets.json has been enqueued
     asset_batch: Optional[str] = None
-    # read→edit grounding, durable across process death
-    tool_versions: Dict[str, int] = field(default_factory=dict)
-    tool_seen: Dict[str, int] = field(default_factory=dict)
 
     def audit_cursor(self) -> Optional[AuditCursor]:
         return AuditCursor(**self.audit) if self.audit else None

@@ -18,7 +18,6 @@ class LLMSettings(BaseModel):
         "The server's runtime context window in tokens (llama-server `-c`). The local router does not "
         "report it, so set it to match your launch flag. MessageBuilder budgets input against this so "
         "it trims the transcript BEFORE the prompt overflows the window; too-large a value = no trim."))
-    frequency_penalty: float = Field(0.5, ge=0.0, le=2.0)
     reasoning: Optional[ReasoningLevel] = None
 
 

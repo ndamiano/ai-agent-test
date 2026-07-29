@@ -29,6 +29,8 @@ _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 MAX_TURNS = 80
 MAX_TOKENS = 16_000
+# Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
+_MAX_TOOL_CHARS = 20_000
 # Compact when the last prompt crossed this fraction of the window, leaving room for the reply and
 # the next tool result; keep this fraction of it afterwards.
 _COMPACT_AT = 0.62
@@ -210,6 +212,29 @@ def _action_of(tc, res) -> str:
     return f"{line} — failed: {_clip(res.get('error') or 'no reason given', 120)}"
 
 
+def _repeat_note(cursor, tc, res) -> Optional[str]:
+    """The error text alone cannot say it has been seen before, so a resent call repeats to the
+    step cap."""
+    ok = res.get("ok", True)
+    sig = json.dumps([tc["function"]["name"], parse_args(tc["function"].get("arguments"))],
+                     sort_keys=True, default=str)
+    if ok or sig != cursor.repeat_sig:
+        cursor.repeat_sig = "" if ok else sig
+        cursor.repeat_count = 0 if ok else 1
+        return None
+    cursor.repeat_count += 1
+    return (f"You have now sent this tool call {cursor.repeat_count} times in a row with exactly "
+            f"identical parameters, and it has failed every time. Try something new.")
+
+
+def _tool_content(res) -> str:
+    """Serialized, a file body shows every quote as \\" — which the model then copies into old_text,
+    where it matches nothing."""
+    if res.get("ok") and "content" in res:
+        return f"<file path=\"{res.get('path')}\">\n{res['content']}\n</file>"
+    return json.dumps(res)[:_MAX_TOOL_CHARS]
+
+
 def _apply(tools, cursor, tc) -> None:
     try:
         res = _dispatch(tools, cursor, tc)
@@ -221,8 +246,11 @@ def _apply(tools, cursor, tc) -> None:
         logger.exception("tool %s raised", tc["function"]["name"])
         res = {"ok": False, "error": f"{tc['function']['name']} failed: {e}"}
     cursor.actions.append(_action_of(tc, res))
+    note = _repeat_note(cursor, tc, res)
+    if note:
+        res = {**res, "error": f"{res.get('error') or ''}\n\n{note}".strip()}
     cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                           "content": json.dumps(res)[:20_000]})
+                           "content": _tool_content(res)})
 
 
 def _dispatch(tools, cursor, tc) -> dict:

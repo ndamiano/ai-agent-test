@@ -100,13 +100,22 @@ src/
                          SUSPENDS only at a real inference (enqueue one llm job + return; the
                          process is free to die). Never more than one turn in flight per run, and
                          advance runs only in the control-plane process (completion handler +
-                         reaper), so an in-process lock serializes them. kickoff/resume/is_active/
-                         status_of are the API/CLI entry points. A refused compute budget PREEMPTS
-                         the run's still-pending asset jobs before giving up — gameplay beats art.
+                         reaper), so an in-process lock serializes them. kickoff/pause/resume/stop/
+                         is_active/status_of are the API/CLI entry points. `stop` ends a build where
+                         it stands and KEEPS what it wrote: playability is judged as it is at the
+                         step cap (an index.html), while the builds row records `stopped` — a run
+                         ended by hand over a game that runs is not a run that failed. A refused
+                         compute budget PREEMPTS the run's still-pending asset jobs before giving
+                         up — gameplay beats art.
       build_steps.py     the turn MACHINE: step(spec, run_dir, tools, cursor, result) -> Infer|Done.
                          Owns the six tool schemas, the transcript, compaction, and the
                          out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
-                         than letting the model believe the file landed).
+                         than letting the model believe the file landed). A failing call resent with
+                         identical arguments is COUNTED and the count told back; what to do instead
+                         is the model's call. A read reaches the transcript as the FILE
+                         (`<file path=…>`), never serialized — a JSON body shows every quote as \"
+                         and the model copies that into old_text, where it matches nothing (measured
+                         2026-07-28: 17 of one build's 32 turns, resent byte-identical).
       build_state.py     the durable build CURSOR (runs/<id>/build_state.json) — phase, step count,
                          the PAUSE flag, the growing transcript, and the read→edit tool grounding,
                          rehydrated into build_tools each completion (a fresh process would else

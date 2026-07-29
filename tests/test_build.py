@@ -201,6 +201,111 @@ def test_no_tool_call_is_nudged_not_failed(tmp_path, tools):
     assert "Keep going" in cursor.history[-1]["content"]
 
 
+_QUOTED = "function f() {\n  el.innerHTML = '<div style=\"color:#888\">?</div>';\n}\n"
+
+
+def test_a_read_reaches_the_model_as_the_file_not_as_json(tmp_path, tools):
+    """The measured loop: `\\"` copied out of a serialized read into old_text matches nothing."""
+    (tmp_path / "game" / "game.js").write_text(_QUOTED, encoding="utf-8")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("read_file", {"path": "game.js"})]))
+    seen = cursor.history[-1]["content"]
+    assert _QUOTED in seen
+    assert "\\\"" not in seen and "\\n" not in seen
+    assert seen.startswith('<file path="game.js">')
+
+
+def test_text_copied_from_a_read_edits_the_file(tmp_path, tools):
+    """Whatever the model can see, it can send back as old_text."""
+    (tmp_path / "game" / "game.js").write_text(_QUOTED, encoding="utf-8")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("read_file", {"path": "game.js"})]))
+    seen = cursor.history[-1]["content"]
+    copied = seen.split(">\n", 1)[1].rsplit("\n</file>", 1)[0].splitlines()[1]
+    out = build_steps.step({}, tmp_path, tools, cursor,
+                           _reply(calls=[("edit_file", {"path": "game.js", "old_text": copied,
+                                                        "new_text": "  el.innerHTML = 'x';"})]))
+    assert out.report == "edited game.js"
+    assert "'x'" in (tmp_path / "game" / "game.js").read_text()
+
+
+def test_a_failed_read_stays_structured(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("read_file", {"path": "nope.js"})]))
+    assert json.loads(cursor.history[-1]["content"])["ok"] is False
+
+
+def test_a_read_is_not_cut_below_what_it_told_the_model(tmp_path, tools):
+    """A transcript that trimmed further would contradict read_file's own note."""
+    from maestro.codegen.tools import MAX_READ_CHARS
+    (tmp_path / "game" / "big.js").write_text("x" * (MAX_READ_CHARS * 2), encoding="utf-8")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("read_file", {"path": "big.js"})]))
+    seen = cursor.history[-1]["content"]
+    assert seen.count("x") == MAX_READ_CHARS
+    assert "truncated" in seen and seen.endswith("</file>")
+
+
+def _fail(tmp_path, tools, cursor, call, times):
+    for _ in range(times):
+        build_steps.step({}, tmp_path, tools, cursor, _reply(calls=[call]))
+    return cursor.history[-1]["content"]
+
+
+def test_an_identical_failing_call_is_told_it_is_repeating(tmp_path, tools):
+    """The loop this ends: a failing edit resent byte for byte to the step cap."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    call = ("edit_file", {"path": "game.js", "old_text": "a", "new_text": "b"})
+    assert "times in a row" not in _fail(tmp_path, tools, cursor, call, 1)
+    assert "sent this tool call 2 times in a row" in _fail(tmp_path, tools, cursor, call, 1)
+    assert "sent this tool call 4 times in a row" in _fail(tmp_path, tools, cursor, call, 2)
+
+
+def test_the_repeat_note_keeps_the_reason_the_call_failed(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    call = ("read_file", {"path": "nope.js"})
+    content = _fail(tmp_path, tools, cursor, call, 2)
+    assert "no such file" in content and "times in a row" in content
+
+
+def test_a_changed_argument_is_not_a_repeat(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    _fail(tmp_path, tools, cursor, ("read_file", {"path": "nope.js"}), 1)
+    content = _fail(tmp_path, tools, cursor, ("read_file", {"path": "other.js"}), 1)
+    assert "times in a row" not in content
+
+
+def test_a_call_that_succeeds_clears_the_streak(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    call = ("read_file", {"path": "nope.js"})
+    _fail(tmp_path, tools, cursor, call, 2)
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("list_files", {})]))
+    assert "times in a row" not in _fail(tmp_path, tools, cursor, call, 1)
+
+
+def test_the_repeat_note_stays_out_of_the_build_feed(tmp_path, tools):
+    """The feed line is one clipped sentence."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    call = ("read_file", {"path": "nope.js"})
+    build_steps.step({}, tmp_path, tools, cursor, _reply(calls=[call]))
+    out = build_steps.step({}, tmp_path, tools, cursor, _reply(calls=[call]))
+    assert "times in a row" not in out.report
+
+
 def test_generate_media_reaches_the_tool_and_its_path_reaches_the_transcript(tmp_path):
     """The model writes code against the path it gets back on the same turn, so the tool result has
     to carry it."""

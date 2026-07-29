@@ -174,6 +174,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     }
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
+    const stop = () => act(() => api.stopGame(runId), 'Stop failed', false)
     const renderArt = () => act(async () => { setRenderPending(true); await api.renderAssets(runId) }, 'Render failed', false)
     const submitFix = () => {
         const note = fixNote.trim()
@@ -213,6 +214,9 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     )}
                     {building && status === 'paused' && (
                         <button onClick={resume} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Resume</button>
+                    )}
+                    {building && (
+                        <button onClick={stop} disabled={acting} className="bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Stop</button>
                     )}
                     {stage === 'built' && detail.play_url && (
                         <a href={detail.play_url} target="_blank" rel="noreferrer"

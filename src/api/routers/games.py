@@ -3,8 +3,8 @@
 A "game" is a games row in the platform db plus its run dir under
 <working_directory>/runs/<run_id>/. The list reads the db only; the detail view reads the prompt
 from disk (source of truth) and derives live status from the durable build cursor.
-Build (which also stores the prompt it was given), pause/resume, fix-from-note, and asset skinning
-all live here.
+Build (which also stores the prompt it was given), pause/resume/stop, fix-from-note, and asset
+skinning all live here.
 """
 
 import asyncio
@@ -284,6 +284,16 @@ async def pause_game(run_id: str, user: User = Depends(get_current_user)):
     if not build_chain.pause(run_id):
         raise HTTPException(status_code=409, detail="no build in progress for this run")
     return {"run_id": run_id, "status": "pausing"}
+
+
+@router.post("/{run_id}/stop", response_model=Dict)
+async def stop_game(run_id: str, user: User = Depends(get_current_user)):
+    """Stop a build for good, keeping whatever it has written. A run that never wrote an index.html
+    ends `failed`; one that did is playable and ends `built`, exactly as a step-capped build does."""
+    _require_state(run_id, user)
+    if not await asyncio.to_thread(build_chain.stop, run_id):
+        raise HTTPException(status_code=409, detail="no build in progress for this run")
+    return {"run_id": run_id, "status": "stopped"}
 
 
 @router.post("/{run_id}/resume", response_model=Dict)

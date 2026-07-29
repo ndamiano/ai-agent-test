@@ -37,6 +37,8 @@ class BuildCursor:
     prompt_tokens: int = 0
     compacted: int = 0                            # transcript rounds dropped so far
     no_call_streak: int = 0                       # consecutive turns that produced no tool call
+    repeat_sig: str = ""                          # the last failing tool call, name + arguments
+    repeat_count: int = 0                         # times it has now been sent unchanged
     actions: List[str] = field(default_factory=list)   # last turn's tool calls, for the build feed
     finished: bool = False                        # the model called `done`
     summary: str = ""

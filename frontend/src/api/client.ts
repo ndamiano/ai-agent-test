@@ -155,6 +155,8 @@ export const api = {
         request<{ status: string }>(`/games/${runId}/pause`, { method: 'POST' }),
     resumeGame: (runId: string) =>
         request<{ status: string }>(`/games/${runId}/resume`, { method: 'POST' }),
+    stopGame: (runId: string) =>
+        request<{ status: string }>(`/games/${runId}/stop`, { method: 'POST' }),
     // Free-text patch of a built game — re-runs the build loop from a human note.
     fixGame: (runId: string, note: string) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/fix`, { method: 'POST', body: JSON.stringify({ note }) }),

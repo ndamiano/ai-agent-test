@@ -11,7 +11,8 @@ from pathlib import Path
 from maestro.codegen.assets import request_media
 from maestro.codegen.staging import game_dir
 
-MAX_READ_CHARS = 60_000   # whole-file ceiling; past this the read returns the head and says so
+MAX_READ_CHARS = 20_000   # whole-file ceiling; past this the read returns the head and says so.
+                          # Higher than build_steps._MAX_TOOL_CHARS is a promise the transcript cuts.
 
 
 _ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\\"": "\"", "\\'": "'"}
@@ -23,7 +24,7 @@ def _unescaped(text: str) -> str:
     return text
 
 
-DOUBLE_ESCAPED = ("your text is escaped twice — it carries backslash sequences (\\n, \\\") where "
+DOUBLE_ESCAPED = ("Your text is escaped twice — it carries backslash sequences (\\n, \\\") where "
                   "the file has a real newline or quote. Send the characters themselves, escaped "
                   "once for JSON.")
 
@@ -66,7 +67,7 @@ def build_tools(state) -> dict:
         if content is None:
             raise KeyError("content")
         if "\n" not in content and "\\n" in content:
-            return {"ok": False, "error": f"the file was not written: {DOUBLE_ESCAPED}"}
+            return {"ok": False, "error": DOUBLE_ESCAPED}
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(content)}
@@ -86,7 +87,7 @@ def build_tools(state) -> dict:
         n = body.count(old)
         if n == 0:
             if _unescaped(old) != old and body.count(_unescaped(old)) > 0:
-                return {"ok": False, "error": f"old_text was not found in the file: {DOUBLE_ESCAPED}"}
+                return {"ok": False, "error": DOUBLE_ESCAPED}
             return {"ok": False, "error": "old_text was not found in the file. Read the file and "
                                           "copy the exact text, including whitespace."}
         if n > 1:

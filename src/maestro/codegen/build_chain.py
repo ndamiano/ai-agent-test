@@ -68,6 +68,26 @@ def pause(run_id: str) -> bool:
     return True
 
 
+def stop(run_id: str) -> bool:
+    """End a build where it stands and keep what it wrote. False when there is nothing in flight.
+
+    Playability is judged the same way a build that hits its step cap is judged — an index.html is
+    still the whole contract, and a run stopped by hand is not a run that failed."""
+    lock = _lock_for(run_id)
+    lock.acquire()
+    try:
+        rs = RunState(run_id)
+        cursor = build_state.load(rs.run_dir)
+        if cursor is None or cursor.phase == "done":
+            return False
+        if cursor.build_id:
+            db_store.abandon_build_jobs(cursor.build_id, "the build was stopped by hand")
+        _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir), attempt="stopped")
+        return True
+    finally:
+        lock.release()
+
+
 def resume(run_id: str) -> None:
     """Re-drive a mid-flight build — a paused one (clear the pause first) or one whose driver process
     died (the cursor is on disk, no llm turn in flight). A no-op once the cursor is done."""
@@ -177,7 +197,10 @@ def _playable(run_dir) -> bool:
     return entry_path(run_dir).exists()
 
 
-def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
+def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
+              attempt: Optional[str] = None) -> None:
+    """`ok` is whether the GAME is playable; `attempt` is how the build ended, and they differ for
+    one stopped by hand over a game that already ran."""
     cursor.phase = "done"
     cursor.ok = ok
     build_state.save(rs.run_dir, cursor)
@@ -185,7 +208,8 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
         stage_for_play(rs.run_dir, run_id)
     db_store.set_status(run_id, "built" if ok else "failed")
     if cursor.build_id:
-        db_store.build_finished(cursor.build_id, "succeeded" if ok else "failed", steps=cursor.step)
+        db_store.build_finished(cursor.build_id, attempt or ("succeeded" if ok else "failed"),
+                                steps=cursor.step)
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
     _emit("build_done", run_id, ok=ok, steps=cursor.step)
 

@@ -172,7 +172,7 @@ def step(spec, run_dir, tools, cursor, result) -> Outcome:
             if tc["function"]["name"] == "done":
                 args = parse_args(tc["function"].get("arguments"))
                 cursor.finished = True
-                cursor.summary = str(args.get("summary", ""))[:400]
+                cursor.summary = _clip(args.get("summary", ""), 400)
                 cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
                                        "content": "ok"})
                 continue
@@ -185,6 +185,29 @@ def step(spec, run_dir, tools, cursor, result) -> Outcome:
     return _infer(run_dir, cursor)
 
 
+def _clip(text: str, n: int) -> str:
+    """Cut to `n` chars on a word boundary. A feed line that ends mid-word reads as a bug."""
+    text = " ".join(str(text).split())
+    if len(text) <= n:
+        return text
+    return text[:n].rsplit(" ", 1)[0] + "…"
+
+
+def _action_of(tc, res) -> str:
+    """One turn's tool call as a line for the build feed — what the model DID, since the turn
+    counter alone says only that it is still going. A failure carries its reason: the whole point
+    of watching the feed is seeing the build go wrong before its step cap says so."""
+    name = tc["function"]["name"]
+    args = parse_args(tc["function"].get("arguments"))
+    target = args.get("path") or args.get("id") or ""
+    verb = {"write_file": "wrote", "edit_file": "edited", "read_file": "read",
+            "generate_media": "asked for art", "list_files": "listed files"}.get(name, name)
+    line = f"{verb} {target}".strip()
+    if res.get("ok", True):
+        return line
+    return f"{line} — failed: {_clip(res.get('error') or 'no reason given', 120)}"
+
+
 def _apply(tools, cursor, tc) -> None:
     try:
         res = _dispatch(tools, cursor, tc)
@@ -195,6 +218,7 @@ def _apply(tools, cursor, tc) -> None:
         # what went wrong. It surfaces as a tool error and is logged as the bug it is.
         logger.exception("tool %s raised", tc["function"]["name"])
         res = {"ok": False, "error": f"{tc['function']['name']} failed: {e}"}
+    cursor.actions.append(_action_of(tc, res))
     cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
                            "content": json.dumps(res)[:20_000]})
 
@@ -227,9 +251,13 @@ def _infer(run_dir, cursor) -> Infer:
             cursor.compacted += dropped
             cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
     msgs = MessageBuilder(cursor.system).extend(cursor.history).build()
-    report = f"building (turn {cursor.turn + 1}/{MAX_TURNS})"
+    # No actions means the turn called no tool: either the opening turn (the prompt has just been
+    # sent and nothing has happened yet) or one the nudge is answering.
+    report = ", ".join(cursor.actions) or (
+        "sent the prompt" if cursor.turn == 0 else "no tool call — asked again")
     if cursor.compacted:
-        report += f", {cursor.compacted} round(s) compacted"
+        report += f" ({cursor.compacted} round(s) compacted)"
+    cursor.actions = []
     return Infer(msgs, SCHEMAS, MAX_TOKENS, report=report)
 
 
@@ -277,6 +305,5 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
 
 
 def _request_from(spec) -> str:
-    """The build's one user message: the person's request, as they wrote it. The brief is not
-    prepended — it is for the human to review and for the audit to judge against."""
+    """The build's one user message: the run's prompt, byte for byte as the human approved it."""
     return str((spec or {}).get("request") or "").strip() or "Make a small, playable browser game."

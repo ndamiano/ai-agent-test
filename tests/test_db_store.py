@@ -31,13 +31,12 @@ def test_list_is_per_user():
     assert [g["id"] for g in store.list_games("u1")] == ["g1"]
 
 
-def test_spec_meta_mirrors_title_mode_and_frozen():
+def test_prompt_meta_mirrors_the_title_and_marks_the_run_buildable():
     store.create_game("g1", "u1")
-    store.update_spec_meta("g1", "Moon Miner", "3d", frozen=False)
+    assert store.game("g1")["status"] == "draft"
+    store.update_prompt_meta("g1", "Moon Miner")
     row = store.game("g1")
-    assert (row["title"], row["mode"], row["status"]) == ("Moon Miner", "3d", "draft")
-    store.update_spec_meta("g1", "Moon Miner", "3d", frozen=True)
-    assert store.game("g1")["status"] == "frozen"
+    assert (row["title"], row["status"]) == ("Moon Miner", "ready")
 
 
 def test_charge_grants_seconds_and_is_durable():

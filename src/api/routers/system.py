@@ -1,27 +1,16 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
-from agents.agent_store import list_agents
 from llm_clients.connector import get_connector
 
 router = APIRouter()
 
 
 @router.get("/status")
-async def get_status(request: Request) -> Dict[str, Any]:
-    """
-    Get system status including LLM connection status
-
-    Returns:
-        SystemStatus object with connection information
-    """
-    client = get_connector()
-
+async def get_status() -> Dict[str, Any]:
+    """System status: which model the queue's llm jobs are tagged for."""
     return {
         "status": "healthy",
-        "llm_connected": True,
-        "embedding_connected": False,
-        "llm_model": client.model_name,
-        "agent_count": len(list_agents()),
+        "llm_model": get_connector().model_name,
     }

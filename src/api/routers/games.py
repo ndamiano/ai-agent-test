@@ -1,14 +1,13 @@
 """Games router — browse and drive codegen build runs.
 
 A "game" is a games row in the platform db plus its run dir under
-<working_directory>/runs/<run_id>/. The list reads the db only; the detail view reads the spec
+<working_directory>/runs/<run_id>/. The list reads the db only; the detail view reads the prompt
 from disk (source of truth) and derives live status from the build queue + the run control.
-Freeze, build (queued on the single GPU), pause/resume, fix-from-note, and asset skinning all
-live here.
+Build (which also stores the prompt it was given), pause/resume, fix-from-note, and asset skinning
+all live here.
 """
 
 import asyncio
-import json
 import logging
 import re
 import threading
@@ -27,7 +26,8 @@ from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
 from maestro.codegen.assets import AlreadyRendering, add_assets, read_manifest, regenerate_asset
 from maestro.codegen.staging import game_dir, is_staged
-from maestro.codegen.run import freeze_spec
+from maestro.codegen.run import create_run, set_prompt
+from tools.safety import log_violation, screen_text
 from maestro.run_control import get as get_control
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -36,8 +36,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class NewGameBody(BaseModel):
+    prompt: str
+    auto_pause: bool = False
+
+
 class BuildBody(BaseModel):
     auto_pause: bool = False
+    prompt: Optional[str] = None
 
 
 class AutoPauseBody(BaseModel):
@@ -91,13 +97,11 @@ async def list_games(user: User = Depends(get_current_user)):
     games: List[Dict] = []
     for row in db_store.list_games(user.id):
         if not row["title"] and row["status"] == "draft":
-            continue   # created but never drafted — nothing to show yet
+            continue   # created but has no prompt yet — nothing to show
         games.append({
             "run_id": row["id"],
             "title": row["title"],
-            "mode": row["mode"],
             "status": row["status"],
-            "frozen": row["status"] != "draft",
             "built": _built(row["id"]),
             "building": build_chain.is_active(row["id"]),
             "mtime": row["updated_at"],
@@ -106,9 +110,38 @@ async def list_games(user: User = Depends(get_current_user)):
     return games
 
 
+@router.post("", response_model=Dict)
+async def create_game(body: NewGameBody, user: User = Depends(get_current_user)):
+    """Make a new game: the prompt the user wrote becomes the run, and the build starts. Nothing
+    exists server-side until this call, so an abandoned box leaves nothing behind."""
+    text = body.prompt.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="the prompt is empty")
+    violation = screen_text(text)
+    if violation is not None:
+        log_violation(violation, user_id=user.id, source="new_game")
+        raise HTTPException(status_code=400, detail="this prompt can't be built")
+
+    price = cost({"request": text})
+    if store.balance(user.id) < price:
+        raise HTTPException(status_code=402, detail={
+            "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+
+    run_id = await asyncio.to_thread(create_run, user.id)
+    await asyncio.to_thread(set_prompt, run_id, text, event="prompt_proposed")
+    if not store.deduct(user.id, price, "build", run_id):
+        raise HTTPException(status_code=402, detail={
+            "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+    db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
+    _require_compute(run_id)
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build",
+                            auto_pause=body.auto_pause)
+    return {"run_id": run_id, "status": "building"}
+
+
 @router.get("/{run_id}", response_model=Dict)
 async def get_game(run_id: str, user: User = Depends(get_current_user)):
-    """Full detail for one game: the freeform spec, built/building state, and live status."""
+    """Full detail for one game: the build prompt, built/building state, and live status."""
     state = _require_state(run_id, user)
     spec_data = state.read_spec()
     row = db_store.game(run_id) or {}
@@ -122,8 +155,8 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         status = "built" if built else "idle"
     return {
         "run_id": run_id,
-        "spec": spec_data,
-        "frozen": bool(spec_data.get("frozen")),
+        "prompt": spec_data.get("request", ""),
+        "title": spec_data.get("title", ""),
         "built": built,
         "building": active is not None,
         "status": status,
@@ -213,30 +246,33 @@ async def game_events(run_id: str, after: int = 0, user: User = Depends(get_curr
     return db_store.events_for(run_id, after_id=after)
 
 
-@router.post("/{run_id}/freeze", response_model=Dict)
-async def freeze_game(run_id: str, user: User = Depends(get_current_user)):
-    """Human approval action — freeze the spec so the build can run."""
-    _require_state(run_id, user)
-    return await asyncio.to_thread(freeze_spec, run_id)
-
-
 @router.post("/{run_id}/build", response_model=Dict)
 async def build_game(run_id: str, body: BuildBody = BuildBody(),
                      user: User = Depends(get_current_user)):
     """Queue a build on the single GPU. It runs immediately if the worker is free, else it waits
     with a `queue_position`. Progress streams over the websocket.
 
+    `prompt` carries the user's edit of the text: pressing Build IS approving what is in the box,
+    so the build is the only thing that writes it. The driver reads it from disk, not from this
+    request — a build outlives the process that started it.
+
     A run is charged ONCE, gated on a durable `charged` flag: the first enqueue deducts
     `cost(spec)`; every later enqueue for the same run (a re-trigger, a resume after a dead build)
     finds it already flagged and never re-charges. Charged stays charged — there is no automatic
     refund."""
     state = _require_state(run_id, user)
-    spec_data = state.read_spec()
-    if not spec_data.get("frozen"):
-        raise HTTPException(status_code=400, detail="freeze the spec before building")
-
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="build already in progress")
+    if body.prompt is not None:
+        violation = screen_text(body.prompt)
+        if violation is not None:
+            log_violation(violation, user_id=user.id, source="prompt_edit")
+            raise HTTPException(status_code=400, detail="this prompt can't be built")
+        try:
+            await asyncio.to_thread(set_prompt, run_id, body.prompt)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    spec_data = state.read_spec()
     if not db_store.is_charged(run_id):
         price = cost(spec_data)
         if not store.deduct(user.id, price, "build", run_id):

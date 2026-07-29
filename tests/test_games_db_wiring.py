@@ -40,28 +40,96 @@ def _user(handle="alice", credits=10):
 def _make_game(user_id, spec):
     run_id = create_run(user_id)
     RunState(run_id).write_spec(spec)
-    db_store.update_spec_meta(run_id, spec.get("title", ""), spec.get("mode", ""),
-                              bool(spec.get("frozen")))
+    db_store.update_prompt_meta(run_id, spec.get("title", ""))
     return run_id
 
 
 def test_list_and_detail_come_from_the_db(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": False})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
 
     (row,) = client.get("/api/games", headers=headers).json()
-    assert (row["run_id"], row["title"], row["frozen"]) == (run_id, "Moon Miner", False)
+    assert (row["run_id"], row["title"]) == (run_id, "Moon Miner")
 
     detail = client.get(f"/api/games/{run_id}", headers=headers).json()
-    assert detail["spec"]["title"] == "Moon Miner"
+    assert (detail["title"], detail["prompt"]) == ("Moon Miner", "make a moon miner")
     assert detail["credits_spent"] == 0
     assert detail["budget_pct_remaining"] is None   # uncharged → no bar
+
+
+def test_new_game_creates_the_run_from_the_prompt_and_builds(client, monkeypatch):
+    user, headers = _user()
+    started = []
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(rid) or "bid")
+
+    r = client.post("/api/games", headers=headers,
+                    json={"prompt": "an open world RPG with card combat"})
+    assert r.status_code == 200
+    run_id = r.json()["run_id"]
+    assert started == [run_id]
+    assert RunState(run_id).read_spec()["request"] == "an open world RPG with card combat"
+    assert db_store.owner_of(run_id) == user.id
+    assert auth_store.balance(user.id) == 9
+    assert db_store.game(run_id)["seconds_granted"] == SECONDS_PER_CREDIT
+
+
+def test_new_game_with_no_credits_is_402_and_creates_nothing(client, monkeypatch):
+    """The balance is checked BEFORE the run exists, so a broke user leaves no orphan run."""
+    user, headers = _user(credits=0)
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
+
+    r = client.post("/api/games", headers=headers, json={"prompt": "a maze game"})
+    assert r.status_code == 402
+    assert client.get("/api/games", headers=headers).json() == []
+
+
+def test_new_game_with_an_empty_prompt_is_400(client):
+    _, headers = _user()
+    assert client.post("/api/games", headers=headers,
+                       json={"prompt": "   "}).status_code == 400
+    assert client.get("/api/games", headers=headers).json() == []
+
+
+def test_build_stores_the_edited_prompt_it_was_given(client, monkeypatch):
+    """Pressing Build is what approves the text, so the build call is the only writer."""
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "a maze game", "title": "Maze"})
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
+
+    r = client.post(f"/api/games/{run_id}/build", headers=headers,
+                    json={"prompt": "a maze game with a boss fight"})
+    assert r.status_code == 200
+    assert RunState(run_id).read_spec()["request"] == "a maze game with a boss fight"
+    assert client.get(f"/api/games/{run_id}", headers=headers).json()["prompt"] == \
+        "a maze game with a boss fight"
+
+
+def test_build_without_a_prompt_keeps_what_is_on_disk(client, monkeypatch):
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "a maze game", "title": "Maze"})
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
+
+    assert client.post(f"/api/games/{run_id}/build", headers=headers).status_code == 200
+    assert RunState(run_id).read_spec()["request"] == "a maze game"
+
+
+def test_building_an_empty_prompt_is_400_and_changes_nothing(client, monkeypatch):
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "a maze game", "title": "Maze"})
+    started = []
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(rid))
+
+    assert client.post(f"/api/games/{run_id}/build", headers=headers,
+                       json={"prompt": "  "}).status_code == 400
+    assert RunState(run_id).read_spec()["request"] == "a maze game"
+    assert started == []
+    assert auth_store.balance(user.id) == 10   # a refused prompt never charges
 
 
 def test_cross_user_access_is_403(client):
     user, _ = _user("alice")
     _, other_headers = _user("bob")
-    run_id = _make_game(user.id, {"title": "Mine", "mode": "2d", "frozen": False})
+    run_id = _make_game(user.id, {"request": "make a mine", "title": "Mine"})
     assert client.get(f"/api/games/{run_id}", headers=other_headers).status_code == 403
     assert client.get("/api/games", headers=other_headers).json() == []
 
@@ -69,7 +137,7 @@ def test_cross_user_access_is_403(client):
 def test_build_charges_once_and_grants_seconds(client, monkeypatch):
 
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
 
     # Kick off without running a real build (no worker to drive completions in tests).
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
@@ -89,7 +157,7 @@ def test_build_charges_once_and_grants_seconds(client, monkeypatch):
 
 def test_build_with_no_credits_is_402_and_uncharged(client, monkeypatch):
     user, headers = _user(credits=0)
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
 
     r = client.post(f"/api/games/{run_id}/build", headers=headers)
     assert r.status_code == 402
@@ -100,7 +168,7 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
     """Credits buy a grant ONCE; the grant is what each later build/fix/skin spends. A game that
     has burned it must be refused before it takes the GPU slot, not after."""
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
 
     assert client.post(f"/api/games/{run_id}/build", headers=headers).status_code == 200
@@ -121,7 +189,7 @@ def test_detail_reports_remaining_net_of_queued_work(client):
     queue, so a bar drawn from spend alone would read full while a build's jobs are already spoken
     for. budget_pct_remaining is computed from compute_remaining, which reserves the estimate."""
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, 1000.0)
     db_store.enqueue_job("mesh", {}, game_id=run_id)
 
@@ -131,12 +199,12 @@ def test_detail_reports_remaining_net_of_queued_work(client):
 
 def test_events_endpoint_replays_the_log(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": False})
-    db_store.record_event(run_id, "spec_proposed", {"title": "Moon Miner"})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
+    db_store.record_event(run_id, "prompt_proposed", {"title": "Moon Miner"})
     db_store.record_event(run_id, "build_step", {"step": 1})
 
     events = client.get(f"/api/games/{run_id}/events", headers=headers).json()
-    assert [e["kind"] for e in events] == ["spec_proposed", "build_step"]
+    assert [e["kind"] for e in events] == ["prompt_proposed", "build_step"]
     after = events[0]["id"]
     later = client.get(f"/api/games/{run_id}/events?after={after}", headers=headers).json()
     assert [e["kind"] for e in later] == ["build_step"]
@@ -152,13 +220,13 @@ def _write_assets(run_id, manifest, files=()):
 
 def test_assets_empty_before_the_game_declares_any(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     assert client.get(f"/api/games/{run_id}/assets", headers=headers).json() == []
 
 
 def test_assets_report_per_asset_status(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     # hero.png is on disk (rendered), slime.png is planned but not yet rendered → pending.
     _write_assets(run_id,
                   {"images": [{"id": "hero", "file": "assets/hero.png", "prompt": "a hero"},
@@ -173,7 +241,7 @@ def test_assets_report_per_asset_status(client):
 
 def test_asset_blob_streams_and_guards(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
                                       "prompt": "a hero"}]},
                   files=[("hero.png", b"PNGDATA")])
@@ -197,7 +265,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
     import maestro.codegen.assets as assets_mod
 
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
                                       "prompt": "a hero"}]})
     db_store.charge_game(run_id, 1, 10_000.0)   # grant compute so the enqueue is admitted
@@ -220,7 +288,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
 def test_regenerate_cross_user_is_403(client):
     user, _ = _user("alice")
     _, other = _user("bob")
-    run_id = _make_game(user.id, {"title": "Mine", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a mine", "title": "Mine"})
     db_store.charge_game(run_id, 1, 10_000.0)
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=other,
                     json={"prompt": "x"})
@@ -229,7 +297,7 @@ def test_regenerate_cross_user_is_403(client):
 
 def test_regenerate_bad_asset_id_is_400(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, 10_000.0)
     r = client.post(f"/api/games/{run_id}/assets/bad!id/regenerate", headers=headers,
                     json={"prompt": "x"})
@@ -238,7 +306,7 @@ def test_regenerate_bad_asset_id_is_400(client):
 
 def test_regenerate_out_of_compute_is_402(client):
     user, headers = _user()
-    run_id = _make_game(user.id, {"title": "Moon Miner", "mode": "2d", "frozen": True})
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, SECONDS_PER_CREDIT)
     db_store.add_seconds_used(run_id, SECONDS_PER_CREDIT)   # burn the whole grant
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,

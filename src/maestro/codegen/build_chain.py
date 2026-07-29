@@ -6,10 +6,9 @@ local work (tool dispatch, staging) synchronously, and SUSPENDS only at a real i
 one `llm` job and returns; the process is free to die. The next completion reloads build_state.json
 and calls `advance` again.
 
-Two phases: `build` (the turn machine writes the game until it calls done or hits the cap) and
-`audit` (the frozen brief's claims judged against the source, once, as a REPORT). There is never more
-than one llm job in flight per run, so the chain is strictly linear and advance is only ever driven
-from the control-plane process — an in-process lock serializes those.
+The turn machine writes the game until it calls done or hits the step cap. There is never more than
+one llm job in flight per run, so the chain is strictly linear and advance is only ever driven from
+the control-plane process — an in-process lock serializes those.
 """
 
 from __future__ import annotations
@@ -21,9 +20,8 @@ from typing import Dict, Optional
 
 from db import store as db_store
 from llm_clients.connector import get_connector
-from maestro.codegen import audit as audit_mod
 from maestro.codegen import build_state, build_steps
-from maestro.codegen.build_state import AuditCursor, BuildCursor
+from maestro.codegen.build_state import BuildCursor
 from maestro.codegen.staging import entry_path, stage_for_play
 from maestro.codegen.tools import build_tools
 from maestro.state import RunState
@@ -85,19 +83,11 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
     turn, then returns). A FIX re-enters the same turn machine with the note as its request — the
     model lists and reads the files itself, so there is nothing to hand it up front."""
     rs = RunState(run_id)
-    spec = rs.read_spec()
-    if spec is None:
-        raise ValueError(f"no spec for run {run_id!r}")
-    if kind == "build" and not spec.get("frozen"):
-        raise RuntimeError("build refuses to run until the spec is frozen")
+    if rs.read_spec() is None:
+        raise ValueError(f"no prompt for run {run_id!r}")
     _seed(rs)
 
-    prev = build_state.load(rs.run_dir)
     cursor = BuildCursor(build_id=build_id, kind=kind, max_steps=max_steps, t0=time.time())
-    if prev is not None:
-        # Delivered claims carry across builds, so a later audit reads as a diff rather than a
-        # re-litigation of the same code.
-        cursor.audit_delivered = list(prev.audit_delivered)
     if kind == "fix":
         cursor.request = ("The game is already written and playable. A person played it and "
                           f"reported this:\n{note}\n\nRead the files and fix exactly that. Call "
@@ -106,7 +96,7 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
     from maestro.run_control import get_or_create
     get_or_create(run_id).set_auto_pause(auto_pause)
     db_store.set_status(run_id, "building")
-    _emit("build_started", run_id, n_failing=0, max_steps=max_steps, todo=[], started_at=cursor.t0)
+    _emit("build_started", run_id, max_steps=max_steps, started_at=cursor.t0)
     # wait=True: this first advance must never be dropped by a lock another finalize still holds.
     advance(run_id, wait=True)
 
@@ -155,11 +145,7 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
         _emit("build_paused", run_id, step=cursor.step)
         return
     tools = build_tools(rs)
-
-    if cursor.phase == "audit":
-        outcome = audit_mod.step(spec, rs, cursor, tools, result or {})
-    else:
-        outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result or {})
+    outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result or {})
 
     if isinstance(outcome, build_steps.Infer):
         cursor.step += 1
@@ -168,33 +154,19 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
             return
         build_state.save(rs.run_dir, cursor)
         _enqueue_turn(run_id, cursor, outcome)
+        # A refused compute budget ends the run inside _enqueue_turn; a step line after that
+        # `build_done` would read as progress the build never made.
         if cursor.phase != "done":
             _emit_step(run_id, cursor, outcome.report)
         return
 
     _emit_step(run_id, cursor, outcome.report)
-    if cursor.phase == "build" and _start_audit(rs, cursor):
-        build_state.save(rs.run_dir, cursor)
-        return _advance_locked(run_id, None)
-    _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir) and (cursor.finished or cursor.audit_done))
+    _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir) and cursor.finished)
 
 
 def _playable(run_dir) -> bool:
     """An index.html is the whole contract: without one there is nothing for a browser to open."""
     return entry_path(run_dir).exists()
-
-
-def _start_audit(rs: RunState, cursor: BuildCursor) -> bool:
-    """The build says it is finished — judge the brief's claims against the source, ONCE, and report.
-
-    Never a fix loop: each fix breaks a claim that already worked, so rounds of judge-then-fix
-    converge on sediment rather than a game."""
-    if (cursor.kind != "build" or cursor.audit_done or not cursor.finished
-            or cursor.step >= cursor.max_steps or not audit_mod.claims_of(rs.read_spec())):
-        return False
-    cursor.phase = "audit"
-    cursor.set_audit(AuditCursor(anchors=list(cursor.audit_delivered)))
-    return True
 
 
 def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
@@ -251,5 +223,5 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
 
 def _emit_step(run_id: str, cursor: BuildCursor, summary: str) -> None:
     _emit("build_step", run_id, step=cursor.step, max_steps=cursor.max_steps, summary=summary,
-          n_failing=0, todo=[], elapsed=time.time() - cursor.t0)
+          elapsed=time.time() - cursor.t0)
     logger.info("build %s step %d: %s", run_id, cursor.step, summary)

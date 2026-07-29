@@ -1,30 +1,29 @@
 """Run orchestrator + CLI.
 
   create_run(user_id)          → a fresh run dir
-  draft_spec(request)          → the local model drafts a BRIEF (stage 1)
+  propose_prompt(request, id)  → the request, verbatim, as the run's PROMPT
+  set_prompt(run_id, text)     → the human's edit of that prompt
   run_build(run_id)            → kick the build off + BLOCK-poll the cursor to done (CLI only; the web
-                                 path is fire-and-forget via build_chain.kickoff — stage 2)
-  python -m maestro.codegen.run "<request>"  → draft → freeze (your ok) → build → play path
+                                 path is fire-and-forget via build_chain.kickoff)
+  python -m maestro.codegen.run "<request>"  → prompt → build → play path
 
-The build refuses until the brief is frozen. The build itself is a chain of llm jobs driven by
-build_chain's completion handler, so `run_build`/`fix_from_note` only START it and wait — the API
-server (where worker completions land) must be up, same as every other queue stage.
+THE PROMPT IS THE ARTIFACT: what the run stores is what the build's one user message contains,
+byte for byte, so the text a human approves is the text the model reads.
+
+The build itself is a chain of llm jobs driven by build_chain's completion handler, so
+`run_build`/`fix_from_note` only START it and wait — the API server (where worker completions
+land) must be up, same as every other queue stage.
 """
 
-import json
 import logging
-import re
 import sys
 import time
 import uuid
-from pathlib import Path
 from typing import Optional
 
 from auth import store
 from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
-from llm_clients.connector import get_connector
-from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import build_chain, build_state
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.state import RunState
@@ -33,7 +32,6 @@ from tools.build_events import _emit
 logger = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 1.0
-_PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 
 class BuildResult:
@@ -54,76 +52,31 @@ def create_run(user_id: str) -> str:
     return run_id
 
 
-def _content(resp) -> str:
-    return ((resp.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
+_TITLE_CHARS = 60
 
 
-def draft_spec(request: str) -> dict:
-    """Stage 1: prose request → a short BRIEF (look, audio, scope, and the promises the request
-    actually made). Retries on a bad JSON parse."""
-    conn = get_connector()
-    system = (_PROMPTS / "spec_draft.txt").read_text(encoding="utf-8")
-    user = f"Request: {request}\n\nWrite the JSON brief."
-    design, last = None, ""
-    for _ in range(3):
-        reply = _content(conn.generate_with_tools(
-            MessageBuilder(system).add_user(user).build(), [], max_tokens=4000))
-        m = re.search(r"```(?:json)?\s*\n(.*?)```", reply, re.S)
-        try:
-            design = json.loads(m.group(1) if m else reply)
-            break
-        except json.JSONDecodeError as e:
-            last = f"{e} — return ONLY one ```json block of STRICT valid JSON, no trailing commas."
-            user = f"Request: {request}\n\nYour previous JSON was invalid: {last}\n\nWrite the JSON brief."
-    if design is None:
-        raise ValueError(f"brief draft never produced valid JSON: {last}")
-    return {"request": request, "title": design.get("title") or request,
-            "design": design, "frozen": False}
+def _title_of(request: str) -> str:
+    """A label for the games list, cut from the prompt's first line. Mechanical: the human sees
+    their text back with nothing to wait for."""
+    line = (request.strip().splitlines() or [""])[0].strip()
+    return line if len(line) <= _TITLE_CHARS else line[:_TITLE_CHARS].rsplit(" ", 1)[0] + "…"
 
 
-def propose_spec(request: str, run_id: str) -> dict:
-    """Draft a brief from the request, persist it to the run, and announce it for human review."""
-    spec = draft_spec(request)
+def propose_prompt(request: str, run_id: str) -> dict:
+    """Store the request as the run's prompt, VERBATIM, and announce it for the human to read."""
+    return set_prompt(run_id, request, event="prompt_proposed")
+
+
+def set_prompt(run_id: str, text: str, *, event: str = "prompt_updated") -> dict:
+    """Write the run's prompt — the text the build will send as its user message."""
+    text = text.strip()
+    if not text:
+        raise ValueError("the prompt is empty")
+    spec = {"request": text, "title": _title_of(text)}
     RunState(run_id).write_spec(spec)
-    _mirror_spec_meta(run_id, spec)
-    _emit("spec_proposed", run_id, title=spec["title"], mode="")
+    db_store.update_prompt_meta(run_id, spec["title"])
+    _emit(event, run_id, title=spec["title"])
     return spec
-
-
-def amend_spec(run_id: str, note: str) -> dict:
-    """Re-draft an existing brief from a free-text revision note. Writes it UNFROZEN so the build
-    refuses until the human re-freezes."""
-    state = RunState(run_id)
-    spec = state.read_spec()
-    if spec is None:
-        raise ValueError(f"no run {run_id!r}")
-    augmented = (f"Original request: {spec['request']}\n"
-                 f"Revision requested: {note}\n"
-                 f"Current brief JSON: {json.dumps(spec['design'], ensure_ascii=False)}\n"
-                 "Produce the full updated brief.")
-    revised = draft_spec(augmented)
-    revised["request"] = spec["request"]
-    revised["frozen"] = False
-    state.write_spec(revised)
-    _mirror_spec_meta(run_id, revised)
-    _emit("spec_amend_requested", run_id, note=note)
-    return revised
-
-
-def freeze_spec(run_id: str) -> dict:
-    """The human's out-of-band approval: freeze the brief so the build may run."""
-    state = RunState(run_id)
-    spec = state.read_spec()
-    spec["frozen"] = True
-    state.write_spec(spec)
-    _mirror_spec_meta(run_id, spec)
-    _emit("spec_frozen", run_id, title=spec["title"])
-    return {"ok": True, "frozen": True}
-
-
-def _mirror_spec_meta(run_id: str, spec: dict) -> None:
-    """spec.json is the source of truth; the games row mirrors its identity fields for listing."""
-    db_store.update_spec_meta(run_id, spec.get("title", ""), "", bool(spec.get("frozen")))
 
 
 def run_build(run_id: str, max_steps: Optional[int] = None) -> BuildResult:
@@ -154,8 +107,8 @@ def _await_build(run_id: str) -> BuildResult:
     return BuildResult(bool(cursor.ok), cursor.step, elapsed, cursor.summary)
 
 
-def _draft_run(request: str) -> Optional[str]:
-    """A fresh run with its drafted, unfrozen brief on disk. None when there is no account to own it."""
+def _new_run(request: str) -> Optional[str]:
+    """A fresh run holding the request as its prompt. None when there is no account to own it."""
     users = store.list_users()
     if not users:
         print("no accounts yet — create one first: python -m auth.cli create <handle>")
@@ -164,21 +117,19 @@ def _draft_run(request: str) -> Optional[str]:
     # The CLI is the employee path — no credit charge, but the compute budget still gates every
     # enqueue, so grant the same seconds a charged build would get or step 1 is refused.
     db_store.charge_game(run_id, 0, SECONDS_PER_CREDIT)
-    print(f"run: {run_id}\ndrafting brief for: {request!r}\n")
-    spec = draft_spec(request)
-    RunState(run_id).write_spec(spec)
-    print(json.dumps(spec["design"], indent=2, ensure_ascii=False))
+    propose_prompt(request, run_id)
+    print(f"run: {run_id}\nprompt: {request!r}")
     return run_id
 
 
-def _cli_draft(request: str) -> int:
-    """Stage 1 alone: draft the brief and STOP, leaving spec.json on disk for a human edit."""
+def _cli_new(request: str) -> int:
+    """The run + its prompt on disk, STOPPING before the build so the text can be edited first."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    run_id = _draft_run(request)
+    run_id = _new_run(request)
     if run_id is None:
         return 1
-    print(f"\nbrief: {RunState(run_id).spec_path.resolve()}")
-    print(f"edit it, then: python -m maestro.codegen.run --build {run_id}")
+    print(f"\nprompt file: {RunState(run_id).spec_path.resolve()}")
+    print(f"edit `request` in it, then: python -m maestro.codegen.run --build {run_id}")
     return 0
 
 
@@ -186,16 +137,15 @@ def _cli_build(run_id: str) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     state = RunState(run_id)
     if state.read_spec() is None:
-        print(f"no brief for run {run_id!r}")
+        print(f"no prompt for run {run_id!r}")
         return 1
-    freeze_spec(run_id)
-    print("frozen — building...\n")
+    print("building...\n")
     return _report(run_id, state, run_build(run_id))
 
 
 def _cli(request: str) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    run_id = _draft_run(request)
+    run_id = _new_run(request)
     if run_id is None:
         return 1
     print()
@@ -258,30 +208,13 @@ def _cli_assets(run_id: str) -> int:
     return 0
 
 
-def _cli_audit(run_id: str) -> int:
-    from maestro.codegen.audit import claims_of
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    verdicts = Path(RunState(run_id).run_dir) / "audit_verdicts.jsonl"
-    if not verdicts.exists():
-        claims = claims_of(RunState(run_id).read_spec())
-        print(f"no audit on disk for {run_id!r} ({len(claims)} claim(s) in the brief)")
-        return 1
-    for line in verdicts.read_text(encoding="utf-8").splitlines():
-        for v in json.loads(line).get("verdicts", []):
-            print(f"  [{v['status']:>9}] {v['claim']}")
-            if v.get("evidence"):
-                print(f"              {v['evidence']}")
-    return 0
-
-
-_HELP = """maestro — draft a brief, build a game, render its art.
+_HELP = """maestro — write a prompt, build a game, render its art.
 
 usage:
-  python -m maestro.codegen.run "<request>"   draft → freeze → build → play
-  python -m maestro.codegen.run --draft "<request>"       draft the brief and stop (edit spec.json)
-  python -m maestro.codegen.run --build <run_id>          freeze the brief on disk → build
+  python -m maestro.codegen.run "<request>"   the request IS the prompt → build → play
+  python -m maestro.codegen.run --new "<request>"         write the prompt and stop (edit it first)
+  python -m maestro.codegen.run --build <run_id>          build the prompt on disk
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
-  python -m maestro.codegen.run --audit <run_id>          print the brief-vs-code audit verdicts
   python -m maestro.codegen.run --assets <run_id>         render the art the game declared
   python -m maestro.codegen.run --help | -h              show this help
 """
@@ -291,10 +224,10 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
         print(_HELP)
         sys.exit(0)
-    if len(sys.argv) >= 2 and sys.argv[1] == "--draft":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--new":
         if len(sys.argv) < 3:
-            sys.exit('usage: python -m maestro.codegen.run --draft "<request>"')
-        sys.exit(_cli_draft(" ".join(sys.argv[2:])))
+            sys.exit('usage: python -m maestro.codegen.run --new "<request>"')
+        sys.exit(_cli_new(" ".join(sys.argv[2:])))
     if len(sys.argv) >= 2 and sys.argv[1] == "--build":
         if len(sys.argv) < 3:
             sys.exit("usage: python -m maestro.codegen.run --build <run_id>")
@@ -303,10 +236,6 @@ if __name__ == "__main__":
         if len(sys.argv) < 4:
             sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')
         sys.exit(_cli_fix(sys.argv[2], " ".join(sys.argv[3:])))
-    if len(sys.argv) >= 2 and sys.argv[1] == "--audit":
-        if len(sys.argv) < 3:
-            sys.exit("usage: python -m maestro.codegen.run --audit <run_id>")
-        sys.exit(_cli_audit(sys.argv[2]))
     if len(sys.argv) >= 2 and sys.argv[1] == "--assets":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')

@@ -1,5 +1,4 @@
 import type { AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn, SystemStatus } from '../types'
-import type { ChatStreamEvent } from '../types/chat'
 
 const base = '/api'
 
@@ -92,62 +91,6 @@ async function request<T>(path: string, init?: RequestInit, retries = 2): Promis
     throw new Error('Rate limit exceeded after retries')
 }
 
-// Splits an accumulated SSE text buffer on blank lines into complete `data: ...` frames
-// plus whatever partial frame is still trailing (a chunk boundary can land mid-frame).
-export function splitSseFrames(buffer: string): { frames: string[]; rest: string } {
-    const parts = buffer.split('\n\n')
-    const rest = parts.pop() ?? ''
-    return { frames: parts, rest }
-}
-
-function parseSseFrame(frame: string): ChatStreamEvent | null {
-    const dataLine = frame.split('\n').find(line => line.startsWith('data: '))
-    if (!dataLine) return null
-    try {
-        return JSON.parse(dataLine.slice('data: '.length)) as ChatStreamEvent
-    } catch {
-        return null
-    }
-}
-
-// Streams a chat turn's tokens + tool-progress markers as they arrive (SSE over POST —
-// EventSource can't send a body, so this parses the stream by hand).
-export async function* streamChatMessage(
-    message: string,
-    session_id = 'default',
-): AsyncGenerator<ChatStreamEvent> {
-    const res = await fetch(`${base}/chat`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ message, session_id }),
-    })
-    if (res.status === 401) handleUnauthorized()
-    if (!res.ok || !res.body) {
-        // Chat is free but gated on a balance, so a 402 lands here with the numbers to explain
-        // itself — dropping the body would surface it as a bare "402".
-        throw new ApiError(res.status, res.ok ? null : await errorBody(res))
-    }
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const { frames, rest } = splitSseFrames(buffer)
-        buffer = rest
-        for (const frame of frames) {
-            const event = parseSseFrame(frame)
-            if (event) yield event
-        }
-    }
-    const { frames } = splitSseFrames(buffer + '\n\n')
-    for (const frame of frames) {
-        const event = parseSseFrame(frame)
-        if (event) yield event
-    }
-}
 
 export const api = {
     // Auth — login lives at /auth (not under /api); no signup endpoint exists.
@@ -179,6 +122,10 @@ export const api = {
     // Games
     listGames: () =>
         request<Game[]>('/games'),
+    // Make a new game: the prompt becomes the run and the build starts. Nothing exists server-side
+    // until this call, so an abandoned box leaves nothing behind.
+    createGame: (prompt: string, autoPause = false) =>
+        request<{ run_id: string; status: string }>('/games', { method: 'POST', body: JSON.stringify({ prompt, auto_pause: autoPause }) }),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
     // The durable build/spec event log — catch-up after a reload or a websocket gap. `after` is an
@@ -198,10 +145,10 @@ export const api = {
         if (!res.ok) throw new ApiError(res.status, await errorBody(res))
         return URL.createObjectURL(await res.blob())
     },
-    freezeGame: (runId: string) =>
-        request<{ ok: boolean; frozen: boolean }>(`/games/${runId}/freeze`, { method: 'POST' }),
-    buildGame: (runId: string, autoPause = false) =>
-        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ auto_pause: autoPause }) }),
+    // `prompt` is the text in the box: pressing Build is what approves it, so the build call is
+    // the only thing that writes it.
+    buildGame: (runId: string, autoPause = false, prompt?: string) =>
+        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ auto_pause: autoPause, prompt }) }),
 
     // Human-in-the-loop build control
     pauseGame: (runId: string) =>
@@ -240,8 +187,4 @@ export const api = {
     getPromptTurn: (jobId: string) =>
         request<PromptDetail>(`/admin/prompts/turns/${jobId}`),
 
-    // Chat
-    streamChatMessage,
-    clearChatSession: () =>
-        fetch(`${base}/chat`, { method: 'DELETE', headers: authHeaders() }),
 }

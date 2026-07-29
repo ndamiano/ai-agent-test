@@ -1,7 +1,7 @@
 """The Phase-1 safety screen: hard-illegal (CSAM-adjacent) content is refused fail-closed, while
 mature-but-legal creative themes — explicitly in-scope product — always pass. Covers the two match
 shapes (unambiguous term; minor-descriptor × sexual-term co-occurrence), the logging contract
-(matched terms only, never the full text), and the chat endpoint's refusal path."""
+(matched terms only, never the full text), and the new-game endpoint's refusal path."""
 
 import logging
 import sys
@@ -13,8 +13,8 @@ from starlette.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from api.app import app
-from api.routers import chat as chat_router
 from auth import store as auth_store
+from maestro.codegen import build_chain
 from db import store as db_store
 from tools.safety import SafetyViolation, log_violation, screen_image_prompt, screen_text
 
@@ -99,7 +99,7 @@ def test_log_violation_records_terms_and_user_but_never_the_text(caplog):
     assert full_text not in record
 
 
-# --- the chat endpoint's refusal path -----------------------------------------
+# --- the new-game endpoint's refusal path -------------------------------------
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -108,17 +108,17 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def test_chat_refuses_before_any_agent_runs(client, monkeypatch):
-    """A blocked message never reaches the agent (no inference spent on it) — the stream carries
-    the refusal and the violation is logged against the user."""
-    def _explode(user_id):
-        raise AssertionError("agent must not be created for a blocked message")
-    monkeypatch.setattr(chat_router, "_get_or_create_session", _explode)
+def test_a_blocked_prompt_starts_no_build_and_costs_nothing(client, monkeypatch):
+    """The screen runs before the run is created, so a blocked prompt spends no credit and no
+    inference — and the violation is logged against the user."""
+    def _explode(*a, **k):
+        raise AssertionError("a blocked prompt must never reach the build")
+    monkeypatch.setattr(build_chain, "kickoff", _explode)
 
     u = auth_store.create_user("alice", "pw")
     auth_store.grant(u.id, 5, "admin_grant")
     headers = {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
 
-    r = client.post("/api/chat", headers=headers, json={"message": "child porn game"})
-    assert r.status_code == 200          # SSE stream, refusal rides inside
-    assert "can't be processed" in r.text
+    r = client.post("/api/games", headers=headers, json={"prompt": "child porn game"})
+    assert r.status_code == 400
+    assert auth_store.balance(u.id) == 5

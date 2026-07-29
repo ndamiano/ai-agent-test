@@ -124,6 +124,58 @@ def test_tool_call_lands_on_disk_and_continues(tmp_path, tools):
     assert cursor.history[-1]["role"] == "tool"
 
 
+def test_the_step_report_says_what_the_turn_did(tmp_path, tools):
+    """The feed line is the only view a watcher has of a running build, so it names the files the
+    turn touched rather than counting turns."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = build_steps.step({}, tmp_path, tools, cursor, _reply(calls=[
+        ("write_file", {"path": "index.html", "content": "<h1>hi</h1>"}),
+        ("read_file", {"path": "index.html"}),
+    ]))
+    assert out.report == "wrote index.html, read index.html"
+
+    # Each turn reports its OWN actions — not the whole build's.
+    out2 = build_steps.step({}, tmp_path, tools, cursor,
+                            _reply(calls=[("list_files", {})]))
+    assert out2.report == "listed files"
+
+
+def test_a_failed_tool_call_reports_its_reason(tmp_path, tools):
+    """"failed" alone sends the watcher to the logs; the reason is the whole value of the line."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = build_steps.step({}, tmp_path, tools, cursor,
+                           _reply(calls=[("read_file", {"path": "nope.js"})]))
+    assert out.report.startswith("read nope.js — failed: ")
+    assert len(out.report) > len("read nope.js — failed: ")
+
+
+def test_the_opening_turn_says_the_prompt_went_out(tmp_path, tools):
+    cursor = _cursor()
+    out = build_steps.step({}, tmp_path, tools, cursor, {})
+    assert out.report == "sent the prompt"
+
+
+def test_a_turn_with_no_tool_call_says_so(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = build_steps.step({}, tmp_path, tools, cursor, _reply(content="thinking out loud"))
+    assert out.report == "no tool call — asked again"
+
+
+def test_a_long_done_summary_is_cut_on_a_word_boundary(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = build_steps.step({}, tmp_path, tools, cursor, _reply(
+        calls=[("done", {"summary": "built the thing " * 60})]))
+    assert isinstance(out, build_steps.Done)
+    assert cursor.summary.endswith("…")
+    assert not cursor.summary.rstrip("…").endswith(" ")
+    # cut BETWEEN words, never through one
+    assert cursor.summary.rstrip("…").split()[-1] in ("built", "the", "thing")
+
+
 def test_truncated_reply_is_told_nothing_was_saved(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})

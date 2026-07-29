@@ -21,7 +21,7 @@ export interface FeedEntry {
 
 export interface RunStream {
     feed: FeedEntry[]
-    progress: { step: number; nFailing: number } | null
+    progress: { step: number } | null
     startedAt: number | null  // seconds epoch, for the elapsed timer
     parked: { message: string } | null
     skinning: boolean
@@ -34,7 +34,6 @@ interface NormEvent {
     type: string
     at: number  // ms epoch
     step?: number
-    n_failing?: number
     summary?: string
     elapsed?: number
     started_at?: number
@@ -84,9 +83,9 @@ const feedLine = (e: NormEvent): { text: string; tone: FeedTone } | null => {
         case 'fix_started':
             return { text: `⚒ fixing — ${e.note ?? ''}`, tone: 'warn' }
         case 'build_started':
-            return { text: `build started — ${e.n_failing ?? 0} checks failing`, tone: 'info' }
+            return { text: 'build started', tone: 'info' }
         case 'build_step':
-            return { text: `step ${e.step}: ${e.summary} — ${e.n_failing} failing`, tone: 'info' }
+            return { text: `step ${e.step}: ${e.summary}`, tone: 'info' }
         case 'error_parked':
             return { text: `⚑ parked — needs a fix note: ${e.message ?? ''}`, tone: 'bad' }
         case 'build_paused':
@@ -107,10 +106,10 @@ const feedLine = (e: NormEvent): { text: string; tone: FeedTone } | null => {
             return e.ok
                 ? { text: `✓ assets rendered (${e.rendered ?? 0})`, tone: 'good' }
                 : { text: '✗ asset skin failed', tone: 'bad' }
-        case 'spec_frozen':
-            return { text: '🔒 spec frozen', tone: 'info' }
+        case 'prompt_updated':
+            return { text: '✎ prompt edited', tone: 'info' }
         default:
-            return null  // spec_proposed, build_queued, … only refresh state — no feed line
+            return null  // prompt_proposed, build_queued, … only refresh state — no feed line
     }
 }
 
@@ -133,11 +132,11 @@ export function foldStream(events: NormEvent[]): RunStream {
                 break
             case 'build_started':
                 parked = null
-                progress = { step: 0, nFailing: e.n_failing ?? 0 }
+                progress = { step: 0 }
                 if (e.started_at != null) startedAt = e.started_at
                 break
             case 'build_step':
-                progress = { step: e.step ?? 0, nFailing: e.n_failing ?? 0 }
+                progress = { step: e.step ?? 0 }
                 // build_step carries elapsed since start; recover the absolute start from it so the
                 // timer stays accurate even when the build_started event was never seen (reload).
                 if (e.elapsed != null) startedAt = e.at / 1000 - e.elapsed

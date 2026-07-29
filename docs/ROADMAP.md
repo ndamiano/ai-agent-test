@@ -16,7 +16,7 @@ over a 25-game grid across two local models: given the whole problem and five to
 writes working browser games in 2–4 minutes, 4/4; given a declared architecture to fill in, the same
 model produced unplayable ones in 5–37 minutes. So the model now writes **plain HTML/CSS/JS with no
 engine of ours between it and the screen**, and the platform's job is everything around that —
-the brief, the queue, the compute budget, the art, the audit, the human's review.
+the prompt, the queue, the compute budget, the art, the human's review.
 
 What that deleted: `runtime/engine.js` + `engine3d.js` + `engine.d.ts` + the kit_api docs, the
 headless/render/typecheck gates, `interfaces.py` (the declared architecture), `module.py` (the gate
@@ -26,9 +26,9 @@ list), `fix_classes.py`, `data_files.py`, `scaffold.py` + its templates, `contro
 What survived, and why:
 - **The job chain.** A build is still a linear chain of `llm` jobs driven by `/worker/complete`, with
   the whole loop's state in a durable cursor. Nothing about that depended on the kit.
-- **The audit.** The brief's claims judged against the source by a read→verdict subloop, once, as a
-  REPORT. It is the only "did you deliver" signal there is.
-- **The human freeze.** A brief is reviewed and frozen before a build may run.
+- **The human's review.** The run's PROMPT is shown in the box it will be sent from, and pressing
+  Build is what approves it — one artifact, one action, and the text on screen is byte for byte
+  the build's user message.
 - **The asset chain.** Unchanged transport; what changed is that the GAME asks for its own art with
   `generate_media` while writing the code that uses it — one call, one render, the path back
   immediately — so the stage costs zero planning calls. (On trial since 2026-07-28; see CLAUDE.md
@@ -64,8 +64,7 @@ good with refund-on-fail. Measure real cost/time/failure per game.
   three RunPod worker images + the provisioned network volume, and a queue-driven autoscaler
   (`src/scaler/`) — workers self-exit when their queue drains, the control plane adds pods on
   backlog and reaps dead ones. On-demand RunPod inference is no longer a Release-stage item.
-- **Hardening (landed 2026-07-23):** chat rate-limited (uncharged inference, 30 turns/hour),
-  `/docs` dev-only, session TTL 7d, `/play` responses carry a no-exfiltration CSP. Still open:
+- **Hardening (landed 2026-07-23):** `/docs` dev-only, session TTL 7d, `/play` responses carry a no-exfiltration CSP. Still open:
   TRUE origin isolation for generated `game.js` — required before any game-sharing feature, not
   before beta (ownership-gating means a game only runs in its owner's browser). (The old
   build-flood DoS is retired: builds charge credits before enqueue, jobs admit against the

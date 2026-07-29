@@ -189,12 +189,12 @@ def list_games(user_id: str) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def update_spec_meta(game_id: str, title: str, mode: str, frozen: bool) -> None:
-    """Mirror the spec's identity fields onto the game row when the spec is (re)written."""
+def update_prompt_meta(game_id: str, title: str) -> None:
+    """Mirror the prompt's title onto the game row and mark the run buildable."""
     with _db() as conn:
         conn.execute(
-            "UPDATE games SET title = ?, mode = ?, status = ?, updated_at = ? WHERE id = ?",
-            (title, mode, "frozen" if frozen else "draft", time.time(), game_id),
+            "UPDATE games SET title = ?, status = ?, updated_at = ? WHERE id = ?",
+            (title, "ready", time.time(), game_id),
         )
 
 

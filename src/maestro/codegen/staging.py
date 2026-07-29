@@ -37,7 +37,7 @@ def entry_path(run_dir) -> Path:
 
 def game_files(run_dir) -> dict:
     """{relative path: source} for the files the model AUTHORED. Skips `_`-prefixed scratch and the
-    vendored renderer: the audit judges this listing, and vendored source is not the game."""
+    vendored renderer, which is not the game."""
     d = game_dir(run_dir)
     if not d.exists():
         return {}

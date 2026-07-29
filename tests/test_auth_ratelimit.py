@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from auth import router as auth_router
 from auth import store
-from auth.ratelimit import LoginThrottle, RequestThrottle, login_throttle
+from auth.ratelimit import LoginThrottle, login_throttle
 
 
 @pytest.fixture(autouse=True)
@@ -87,22 +87,3 @@ def test_successful_login_resets_the_counter():
     with pytest.raises(HTTPException) as exc:
         _login("alice", "wrong")
     assert exc.value.status_code == 401
-
-
-def test_request_throttle_admits_up_to_cap_then_refuses():
-    t = RequestThrottle(window=60, max_requests=3)
-    assert [t.hit("k") for _ in range(3)] == [0, 0, 0]
-    assert t.hit("k") > 0
-    # The refused hit was not recorded — per-key isolation intact.
-    assert t.hit("other") == 0
-
-
-def test_request_throttle_window_slides(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr("auth.ratelimit.time.time", lambda: now[0])
-    t = RequestThrottle(window=60, max_requests=2)
-    assert t.hit("k") == 0
-    assert t.hit("k") == 0
-    assert t.hit("k") == 60   # retry-after counts from the OLDEST recorded hit
-    now[0] += 61
-    assert t.hit("k") == 0

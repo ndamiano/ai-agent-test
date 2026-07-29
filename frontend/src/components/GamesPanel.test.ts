@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { formatElapsed, stageFor, budgetFraction } from './GamesPanel'
+import { formatElapsed, stageFor, budgetFraction, shouldAdoptPrompt } from './GamesPanel'
+
+describe('shouldAdoptPrompt', () => {
+    it('fills the box on the first load', () => {
+        expect(shouldAdoptPrompt(null, 'an open world RPG')).toBe(true)
+    })
+
+    it('leaves an in-progress edit alone when the poll returns the same text', () => {
+        expect(shouldAdoptPrompt('an open world RPG', 'an open world RPG')).toBe(false)
+    })
+
+    it('adopts text the server changed under us', () => {
+        expect(shouldAdoptPrompt('an open world RPG', 'an open world RPG with card combat')).toBe(true)
+    })
+})
 
 describe('formatElapsed', () => {
     it('renders m:ss, zero-padding seconds', () => {
@@ -16,22 +30,17 @@ describe('formatElapsed', () => {
 })
 
 describe('stageFor', () => {
-    it('is draft until frozen, regardless of build state', () => {
-        expect(stageFor(false, false, false)).toBe('draft')
-        expect(stageFor(false, true, true)).toBe('draft')
-    })
-
-    it('is building while a frozen spec is mid-build', () => {
-        expect(stageFor(true, true, false)).toBe('building')
-        expect(stageFor(true, true, true)).toBe('building')
+    it('is building whenever a build is running, built or not', () => {
+        expect(stageFor(true, false)).toBe('building')
+        expect(stageFor(true, true)).toBe('building')
     })
 
     it('is built once a build has produced a bundle and nothing is running', () => {
-        expect(stageFor(true, false, true)).toBe('built')
+        expect(stageFor(false, true)).toBe('built')
     })
 
-    it('is ready when frozen but never built', () => {
-        expect(stageFor(true, false, false)).toBe('ready')
+    it('is ready when nothing has been built yet', () => {
+        expect(stageFor(false, false)).toBe('ready')
     })
 })
 

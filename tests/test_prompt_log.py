@@ -33,8 +33,8 @@ def _user(handle="alice", role="admin"):
 
 def _game(user_id, title="Moon Miner"):
     run_id = create_run(user_id)
-    RunState(run_id).write_spec({"title": title, "mode": "2d", "frozen": True})
-    db_store.update_spec_meta(run_id, title, "2d", True)
+    RunState(run_id).write_spec({"request": "make a game", "title": title})
+    db_store.update_prompt_meta(run_id, title)
     db_store.charge_game(run_id, 1, 3600)   # a budget, so enqueue admits the turns
     return run_id
 

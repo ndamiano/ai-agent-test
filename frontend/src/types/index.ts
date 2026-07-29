@@ -3,28 +3,18 @@
 export interface Game {
     run_id: string
     title: string
-    mode: string
-    frozen: boolean
     built: boolean
     building: boolean
     mtime: number
-}
-
-// The brief (runs/<id>/spec.json) — `design` is freeform (genre/look/audio/scope/mechanics/
-// win-lose), rendered read-only.
-export interface Spec {
-    request: string
-    title: string
-    design: Record<string, any>
-    frozen: boolean
 }
 
 export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 'built'
 
 export interface GameDetail {
     run_id: string
-    spec: Spec
-    frozen: boolean
+    // The text the build sends as its user message — editable here, byte for byte what runs.
+    prompt: string
+    title: string
     built: boolean
     building: boolean
     status: GameStatus
@@ -180,10 +170,9 @@ export type WebSocketMessage = {
     // build_queued — kind is 'build' | 'fix'
     position?: number
     kind?: string
-    // fix_started / spec_amend_requested
+    // fix_started
     note?: string
     // build_started / build_step
-    n_failing?: number
     step?: number
     max_steps?: number
     summary?: string
@@ -199,9 +188,8 @@ export type WebSocketMessage = {
     // build_done
     ok?: boolean
     steps?: number
-    // spec_proposed / spec_frozen
+    // prompt_proposed / prompt_updated
     title?: string
-    mode?: string
     // assets_done
     rendered?: number
     [key: string]: any

@@ -19,25 +19,10 @@ _STATE_FILE = "build_state.json"
 
 
 @dataclass
-class AuditCursor:
-    """One claim at a time through a read→verdict subloop. history/turn/nreads reset per claim;
-    verdicts accumulates every claim's outcome for the durable log."""
-    claim_idx: int = 0
-    turn: int = 0
-    nreads: int = 0
-    system: str = ""
-    history: List[Dict] = field(default_factory=list)
-    verdicts: List[Dict] = field(default_factory=list)
-    findings: List[Dict] = field(default_factory=list)
-    delivered: List[str] = field(default_factory=list)
-    anchors: List[str] = field(default_factory=list)
-
-
-@dataclass
 class BuildCursor:
     build_id: str
     kind: str = "build"                           # "build" | "fix"
-    phase: str = "build"                          # "build" | "audit" | "done"
+    phase: str = "build"                          # "build" | "done"
     step: int = 0
     max_steps: int = 200
     t0: float = 0.0
@@ -51,20 +36,11 @@ class BuildCursor:
     prompt_tokens: int = 0
     compacted: int = 0                            # transcript rounds dropped so far
     no_call_streak: int = 0                       # consecutive turns that produced no tool call
+    actions: List[str] = field(default_factory=list)   # last turn's tool calls, for the build feed
     finished: bool = False                        # the model called `done`
     summary: str = ""
     system: str = ""
     history: List[Dict] = field(default_factory=list)
-    # the spec-vs-code audit, run once after the build finishes
-    audit: Optional[Dict] = None
-    audit_done: bool = False
-    audit_delivered: List[str] = field(default_factory=list)
-
-    def audit_cursor(self) -> Optional[AuditCursor]:
-        return AuditCursor(**self.audit) if self.audit else None
-
-    def set_audit(self, ac: Optional[AuditCursor]) -> None:
-        self.audit = asdict(ac) if ac else None
 
 
 # ── persistence ───────────────────────────────────────────────────────────────

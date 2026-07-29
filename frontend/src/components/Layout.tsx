@@ -1,34 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react'
-import ChatPanel from './ChatPanel'
+import React, { useState } from 'react'
 import GamesPanel from './GamesPanel'
 import AdminPanel from './AdminPanel'
 import PromptsPanel from './PromptsPanel'
-import { useWebSocket } from '../contexts/WebSocketContext'
 import { useAuth } from '../contexts/AuthContext'
 
-type Tab = 'chat' | 'games' | 'admin' | 'prompts'
+type Tab = 'games' | 'admin' | 'prompts'
 
 const Layout: React.FC = () => {
-    const [tab, setTab] = useState<Tab>('chat')
-    const { messages } = useWebSocket()
+    const [tab, setTab] = useState<Tab>('games')
     const { user, balance, logout } = useAuth()
-    const [focusRun, setFocusRun] = useState<string | null>(null)
-    const seenMsgs = useRef(0)
 
     // The admin tab is operator-only. The server enforces it (require_admin → 403); this just hides
     // the entry point from ordinary users so it never shows.
-    const tabs: Tab[] = user?.role === 'admin' ? ['chat', 'games', 'admin', 'prompts'] : ['chat', 'games']
-
-    // F2 — chat→build continuity: a chat request that drafts a spec emits `spec_proposed` (carrying
-    // the new run_id) over the WebSocket. Surface it: jump to the games view and focus the run, so
-    // the user lands on the freeze gate without a manual tab switch + Refresh.
-    useEffect(() => {
-        if (messages.length <= seenMsgs.current) { seenMsgs.current = messages.length; return }
-        const fresh = messages.slice(seenMsgs.current)
-        seenMsgs.current = messages.length
-        const proposed = [...fresh].reverse().find(m => m.type === 'spec_proposed' && m.run_id)
-        if (proposed?.run_id) { setFocusRun(proposed.run_id); setTab('games') }
-    }, [messages])
+    const tabs: Tab[] = user?.role === 'admin' ? ['games', 'admin', 'prompts'] : ['games']
 
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
@@ -70,8 +54,7 @@ const Layout: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-hidden">
-                {tab === 'chat' && <ChatPanel />}
-                {tab === 'games' && <GamesPanel focusRunId={focusRun} />}
+                {tab === 'games' && <GamesPanel />}
                 {tab === 'admin' && <AdminPanel />}
                 {tab === 'prompts' && <PromptsPanel />}
             </div>

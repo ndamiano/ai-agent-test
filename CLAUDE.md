@@ -17,10 +17,12 @@ See `docs/ROADMAP.md` for status.
 The model writes **real browser game code** — plain HTML/CSS/JavaScript, no framework, no build
 step, no engine of ours between it and the screen. Two stages:
 
-1. **Brief (stage 1, human-gated):** the chat model turns the request into a short BRIEF — title,
-   genre, **look**, **audio**, **scope**, plus only the mechanics the request actually asked for.
-   The human reviews and **freezes** it. The brief answers the questions a one-line request leaves
-   open ("a rhythm RPG" — synthwave or hand-drawn folk?); it does NOT design the game.
+1. **Prompt (stage 1, human-gated):** the run stores the request VERBATIM as its prompt, and the
+   human reads it in the box it will be sent from. **THE PROMPT IS THE ARTIFACT** — what is on
+   screen is byte for byte the build's one user message, so approving it and building it are the
+   same act. No inference runs in this stage: a model between the person's words and the build's
+   input would mean approving one text and building another. Pressing **Build** stores the edit
+   and starts the build, so there is one action and one writer.
 2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model six
    tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — and a running
    transcript, and lets it write the game. It decides the file layout, the data shapes, the systems,
@@ -58,13 +60,12 @@ and near-impossible for code, so the gap stays VISIBLE rather than filled with a
 and every hit traced to a global declared in an inline `<script>` that tsc never reads. It is gone.
 If output ever moves back to TypeScript it comes back for free and is worth it immediately.
 
-**The audit is the closest thing to a "done" signal.** Once the model calls `done`, each of the
-brief's claims (its `mechanics` + `win`/`lose`, enumerated mechanically — `look`/`audio`/`scope` are
-taste, never claims) is judged against the source by a bounded read→verdict subloop that must cite
-the traced path. It RUNS ONCE and REPORTS to `audit_verdicts.jsonl`; it NEVER drives a fix. Rounds of
-judge-then-fix were measured to spend 208 of one build's 227 steps and score WORSE in round 2 than
-round 1, because each fix broke a claim that already worked. To act on a report, the human says what
-to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
+**"Did it deliver?" is a HUMAN question.** A build ends when the model calls `done` (or hits its
+step cap) and nothing machine-side judges the result. The human plays it and says what to change:
+`python -m maestro.codegen.run --fix <run_id> "<note>"`, which re-enters the same turn machine with
+the note as its request. Any automated judge that returns here has to answer the question that
+retired the last one: judge-then-fix rounds were measured to spend 208 of one build's 227 steps and
+score WORSE in round 2 than round 1, because each fix broke a claim that already worked.
 
 **The game asks for its own art, as it writes the code that uses it.** `generate_media(id, prompt,
 kind)` enqueues one render and answers IMMEDIATELY with the path the file will appear at
@@ -94,9 +95,8 @@ src/
     codegen/             THE build path:
       build_chain.py     THE build DRIVER — what a finished llm turn does next. A build is a linear
                          chain of `llm` jobs tagged metadata.stage="build"; /worker/complete routes
-                         here. Two phases: `build` (the turn machine writes the game) and `audit`
-                         (the brief's claims judged, once, as a report). advance() runs ALL local
-                         work — tool dispatch, staging — synchronously and
+                         here. advance() runs ALL local work — tool dispatch, staging —
+                         synchronously and
                          SUSPENDS only at a real inference (enqueue one llm job + return; the
                          process is free to die). Never more than one turn in flight per run, and
                          advance runs only in the control-plane process (completion handler +
@@ -121,12 +121,6 @@ src/
                          the folder to runtime/games/<slug>/. No bundle, no transform. Also the SEED
                          (seed_vendor): the game folder starts holding the vendored renderer and
                          nothing else, since everything placed there steers the first list_files.
-      audit.py           the brief-vs-code AUDIT (see above). Verdicts append to
-                         runs/<id>/audit_verdicts.jsonl — "which claim failed?" must never be
-                         unanswerable. Delivered claims carry across builds (audit_delivered on the
-                         cursor) so a later run reads as a diff, not a re-litigation. Every failure
-                         path FAILS OPEN to a finished build; a claim with no verdict inside its
-                         turn cap is SKIPPED, never a finding.
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
                          runs: enqueue ONE `image` job, record the ask in assets.json, answer with
                          the path. Nothing plans, rewrites or inspects the game's source. `kind:
@@ -141,8 +135,8 @@ src/
                          (save_sprite / decimate), and the batch's FINALIZE. This module owns those
                          names so the queue stays a generic transport that never learns what an
                          asset is.
-      prompts/           build.txt · spec_draft.txt · audit_claim.txt
-      run.py             create_run / draft_spec / freeze_spec / run_build (CLI: kickoff +
+      prompts/           build.txt
+      run.py             create_run / propose_prompt / set_prompt / run_build (CLI: kickoff +
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is
                          fire-and-forget through build_chain.kickoff, not run.py.
     services.py          parse_args — any argument shape a local model returns → a dict.
@@ -158,7 +152,6 @@ src/
                          wilderness ring: forest, POIs, roads, named regions). Currently UNWIRED —
                          it was the one thing that produced real scale, and re-pointing it to emit
                          data the game reads is an open decision, not a dependency.
-  agents/                MainAgent (chat persona) + agent_store, config/agents/chat.json
 ```
 
 The rest of the platform is build-path-agnostic and unchanged: `auth/` (identity, bearer sessions,
@@ -167,8 +160,10 @@ credits, the /play cookie gate), `db/` (games/builds/events/jobs/workers + the c
 `llm_clients/`, `tools/`, `config/`. For their contracts see the module docstrings — they are the
 authority, and none of them changed when the kit came out.
 
-**Inference path (chat / brief draft):** `MainAgent` / `draft_spec` → `MessageBuilder` →
-`get_connector()` → `LLMConnector` → the `llm` queue.
+**Inference runs ONLY inside a build.** There is no conversational surface: `POST /api/games`
+takes the prompt the person typed, creates the run, charges it, and starts the build in one call, so
+every llm job on the queue belongs to a game that is paying for it.
+
 **Inference path (build) — build-as-jobs:** `build_chain.advance` runs one `build_steps` turn,
 enqueues it on the `llm` queue tagged `metadata.stage="build"`, and RETURNS (the process may die). A
 worker runs the turn; `/worker/complete` → `build_chain.on_completion` reloads the durable cursor
@@ -226,7 +221,8 @@ unused schema costs every turn of every build, so a tool that fails that comes b
 - **Model categories** `large`/`medium`/`small` control `message_budget_chars`, `max_iterations`,
   `use_json_mode`. Use `small` for local models.
 
-**Run a build (CLI):** `cd src && python -m maestro.codegen.run "<request>"` (draft → freeze → build).
+**Run a build (CLI):** `cd src && python -m maestro.codegen.run "<request>"` (the request is the
+prompt → build). `--new "<request>"` stops with the prompt on disk so it can be edited first.
 **Play a build:** open `runtime/games/<run_id>/index.html` — a game is plain browser files, but a
 3D one needs http, not file:// (`<script type="module">` is CORS-blocked from a file origin).
 **Run backend:** `source venv/bin/activate && python run.py`  •  **Frontend:** `cd frontend && npm run dev`
@@ -274,8 +270,7 @@ for things that can't happen.
 
 ## Keeping prompts hill-climbable
 1. **One `.txt` file per LLM call.** Never inline prompt strings in Python. Each call gets its own
-   file under `maestro/codegen/prompts/`. There are three: `build.txt`, `spec_draft.txt`,
-   `audit_claim.txt`.
+   file under `maestro/codegen/prompts/`. There is one: `build.txt`.
 2. **Load-bearing system prompts belong in a `.txt` too**, not a hardcoded string.
 3. **A prompt fix states a general law; examples only illustrate.** Never encode the game that
    triggered it, and validate on the battery rather than the motivating case.

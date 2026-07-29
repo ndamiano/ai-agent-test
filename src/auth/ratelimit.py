@@ -53,39 +53,3 @@ class LoginThrottle:
 
 
 login_throttle = LoginThrottle()
-
-
-# Chat turns are authenticated but UNCHARGED (see auth.deps.require_credits): a funded account
-# could otherwise loop turns and burn llm-worker GPU forever at zero marginal cost. The cap is
-# sized for a human drafting a spec (a heavy session is 10-20 turns/hour), not for loops.
-_CHAT_WINDOW_SECONDS = 3600
-_CHAT_MAX_TURNS = 30
-
-
-class RequestThrottle:
-    """Sliding-window cap on successful requests per key (unlike LoginThrottle, which counts
-    only failures). `hit` records and admits in one step so two racing requests can't both
-    slip under the cap."""
-
-    def __init__(self, window: int, max_requests: int):
-        self._window = window
-        self._max = max_requests
-        self._hits: dict[str, deque] = {}
-        self._lock = Lock()
-
-    def hit(self, key: str) -> int:
-        """Admit and record one request — returns 0, or the seconds to wait if over the cap
-        (the refused request is not recorded)."""
-        now = time.time()
-        cutoff = now - self._window
-        with self._lock:
-            dq = self._hits.setdefault(key, deque())
-            while dq and dq[0] < cutoff:
-                dq.popleft()
-            if len(dq) >= self._max:
-                return max(1, int(dq[0] + self._window - now))
-            dq.append(now)
-            return 0
-
-
-chat_throttle = RequestThrottle(_CHAT_WINDOW_SECONDS, _CHAT_MAX_TURNS)

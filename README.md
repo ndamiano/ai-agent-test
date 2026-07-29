@@ -6,11 +6,11 @@ See `docs/VISION.md` for the philosophy, `docs/ROADMAP.md` for the plan and curr
 
 ## How it works
 
-You talk to Maestro through a chat interface. When you ask for a game, the chat model turns the request into a short **BRIEF** — title / genre / look / audio / scope / mechanics / win-lose — which you review and **freeze**. The brief answers what a one-line request leaves open ("a rhythm RPG" — synthwave or hand-drawn folk?); how the game works is decided in the build.
+Press **Make a new game**, describe the game you want, and press **Build**. What you typed is byte for byte the one message the model is given, so approving it and building it are the same act. Nothing is stored server-side until you build.
 
-Once frozen, a non-LLM **driver** hands the model six tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. A 3D game imports the vendored three.js copied into every game folder.
+A non-LLM **driver** then hands the model six tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. A 3D game imports the vendored three.js copied into every game folder.
 
-A build reaches `built` when `index.html` exists — a gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. After `done`, an **audit** judges each of the brief's claims against the source and writes a report to `audit_verdicts.jsonl`. To act on it, say what to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
+A build reaches `built` when `index.html` exists — a gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. Play it, then say what to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
 
 The game asks for its own art as it writes the code that uses it: `generate_media(id, prompt, kind)` enqueues one render and answers immediately with the path the file will appear at, so the GPU draws while the model keeps writing.
 
@@ -42,7 +42,7 @@ python -m auth.cli grant  <handle> <n>  # accounts start at 0 credits
 
 ### Workers (the only path to a GPU)
 
-The queue is the only transport to a GPU. Every backend — LLM, images, meshes — is a worker agent that PULLS jobs over `/worker`, authed by the shared `workqueue.token`. **A queue with no worker running means every job on it times out**, so the `llm` worker is mandatory for chat and builds alike.
+The queue is the only transport to a GPU. Every backend — LLM, images, meshes — is a worker agent that PULLS jobs over `/worker`, authed by the shared `workqueue.token`. **A queue with no worker running means every job on it times out**, so the `llm` worker is mandatory.
 
 ```bash
 python -m worker.agent --server http://localhost:8000 --token <token> --queue llm   --target http://localhost:8080
@@ -84,7 +84,7 @@ A GPU serves one backend. Running the LLM and ComfyUI on one card means both mus
 ## Build a game from the CLI
 
 ```bash
-cd src && python -m maestro.codegen.run "<request>"   # draft → freeze → build
+cd src && python -m maestro.codegen.run "<request>"   # the request is the prompt → build
 ```
 
 Play a build by opening `runtime/games/<run_id>/index.html`. Serve a 3D one over http rather than `file://` — `<script type="module">` is CORS-blocked from a file origin.
@@ -105,7 +105,6 @@ runtime/
   games/        staged games, served at /play
   decimate.mjs  node: a finished TRELLIS GLB decimated to game weight
 src/
-  agents/       MainAgent (chat persona — drafts/amends briefs) + agent configs
   api/          FastAPI routers + WebSocket event bus
   auth/         identity, sessions, credit ledger, admin CLI
   config/       settings schema/manager
@@ -113,7 +112,7 @@ src/
   llm_clients/  connector, message builder, wire translation
   maestro/
     codegen/    the build path — build_chain (driver), build_steps (turn machine),
-                build_state (cursor), tools, staging, audit, assets, asset_chain,
+                build_state (cursor), tools, staging, assets, asset_chain,
                 prompts/, run (CLI)
     services.py, state.py, run_control.py, tool_calls.py
   scaler/       the RunPod autoscaler
@@ -121,7 +120,7 @@ src/
   worker/       the pull-side GPU worker agent
   worldgen/     standalone procedural world generator
 eval/           the harness × model battery grid
-frontend/       chat-first React + Vite UI
+frontend/       React + Vite UI
 tests/          pytest suite
 docs/           vision, roadmap, deploy
 ```

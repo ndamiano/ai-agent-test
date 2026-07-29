@@ -16,7 +16,6 @@ from typing import Any, Dict, Optional
 from db import queue_client
 from tools.execution_context import resolve_base_path
 from tools.safety import log_violation, screen_image_prompt
-from tools.tool_manager import tool_manager
 
 logger = logging.getLogger(__name__)
 
@@ -163,14 +162,10 @@ def _run_comfyui_job(prompt: str, workflow_override: Optional[dict]) -> Dict[str
     }
 
 
-@tool_manager.tool(
-    description="Generate an image from a text prompt using ComfyUI. Returns URLs and filenames for the generated image(s). Use this when asked to create, draw, or visualize anything.",
-    auto_inject_context=False,
-)
 def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dict[str, Any]:
     violation = screen_image_prompt(prompt)
     if violation is not None:
-        log_violation(violation, source="generate_image_tool")
+        log_violation(violation, source="generate_image")
         return {"success": False, "error": "blocked by safety filter"}
 
     try:

@@ -38,14 +38,14 @@ describe('mergeEvents', () => {
 describe('foldStream', () => {
     it('derives progress and start time from the stream', () => {
         const s = foldStream(mergeEvents([
-            row(1, 'build_started', 100, { n_failing: 3, started_at: 100 }),
-            row(2, 'build_step', 130, { step: 4, summary: 'typecheck', n_failing: 1, elapsed: 30 }),
+            row(1, 'build_started', 100, { started_at: 100 }),
+            row(2, 'build_step', 130, { step: 4, summary: 'wrote index.html', elapsed: 30 }),
         ], []))
-        expect(s.progress).toEqual({ step: 4, nFailing: 1 })
+        expect(s.progress).toEqual({ step: 4 })
         expect(s.startedAt).toBeCloseTo(100)  // 130 - elapsed 30
         expect(s.feed.map(f => f.text)).toEqual([
-            'build started — 3 checks failing',
-            'step 4: typecheck — 1 failing',
+            'build started',
+            'step 4: wrote index.html',
         ])
     })
 
@@ -69,7 +69,7 @@ describe('foldStream', () => {
     })
 
     it('ignores state-only event kinds (no feed line)', () => {
-        const s = foldStream(mergeEvents([row(1, 'spec_proposed', 100), row(2, 'build_queued', 110)], []))
+        const s = foldStream(mergeEvents([row(1, 'prompt_proposed', 100), row(2, 'build_queued', 110)], []))
         expect(s.feed).toHaveLength(0)
     })
 })

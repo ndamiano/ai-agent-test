@@ -27,7 +27,6 @@ function renderApp() {
 describe('auth gate', () => {
     beforeEach(() => {
         vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket)
-        // jsdom has no layout engine — ChatPanel scrolls its anchor into view on mount.
         Element.prototype.scrollIntoView = vi.fn()
     })
     afterEach(() => {
@@ -44,10 +43,14 @@ describe('auth gate', () => {
 
     it('shows the app (not the login screen) when a token is present, and renders the balance', async () => {
         setAuthToken('tok')
-        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        // Routed by URL: the games list mounts with the app now, and handing it the /auth/me
+        // object would break the render before the balance ever appears.
+        vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => Promise.resolve({
             ok: true, status: 200,
-            json: async () => ({ id: 'u1', handle: 'alice', role: 'user', balance: 42 }),
-        }))
+            json: async () => String(url).includes('/games')
+                ? []
+                : { id: 'u1', handle: 'alice', role: 'user', balance: 42 },
+        })))
 
         renderApp()
 

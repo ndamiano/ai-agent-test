@@ -2,15 +2,11 @@
 
 Each game gets its own run directory under <working_directory>/runs/<run_id>/.
 Inside it:
-  - <component_id>.json   one file per artifact component (a generic Module's authored output)
-  - spec.json             the frozen contract
-  - story_state.json      continuity bible
-  - game/                 the codegen path's TypeScript source (main.ts + system files,
-                           manifest.json) — written directly by maestro.codegen.tools, not
-                           through the component mechanism above
-
-This is the source of truth. The agent's transcript is not used as memory; each
-step rebuilds context from here.
+  - spec.json             the run's PROMPT ({request, title}) — what the build sends as its
+                          user message, and what the human approved
+  - build_state.json      the durable build cursor (maestro.codegen.build_state)
+  - game/                 the browser files the model wrote — written directly by
+                          maestro.codegen.tools
 """
 
 import json

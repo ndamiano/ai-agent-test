@@ -34,11 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-import tools.chat_tools  # noqa: F401  — the @tool decorators register on import
-import tools.comfyui_tools  # noqa: F401
-import tools.system_tools  # noqa: F401
-from api.routers import (admin, agents, billing, chat, games, prompts, system, websocket,
-                         workqueue)
+from api.routers import (admin, billing, games, prompts, system, websocket, workqueue)
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
@@ -53,7 +49,7 @@ install_auth(app)
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event handler to register tools and start the event bus."""
+    """Start the event bus, the queue reaper, and (when configured) the autoscaler."""
     try:
         await event_bus.start()
         logging.info("Event bus started")
@@ -101,9 +97,7 @@ async def healthz():
 # Mount routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
-app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
-app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])

@@ -12,6 +12,7 @@ listing) is what keeps it inside the context window.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -83,7 +84,10 @@ READ_SCHEMA = {"type": "function", "function": {
     "name": "read_file",
     "description": "Read a file from the project directory.",
     "parameters": {"type": "object",
-                   "properties": {"path": {"type": "string"}},
+                   "properties": {"path": {"type": "string"},
+                                  "offset": {"type": "integer", "description":
+                                             "First line to show, 1-based. Use it to read past a "
+                                             "read that said the file was too long."}},
                    "required": ["path"]}}}
 WRITE_SCHEMA = {"type": "function", "function": {
     "name": "write_file",
@@ -227,24 +231,31 @@ def _action_of(tc, res) -> str:
 
 def _repeat_note(cursor, tc, res) -> Optional[str]:
     """The error text alone cannot say it has been seen before, so a resent call repeats to the
-    step cap."""
-    ok = res.get("ok", True)
-    sig = json.dumps([tc["function"]["name"], parse_args(tc["function"].get("arguments"))],
-                     sort_keys=True, default=str)
-    if ok or sig != cursor.repeat_sig:
-        cursor.repeat_sig = "" if ok else sig
-        cursor.repeat_count = 0 if ok else 1
+    step cap.
+
+    Counted per call, not against the previous call alone: a model stuck on one edit re-reads the
+    file between attempts, and that succeeding read must not clear the failing edit's count
+    (measured 2026-07-29: 12 identical failing edits, every one scored as the first)."""
+    sig = hashlib.sha1(
+        json.dumps([tc["function"]["name"], parse_args(tc["function"].get("arguments"))],
+                   sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    if res.get("ok", True):
+        cursor.repeat_counts.pop(sig, None)
         return None
-    cursor.repeat_count += 1
-    return (f"You have now sent this tool call {cursor.repeat_count} times in a row with exactly "
-            f"identical parameters, and it has failed every time. Try something new.")
+    n = cursor.repeat_counts.get(sig, 0) + 1
+    cursor.repeat_counts[sig] = n
+    if n < 2:
+        return None
+    return (f"You have now sent this tool call {n} times with exactly identical parameters, and it "
+            f"has failed every time. Try something new.")
 
 
 def _tool_content(res) -> str:
     """Serialized, a file body shows every quote as \\" — which the model then copies into old_text,
     where it matches nothing."""
     if res.get("ok") and "content" in res:
-        return f"<file path=\"{res.get('path')}\">\n{res['content']}\n</file>"
+        span = f" lines=\"{res['lines']}\"" if res.get("lines") else ""
+        return f"<file path=\"{res.get('path')}\"{span}>\n{res['content']}\n</file>"
     return json.dumps(res)[:_MAX_TOOL_CHARS]
 
 
@@ -273,7 +284,7 @@ def _dispatch(tools, cursor, tc) -> dict:
     if fn is None:
         res = {"ok": False, "error": f"unknown tool: {name!r}"}
     elif name == "read_file":
-        res = fn(path=args.get("path"))
+        res = fn(path=args.get("path"), offset=args.get("offset"))
     elif name == "write_file":
         res = fn(path=args.get("path"), content=args.get("content"))
     elif name == "edit_file":

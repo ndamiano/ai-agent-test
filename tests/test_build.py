@@ -243,7 +243,7 @@ def test_a_read_reaches_the_model_as_the_file_not_as_json(tmp_path, tools):
     seen = cursor.history[-1]["content"]
     assert _QUOTED in seen
     assert "\\\"" not in seen and "\\n" not in seen
-    assert seen.startswith('<file path="game.js">')
+    assert seen.startswith('<file path="game.js"')
 
 
 def test_text_copied_from_a_read_edits_the_file(tmp_path, tools):
@@ -279,8 +279,8 @@ def test_a_read_is_not_cut_below_what_it_told_the_model(tmp_path, tools):
     build_steps.step({}, tmp_path, tools, cursor,
                      _reply(calls=[("read_file", {"path": "big.js"})]))
     seen = cursor.history[-1]["content"]
-    assert seen.count("x") == MAX_READ_CHARS
-    assert "truncated" in seen and seen.endswith("</file>")
+    assert "x" * MAX_READ_CHARS in seen
+    assert "cut here, mid-line" in seen and seen.endswith("</file>")
 
 
 def _fail(tmp_path, tools, cursor, call, times):
@@ -294,9 +294,22 @@ def test_an_identical_failing_call_is_told_it_is_repeating(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     call = ("edit_file", {"path": "game.js", "old_text": "a", "new_text": "b"})
-    assert "times in a row" not in _fail(tmp_path, tools, cursor, call, 1)
-    assert "sent this tool call 2 times in a row" in _fail(tmp_path, tools, cursor, call, 1)
-    assert "sent this tool call 4 times in a row" in _fail(tmp_path, tools, cursor, call, 2)
+    assert "times with exactly identical" not in _fail(tmp_path, tools, cursor, call, 1)
+    assert "sent this tool call 2 times" in _fail(tmp_path, tools, cursor, call, 1)
+    assert "sent this tool call 4 times" in _fail(tmp_path, tools, cursor, call, 2)
+
+
+def test_a_succeeding_call_between_retries_does_not_reset_the_count(tmp_path, tools):
+    """The measured loop: read → failing edit → read → the SAME failing edit, twelve times, every
+    one counted as the first because the read in between succeeded."""
+    (tmp_path / "game" / "game.js").write_text("hello\n", encoding="utf-8")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    call = ("edit_file", {"path": "game.js", "old_text": "nope", "new_text": "b"})
+    for _ in range(3):
+        _fail(tmp_path, tools, cursor, ("read_file", {"path": "game.js"}), 1)
+        content = _fail(tmp_path, tools, cursor, call, 1)
+    assert "sent this tool call 3 times" in content
 
 
 def test_the_repeat_note_keeps_the_reason_the_call_failed(tmp_path, tools):
@@ -304,7 +317,7 @@ def test_the_repeat_note_keeps_the_reason_the_call_failed(tmp_path, tools):
     build_steps.step({}, tmp_path, tools, cursor, {})
     call = ("read_file", {"path": "nope.js"})
     content = _fail(tmp_path, tools, cursor, call, 2)
-    assert "no such file" in content and "times in a row" in content
+    assert "no such file" in content and "2 times" in content
 
 
 def test_a_changed_argument_is_not_a_repeat(tmp_path, tools):
@@ -312,7 +325,16 @@ def test_a_changed_argument_is_not_a_repeat(tmp_path, tools):
     build_steps.step({}, tmp_path, tools, cursor, {})
     _fail(tmp_path, tools, cursor, ("read_file", {"path": "nope.js"}), 1)
     content = _fail(tmp_path, tools, cursor, ("read_file", {"path": "other.js"}), 1)
-    assert "times in a row" not in content
+    assert "times with exactly identical" not in content
+
+
+def test_a_read_carries_the_lines_it_showed(tmp_path, tools):
+    (tmp_path / "game" / "game.js").write_text("a\nb\nc\n", encoding="utf-8")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("read_file", {"path": "game.js"})]))
+    assert cursor.history[-1]["content"].startswith('<file path="game.js" lines="1-3/3">')
 
 
 def test_a_call_that_succeeds_clears_the_streak(tmp_path, tools):

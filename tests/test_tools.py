@@ -104,11 +104,54 @@ def test_read_returns_the_whole_file(tools):
     assert tools["read_file"](path="game.js")["content"] == SRC
 
 
-def test_read_truncates_only_past_the_ceiling(tmp_path):
+def test_a_single_line_past_the_ceiling_says_it_was_cut_mid_line(tmp_path):
     _game(tmp_path, {"big.js": "x" * (MAX_READ_CHARS + 500)})
     r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
-    assert r["ok"] and "truncated" in r["content"]
-    assert len(r["content"]) < MAX_READ_CHARS + 200
+    assert r["ok"] and "cut here, mid-line" in r["content"]
+    assert len(r["content"]) < MAX_READ_CHARS + 300
+
+
+def _numbered(n):
+    return "".join(f"line {i} " + "y" * 90 + "\n" for i in range(1, n + 1))
+
+
+def test_a_window_ends_on_a_line_boundary(tmp_path):
+    """The measured loop: a read cut mid-line is copied into old_text, where it matches nothing."""
+    body = _numbered(400)
+    _game(tmp_path, {"big.js": body})
+    r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
+    shown = r["content"].split("\n\n[", 1)[0]
+    assert body.startswith(shown)
+    assert shown.endswith("\n") and len(shown) <= MAX_READ_CHARS
+
+
+def test_the_note_says_where_to_read_the_rest_and_to_split_the_file(tmp_path):
+    _game(tmp_path, {"big.js": _numbered(400)})
+    r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
+    assert "of 400" in r["content"] and "worth splitting" in r["content"]
+    assert f"offset {int(r['lines'].split('-')[1].split('/')[0]) + 1}" in r["content"]
+
+
+def test_offset_reaches_the_tail_a_first_read_could_not_show(tmp_path):
+    body = _numbered(400)
+    _game(tmp_path, {"big.js": body})
+    read = build_tools(RunState(tmp_path))["read_file"]
+    first = read(path="big.js")
+    nxt = int(first["lines"].split("-")[1].split("/")[0]) + 1
+    rest = read(path="big.js", offset=nxt)
+    assert rest["ok"] and rest["lines"] == f"{nxt}-400/400"
+    assert body.endswith(rest["content"])
+
+
+def test_offset_past_the_end_is_reported(tmp_path):
+    _game(tmp_path, {"small.js": "a\nb\n"})
+    r = build_tools(RunState(tmp_path))["read_file"](path="small.js", offset=9)
+    assert r["ok"] is False and "past the end" in r["error"]
+
+
+def test_a_whole_file_still_reads_from_line_one(tmp_path, tools):
+    r = tools["read_file"](path="game.js")
+    assert r["content"] == SRC and r["lines"] == "1-3/3"
 
 
 def test_a_long_single_line_is_not_elided_below_the_ceiling(tmp_path):

@@ -37,8 +37,9 @@ class BuildCursor:
     prompt_tokens: int = 0
     compacted: int = 0                            # transcript rounds dropped so far
     no_call_streak: int = 0                       # consecutive turns that produced no tool call
-    repeat_sig: str = ""                          # the last failing tool call, name + arguments
-    repeat_count: int = 0                         # times it has now been sent unchanged
+    # hashed failing tool call -> times sent. Per call, not just the last one: a stuck model
+    # re-reads between retries, and that read must not clear the failing edit's count.
+    repeat_counts: Dict[str, int] = field(default_factory=dict)
     actions: List[str] = field(default_factory=list)   # last turn's tool calls, for the build feed
     finished: bool = False                        # the model called `done`
     summary: str = ""

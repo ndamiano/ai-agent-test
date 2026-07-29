@@ -121,7 +121,11 @@ src/
                          out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
                          than letting the model believe the file landed). A failing call resent with
                          identical arguments is COUNTED and the count told back; what to do instead
-                         is the model's call. A read reaches the transcript as the FILE
+                         is the model's call. That count is keyed PER CALL, not against the previous
+                         one: a model stuck on an edit re-reads the file between attempts, and a
+                         succeeding read between two identical failures must not clear the ledger
+                         (measured 2026-07-29: 12 identical failing edits, each scored as the first).
+                         A read reaches the transcript as the FILE
                          (`<file path=…>`), never serialized — a JSON body shows every quote as \"
                          and the model copies that into old_text, where it matches nothing (measured
                          2026-07-28: 17 of one build's 32 turns, resent byte-identical).
@@ -137,6 +141,13 @@ src/
                          land inside the game folder. Every failure is REPORTED to the model as text
                          (a missing argument names itself) and never guessed at: substituting a
                          default for a missing `path` sent every write in a run to one file.
+                         `read_file` returns a WINDOW of whole lines from a 1-based `offset`. Both
+                         halves are load-bearing: a window cut mid-line is text the model cannot
+                         reproduce and it copies the cut into old_text, and without `offset` the
+                         tail past the ceiling is unreachable, so an edit there can never land
+                         (measured 2026-07-29: 12 byte-identical edits, 248 of 249 chars matching,
+                         the 249th the cut). A window that stops short says where the rest is and
+                         that a file this size is worth splitting.
       staging.py         where a game lives (runs/<id>/game/) and how it reaches the browser: copy
                          the folder to runtime/games/<slug>/. No bundle, no transform. Also the SEED
                          (seed_vendor): the game folder starts holding the vendored renderer and

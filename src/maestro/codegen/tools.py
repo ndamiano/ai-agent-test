@@ -11,7 +11,7 @@ from pathlib import Path
 from maestro.codegen.assets import request_media
 from maestro.codegen.staging import game_dir
 
-MAX_READ_CHARS = 20_000   # whole-file ceiling; past this the read returns the head and says so.
+MAX_READ_CHARS = 20_000   # one read's ceiling; past this the read returns a WINDOW and says so.
                           # Higher than build_steps._MAX_TOOL_CHARS is a promise the transcript cuts.
 
 
@@ -52,15 +52,41 @@ def build_tools(state) -> dict:
                 out.append({"path": str(p.relative_to(root)), "bytes": p.stat().st_size})
         return {"ok": True, "files": out}
 
-    def read_file(path: str = None, **_) -> dict:
+    def read_file(path: str = None, offset=None, **_) -> dict:
+        """A window of the file, whole lines, starting at 1-based `offset`.
+
+        The window ends on a line boundary: a cut mid-line is text the model copies into old_text,
+        where it matches nothing (measured 2026-07-29: 12 byte-identical failing edits, 248 of 249
+        chars matching, the 249th the cut). `offset` is what makes the tail past the ceiling
+        reachable at all."""
         p = _safe(root, path)
         if not p.exists():
             return {"ok": False, "error": f"no such file: {path}"}
-        body = p.read_text(encoding="utf-8", errors="replace")
-        if len(body) > MAX_READ_CHARS:
-            return {"ok": True, "path": path, "content": body[:MAX_READ_CHARS]
-                    + f"\n\n[truncated: file is {len(body)} chars, showed the first {MAX_READ_CHARS}]"}
-        return {"ok": True, "path": path, "content": body}
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        total = len(lines)
+        start = max(int(offset or 1), 1) - 1
+        if start and start >= total:
+            return {"ok": False,
+                    "error": f"offset {start + 1} is past the end of {path}: it has {total} lines."}
+        window, chars = [], 0
+        for line in lines[start:]:
+            if window and chars + len(line) > MAX_READ_CHARS:
+                break
+            window.append(line)
+            chars += len(line)
+        content = "".join(window)
+        end = start + len(window)
+        if len(content) > MAX_READ_CHARS:
+            # A single line past the ceiling: cutting it is the only bound left, so say where.
+            content = content[:MAX_READ_CHARS] + (
+                f"\n\n[line {end} is longer than one read and was cut here, mid-line — text ending "
+                f"at that cut is not what the file says, so do not use it as an edit anchor.]")
+        elif end < total:
+            content += (
+                f"\n\n[showed lines {start + 1}-{end} of {total}; the file is too long to read at "
+                f"once. Read the rest with offset {end + 1}. A file this size is worth splitting — "
+                f"move a system out into its own file so later reads and edits stay cheap.]")
+        return {"ok": True, "path": path, "content": content, "lines": f"{start + 1}-{end}/{total}"}
 
     def write_file(path=None, content=None, **_) -> dict:
         p = _safe(root, path)

@@ -14,6 +14,20 @@ from maestro.codegen.staging import game_dir
 MAX_READ_CHARS = 60_000   # whole-file ceiling; past this the read returns the head and says so
 
 
+_ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\\"": "\"", "\\'": "'"}
+
+
+def _unescaped(text: str) -> str:
+    for k, v in _ESCAPES.items():
+        text = text.replace(k, v)
+    return text
+
+
+DOUBLE_ESCAPED = ("your text is escaped twice — it carries backslash sequences (\\n, \\\") where "
+                  "the file has a real newline or quote. Send the characters themselves, escaped "
+                  "once for JSON.")
+
+
 def _safe(root: Path, path: str) -> Path:
     """A path inside the game folder. Resolved, so `../` can never escape. A missing path raises
     KeyError('path') so the reported error names the argument that was left out."""
@@ -51,6 +65,8 @@ def build_tools(state) -> dict:
         p = _safe(root, path)
         if content is None:
             raise KeyError("content")
+        if "\n" not in content and "\\n" in content:
+            return {"ok": False, "error": f"the file was not written: {DOUBLE_ESCAPED}"}
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(content)}
@@ -69,6 +85,8 @@ def build_tools(state) -> dict:
         body = p.read_text(encoding="utf-8")
         n = body.count(old)
         if n == 0:
+            if _unescaped(old) != old and body.count(_unescaped(old)) > 0:
+                return {"ok": False, "error": f"old_text was not found in the file: {DOUBLE_ESCAPED}"}
             return {"ok": False, "error": "old_text was not found in the file. Read the file and "
                                           "copy the exact text, including whitespace."}
         if n > 1:

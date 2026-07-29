@@ -64,6 +64,37 @@ def test_edit_refuses_a_missing_snippet(tools, tmp_path):
     assert (tmp_path / "game" / "game.js").read_text() == SRC
 
 
+def test_edit_names_double_escaping_as_the_reason(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="const a = 1;\\nconst b = 2;", new_text="x")
+    assert r["ok"] is False and "escaped twice" in r["error"]
+    assert (tmp_path / "game" / "game.js").read_text() == SRC
+
+
+def test_edit_names_double_escaped_quotes_too(tmp_path):
+    _game(tmp_path, {"index.html": '<div id="x">\n  <p>hi</p>\n</div>\n'})
+    t = build_tools(RunState(tmp_path))
+    r = t["edit_file"](path="index.html", old_text='<div id=\\"x\\">\\n  <p>hi</p>', new_text="x")
+    assert r["ok"] is False and "escaped twice" in r["error"]
+
+
+def test_edit_does_not_unmangle_the_text_it_reports(tools, tmp_path):
+    r = tools["edit_file"](path="game.js", old_text="const a = 1;\\nconst b = 2;", new_text="x")
+    assert r["ok"] is False
+    assert (tmp_path / "game" / "game.js").read_text() == SRC
+
+
+def test_write_refuses_a_file_that_is_one_escaped_line(tools, tmp_path):
+    r = tools["write_file"](path="new.js", content="const a = 1;\\nconst b = 2;")
+    assert r["ok"] is False and "escaped twice" in r["error"]
+    assert not (tmp_path / "game" / "new.js").exists()
+
+
+def test_write_allows_a_real_newline_beside_an_escaped_one(tools, tmp_path):
+    body = 'const s = "a\\nb";\nconst t = 2;\n'
+    assert tools["write_file"](path="new.js", content=body)["ok"] is True
+    assert (tmp_path / "game" / "new.js").read_text() == body
+
+
 def test_edit_on_a_missing_file_is_an_error(tools):
     assert tools["edit_file"](path="nope.js", old_text="a", new_text="b")["ok"] is False
 

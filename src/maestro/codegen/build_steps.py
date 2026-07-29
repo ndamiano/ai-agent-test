@@ -96,7 +96,9 @@ EDIT_SCHEMA = {"type": "function", "function": {
                     "rewriting a whole file to change a small part of it."),
     "parameters": {"type": "object",
                    "properties": {"path": {"type": "string"},
-                                  "old_text": {"type": "string", "description": "Exact text to replace."},
+                                  "old_text": {"type": "string", "description":
+                                               "Exact text to replace, with real newlines and "
+                                               "quotes — never \\n or \\\" as characters."},
                                   "new_text": {"type": "string", "description": "Text to put in its place."}},
                    "required": ["path", "old_text", "new_text"]}}}
 MEDIA_SCHEMA = {"type": "function", "function": {

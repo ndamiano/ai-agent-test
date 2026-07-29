@@ -67,6 +67,9 @@ def test_login_sets_play_cookie_and_logout_clears_it(client):
     assert "samesite=strict" in set_cookie
     # http (test scheme) → not Secure, so the cookie works on localhost dev.
     assert "secure" not in set_cookie
+    # Outlives the browser: the bearer token is in localStorage, so a session cookie here would
+    # leave the app signed in with every /play request 401ing after a restart.
+    assert f"max-age={auth_store.SESSION_TTL_SECONDS}" in set_cookie
 
     token = r.json()["token"]
     r2 = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})

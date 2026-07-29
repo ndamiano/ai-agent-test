@@ -21,7 +21,11 @@ def _set_play_cookie(request: Request, response: Response, token: str) -> None:
     """Mirror the session token into the /play-scoped cookie. Path=/play keeps it off every /api and
     /auth request (the API stays header-only); HttpOnly hides it from scripts; SameSite=Strict blocks
     cross-site sends. Secure is gated on https so the cookie still works over plain http on localhost
-    dev — behind a TLS-terminating proxy, forward the scheme (X-Forwarded-Proto) or it won't set."""
+    dev — behind a TLS-terminating proxy, forward the scheme (X-Forwarded-Proto) or it won't set.
+
+    max_age matches the token's own TTL. Without it this is a SESSION cookie, and since the bearer
+    token lives in localStorage, a browser restart leaves the app signed in while every /play
+    request 401s."""
     response.set_cookie(
         key=PLAY_COOKIE,
         value=token,
@@ -29,6 +33,7 @@ def _set_play_cookie(request: Request, response: Response, token: str) -> None:
         httponly=True,
         samesite="strict",
         secure=request.url.scheme == "https",
+        max_age=store.SESSION_TTL_SECONDS,
     )
 
 

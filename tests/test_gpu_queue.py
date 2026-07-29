@@ -1,5 +1,5 @@
-"""Image + mesh over the worker-pull queue: the control plane enqueues high-level jobs and lands
-the bytes; the worker runs the ComfyUI submit/poll/fetch flow and the TRELLIS POST next to the GPU.
+"""Image + mesh over the worker-pull queue: the control plane builds a screened job payload, and
+the worker runs the ComfyUI submit/poll/fetch flow and the TRELLIS POST next to the GPU.
 """
 
 import base64
@@ -10,8 +10,6 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import tools.comfyui_tools as ct
-from db import queue_client
-from tools.execution_context import execution_context
 from tools.safety import SafetyViolation
 from worker import handlers
 from worker.agent import Agent
@@ -39,37 +37,6 @@ def _agent(queue="image", target="http://gpu"):
     a = Agent("http://server", target, queue, "wsecret", worker_id="w1")
     a.session = MagicMock()
     return a
-
-
-def test_comfy_image_job_saves_returned_bytes(monkeypatch, tmp_path):
-    seen = {}
-
-    def run_job(queue, payload, **kw):
-        seen["queue"], seen["payload"] = queue, payload
-        # The control plane offloads image bytes at completion; consumers get paths.
-        blob = tmp_path / "blob-0.png"
-        blob.write_bytes(PNG)
-        return {"status": "done", "result": {
-            "prompt_id": "p1",
-            "images": [{"filename": "out.png", "file": str(blob)}]}}
-
-    monkeypatch.setattr(queue_client, "run_job", run_job)
-
-    with execution_context(working_directory=str(tmp_path)):
-        result = ct._run_comfyui_job("a cat", {"1": {"inputs": {}}})
-
-    assert seen["queue"] == "image"
-    assert seen["payload"] == {"kind": "comfy_image", "workflow": {"1": {"inputs": {}}}}
-    assert result["success"] and result["saved_paths"] == [str(tmp_path / "out.png")]
-    assert (tmp_path / "out.png").read_bytes() == PNG
-
-
-def test_comfy_image_job_failure_degrades(monkeypatch, tmp_path):
-    monkeypatch.setattr(queue_client, "run_job",
-                        lambda *a, **kw: {"status": "failed", "error": "no worker"})
-    with execution_context(working_directory=str(tmp_path)):
-        result = ct._run_comfyui_job("a cat", {"1": {}})
-    assert result == {"success": False, "error": "no worker"}
 
 
 def test_build_item_payload_returns_workflow_for_clean_prompt(monkeypatch):

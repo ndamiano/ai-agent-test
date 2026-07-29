@@ -1,7 +1,8 @@
-"""Image + mesh generation. Both are worker-pull queue jobs: this side builds the workflow and
-lands the returned bytes, the worker next to the GPU runs ComfyUI and TRELLIS. There is no
-direct-call path — every producer of GPU work goes through db.queue_client so it can be metered
-and budget-gated in one place.
+"""Image + mesh job PAYLOADS: this side resolves a workflow and screens the prompt, the worker next
+to the GPU runs it, and `_decimate_glb` is the one local post-op the asset chain calls on a result.
+
+Nothing here enqueues or waits — a caller lands the payload on the `image` queue itself, so every
+producer of GPU work passes through one place that can meter it.
 """
 
 import copy
@@ -13,8 +14,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from db import queue_client
-from tools.execution_context import resolve_base_path
 from tools.safety import log_violation, screen_image_prompt
 
 logger = logging.getLogger(__name__)
@@ -22,7 +21,6 @@ logger = logging.getLogger(__name__)
 _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
 _TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
 _IMG2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_item.json"
-_TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
 
 def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
@@ -77,9 +75,9 @@ def build_item_payload(description: str, init_image_b64: Optional[str] = None,
     With `init_image_b64` the job is img2img: the payload carries the init image as an upload the
     worker lands on ComfyUI before submitting, and the workflow denoises from it instead of noise.
 
-    The local image model (uncensored SDXL) has no built-in guardrails, so every finalized prompt
-    is screened before it can reach a worker. A blocked prompt degrades like any other missing
-    asset — the game renders that entity as its shape."""
+    The local image model has no built-in guardrails, so every finalized prompt is screened before
+    it can reach a worker. A blocked prompt degrades like any other missing asset — the game renders
+    that entity as its shape."""
     violation = screen_image_prompt(description)
     if violation is not None:
         log_violation(violation, source="image_prompt")
@@ -118,53 +116,3 @@ def _load_workflow(path: Path) -> dict:
         return json.load(f)
 
 
-def _save_image_bytes(filename: str, data: bytes) -> str:
-    base_dir = resolve_base_path()
-    base_dir.mkdir(parents=True, exist_ok=True)
-    dest = base_dir / filename
-    dest.write_bytes(data)
-    logger.info(f"Saved image: {dest}")
-    return str(dest)
-
-
-def _run_comfyui_job(prompt: str, workflow_override: Optional[dict]) -> Dict[str, Any]:
-    """Resolve the workflow and hand it to an image worker; the worker owns the GPU and the
-    submit/poll/fetch flow, this side only lands the bytes in the working directory."""
-    if workflow_override is not None:
-        workflow = workflow_override
-    else:
-        workflow = _load_workflow(_TXT2IMG_WORKFLOW_PATH)
-        workflow["11"]["inputs"]["text"] = prompt
-        workflow["19"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
-
-    job = queue_client.run_job("image", {"kind": "comfy_image", "workflow": workflow})
-    if job["status"] != "done":
-        return {"success": False, "error": job.get("error") or "image job lost"}
-    images = (job["result"] or {}).get("images") or []
-    # The control plane offloaded each image to <data_dir>/blobs at completion; the row
-    # carries paths — same disk as this process.
-    saved_paths = [_save_image_bytes(img["filename"], Path(img["file"]).read_bytes())
-                   for img in images]
-    saved_str = ", ".join(saved_paths) if saved_paths else "(none saved)"
-    return {
-        "success": True,
-        "prompt_id": (job["result"] or {}).get("prompt_id"),
-        "prompt": prompt,
-        "images": [{"filename": img["filename"]} for img in images],
-        "image_count": len(images),
-        "saved_paths": saved_paths,
-        "message": f"Image generated successfully. Saved to: {saved_str}",
-    }
-
-
-def generate_image(prompt: str, workflow_override: Optional[dict] = None) -> Dict[str, Any]:
-    violation = screen_image_prompt(prompt)
-    if violation is not None:
-        log_violation(violation, source="generate_image")
-        return {"success": False, "error": "blocked by safety filter"}
-
-    try:
-        return _run_comfyui_job(prompt, workflow_override)
-    except Exception as e:
-        logger.error(f"generate_image failed: {e}")
-        return {"success": False, "error": str(e)}

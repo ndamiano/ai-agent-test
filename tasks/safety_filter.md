@@ -28,7 +28,7 @@ inspects what comes back out.
 - **Landed:** `src/tools/safety.py` (+ `src/tools/safety_terms.json`) — `screen_text` /
   `screen_image_prompt` / `log_violation`; wired at hook 1 (`api/routers/chat.py` +
   `tools/chat_tools.py:propose_game_spec`) and hook 4 (`tools/comfyui_tools.py:build_item_payload`
-  + `generate_image` — a flagged prompt is skipped, never crashing the build). Violations log to
+  — a flagged prompt is skipped, never crashing the build). Violations log to
   the `maestro.safety` logger with the authed user id and only the matched term(s).
   Tests: `tests/test_safety.py`.
 - **Open hook points** (numbering from Phase 1's map in `safety_phase1_notes.md`):

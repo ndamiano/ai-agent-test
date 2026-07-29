@@ -132,12 +132,17 @@ def _n_ctx() -> int:
 
 # ── the turn ──────────────────────────────────────────────────────────────────
 def step(spec, run_dir, tools, cursor, result) -> Outcome:
-    """One turn: apply the completed turn's tool calls, then ask for the next."""
+    """One turn: apply the completed turn's tool calls, then ask for the next. `None` is no turn to
+    apply (re-ask as-is); `{}` is a turn that ran and returned nothing, which the no-call branch
+    answers."""
     if not cursor.started:
         cursor.started = True
         cursor.system = (_PROMPTS / "build.txt").read_text(encoding="utf-8")
         cursor.history = [{"role": "user", "content": cursor.request or _request_from(spec)}]
         return _infer(run_dir, cursor)
+
+    if result is None:
+        return _infer(run_dir, cursor, report="re-sent the turn that never ran")
 
     usage = result.get("usage") or {}
     cursor.prompt_tokens = usage.get("prompt_tokens") or cursor.prompt_tokens
@@ -273,7 +278,7 @@ def _dispatch(tools, cursor, tc) -> dict:
     return res
 
 
-def _infer(run_dir, cursor) -> Infer:
+def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     ctx = _n_ctx()
     if cursor.prompt_tokens > int(ctx * _COMPACT_AT):
         dropped = compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4)
@@ -283,7 +288,7 @@ def _infer(run_dir, cursor) -> Infer:
     msgs = MessageBuilder(cursor.system).extend(cursor.history).build()
     # No actions means the turn called no tool: either the opening turn (the prompt has just been
     # sent and nothing has happened yet) or one the nudge is answering.
-    report = ", ".join(cursor.actions) or (
+    report = report or ", ".join(cursor.actions) or (
         "sent the prompt" if cursor.turn == 0 else "no tool call — asked again")
     if cursor.compacted:
         report += f" ({cursor.compacted} round(s) compacted)"

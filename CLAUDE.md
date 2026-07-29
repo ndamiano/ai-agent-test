@@ -104,10 +104,19 @@ src/
                          is_active/status_of are the API/CLI entry points. `stop` ends a build where
                          it stands and KEEPS what it wrote: playability is judged as it is at the
                          step cap (an index.html), while the builds row records `stopped` — a run
-                         ended by hand over a game that runs is not a run that failed. A refused
-                         compute budget PREEMPTS the run's still-pending asset jobs before giving
-                         up — gameplay beats art.
+                         ended by hand over a game that runs is not a run that failed. `pause`
+                         DEQUEUES: a still-queued turn is cancelled and its step refunded, a claimed
+                         one is left to its worker and applied when it lands, and the build parks at
+                         the ENQUEUE boundary rather than the top of advance. That boundary is what
+                         makes pause cost nothing: parking at the top discarded a turn the GPU had
+                         already been paid for, and announced itself on every reaper re-drive (one
+                         feed line every 5s, forever). A refused compute budget PREEMPTS the run's
+                         still-pending asset jobs before giving up — gameplay beats art.
       build_steps.py     the turn MACHINE: step(spec, run_dir, tools, cursor, result) -> Infer|Done.
+                         A `result` of None is NO TURN TO APPLY (a resume, a reaper re-drive) and
+                         re-asks from the transcript as it stands; `{}` is a turn that ran and
+                         answered with nothing, which the nudge branch handles. Collapsing the two
+                         scolded the model for a reply it never sent and burned a turn.
                          Owns the six tool schemas, the transcript, compaction, and the
                          out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
                          than letting the model believe the file landed). A failing call resent with

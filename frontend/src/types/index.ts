@@ -5,6 +5,7 @@ export interface Game {
     title: string
     built: boolean
     building: boolean
+    paused: boolean
     mtime: number
 }
 

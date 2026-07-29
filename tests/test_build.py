@@ -164,6 +164,22 @@ def test_a_turn_with_no_tool_call_says_so(tmp_path, tools):
     assert out.report == "no tool call — asked again"
 
 
+def test_no_result_re_asks_instead_of_inventing_an_empty_turn(tmp_path, tools):
+    """A resume, or a reaper re-drive, has no turn to apply. Treating that as a turn that answered
+    with nothing scolds the model for a reply it never sent, and burns a turn against the cap."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("write_file", {"path": "index.html", "content": "<h1>hi</h1>"})]))
+    before, turn = list(cursor.history), cursor.turn
+
+    out = build_steps.step({}, tmp_path, tools, cursor, None)
+
+    assert isinstance(out, build_steps.Infer)
+    assert cursor.history == before and cursor.turn == turn
+    assert cursor.no_call_streak == 0
+
+
 def test_a_long_done_summary_is_cut_on_a_word_boundary(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})

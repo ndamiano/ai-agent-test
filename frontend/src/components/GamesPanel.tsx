@@ -380,7 +380,7 @@ const GamesPanel: React.FC = () => {
                             <div className="text-white text-sm font-medium truncate">{g.title || g.run_id}</div>
                             <div className="flex items-center gap-1.5 mt-1">
                                 {g.built ? <Badge label="built" tone="green" /> : null}
-                                {g.building ? <Badge label="building…" tone="amber" /> : null}
+                                {g.building ? <Badge label={g.paused ? 'paused' : 'building…'} tone="amber" /> : null}
                             </div>
                         </button>
                     ))}

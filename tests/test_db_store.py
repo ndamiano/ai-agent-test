@@ -99,3 +99,31 @@ def test_event_payload_survives_non_json_values():
     store.record_event("g1", "weird", {"path": Path("/tmp/x")})   # default=str, never raises
     (e,) = store.events_for("g1")
     assert e["payload"]["path"] == "/tmp/x"
+
+
+# ── cancelling a paused build's turn ──────────────────────────────────────────
+def _build_with_art():
+    store.create_game("g1", "u1")
+    store.charge_game("g1", 10, 144_000)
+    bid = store.create_build("g1", kind="build")
+    turn = store.enqueue_job("llm", {}, game_id="g1", build_id=bid,
+                             metadata={"stage": "build", "run_id": "g1", "build_id": bid})
+    art = store.enqueue_job("image", {}, game_id="g1", build_id=bid, batch_id="b",
+                            metadata={"run_id": "g1", "asset_id": "goblin"})
+    return bid, turn, art
+
+
+def test_cancel_pending_build_turn_spares_the_art():
+    """Asset renders ride the same build_id as the turn that asked for them, so a pause that failed
+    every job under the build would throw away art the model already paid for."""
+    bid, turn, art = _build_with_art()
+    assert store.cancel_pending_build_turn(bid, "paused by hand") == 1
+    assert store.get_job(turn)["status"] == "failed"
+    assert store.get_job(art)["status"] == "pending"
+
+
+def test_a_claimed_turn_is_left_to_its_worker():
+    bid, turn, _ = _build_with_art()
+    store.claim_job("llm", "w1", 60)
+    assert store.cancel_pending_build_turn(bid, "paused by hand") == 0
+    assert store.get_job(turn)["status"] == "claimed"

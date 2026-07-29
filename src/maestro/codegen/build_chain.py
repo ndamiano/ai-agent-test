@@ -56,16 +56,28 @@ def kickoff(run_id: str, *, kind: str = "build", note: str = "",
 
 
 def pause(run_id: str) -> bool:
-    """Park a build at its next step boundary. The flag rides the durable cursor, not process
-    memory: the driver holds no state between turns, so a control plane that restarted mid-build
-    still owns the run. False when there is nothing in flight to pause."""
-    rs = RunState(run_id)
-    cursor = build_state.load(rs.run_dir)
-    if cursor is None or cursor.phase == "done":
-        return False
-    cursor.paused = True
-    build_state.save(rs.run_dir, cursor)
-    return True
+    """Park a build and DEQUEUE its turn. The flag rides the durable cursor, not process memory: the
+    driver holds no state between turns, so a control plane that restarted mid-build still owns the
+    run. False when there is nothing in flight to pause.
+
+    A queued turn is cancelled and its step refunded, since it never ran. A CLAIMED one is left to
+    its worker — that GPU time is already being paid for, so the result is applied when it lands and
+    the build parks after it."""
+    lock = _lock_for(run_id)
+    lock.acquire()   # an advance mid-flight must finish enqueueing before its job can be cancelled
+    try:
+        rs = RunState(run_id)
+        cursor = build_state.load(rs.run_dir)
+        if cursor is None or cursor.phase == "done":
+            return False
+        cursor.paused = True
+        if cursor.build_id and db_store.cancel_pending_build_turn(cursor.build_id, "paused by hand"):
+            cursor.step = max(0, cursor.step - 1)
+        build_state.save(rs.run_dir, cursor)
+        _emit("build_paused", run_id, step=cursor.step)
+        return True
+    finally:
+        lock.release()
 
 
 def stop(run_id: str) -> bool:
@@ -96,6 +108,7 @@ def resume(run_id: str) -> None:
     if cursor is not None and cursor.paused:
         cursor.paused = False
         build_state.save(rs.run_dir, cursor)
+        _emit("build_resumed", run_id, step=cursor.step)
     advance(run_id)
 
 
@@ -169,13 +182,17 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
     cursor = build_state.load(rs.run_dir)
     if cursor is None or cursor.phase == "done":
         return
-    if cursor.paused:
-        _emit("build_paused", run_id, step=cursor.step)
-        return
+    if cursor.paused and result is None:
+        return   # nothing to apply, and a re-drive (reaper, resume race) must not restart a parked build
     tools = build_tools(rs)
-    outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result or {})
+    outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result)
 
     if isinstance(outcome, build_steps.Infer):
+        if cursor.paused:
+            # A turn claimed before the pause. Its work is kept; what pause withholds is the NEXT one.
+            build_state.save(rs.run_dir, cursor)
+            _emit_step(run_id, cursor, outcome.report)
+            return
         cursor.step += 1
         if cursor.step > cursor.max_steps:
             _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir))

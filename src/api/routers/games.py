@@ -91,12 +91,14 @@ async def list_games(user: User = Depends(get_current_user)):
     for row in db_store.list_games(user.id):
         if not row["title"] and row["status"] == "draft":
             continue   # created but has no prompt yet — nothing to show
+        active = build_chain.status_of(row["id"])
         games.append({
             "run_id": row["id"],
             "title": row["title"],
             "status": row["status"],
             "built": _built(row["id"]),
-            "building": build_chain.is_active(row["id"]),
+            "building": active is not None,
+            "paused": bool(active and active["paused"]),
             "mtime": row["updated_at"],
         })
     games.sort(key=lambda g: g["mtime"], reverse=True)
@@ -279,9 +281,10 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
 
 @router.post("/{run_id}/pause", response_model=Dict)
 async def pause_game(run_id: str, user: User = Depends(get_current_user)):
-    """Pause a running build — it halts at the next step boundary (state stays consistent)."""
+    """Pause a running build — its queued turn is cancelled, and one already claimed lands and is
+    kept before the build parks."""
     _require_state(run_id, user)
-    if not build_chain.pause(run_id):
+    if not await asyncio.to_thread(build_chain.pause, run_id):
         raise HTTPException(status_code=409, detail="no build in progress for this run")
     return {"run_id": run_id, "status": "pausing"}
 

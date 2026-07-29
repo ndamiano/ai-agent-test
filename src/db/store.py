@@ -353,6 +353,18 @@ def abandon_build_jobs(build_id: str, error: str) -> int:
     return cur.rowcount
 
 
+def cancel_pending_build_turn(build_id: str, error: str) -> int:
+    """Fail the build's queued llm TURN and nothing else — a paused build keeps the art it already
+    asked for, and that rides the same build_id. A claimed turn is left to its worker."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
+            "WHERE build_id = ? AND status = 'pending' AND queue = 'llm' "
+            "AND json_extract(metadata, '$.stage') = 'build'",
+            (error, time.time(), build_id))
+    return cur.rowcount
+
+
 def abandon_pending_batch_jobs(game_id: str, error: str) -> int:
     """Fail a game's queued (still-unclaimed) batch jobs, releasing their reservations — the
     build-vs-assets budget priority: a build turn refused for headroom preempts the opportunistic

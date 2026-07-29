@@ -35,7 +35,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clear()
     }, [clear])
 
-    // Central 401 handling: the client clears the stored token, we drop back to the login gate.
     useEffect(() => {
         setUnauthorizedHandler(clear)
         return () => setUnauthorizedHandler(null)
@@ -52,7 +51,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }, [])
 
-    // Hydrate the user + balance whenever a token is present (mount, or just after login).
     useEffect(() => {
         if (token) refreshBalance()
     }, [token, refreshBalance])

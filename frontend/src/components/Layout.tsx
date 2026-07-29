@@ -17,7 +17,6 @@ const Layout: React.FC = () => {
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
 
-            {/* Header */}
             <div className="flex-shrink-0 border-b border-white/[0.06] px-4 py-2 flex items-center justify-between bg-[#0f0f0f]">
                 <div className="flex items-center gap-4">
                     <div className="text-white font-semibold text-sm tracking-wide">Maestro</div>

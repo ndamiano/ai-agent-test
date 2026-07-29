@@ -29,7 +29,6 @@ describe('mergeEvents', () => {
     })
 
     it('sorts the merged stream by time', () => {
-        // replay row at 30s (before the live window at 40s) is kept and ordered ahead of the live one.
         const merged = mergeEvents([row(1, 'build_started', 30)], [live('build_done', 40, { ok: false })])
         expect(merged.map(e => e.at)).toEqual([30_000, 40_000])
     })

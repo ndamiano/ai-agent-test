@@ -4,8 +4,6 @@ import type { AdminQueues, QueueRow } from '../types'
 
 const POLL_MS = 5000
 
-// GPU-seconds are the only unit here (no dollar model yet). Compact to hours past an hour so a
-// fleet's all-time spend stays readable; raw seconds below that, where the queue backlog lives.
 export const fmtSecs = (s: number): string =>
     s >= 3600 ? `${(s / 3600).toFixed(1)}h` : `${Math.round(s)}s`
 

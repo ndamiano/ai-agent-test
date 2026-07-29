@@ -3,13 +3,6 @@ import { api } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import type { DurableEventRow, WebSocketMessage } from '../types'
 
-// The persistent build stream for one run. The disappearing-status bug was structural: the build
-// feed lived in component-local useState that React tears down on tab switch/remount. The cure is
-// to stop storing and start DERIVING — fold the two durable sources that already survive:
-//   1. the global websocket `messages` array (lives above the tab switch, so it persists), and
-//   2. the /events replay (the backend's durable log, for reload/reconnect catch-up).
-// One pure fold over both yields feed/progress/parked/startedAt, so the view holds no build state.
-
 export type FeedTone = 'info' | 'good' | 'bad' | 'warn'
 
 export interface FeedEntry {
@@ -111,7 +104,6 @@ const feedLine = (e: NormEvent): { text: string; tone: FeedTone } | null => {
     }
 }
 
-// The pure reducer: an ordered event stream → the streamy display state. Held nowhere; recomputed.
 export function foldStream(events: NormEvent[]): RunStream {
     const feed: FeedEntry[] = []
     let progress: RunStream['progress'] = null
@@ -155,9 +147,8 @@ export function foldStream(events: NormEvent[]): RunStream {
 
 const EMPTY: RunStream = { feed: [], progress: null, startedAt: null, parked: null, skinning: false }
 
-// The hook. Replay is refetched whenever the run changes or the socket reconnects (a reconnect
-// clears the live `messages` buffer, so the durable log must refill the gap). No new context is
-// needed: `messages` already outlives the tab switch, and replay is cheap to refetch on remount.
+// Replay is refetched whenever the run changes or the socket reconnects (a reconnect clears the
+// live `messages` buffer, so the durable log must refill the gap).
 export function useRunBuildStream(runId: string | null): RunStream {
     const { messages, connected } = useWebSocket()
     const [rows, setRows] = useState<DurableEventRow[]>([])

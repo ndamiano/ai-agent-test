@@ -14,20 +14,22 @@ const CHECKER: React.CSSProperties = {
     backgroundPosition: '0 0,0 7px,7px -7px,-7px 0',
 }
 
-// The bytes come from the authed blob route, so <img> can't load them by URL — fetch to an object
-// URL and revoke it on unmount / when the asset changes. `version` is in the deps so a regenerated
-// asset (whose status stays 'ready' across the swap) still refetches its new bytes on assets_done.
+// The preview bytes come from the authed blob route, so <img> can't load them by URL — fetch to an
+// object URL and revoke it on unmount / when the asset changes. `version` is in the deps so a
+// regenerated asset (whose status stays 'ready' across the swap) still refetches on assets_done.
+// Only images preview: a mesh's bytes are megabytes and are fetched on the download click instead.
 const useAssetBlob = (runId: string, asset: GameAsset, version: number): string | null => {
     const [url, setUrl] = useState<string | null>(null)
+    const previewable = asset.kind === 'image' && asset.status === 'ready'
     useEffect(() => {
-        if (asset.status !== 'ready') { setUrl(null); return }
+        if (!previewable) { setUrl(null); return }
         let live = true
         let made: string | null = null
         api.getAssetBlobUrl(runId, asset.id)
             .then(u => { if (live) { made = u; setUrl(u) } else URL.revokeObjectURL(u) })
             .catch(() => { if (live) setUrl(null) })
         return () => { live = false; if (made) URL.revokeObjectURL(made) }
-    }, [runId, asset.id, asset.status, version])
+    }, [runId, asset.id, previewable, version])
     return url
 }
 
@@ -38,8 +40,6 @@ const StatusNote: React.FC<{ status: GameAsset['status'] }> = ({ status }) => (
     </span>
 )
 
-// Every card carries a ↻ that reveals a prompt input; submitting re-renders just this asset.
-// "redraw" renders from scratch; "refine" is img2img off the current image, keeping its composition.
 const CardShell: React.FC<{
     id: string
     status: GameAsset['status']
@@ -95,45 +95,39 @@ const CardShell: React.FC<{
     )
 }
 
-const ImageCard: React.FC<{
-    runId: string; asset: GameAsset; version: number; regenerating: boolean
-    onRegenerate: (prompt: string, mode: RegenMode) => void
-}> = ({ runId, asset, version, regenerating, onRegenerate }) => {
-    const status = regenerating ? 'rendering' : asset.status
-    const url = useAssetBlob(runId, asset, version)
-    return (
-        <CardShell id={asset.id} status={status} onRegenerate={onRegenerate}
-            right={undefined}>
-            {url && status === 'ready'
-                ? <img src={url} alt={asset.id} className="max-w-full max-h-full object-contain [image-rendering:pixelated]" />
-                : <StatusNote status={status} />}
-        </CardShell>
-    )
-}
-
-const MeshCard: React.FC<{
-    runId: string; asset: GameAsset; regenerating: boolean
-    onRegenerate: (prompt: string, mode: RegenMode) => void
-}> = ({ runId, asset, regenerating, onRegenerate }) => {
-    const status = regenerating ? 'rendering' : asset.status
+const MeshDownload: React.FC<{ runId: string; assetId: string }> = ({ runId, assetId }) => {
     const [busy, setBusy] = useState(false)
     const download = async () => {
         setBusy(true)
         try {
-            const u = await api.getAssetBlobUrl(runId, asset.id)
+            const u = await api.getAssetBlobUrl(runId, assetId)
             const a = document.createElement('a')
-            a.href = u; a.download = `${asset.id}.glb`; a.click()
+            a.href = u; a.download = `${assetId}.glb`; a.click()
             URL.revokeObjectURL(u)
         } catch { /* transient — the button stays clickable */ }
         finally { setBusy(false) }
     }
     return (
+        <button onClick={download} disabled={busy}
+            className="text-blue-400 hover:text-blue-300 disabled:opacity-40 text-[10px] shrink-0">GLB ↓</button>
+    )
+}
+
+const AssetCard: React.FC<{
+    runId: string; asset: GameAsset; version: number; regenerating: boolean
+    onRegenerate: (prompt: string, mode: RegenMode) => void
+}> = ({ runId, asset, version, regenerating, onRegenerate }) => {
+    const status = regenerating ? 'rendering' : asset.status
+    const isImage = asset.kind === 'image'
+    const url = useAssetBlob(runId, asset, version)
+    const ready = status === 'ready'
+    return (
         <CardShell id={asset.id} status={status} onRegenerate={onRegenerate}
-            right={status === 'ready'
-                ? <button onClick={download} disabled={busy}
-                    className="text-blue-400 hover:text-blue-300 disabled:opacity-40 text-[10px] shrink-0">GLB ↓</button>
-                : undefined}>
-            {status === 'ready' ? <span className="text-4xl opacity-40">⬡</span> : <StatusNote status={status} />}
+            right={!isImage && ready ? <MeshDownload runId={runId} assetId={asset.id} /> : undefined}>
+            {!ready ? <StatusNote status={status} />
+                : isImage
+                    ? url && <img src={url} alt={asset.id} className="max-w-full max-h-full object-contain [image-rendering:pixelated]" />
+                    : <span className="text-4xl opacity-40">⬡</span>}
         </CardShell>
     )
 }
@@ -169,13 +163,13 @@ export const AssetGallery: React.FC<{
         })
     }
 
-    const has = assets && assets.length > 0
+    const has = assets != null && assets.length > 0
 
     return (
         <section className="space-y-2.5">
             <div className="flex items-center gap-2">
                 <h3 className="text-gray-300 text-xs font-semibold uppercase tracking-wide">Assets</h3>
-                {has && <span className="text-gray-600 text-[11px]">{assets!.length}</span>}
+                {has && <span className="text-gray-600 text-[11px]">{assets.length}</span>}
                 {canRender && (
                     <button onClick={onRender} disabled={acting || rendering}
                         title={has ? 're-plan + re-render all assets' : 'plan + render assets for this game'}
@@ -200,11 +194,10 @@ export const AssetGallery: React.FC<{
                 </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {assets!.map(a => a.kind === 'image'
-                        ? <ImageCard key={a.id} runId={runId} asset={a} version={version}
+                    {assets.map(a => (
+                        <AssetCard key={a.id} runId={runId} asset={a} version={version}
                             regenerating={regenerating.has(a.id)} onRegenerate={(p, m) => regenerate(a, p, m)} />
-                        : <MeshCard key={a.id} runId={runId} asset={a}
-                            regenerating={regenerating.has(a.id)} onRegenerate={(p, m) => regenerate(a, p, m)} />)}
+                    ))}
                 </div>
             )}
         </section>

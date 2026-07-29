@@ -1,12 +1,9 @@
-// A "game" is one build run (runs/<run_id>/), surfaced read-only by /api/games.
-
 export interface Game {
     run_id: string
     title: string
     built: boolean
     building: boolean
     paused: boolean
-    mtime: number
 }
 
 export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 'built'
@@ -19,10 +16,8 @@ export interface GameDetail {
     built: boolean
     building: boolean
     status: GameStatus
-    queue_position: number | null
     assets_exist: boolean
     play_url: string | null
-    credits_spent: number
     // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
     // uncharged (no bar). Raw seconds — especially seconds_used — are deliberately never surfaced.
     budget_pct_remaining: number | null
@@ -58,8 +53,6 @@ export interface GameAsset {
 // so a turn's full text is fetched on click.
 export type PromptScope = 'all' | 'game' | 'platform'
 
-// A bucket is one game's turns; game_id null is the platform's own (chat + spec drafting, which
-// run before a game exists), so those turns are reachable too.
 export interface PromptBucket {
     game_id: string | null
     turns: number
@@ -122,13 +115,6 @@ export interface PromptDetail {
     } | null
 }
 
-export interface SystemStatus {
-    status: string
-    llm_connected: boolean
-    llm_model: string
-    agent_count: number
-}
-
 // Admin queue snapshot (GET /api/admin/queues). GPU-SECONDS only — no dollar conversion.
 export interface QueueRow {
     queue: string
@@ -159,38 +145,27 @@ export interface AdminQueues {
     }
 }
 
-// Generic envelope — the event bus broadcasts many shapes. Known fields are typed as optional so
-// a consumer can narrow by `type` without a full discriminated union; anything else still falls
-// through the index signature.
+// Generic envelope — the event bus broadcasts many shapes. The fields the UI actually reads are
+// typed as optional so a consumer can narrow by `type` without a full discriminated union; the rest
+// of what the bus sends still falls through the index signature.
 export type WebSocketMessage = {
     type: string
     run_id?: string
-    task_id?: string
     timestamp?: string
-    // build_queued — kind is 'build' | 'fix'
-    position?: number
-    kind?: string
     // fix_started
     note?: string
     // build_started / build_step
     step?: number
-    max_steps?: number
     summary?: string
     // build_started carries wall-clock seconds (time.time()) the build began; build_step carries
     // `elapsed` seconds since that start, so the progress header can show a running timer.
     started_at?: number
     elapsed?: number
-    // error_parked — an error that survived the fix-attempt cap without clearing.
-    identity?: string[]
     message?: string
     // component_complete
     component_id?: string
-    // build_done
+    // build_done / assets_done
     ok?: boolean
-    steps?: number
-    // prompt_proposed / prompt_updated
-    title?: string
-    // assets_done
     rendered?: number
     [key: string]: any
 }

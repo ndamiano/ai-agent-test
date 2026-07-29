@@ -16,7 +16,7 @@ describe('client auth', () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
         vi.stubGlobal('fetch', fetchMock)
 
-        await api.getStatus()
+        await api.listGames()
 
         const init = fetchMock.mock.calls[0][1]
         expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok123')
@@ -53,7 +53,7 @@ describe('client auth', () => {
             ok: false, status: 401, json: async () => ({ detail: 'authentication required' }),
         }))
 
-        await expect(api.getStatus()).rejects.toBeInstanceOf(ApiError)
+        await expect(api.listGames()).rejects.toBeInstanceOf(ApiError)
         expect(getAuthToken()).toBeNull()
         expect(handler).toHaveBeenCalledTimes(1)
     })

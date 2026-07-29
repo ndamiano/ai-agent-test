@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import type { FeedEntry, FeedTone } from '../../hooks/useRunBuildStream'
+import { FixNoteInput } from './FixNoteInput'
 
 const TONE: Record<FeedTone, string> = {
     info: 'text-gray-400',
@@ -29,8 +30,6 @@ export const BuildFeed: React.FC<{ feed: FeedEntry[] }> = ({ feed }) => {
     )
 }
 
-// A parked build stopped itself after exhausting its fix attempts — it needs a human note to move.
-// This is a dead end the old UI buried as one gray log line; surface it as the primary action.
 export const ParkedCard: React.FC<{
     message: string
     note: string
@@ -44,13 +43,7 @@ export const ParkedCard: React.FC<{
             <span className="text-gray-500 text-[11px]">needs a fix note to continue</span>
         </div>
         {message && <div className="text-gray-400 text-[11px] font-mono break-words">{message}</div>}
-        <div className="flex gap-2">
-            <input value={note} onChange={e => setNote(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && note.trim()) onSubmit() }}
-                placeholder="Describe what to fix, then Enter…"
-                className="flex-1 bg-black/40 border border-red-500/20 rounded text-xs text-gray-200 px-2 py-1.5" />
-            <button onClick={onSubmit} disabled={busy || !note.trim()}
-                className="bg-red-600/80 hover:bg-red-600 disabled:opacity-40 text-white px-3 py-1.5 rounded text-xs font-medium">Fix</button>
-        </div>
+        <FixNoteInput note={note} setNote={setNote} onSubmit={onSubmit} busy={busy} tone="red"
+            placeholder="Describe what to fix, then Enter…" />
     </div>
 )

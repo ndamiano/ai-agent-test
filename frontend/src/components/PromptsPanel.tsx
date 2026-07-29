@@ -4,8 +4,8 @@ import type { PromptBucket, PromptDetail, PromptMessage, PromptScope, PromptTurn
 import { Badge } from './cockpit/Badge'
 import type { Tone } from './cockpit/Badge'
 
-// The prompt log: read exactly what went to the model, for any game. The prompt FILE a turn came
-// from isn't recorded, so the system prompt's first line is the closest thing to a turn's name.
+// The prompt FILE a turn came from isn't recorded, so the system prompt's first line is the
+// closest thing to a turn's name.
 export const turnLabel = (turn: PromptTurn): string => {
     const head = (turn.system_head || '').trim().split('\n')[0]
     return head || '(no system prompt)'
@@ -269,7 +269,7 @@ const PromptsPanel: React.FC = () => {
 
     const toggleGroup = (hash: string) => setOpen(prev => {
         const next = new Set(prev)
-        next.has(hash) ? next.delete(hash) : next.add(hash)
+        if (!next.delete(hash)) next.add(hash)
         return next
     })
 

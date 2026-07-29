@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { api, ApiError } from '../api/client'
+import { api, buildErrorMessage } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import { useAuth } from '../contexts/AuthContext'
 import type { Game, GameDetail, WebSocketMessage } from '../types'
@@ -8,6 +8,7 @@ import { Badge } from './cockpit/Badge'
 import { PromptCard } from './cockpit/PromptCard'
 import { AssetGallery } from './cockpit/AssetGallery'
 import { BuildFeed, ParkedCard } from './cockpit/BuildFeed'
+import { FixNoteInput } from './cockpit/FixNoteInput'
 
 export const formatElapsed = (secs: number): string => {
     const s = Math.max(0, Math.floor(secs))
@@ -23,8 +24,6 @@ export const shouldAdoptPrompt = (seen: string | null, incoming: string): boolea
 
 export type Stage = 'building' | 'built' | 'ready'
 
-// Lifecycle stage drives which controls show — `built` unlocks skin/fix/play but still allows a
-// rebuild.
 export const stageFor = (building: boolean, built: boolean): Stage =>
     building ? 'building' : built ? 'built' : 'ready'
 
@@ -101,11 +100,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         return () => { cancelled = true }
     }, [runId])
 
-    // Detail (built/status/budget) reloads on run change; feed/progress now come from the persistent
-    // stream, so they survive tab switches and reloads with no local reset here.
     useEffect(() => { setRenderPending(false); return load() }, [load])
 
-    // A running elapsed timer while building — ticks locally off the stream's authoritative start.
     useEffect(() => {
         if (!building || stream.startedAt == null) { setElapsedSec(0); return }
         const start = stream.startedAt
@@ -123,8 +119,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         return () => clearInterval(id)
     }, [building, load])
 
-    // A slim handler for the few events that change durable state (building/status/detail). The
-    // feed/progress/parked display is derived by the stream hook, not mutated here.
     useEffect(() => {
         const unsub = subscribe(runId, (msg: WebSocketMessage) => {
             switch (msg.type) {
@@ -163,12 +157,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         try { await api.buildGame(runId, promptText); onChanged() }
         catch (e) {
             setBuilding(false); setStatus('idle')
-            if (e instanceof ApiError && e.status === 402) {
-                const b = e.body ?? {}
-                setError(`Out of credits — this build costs ${b.cost}, your balance is ${b.balance}.`)
-            } else {
-                setError(e instanceof Error ? e.message : 'Build failed')
-            }
+            setError(buildErrorMessage(e, 'Build failed'))
         }
         finally { setActing(false); refreshBalance() }  // a build spends credits — resync the header
     }
@@ -244,14 +233,8 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     )}
 
                     {stage === 'built' && !stream.parked && (
-                        <div className="flex gap-2">
-                            <input value={fixNote} onChange={e => setFixNote(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter' && fixNote.trim()) submitFix() }}
-                                placeholder="Describe what's wrong — patches the built game…"
-                                className="flex-1 bg-black/40 border border-white/[0.1] rounded text-xs text-gray-200 px-2 py-1.5" />
-                            <button onClick={submitFix} disabled={acting || !fixNote.trim()}
-                                className="bg-blue-600/80 hover:bg-blue-700 disabled:opacity-40 text-white px-3 py-1.5 rounded text-xs">Fix</button>
-                        </div>
+                        <FixNoteInput note={fixNote} setNote={setFixNote} onSubmit={submitFix} busy={acting}
+                            placeholder="Describe what's wrong — patches the built game…" />
                     )}
 
                     <BuildFeed feed={stream.feed} />
@@ -274,7 +257,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
 const NEW = Symbol('new-game')
 
-// A game that has no run yet: the box is the whole page, and Build is what creates it.
 const NewGameView: React.FC<{ onCreated: (runId: string) => void }> = ({ onCreated }) => {
     const [text, setText] = useState('')
     const [busy, setBusy] = useState(false)
@@ -287,12 +269,7 @@ const NewGameView: React.FC<{ onCreated: (runId: string) => void }> = ({ onCreat
             const { run_id } = await api.createGame(text)
             onCreated(run_id)
         } catch (e) {
-            if (e instanceof ApiError && e.status === 402) {
-                const b = e.body ?? {}
-                setError(`Out of credits — this build costs ${b.cost}, your balance is ${b.balance}.`)
-            } else {
-                setError(e instanceof Error ? e.message : 'Could not start the build')
-            }
+            setError(buildErrorMessage(e, 'Could not start the build'))
         } finally { setBusy(false); refreshBalance() }
     }
 
@@ -316,7 +293,6 @@ const NewGameView: React.FC<{ onCreated: (runId: string) => void }> = ({ onCreat
     )
 }
 
-// Lifecycle events that change a row's badges or add a row — refresh the list on these.
 const LIST_REFRESH_EVENTS = new Set([
     'prompt_proposed', 'prompt_updated', 'build_started', 'build_paused', 'build_resumed',
     'component_complete', 'build_done', 'assets_started', 'assets_done',
@@ -343,8 +319,6 @@ const GamesPanel: React.FC = () => {
 
     useEffect(refresh, [refresh])
 
-    // Live: re-pull the list when a build event arrives, so badges track reality without a
-    // manual Refresh.
     useEffect(() => {
         if (messages.length <= seenMsgs.current) { seenMsgs.current = messages.length; return }
         const fresh = messages.slice(seenMsgs.current)
@@ -354,7 +328,6 @@ const GamesPanel: React.FC = () => {
 
     return (
         <div className="h-full flex">
-            {/* List */}
             <div className="w-72 flex-shrink-0 border-r border-white/[0.06] flex flex-col">
                 <div className="flex-shrink-0 px-3 py-2 border-b border-white/[0.06] space-y-2">
                     <span className="text-gray-400 text-xs font-semibold uppercase tracking-wide">Games</span>
@@ -387,7 +360,6 @@ const GamesPanel: React.FC = () => {
                 </div>
             </div>
 
-            {/* Detail */}
             <div className="flex-1 min-w-0">
                 {selected === NEW
                     ? <NewGameView onCreated={runId => { setSelected(runId); refresh() }} />

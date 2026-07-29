@@ -5,8 +5,7 @@ import { useAuth } from './AuthContext'
 interface WebSocketContextValue {
     messages: WebSocketMessage[]
     connected: boolean
-    error: string | null
-    subscribe: (taskId: string, callback: (message: WebSocketMessage) => void) => () => void
+    subscribe: (runId: string, callback: (message: WebSocketMessage) => void) => () => void
 }
 
 const WebSocketContext = createContext<WebSocketContextValue | null>(null)
@@ -23,26 +22,24 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const { token } = useAuth()
     const [messages, setMessages] = useState<WebSocketMessage[]>([])
     const [connected, setConnected] = useState(false)
-    const [error, setError] = useState<string | null>(null)
     const wsRef = useRef<WebSocket | null>(null)
     const retryCountRef = useRef(0)
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const unmountedRef = useRef(false)
     const subscribersRef = useRef<Map<string, Set<(message: WebSocketMessage) => void>>>(new Map())
 
-    const subscribe = useCallback((taskId: string, callback: (message: WebSocketMessage) => void) => {
-        if (!subscribersRef.current.has(taskId)) {
-            subscribersRef.current.set(taskId, new Set())
+    const subscribe = useCallback((runId: string, callback: (message: WebSocketMessage) => void) => {
+        if (!subscribersRef.current.has(runId)) {
+            subscribersRef.current.set(runId, new Set())
         }
-        subscribersRef.current.get(taskId)!.add(callback)
+        subscribersRef.current.get(runId)!.add(callback)
 
-        // Return unsubscribe function
         return () => {
-            const callbacks = subscribersRef.current.get(taskId)
+            const callbacks = subscribersRef.current.get(runId)
             if (callbacks) {
                 callbacks.delete(callback)
                 if (callbacks.size === 0) {
-                    subscribersRef.current.delete(taskId)
+                    subscribersRef.current.delete(runId)
                 }
             }
         }
@@ -66,7 +63,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             retryCountRef.current = 0
             setMessages([])
             setConnected(false)
-            setError(null)
         }
 
         const connect = () => {
@@ -79,7 +75,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
             ws.onopen = () => {
                 setConnected(true)
-                setError(null)
                 retryCountRef.current = 0
             }
 
@@ -87,14 +82,8 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 try {
                     const message: WebSocketMessage = JSON.parse(event.data)
                     setMessages(prev => [...prev, message])
-
-                    // Notify subscribers keyed by run_id (builds) or task_id (legacy).
-                    const key = message.run_id ?? message.task_id
-                    if (key) {
-                        const callbacks = subscribersRef.current.get(key)
-                        if (callbacks) {
-                            callbacks.forEach(callback => callback(message))
-                        }
+                    if (message.run_id) {
+                        subscribersRef.current.get(message.run_id)?.forEach(callback => callback(message))
                     }
                 } catch (e) {
                     console.error('Failed to parse WebSocket message:', e)
@@ -114,10 +103,6 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     reconnectTimerRef.current = setTimeout(connect, delay)
                 }
             }
-
-            ws.onerror = () => {
-                setError('WebSocket connection error')
-            }
         }
 
         connect()
@@ -129,7 +114,7 @@ export const WebSocketProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }, [token])
 
     return (
-        <WebSocketContext.Provider value={{ messages, connected, error, subscribe }}>
+        <WebSocketContext.Provider value={{ messages, connected, subscribe }}>
             {children}
         </WebSocketContext.Provider>
     )

@@ -34,5 +34,7 @@ are released, we should regularly validate whether we can do better with what ha
 - [ ] Lato.2 seems interesting. It generates 3d models as parts, which will help with automated animation probably.
       https://www.reddit.com/r/TopologyAI/comments/1v91x4h/opensource_3d_ai_generates_meshes_with/
       https://lohhhha.github.io/LATO.2/
+- [ ] Vibe voice from microsoft for voiceovers
+      https://github.com/microsoft/VibeVoice
 
 ## Previously investigated

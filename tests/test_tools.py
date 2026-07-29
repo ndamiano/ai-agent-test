@@ -22,7 +22,6 @@ def tools(tmp_path):
     return build_tools(RunState(tmp_path))
 
 
-# ── the path guard (the one thing that is never relaxed) ──────────────────────
 @pytest.mark.parametrize("path", ["../escaped.js", "../../etc/passwd", "a/../../out.js"])
 def test_a_path_cannot_escape_the_game_folder(tools, tmp_path, path):
     assert tools["write_file"](path=path, content="x")["ok"] is False
@@ -34,13 +33,11 @@ def test_nested_paths_are_allowed(tools, tmp_path):
     assert (tmp_path / "game" / "assets" / "cards.json").read_text() == "[]"
 
 
-# ── write_file ────────────────────────────────────────────────────────────────
 def test_write_overwrites(tools, tmp_path):
     tools["write_file"](path="game.js", content="const x = 1;\n")
     assert (tmp_path / "game" / "game.js").read_text() == "const x = 1;\n"
 
 
-# ── edit_file ─────────────────────────────────────────────────────────────────
 def test_edit_replaces_a_unique_snippet(tools, tmp_path):
     r = tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="const b = 3;")
     assert r["ok"] is True
@@ -99,7 +96,6 @@ def test_edit_on_a_missing_file_is_an_error(tools):
     assert tools["edit_file"](path="nope.js", old_text="a", new_text="b")["ok"] is False
 
 
-# ── read_file / list_files ────────────────────────────────────────────────────
 def test_read_returns_the_whole_file(tools):
     assert tools["read_file"](path="game.js")["content"] == SRC
 
@@ -171,7 +167,6 @@ def test_list_files_skips_scratch(tools, tmp_path):
     assert [f["path"] for f in tools["list_files"]()["files"]] == ["game.js"]
 
 
-# ── a missing required argument is an error, never a default ─────────────────
 def test_write_without_a_path_is_an_error_not_a_default(tools, tmp_path):
     """THE regression. Defaulting a missing `path` to index.html meant every write in a run landed
     on the same file and the last one — the game's JavaScript — won, so index.html held no HTML and

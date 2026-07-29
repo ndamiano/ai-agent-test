@@ -240,8 +240,10 @@ unused schema costs every turn of every build, so a tool that fails that comes b
   owns its card:
   `python -m worker.agent --server <cp>:8000 --token <token> --queue image --target localhost:8188`
   (defaults: server localhost:8000, target localhost:1234, queue llm). exec_seconds are debited to
-  the owning game via the run_scope contextvar, set around run_build / fix_from_note / add_assets —
-  a stage outside that scope enqueues with no game_id and so is neither metered nor gated.
+  the owning game by the `game_id` on the job row, and a job with none is neither metered nor gated.
+  The build and asset enqueues pass it directly; the one BLOCKING path (`queue_client.run_job`, what
+  the connector's `generate_with_tools` rides) reads it off the `run_scope` contextvar instead, so a
+  call there outside a scope spends GPU nobody is charged for.
 - `data_dir` (env `MAESTRO_DATA_DIR`, default `<repo>/data`) — where platform.db + auth.db live;
   control-plane state, deliberately not under `working_directory`.
 - `runpod.*` — the autoscaler (see `src/scaler/` + docs/DEPLOY.md): `enabled`, `api_key`,

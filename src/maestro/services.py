@@ -1,4 +1,4 @@
-"""LLM tool-call parsing helpers shared by the codegen fix shapes.
+"""LLM tool-call argument parsing, shared by the build turn machine.
 
 Local models are loose about tool calls: arguments arrive already-parsed, or wrapped in a stray
 single key. `parse_args` normalizes any argument shape to a dict.

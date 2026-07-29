@@ -22,7 +22,6 @@ _OTHER_SCHEMA = {"type": "function", "function": {
                    "required": ["node_id", "content"]}}}
 
 
-# ── parse_args: normalize any argument shape to a dict ────────────────────────
 def test_parse_args_handles_dict_json_and_fenced():
     assert parse_args({"a": 1}) == {"a": 1}
     assert parse_args('{"a": 1}') == {"a": 1}

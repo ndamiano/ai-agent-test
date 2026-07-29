@@ -31,7 +31,6 @@ def _tmp_db(tmp_path, monkeypatch):
     get_llm_rate_limiter().reset()
 
 
-# ── store semantics ───────────────────────────────────────────────────────────
 def test_claim_is_fifo_and_exclusive():
     a = store.enqueue_job("llm", {"n": 1})
     b = store.enqueue_job("llm", {"n": 2})
@@ -86,7 +85,6 @@ def test_failed_job_carries_the_error():
     assert (job["status"], job["error"]) == ("failed", "Status 500: boom")
 
 
-# ── /worker endpoints ─────────────────────────────────────────────────────────
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(wq, "_queue_settings",
@@ -254,7 +252,6 @@ def test_deregister_requires_the_token(client):
     assert client.post("/worker/deregister", json={"worker_id": "w1"}).status_code == 403
 
 
-# ── LLMConnector end-to-end with a fake worker ────────────────────────────────
 def _fake_worker(stop, respond):
     """Claim from the store directly and complete with `respond(payload)`."""
     while not stop.is_set():

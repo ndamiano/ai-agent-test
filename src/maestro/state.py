@@ -29,7 +29,6 @@ class RunState:
         self.run_dir = resolve_base_path() / "runs" / run_id
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── components ──────────────────────────────────────────────────────────
     def write_component(self, component_id: str, content) -> None:
         if f"{component_id}.json" in _RESERVED:
             raise ValueError(f"'{component_id}' is a reserved name, not a component id")
@@ -50,7 +49,6 @@ class RunState:
     def component_ids(self) -> List[str]:
         return [p.stem for p in sorted(self.run_dir.glob("*.json")) if p.name not in _RESERVED]
 
-    # ── spec ────────────────────────────────────────────────────────────────
     @property
     def spec_path(self) -> Path:
         return self.run_dir / SPEC_FILE
@@ -61,14 +59,12 @@ class RunState:
     def read_spec(self) -> Optional[Dict]:
         return self._read(SPEC_FILE)
 
-    # ── story state (Phase 6) ─────────────────────────────────────────────────
     def write_story_state(self, state: Dict) -> None:
         self._write(STORY_STATE_FILE, state)
 
     def read_story_state(self) -> Optional[Dict]:
         return self._read(STORY_STATE_FILE)
 
-    # ── io ────────────────────────────────────────────────────────────────────
     def _write(self, filename: str, data) -> None:
         # Atomic: a concurrent load_artifact() (parallel fixes) must never read a half-written
         # file. Write a unique temp in the same dir, then os.replace (atomic on POSIX) — a reader

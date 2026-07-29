@@ -1,5 +1,3 @@
-"""Tests for SettingsManager validation with Pydantic schema"""
-
 import copy
 import json
 from pathlib import Path
@@ -10,8 +8,6 @@ from pydantic import ValidationError
 from config.settings_manager import _merge, settings_manager
 from config.settings_schema import AppSettings
 
-# --- The loaded file layers OVER the defaults ---
-#
 # Callers subscript get_settings() directly (db/store._db_path reads working_directory), so a key
 # the file omits must resolve to its default, not raise KeyError three frames away.
 
@@ -50,11 +46,7 @@ def _valid():
     )
 
 
-# --- Positive contracts: each asserts a DISTINCT accepted-input guarantee. ---
-
-
 def test_valid_settings_load():
-    # A fully-specified settings dict loads and round-trips its fields.
     settings = AppSettings(**_valid())
     assert settings.llm.model == "local-model"
     assert settings.llm.max_tokens == 50000
@@ -83,9 +75,6 @@ def test_extra_fields_ignored_by_default():
     settings["unknown_field"] = "value"
     result = AppSettings(**settings)
     assert not hasattr(result, "unknown_field")
-
-
-# --- Negative contract: any of these mutations to a valid dict must be rejected. ---
 
 
 def _del(*path):
@@ -119,8 +108,6 @@ def _set(value, *path):
     ],
 )
 def test_invalid_settings_rejected(mutation):
-    # Required-field, enum, non-empty-string, and positive-int constraints must all
-    # raise on a mutated-but-otherwise-valid dict; one row per constraint.
     settings = _valid()
     mutation(settings)
     with pytest.raises(ValidationError):

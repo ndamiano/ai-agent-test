@@ -78,8 +78,8 @@ class LLMConnector:
             _log_call(payload["model"], len(messages), bool(tools),
                       time.perf_counter() - t0, result)
             return result
-        # Worker reported an upstream error. A server that rejects the structured-output field
-        # degrades to free-form rather than failing the whole call.
+        # A server that rejects the structured-output field degrades to free-form rather than
+        # failing the whole call.
         error = job.get("error") or "job lost"
         if response_format and "format" in error:
             logger.warning("Endpoint does not support structured output, retrying without it")
@@ -121,7 +121,6 @@ class LLMConnector:
             "temperature": 0.7,
             "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
         }
-        # Per-call override falls back to the connector's configured effort when unset.
         effort = self.reasoning if reasoning is _REASONING_UNSET else _resolve_effort(reasoning)
         if effort:
             payload["reasoning"] = effort

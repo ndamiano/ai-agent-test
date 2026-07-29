@@ -30,7 +30,6 @@ def _game(seconds: float = 1000.0, game_id: str = "g1") -> str:
     return game_id
 
 
-# ── reservations ──────────────────────────────────────────────────────────────
 def test_remaining_starts_at_the_grant():
     _game(500.0)
     assert store.compute_remaining("g1") == 500.0
@@ -56,7 +55,6 @@ def test_completion_replaces_the_reservation_with_measured_seconds():
     assert store.compute_remaining("g1") == 988.0
 
 
-# ── only delivered work is billed ─────────────────────────────────────────────
 def test_a_failed_job_does_not_debit_the_game():
     """The user got nothing out of an OOM or a 500. It burned real GPU time, but that is our cost
     to eat, not theirs to pay."""
@@ -103,7 +101,6 @@ def test_abandoned_job_releases_its_reservation():
     assert store.compute_remaining("g1") < 1000.0
     assert store.abandon_job(job_id, "timed out") is True
     assert store.compute_remaining("g1") == 1000.0
-    # Already-terminal jobs are not re-abandoned.
     assert store.abandon_job(job_id, "again") is False
 
 
@@ -120,7 +117,6 @@ def test_worker_completing_an_abandoned_job_is_dropped():
     assert store.game("g1")["seconds_used"] == 0
 
 
-# ── admission ─────────────────────────────────────────────────────────────────
 def test_enqueue_refuses_when_the_estimate_does_not_fit():
     _game(estimate_seconds("mesh") - 1)
     with pytest.raises(store.InsufficientCompute) as exc:
@@ -134,7 +130,7 @@ def test_estimates_are_per_queue_so_a_cheap_job_still_fits():
     not one flat number."""
     _game(estimate_seconds("mesh") - 1)
     assert estimate_seconds("llm") < estimate_seconds("mesh")
-    store.enqueue_job("llm", {}, game_id="g1")   # does not raise
+    store.enqueue_job("llm", {}, game_id="g1")
 
 
 def test_reservations_accumulate_until_the_grant_is_gone():
@@ -187,7 +183,6 @@ def test_concurrent_enqueues_cannot_all_take_the_same_headroom():
     assert store.compute_remaining("g1") == 0
 
 
-# ── attribution ───────────────────────────────────────────────────────────────
 def test_jobs_outside_a_run_scope_are_ungated():
     """Chat and spec drafting are platform cost, not a game's — no game_id, so no budget to
     check and nothing to refuse."""

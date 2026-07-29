@@ -57,7 +57,6 @@ class Agent:
         self._uploader = threading.Thread(target=self._upload_loop, daemon=True)
         self._uploader.start()
 
-    # ── server API ────────────────────────────────────────────────────────────
     def _post(self, path: str, body: dict, timeout: float) -> dict:
         r = self.session.post(f"{self.server}{path}", json=body, timeout=timeout)
         r.raise_for_status()
@@ -121,7 +120,6 @@ class Agent:
             except requests.RequestException as e:
                 logger.warning("job %s: heartbeat failed: %s", job_id, e)
 
-    # ── execution ─────────────────────────────────────────────────────────────
     def execute(self, job: dict) -> None:
         payload = job["payload"]
         handler = HANDLERS[payload.get("kind", "llm")]

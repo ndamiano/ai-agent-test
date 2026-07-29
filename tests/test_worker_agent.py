@@ -116,7 +116,6 @@ def test_run_drains_uploads_before_deregister():
     assert order == ["complete", "deregister"]
 
 
-# ── idle self-exit (the scale-down decision) ─────────────────────────────────
 def _posts_to(a, path):
     return sum(1 for c in a.session.post.call_args_list if c.args[0].endswith(path))
 
@@ -180,7 +179,6 @@ def test_deregister_is_best_effort():
     a.deregister()   # swallowed, not raised
 
 
-# ── comfy_image uploads (img2img init images) ─────────────────────────────────
 def test_comfy_image_uploads_init_images_before_submit():
     import base64
     from worker import handlers

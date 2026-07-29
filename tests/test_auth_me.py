@@ -47,7 +47,6 @@ def test_logout_revokes_the_token(app_client):
 
     assert app_client.get("/auth/me", headers=hdr).status_code == 200
     assert app_client.post("/auth/logout", headers=hdr).status_code == 200
-    # The token is dead server-side now — reusing it 401s.
     assert app_client.get("/auth/me", headers=hdr).status_code == 401
 
 

@@ -28,15 +28,15 @@ def test_messages_to_input_maps_roles_and_tool_roundtrip():
         {"role": "tool", "tool_call_id": "c1", "content": "{\"ok\": true}"},
     ]
     instructions, items = _chat_messages_to_responses_input(messages)
-    assert instructions == "you are X"                      # system → instructions
+    assert instructions == "you are X"
     # plain message items carry explicit type:message — llama.cpp rejects untyped input items
     assert items[0] == {"type": "message", "role": "user", "content": "make a node"}
     assert items[1] == {"type": "message", "role": "assistant",
                         "content": [{"type": "output_text", "text": "thinking out loud"}]}
     assert items[2] == {"type": "function_call", "call_id": "c1",
-                        "name": "write_node", "arguments": "{}"}   # assistant tool_call
+                        "name": "write_node", "arguments": "{}"}
     assert items[3] == {"type": "function_call_output", "call_id": "c1",
-                        "output": "{\"ok\": true}"}                # tool result
+                        "output": "{\"ok\": true}"}
     assert all("messages" not in i for i in items)
 
 

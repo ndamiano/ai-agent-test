@@ -65,7 +65,7 @@ def test_responses_dialect_translates_both_ways():
     assert err is None
     assert a.session.post.call_args[0][0] == "http://gpu/v1/responses"
     sent = a.session.post.call_args[1]["json"]
-    assert sent["instructions"] == "you are X"        # system -> instructions
+    assert sent["instructions"] == "you are X"
     assert [i["type"] for i in sent["input"]] == ["message", "function_call",
                                                   "function_call_output"]
     assert sent["tools"][0]["name"] == "write_file"   # flattened, no `function` nesting

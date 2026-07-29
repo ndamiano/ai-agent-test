@@ -4,10 +4,9 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-# Reasoning-effort knob for reasoning models, sent as reasoning.effort on the Responses API
-# (the only endpoint this connector speaks). "none" disables reasoning — the lever that stops
-# a local model spending ~30k tokens thinking per call. None = the model's own default.
-# ("off" is NOT a valid value — it errors.)
+# Reasoning-effort knob, sent as reasoning.effort when the worker speaks the Responses API.
+# "none" disables reasoning — the lever that stops a local model spending ~30k tokens thinking per
+# call. None = the model's own default. ("off" is NOT a valid value — it errors.)
 ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
 

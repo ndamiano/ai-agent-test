@@ -24,10 +24,6 @@ _TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
 _IMG2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_item.json"
 _TXT2IMG_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img.json"
 
-# ---------------------------------------------------------------------------
-# Prompt construction helpers
-# ---------------------------------------------------------------------------
-
 
 def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
     wf = copy.deepcopy(base_workflow)
@@ -45,13 +41,12 @@ _ITEM_NEGATIVE = (
 
 
 def build_item_job(description: str) -> dict:
-    """Return a {prompt, workflow_override} job dict for ONE inventory item icon (WAI
-    Illustrious, square — icons render small in the inventory bar, so the object must fill the
-    frame, never sit in a scene). `description` is the manifest's SAVED styled prompt and IS the
-    positive, verbatim: the flux workflow's T5 encoder reads prose as-is — danbooru quality tags
-    and negative prompts are tag-model (Illustrious) culture and off-distribution here. The
-    tag-model era taught the hard lesson: embedding the prose mid-phrase ("a single {X}, one
-    object only, ...") or salting it with tags drove subject drift."""
+    """Return a {prompt, workflow_override} job dict for ONE inventory item icon (square — icons
+    render small in the inventory bar, so the object must fill the frame, never sit in a scene).
+    `description` is the manifest's SAVED styled prompt and IS the positive, verbatim: the flux
+    workflow's T5 encoder reads prose as-is, danbooru quality tags are off-distribution here, and
+    embedding the prose mid-phrase ("a single {X}, one object only, ...") or salting it with tags
+    drove subject drift."""
     positive = description
     # txt2img_item = the background workflow + BiRefNet matting: these render ON maps and in
     # the inventory bar, so they must land transparent like sprites (observed: props shipping

@@ -44,7 +44,7 @@ def main():
             print(f"  [{i}/{len(images)}] {ident}: already present")
             continue
         payload = build_item_payload(prompt)
-        if payload is None:                       # safety screen refused it
+        if payload is None:
             print(f"  [{i}/{len(images)}] {ident}: BLOCKED by prompt screen")
             blocked += 1
             continue

@@ -32,6 +32,7 @@ from db import store as db_store
 from maestro.codegen.staging import game_dir
 from maestro.state import RunState
 from tools.comfyui_tools import build_item_payload
+from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,10 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     entry = next((e for e in read_manifest(state.run_dir) if e["id"] == asset_id), None)
     if entry is None:
         return {"ok": False, "error": f"no asset {asset_id!r} in the manifest"}
-    prompt = _merge_prompt(entry["prompt"], note)
+    # The merge is a GPU job like any other, and it is the one enqueue here that goes through the
+    # blocking connector, which reads the owning game off the run scope rather than an argument.
+    with run_scope(run_id):
+        prompt = _merge_prompt(entry["prompt"], note)
     init_b64 = None
     if mode == "img2img":
         mesh = entry.get("kind") == "mesh"

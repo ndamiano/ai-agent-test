@@ -153,7 +153,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "built": built,
         "building": active is not None,
         "status": status,
-        "queue_position": None,   # builds no longer queue behind each other; kept for the client shape
+        "queue_position": None,   # kept for the client shape; builds don't queue behind each other
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         "play_url": f"/play/games/{run_id}/index.html" if built else None,
         "credits_spent": row.get("credits_spent", 0),
@@ -198,8 +198,8 @@ async def game_assets(run_id: str, user: User = Depends(get_current_user)):
 
 @router.get("/{run_id}/assets/{asset_id}")
 async def game_asset_blob(run_id: str, asset_id: str, user: User = Depends(get_current_user)):
-    """Stream one rendered asset (png or glb), authed + ownership-checked. Replaces the public
-    /play static path for the management UI."""
+    """Stream one rendered asset (png or glb), authed + ownership-checked — the management UI
+    never reads the public /play static path."""
     state = _require_state(run_id, user)
     if not _ASSET_ID.match(asset_id):
         raise HTTPException(status_code=400, detail="bad asset id")
@@ -241,8 +241,7 @@ async def game_events(run_id: str, after: int = 0, user: User = Depends(get_curr
 @router.post("/{run_id}/build", response_model=Dict)
 async def build_game(run_id: str, body: BuildBody = BuildBody(),
                      user: User = Depends(get_current_user)):
-    """Queue a build on the single GPU. It runs immediately if the worker is free, else it waits
-    with a `queue_position`. Progress streams over the websocket.
+    """Start a build. Progress streams over the websocket.
 
     `prompt` carries the user's edit of the text: pressing Build IS approving what is in the box,
     so the build is the only thing that writes it. The driver reads it from disk, not from this
@@ -273,8 +272,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
         db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
     _require_compute(run_id)
 
-    # kickoff seeds the scaffolds, runs the first gate sweep and enqueues the first llm turn — that
-    # touches disk + tsc, so off the event loop. It returns as soon as the turn is queued.
+    # kickoff seeds the game folder before enqueueing the first llm turn, so it touches disk.
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
     return {"status": "building", "run_id": run_id, "queue_position": 0}
 
@@ -307,21 +305,20 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     _require_state(run_id, user)
     _require_compute(run_id)
     if build_chain.is_active(run_id):
-        # A mid-flight build — paused, or one whose driver died (cursor on disk). Re-drive it.
         await asyncio.to_thread(build_chain.resume, run_id)
         return {"run_id": run_id, "status": "running"}
     if not db_store.is_charged(run_id):
         raise HTTPException(status_code=409, detail="no build to resume for this run")
-    # A finished/failed build: re-run the gate loop over the on-disk game (rebuild where it left off).
+    # A finished/failed build has no cursor to re-drive: start a fresh one over the on-disk game.
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
     return {"status": "building", "run_id": run_id, "queue_position": 0}
 
 
 @router.post("/{run_id}/fix", response_model=Dict)
 async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_user)):
-    """Patch a built game from a free-text note ('the player falls through the floor'). Queued on
-    the same single-GPU queue as a build — a fix ends in its own re-gating build loop, so the two
-    can't run at once. Progress + completion stream over the websocket (fix_started, build_*)."""
+    """Patch a built game from a free-text note ('the player falls through the floor'). It re-enters
+    the same turn machine a build runs, so the two can't run at once. Progress + completion stream
+    over the websocket (fix_started, build_*)."""
     _require_state(run_id, user)
     _require_compute(run_id)
     if build_chain.is_active(run_id):
@@ -337,7 +334,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     _require_state(run_id, user)
     _require_compute(run_id)
     key = f"assets:{run_id}"
-    # Two guards, because the stage now outlives its thread: the key covers the plan-and-enqueue
+    # Two guards, because the stage outlives its thread: the key covers the plan-and-enqueue
     # half, the batch query covers the queued half. Without the second, a double-click enqueues a
     # second full set of image/mesh jobs and pays for them.
     if db_store.has_active_batch(run_id):

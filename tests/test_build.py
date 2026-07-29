@@ -30,7 +30,6 @@ def _reply(content="", calls=None, usage=None):
     return {"choices": [{"message": msg}], "usage": usage or {}}
 
 
-# ── compaction ────────────────────────────────────────────────────────────────
 def _history():
     h = [{"role": "user", "content": "make a game"}]
     for i in range(6):
@@ -71,7 +70,6 @@ def test_compact_noop_when_it_fits(tmp_path):
     assert cursor.history == before
 
 
-# ── the turn machine ──────────────────────────────────────────────────────────
 def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
     """The brief is for the human and the audit. Prepending its restated mechanics puts a second,
     more concrete instruction beside the request on every turn — the small-model failure mode."""
@@ -92,7 +90,7 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 8            # exactly the eight rules
+    assert system.count("\n- ") == 8
     assert "three.module.js" in system and "generate_media" in system
     # assets.json is written by the platform, so naming it here would invite the model to write it.
     for absent in ("assets.json", "WASD", "window"):
@@ -375,7 +373,6 @@ def test_generate_media_reaches_the_tool_and_its_path_reaches_the_transcript(tmp
     assert "assets/goblin.glb" in cursor.history[-1]["content"]
 
 
-# ── the seed ──────────────────────────────────────────────────────────────────
 def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
     """A game fetches nothing at runtime, so the renderer has to be in the folder before the model
     starts writing. A re-seed (a fix, a resumed build) must not overwrite what is there."""
@@ -391,11 +388,8 @@ def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
     staging.seed_vendor(tmp_path)
     assert (tmp_path / "game" / "index.html").read_text() == "<h1>hi</h1>"
     assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["index.html", "three.module.js"]
-    # The audit judges the game, not the renderer it imports.
-    assert list(staging.game_files(tmp_path)) == ["index.html"]
 
 
-# ── staging ───────────────────────────────────────────────────────────────────
 def test_stage_copies_the_folder(tmp_path, monkeypatch):
     from maestro.codegen import staging
     runtime = tmp_path / "runtime"

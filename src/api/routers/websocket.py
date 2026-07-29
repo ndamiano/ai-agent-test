@@ -28,7 +28,6 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket, user.id)
 
     try:
-        # Send connection acknowledgment
         await websocket.send_json({
             "type": "connected",
             "timestamp": get_utc_timestamp()

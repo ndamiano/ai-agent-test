@@ -44,7 +44,6 @@ def _image_jobs():
     return [store._job_dict(r) for r in rows]
 
 
-# ── the answer ────────────────────────────────────────────────────────────────
 def test_the_path_comes_back_before_the_render(run_dir):
     out = request_media(RUN, run_dir, "goblin", "a snarling goblin")
     assert out == {"ok": True, "path": "assets/goblin.png", "status": "rendering"}
@@ -86,7 +85,6 @@ def test_each_request_is_its_own_batch(run_dir):
     assert len(batches) == 2 and None not in batches
 
 
-# ── asking twice ──────────────────────────────────────────────────────────────
 def test_the_same_id_twice_is_one_render(run_dir):
     first = request_media(RUN, run_dir, "goblin", "a snarling goblin")
     again = request_media(RUN, run_dir, "goblin", "a snarling goblin, but bigger")
@@ -104,7 +102,6 @@ def test_an_already_rendered_asset_is_not_paid_for_again(run_dir):
     assert _image_jobs() == []
 
 
-# ── every refusal is reported, never guessed at ───────────────────────────────
 @pytest.mark.parametrize("bad", ["", "../escape", "a b", "x" * 65, "a/b"])
 def test_an_id_that_cannot_name_a_file_is_refused(run_dir, bad):
     out = request_media(RUN, run_dir, bad, "a goblin")
@@ -139,7 +136,6 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
     assert read_manifest(run_dir) == []
 
 
-# ── the tool surface ──────────────────────────────────────────────────────────
 def test_the_tool_reaches_the_queue_and_defaults_to_an_image(run_dir):
     tools = build_tools(RunState(RUN))
     out = tools["generate_media"](id="goblin", prompt="a snarling goblin")

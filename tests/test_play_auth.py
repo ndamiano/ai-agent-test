@@ -84,12 +84,9 @@ def test_play_game_file_requires_owning_session(client, game_bundle):
     run_id = _make_game(owner.id)
     url = game_bundle(run_id)
 
-    # No cookie → 401.
     assert client.get(url).status_code == 401
-    # A different user's cookie → 403.
     r = client.get(url, cookies={"maestro_play": other_tok})
     assert r.status_code == 403
-    # The owner's cookie → 200, serving the bundle.
     r = client.get(url, cookies={"maestro_play": owner_tok})
     assert r.status_code == 200
     assert r.text == "// fake bundle"

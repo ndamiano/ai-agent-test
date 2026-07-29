@@ -18,7 +18,7 @@ def build_mask(elevation, w, h, sea_level):
 
 
 def fill_puddles(elevation, water, w, h, sea_level):
-    """Convert small, edge-detached water pockets (noise artifacts) into land."""
+    """Convert small water pockets (noise artifacts) into land."""
     seen = [[False] * w for _ in range(h)]
     for sy in range(h):
         for sx in range(w):

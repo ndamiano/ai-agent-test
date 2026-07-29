@@ -19,7 +19,6 @@ import json
 import re
 from typing import Dict, List, Optional
 
-# ── the encodings ─────────────────────────────────────────────────────────────
 # Hermes / Qwen / most local finetunes: JSON inside <tool_call> tags, one block per call.
 _HERMES_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 # Llama 3.1's built-in tag, one JSON object after it.

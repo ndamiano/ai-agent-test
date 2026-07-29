@@ -18,10 +18,6 @@ class MessageBuilder:
     """
     Builds the messages list sent to the LLM.
 
-    All callers must go through here
-    so that cross-cutting concerns (truncation, token budgeting, logging) can
-    be added in one place later without touching call sites.
-
     Usage (one-shot):
         messages = MessageBuilder(system_prompt).add_user(text).build()
 
@@ -38,9 +34,9 @@ class MessageBuilder:
                 # Input budget = (window − reserved output) × chars/token. Measured on live
                 # code-heavy payloads (120 jobs, 2026-07-21): 3.5–3.9 chars/token, median 3.67 —
                 # NOT the 4:1 prose heuristic. Output reservation matches the largest completion
-                # the build path requests (16K, module._CODE_MAX_TOKENS); without it the biggest
-                # fix calls could only truncate their OUTPUT, which is how a long tool-call write
-                # comes back cut off mid-arg.
+                # the build path requests (16K); without it the biggest fix calls could only
+                # truncate their OUTPUT, which is how a long tool-call write comes back cut off
+                # mid-arg.
                 # Floor at a third of the window: a small-context model can't reserve 16K of
                 # output, but must still get a usable input slice.
                 budget = int(max(ctx_len - 16_000, ctx_len // 3) * 3.5)
@@ -49,8 +45,6 @@ class MessageBuilder:
         self.MESSAGE_BUDGET_CHARS: int = budget
         self._system = system_prompt
         self._messages: List[Dict[str, Any]] = []
-
-    # ── Append helpers ─────────────────────────────────────────────────────
 
     def add_user(self, content: str) -> "MessageBuilder":
         self._messages.append({"role": "user", "content": content})
@@ -76,11 +70,8 @@ class MessageBuilder:
         return self
 
     def extend(self, messages: List[Dict[str, Any]]) -> "MessageBuilder":
-        """Append a pre-built list of messages (e.g. an existing history)."""
         self._messages.extend(messages)
         return self
-
-    # ── Static factories (for appending single messages to stored history) ──
 
     @staticmethod
     def user_msg(content: str) -> Dict[str, Any]:
@@ -99,8 +90,6 @@ class MessageBuilder:
     @staticmethod
     def tool_msg(tool_call_id: str, content: str) -> Dict[str, Any]:
         return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
-
-    # ── Context optimisation ───────────────────────────────────────────────
 
     def _enforce_budget(
         self, messages: List[Dict[str, Any]]
@@ -126,8 +115,8 @@ class MessageBuilder:
 
         # MESSAGE_BUDGET_CHARS is the INPUT half of the window (system + messages). The system prompt
         # is prepended AFTER this pass but shares that half, so charge it against the budget here —
-        # otherwise a fat system prompt (e.g. the 9-16KB kit doc) silently pushes the real prompt over
-        # the window. Floor at 0 so a system larger than the budget still trims messages to nothing.
+        # otherwise a fat system prompt silently pushes the real prompt over the window. Floor at 0
+        # so a system larger than the budget still trims messages to nothing.
         budget = max(self.MESSAGE_BUDGET_CHARS - len(self._system or ""), 0)
 
         total = sum(_msg_chars(m) for m in messages)
@@ -145,22 +134,17 @@ class MessageBuilder:
         while i < len(result) and total > budget:
             msg = result[i]
 
-            # Never drop a protected (first/last) user message.
             if id(msg) in protected:
                 i += 1
                 continue
 
-            # Drop assistant messages that carry tool_calls together with their
-            # paired tool results (to preserve tool_call_id linkage).
             if msg.get("role") == "assistant" and msg.get("tool_calls"):
                 call_ids = {tc.get("id") for tc in msg["tool_calls"]}
-                # Find all paired tool-result indices immediately following.
                 paired = [
                     j for j in range(i + 1, len(result))
                     if result[j].get("role") == "tool"
                     and result[j].get("tool_call_id") in call_ids
                 ]
-                # Drop assistant msg + all paired results together.
                 indices_to_drop = sorted({i} | set(paired), reverse=True)
                 for idx in indices_to_drop:
                     total -= _msg_chars(result[idx])
@@ -169,7 +153,6 @@ class MessageBuilder:
                 # Don't advance i — next msg is now at the same index.
                 continue
 
-            # Drop any other message (user turns, plain assistant turns, orphaned tool results).
             total -= _msg_chars(msg)
             result.pop(i)
             dropped += 1
@@ -186,8 +169,5 @@ class MessageBuilder:
 
         return result
 
-    # ── Output ─────────────────────────────────────────────────────────────
-
     def build(self) -> List[Dict[str, Any]]:
-        """Return the complete messages list: [system] + accumulated messages."""
         return [{"role": "system", "content": self._system}] + self._enforce_budget(self._messages)

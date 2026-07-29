@@ -45,7 +45,6 @@ def _complete(job_id: str, worker: str = "w1", continuation=None, error=None):
                               continuation=continuation)
 
 
-# ── the ordering invariant ────────────────────────────────────────────────────
 def test_a_batch_with_a_continuation_pending_is_not_complete():
     """The load-bearing order: the follow-up is inserted BEFORE the remaining count. Inverted,
     the last image completion sees an empty batch and finalizes work that hasn't been done."""
@@ -78,7 +77,6 @@ def test_a_job_outside_any_batch_never_reports_complete():
     assert out["batch_complete"] is False
 
 
-# ── attribution ───────────────────────────────────────────────────────────────
 def test_a_continuation_inherits_its_parent_game_batch_and_build():
     """Nothing enqueues the follow-up inside a run_scope, so the parent row is the only place its
     game can come from — the attribution hole that let the platform's most expensive work run off
@@ -117,7 +115,6 @@ def test_a_refused_continuation_still_finishes_the_batch():
     assert out["batch_complete"] is True
 
 
-# ── the finalize claim ────────────────────────────────────────────────────────
 def test_a_batch_finalize_is_claimed_exactly_once():
     _game()
     _complete(_image_job("b1"))
@@ -132,7 +129,6 @@ def test_batch_jobs_returns_parsed_metadata():
     assert [j["metadata"]["asset_id"] for j in jobs] == ["goblin"]
 
 
-# ── the second batch guard ─────────────────────────────────────────────────────
 def test_a_game_with_queued_batch_work_reads_as_active():
     _game()
     _image_job("b1")
@@ -147,7 +143,6 @@ def test_unbatched_work_does_not_count_as_an_active_batch():
     assert store.has_active_batch("g1") is False
 
 
-# ── the reaper's sweeps ───────────────────────────────────────────────────────
 def test_a_lapsed_lease_is_requeued_without_any_claim_traffic():
     """claim_job requeues these too, but only when a claim arrives. A queue that goes quiet would
     otherwise hold a dead job and its reservation forever."""
@@ -189,7 +184,6 @@ def test_a_batch_with_work_left_is_never_offered():
     assert store.batches_awaiting_finalize(-1.0) == []
 
 
-# ── the asset finalize vs the build's lifecycle ───────────────────────────────
 @pytest.fixture
 def _asset_env(monkeypatch, tmp_path):
     from maestro.codegen import asset_chain
@@ -211,7 +205,7 @@ def test_early_finalize_mid_build_defers_staging(_asset_env):
     """A batch lands while the build is still running: renders are on disk, but staging is the
     build finalize's job — and the outcome is a success, not a failure."""
     asset_chain, staged, events = _asset_env
-    _game()                                            # status defaults to non-built
+    _game()
     store.set_status("g1", "building")
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []

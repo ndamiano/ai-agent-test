@@ -30,7 +30,6 @@ def _first_image(result: Optional[Dict]) -> Optional[str]:
     return None
 
 
-# ── continuations: parent result → the job that follows ───────────────────────
 def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
     """The image a TRELLIS job turns into a GLB. The PNG rides the payload as base64 because the
     worker is remote and cannot read the control plane's blob dir."""
@@ -50,7 +49,6 @@ def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
 CONTINUATIONS = {"mesh_from_image": _mesh_from_image}
 
 
-# ── operations: what to do with THIS job's result ─────────────────────────────
 def _save_sprite(md: Dict, result: Dict) -> None:
     src = _first_image(result)
     if src is None:
@@ -76,7 +74,6 @@ def _decimate(md: Dict, result: Dict) -> None:
 OPERATIONS = {"save_sprite": _save_sprite, "decimate": _decimate}
 
 
-# ── finalize: the batch is done ───────────────────────────────────────────────
 def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
     run_id = md["run_id"]
     state = RunState(run_id)
@@ -106,7 +103,6 @@ def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
 FINALIZERS = {"assets": _finalize_assets}
 
 
-# ── the completion hook ───────────────────────────────────────────────────────
 def build_continuation(metadata: Dict, result: Optional[Dict]) -> Optional[Dict]:
     """The follow-up job this completion should enqueue, built before the completion transaction
     so the insert stays inside it."""

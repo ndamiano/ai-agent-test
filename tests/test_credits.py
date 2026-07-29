@@ -42,7 +42,6 @@ def test_deduct_refuses_to_go_negative():
     store.grant(user.id, 5, "admin_grant")
     assert store.deduct(user.id, 5, "build") is True
     assert store.balance(user.id) == 0
-    # No balance to spend — deduct returns False and leaves the balance untouched, logs nothing.
     assert store.deduct(user.id, 1, "build") is False
     assert store.balance(user.id) == 0
     assert _ledger_sum(user.id) == 0
@@ -86,6 +85,6 @@ def test_concurrent_deducts_of_the_last_credit_only_one_wins():
     for t in threads:
         t.join()
 
-    assert sorted(results) == [False, True]   # exactly one deduction succeeded
-    assert store.balance(user.id) == 0        # never negative
+    assert sorted(results) == [False, True]
+    assert store.balance(user.id) == 0
     assert _ledger_sum(user.id) == 0          # the +1 grant and the one winning −1 deduct

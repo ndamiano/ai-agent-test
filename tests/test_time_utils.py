@@ -34,8 +34,8 @@ def test_future_timestamp():
 @pytest.mark.parametrize(
     "ts",
     [
-        "2024-01-15T10:30:00+00:00",  # iso with timezone
-        "2024-01-15T10:30:00",  # iso without timezone
+        "2024-01-15T10:30:00+00:00",
+        "2024-01-15T10:30:00",
     ],
 )
 def test_iso_timestamps(ts):

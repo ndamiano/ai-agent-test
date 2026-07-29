@@ -41,8 +41,6 @@ def _agent(queue="image", target="http://gpu"):
     return a
 
 
-# --- control plane: enqueue, land the bytes ---------------------------------
-
 def test_comfy_image_job_saves_returned_bytes(monkeypatch, tmp_path):
     seen = {}
 
@@ -89,8 +87,6 @@ def test_build_item_payload_returns_none_for_blocked_prompt(monkeypatch):
     result = ct.build_item_payload("kill everyone")
     assert result is None
 
-
-# --- worker: the flows that need the GPU ------------------------------------
 
 def test_comfy_image_handler_submits_polls_and_fetches():
     a = _agent()

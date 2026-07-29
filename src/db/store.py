@@ -1,9 +1,9 @@
 """Platform datastore (sqlite) — games, builds, jobs, events, workers.
 
 The authoritative index for everything the run dir can't answer cheaply: who owns which game,
-lifecycle status, compute grants/spend, the append-only build event log, and (next) the
-inference job queue + worker fleet. The run dir stays the source of truth for the spec and
-build artifacts — rows here point at it, never duplicate it.
+lifecycle status, compute grants/spend, the append-only build event log, the inference job queue
+and the worker fleet. The run dir stays the source of truth for the spec and build artifacts —
+rows here point at it, never duplicate it.
 
 Plain parameterized SQL, short-lived connections, WAL. No sqlite-isms in the DML, so a future
 Postgres port is DDL + driver work, not a rewrite.
@@ -117,10 +117,9 @@ CREATE TABLE IF NOT EXISTS workers (
 
 
 def _db_path() -> Path:
-    # Not resolve_base_path(): tools repoint the execution_context working dir (the reskin points it
-    # at game/assets/ for ComfyUI), which would fork an empty db there — an enqueued job would land
-    # where no worker is looking. data_dir, not working_directory: control-plane state does not
-    # belong in the artifact output tree.
+    # Not resolve_base_path(): the execution_context working dir is repointable per call, and a db
+    # that followed it would fork an empty copy there — an enqueued job would land where no worker
+    # is looking. data_dir, not working_directory: control-plane state is not artifact output.
     return Path(settings_manager.get_settings()["data_dir"]).resolve() / "platform.db"
 
 
@@ -160,7 +159,6 @@ def _row_dict(row: Optional[sqlite3.Row]) -> Optional[Dict]:
     return dict(row) if row is not None else None
 
 
-# ── games ─────────────────────────────────────────────────────────────────────
 def create_game(game_id: str, user_id: str) -> None:
     now = time.time()
     with _db() as conn:
@@ -205,7 +203,6 @@ def set_status(game_id: str, status: str) -> None:
 
 
 def charge_game(game_id: str, credits: int, seconds: float) -> None:
-    """Record a credit spend against this game and grant its compute budget."""
     with _db() as conn:
         conn.execute(
             "UPDATE games SET credits_spent = credits_spent + ?, "
@@ -251,7 +248,6 @@ def compute_remaining(game_id: str) -> float:
         return _remaining_locked(conn, game_id)
 
 
-# ── builds ────────────────────────────────────────────────────────────────────
 def create_build(game_id: str, kind: str = "build") -> str:
     build_id = uuid.uuid4().hex[:12]
     with _db() as conn:
@@ -284,7 +280,6 @@ def builds_for(game_id: str) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-# ── jobs (the worker-pull inference queue) ────────────────────────────────────
 # Producers (the build loop, in-process) enqueue; workers claim over HTTP. A claim is a single
 # atomic UPDATE...RETURNING, so two workers can never take the same job. A claimed job whose
 # lease lapses (worker died mid-inference) returns to pending on the next claim sweep — the
@@ -319,8 +314,8 @@ def enqueue_job(queue: str, payload: Dict, game_id: Optional[str] = None,
     headroom and all take it. Raises InsufficientCompute when the queue's estimate does
     not fit in what's left.
 
-    A job with no game — chat, spec drafting — is platform cost rather than a game's, so it is
-    attributed to nobody and gated by nothing.
+    A job with no game is platform cost rather than a game's, so it is attributed to nobody and
+    gated by nothing.
 
     `metadata` is control-plane only and never reaches a worker: it carries `then` (the follow-up
     job, this result's operations, the batch's finalize). `batch_id` groups a chain so the last
@@ -509,7 +504,7 @@ def claim_batch_finalize(batch_id: str) -> bool:
 
 def has_active_batch(game_id: str) -> bool:
     """Whether this game has batched work still in the queue. The asset stage outlives the thread
-    that started it, so this is what a second skin request has to check."""
+    that started it, so this is what a second asset request has to check."""
     with _db() as conn:
         row = conn.execute(
             "SELECT 1 FROM jobs WHERE game_id = ? AND batch_id IS NOT NULL "
@@ -569,8 +564,7 @@ def llm_turns_for_game(game_id: str, limit: int = 2000) -> List[Dict]:
 
 
 def llm_turns_platform(limit: int = 2000) -> List[Dict]:
-    """The turns no game owns: chat and spec drafting run before a game exists to bill, so they
-    enqueue outside a run_scope. Nothing else records them — without this they are unreadable."""
+    """The turns no game owns — enqueued with no game to bill. Nothing else records them."""
     return _llm_turns("game_id IS NULL", (), limit)
 
 
@@ -591,7 +585,6 @@ def llm_turn_buckets() -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-# ── reaper sweeps ─────────────────────────────────────────────────────────────
 def requeue_lapsed_leases() -> int:
     """Return claimed jobs whose worker stopped heartbeating to pending. claim_job does this too,
     but only when a claim arrives — a queue that goes quiet would otherwise hold a dead job (and
@@ -652,7 +645,6 @@ def batches_awaiting_finalize(grace_seconds: float) -> List[str]:
     return [r["batch_id"] for r in rows]
 
 
-# ── workers (fleet + utilization facts) ───────────────────────────────────────
 def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
                 source: Optional[str] = None, pod_id: Optional[str] = None) -> None:
     now = time.time()
@@ -743,7 +735,7 @@ def gpu_seconds(queue: str, since: Optional[float] = None) -> Dict:
              whether or not the user got anything, mirroring workers.busy_seconds.
     billed = only delivered, game-attributed work (status done, game_id set) — what actually
              debited games.seconds_used.
-    The gap between them is unbilled GPU we ate (failures, chat/spec platform jobs)."""
+    The gap between them is unbilled GPU we ate (failures, and jobs no game owns)."""
     clause = "AND finished_at >= ?" if since is not None else ""
     args = [queue] + ([since] if since is not None else [])
     with _db() as conn:
@@ -756,7 +748,6 @@ def gpu_seconds(queue: str, since: Optional[float] = None) -> Dict:
     return {"paid": row["paid"], "billed": row["billed"]}
 
 
-# ── events (append-only build/spec lifecycle log) ─────────────────────────────
 def record_event(game_id: str, kind: str, payload: Dict, build_id: Optional[str] = None) -> None:
     with _db() as conn:
         conn.execute(

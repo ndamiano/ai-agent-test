@@ -44,8 +44,8 @@ class TestOwnerCache(unittest.TestCase):
 class TestEventRouting(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.mgr = manager_mod.manager
-        self.ws1 = AsyncMock(spec=WebSocket)      # u1
-        self.ws2 = AsyncMock(spec=WebSocket)      # u2
+        self.ws1 = AsyncMock(spec=WebSocket)
+        self.ws2 = AsyncMock(spec=WebSocket)
         await self.mgr.connect(self.ws1, "u1")
         await self.mgr.connect(self.ws2, "u2")
         self.bus = EventBus()

@@ -14,8 +14,8 @@ class TestConnectionManagerBroadcast(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.manager = ConnectionManager()
-        self.ws1 = AsyncMock(spec=WebSocket)   # user u1
-        self.ws2 = AsyncMock(spec=WebSocket)   # user u2
+        self.ws1 = AsyncMock(spec=WebSocket)
+        self.ws2 = AsyncMock(spec=WebSocket)
         await self.manager.connect(self.ws1, "u1")
         await self.manager.connect(self.ws2, "u2")
 
@@ -101,8 +101,6 @@ class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
         manager_mock.disconnect.assert_called_with(ws)
 
     async def test_endpoint_sends_error_when_task_not_found(self):
-        # With the new global websocket, task-not-found errors are not sent from the endpoint
-        # They are handled by the client filtering messages by task_id
         ws, logger_mock, manager_mock = await self._run_endpoint(
             receive_raise=Exception("something went wrong"),
         )

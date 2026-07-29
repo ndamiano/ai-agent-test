@@ -43,7 +43,6 @@ def _lock_for(run_id: str) -> threading.Lock:
         return lk
 
 
-# ── lifecycle ─────────────────────────────────────────────────────────────────
 def kickoff(run_id: str, *, kind: str = "build", note: str = "",
             max_steps: Optional[int] = None) -> str:
     """Create the build attempt row and start the build. Returns the build_id."""
@@ -231,7 +230,6 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     _emit("build_done", run_id, ok=ok, steps=cursor.step)
 
 
-# ── enqueue + events ──────────────────────────────────────────────────────────
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:
     """Land one build llm turn as a pending `llm` job. Its completion re-enters advance. A refused
     compute budget first PREEMPTS the run's queued (unclaimed) asset renders — gameplay beats skin —

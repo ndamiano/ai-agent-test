@@ -27,7 +27,6 @@ def _decide(stats=IDLE, live=(), stale=(), terminated=(), pods=(), since=1e9, cf
                   list(pods), since)
 
 
-# ── scale-up ──────────────────────────────────────────────────────────────────
 def test_scale_from_zero_on_a_single_pending_job():
     assert _decide(stats=QueueStats(1, 0, 5.0)) == [StartPod("mesh")]
 
@@ -76,7 +75,6 @@ def test_at_most_one_start_pod_per_tick():
     assert actions == [StartPod("mesh")]
 
 
-# ── reaping ───────────────────────────────────────────────────────────────────
 def test_wedged_pod_reaped_past_the_boot_deadline_and_capacity_recovers():
     pod = PodInfo("p1", "maestro-mesh-a1", age_seconds=1000)
     actions = _decide(stats=QueueStats(1, 0, 5.0), pods=[pod])

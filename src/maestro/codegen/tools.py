@@ -1,4 +1,4 @@
-"""The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media, done.
+"""The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media.
 
 Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.

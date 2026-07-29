@@ -1,12 +1,3 @@
-"""Contract tests for MessageBuilder's three stateful context transforms.
-
-The remaining transform (`_enforce_budget`,
-`_enforce_budget`) shape every LLM message array in the app and had NO tests —
-they rot silently because a regression still produces a *valid-looking* message
-list, just one that leaks context, blows the budget, or breaks tool linkage.
-Each test feeds a real message list and asserts the transformed output.
-"""
-
 import pytest
 
 import llm_clients.message_builder as mod
@@ -41,8 +32,6 @@ def _tool_result(call_id, content):
     return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
-# ── _deduplicate_tool_results ────────────────────────────────────────────────
-
 def test_budget_under_limit_unchanged(mb):
     # WHY: when the conversation fits, the transform must be a no-op — dropping
     # anything early would throw away history for no reason.
@@ -68,7 +57,6 @@ def test_budget_drops_oldest_first_protects_latest_user(mb):
     ]
     out = mb._enforce_budget(msgs)
     assert {"role": "user", "content": "now"} in out
-    # the fat old middle turn is gone
     assert all(m["content"] != "Y" * 100 for m in out)
 
 
@@ -148,6 +136,3 @@ def test_budget_charges_system_prompt_against_input_half(monkeypatch):
     out = big._enforce_budget(list(msgs))                   # effective budget 300 → the fat turn drops
     assert all(m["content"] != "X" * 400 for m in out)
     assert {"role": "user", "content": "now"} in out
-
-
-# ── build(): the composed pipeline ───────────────────────────────────────────

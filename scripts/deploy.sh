@@ -14,7 +14,6 @@ if [ -z "${PROD_HOST}" ]; then
   exit 1
 fi
 
-# Remote dir the app source lives in on the prod box.
 REMOTE_DIR="${REMOTE_DIR:-/opt/maestro}"
 # Port to probe for the health check (matches PORT in the prod .env).
 HEALTH_PORT="${HEALTH_PORT:-8000}"

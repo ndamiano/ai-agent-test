@@ -1,4 +1,3 @@
-# tests/test_connectors.py
 import unittest
 
 from llm_clients.connector import get_connector
@@ -31,18 +30,15 @@ class TestConnectors(unittest.TestCase):
         
         response = self.connector.generate_with_tools(messages, tools)
         
-        # Assertions
         self.assertIn("choices", response)
         self.assertIsNotNone(response["choices"][0]["message"])
         
-        # Check if we got a tool call
         message = response["choices"][0]["message"]
         if message.get("tool_calls"):
             tool_call = message["tool_calls"][0]
             print(f"✓ AI wants to call: {tool_call['function']['name']}")
             print(f"✓ With arguments: {tool_call['function']['arguments']}")
             
-            # Verify the tool call
             self.assertEqual(tool_call['function']['name'], 'multiply')
             self.assertIn('a', tool_call['function']['arguments'])
             self.assertIn('b', tool_call['function']['arguments'])

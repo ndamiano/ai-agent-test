@@ -1,5 +1,3 @@
-"""Tests for execution context and automatic task_id injection"""
-
 import contextvars
 
 from tools.execution_context import (
@@ -11,10 +9,7 @@ from tools.execution_context import (
 
 
 class TestExecutionContext:
-    """Test execution context management"""
-
     def test_context_manager_basic(self):
-        """Test that execution context sets and clears properly"""
         assert get_task_id() is None
         assert get_subtask_id() is None
 
@@ -23,13 +18,11 @@ class TestExecutionContext:
             assert get_subtask_id() == "sub-456"
             assert get_execution_context()['task_id'] is not None
 
-        # Context cleared after exiting
         assert get_task_id() is None
         assert get_subtask_id() is None
         assert get_execution_context()['task_id'] is None
 
     def test_partial_context(self):
-        """Test context with only task_id or only subtask_id"""
         with execution_context(task_id="test-task"):
             assert get_task_id() == "test-task"
             assert get_subtask_id() is None
@@ -39,7 +32,6 @@ class TestExecutionContext:
             assert get_subtask_id() == "test-sub"
 
     def test_get_execution_context(self):
-        """Test getting full execution context"""
         context = get_execution_context()
         assert context == {'task_id': None, 'subtask_id': None, 'working_directory': None}
 

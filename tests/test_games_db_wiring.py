@@ -258,7 +258,7 @@ def test_asset_blob_streams_and_guards(client):
     assert client.get(f"/api/games/{run_id}/assets", headers=other).status_code == 403
 
 
-def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
+def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypatch):
     """A single-asset regen puts ONE image job on the queue carrying the merged prompt (in the
     comfy workflow) + the asset_id/then in metadata — the batch's finalize saves and re-stages it.
     No whole-game re-render."""
@@ -270,7 +270,8 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
                                       "prompt": "a hero"}]})
     db_store.charge_game(run_id, 1, 10_000.0)   # grant compute so the enqueue is admitted
     # The merge is an LLM call; the note-vs-original contract is tested on _merge_prompt itself.
-    assets_mod._merge_prompt = lambda original, note: "a brave knight, pixel art"
+    monkeypatch.setattr(assets_mod, "_merge_prompt",
+                        lambda original, note: "a brave knight, pixel art")
 
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
                     json={"prompt": "make him a knight"})
@@ -283,6 +284,32 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client):
     meta = json.loads(job["metadata"])
     assert meta["asset_id"] == "hero"
     assert meta["then"] == {"operations": ["save_sprite"], "finalize": "assets"}
+
+
+def test_regenerate_merge_is_attributed_to_the_game(client, monkeypatch):
+    """The prompt merge is a real GPU job, and the only enqueue here that goes through the blocking
+    connector — which reads the owning game off the run scope. Outside that scope it lands with no
+    game_id, so it is neither metered nor gated by the budget it is spending."""
+    import maestro.codegen.assets as assets_mod
+    from tools.execution_context import get_run_id
+
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
+    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
+                                      "prompt": "a hero"}]})
+    db_store.charge_game(run_id, 1, 10_000.0)
+    seen = {}
+
+    def _merge(original, note):
+        seen["run_id"] = get_run_id()
+        return "merged"
+
+    monkeypatch.setattr(assets_mod, "_merge_prompt", _merge)
+
+    r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
+                    json={"prompt": "make him a knight"})
+    assert r.status_code == 200
+    assert seen["run_id"] == run_id
 
 
 def test_regenerate_cross_user_is_403(client):

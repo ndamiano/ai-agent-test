@@ -32,7 +32,6 @@ def _ledger_rows(user_id, reason):
         ).fetchall()
 
 
-# ── admin grant CLI ───────────────────────────────────────────────────────────
 def test_cli_grant_increments_balance_and_logs_a_transaction(capsys):
     user = store.create_user("alice", "pw")
     assert cli.main(["grant", "alice", "50"]) == 0
@@ -49,7 +48,6 @@ def test_cli_grant_on_unknown_handle_fails_cleanly():
     assert "ghost" in str(exc.value.code)
 
 
-# ── provider webhook ──────────────────────────────────────────────────────────
 class _StubProvider(CreditProvider):
     """Verifies iff the payload carries a matching secret — stands in for signature checking."""
 

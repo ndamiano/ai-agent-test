@@ -66,8 +66,6 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), **kw)
 
 
-# ---------------------------------------------------------------- model serving
-
 def router_models():
     try:
         with urllib.request.urlopen(f"{ROUTER}/v1/models", timeout=15) as r:
@@ -153,8 +151,6 @@ def wait_model(model, timeout=900):
         json.load(r)
     return time.time() - t0
 
-
-# ---------------------------------------------------------------- harness adapters
 
 def _naked_like(script, model, request, out, timeout):
     env = dict(os.environ, LLM_BASE=ROUTER, LLM_MODEL=model)
@@ -255,8 +251,6 @@ HARNESSES = {"naked": run_naked, "compact": run_compact,
              "iface": run_iface, "maestro": run_maestro}
 TIMEOUTS = {"naked": 3600, "compact": 3600, "iface": 5400, "maestro": 10800}
 
-
-# ---------------------------------------------------------------- commands
 
 def cmd_fetch(a):
     """Download one quant into the router's models dir, flattening shards into it."""

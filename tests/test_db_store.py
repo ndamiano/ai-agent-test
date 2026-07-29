@@ -15,7 +15,6 @@ def _tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
-# ── games ─────────────────────────────────────────────────────────────────────
 def test_create_and_owner():
     store.create_game("g1", "u1")
     assert store.owner_of("g1") == "u1"
@@ -60,7 +59,6 @@ def test_seconds_used_accumulates():
     assert store.game("g1")["seconds_used"] == 20.0
 
 
-# ── builds ────────────────────────────────────────────────────────────────────
 def test_build_lifecycle():
     store.create_game("g1", "u1")
     bid = store.create_build("g1", kind="build")
@@ -79,7 +77,6 @@ def test_a_game_accumulates_builds():
     assert [b["kind"] for b in store.builds_for("g1")] == ["build", "fix", "assets"]
 
 
-# ── events ────────────────────────────────────────────────────────────────────
 def test_events_append_and_replay_after_id():
     store.create_game("g1", "u1")
     store.record_event("g1", "spec_proposed", {"title": "Moon Miner"})
@@ -101,7 +98,6 @@ def test_event_payload_survives_non_json_values():
     assert e["payload"]["path"] == "/tmp/x"
 
 
-# ── cancelling a paused build's turn ──────────────────────────────────────────
 def _build_with_art():
     store.create_game("g1", "u1")
     store.charge_game("g1", 10, 144_000)

@@ -72,7 +72,6 @@ def test_token_stops_resolving_after_its_ttl(monkeypatch):
     token = store.issue_token(user.id)
     assert store.resolve_token(token) is not None
 
-    # Age the session past the TTL by shifting "now" forward — the token no longer resolves.
     real_time = s.time.time
     monkeypatch.setattr(s.time, "time",
                         lambda: real_time() + store.SESSION_TTL_SECONDS + 1)
@@ -85,4 +84,4 @@ def test_token_stored_only_as_hash(tmp_path):
     conn = sqlite3.connect(str(tmp_path / "auth.db"))
     rows = [r[0] for r in conn.execute("SELECT token_hash FROM sessions").fetchall()]
     conn.close()
-    assert token not in rows  # the raw token never touches disk
+    assert token not in rows

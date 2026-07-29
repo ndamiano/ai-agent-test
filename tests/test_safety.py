@@ -19,8 +19,6 @@ from db import store as db_store
 from tools.safety import SafetyViolation, log_violation, screen_image_prompt, screen_text
 
 
-# --- screen_text: what passes -------------------------------------------------
-
 @pytest.mark.parametrize("text", [
     None,
     "",
@@ -40,8 +38,6 @@ def test_word_boundaries_prevent_substring_false_positives():
     # "sex" inside "Essex", "kid" inside "kidney" — boundary-anchored patterns must not fire.
     assert screen_text("a detective in Essex investigates a kidney heist") is None
 
-
-# --- screen_text: what blocks -------------------------------------------------
 
 def test_unambiguous_term_blocks_regardless_of_context():
     v = screen_text("a game with child porn in it")
@@ -85,8 +81,6 @@ def test_screen_image_prompt_is_the_same_screen():
     assert screen_image_prompt("a heroic knight, pixel art") is None
 
 
-# --- logging contract ---------------------------------------------------------
-
 def test_log_violation_records_terms_and_user_but_never_the_text(caplog):
     full_text = "the full user request must never be persisted"
     v = SafetyViolation("csam_combination", "teen+nude")
@@ -98,8 +92,6 @@ def test_log_violation_records_terms_and_user_but_never_the_text(caplog):
     assert "teen+nude" in record
     assert full_text not in record
 
-
-# --- the new-game endpoint's refusal path -------------------------------------
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):

@@ -29,24 +29,19 @@ class LLMRateLimiter:
                 now = self._clock()
                 elapsed = now - self.last_update
 
-                # Add tokens based on elapsed time
                 self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
                 self.last_update = now
 
-                # Try to consume a token
                 if self.tokens >= 1:
                     self.tokens -= 1
                     return True
 
-                # If not blocking, return immediately
                 if not blocking:
                     return False
 
-                # Check timeout
                 if deadline is not None and now >= deadline:
                     return False
 
-                # Calculate wait time
                 wait_time = (1.0 - self.tokens) / self.rate
 
             # Wait outside the lock

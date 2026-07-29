@@ -82,7 +82,6 @@ def _db():
         conn.close()
 
 
-# ── password + token hashing ──────────────────────────────────────────────────
 def _hash_password(password: str, salt: Optional[bytes] = None) -> str:
     salt = salt or secrets.token_bytes(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ROUNDS)
@@ -107,7 +106,6 @@ def _row_to_user(row: sqlite3.Row) -> User:
     return User(id=row["id"], handle=row["handle"], role=row["role"])
 
 
-# ── users ─────────────────────────────────────────────────────────────────────
 def create_user(handle: str, password: str, role: str = "user") -> User:
     handle = handle.strip()
     if not handle:
@@ -156,7 +154,6 @@ def authenticate(handle: str, password: str) -> Optional[User]:
     return _row_to_user(row)
 
 
-# ── sessions (bearer tokens) ───────────────────────────────────────────────────
 def issue_token(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     with _db() as conn:
@@ -183,11 +180,8 @@ def revoke_token(token: str) -> None:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
 
-# ── credit ledger ───────────────────────────────────────────────────────────────
-# Balance lives on the user row; every change also lands a signed row in
-# credit_transactions, so the balance always reconciles with the log's sum. Deduct is a
-# single check-and-decrement statement — atomic under concurrency, refuses to go negative,
-# and returns False (not an exception) so the caller branches on it rather than catching.
+# Balance lives on the user row; every change also lands a signed row in credit_transactions, so
+# the balance always reconciles with the log's sum.
 def _log_txn(conn, user_id: str, delta: int, reason: str, run_id: Optional[str]) -> None:
     conn.execute(
         "INSERT INTO credit_transactions (id, user_id, delta, reason, run_id, created_at) "
@@ -203,7 +197,6 @@ def balance(user_id: str) -> int:
 
 
 def grant(user_id: str, n: int, reason: str = "grant", run_id: Optional[str] = None) -> int:
-    """Add `n` credits and log it. Returns the new balance."""
     with _db() as conn:
         conn.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (n, user_id))
         _log_txn(conn, user_id, n, reason, run_id)

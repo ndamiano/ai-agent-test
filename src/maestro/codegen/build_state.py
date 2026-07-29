@@ -29,14 +29,13 @@ class BuildCursor:
     t0: float = 0.0
     ok: Optional[bool] = None
     request: str = ""                             # overrides the spec-rendered request (a fix note)
-    # the build turn machine
     started: bool = False
     turn: int = 0
     # what the SERVER reported for the last turn — an estimate of ours that drifts low would hit the
     # context window with no warning.
     prompt_tokens: int = 0
     compacted: int = 0                            # transcript rounds dropped so far
-    no_call_streak: int = 0                       # consecutive turns that produced no tool call
+    no_call_streak: int = 0
     # hashed failing tool call -> times sent. Per call, not just the last one: a stuck model
     # re-reads between retries, and that read must not clear the failing edit's count.
     repeat_counts: Dict[str, int] = field(default_factory=dict)
@@ -47,7 +46,6 @@ class BuildCursor:
     history: List[Dict] = field(default_factory=list)
 
 
-# ── persistence ───────────────────────────────────────────────────────────────
 def _path(run_dir: Path) -> Path:
     return Path(run_dir) / _STATE_FILE
 

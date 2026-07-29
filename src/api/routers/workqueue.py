@@ -179,7 +179,7 @@ async def complete(body: CompleteBody, request: Request):
     _require_worker(request)
     blobs, metadata, continuation, queue = await asyncio.to_thread(
         _prepare, body.job_id, body.result)
-    # sqlite, not the event loop: the completion txn now also admits and inserts the follow-up,
+    # sqlite, not the event loop: the completion txn also admits and inserts the follow-up,
     # and _emit writes an events row.
     outcome = await asyncio.to_thread(_land, body, continuation, queue)
     if outcome is None:
@@ -188,7 +188,7 @@ async def complete(body: CompleteBody, request: Request):
         return {"ok": False}
 
     # Fire-and-forget: the completion's follow-up work must not block the worker's response. For a
-    # BUILD turn that work is the whole next advance (gates, tool dispatch, the next enqueue), for
+    # BUILD turn that work is the whole next advance (tool dispatch, staging, the next enqueue), for
     # an ASSET job it is the ops + finalize. Either way it's off the event loop; a restart between
     # here and it is what the reaper backstops. to_thread, not a bare task — sync work on the loop
     # stalls every other completion.

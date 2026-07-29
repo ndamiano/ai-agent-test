@@ -13,7 +13,6 @@ def format_relative_time(iso_timestamp: str) -> str:
     now = datetime.now(UTC)
     diff = now - dt
     
-    # Handle future timestamps
     if diff.total_seconds() < 0:
         return "just now"
     

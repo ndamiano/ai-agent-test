@@ -56,7 +56,6 @@ def test_gpu_seconds_window_bounds_on_finished_at():
     store.charge_game("g1", 1, 10_000)
     _finish("llm", 12.0, game_id="g1")
 
-    # A window opening in the future excludes the just-finished job; one in the past keeps it.
     assert store.gpu_seconds("llm", since=time.time() + 100)["paid"] == 0.0
     assert store.gpu_seconds("llm", since=0)["paid"] == 12.0
 
@@ -69,7 +68,6 @@ def test_backlog_seconds_sums_unfinished_estimates():
     store.enqueue_job("llm", {}, game_id="g1")
     assert store.backlog_seconds("llm") == 60.0
 
-    # Finishing one of the two drops it from the backlog, leaving one pending.
     store.worker_seen("w1", "llm")
     claimed = store.claim_job("llm", "w1", 60)
     store.complete_job(claimed["id"], "w1", {"ok": True}, None, exec_seconds=12.0)

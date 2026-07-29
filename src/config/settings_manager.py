@@ -25,12 +25,9 @@ class SettingsManager:
     def __init__(self):
         self._settings_lock = Lock()
 
-        # Get project root directory
         project_root = Path(__file__).parent.parent
         self.settings_path = project_root / "config" / "settings.json"
 
-        # Default settings
-        # Get absolute path for working directory
         default_working_dir = os.getenv("WORKING_DIRECTORY", "outputs")
         if not Path(default_working_dir).is_absolute():
             default_working_dir = str((project_root / default_working_dir).resolve())
@@ -73,11 +70,9 @@ class SettingsManager:
             }
         }
 
-        # Load or create settings
         self._settings = self._load_settings()
 
     def _load_settings(self) -> Dict[str, Any]:
-        """Load settings from JSON file, create with defaults if doesn't exist"""
         try:
             if self.settings_path.exists():
                 with open(self.settings_path, 'r') as f:
@@ -87,7 +82,6 @@ class SettingsManager:
                     # rather than the schema default it looks like — layer the defaults under it.
                     return _merge(self.defaults, settings)
             else:
-                # Create settings file with defaults
                 logger.info(f"Settings file not found, creating with defaults at {self.settings_path}")
                 self._save_settings(self.defaults)
                 return self.defaults.copy()
@@ -96,9 +90,7 @@ class SettingsManager:
             return self.defaults.copy()
 
     def _save_settings(self, settings: Dict[str, Any]) -> None:
-        """Save settings to JSON file"""
         try:
-            # Ensure config directory exists
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
 
             with open(self.settings_path, 'w') as f:
@@ -119,5 +111,4 @@ class SettingsManager:
         return DEFAULT_MODEL_CATEGORIES.get(category, ModelCategorySettings())
 
 
-# Global singleton instance
 settings_manager = SettingsManager()

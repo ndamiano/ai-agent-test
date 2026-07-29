@@ -15,14 +15,12 @@ class ConnectionManager:
         self.logger = logging.getLogger(__name__)
 
     async def connect(self, websocket: WebSocket, user_id: str) -> None:
-        """Accept the connection and register it under its authenticated user."""
         await websocket.accept()
         self._user_by_ws[websocket] = user_id
         self._sockets_by_user.setdefault(user_id, set()).add(websocket)
         self.logger.info("WebSocket connected user=%s (total: %d)", user_id, len(self._user_by_ws))
 
     def disconnect(self, websocket: WebSocket) -> None:
-        """Remove the connection from both indexes."""
         user_id = self._user_by_ws.pop(websocket, None)
         if user_id is not None:
             socks = self._sockets_by_user.get(user_id)
@@ -33,11 +31,10 @@ class ConnectionManager:
         self.logger.info("WebSocket disconnected (total: %d)", len(self._user_by_ws))
 
     async def broadcast_to_user(self, user_id: str, message: dict) -> None:
-        """Send to every socket owned by one user (nothing if they have none open)."""
         await self._send_many(self._sockets_by_user.get(user_id), message)
 
     async def broadcast_to_all(self, message: dict) -> None:
-        """Send to every connected socket — only for events with no owning run/user."""
+        """Only for events with no owning run/user — anything run-scoped must route by owner."""
         await self._send_many(list(self._user_by_ws.keys()), message)
 
     async def _send_many(self, sockets: Optional[Iterable[WebSocket]], message: dict) -> None:

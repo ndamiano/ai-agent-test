@@ -12,7 +12,6 @@ from pathlib import Path
 RUNTIME_DIR = Path(__file__).resolve().parents[3] / "runtime"
 GAME_DIR = "game"
 ENTRY = "index.html"
-_SOURCE_EXTS = (".html", ".js", ".mjs", ".css", ".json")
 
 
 def game_dir(run_dir) -> Path:
@@ -33,23 +32,6 @@ def seed_vendor(run_dir) -> None:
 
 def entry_path(run_dir) -> Path:
     return game_dir(run_dir) / ENTRY
-
-
-def game_files(run_dir) -> dict:
-    """{relative path: source} for the files the model AUTHORED. Skips `_`-prefixed scratch and the
-    vendored renderer, which is not the game."""
-    d = game_dir(run_dir)
-    if not d.exists():
-        return {}
-    vendor = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
-    out = {}
-    for p in sorted(d.rglob("*")):
-        if not p.is_file() or p.name.startswith("_") or p.suffix.lower() not in _SOURCE_EXTS:
-            continue
-        if p.name in vendor:
-            continue
-        out[str(p.relative_to(d))] = p.read_text(encoding="utf-8", errors="replace")
-    return out
 
 
 def is_staged(slug: str) -> bool:

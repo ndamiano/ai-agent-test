@@ -36,8 +36,7 @@ def llm(agent, payload):
     """The llm queue. The request arrives CANONICAL (OpenAI chat shape); this translates it into
     whatever dialect `agent.api` says the local server speaks, and translates the reply back.
 
-    The control plane never learns what engine is behind a worker — that is the whole point of
-    putting this here. Adding an engine is a branch in this function plus an `--api` value."""
+    Adding an engine is a branch in this function plus an `--api` value."""
     from llm_clients import wire
     body = payload.get("body") or {}
     if agent.api == "responses":

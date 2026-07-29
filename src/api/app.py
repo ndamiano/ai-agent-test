@@ -49,20 +49,16 @@ install_auth(app)
 
 @app.on_event("startup")
 async def startup_event():
-    """Start the event bus, the queue reaper, and (when configured) the autoscaler."""
     try:
         await event_bus.start()
         logging.info("Event bus started")
 
-        # Queue housekeeping. Unconditional, unlike the autoscaler below: a wedged job, a dropped
-        # asset finalize, or a stuck build (its driver process died mid-turn) needs reaping on the
-        # home box too. Builds have no dedicated worker any more — each build's llm turns ride the
-        # shared `llm` queue and the completion handler drives the next.
+        # Unconditional, unlike the autoscaler below: a wedged job, a dropped asset finalize, or a
+        # stuck build (its driver process died mid-turn) needs reaping on the home box too.
         app.state.reaper = Reaper()
         app.state.reaper.start()
         logging.info("Queue reaper started")
 
-        # RunPod autoscaler — only when RunPod is configured.
         _settings = settings_manager.get_settings()
         _rp = _settings.get("runpod") or {}
         if _rp.get("enabled") and _rp.get("api_key"):
@@ -78,7 +74,6 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Shutdown event handler to clean up resources."""
     try:
         if getattr(app.state, "autoscaler", None):
             app.state.autoscaler.stop()
@@ -94,7 +89,6 @@ async def healthz():
     """Liveness probe. (`/` serves the SPA in a deployed build, so health lives here.)"""
     return {"status": "healthy", "server": "running"}
 
-# Mount routers
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])

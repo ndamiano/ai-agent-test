@@ -1,5 +1,3 @@
-"""Test LLM API rate limiting"""
-
 from llm_clients.rate_limiter import LLMRateLimiter, get_llm_rate_limiter
 
 
@@ -22,8 +20,6 @@ class FakeClock:
 
 
 class TestLLMRateLimiter:
-    """Test the LLM rate limiter functionality"""
-
     def test_rate_limiter_allows_burst(self):
         # Contract: a fresh bucket permits an immediate burst up to capacity, then refuses.
         clock = FakeClock()
@@ -32,7 +28,6 @@ class TestLLMRateLimiter:
         assert limiter.acquire(blocking=False) is True
         assert limiter.acquire(blocking=False) is True
 
-        # Capacity exhausted, no time has passed: third non-blocking acquire fails.
         assert limiter.acquire(blocking=False) is False
 
     def test_rate_limiter_refills_tokens(self):
@@ -91,8 +86,6 @@ class TestLLMRateLimiter:
 
 
 class TestLLMRateLimiterIntegration:
-    """Test rate limiting integration with the connector"""
-
     def test_connector_rate_limiting(self, monkeypatch):
         # Contract: the shared singleton is sized so a full parallel-fix batch (8) bursts
         # through, then the rate gates until tokens refill. Driven on a fake clock so the

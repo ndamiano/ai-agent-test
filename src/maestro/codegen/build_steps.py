@@ -51,7 +51,6 @@ def _nudge(streak: int) -> str:
     return _NUDGES[min(streak, len(_NUDGES)) - 1]
 
 
-# ── step outcomes ─────────────────────────────────────────────────────────────
 @dataclass
 class Infer:
     """Suspend here: enqueue one `llm` job with these messages, die, resume on completion."""
@@ -73,7 +72,6 @@ class Done:
 Outcome = Union[Infer, Done]
 
 
-# ── tool schemas ──────────────────────────────────────────────────────────────
 # Descriptions stay short: every clause is another instruction competing with the request, on every
 # turn.
 LIST_SCHEMA = {"type": "function", "function": {
@@ -134,7 +132,6 @@ def _n_ctx() -> int:
     return int((settings_manager.get_settings().get("llm") or {}).get("n_ctx") or 32768)
 
 
-# ── the turn ──────────────────────────────────────────────────────────────────
 def step(spec, run_dir, tools, cursor, result) -> Outcome:
     """One turn: apply the completed turn's tool calls, then ask for the next. `None` is no turn to
     apply (re-ask as-is); `{}` is a turn that ran and returned nothing, which the no-call branch
@@ -315,7 +312,6 @@ def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     return Infer(msgs, SCHEMAS, MAX_TOKENS, report=report)
 
 
-# ── compaction ────────────────────────────────────────────────────────────────
 def rounds(history: List[dict]) -> List[List[dict]]:
     """Split the transcript into whole rounds — one assistant message plus the tool results
     answering it. Dropping must never split one: a `tool` message whose matching assistant

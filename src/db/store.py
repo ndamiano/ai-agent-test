@@ -527,11 +527,15 @@ def batch_jobs(batch_id: str) -> List[Dict]:
 # The prompt log's index columns. The payload/result bodies stay in the db — one build's payloads
 # run to megabytes — so a listing carries only sizes plus the head of the system prompt, and the
 # reader pulls one turn's full text at a time.
+# A db that has served both wire formats holds both, and a chat body's system prompt is messages[0]
+# — MessageBuilder.build is what puts it there.
 _TURN_COLUMNS = (
     "id, game_id, build_id, status, model, created_at, started_at, finished_at, "
     "exec_seconds, error, metadata, length(payload) AS payload_chars, "
-    "json_extract(payload, '$.body.instructions') AS system, "
-    "json_array_length(json_extract(payload, '$.body.input')) AS n_messages"
+    "COALESCE(json_extract(payload, '$.body.instructions'), "
+    "         json_extract(payload, '$.body.messages[0].content')) AS system, "
+    "COALESCE(json_array_length(json_extract(payload, '$.body.input')), "
+    "         json_array_length(json_extract(payload, '$.body.messages')) - 1) AS n_messages"
 )
 
 _SYSTEM_HEAD_CHARS = 160

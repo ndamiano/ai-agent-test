@@ -1,10 +1,10 @@
 """The PROMPT LOG — operator-only, read-only, every game.
 
 Nothing instruments the build to make this work: an llm turn IS a jobs row, its payload IS the
-exact Responses body that went to the model (instructions + input + tools) and its result IS the
-reply, so the whole conversation behind any game is readable after the fact. This router only
-reshapes those rows for reading; `require_admin` gates all of it, since a bucket list spans every
-user's games.
+body that went to the model (system prompt + messages + tools, in whichever wire format the run
+used) and its result IS the reply, so the whole conversation behind any game is readable after the
+fact. This router only reshapes those rows for reading; `require_admin` gates all of it, since a
+bucket list spans every user's games.
 """
 
 from typing import Dict, List, Literal, Optional

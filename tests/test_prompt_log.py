@@ -199,6 +199,25 @@ def test_the_whole_surface_is_admin_only(client):
     assert client.get("/api/admin/prompts/turns/nope", headers=admin_headers).status_code == 404
 
 
+def test_the_index_reads_a_chat_body_too(client):
+    """The canonical body a build enqueues is chat-shaped: the index finds its system prompt in
+    messages[0] and counts the conversation after it."""
+    _user_row, headers = _user()
+    job_id = db_store.enqueue_job("llm", {"path": "/v1/chat/completions", "body": {
+        "model": "m", "messages": [
+            {"role": "system", "content": "You author ONE file.\nSecond line."},
+            {"role": "user", "content": "make a game"},
+            {"role": "assistant", "content": "on it"},
+        ]}}, model="m")
+
+    (row,) = client.get("/api/admin/prompts/turns?scope=platform", headers=headers).json()
+
+    assert row["id"] == job_id
+    assert row["system_head"] == "You author ONE file.\nSecond line."
+    assert row["system_chars"] == len("You author ONE file.\nSecond line.")
+    assert row["n_messages"] == 2
+
+
 def test_a_chat_wire_format_turn_reads_the_same(client):
     """`llm.api` can change between a build and someone reading its log, and a db that has served
     both wire formats holds both — the shape is read off the record, never asked of the connector."""

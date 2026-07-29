@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import PromptsPanel, { bucketLabel, groupTurns, turnLabel } from './PromptsPanel'
 import type { IndexedTurn } from './PromptsPanel'
 import { api } from '../api/client'
@@ -121,6 +121,26 @@ describe('PromptsPanel', () => {
 
         fireEvent.click(screen.getByText('Platform (chat + spec drafts)'))
         await waitFor(() => expect(getTurns).toHaveBeenCalledWith('platform', null))
+    })
+
+    it('puts the newest turn at the top and keeps every turn its ordinal', async () => {
+        vi.spyOn(api, 'getPromptBuckets').mockResolvedValue([bucket()])
+        vi.spyOn(api, 'getPromptTurns').mockResolvedValue([turn(), audit()])   // server: oldest first
+
+        render(<PromptsPanel />)
+        await waitFor(() => expect(screen.getByText('2 of 2 turns · 2 prompts')).toBeTruthy())
+
+        const labels = () => screen.getAllByText(/^You (author|audit) ONE (file|claim)\.$/)
+            .map(n => n.textContent)
+        expect(labels()).toEqual(['You audit ONE claim.', 'You author ONE file.'])
+
+        fireEvent.click(screen.getByText('group'))
+
+        expect(labels()).toEqual(['You audit ONE claim.', 'You author ONE file.'])
+        const rows = screen.getAllByText(/^You (author|audit) ONE (file|claim)\.$/)
+            .map(n => n.closest('button') as HTMLElement)
+        expect(within(rows[0]).getByText('2')).toBeTruthy()
+        expect(within(rows[1]).getByText('1')).toBeTruthy()
     })
 
     it('filters the turn list by label', async () => {

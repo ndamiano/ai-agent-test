@@ -169,8 +169,8 @@ export interface TurnGroup {
 }
 
 // Group by the system prompt — one group per prompt the build actually used (measured: a 661-turn
-// build ran on 8 distinct system prompts). First-appearance order, which is the pipeline's own:
-// interfaces → review → data → author → fix → audit.
+// build ran on 8 distinct system prompts). First-appearance order, so newest-first turns yield
+// newest-first groups.
 export const groupTurns = (turns: IndexedTurn[]): TurnGroup[] => {
     const by = new Map<string, TurnGroup>()
     for (const t of turns) {
@@ -251,7 +251,8 @@ const PromptsPanel: React.FC = () => {
     }, [selected])
 
     const rows = useMemo(() => {
-        const indexed: IndexedTurn[] = turns.map((t, i) => ({ ...t, index: i + 1 }))
+        // The ordinal is taken before the reverse, so a row still says where it sits in the build.
+        const indexed: IndexedTurn[] = turns.map((t, i) => ({ ...t, index: i + 1 })).reverse()
         const q = filter.trim().toLowerCase()
         if (!q) return indexed
         return indexed.filter(t =>

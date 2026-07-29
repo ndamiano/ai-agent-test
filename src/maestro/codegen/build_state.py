@@ -25,6 +25,7 @@ class BuildCursor:
     phase: str = "build"                          # "build" | "done"
     step: int = 0
     max_steps: int = 200
+    paused: bool = False
     t0: float = 0.0
     ok: Optional[bool] = None
     request: str = ""                             # overrides the spec-rendered request (a fix note)

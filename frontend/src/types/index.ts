@@ -19,7 +19,6 @@ export interface GameDetail {
     building: boolean
     status: GameStatus
     queue_position: number | null
-    auto_pause: boolean
     assets_exist: boolean
     play_url: string | null
     credits_spent: number
@@ -183,7 +182,7 @@ export type WebSocketMessage = {
     // error_parked — an error that survived the fix-attempt cap without clearing.
     identity?: string[]
     message?: string
-    // component_complete / auto_paused
+    // component_complete
     component_id?: string
     // build_done
     ok?: boolean

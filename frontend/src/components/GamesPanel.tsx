@@ -77,7 +77,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
     const [fixNote, setFixNote] = useState('')
     const [promptText, setPromptText] = useState('')
     const serverPrompt = useRef<string | null>(null)
-    const [autoPause, setAutoPause] = useState(false)
     const [elapsedSec, setElapsedSec] = useState(0)
     // Bumped on assets_done so the gallery re-reads its manifest off the static mount.
     const [assetsVersion, setAssetsVersion] = useState(0)
@@ -89,7 +88,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
         api.getGame(runId)
             .then(d => {
                 if (cancelled) return
-                setDetail(d); setBuilding(d.building); setStatus(d.status); setAutoPause(d.auto_pause)
+                setDetail(d); setBuilding(d.building); setStatus(d.status)
                 // Only adopt the server's text when it actually changed — this poll runs every 10s
                 // while building, and re-seeding on each one would wipe an edit mid-keystroke.
                 // Compared against the value from BEFORE this response: a functional updater would
@@ -137,7 +136,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'build_started':
                     setBuilding(true); setStatus('running'); break
                 case 'build_paused':
-                case 'auto_paused':
                     setStatus('paused'); break
                 case 'build_resumed':
                     setStatus('running'); break
@@ -162,7 +160,7 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
     const build = async () => {
         setActing(true); setBuilding(true); setStatus('running')
-        try { await api.buildGame(runId, autoPause, promptText); onChanged() }
+        try { await api.buildGame(runId, promptText); onChanged() }
         catch (e) {
             setBuilding(false); setStatus('idle')
             if (e instanceof ApiError && e.status === 402) {
@@ -173,10 +171,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
             }
         }
         finally { setActing(false); refreshBalance() }  // a build spends credits — resync the header
-    }
-    const toggleAutoPause = async (enabled: boolean) => {
-        setAutoPause(enabled)
-        if (building) { try { await api.setAutoPause(runId, enabled) } catch { /* best effort */ } }
     }
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
@@ -219,12 +213,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                     )}
                     {building && status === 'paused' && (
                         <button onClick={resume} disabled={acting} className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded text-xs font-medium">Resume</button>
-                    )}
-                    {(stage === 'ready' || stage === 'building') && (
-                        <label className="flex items-center gap-1.5 text-gray-400 text-xs ml-1 cursor-pointer select-none">
-                            <input type="checkbox" checked={autoPause} onChange={e => toggleAutoPause(e.target.checked)} className="accent-amber-500" />
-                            pause after each step
-                        </label>
                     )}
                     {stage === 'built' && detail.play_url && (
                         <a href={detail.play_url} target="_blank" rel="noreferrer"

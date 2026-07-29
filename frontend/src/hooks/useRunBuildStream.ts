@@ -90,8 +90,6 @@ const feedLine = (e: NormEvent): { text: string; tone: FeedTone } | null => {
             return { text: `⚑ parked — needs a fix note: ${e.message ?? ''}`, tone: 'bad' }
         case 'build_paused':
             return { text: '⏸ paused', tone: 'warn' }
-        case 'auto_paused':
-            return { text: `⏸ auto-paused after ${e.component_id}`, tone: 'warn' }
         case 'build_resumed':
             return { text: '▶ resumed', tone: 'info' }
         case 'component_complete':

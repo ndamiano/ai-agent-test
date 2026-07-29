@@ -44,24 +44,38 @@ def _lock_for(run_id: str) -> threading.Lock:
 
 
 # ── lifecycle ─────────────────────────────────────────────────────────────────
-def kickoff(run_id: str, *, kind: str = "build", note: str = "", auto_pause: bool = False,
+def kickoff(run_id: str, *, kind: str = "build", note: str = "",
             max_steps: Optional[int] = None) -> str:
     """Create the build attempt row and start the build. Returns the build_id."""
     if max_steps is None:
         max_steps = 200
     build_id = db_store.create_build(run_id, kind=kind)
     db_store.build_started(build_id)
-    start_build(run_id, build_id, kind=kind, note=note, auto_pause=auto_pause, max_steps=max_steps)
+    start_build(run_id, build_id, kind=kind, note=note, max_steps=max_steps)
     return build_id
+
+
+def pause(run_id: str) -> bool:
+    """Park a build at its next step boundary. The flag rides the durable cursor, not process
+    memory: the driver holds no state between turns, so a control plane that restarted mid-build
+    still owns the run. False when there is nothing in flight to pause."""
+    rs = RunState(run_id)
+    cursor = build_state.load(rs.run_dir)
+    if cursor is None or cursor.phase == "done":
+        return False
+    cursor.paused = True
+    build_state.save(rs.run_dir, cursor)
+    return True
 
 
 def resume(run_id: str) -> None:
     """Re-drive a mid-flight build — a paused one (clear the pause first) or one whose driver process
     died (the cursor is on disk, no llm turn in flight). A no-op once the cursor is done."""
-    from maestro.run_control import get as get_control
-    ctrl = get_control(run_id)
-    if ctrl is not None:
-        ctrl.request_resume()
+    rs = RunState(run_id)
+    cursor = build_state.load(rs.run_dir)
+    if cursor is not None and cursor.paused:
+        cursor.paused = False
+        build_state.save(rs.run_dir, cursor)
     advance(run_id)
 
 
@@ -74,11 +88,11 @@ def status_of(run_id: str) -> Optional[Dict]:
     cursor = build_state.load(RunState(run_id).run_dir)
     if cursor is None or cursor.phase == "done":
         return None
-    return {"kind": cursor.kind}
+    return {"kind": cursor.kind, "paused": cursor.paused}
 
 
 def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = "",
-                auto_pause: bool = False, max_steps: int = 200) -> None:
+                max_steps: int = 200) -> None:
     """Kick a build off: write the initial cursor and advance once (which enqueues the first llm
     turn, then returns). A FIX re-enters the same turn machine with the note as its request — the
     model lists and reads the files itself, so there is nothing to hand it up front."""
@@ -93,8 +107,6 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
                           f"reported this:\n{note}\n\nRead the files and fix exactly that. Call "
                           "done when it is fixed.")
     build_state.save(rs.run_dir, cursor)
-    from maestro.run_control import get_or_create
-    get_or_create(run_id).set_auto_pause(auto_pause)
     db_store.set_status(run_id, "building")
     _emit("build_started", run_id, max_steps=max_steps, started_at=cursor.t0)
     # wait=True: this first advance must never be dropped by a lock another finalize still holds.
@@ -132,16 +144,12 @@ def advance(run_id: str, result: Optional[Dict] = None, *, wait: bool = False) -
 
 
 def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
-    from maestro.run_control import get as get_control
     rs = RunState(run_id)
     spec = rs.read_spec()
     cursor = build_state.load(rs.run_dir)
     if cursor is None or cursor.phase == "done":
         return
-    control = get_control(run_id)
-    if control is not None and control.paused:
-        control.set_status("paused")
-        build_state.save(rs.run_dir, cursor)
+    if cursor.paused:
         _emit("build_paused", run_id, step=cursor.step)
         return
     tools = build_tools(rs)
@@ -178,8 +186,6 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
     db_store.set_status(run_id, "built" if ok else "failed")
     if cursor.build_id:
         db_store.build_finished(cursor.build_id, "succeeded" if ok else "failed", steps=cursor.step)
-    from maestro.run_control import remove as remove_control
-    remove_control(run_id)
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
     _emit("build_done", run_id, ok=ok, steps=cursor.step)
 
@@ -216,8 +222,6 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
         db_store.set_status(run_id, "failed")
         if cursor.build_id:
             db_store.build_finished(cursor.build_id, "failed", steps=cursor.step)
-        from maestro.run_control import remove as remove_control
-        remove_control(run_id)
         _emit("build_done", run_id, ok=False, steps=cursor.step, error=f"compute exhausted: {e}")
 
 

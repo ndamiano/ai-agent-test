@@ -2,7 +2,7 @@
 
 A "game" is a games row in the platform db plus its run dir under
 <working_directory>/runs/<run_id>/. The list reads the db only; the detail view reads the prompt
-from disk (source of truth) and derives live status from the build queue + the run control.
+from disk (source of truth) and derives live status from the durable build cursor.
 Build (which also stores the prompt it was given), pause/resume, fix-from-note, and asset skinning
 all live here.
 """
@@ -28,7 +28,6 @@ from maestro.codegen.assets import AlreadyRendering, add_assets, read_manifest, 
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.codegen.run import create_run, set_prompt
 from tools.safety import log_violation, screen_text
-from maestro.run_control import get as get_control
 from maestro.state import RunState
 from tools.build_events import _emit
 
@@ -38,16 +37,10 @@ router = APIRouter()
 
 class NewGameBody(BaseModel):
     prompt: str
-    auto_pause: bool = False
 
 
 class BuildBody(BaseModel):
-    auto_pause: bool = False
     prompt: Optional[str] = None
-
-
-class AutoPauseBody(BaseModel):
-    enabled: bool
 
 
 class FixBody(BaseModel):
@@ -134,8 +127,7 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
             "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
     db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
     _require_compute(run_id)
-    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build",
-                            auto_pause=body.auto_pause)
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
     return {"run_id": run_id, "status": "building"}
 
 
@@ -145,12 +137,11 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     state = _require_state(run_id, user)
     spec_data = state.read_spec()
     row = db_store.game(run_id) or {}
-    ctrl = get_control(run_id)
     built = _built(run_id)
     active = build_chain.status_of(run_id)
     if active:
         live = "fixing" if active["kind"] == "fix" else "building"
-        status = "paused" if ctrl and ctrl.paused else live
+        status = "paused" if active["paused"] else live
     else:
         status = "built" if built else "idle"
     return {
@@ -161,7 +152,6 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "building": active is not None,
         "status": status,
         "queue_position": None,   # builds no longer queue behind each other; kept for the client shape
-        "auto_pause": ctrl.auto_pause if ctrl else False,
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         "play_url": f"/play/games/{run_id}/index.html" if built else None,
         "credits_spent": row.get("credits_spent", 0),
@@ -283,32 +273,24 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
 
     # kickoff seeds the scaffolds, runs the first gate sweep and enqueues the first llm turn — that
     # touches disk + tsc, so off the event loop. It returns as soon as the turn is queued.
-    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build", auto_pause=body.auto_pause)
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
     return {"status": "building", "run_id": run_id, "queue_position": 0}
-
-
-def _control(run_id: str):
-    """The live control for an in-flight build, or 409 if nothing is building."""
-    ctrl = get_control(run_id)
-    if ctrl is None:
-        raise HTTPException(status_code=409, detail="no build in progress for this run")
-    return ctrl
 
 
 @router.post("/{run_id}/pause", response_model=Dict)
 async def pause_game(run_id: str, user: User = Depends(get_current_user)):
     """Pause a running build — it halts at the next step boundary (state stays consistent)."""
     _require_state(run_id, user)
-    _control(run_id).request_pause()
+    if not build_chain.pause(run_id):
+        raise HTTPException(status_code=409, detail="no build in progress for this run")
     return {"run_id": run_id, "status": "pausing"}
 
 
 @router.post("/{run_id}/resume", response_model=Dict)
 async def resume_game(run_id: str, user: User = Depends(get_current_user)):
-    """Resume a build. If a live control exists (a paused in-flight build), resume it in place. If
-    not (the build thread died — container restart, redeploy), RE-ENQUEUE the build from durable
-    on-disk state so it rebuilds where it left off. The run is already `charged`, so re-enqueue
-    never re-charges."""
+    """Resume a build. A mid-flight cursor (paused, or one whose driver died — container restart,
+    redeploy) is re-driven in place from durable on-disk state, so it rebuilds where it left off.
+    The run is already `charged`, so re-enqueue never re-charges."""
     _require_state(run_id, user)
     _require_compute(run_id)
     if build_chain.is_active(run_id):
@@ -320,14 +302,6 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     # A finished/failed build: re-run the gate loop over the on-disk game (rebuild where it left off).
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
     return {"status": "building", "run_id": run_id, "queue_position": 0}
-
-
-@router.post("/{run_id}/auto-pause", response_model=Dict)
-async def auto_pause_game(run_id: str, body: AutoPauseBody, user: User = Depends(get_current_user)):
-    """Arm/disarm auto-pause: when armed, the build parks itself each time a system finishes."""
-    _require_state(run_id, user)
-    _control(run_id).set_auto_pause(body.enabled)
-    return {"run_id": run_id, "auto_pause": body.enabled}
 
 
 @router.post("/{run_id}/fix", response_model=Dict)

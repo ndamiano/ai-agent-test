@@ -108,10 +108,12 @@ src/
                          out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
                          than letting the model believe the file landed).
       build_state.py     the durable build CURSOR (runs/<id>/build_state.json) — phase, step count,
-                         the growing transcript, and the read→edit tool grounding, rehydrated into
-                         build_tools each completion (a fresh process would else refuse a resumed
-                         edit). Job metadata carries only {stage,run_id,build_id}; this file is the
-                         single source the completion reloads, advances, rewrites.
+                         the PAUSE flag, the growing transcript, and the read→edit tool grounding,
+                         rehydrated into build_tools each completion (a fresh process would else
+                         refuse a resumed edit). Job metadata carries only {stage,run_id,build_id};
+                         this file is the single source the completion reloads, advances, rewrites.
+                         Pause lives here and not in memory: a control plane that restarts mid-build
+                         holds nothing, while its turns keep completing.
       tools.py           list_files / read_file / write_file / edit_file / generate_media — the
                          smallest surface that works, and kept that way. A path is resolved and must
                          land inside the game folder. Every failure is REPORTED to the model as text
@@ -147,7 +149,6 @@ src/
                          tool and carries that tool's required arguments.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
                          game/ folder). Ownership + charge state live in db/, not the run dir.
-    run_control.py       cross-thread pause/resume signal channel.
   worldgen/              a standalone procedural world generator (heightfield town inside a
                          wilderness ring: forest, POIs, roads, named regions). Currently UNWIRED —
                          it was the one thing that produced real scale, and re-pointing it to emit

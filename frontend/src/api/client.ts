@@ -124,8 +124,8 @@ export const api = {
         request<Game[]>('/games'),
     // Make a new game: the prompt becomes the run and the build starts. Nothing exists server-side
     // until this call, so an abandoned box leaves nothing behind.
-    createGame: (prompt: string, autoPause = false) =>
-        request<{ run_id: string; status: string }>('/games', { method: 'POST', body: JSON.stringify({ prompt, auto_pause: autoPause }) }),
+    createGame: (prompt: string) =>
+        request<{ run_id: string; status: string }>('/games', { method: 'POST', body: JSON.stringify({ prompt }) }),
     getGame: (runId: string) =>
         request<GameDetail>(`/games/${runId}`),
     // The durable build/spec event log — catch-up after a reload or a websocket gap. `after` is an
@@ -147,16 +147,14 @@ export const api = {
     },
     // `prompt` is the text in the box: pressing Build is what approves it, so the build call is
     // the only thing that writes it.
-    buildGame: (runId: string, autoPause = false, prompt?: string) =>
-        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ auto_pause: autoPause, prompt }) }),
+    buildGame: (runId: string, prompt?: string) =>
+        request<{ status: string; run_id: string }>(`/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ prompt }) }),
 
     // Human-in-the-loop build control
     pauseGame: (runId: string) =>
         request<{ status: string }>(`/games/${runId}/pause`, { method: 'POST' }),
     resumeGame: (runId: string) =>
         request<{ status: string }>(`/games/${runId}/resume`, { method: 'POST' }),
-    setAutoPause: (runId: string, enabled: boolean) =>
-        request<{ auto_pause: boolean }>(`/games/${runId}/auto-pause`, { method: 'POST', body: JSON.stringify({ enabled }) }),
     // Free-text patch of a built game — re-runs the build loop from a human note.
     fixGame: (runId: string, note: string) =>
         request<{ status: string; run_id: string }>(`/games/${runId}/fix`, { method: 'POST', body: JSON.stringify({ note }) }),

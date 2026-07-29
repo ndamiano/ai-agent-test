@@ -202,6 +202,14 @@ def _clip(text: str, n: int) -> str:
     return text[:n].rsplit(" ", 1)[0] + "…"
 
 
+def _opening_line(cursor) -> str:
+    """The opening turn's feed line carries the text that was sent — the whole build follows from
+    it, and the feed is where a person checks that what they typed is what went."""
+    sent = _clip(cursor.history[0]["content"] if cursor.history else "", 300)
+    label = "sent the fix note" if cursor.kind == "fix" else "sent the prompt"
+    return f"{label}: {sent}" if sent else label
+
+
 def _action_of(tc, res) -> str:
     """One turn's tool call as a line for the build feed — what the model DID, since the turn
     counter alone says only that it is still going. A failure carries its reason: the whole point
@@ -289,7 +297,7 @@ def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     # No actions means the turn called no tool: either the opening turn (the prompt has just been
     # sent and nothing has happened yet) or one the nudge is answering.
     report = report or ", ".join(cursor.actions) or (
-        "sent the prompt" if cursor.turn == 0 else "no tool call — asked again")
+        _opening_line(cursor) if cursor.turn == 0 else "no tool call — asked again")
     if cursor.compacted:
         report += f" ({cursor.compacted} round(s) compacted)"
     cursor.actions = []

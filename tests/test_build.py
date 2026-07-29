@@ -153,8 +153,21 @@ def test_a_failed_tool_call_reports_its_reason(tmp_path, tools):
 
 def test_the_opening_turn_says_the_prompt_went_out(tmp_path, tools):
     cursor = _cursor()
+    out = build_steps.step({"request": "make a snake game"}, tmp_path, tools, cursor, {})
+    assert out.report == "sent the prompt: make a snake game"
+
+
+def test_the_opening_line_of_a_fix_carries_the_note(tmp_path, tools):
+    cursor = _cursor(kind="fix", request="the snake never dies")
     out = build_steps.step({}, tmp_path, tools, cursor, {})
-    assert out.report == "sent the prompt"
+    assert out.report == "sent the fix note: the snake never dies"
+
+
+def test_a_long_prompt_is_clipped_in_the_feed(tmp_path, tools):
+    cursor = _cursor()
+    out = build_steps.step({"request": "word " * 200}, tmp_path, tools, cursor, {})
+    assert out.report.startswith("sent the prompt: word word")
+    assert out.report.endswith("…") and len(out.report) < 340
 
 
 def test_a_turn_with_no_tool_call_says_so(tmp_path, tools):

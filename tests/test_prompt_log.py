@@ -204,7 +204,7 @@ def test_a_chat_wire_format_turn_reads_the_same(client):
     both wire formats holds both — the shape is read off the record, never asked of the connector."""
     _user_row, headers = _user()
     job_id = db_store.enqueue_job("llm", {"path": "/v1/chat/completions", "body": {
-        "model": "m", "max_tokens": 900,
+        "model": "m", "max_tokens": 900, "reasoning": "none",
         "messages": [
             {"role": "system", "content": "you are X"},
             {"role": "user", "content": "make a game"},
@@ -227,6 +227,8 @@ def test_a_chat_wire_format_turn_reads_the_same(client):
     turn = client.get(f"/api/admin/prompts/turns/{job_id}", headers=headers).json()
     assert turn["system"] == "you are X"
     assert turn["max_output_tokens"] == 900
+    # The canonical body carries the effort as a plain string; only Responses wraps it in a dict.
+    assert turn["reasoning"] == "none"
     assert [m["kind"] for m in turn["messages"]] == ["text", "tool_call", "tool_result"]
     assert turn["messages"][1]["name"] == "write"
     assert turn["messages"][2]["text"] == '{"ok": true}'

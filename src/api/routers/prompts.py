@@ -61,13 +61,20 @@ def _turn_view(job: Dict) -> Dict:
         "status": job["status"], "model": body.get("model") or job["model"],
         "created_at": job["created_at"], "exec_seconds": job["exec_seconds"],
         "error": job["error"], "stage": (job.get("metadata") or {}).get("stage"),
-        "reasoning": (body.get("reasoning") or {}).get("effort"),
+        "reasoning": _view_reasoning(body.get("reasoning")),
         "max_output_tokens": body.get("max_output_tokens") or body.get("max_tokens"),
         "system": system,
         "messages": messages,
         "tools": [_view_tool(t) for t in body.get("tools") or []],
         "response": _view_response(job.get("result")),
     }
+
+
+def _view_reasoning(reasoning) -> Optional[str]:
+    """Responses carries {"effort": ...}; chat carries the level itself."""
+    if isinstance(reasoning, dict):
+        return reasoning.get("effort")
+    return reasoning or None
 
 
 def _view_conversation(body: Dict) -> tuple:

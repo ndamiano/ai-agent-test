@@ -80,13 +80,22 @@ Owned here; `scaleout.md` S3 and `production_hardening.md` H4 were the same item
       defer past beta.
       → done when: a test enqueues user A ×20 then user B ×1 and B is claimed before A's tail.
 
-## P5 — Release hygiene
+## P5 — Signed-in account is invisible in the UI
+- [ ] Show which account the browser is signed in as (top-left of the app shell), plus a sign-out.
+      Today nothing on screen says it, so "which account is this build charged to" is a guess —
+      and with manual account creation (`auth/cli.py`) a dev and a real account look identical.
+      The client already fetches `/auth/me` (`frontend/src/api/client.ts:111`) — this is placement,
+      not new API.
+      → done when: the signed-in email (or handle) is visible on every page without opening
+      devtools.
+
+## P6 — Release hygiene
 - [ ] Versioning + tags; a changelog (could be fed from `tasks/finished.md`).
       → done when: `git describe --tags` returns a tag.
 - [ ] Rollback path documented in `docs/DEPLOY.md` and exercised once.
       → done when: `grep -in "rollback" docs/DEPLOY.md` hits a procedure.
 
-## P6 — Standing rules (no work until triggered)
+## P7 — Standing rules (no work until triggered)
 - [ ] Any new uncharged inference path gets the same sliding-window cap as `/api/chat` (30
       turns/hour). Spec drafting rides chat today, so it is covered.
       → done when: triggered — a new uncharged path exists without a throttle.

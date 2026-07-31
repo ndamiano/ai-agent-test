@@ -16,7 +16,6 @@ export interface RunStream {
     feed: FeedEntry[]
     progress: { step: number } | null
     startedAt: number | null  // seconds epoch, for the elapsed timer
-    parked: { message: string } | null
     skinning: boolean
 }
 
@@ -30,11 +29,9 @@ interface NormEvent {
     summary?: string
     elapsed?: number
     started_at?: number
-    message?: string
-    component_id?: string
     ok?: boolean
+    error?: string
     rendered?: number
-    note?: string
 }
 
 const fromRow = (row: DurableEventRow): NormEvent => ({
@@ -73,24 +70,18 @@ export function mergeEvents(rows: DurableEventRow[], live: WebSocketMessage[]): 
 
 const feedLine = (e: NormEvent): { text: string; tone: FeedTone } | null => {
     switch (e.type) {
-        case 'fix_started':
-            return { text: `⚒ fixing — ${e.note ?? ''}`, tone: 'warn' }
         case 'build_started':
             return { text: 'build started', tone: 'info' }
         case 'build_step':
             return { text: `step ${e.step}: ${e.summary}`, tone: 'info' }
-        case 'error_parked':
-            return { text: `⚑ parked — needs a fix note: ${e.message ?? ''}`, tone: 'bad' }
         case 'build_paused':
             return { text: '⏸ paused', tone: 'warn' }
         case 'build_resumed':
             return { text: '▶ resumed', tone: 'info' }
-        case 'component_complete':
-            return { text: `✓ ${e.component_id} complete`, tone: 'good' }
         case 'build_done':
             return e.ok
                 ? { text: '✓ build complete', tone: 'good' }
-                : { text: '✗ build ended with failures', tone: 'bad' }
+                : { text: `✗ build failed${e.error ? ` — ${e.error}` : ''}`, tone: 'bad' }
         case 'assets_started':
             return { text: '⏳ skinning assets…', tone: 'info' }
         case 'assets_done':
@@ -108,7 +99,6 @@ export function foldStream(events: NormEvent[]): RunStream {
     const feed: FeedEntry[] = []
     let progress: RunStream['progress'] = null
     let startedAt: number | null = null
-    let parked: RunStream['parked'] = null
     let skinning = false
 
     for (const e of events) {
@@ -116,12 +106,7 @@ export function foldStream(events: NormEvent[]): RunStream {
         if (line) feed.push({ key: e.key, text: line.text, tone: line.tone, at: e.at })
 
         switch (e.type) {
-            case 'fix_started':
-            case 'build_resumed':
-                parked = null
-                break
             case 'build_started':
-                parked = null
                 progress = { step: 0 }
                 if (e.started_at != null) startedAt = e.started_at
                 break
@@ -131,9 +116,6 @@ export function foldStream(events: NormEvent[]): RunStream {
                 // timer stays accurate even when the build_started event was never seen (reload).
                 if (e.elapsed != null) startedAt = e.at / 1000 - e.elapsed
                 break
-            case 'error_parked':
-                parked = { message: e.message ?? '' }
-                break
             case 'assets_started':
                 skinning = true
                 break
@@ -142,10 +124,10 @@ export function foldStream(events: NormEvent[]): RunStream {
                 break
         }
     }
-    return { feed, progress, startedAt, parked, skinning }
+    return { feed, progress, startedAt, skinning }
 }
 
-const EMPTY: RunStream = { feed: [], progress: null, startedAt: null, parked: null, skinning: false }
+const EMPTY: RunStream = { feed: [], progress: null, startedAt: null, skinning: false }
 
 // Replay is refetched whenever the run changes or the socket reconnects (a reconnect clears the
 // live `messages` buffer, so the durable log must refill the gap).

@@ -152,8 +152,6 @@ export type WebSocketMessage = {
     type: string
     run_id?: string
     timestamp?: string
-    // fix_started
-    note?: string
     // build_started / build_step
     step?: number
     summary?: string
@@ -161,11 +159,9 @@ export type WebSocketMessage = {
     // `elapsed` seconds since that start, so the progress header can show a running timer.
     started_at?: number
     elapsed?: number
-    message?: string
-    // component_complete
-    component_id?: string
     // build_done / assets_done
     ok?: boolean
+    error?: string
     rendered?: number
     [key: string]: any
 }

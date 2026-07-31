@@ -7,7 +7,7 @@ import { useRunBuildStream } from '../hooks/useRunBuildStream'
 import { Badge } from './cockpit/Badge'
 import { PromptCard } from './cockpit/PromptCard'
 import { AssetGallery } from './cockpit/AssetGallery'
-import { BuildFeed, ParkedCard } from './cockpit/BuildFeed'
+import { BuildFeed } from './cockpit/BuildFeed'
 import { FixNoteInput } from './cockpit/FixNoteInput'
 
 export const formatElapsed = (secs: number): string => {
@@ -125,8 +125,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 case 'prompt_proposed':
                 case 'prompt_updated':
                     load(); break
-                case 'fix_started':
-                    setBuilding(true); setStatus('fixing'); break
                 case 'build_started':
                     setBuilding(true); setStatus('running'); break
                 case 'build_paused':
@@ -187,7 +185,6 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
                 <div className="flex items-center gap-2 flex-wrap">
                     <h2 className="text-white text-base font-semibold">{detail.title || detail.run_id}</h2>
                     {detail.built ? <Badge label="built" tone="green" /> : null}
-                    {stream.parked ? <Badge label="parked" tone="red" /> : null}
                     {building ? <Badge label={status === 'paused' ? 'paused' : status === 'fixing' ? 'fixing…' : 'building…'} tone={statusTone} /> : null}
                     <span className="text-gray-600 text-[11px] font-mono ml-auto">{detail.run_id}</span>
                 </div>
@@ -221,18 +218,13 @@ const GameDetailView: React.FC<{ runId: string; onChanged: () => void }> = ({ ru
 
                 {error && <p className="text-red-400 text-xs">{error}</p>}
 
-                {stream.parked && (
-                    <ParkedCard message={stream.parked.message} note={fixNote} setNote={setFixNote}
-                        onSubmit={submitFix} busy={acting} />
-                )}
-
                 {showBuildArea && <>
                     {building && stream.progress && (
                         <BuildProgressHeader step={stream.progress.step}
                             elapsedSec={elapsedSec} />
                     )}
 
-                    {stage === 'built' && !stream.parked && (
+                    {stage === 'built' && (
                         <FixNoteInput note={fixNote} setNote={setFixNote} onSubmit={submitFix} busy={acting}
                             placeholder="Describe what's wrong — patches the built game…" />
                     )}
@@ -295,7 +287,7 @@ const NewGameView: React.FC<{ onCreated: (runId: string) => void }> = ({ onCreat
 
 const LIST_REFRESH_EVENTS = new Set([
     'prompt_proposed', 'prompt_updated', 'build_started', 'build_paused', 'build_resumed',
-    'component_complete', 'build_done', 'assets_started', 'assets_done',
+    'build_done', 'assets_started', 'assets_done',
 ])
 
 const GamesPanel: React.FC = () => {

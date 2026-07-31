@@ -48,15 +48,16 @@ describe('foldStream', () => {
         ])
     })
 
-    it('surfaces a parked build and clears it on the next fix', () => {
-        const parked = foldStream(mergeEvents([row(1, 'error_parked', 100, { message: 'tsc: TS2345' })], []))
-        expect(parked.parked).toEqual({ message: 'tsc: TS2345' })
-
-        const fixed = foldStream(mergeEvents([
-            row(1, 'error_parked', 100, { message: 'tsc: TS2345' }),
-            row(2, 'fix_started', 200, { note: 'widen the type' }),
+    it('shows why a build failed, not just that it did', () => {
+        const s = foldStream(mergeEvents([
+            row(1, 'build_done', 100, { ok: false, error: 'compute exhausted: budget refused' }),
         ], []))
-        expect(fixed.parked).toBeNull()
+        expect(s.feed.map(f => f.text)).toEqual(['✗ build failed — compute exhausted: budget refused'])
+    })
+
+    it('falls back to a bare failure line when build_done carries no error', () => {
+        const s = foldStream(mergeEvents([row(1, 'build_done', 100, { ok: false })], []))
+        expect(s.feed.map(f => f.text)).toEqual(['✗ build failed'])
     })
 
     it('tracks the skinning flag across asset start/done', () => {
@@ -68,7 +69,7 @@ describe('foldStream', () => {
     })
 
     it('ignores state-only event kinds (no feed line)', () => {
-        const s = foldStream(mergeEvents([row(1, 'prompt_proposed', 100), row(2, 'build_queued', 110)], []))
+        const s = foldStream(mergeEvents([row(1, 'prompt_proposed', 100), row(2, 'job_done', 110)], []))
         expect(s.feed).toHaveLength(0)
     })
 })

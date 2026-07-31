@@ -119,7 +119,6 @@ src/
   tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
   worker/       the pull-side GPU worker agent
   worldgen/     standalone procedural world generator
-eval/           the harness × model battery grid
 frontend/       React + Vite UI
 tests/          pytest suite
 docs/           vision, roadmap, deploy

@@ -219,8 +219,8 @@ more than a prompt line: 3D scenes lit near-black (2/4, both models), fixed canv
 scaling (every 2D game), silent games (all four arcade + the deck-builder), arrow-keys-only input.
 
 `generate_media` entered UNMEASURED (2026-07-28) — art is the one capability no `write_file` can
-stand in for. What settles it is a battery run against the manifest prompt line in `eval/arms/`:
-whether the model calls it, uses the returned path verbatim, and still draws a fallback shape. An
+stand in for. What settles it is a battery run against the manifest prompt line: whether the model
+calls it, uses the returned path verbatim, and still draws a fallback shape. An
 unused schema costs every turn of every build, so a tool that fails that comes back out.
 
 **Adding a build STAGE** (beyond build/asset): register a driver keyed on `metadata.stage` in the

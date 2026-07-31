@@ -62,7 +62,7 @@ next".
 - [ ] A `dialogue` dataset convention: rows `ref:residents` + lines/options, optional
       `requires`-style gate on quest state; a worked `talkOpen(state, npc, options)` example
       reading rows in `kit_api_3d.md`. Files: `design_data.txt`, `runtime/kit_api_3d.md`.
-      Verify: talking to a resident shows row-authored lines; grade with `grade-scenes`.
+      Verify: talking to a resident shows row-authored lines, graded by hand.
       → done when: grep -n "ref:residents" src/maestro/codegen/prompts/design_data.txt matches
 - [ ] Ambient register: cheap per-resident one-liners (a `talkOpen` with no options, or
       `kit.notify` barks on proximity) so verisimilitude residents aren't mute. Verify: a

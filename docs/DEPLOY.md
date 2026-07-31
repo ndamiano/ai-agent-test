@@ -116,24 +116,13 @@ VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
 docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v4 .
-docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v3 .
-docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v10 .
+docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v4 .
+docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v12 .
 docker push ndamiano100/maestro-worker:mesh-v10   # etc.
 ```
 
-Deployed tags: `llm-v3`, `image-v3`, `mesh-v10`. Bump the tag on every push — RunPod caches images
+Deployed tags: `llm-v4`, `image-v4`, `mesh-v12`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
-
-**`llm-v4` is built but not pushed.** The llm image at `llm-v3` predates wire translation moving
-into the worker, so it serves stale code; anything built from that Dockerfile before this fix
-`ModuleNotFoundError`s on `llm_clients` at the first job, because only `src/worker` was copied.
-Pushing it means bumping the llm queue's `template_id` to the new tag.
-
-The mesh image is the fussy one; its runtime deps are the home-verified TRELLIS stack exactly
-(see Dockerfile.worker-mesh): pinned transformers/timm/einops/kornia, the local TRELLIS.2 patch
-set (`scripts/trellis2-sdpa-dinov3.patch` — sdpa attention backends + the DINOv3 module layout),
-gcc for triton's first-use JIT of the flex_gemm kernels, and `TRITON_CACHE_DIR` on the network
-volume so that JIT is paid once per volume, not per pod.
 
 **Mesh cold start (measured on a 5090 pod, 2026-07-23).** A pod reaches WARM — able to serve at
 steady speed — in ~116s of the ~330s it used to take, and a claimed job never pays boot:

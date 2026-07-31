@@ -22,11 +22,8 @@ bug until the exact prompt has been dumped and read.
   `runtime/kit_api.md` / `runtime/kit_api_3d.md` / `runtime/kit_catalog.md`, and the scaffold
   sources `src/maestro/codegen/scaffold_templates/*.ts.tmpl` (real TS we own, climbable like
   prompts).
-- Iteration workflow: `.claude/skills/iterate-dialogue` (babysat launch → monitor → grade →
-  root-cause → fix → rebuild) + `.claude/skills/grade-scenes` (calibrated bar, slop taxonomy,
-  the why-chain/nonsense test). Both are STALE on paths: they reference `python -m maestro.run`,
-  `eval.slop_scan` and `docs/examples/one_last_lan.md`, all deleted. `eval/build_trace.py`
-  survives (attributes output changes to pipeline changes).
+- Iteration workflow: NONE. Q1 writes it — a babysat launch → monitor → grade → root-cause → fix →
+  rebuild loop, and a grading bar built on the why-chain/nonsense test.
 - Current CLI: `cd src && python -m maestro.codegen.run "<request>"`; fix path
   `--fix <run_id> "<note>"`; play via `runtime/index.html?game=<slug>`.
 - Phase 7 (`docs/codegen_rebuild_plan.md`): T7.1 self-play metrics (solvable/non-trivial/fair,
@@ -47,17 +44,16 @@ bug until the exact prompt has been dumped and read.
 
 ## Tasks
 
-### Q1 — Retarget the iteration skills to codegen (unblocks everything else)
-- [ ] `.claude/skills/iterate-dialogue/SKILL.md`: launch via `python -m maestro.codegen.run`,
-      monitor `runs/<id>/build_state.json` + gate output, keep the /proc-not-pgrep liveness
-      rule and the blame-context discipline verbatim. Verify: run one build end-to-end by the
-      skill's own text.
+### Q1 — Write the iteration skills against codegen (unblocks everything else)
+- [ ] An iterate skill: launch via `python -m maestro.codegen.run`, monitor
+      `runs/<id>/build_state.json`, root-cause → fix → rebuild. Two rules it must hold:
+      /proc-not-pgrep liveness, and blame the context before the model.
+      Verify: run one build end-to-end by the skill's own text.
       → done when: `python -m maestro.codegen.run "<req>"` finishes and `runs/<id>/build_state.json` has `"phase": "done"`
-- [ ] `.claude/skills/grade-scenes/SKILL.md`: keep the calibrated bar + why-chain test; point
-      it at generated games' dialogue (`talkOpen` option/line content in `game/game.ts` +
-      `game/data/*.json` rows) and playable feel via `runtime/index.html?game=<slug>`. Drop
-      the `eval.slop_scan` / `one_last_lan.md` references or restore a gold example first.
-      → done when: `grep -c "slop_scan\|one_last_lan" .claude/skills/grade-scenes/SKILL.md` is 0
+- [ ] A grade skill: the calibrated bar + why-chain/nonsense test, pointed at generated games'
+      dialogue and playable feel via `runtime/index.html?game=<slug>`. Needs a gold example to
+      grade against — pick one from a real build and check it in.
+      → done when: the skill file exists and names a gold example that is checked in
 - [ ] Pick ONE gold spec per genre-battery slot and record it in the skill (the old gold A/B
       premise pattern). Verify: two graders (you, cold) reach the same verdict on one build.
       → done when: the skill file has a dated table naming one spec each for platformer/top-down/grid-turn/3D-RPG
@@ -67,8 +63,7 @@ bug until the exact prompt has been dumped and read.
       what call it backs → last climbed → verdict. Include kit_api*.md and scaffold templates.
       → done when: this file has a table row for every file in src/maestro/codegen/prompts/*.txt, scaffold_templates/*.tmpl and runtime/kit_api*.md/kit_catalog.md
 - [ ] One climb pass per prompt: baseline build → grade (Q1 skills) → hypothesis → change →
-      rebuild → keep only if better across the battery. Use `eval/build_trace.py` to attribute
-      changes. Files: the prompt under test only.
+      rebuild → keep only if better across the battery. Files: the prompt under test only.
       → done when: the Q2 tracking table has a non-empty "last climbed"/"verdict" for ≥1 file
 - [ ] `spec_draft.txt` first — a wrong spec is a wrong everything, and it's human-gated so a
       better draft is pure win. Watch for the known variance flipping `world`/scheme.

@@ -1,1 +1,0 @@
-- For art, write assets.json — {"images": [{"id": "goblin", "file": "assets/goblin.png", "prompt": "a snarling goblin, painted"}]} — while you write the code that uses those files, and draw a plain shape at each spot so the game looks right before the art arrives and after it does. Use "kind": "mesh" and a .glb file for a 3D model.

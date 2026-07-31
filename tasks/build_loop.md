@@ -19,9 +19,9 @@ project was a billing system. This file is the live plan for the loop.
 ## Background (VERIFIED — points at code)
 - Driver: `src/maestro/codegen/build_chain.py` (default `max_steps=200`), cursor in
   `build_state.py`, per-shape machines in `build_steps.py`, gate list in `module.py`.
-- Attribution: `eval/build_trace.py` — per-build steps grouped by failing error class, wasted steps
-  (a class recurring after it was cleared), elapsed; diffs two runs of the same premise. This is the
-  tool that justified deleting the probe (13% of steps, 8 dead builds).
+- Attribution: NO TOOL. B2 below cannot run until one exists. The shape that justified deleting
+  the probe: per-build steps grouped by failing error class, wasted steps (a class recurring after
+  it was cleared), elapsed, and a diff of two runs of the same premise.
 - Spec-side surface: `runtime/kit_catalog.md` § "What the runtime CANNOT do" — the only thing
   stopping a spec promising what the runtime can't deliver (today: sound, screen effects, typing,
   persistence/multiplayer).
@@ -32,8 +32,8 @@ project was a billing system. This file is the live plan for the loop.
   check is the one reliably wrong move here — that is what the probe and scroll gates were.
 - **Widen the kit, don't prompt harder** for hard/ambiguous mechanics. Widening the kit means
   widening `kit_api*.md` AND `kit_catalog.md`, or specs never reach the new primitive.
-- **Measure before changing the loop.** `eval/build_trace.py` over real builds, not intuition — the
-  probe's benefit was asserted for months and was never once verified.
+- **Measure before changing the loop.** Attribution over real builds, not intuition — the probe's
+  benefit was asserted for months and was never once verified.
 - Normalize model output to its evident intent; never add caps or rules that DROP it.
 
 ## B1 — Retire the dead plan
@@ -46,8 +46,9 @@ project was a billing system. This file is the live plan for the loop.
 ## B2 — Step-economics baseline
 No current measurement of where a build's 200 steps go. Every loop change below should be judged
 against it, the way the probe deletion was.
-- [ ] Run `python -m eval.build_trace` over the last N builds; record the class → % of steps table
-      in this file, plus wasted-step rate (regressions) and median steps-to-green.
+- [ ] Write the attribution tool (shape in Background), run it over the last N builds; record the
+      class → % of steps table in this file, plus wasted-step rate (regressions) and median
+      steps-to-green.
       → done when: this section holds a dated table covering ≥10 builds.
 - [ ] Re-run after any loop change and diff, per the guardrail.
       → done when: standing.

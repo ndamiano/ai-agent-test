@@ -60,8 +60,14 @@ and near-impossible for code, so the gap stays VISIBLE rather than filled with a
 and every hit traced to a global declared in an inline `<script>` that tsc never reads. It is gone.
 If output ever moves back to TypeScript it comes back for free and is worth it immediately.
 
-**"Did it deliver?" is a HUMAN question.** A build ends when the model calls `done` (or hits its
-step cap) and nothing machine-side judges the result. The human plays it and says what to change:
+**The FIRST `done` is answered, not accepted.** One nudge back — what is unfinished, what is stubbed
+— and the second `done` ends the build. It costs one turn, and it is asked ONCE: a model told twice
+that it is not finished starts inventing work. Measured over a 17-cell grid (2026-07-30, see
+`docs/experiments.md`): it was best or joint-best on three of four game requests, while every arm
+that bought depth by splitting authoring across builds shipped load-blocking defects instead.
+
+**"Did it deliver?" is a HUMAN question.** A build ends when the model calls `done` twice (or hits
+its step cap) and nothing machine-side judges the result. The human plays it and says what to change:
 `python -m maestro.codegen.run --fix <run_id> "<note>"`, which re-enters the same turn machine with
 the note as its request. Any automated judge that returns here has to answer the question that
 retired the last one: judge-then-fix rounds were measured to spend 208 of one build's 227 steps and
@@ -117,7 +123,8 @@ src/
                          re-asks from the transcript as it stands; `{}` is a turn that ran and
                          answered with nothing, which the nudge branch handles. Collapsing the two
                          scolded the model for a reply it never sent and burned a turn.
-                         Owns the six tool schemas, the transcript, compaction, and the
+                         Owns the six tool schemas, the transcript, compaction, the DONE-NUDGE
+                         (`cursor.done_nudged` — asked once, then the next `done` is taken), and the
                          out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
                          than letting the model believe the file landed). A failing call resent with
                          identical arguments is COUNTED and the count told back; what to do instead
@@ -130,7 +137,8 @@ src/
                          and the model copies that into old_text, where it matches nothing (measured
                          2026-07-28: 17 of one build's 32 turns, resent byte-identical).
       build_state.py     the durable build CURSOR (runs/<id>/build_state.json) — phase, step count,
-                         the PAUSE flag, the growing transcript, and the read→edit tool grounding,
+                         the PAUSE flag, the done-nudge flag, the growing transcript, and the
+                         read→edit tool grounding,
                          rehydrated into build_tools each completion (a fresh process would else
                          refuse a resumed edit). Job metadata carries only {stage,run_id,build_id};
                          this file is the single source the completion reloads, advances, rewrites.

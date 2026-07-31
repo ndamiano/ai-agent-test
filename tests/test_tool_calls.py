@@ -17,6 +17,9 @@ SCHEMAS = [
     {"type": "function", "function": {
         "name": "done", "parameters": {
             "type": "object", "properties": {"summary": {}}, "required": ["summary"]}}},
+    {"type": "function", "function": {
+        "name": "list_files", "parameters": {
+            "type": "object", "properties": {}, "required": []}}},
 ]
 
 HTML = "<!DOCTYPE html>\n<html><body><h1>Hi</h1></body></html>"
@@ -133,3 +136,22 @@ def test_an_optional_argument_may_be_omitted():
     content = '<tool_call>\n{"name": "read_file", "arguments": {"path": "game.js"}}\n</tool_call>'
     calls = parse_tool_calls(content, SCHEMAS)
     assert len(calls) == 1 and calls[0]["function"]["name"] == "read_file"
+
+
+@pytest.mark.parametrize("content", [
+    "<tool_call>\n<function=list_files>\n</tool_call>",
+    "<tool_call>\n<function=list_files>\n</function>\n</tool_call>",
+    '<invoke name="list_files">\n</invoke>',
+])
+def test_a_call_with_no_arguments_lands(content):
+    """`list_files` takes none, and it is the first tool a fix build reaches for. Measured
+    2026-07-30: three fix rounds in a row died at step 4 because every `<function=list_files>` was
+    dropped for having no `<parameter>` block, and the model was told no tool call landed."""
+    calls = parse_tool_calls(content, SCHEMAS)
+    assert len(calls) == 1 and calls[0]["function"]["name"] == "list_files"
+    assert json.loads(calls[0]["function"]["arguments"]) == {}
+
+
+def test_an_argument_less_call_still_has_to_name_an_offered_tool():
+    """Dropping the empty-args guard must not turn any `<function=x>` into a call."""
+    assert parse_tool_calls("<tool_call>\n<function=reticulate_splines>\n</tool_call>", SCHEMAS) == []

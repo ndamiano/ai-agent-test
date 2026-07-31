@@ -110,8 +110,9 @@ def _xml_calls(content: str, fn_re, param_re) -> List[Dict]:
     for i, m in enumerate(starts):
         end = starts[i + 1].start() if i + 1 < len(starts) else len(content)
         args = {k: v.strip("\n") for k, v in param_re.findall(content[m.end():end])}
-        if args:
-            out.append(_call(m.group(1), args))
+        # An argument-less call is a real call — `list_files` takes none. `_usable` is what rejects
+        # a name that was never offered, so an empty-args guard here only drops good calls.
+        out.append(_call(m.group(1), args))
     return out
 
 

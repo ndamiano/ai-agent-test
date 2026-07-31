@@ -177,12 +177,19 @@ src/
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
                          runs: enqueue ONE `image` job, record the ask in assets.json, answer with
                          the path. Nothing plans, rewrites or inspects the game's source. `kind:
-                         "mesh"` chains image → TRELLIS. A repeated id, an already-rendered file, a
-                         blocked prompt and a refused budget are all answered, never retried blind.
+                         "mesh"` chains image → TRELLIS. An already-rendered file, a blocked prompt
+                         and a refused budget are all answered, never retried blind. A REPEATED id
+                         is answered ONCE and then obeyed — the done-nudge shape: the first repeat
+                         says "not requeued, call again to replace it", the second re-renders and
+                         rewrites the entry's prompt. Silently keeping the old picture was worse
+                         than either, because "redraw these" got agreement and no new art.
                          Also owns start_from_manifest (the TOP-UP: re-render what the record says
                          is still missing) and the single-asset regenerate — the user's text is a
                          CHANGE NOTE merged (one small llm call) with the entry's original prompt,
                          so "give him a red cape" keeps the goblin; img2img seeds from the render.
+                         A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
+                         needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
+                         always restarting at the image leg never reached the second half.
       asset_chain.py     what a finished asset job does NEXT — the names in its `metadata.then`: a
                          CONTINUATION to enqueue (mesh_from_image), OPERATIONS on this result
                          (save_sprite / decimate), and the batch's FINALIZE. This module owns those

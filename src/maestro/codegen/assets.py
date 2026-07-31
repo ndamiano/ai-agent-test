@@ -18,6 +18,7 @@ than when the slowest render in a set does.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -121,6 +122,17 @@ def _record(run_dir, entry: Dict) -> None:
     p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _update(run_dir, asset_id: str, **fields) -> None:
+    """Rewrite one manifest entry in place. `None` drops the key."""
+    p = manifest_path(run_dir)
+    entries = read_manifest(run_dir)
+    for e in entries:
+        if e["id"] == asset_id:
+            for k, v in fields.items():
+                e.pop(k, None) if v is None else e.update({k: v})
+    p.write_text(json.dumps({"images": entries}, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = "image") -> Dict:
     """ONE asset. Enqueues the render and answers with the path the file will appear at, so the
     model can write code against it on the same turn.
@@ -137,11 +149,18 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = 
     mesh = kind == "mesh"
     ext = "glb" if mesh else "png"
     rel = f"assets/{asset_id}.{ext}"
-    if asset_path(run_id, asset_id, ext).exists():
+    existing = next((e for e in read_manifest(run_dir) if e["id"] == asset_id), None)
+    if not existing and asset_path(run_id, asset_id, ext).exists():
         return {"ok": True, "path": rel, "status": "ready"}
-    # One id is one render, however many times it is asked for.
-    if any(e["id"] == asset_id for e in read_manifest(run_dir)):
-        return {"ok": True, "path": rel, "status": "rendering"}
+    if existing and not existing.get("replace_asked"):
+        # An id asked for twice is usually the model losing track, so the first repeat is ANSWERED
+        # rather than obeyed — the done-nudge shape. What it must not do is agree and keep the old
+        # picture, which is what someone asking for the art to be redrawn used to get.
+        _update(run_dir, asset_id, replace_asked=True)
+        return {"ok": True, "path": rel,
+                "status": "ready" if asset_path(run_id, asset_id, ext).exists() else "rendering",
+                "note": "not requeued — this id already has art. Call again with the prompt you "
+                        "want to replace it with, or use a different id to draw something new."}
 
     payload = build_item_payload(prompt)
     if payload is None:
@@ -157,8 +176,13 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = 
                                        "then": then})
     except db_store.InsufficientCompute:
         return {"ok": False, "error": "no compute left for art — draw this one with code instead"}
-    _record(run_dir, {"id": asset_id, "file": rel, "prompt": prompt,
-                      **({"kind": "mesh"} if mesh else {})})
+    if existing:
+        # The manifest holds the prompt a regenerate re-prompts against, so a confirmed replace
+        # rewrites it rather than leaving the record describing art that no longer exists.
+        _update(run_dir, asset_id, prompt=prompt, replace_asked=None)
+    else:
+        _record(run_dir, {"id": asset_id, "file": rel, "prompt": prompt,
+                          **({"kind": "mesh"} if mesh else {})})
     logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
     return {"ok": True, "path": rel, "status": "rendering"}
 
@@ -192,15 +216,22 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
     batch_id = uuid.uuid4().hex[:16]
     enqueued = 0
     for e in entries:
-        payload = build_item_payload(e["prompt"])
+        mesh = e.get("kind") == "mesh"
+        queue, payload, then = "image", build_item_payload(e["prompt"]), (
+            {"enqueue": "mesh_from_image", "finalize": "assets"} if mesh
+            else {"operations": ["save_sprite"], "finalize": "assets"})
+        src = asset_path(run_id, e["id"], "src.png")
+        if mesh and src.exists():
+            # A mesh needs ComfyUI and then TRELLIS, and one GPU can only hold one of them, so a
+            # top-up that always restarted at the image leg could never reach the second half.
+            queue, then = "mesh", {"operations": ["decimate"], "finalize": "assets"}
+            payload = {"kind": "trellis_mesh",
+                       "image_b64": base64.b64encode(src.read_bytes()).decode("ascii")}
         if payload is None:
             logger.warning("assets %s: %s blocked by the safety filter — not sent", run_id, e["id"])
             continue
-        mesh = e.get("kind") == "mesh"
-        then = ({"enqueue": "mesh_from_image", "finalize": "assets"} if mesh
-                else {"operations": ["save_sprite"], "finalize": "assets"})
         try:
-            db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
+            db_store.enqueue_job(queue, payload, game_id=run_id, build_id=build_id,
                                  batch_id=batch_id,
                                  metadata={"run_id": run_id, "asset_id": e["id"],
                                            "kind": e.get("kind") or "image", "then": then})

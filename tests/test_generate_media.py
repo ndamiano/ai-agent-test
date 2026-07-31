@@ -85,12 +85,41 @@ def test_each_request_is_its_own_batch(run_dir):
     assert len(batches) == 2 and None not in batches
 
 
-def test_the_same_id_twice_is_one_render(run_dir):
-    first = request_media(RUN, run_dir, "goblin", "a snarling goblin")
+def test_the_same_id_asked_twice_is_answered_not_obeyed(run_dir):
+    """The first repeat costs nothing — an id asked for twice is usually the model losing track."""
+    request_media(RUN, run_dir, "goblin", "a snarling goblin")
     again = request_media(RUN, run_dir, "goblin", "a snarling goblin, but bigger")
-    assert again == first
+
+    assert "not requeued" in again["note"]
     assert len(_image_jobs()) == 1
     assert len(read_manifest(run_dir)) == 1
+    assert read_manifest(run_dir)[0]["prompt"] == "a snarling goblin"
+
+
+def test_a_confirmed_repeat_replaces_the_art_and_the_prompt(run_dir):
+    """Asking again after the answer is the model meaning it — which is how a playtest note that
+    says redraw these reaches the renderer at all."""
+    request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
+    out = request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
+
+    assert out == {"ok": True, "path": "assets/goblin.png", "status": "rendering"}
+    assert len(_image_jobs()) == 2
+    entries = read_manifest(run_dir)
+    assert len(entries) == 1, "a replacement rewrites its record rather than adding one"
+    assert entries[0]["prompt"] == "a goblin, full body, for a 3d model"
+    assert "replace_asked" not in entries[0]
+
+
+def test_a_replacement_is_answered_again_before_the_next_one(run_dir):
+    """The flag clears with the render it authorized, so the turn after does not requeue blind."""
+    request_media(RUN, run_dir, "goblin", "a goblin")
+    request_media(RUN, run_dir, "goblin", "a bigger goblin")
+    request_media(RUN, run_dir, "goblin", "a bigger goblin")
+    again = request_media(RUN, run_dir, "goblin", "a bigger goblin still")
+
+    assert "not requeued" in again["note"]
+    assert len(_image_jobs()) == 2
 
 
 def test_an_already_rendered_asset_is_not_paid_for_again(run_dir):
@@ -148,3 +177,34 @@ def test_the_tool_reports_a_missing_argument_rather_than_guessing(run_dir):
     assert tools["generate_media"](prompt="a goblin")["ok"] is False
     assert tools["generate_media"](id="goblin")["ok"] is False
     assert _image_jobs() == []
+
+
+def _jobs(queue):
+    with store._db() as conn:
+        rows = conn.execute("SELECT * FROM jobs WHERE queue = ? ORDER BY id", (queue,)).fetchall()
+    return [store._job_dict(r) for r in rows]
+
+
+def test_a_top_up_resumes_a_mesh_from_the_source_render_it_already_has(run_dir):
+    """A mesh is ComfyUI and then TRELLIS, and one GPU holds one of them, so a top-up that always
+    restarted at the image leg could never reach the second half on a single-card box."""
+    request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
+    src = assets.asset_path(RUN, "hut", "src.png")
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"\x89PNG-the-render-we-already-paid-for")
+
+    assets.start_from_manifest(RUN, run_dir)
+
+    mesh_jobs = _jobs("mesh")
+    assert len(mesh_jobs) == 1, "the top-up went to TRELLIS, not back to ComfyUI"
+    assert mesh_jobs[0]["payload"]["kind"] == "trellis_mesh"
+    assert mesh_jobs[0]["metadata"]["then"]["operations"] == ["decimate"]
+    assert len(_jobs("image")) == 1, "no second image render was paid for"
+
+
+def test_a_mesh_with_no_source_render_still_starts_at_the_image(run_dir):
+    request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
+
+    assets.start_from_manifest(RUN, run_dir)
+
+    assert len(_jobs("image")) == 2 and _jobs("mesh") == []

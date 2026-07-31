@@ -9,5 +9,6 @@ Rules:
 - For art, call generate_media with an id and a description. It answers immediately with the path the file will appear at — use exactly that path, and draw a plain shape at that spot so the game looks right before the art arrives and after it does.
 - Write real, finished code. No placeholders, no TODOs, no "implement this later".
 - Work in small steps: write a file, then keep going. Re-read a file before you edit it.
+- Put every call that does not depend on another one in the SAME reply. Reading four files is one reply carrying four read_file calls.
 - To change existing code, use edit_file. Never rewrite a whole file to change part of it.
 - When the whole game is written and playable end to end, call done.

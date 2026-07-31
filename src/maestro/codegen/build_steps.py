@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
-MAX_TURNS = 80
+MAX_TURNS = 120
 MAX_TOKENS = 16_000
 # Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
 _MAX_TOOL_CHARS = 20_000
@@ -49,6 +49,16 @@ _NUDGES = [
 
 def _nudge(streak: int) -> str:
     return _NUDGES[min(streak, len(_NUDGES)) - 1]
+
+
+# Satisfiable by naming nothing, so a finished game passes it on the next turn. A bar the model
+# cannot clear is answered by contorting the game until the step cap.
+_DONE_NUDGE = (
+    "Not finished yet. Call list_files, then name anything a player meets in the first thirty "
+    "seconds that is missing or unfinished — how they learn the controls, what the first screen "
+    "shows, whether every button does something. Build what you find, then call done again. If "
+    "nothing is missing, call done again."
+)
 
 
 @dataclass
@@ -181,6 +191,13 @@ def step(spec, run_dir, tools, cursor, result) -> Outcome:
         for tc in calls:
             if tc["function"]["name"] == "done":
                 args = parse_args(tc["function"].get("arguments"))
+                if not cursor.done_nudged:
+                    # The nudge is the TOOL RESULT, not a user message after it: one message answers
+                    # one call, and no round is left with its `tool` half missing.
+                    cursor.done_nudged = True
+                    cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                           "content": _DONE_NUDGE})
+                    continue
                 cursor.finished = True
                 cursor.summary = _clip(args.get("summary", ""), 400)
                 cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),

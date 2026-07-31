@@ -20,6 +20,13 @@ def _cursor(**kw):
     return BuildCursor(build_id="b1", **kw)
 
 
+def _done(tmp_path, tools, cursor):
+    """Spend the one `done` the build answers instead of accepting, so a test about what the SECOND
+    done does starts from the state a real build reaches."""
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("done", {"summary": "first pass"})]))
+
+
 def _reply(content="", calls=None, usage=None):
     msg = {"role": "assistant", "content": content}
     if calls:
@@ -90,7 +97,7 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 8
+    assert system.count("\n- ") == 9
     assert "three.module.js" in system and "generate_media" in system
     # assets.json is written by the platform, so naming it here would invite the model to write it.
     for absent in ("assets.json", "WASD", "window"):
@@ -103,13 +110,40 @@ def test_fix_note_replaces_the_request(tmp_path, tools):
     assert "the player cannot move" in out.messages[-1]["content"]
 
 
-def test_done_ends_the_build(tmp_path, tools):
+def test_the_first_done_is_answered_not_accepted(tmp_path, tools):
+    """A model's own bar for playable is that it wrote the files. One bounded turn asks it to look
+    once more, and is satisfiable by naming nothing."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor,
                            _reply(calls=[("done", {"summary": "shipped"})]))
+    assert isinstance(out, build_steps.Infer)
+    assert cursor.finished is False and cursor.done_nudged is True
+    assert cursor.history[-1] == {"role": "tool", "tool_call_id": "c0",
+                                  "content": build_steps._DONE_NUDGE}
+
+
+def test_done_ends_the_build(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    _done(tmp_path, tools, cursor)
+    out = build_steps.step({}, tmp_path, tools, cursor,
+                           _reply(calls=[("done", {"summary": "shipped"})]))
     assert isinstance(out, build_steps.Done)
     assert cursor.finished is True and "shipped" in out.report
+
+
+def test_the_nudge_is_asked_once_not_every_done(tmp_path, tools):
+    """Work happens between the two dones. The second one must be accepted whatever came between —
+    a bar the model cannot get past grinds to the step cap."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    _done(tmp_path, tools, cursor)
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("write_file", {"path": "help.html", "content": "controls"})]))
+    out = build_steps.step({}, tmp_path, tools, cursor,
+                           _reply(calls=[("done", {"summary": "added the controls screen"})]))
+    assert isinstance(out, build_steps.Done)
 
 
 def test_tool_call_lands_on_disk_and_continues(tmp_path, tools):
@@ -194,6 +228,7 @@ def test_no_result_re_asks_instead_of_inventing_an_empty_turn(tmp_path, tools):
 def test_a_long_done_summary_is_cut_on_a_word_boundary(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
+    _done(tmp_path, tools, cursor)
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(
         calls=[("done", {"summary": "built the thing " * 60})]))
     assert isinstance(out, build_steps.Done)

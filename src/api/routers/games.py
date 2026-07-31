@@ -318,7 +318,7 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
 async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_user)):
     """Patch a built game from a free-text note ('the player falls through the floor'). It re-enters
     the same turn machine a build runs, so the two can't run at once. Progress + completion stream
-    over the websocket (fix_started, build_*)."""
+    over the websocket as a build's own events (build_started, build_step, build_done)."""
     _require_state(run_id, user)
     _require_compute(run_id)
     if build_chain.is_active(run_id):

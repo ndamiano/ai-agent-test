@@ -71,14 +71,12 @@ class RunPodSettings(BaseModel):
 
 class ModelCategorySettings(BaseModel):
     message_budget_chars: int = Field(30000, ge=1000)
-    max_iterations: int = Field(10, ge=1)
-    use_json_mode: bool = Field(False)
 
 
 DEFAULT_MODEL_CATEGORIES: Dict[str, ModelCategorySettings] = {
-    "large":  ModelCategorySettings(message_budget_chars=30000, max_iterations=10, use_json_mode=False),
-    "medium": ModelCategorySettings(message_budget_chars=20000, max_iterations=8,  use_json_mode=False),
-    "small":  ModelCategorySettings(message_budget_chars=250000, max_iterations=6,  use_json_mode=True),
+    "large":  ModelCategorySettings(message_budget_chars=30000),
+    "medium": ModelCategorySettings(message_budget_chars=20000),
+    "small":  ModelCategorySettings(message_budget_chars=250000),
 }
 
 

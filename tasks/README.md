@@ -1,7 +1,7 @@
 # Tasks
 
 Work plans for Maestro. One file per **workstream** (a coherent body of work), not per atomic
-task. `docs/ROADMAP.md` is the high-altitude forward plan; these files are the drainable
+task. `docs/roadmap.md` is the high-altitude forward plan; these files are the drainable
 detail under it.
 
 ## Active

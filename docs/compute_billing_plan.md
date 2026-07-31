@@ -47,11 +47,25 @@ Every second of uptime that isn't used for inference is pure loss, and therefore
 
 ## 3. Metering
 
-We will be metering on GPU inference time. Each request will return the time it took to execute, which will be subtracted from the alloted budget for the game. Utilizing this, we can handle multiple requests at once, subtracting each on completion, allowing for a better user experience.
+We meter on GPU inference time. The worker times its own execution (`time.perf_counter` around the
+call) and returns `exec_seconds` on completion; the control plane debits it from the game's grant in
+the same transaction that lands the job. Multiple requests run at once, each debiting as it
+completes.
 
-Additionally, we can utilize different GPUs with multipliers on seconds. For example, an H100 rental is $2.89 per GPU hour, which we can subtract 3 seconds per GPU second, but allows us to process either faster or utilizing higher quality models.
+**Overdraw is bounded by reservations** (`db/estimates.py`, landed). Debiting only on completion
+would let a build enqueue far faster than workers complete, so `seconds_used` reads near-zero right
+up to the moment a grant is already gone. Instead each queue carries a flat estimate — llm 30s,
+image 45s, mesh 240s — and enqueue RESERVES that estimate against the grant; the measured debit
+replaces the reservation when the job leaves the queue. A single job that runs longer than its
+estimate is never refused mid-flight, so a game can still overdraw — the reservation bounds how far.
+The estimates are a hill-climbable policy constant, not a measurement: tune them against the jobs
+table's real `exec_seconds`.
 
-This does come with downsides, as we subtract from the budget on completion, this leads to potentially overdrawing, which will eat into our profit margins. If we find this to be a problem, we will need to estimate request costs and enqueue smaller amounts to limit overdraws.
+**GPU multipliers are planned, not built.** The idea: a faster/pricier card debits more than one
+second per GPU-second (an H100 at $2.89/GPU-hr would debit ~3×), buying either speed or better
+models out of the same grant. Today every job row records the `gpu_type` that ran it, but the debit
+is unweighted — 1 second is 1 second whatever the card. The recorded `gpu_type` is what a multiplier
+would key on when it lands.
 
 ---
 
@@ -60,7 +74,19 @@ This does come with downsides, as we subtract from the budget on completion, thi
 Given the fact that downtime is strictly loss-y, it is likely to be beneficial to utilize a separate queue and unit per model and endpoint. Time spent switching models and switching inference types (comfyUI vs llama-cpp) is purely loss. We will need to carefully evaluate the models we utilize to ensure their licensing is viable, but in general, we will use the following methods and models for V1:
 
 ### Large Language Models
-Llama.cpp will be our primary inference provider, and we will utilize the `QWEN` family of models. Specifically, we are targeting Qwen3.6-35B-A3B-NVFP4.
+Llama.cpp will be our primary inference provider. The model itself is a **swappable choice, not a
+commitment** — it is a settings value (`llm.model`), the worker owns the wire format, and
+`tool_calls.py` already recovers the tool-call encodings the common local families emit. Models are
+evaluated and replaced as better ones ship; whatever is in `settings.json` on a given day is what
+builds run.
+
+What does not change is the criteria a candidate has to meet:
+- **MIT or Apache-2.0 weights.** Non-negotiable (`vision.md`).
+- **Fits the card** at the class of GPU the `llm` queue rents, with enough context left for a full
+  build transcript.
+- **Reliable tool calls** — the build is nothing but tool calls, so a model that emits them
+  inconsistently is disqualified regardless of how it writes code.
+- **Cost per finished game**, which is throughput and turn count together, not tokens/sec alone.
 
 ### Image model (diffusion)
 We will be using ComfyUI as our primary interface for generating images, and we'll be utilizing the illustrious family of models. Specifically we are targeting waiIllustriousSDXL_v170.
@@ -78,16 +104,27 @@ Infrastructure failures lead to bad user experience, when their build stalls, bu
 
 Quality failures are when what comes out isn't a game or is low quality. This is broken logic, failed image / 3d model generation, etc. This case will naturally diminish over time, and we should add language similar to "Game generation is non deterministic. We try our best to generate good games, but the game you get out may not be a game you like. If the game is functional, outside of extreme cases, we will not refund you."
 
-Churn failures are when the model gets stuck in a loop. It tries and tries and tries to get a result out, but for whatever reason cannot. The reason may be that it added some bad code, it might be that it cannot figure out how to progress, but no matter what the reason, it's not making forward progress. We have stall detection in place, with the goal of not wasting compute, but we may need to build a better UX to help people understand WHY it's stalling, and enable them to fix it, or provide a process for an internal developer to fix it. 
+Churn failures are when the model gets stuck in a loop. It tries and tries and tries to get a result out, but for whatever reason cannot. The reason may be that it added some bad code, it might be that it cannot figure out how to progress, but no matter what the reason, it's not making forward progress.
+
+**There is no stall detection.** Three things bound a churning build, none of which notice churn as such: the step cap (200 turns), the compute budget (a refused enqueue ends the run), and the repeated-identical-call counter — a failing tool call resent with identical arguments is counted per call and the count told back to the model, leaving what to do about it as the model's decision. Detecting churn *as churn* would mean a rule the model can't satisfy, which is the shape `CLAUDE.md` forbids. What is missing is the UX half: nothing tells the human WHY a build is spinning, or lets them intervene before the cap. That gap is real and unowned.
 
 ---
 
 ## 6. Open decisions
 
-- **exec-seconds source**: does the llama.cpp router surface per-request execution time, or does the
-  worker wrapper measure it? (Responses `usage` gives tokens, not seconds.)
-- **Pod packing**: confirm one-model-per-pod for all three modalities, or co-locate small ones.
-- **Weights delivery**: network volume vs baked image (cold-start latency vs pull size vs storage
-  cost).
-- **Spot vs on-demand** per queue (preemption tolerance vs price).
-- **Idle-timeout per queue** — the cold-start-UX vs idle-cost tradeoff, tuned per modality.
+- **Spot vs on-demand** per queue (preemption tolerance vs price). Still open.
+- **GPU multipliers** — whether to weight the debit by card at all, and at what ratio. Nothing
+  depends on it while every queue runs the same class of card.
+
+### Settled since this was written
+
+- **exec-seconds source** — the worker measures it (`worker/agent.py`, `time.perf_counter` around
+  the call) and reports it on completion. The inference server is never asked.
+- **Pod packing** — one model per pod, one worker per queue, and a queue owns its card. Model
+  switching is pure loss, so nothing is co-located.
+- **Weights delivery** — RunPod network volume, not a baked image. Measured on a mesh pod: ~45s to
+  pull the 13.7GB image, ~5s to stage 9.7GB of weights off the volume into `/dev/shm`, ~116s to
+  warm overall (`deploy.md`). Baking the weights would have moved that cost into the image pull.
+- **Idle-timeout per queue** — `idle_exit_seconds` per queue in the autoscaler config. Prod runs 30s
+  on llm and image, 120s on mesh: mesh jobs arrive staggered off the image chain, so a short idle
+  would re-pay the ~116s cold start repeatedly.

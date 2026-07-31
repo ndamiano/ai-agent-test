@@ -8,7 +8,9 @@ The north star is **any game + local**: ask for a game you imagine, get a real, 
 every generation runs on a local GPU (a 5090-class card, a ~30B model) — no cloud in the build loop.
 "Good" is the constraint we consciously bend today; breadth and local-first come first.
 
-See `docs/ROADMAP.md` for status.
+See `docs/roadmap.md` for status, `docs/architecture.md` for the layer above this one (processes,
+state, trust boundaries, what pins the control plane to one box), and `docs/experiments.md` for what
+each change to the loop actually measured.
 
 ---
 
@@ -24,11 +26,11 @@ step, no engine of ours between it and the screen. Two stages:
    input would mean approving one text and building another. Pressing **Build** stores the edit
    and starts the build, so there is one action and one writer.
 2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model six
-   tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — and a running
-   transcript, and lets it write the game. It decides the file layout, the data shapes, the systems,
-   and what art gets drawn. It calls `done` when the game is playable. The build is not a resident
-   loop: each llm turn is a job on the `llm` queue and its completion drives the next turn, so the
-   driver holds no state between turns.
+   tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `done` — and a
+   running transcript, and lets it write the game. It decides the file layout, the data shapes, the
+   systems, and what art gets drawn. It calls `done` when the game is playable. The build is not a
+   resident loop: each llm turn is a job on the `llm` queue and its completion drives the next turn,
+   so the driver holds no state between turns.
 
 **Why no kit, no contract, no gates.** Measured over a 25-game grid across two local models
 (2026-07-27): given the same requests, this shape produced working games in 2–4 minutes, 4/4, while
@@ -192,11 +194,13 @@ src/
                          data the game reads is an open decision, not a dependency.
 ```
 
-The rest of the platform is build-path-agnostic and unchanged: `auth/` (identity, bearer sessions,
-credits, the /play cookie gate), `db/` (games/builds/events/jobs/workers + the compute budget),
-`worker/` (the pull-side GPU worker), `scaler/` (the RunPod autoscaler), `api/` (FastAPI routers),
-`llm_clients/`, `tools/`, `config/`. For their contracts see the module docstrings — they are the
-authority, and none of them changed when the kit came out.
+The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits, the
+/play cookie gate), `db/` (games/builds/events/jobs/workers + the compute budget), `worker/` (the
+pull-side GPU worker), `scaler/` (the RunPod autoscaler), `api/` (FastAPI routers), `llm_clients/`,
+`tools/`, `config/`, and `frontend/` (the React SPA, served same-origin by the API). For their
+contracts see the module docstrings — they are the authority. How the pieces sit as PROCESSES —
+the two planes, where state lives, the trust boundaries, and the five things that pin the control
+plane to one box — is `docs/architecture.md`, not here.
 
 **Inference runs ONLY inside a build.** There is no conversational surface: `POST /api/games`
 takes the prompt the person typed, creates the run, charges it, and starts the build in one call, so
@@ -231,8 +235,14 @@ unused schema costs every turn of every build, so a tool that fails that comes b
 ## Settings & running
 
 **Settings:** `src/config/settings.json` (gitignored). Copy from `settings.example.json`.
-- `llm.model`, `llm.n_ctx`, `llm.reasoning`. No endpoint: LLM inference rides the queue, so an
-  `llm` worker must be running or every call times out.
+- `llm.model`, `llm.n_ctx`, `llm.max_tokens`, `llm.reasoning`. No endpoint: LLM inference rides the
+  queue, so an `llm` worker must be running or every call times out. `n_ctx` is what the INPUT
+  budget is computed from — MessageBuilder trims the transcript to
+  `max(n_ctx − 16k, n_ctx/3) × 3.5` chars, where the 16k is the build turn's own output cap
+  (`build_steps.MAX_TOKENS`) and 3.5 chars/token was measured on live code-heavy payloads, not the
+  4:1 prose heuristic. The local router never reports its window, so set `n_ctx` to the server's
+  `-c`: too large and nothing trims until the prompt has already overflowed. `llm.max_tokens` is
+  only the connector's default ceiling — the build path passes its own.
 - The WIRE format is the WORKER's, not a setting here: the control plane enqueues a CANONICAL chat
   request and the worker translates it for whatever its own target serves (`worker.agent --api
   chat|responses`, default `chat`; see `llm_clients/wire.py`). `responses` is the only local
@@ -254,19 +264,23 @@ unused schema costs every turn of every build, so a tool that fails that comes b
   call there outside a scope spends GPU nobody is charged for.
 - `data_dir` (env `MAESTRO_DATA_DIR`, default `<repo>/data`) — where platform.db + auth.db live;
   control-plane state, deliberately not under `working_directory`.
-- `runpod.*` — the autoscaler (see `src/scaler/` + docs/DEPLOY.md): `enabled`, `api_key`,
+- `runpod.*` — the autoscaler (see `src/scaler/` + docs/deploy.md): `enabled`, `api_key`,
   `network_volume_id`, `cp_url` (the pod-reachable control-plane URL) and per-queue `queues.<name>`
   scaling blocks (template_id, gpu_type_ids, max_workers, thresholds, idle_exit_seconds). The
   `queues` dict in settings.json replaces the default wholesale — carry complete blocks.
-- **Model categories** `large`/`medium`/`small` control `message_budget_chars`, `max_iterations`,
-  `use_json_mode`. Use `small` for local models.
+- **Model categories** `large`/`medium`/`small` carry one knob, `message_budget_chars`, and it is
+  only the FALLBACK: when `llm.n_ctx` is set the input budget is derived from the window instead
+  (above), so the category decides nothing on a configured box.
 
 **Run a build (CLI):** `cd src && python -m maestro.codegen.run "<request>"` (the request is the
-prompt → build). `--new "<request>"` stops with the prompt on disk so it can be edited first.
+prompt → build). `--new "<request>"` stops with the prompt on disk so it can be edited first,
+`--build <run_id>` builds that prompt, `--fix <run_id> "<note>"` applies a playtest note, and
+`--assets <run_id>` re-renders the art the game asked for and never got.
 **Play a build:** open `runtime/games/<run_id>/index.html` — a game is plain browser files, but a
 3D one needs http, not file:// (`<script type="module">` is CORS-blocked from a file origin).
 **Run backend:** `source venv/bin/activate && python run.py`  •  **Frontend:** `cd frontend && npm run dev`
-**Run tests:** `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
+**Run tests:** `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`  •  frontend:
+`cd frontend && npm test` (vitest)
 **Run the llm worker's target:** `llama-server` needs
 `--chat-template-kwargs '{"enable_thinking":false}'` — load-bearing, and `--reasoning-budget 0`
 alone is a no-op: without it Qwen3.6 thinks in `content` and authoring turns truncate at the output
@@ -296,7 +310,7 @@ After any non-trivial change, self-review the diff: security, unintended scope c
 regressions. Do this before declaring done.
 
 ### Documentation
-Keep CLAUDE.md and docs/ROADMAP.md in sync with reality, in the same commit as the code.
+Keep CLAUDE.md and docs/roadmap.md in sync with reality, in the same commit as the code.
 
 ### Comments
 Default: none. Only when the WHY is non-obvious (hidden constraint, workaround, subtle invariant).
@@ -330,7 +344,9 @@ What does help:
 1. **Output skeleton before field descriptions** — show exact structure first, let the model fill it.
 2. **Say what is true, not what is forbidden.** "Bind WASD and the arrows" beats "don't use only
    arrows".
-3. **`model_category: "small"`** — tighter budget, JSON mode.
+3. **Give them the whole window.** The input budget rides `llm.n_ctx`, not the model category, and
+   a build's input IS its transcript — set `n_ctx` to what the server was launched with and the
+   trim lands where it should.
 4. **Reasoning off by default** — `reasoning: "none"` is the floor for every build turn. Passing
    None instead reaches the connector as "let the model pick", which skips the enable_thinking
    switch; a measured turn then spent 16000 tokens reasoning and never called a tool. Some local

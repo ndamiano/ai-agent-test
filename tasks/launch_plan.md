@@ -32,7 +32,7 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       get manual grants (`auth/cli.py grant`). No payment integration yet (T4 seam only).
 - [x] **Deployed + reachable** — containerize + datastore/volumes + deploy, all shipped (`finished.md`) — T4
       (deploy) DONE (Dockerfile + compose + named-volume persistence + `scripts/deploy.sh` +
-      `docs/DEPLOY.md`); validated on a second box, non-owner drove the full loop. T1 (CI) now
+      `docs/deploy.md`); validated on a second box, non-owner drove the full loop. T1 (CI) now
       exists too (`.github/workflows/ci.yml`).
 - [ ] **Reliably good on ONE genre** — narrow to the best-working path (VN/dialogue). Judge-in-loop
       (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred. NOT STARTED.

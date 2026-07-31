@@ -22,7 +22,7 @@ process-global inference state that concurrent builds still share.
   `src/llm_clients/rate_limiter.py:68` (`_llm_rate_limiter`, one 2 req/s bucket for all builds).
 - Scheduling: `src/db/store.py` `claim_job` (FIFO on `created_at`).
 - Deploy: `.github/workflows/ci.yml`, `Dockerfile`, `docker-compose.yml`, `scripts/deploy.sh`,
-  `docs/DEPLOY.md`.
+  `docs/deploy.md`.
 
 ## Guardrails (READ FIRST)
 - **No self-serve signup.** Accounts are created manually (`auth/cli.py`). Public signup is an
@@ -83,9 +83,9 @@ more code and more ways to be subtly wrong than a second hostname. Don't ship `A
       (session fixation) even though `HttpOnly` stops it reading one. A distinct registrable domain
       removes that class; a subdomain of the app's domain does not. The game origin is the
       DELIBERATELY-UNTRUSTED origin, so it stays off the brand domain permanently.
-      Prod is a droplet behind Tailscale Funnel (`docs/DEPLOY.md:209,264`), which serves only
+      Prod is a droplet behind Tailscale Funnel (`docs/deploy.md:209,264`), which serves only
       `ts.net` names — so this means DNS → droplet IP, OPENING 443, and Caddy/nginx + Let's Encrypt,
-      against a box where `ufw` allows only `41641/udp` (`DEPLOY.md:232`) and nothing is directly
+      against a box where `ufw` allows only `41641/udp` (`deploy.md:232`) and nothing is directly
       internet-reachable. That inbound-exposure change is part of this item, not a footnote.
       Do NOT split by port instead: origin includes port so `localStorage` separates, but cookies
       ignore port and the jar stays shared — a half-fix.
@@ -185,8 +185,8 @@ Owned here; `scaleout.md` S3 and `production_hardening.md` H4 were the same item
 ## P6 — Release hygiene
 - [ ] Versioning + tags; a changelog (could be fed from `tasks/finished.md`).
       → done when: `git describe --tags` returns a tag.
-- [ ] Rollback path documented in `docs/DEPLOY.md` and exercised once.
-      → done when: `grep -in "rollback" docs/DEPLOY.md` hits a procedure.
+- [ ] Rollback path documented in `docs/deploy.md` and exercised once.
+      → done when: `grep -in "rollback" docs/deploy.md` hits a procedure.
 
 ## P7 — Standing rules (no work until triggered)
 - [ ] Any new uncharged inference path gets the same sliding-window cap as `/api/chat` (30

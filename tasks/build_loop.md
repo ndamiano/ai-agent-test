@@ -39,8 +39,8 @@ project was a billing system. This file is the live plan for the loop.
 ## B1 — Retire the dead plan
 - [ ] Mark `docs/codegen_rebuild_plan.md` SUPERSEDED at the top (it is the WHY-record of the
       rebuild, so keep it — `doc_accuracy.md` guardrail), and repoint `CLAUDE.md` +
-      `docs/ROADMAP.md` at this file for live loop work.
-      → done when: `grep -rn "codegen_rebuild_plan" CLAUDE.md docs/ROADMAP.md` returns only
+      `docs/roadmap.md` at this file for live loop work.
+      → done when: `grep -rn "codegen_rebuild_plan" CLAUDE.md docs/roadmap.md` returns only
       historical references.
 
 ## B2 — Step-economics baseline

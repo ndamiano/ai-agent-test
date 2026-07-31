@@ -18,18 +18,19 @@ representing current state.
 
 ## Background (VERIFIED — the living docs, updated 2026-07-23)
 - **Root:** `CLAUDE.md` (architecture + code standards — the primary), `README.md`.
-- **`docs/`:** `ROADMAP.md` (forward-only), `VISION.md`, `DEPLOY.md`, `codegen_rebuild_plan.md`,
-  `compute_billing_plan.md`, `asset_pipeline_chaining.md`, `hitl_vision.md`. (The IR-era docs —
+- **`docs/`:** `vision.md` (goal), `roadmap.md` (stages + status), `architecture.md` (system shape),
+  `deploy.md` (runbook), `compute_billing_plan.md`, `experiments.md`. (The IR-era docs —
   `ir_architecture.md`, `game_ir_decisions.md`, the schemas, `hitl_architecture.md`,
-  `tool_granularity.md`, `game_creation_walkthrough.md`, `examples/` — are deleted.)
+  `tool_granularity.md`, `game_creation_walkthrough.md`, `examples/` — are deleted, as are
+  `codegen_rebuild_plan.md`, `asset_pipeline_chaining.md` and `hitl_vision.md`.)
 - **`tasks/`:** the work plans (this dir). **`finished.md`:** shipped ledger.
 - Drift evidence: pre-rewrite vocabulary (`validate.py`, `executor.build_context`, `done_condition`
   lists, genre/preset) lingered in task docs; sweep the living docs for the same.
 
 ## Source-of-truth map (who owns what — enforce, don't duplicate)
 - **`CLAUDE.md`** — current architecture + how it works + code standards.
-- **`docs/VISION.md`** — the north-star / product scope (games-first, on-demand tool).
-- **`docs/ROADMAP.md`** — forward plan only (done work lives in `tasks/finished.md`, not here).
+- **`docs/vision.md`** — the north-star / product scope (games-first, on-demand tool).
+- **`docs/roadmap.md`** — forward plan only (done work lives in `tasks/finished.md`, not here).
 - **`README.md`** — entry point / orientation.
 - **`docs/*`** — deep rationale + plans (codegen rebuild, compute/billing, asset chaining, HITL
   vision, deploy).
@@ -45,13 +46,13 @@ changed and the docs did not follow:
       build (it's a completion-driven job chain now) and describes a `draw` hook the game no longer
       has.
       → done when: `grep -c "probe\|scroll\|executor" README.md` is 0 (currently 4 matching lines)
-- [ ] **`docs/ROADMAP.md`** — `:17`, `:56`, `:67`, `:73`, `:80-81`, `:103` all plan probe work
+- [ ] **`docs/roadmap.md`** — `:17`, `:56`, `:67`, `:73`, `:80-81`, `:103` all plan probe work
       (`dead_movement`, `dead_action`, `unbound_control`, "harden the probe"); the probe is gone.
       `:56` also lists `draw` among the authored hooks.
-      → done when: `grep -c "probe" docs/ROADMAP.md` is 0 (currently 7 matching lines)
-- [ ] **Sweep the rest** with T2's method (`CLAUDE.md`, `docs/VISION.md`, `docs/DEPLOY.md`,
+      → done when: `grep -c "probe" docs/roadmap.md` is 0 (currently 7 matching lines)
+- [ ] **Sweep the rest** with T2's method (`CLAUDE.md`, `docs/vision.md`, `docs/deploy.md`,
       `docs/codegen_rebuild_plan.md`) for the same two changes, then produce a drift report.
-      → done when: `grep -c "probe\|scroll" docs/VISION.md docs/DEPLOY.md` is 0 for both (clean today)
+      → done when: `grep -c "probe\|scroll" docs/vision.md docs/deploy.md` is 0 for both (clean today)
 
 ## T2 — Anti-drift governance (standing)
 - [ ] **Reinforce the same-commit rule** as a review checklist item (`CLAUDE.md` already mandates it

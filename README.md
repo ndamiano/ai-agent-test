@@ -2,13 +2,13 @@
 
 An AI platform that makes things. The user says "make me a game" — a while later, a good game exists. AI output quality is the product; everything else is scaffolding.
 
-See `docs/VISION.md` for the philosophy, `docs/ROADMAP.md` for the plan and current state, and `CLAUDE.md` for architecture and code standards.
+See `docs/vision.md` for the philosophy, `docs/roadmap.md` for the plan and current state, and `CLAUDE.md` for architecture and code standards.
 
 ## How it works
 
 Press **Make a new game**, describe the game you want, and press **Build**. What you typed is byte for byte the one message the model is given, so approving it and building it are the same act. Nothing is stored server-side until you build.
 
-A non-LLM **driver** then hands the model six tools — `list_files`, `read_file`, `write`, `edit`, `generate_media`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. A 3D game imports the vendored three.js copied into every game folder.
+A non-LLM **driver** then hands the model six tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. A 3D game imports the vendored three.js copied into every game folder.
 
 A build reaches `built` when `index.html` exists — a gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. Play it, then say what to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
 

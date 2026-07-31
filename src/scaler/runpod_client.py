@@ -2,7 +2,7 @@
 
 The full worker env (CP_URL, WORKER_TOKEN, …) is passed at create time: correct whether
 create-time env merges with or replaces the template's env (the one unverified RunPod detail —
-see DEPLOY.md for the one-time manual check).
+see deploy.md for the one-time manual check).
 """
 
 from typing import Dict, List

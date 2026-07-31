@@ -319,14 +319,18 @@ WantedBy=multi-user.target
 ## Known deferred risks (accepted for private alpha — trusted testers)
 
 Flagged in the pre-open security audit; hardened 2026-07-23. Task breakdown + status:
-`tasks/production_hardening.md`.
+`tasks/platform_polish.md` P1.
 
 - **Untrusted generated JS in the browser** — CONTAINED, not isolated. Every `/play` response
-  carries a CSP pinning all loads + network to this origin (`api/app.py _PLAY_CSP`): generated
-  code can't exfiltrate or pull external scripts. It still shares the app origin — safe today
-  because `/play/games/<id>` is ownership-gated, so a game only runs in its owner's browser.
-  TRUE origin isolation (separate origin or SPA-seeded sandbox) is REQUIRED before any
-  game-sharing feature ships — see production_hardening H1 for the verified constraints.
+  carries a CSP pinning scripted loads + network to this origin (`api/app.py _PLAY_CSP`):
+  generated code can't pull external scripts, and fetch/XHR/WS can't leave. Exfiltration is NOT
+  fully closed — no CSP directive governs top-level navigation, so a `location =` to an external
+  URL still leaves. The game shares the app origin, and therefore its localStorage, where the
+  session bearer token lives; what makes that safe today is the ownership gate on
+  `/play/games/<id>`, so a game only runs in its OWNER's browser and the token it can read is
+  already its own. The first non-owner view — a share link, a storefront, or an admin bypass —
+  makes it account takeover. TRUE origin isolation is REQUIRED before any game-sharing feature
+  ships — see `tasks/platform_polish.md` P1 for the shape and the verified constraints.
 - **Chat rate-limited.** `POST /api/chat` is uncharged inference, so it's capped at 30
   turns/hour/user (429 + Retry-After). (The former "build-flood DoS" is retired: builds charge
   credits before enqueue, every GPU job admits against the game's compute budget, the autoscaler

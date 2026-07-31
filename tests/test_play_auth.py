@@ -92,10 +92,9 @@ def test_play_game_file_requires_owning_session(client, game_bundle):
     assert r.text == "// fake bundle"
 
 
-def test_play_responses_carry_the_no_exfil_csp(client):
-    """/play runs model-authored JS: every response (including a 401) pins loads + network to this
-    origin so generated code can't exfiltrate or pull external scripts. /api stays CSP-free —
-    the policy is containment for the game surface only."""
+def test_play_responses_carry_the_containment_csp(client):
+    """/play runs model-authored JS: every response (including a 401) pins scripted loads + network
+    to this origin. /api stays CSP-free — the policy is containment for the game surface only."""
     _, tok = _user("alice")
 
     csp = client.get("/play/games/nosuchgame/index.html",
@@ -108,6 +107,8 @@ def test_play_responses_carry_the_no_exfil_csp(client):
     assert "object-src 'none'" in csp
     # blob: must never reach script-src — a blob: script would let generated code sidestep 'self'.
     assert "script-src 'self' 'unsafe-inline';" in csp
+    # form-action does not fall back to default-src: unset, a form POST leaves the origin.
+    assert "form-action 'none'" in csp
 
     assert "content-security-policy" in client.get("/play/games/g/index.html").headers  # 401 too
     assert "content-security-policy" not in client.get("/api/games").headers

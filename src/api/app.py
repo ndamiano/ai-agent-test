@@ -106,11 +106,13 @@ from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
 # Serve staged games so the SPA can open a built one (mounted before the SPA catch-all).
-# /play runs MODEL-AUTHORED JS, so every response carries a CSP that pins all loads and network
-# to this origin: generated code cannot exfiltrate anywhere or pull external scripts. It shares
-# the app origin (ownership-gated — a game only ever runs in its owner's browser), so this is
-# containment, not isolation; SHARING games requires true origin isolation first — see
-# tasks/production_hardening.md H1. 'unsafe-inline' is for index.html's own bootstrap script;
+# /play runs MODEL-AUTHORED JS, so every response carries a CSP that pins scripted loads and network
+# to this origin. This is NOT full exfiltration protection: top-level navigation is governed by no
+# CSP directive (`navigate-to` was specified and abandoned), so a `location =` to an external URL
+# still leaves. form-action must be set explicitly — it does NOT fall back to default-src. The game
+# shares the app origin, so it shares localStorage; the ownership gate is what keeps the token it
+# can read its own. Containment, not isolation — SHARING requires true origin isolation, see
+# tasks/platform_polish.md P1. 'unsafe-inline' is for index.html's own bootstrap script;
 # eval stays blocked. blob: + data: in img-src (blob: in connect-src too) are for GLTFLoader's
 # embedded GLB textures: it decodes them through same-document object URLs (ImageBitmapLoader
 # fetches them, so connect-src governs as well), and EXT_texture_webp's support DETECTION loads a
@@ -120,7 +122,8 @@ from fastapi.staticfiles import StaticFiles
 _PLAY_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
              "connect-src 'self' blob:; img-src 'self' blob: data:; "
              "style-src 'self' 'unsafe-inline'; "
-             "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+             "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+             "form-action 'none'")
 
 
 @app.middleware("http")

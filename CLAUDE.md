@@ -119,7 +119,9 @@ src/
                          makes pause cost nothing: parking at the top discarded a turn the GPU had
                          already been paid for, and announced itself on every reaper re-drive (one
                          feed line every 5s, forever). A refused compute budget PREEMPTS the run's
-                         still-pending asset jobs before giving up — gameplay beats art.
+                         still-pending asset jobs before giving up — gameplay beats art. A landed
+                         turn is ARCHIVED to the run dir before its jobs row is emptied
+                         (`turn_log`) — append first, so there is never a moment with neither copy.
       build_steps.py     the turn MACHINE: step(spec, run_dir, tools, cursor, result) -> Infer|Done.
                          A `result` of None is NO TURN TO APPLY (a resume, a reaper re-drive) and
                          re-asks from the transcript as it stands; `{}` is a turn that ran and
@@ -146,6 +148,16 @@ src/
                          this file is the single source the completion reloads, advances, rewrites.
                          Pause lives here and not in memory: a control plane that restarts mid-build
                          holds nothing, while its turns keep completing.
+      turn_log.py        the run dir's own copy of the conversation (runs/<id>/turns.jsonl), and
+                         the only one that lasts: a turn's request IS the transcript so far, so a
+                         payload per jobs row stored the same conversation once per turn (951 MB of
+                         `jobs.payload`, 26 MB for one 117-turn build). The system prompt and the
+                         six schemas are byte-identical every turn, so they ride ONE `meta` record
+                         and a `turn` record carries only what that turn ADDED — turn k is
+                         `system + tools + concat(added[0..k])`. A `compact` record carries the
+                         rounds `build_steps.compact` dropped and the note that replaced them, so a
+                         replay shows what was really sent. A FIX appends its own meta and never
+                         truncates. The prompt log reads bodies from here once the row is empty.
       tools.py           list_files / read_file / write_file / edit_file / generate_media — the
                          smallest surface that works, and kept that way. A path is resolved and must
                          land inside the game folder. Every failure is REPORTED to the model as text

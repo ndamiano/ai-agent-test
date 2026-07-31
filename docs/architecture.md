@@ -71,6 +71,10 @@ Crash recovery falls out of this: a build with no job in flight and no terminal 
 by the reaper. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
 source that a completion reloads, advances, and rewrites.
 
+A landed turn is appended to the run's own `turns.jsonl` and its jobs row is then emptied, so the
+db holds live work and the run dir holds the archive. The append comes first: the two writes cannot
+share a transaction, and the order is what guarantees the body is never in neither place.
+
 **Assets.** `generate_media` enqueues one `image` job and answers immediately with the path the file
 will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_image`, save/decimate
 operations, the batch finalize) and dispatched by `asset_chain`, so the queue stays a generic
@@ -87,7 +91,7 @@ transport that never learns what an asset is.
 |---|---|---|
 | accounts, sessions, credit ledger | `auth.db` (SQLite) | `MAESTRO_DATA_DIR` |
 | games, builds, jobs, events, workers, compute budget | `platform.db` (SQLite, WAL) | `MAESTRO_DATA_DIR` |
-| run dirs — spec, build cursor, game source | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
+| run dirs — spec, build cursor, turn log, game source | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
 | staged playable games | `runtime/games/<slug>/` | local filesystem, served at `/play` |
 | structured config the env can't express | `src/config/settings.json` | host bind mount |
 

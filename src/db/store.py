@@ -408,13 +408,22 @@ def heartbeat_job(job_id: str, worker_id: str, lease_seconds: float) -> bool:
     return cur.rowcount == 1
 
 
+def served_model(result: Optional[Dict]) -> Optional[str]:
+    """The model the GPU actually served, off an llm result. The `model` column is written at
+    ENQUEUE from what the caller asked for, which is a different string from what a worker's
+    target had loaded — a pod serving DeepSeek answered 387 jobs filed as qwen. Local servers
+    report the gguf path, hosted ones a name; the basename makes the two comparable."""
+    name = (result or {}).get("model")
+    return name.rsplit("/", 1)[-1] if isinstance(name, str) and name else None
+
+
 def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Optional[str],
                  exec_seconds: float, gpu_type: Optional[str] = None,
                  continuation: Optional[Dict] = None) -> Optional[Dict]:
     """Land a job's outcome, debit its game's compute budget, and advance its chain. One
-    transaction: the job row, the games seconds_used debit, the worker's busy-seconds and the
-    follow-up job all move together. None if the job isn't this worker's claim (lease lapsed —
-    the retry's result wins, this one is dropped).
+    transaction: the job row, the games and builds seconds_used debits, the worker's busy-seconds
+    and the follow-up job all move together. None if the job isn't this worker's claim (lease
+    lapsed — the retry's result wins, this one is dropped).
 
     ONLY DELIVERED WORK IS BILLED. A game is debited when it got a result and never otherwise: a
     failed job, a lapsed-lease duplicate, and a job whose enqueuer abandoned it all leave
@@ -438,9 +447,10 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
     with _db() as conn:
         cur = conn.execute(
             "UPDATE jobs SET status = ?, result = ?, error = ?, exec_seconds = ?, gpu_type = ?, "
+            "model = COALESCE(?, model), "
             "finished_at = ? WHERE id = ? AND worker_id = ? AND status = 'claimed'",
             (status, json.dumps(result, ensure_ascii=False) if result is not None else None,
-             error, exec_seconds, gpu_type, now, job_id, worker_id),
+             error, exec_seconds, gpu_type, served_model(result), now, job_id, worker_id),
         )
         if cur.rowcount != 1:
             return None
@@ -451,6 +461,10 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
             conn.execute(
                 "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
                 (exec_seconds, now, row["game_id"]))
+        if error is None and row["build_id"]:
+            conn.execute(
+                "UPDATE builds SET seconds_used = seconds_used + ? WHERE id = ?",
+                (exec_seconds, row["build_id"]))
         conn.execute(
             "UPDATE workers SET busy_seconds = busy_seconds + ?, last_seen_at = ? WHERE id = ?",
             (exec_seconds, now, worker_id))
@@ -482,6 +496,14 @@ def get_job(job_id: str) -> Optional[Dict]:
     if row is None:
         return None
     return _job_dict(row)
+
+
+def clear_job_body(job_id: str) -> None:
+    """Drop one job's request and reply, keeping the row. Called only once the body is durably
+    archived elsewhere — a build turn's payload is the whole transcript so far, so the rows are
+    where a build's conversation gets stored once per turn (measured 2026-07-31: 951 MB)."""
+    with _db() as conn:
+        conn.execute("UPDATE jobs SET payload = NULL, result = NULL WHERE id = ?", (job_id,))
 
 
 def _job_dict(row: sqlite3.Row) -> Dict:
@@ -519,9 +541,10 @@ def batch_jobs(batch_id: str) -> List[Dict]:
     return [_job_dict(r) for r in rows]
 
 
-# The prompt log's index columns. The payload/result bodies stay in the db — one build's payloads
-# run to megabytes — so a listing carries only sizes plus the head of the system prompt, and the
-# reader pulls one turn's full text at a time.
+# The prompt log's index columns. A listing carries only sizes plus the head of the system prompt,
+# and the reader pulls one turn's full text at a time. A build turn's body has moved OUT of the row
+# by the time it is read (maestro/codegen/turn_log.py), which is what the NULLs here mean — the
+# router fills those rows in from the run dir's log.
 # A db that has served both wire formats holds both, and a chat body's system prompt is messages[0]
 # — MessageBuilder.build is what puts it there.
 _TURN_COLUMNS = (
@@ -536,6 +559,17 @@ _TURN_COLUMNS = (
 _SYSTEM_HEAD_CHARS = 160
 
 
+def system_index(system: Optional[str]) -> Dict:
+    """A turn's system prompt as index columns. A turn's system prompt is its prompt FILE rendered
+    — measured over a 661-turn build, 8 distinct texts covered every turn. Hashing it is what lets
+    the reader collapse a log into the handful of prompts that actually produced it; the file name
+    itself is never recorded."""
+    system = system or ""
+    return {"system_hash": hashlib.sha1(system.encode("utf-8")).hexdigest()[:12],
+            "system_head": system[:_SYSTEM_HEAD_CHARS],
+            "system_chars": len(system)}
+
+
 def _llm_turns(where: str, params: tuple, limit: int) -> List[Dict]:
     with _db() as conn:
         rows = conn.execute(
@@ -546,13 +580,7 @@ def _llm_turns(where: str, params: tuple, limit: int) -> List[Dict]:
     out = []
     for row in reversed(rows):
         turn = dict(row)
-        # A turn's system prompt is its prompt FILE rendered — measured over a 661-turn build, 8
-        # distinct texts covered every turn. Hashing it is what lets the reader collapse a log into
-        # the handful of prompts that actually produced it; the file name itself is never recorded.
-        system = turn.pop("system") or ""
-        turn["system_hash"] = hashlib.sha1(system.encode("utf-8")).hexdigest()[:12]
-        turn["system_head"] = system[:_SYSTEM_HEAD_CHARS]
-        turn["system_chars"] = len(system)
+        turn.update(system_index(turn.pop("system")))
         turn["metadata"] = json.loads(turn["metadata"]) if turn["metadata"] else {}
         out.append(turn)
     return out

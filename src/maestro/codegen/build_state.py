@@ -45,6 +45,11 @@ class BuildCursor:
     summary: str = ""
     system: str = ""
     history: List[Dict] = field(default_factory=list)
+    # The turn log's place in that history: how many messages have been archived to turns.jsonl,
+    # and whether this build's `meta` record is down. Both durable — a control plane that restarts
+    # mid-build must not re-append what a previous process already wrote.
+    logged: int = 0
+    meta_logged: bool = False
 
 
 def _path(run_dir: Path) -> Path:

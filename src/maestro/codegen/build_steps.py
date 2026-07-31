@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
+from maestro.codegen import turn_log
 from maestro.codegen.staging import game_dir
 from maestro.services import parse_args
 from maestro.tool_calls import parse_tool_calls
@@ -352,11 +353,12 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
     few dozen tokens and turns "edit blind" back into "read, then edit"."""
     groups = rounds(cursor.history)
     total = sum(len(json.dumps(m)) for g in groups for m in g)
-    dropped = 0
+    dropped, removed = 0, 0
     while groups and total > keep_chars:
         g = groups.pop(0)
         total -= sum(len(json.dumps(m)) for m in g)
         dropped += 1
+        removed += len(g)
     if not dropped:
         return 0
     root = game_dir(run_dir)
@@ -368,6 +370,10 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
             f"wrote before, so do not assume — read a file before you edit it.]\n\n"
             f"Files in the project directory right now:\n{listing}"}
     cursor.history = cursor.history[:1] + [note] + [m for g in groups for m in g]
+    # The dropped messages are already in the turn log; the note takes their place there too, so
+    # the archive replays what was really sent rather than the transcript that was never re-sent.
+    turn_log.append_compact(run_dir, turn=cursor.turn, dropped=dropped, note=note["content"])
+    cursor.logged = max(1, cursor.logged - removed + 1)
     return dropped
 
 

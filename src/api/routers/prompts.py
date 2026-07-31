@@ -1,10 +1,13 @@
 """The PROMPT LOG — operator-only, read-only, every game.
 
-Nothing instruments the build to make this work: an llm turn IS a jobs row, its payload IS the
-body that went to the model (system prompt + messages + tools, in whichever wire format the run
-used) and its result IS the reply, so the whole conversation behind any game is readable after the
-fact. This router only reshapes those rows for reading; `require_admin` gates all of it, since a
-bucket list spans every user's games.
+Nothing instruments the build to make this work: an llm turn IS a jobs row, and the body that went
+to the model (system prompt + messages + tools) with the reply that came back is readable after the
+fact, so the whole conversation behind any game is too. A BUILD turn's body does not stay in the
+row — the driver archives it to the run dir (maestro/codegen/turn_log.py) and clears the row, since
+each turn's request is the whole transcript so far. So a body lives in exactly one of two places
+and this router reads whichever holds it: the row until the log has the turn, the log after.
+
+`require_admin` gates all of it, since a bucket list spans every user's games.
 """
 
 from typing import Dict, List, Literal, Optional
@@ -15,6 +18,8 @@ from auth.deps import require_admin
 from auth.store import User
 from db import store as db_store
 from llm_clients.wire import responses_to_chat
+from maestro.codegen import turn_log
+from maestro.state import RunState
 
 router = APIRouter()
 
@@ -35,10 +40,29 @@ async def prompt_turns(scope: Literal["all", "game", "platform"] = "all",
     if scope == "game":
         if not game_id:
             raise HTTPException(status_code=400, detail="scope=game needs a game_id")
-        return db_store.llm_turns_for_game(game_id, limit=limit)
+        return _fill_archived(db_store.llm_turns_for_game(game_id, limit=limit))
     if scope == "platform":
-        return db_store.llm_turns_platform(limit=limit)
-    return db_store.llm_turns_all(limit=limit)
+        return _fill_archived(db_store.llm_turns_platform(limit=limit))
+    return _fill_archived(db_store.llm_turns_all(limit=limit))
+
+
+def _fill_archived(rows: List[Dict]) -> List[Dict]:
+    """A turn whose body has moved to its run dir has nothing left in the row to measure. Its sizes
+    and its system prompt come from the same log the detail view reads — one scan per RUN, not one
+    per turn. A turn older than the log (its body pruned, never archived) keeps its empty row."""
+    scanned: Dict[str, Dict] = {}
+    for row in rows:
+        run_id = (row.get("metadata") or {}).get("run_id")
+        if row["payload_chars"] is not None or not run_id:
+            continue
+        if run_id not in scanned:
+            scanned[run_id] = turn_log.read_index(RunState(run_id).run_dir)
+        archived = scanned[run_id].get(row["id"])
+        if archived:
+            row["payload_chars"] = archived["prompt_chars"]
+            row["n_messages"] = archived["n_messages"]
+            row.update(db_store.system_index(archived["system"]))
+    return rows
 
 
 @router.get("/turns/{job_id}", response_model=Dict)
@@ -55,6 +79,9 @@ def _turn_view(job: Dict) -> Dict:
     current connector: `llm.api` can change between a build and someone reading its log, and a db
     that has served both wire formats holds both."""
     body = (job.get("payload") or {}).get("body") or {}
+    result = job.get("result")
+    if not body:
+        body, result = _from_archive(job)
     system, messages = _view_conversation(body)
     return {
         "id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],
@@ -66,8 +93,26 @@ def _turn_view(job: Dict) -> Dict:
         "system": system,
         "messages": messages,
         "tools": [_view_tool(t) for t in body.get("tools") or []],
-        "response": _view_response(job.get("result")),
+        "response": _view_response(result),
     }
+
+
+def _from_archive(job: Dict) -> tuple:
+    """(body, result) rebuilt from the run dir's turn log — the request this turn sent and the reply
+    it got. The record states its own wire format (`meta.wire`), so reading one never asks the
+    current connector what shape it is in. ({}, None) when the turn is not archived: it was never a
+    build turn, or its body was pruned before this log existed."""
+    run_id = (job.get("metadata") or {}).get("run_id")
+    record = turn_log.read_turn(RunState(run_id).run_dir, job["id"]) if run_id else None
+    if record is None:
+        return {}, None
+    meta = record["meta"]
+    body = {"model": meta["model"], "max_tokens": meta["max_tokens"],
+            "reasoning": meta["reasoning"], "tools": meta["tools"],
+            "messages": [{"role": "system", "content": meta["system"]}] + record["messages"]}
+    if record["response"] is None:
+        return body, None
+    return body, {"choices": [{"message": record["response"]}], "usage": record["usage"]}
 
 
 def _view_reasoning(reasoning) -> Optional[str]:

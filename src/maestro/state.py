@@ -5,6 +5,8 @@ Inside it:
   - spec.json             the run's PROMPT ({request, title}) — what the build sends as its
                           user message, and what the human approved
   - build_state.json      the durable build cursor (maestro.codegen.build_state)
+  - turns.jsonl           every llm turn the run has spent (maestro.codegen.turn_log) — the
+                          archive, once the jobs row that carried it is emptied
   - game/                 the browser files the model wrote — written directly by
                           maestro.codegen.tools
 """

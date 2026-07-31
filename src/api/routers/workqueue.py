@@ -194,7 +194,7 @@ async def complete(body: CompleteBody, request: Request):
     # stalls every other completion.
     if metadata.get("stage") == "build":
         follow_up = (build_chain.on_completion, metadata["run_id"], metadata.get("build_id"),
-                     body.result, body.error)
+                     body.result, body.error, body.job_id, body.exec_seconds)
     else:
         follow_up = (asset_chain.on_completion, metadata, body.result, outcome["batch_id"],
                      outcome["batch_complete"])

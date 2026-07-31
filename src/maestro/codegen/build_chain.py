@@ -20,7 +20,7 @@ from typing import Dict, Optional
 
 from db import store as db_store
 from llm_clients.connector import get_connector
-from maestro.codegen import build_state, build_steps
+from maestro.codegen import build_state, build_steps, turn_log
 from maestro.codegen.build_state import BuildCursor
 from maestro.codegen.staging import entry_path, stage_for_play
 from maestro.codegen.tools import build_tools
@@ -152,35 +152,44 @@ def _seed(rs: RunState) -> None:
     seed_vendor(rs.run_dir)
 
 
-def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Optional[str]) -> None:
-    """Drive the next step after a build llm turn lands. The result arrives in raw Responses shape off
-    the queue — normalize it to chat before applying. A worker-reported error (or a lost result)
-    becomes an empty turn the machine handles rather than a stall."""
+def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Optional[str],
+                  job_id: str, exec_seconds: float) -> None:
+    """Drive the next step after a build llm turn lands, and ARCHIVE the turn that just landed. The
+    result arrives in raw Responses shape off the queue — normalize it to chat before applying. A
+    worker-reported error (or a lost result) becomes an empty turn the machine handles rather than
+    a stall."""
     raw = result if (error is None and result) else {}
-    advance(run_id, get_connector().to_chat(raw))
+    advance(run_id, get_connector().to_chat(raw),
+            landed={"job_id": job_id, "exec_seconds": exec_seconds, "error": error})
 
 
-def advance(run_id: str, result: Optional[Dict] = None, *, wait: bool = False) -> None:
+def advance(run_id: str, result: Optional[Dict] = None, *, wait: bool = False,
+            landed: Optional[Dict] = None) -> None:
     """Run the state machine forward until it must infer (enqueue + return) or the build finishes.
     Serialized per run; a stale call whose cursor is already done/absent is a no-op. `wait` blocks
-    for the lock instead — for a fresh build's FIRST advance, which must never be dropped."""
+    for the lock instead — for a fresh build's FIRST advance, which must never be dropped.
+
+    `landed` is the completed turn's {job_id, exec_seconds, error} — the job whose body this
+    advance archives. A re-drive (reaper, resume) has no turn to archive and passes none."""
     lock = _lock_for(run_id)
     if wait:
         lock.acquire()
     elif not lock.acquire(blocking=False):
         return   # another advance (completion or reaper) is already driving this run
     try:
-        _advance_locked(run_id, result)
+        _advance_locked(run_id, result, landed)
     finally:
         lock.release()
 
 
-def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
+def _advance_locked(run_id: str, result: Optional[Dict], landed: Optional[Dict] = None) -> None:
     rs = RunState(run_id)
     spec = rs.read_spec()
     cursor = build_state.load(rs.run_dir)
     if cursor is None or cursor.phase == "done":
         return
+    if landed:
+        _archive_turn(rs, cursor, landed, result)
     if cursor.paused and result is None:
         return   # nothing to apply, and a re-drive (reaper, resume race) must not restart a parked build
     tools = build_tools(rs)
@@ -196,6 +205,16 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
         if cursor.step > cursor.max_steps:
             _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir))
             return
+        if not cursor.meta_logged:
+            turn_log.append_meta(
+                rs.run_dir, run_id=run_id, build_id=cursor.build_id, system=cursor.system,
+                tools=outcome.schemas, model=get_connector().model_name,
+                max_tokens=outcome.max_tokens, reasoning=outcome.reasoning,
+                # The control plane enqueues the canonical chat shape and nothing else
+                # (llm_clients/wire.py); the record says so rather than a reader inferring it from
+                # whatever `llm.api` happens to be the day the log is read.
+                wire="chat")
+            cursor.meta_logged = True
         build_state.save(rs.run_dir, cursor)
         _enqueue_turn(run_id, cursor, outcome)
         # A refused compute budget ends the run inside _enqueue_turn; a step line after that
@@ -206,6 +225,25 @@ def _advance_locked(run_id: str, result: Optional[Dict]) -> None:
 
     _emit_step(run_id, cursor, outcome.report)
     _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir) and cursor.finished)
+
+
+def _archive_turn(rs: RunState, cursor: BuildCursor, landed: Dict, result: Optional[Dict]) -> None:
+    """Write the landed turn to the run dir's log, then DROP its body from the jobs row.
+
+    A build turn's request is the whole transcript, so keeping it in the row stores the same
+    conversation once per turn. The log stores each message once — everything appended since the
+    last archive is exactly what this turn's request added to the one before it.
+
+    The append and the sqlite write cannot be one transaction, so the ORDER is the guarantee: an
+    append that fails leaves the row's copy intact and nothing is lost; a clear that fails leaves
+    two copies and only disk is wasted. There is never a moment with neither."""
+    message = ((result or {}).get("choices") or [{}])[0].get("message")
+    turn_log.append_turn(rs.run_dir, turn=cursor.turn, job_id=landed["job_id"],
+                         added=cursor.history[cursor.logged:], response=message,
+                         usage=(result or {}).get("usage") or {},
+                         exec_seconds=landed["exec_seconds"], error=landed["error"])
+    cursor.logged = len(cursor.history)
+    db_store.clear_job_body(landed["job_id"])
 
 
 def _playable(run_dir) -> bool:

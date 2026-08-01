@@ -326,7 +326,8 @@ live services — skip unless testing connectors.
 
 ### Code review
 After any non-trivial change, self-review the diff: security, unintended scope creep, missing tests,
-regressions. Do this before declaring done.
+regressions, and whether the documentation the change invalidates is in the same diff. Do this
+before declaring done.
 
 ### Documentation
 Keep CLAUDE.md and docs/roadmap.md in sync with reality, in the same commit as the code.

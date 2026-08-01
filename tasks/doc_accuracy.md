@@ -1,6 +1,6 @@
 # Doc Accuracy — Audit & Anti-Drift Governance
 
-Verified: 2026-07-25
+Verified: 2026-07-31
 
 ## Why
 The codebase moves fast (module rewrite, combat/Godot, 3D, HD-2D all landed recently) and docs rot
@@ -16,54 +16,52 @@ representing current state.
 - Avoid restating the same fact in 3 docs — duplication is where drift starts (see the source-of-
   truth map below).
 
-## Background (VERIFIED — the living docs, updated 2026-07-23)
+## Background (VERIFIED 2026-07-31 — the living docs)
 - **Root:** `CLAUDE.md` (architecture + code standards — the primary), `README.md`.
-- **`docs/`:** `vision.md` (goal), `roadmap.md` (stages + status), `architecture.md` (system shape),
-  `deploy.md` (runbook), `compute_billing_plan.md`, `experiments.md`. (The IR-era docs —
-  `ir_architecture.md`, `game_ir_decisions.md`, the schemas, `hitl_architecture.md`,
-  `tool_granularity.md`, `game_creation_walkthrough.md`, `examples/` — are deleted, as are
-  `codegen_rebuild_plan.md`, `asset_pipeline_chaining.md` and `hitl_vision.md`.)
+- **`docs/`:** six files, all live — `vision.md`, `roadmap.md`, `architecture.md`, `deploy.md`,
+  `compute_billing_plan.md`, `experiments.md`.
 - **`tasks/`:** the work plans (this dir). **`finished.md`:** shipped ledger.
-- Drift evidence: pre-rewrite vocabulary (`validate.py`, `executor.build_context`, `done_condition`
-  lists, genre/preset) lingered in task docs; sweep the living docs for the same.
+- What a sweep looks for: vocabulary from a retired surface. Today that is the kit era —
+  `module.py`, `fix_classes.py`, `kit_api*.md`, `kit_catalog.md`, the scaffold templates, the probe
+  and scroll gates, the `draw` hook, `executor`.
 
 ## Source-of-truth map (who owns what — enforce, don't duplicate)
 - **`CLAUDE.md`** — current architecture + how it works + code standards.
 - **`docs/vision.md`** — the north-star / product scope (games-first, on-demand tool).
 - **`docs/roadmap.md`** — forward plan only (done work lives in `tasks/finished.md`, not here).
 - **`README.md`** — entry point / orientation.
-- **`docs/*`** — deep rationale + plans (codegen rebuild, compute/billing, asset chaining, HITL
-  vision, deploy).
+- **`docs/architecture.md`** — the system as processes: the two planes, where state lives, trust
+  boundaries.
+- **`docs/deploy.md`** — the prod runbook.
+- **`docs/compute_billing_plan.md`** — credits, metering, the cost model.
+- **`docs/experiments.md`** — what has been RUN against the loop and what it measured.
 - **`tasks/*`** — active work plans; **`finished.md`** — shipped ledger.
 
-## T1 — Post-rebuild audit (due) — KNOWN DRIFT, verified 2026-07-25
-The 2026-07-08 audit is retired (it covered the pre-codegen-rebuild tree; most docs it fixed are
-deleted). Concrete drift already confirmed against HEAD — the gate list and the draw surface both
-changed and the docs did not follow:
-- [ ] **`README.md`** — `:9` names the gate chain "typecheck → headless → **probe** → render →
-      **scroll**" and `:80-81` lists `probe`/`scroll` runners; both gates were deleted (commit
-      `0ef019f`, `CLAUDE.md` § THE GATES DETECT BROKEN). Also still says an "executor" drives the
-      build (it's a completion-driven job chain now) and describes a `draw` hook the game no longer
-      has.
-      → done when: `grep -c "probe\|scroll\|executor" README.md` is 0 (currently 4 matching lines)
-- [ ] **`docs/roadmap.md`** — `:17`, `:56`, `:67`, `:73`, `:80-81`, `:103` all plan probe work
-      (`dead_movement`, `dead_action`, `unbound_control`, "harden the probe"); the probe is gone.
-      `:56` also lists `draw` among the authored hooks.
-      → done when: `grep -c "probe" docs/roadmap.md` is 0 (currently 7 matching lines)
-- [ ] **Sweep the rest** with T2's method (`CLAUDE.md`, `docs/vision.md`, `docs/deploy.md`,
-      `docs/codegen_rebuild_plan.md`) for the same two changes, then produce a drift report.
-      → done when: `grep -c "probe\|scroll" docs/vision.md docs/deploy.md` is 0 for both (clean today)
+## T1 — Post-rebuild audit — DONE, re-verified 2026-07-31
+- [x] **`README.md`** — describes the six-tool driver, the one gate, and the fix path.
+      `grep -c "probe\|scroll\|executor" README.md` is 0.
+- [x] **`docs/roadmap.md`** — no probe work planned. `grep -c "probe" docs/roadmap.md` is 0.
+- [x] **Sweep the rest** — `CLAUDE.md`, `docs/vision.md`, `docs/deploy.md` carry none of the dead
+      vocabulary either. `docs/experiments.md` names the probe once, as the record of what it
+      measured, which is that file's job.
+
+**Recon 2026-07-31:** swept `README.md`, `CLAUDE.md`, `docs/*.md` for the retired surface (probe,
+scroll, executor, kit_api/kit_catalog, `module.py`, `fix_classes.py`, the `draw` hook, scaffold
+templates). Living docs clean. Drift found and fixed the same day, outside this file:
+`CLAUDE.md`'s north star claimed local-only inference, `tasks/quality_backlog.md` was written
+against the deleted kit, `tasks/launch_plan.md` assumed a one-genre launch, and
+`tasks/test_health.md`/`tests/README.md` described a suite twice the current size.
 
 ## T2 — Anti-drift governance (standing)
 - [ ] **Reinforce the same-commit rule** as a review checklist item (`CLAUDE.md` already mandates it
       under Documentation — make it explicit at review time).
       → done when: `grep -A3 "### Code review" CLAUDE.md` mentions "docs" or "documentation"
-- [ ] **Periodic doc-audit cadence** — a recon pass (this file's T1 is the template) each milestone,
-      cross-checking doc claims vs code. Cheap to run as an agent.
-      → done when: a recon entry dated after 2026-07-25 appears in this file's T1 section
+- [x] **Periodic doc-audit cadence** — a recon pass (this file's T1 is the template) each milestone,
+      cross-checking doc claims vs code. Cheap to run as an agent. Latest: 2026-07-31, in T1.
+      → done when: standing; each milestone adds a dated recon entry to T1
 - [ ] **Keep the source-of-truth map above current** — when a new doc appears, assign it an owner
       scope so facts don't get duplicated across docs.
-      → done when: `grep -c "narrative_design" tasks/doc_accuracy.md` is ≥1 (currently 0 — missing)
+      → done when: standing; every file in `docs/` appears in the map above with one owner
 
 ## Ordering
 T1 is a single audit pass (can run as one recon agent). T2 is ongoing. Low coupling to other

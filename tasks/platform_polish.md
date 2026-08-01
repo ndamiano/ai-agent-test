@@ -192,8 +192,8 @@ Owned here; `scaleout.md` S3 and `production_hardening.md` H4 were the same item
 - [ ] Any new uncharged inference path gets the same sliding-window cap as `/api/chat` (30
       turns/hour). Spec drafting rides chat today, so it is covered.
       → done when: triggered — a new uncharged path exists without a throttle.
-- [ ] CI lint step, once the frontend is lint-clean (52 pre-existing ESLint errors block it today).
-      → done when: `cd frontend && npx eslint .` exits 0 AND `ci.yml` runs it.
+- [x] CI lint step — `npx eslint .` exits 0 and `ci.yml`'s frontend job runs it before the build.
+      The vitest suite is still NOT run in CI; only lint and build are.
 - [ ] Inference-stack images (LLM/ComfyUI/Trellis/TTS). DEFERRED by design — engines are
       host-mounted over Tailscale for alpha; this becomes the RunPod worker image work when a
       fourth queue or a rebuild forces it.

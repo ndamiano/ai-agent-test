@@ -4,18 +4,11 @@ shapes (unambiguous term; minor-descriptor × sexual-term co-occurrence), the lo
 (matched terms only, never the full text), and the new-game endpoint's refusal path."""
 
 import logging
-import sys
-from pathlib import Path
 
 import pytest
-from starlette.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from api.app import app
 from auth import store as auth_store
 from maestro.codegen import build_chain
-from db import store as db_store
 from tools.safety import SafetyViolation, log_violation, screen_image_prompt, screen_text
 
 
@@ -94,10 +87,8 @@ def test_log_violation_records_terms_and_user_but_never_the_text(caplog):
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    return TestClient(app)
+def client(app_client):
+    return app_client
 
 
 def test_a_blocked_prompt_starts_no_build_and_costs_nothing(client, monkeypatch):

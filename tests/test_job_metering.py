@@ -6,19 +6,7 @@ asked for and never corrected, so a pod serving one model filed its jobs under a
 them, on a run that cost real money.
 """
 
-import sys
-from pathlib import Path
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from db import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
 def _job(queue: str = "llm", model=None, build_id=None) -> str:

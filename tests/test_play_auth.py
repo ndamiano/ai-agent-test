@@ -3,28 +3,17 @@
 and shared harness files need only a valid session."""
 
 import shutil
-import sys
-from pathlib import Path
 
 import pytest
-from starlette.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-import maestro.state
 import api.app
-from api.app import app
 from auth import store as auth_store
-from db import store as db_store
 from maestro.codegen.run import create_run
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
-    return TestClient(app)
+def client(app_client, tmp_runs):
+    return app_client
 
 
 def _user(handle="alice"):

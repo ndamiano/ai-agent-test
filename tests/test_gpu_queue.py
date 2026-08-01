@@ -3,34 +3,16 @@ the worker runs the ComfyUI submit/poll/fetch flow and the TRELLIS POST next to 
 """
 
 import base64
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import tools.comfyui_tools as ct
 from tools.safety import SafetyViolation
 from worker import handlers
 from worker.agent import Agent
+from fakes import FakeResponse
 
 PNG = b"\x89PNG\r\n\x1a\nfake"
 GLB = b"glTF\x02fake"
-
-
-class _Resp:
-    def __init__(self, status_code=200, body=None, content=b"", text="", headers=None):
-        self.status_code = status_code
-        self._body = body or {}
-        self.content = content
-        self.text = text
-        self.headers = headers or {}
-
-    def json(self):
-        return self._body
-
-    def raise_for_status(self):
-        pass
 
 
 def _agent(queue="image", target="http://gpu"):
@@ -57,17 +39,17 @@ def test_build_item_payload_returns_none_for_blocked_prompt(monkeypatch):
 
 def test_comfy_image_handler_submits_polls_and_fetches():
     a = _agent()
-    a.session.post.side_effect = lambda url, **kw: _Resp(200, {"prompt_id": "p1"})
+    a.session.post.side_effect = lambda url, **kw: FakeResponse(200, {"prompt_id": "p1"})
     gets = []
 
     def get(url, **kw):
         gets.append(url)
         if "/history/" in url:
-            return _Resp(200, {"p1": {"outputs": {"9": {"images": [
+            return FakeResponse(200, {"p1": {"outputs": {"9": {"images": [
                 {"filename": "out.png", "subfolder": "", "type": "output"}]}}}})
         if "/models" in url:
-            return _Resp(200, {"data": []})
-        return _Resp(200, content=PNG)
+            return FakeResponse(200, {"data": []})
+        return FakeResponse(200, content=PNG)
 
     a.session.get.side_effect = get
     result, error = handlers.comfy_image(a, {"kind": "comfy_image", "workflow": {"1": {}}})
@@ -81,23 +63,23 @@ def test_comfy_image_handler_submits_polls_and_fetches():
 def test_comfy_image_handler_reports_submit_failure():
     a = _agent()
     a.session.post.side_effect = lambda url, **kw: (
-        _Resp(500, text="bad workflow") if url.endswith("/prompt") else _Resp(200, {}))
-    a.session.get.side_effect = lambda url, **kw: _Resp(200, {"data": []})
+        FakeResponse(500, text="bad workflow") if url.endswith("/prompt") else FakeResponse(200, {}))
+    a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
     result, error = handlers.comfy_image(a, {"workflow": {}})
     assert result is None and "bad workflow" in error
 
 
 def test_trellis_handler_retries_once():
     a = _agent(queue="mesh", target="http://trellis")
-    a.session.get.side_effect = lambda url, **kw: _Resp(200, {"data": []})
+    a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
     calls = []
 
     def post(url, **kw):
         calls.append(url)
         if url.endswith("/generate"):
-            return _Resp(200, content=GLB) if len(
-                [c for c in calls if c.endswith("/generate")]) > 1 else _Resp(500, text="OOM")
-        return _Resp(200, {})
+            return FakeResponse(200, content=GLB) if len(
+                [c for c in calls if c.endswith("/generate")]) > 1 else FakeResponse(500, text="OOM")
+        return FakeResponse(200, {})
 
     a.session.post.side_effect = post
     payload = {"kind": "trellis_mesh", "image_b64": base64.b64encode(PNG).decode()}
@@ -112,8 +94,8 @@ def test_trellis_handler_carries_the_servers_timing_split():
     """A pod's stdout is unreachable, so cold-start attribution only survives if the load /
     generate split rides back on the job row."""
     a = _agent(queue="mesh", target="http://trellis")
-    a.session.get.side_effect = lambda url, **kw: _Resp(200, {"data": []})
-    a.session.post.side_effect = lambda url, **kw: _Resp(
+    a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
+    a.session.post.side_effect = lambda url, **kw: FakeResponse(
         200, content=GLB, headers={"X-Load-Seconds": "5.6", "X-Generate-Seconds": "16.2"})
     result, error = handlers.trellis_mesh(
         a, {"kind": "trellis_mesh", "image_b64": base64.b64encode(PNG).decode()})
@@ -125,9 +107,9 @@ def test_trellis_handler_carries_the_servers_timing_split():
 
 def test_trellis_handler_gives_up_after_two_attempts():
     a = _agent(queue="mesh", target="http://trellis")
-    a.session.get.side_effect = lambda url, **kw: _Resp(200, {"data": []})
+    a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
     a.session.post.side_effect = lambda url, **kw: (
-        _Resp(500, text="OOM") if url.endswith("/generate") else _Resp(200, {}))
+        FakeResponse(500, text="OOM") if url.endswith("/generate") else FakeResponse(200, {}))
     result, error = handlers.trellis_mesh(
         a, {"image_b64": base64.b64encode(PNG).decode()})
     assert result is None and "OOM" in error
@@ -137,7 +119,7 @@ def test_agent_dispatches_on_payload_kind(monkeypatch):
     a = _agent()
     monkeypatch.setitem(handlers.HANDLERS, "comfy_image",
                         lambda agent, payload: ({"images": []}, None))
-    a.session.post.side_effect = lambda url, **kw: _Resp(200, {"ok": True})
+    a.session.post.side_effect = lambda url, **kw: FakeResponse(200, {"ok": True})
     a.execute({"id": "j1", "payload": {"kind": "comfy_image", "workflow": {}}})
     a._drain_uploads()
 

@@ -1,22 +1,7 @@
 """GET /auth/me — the balance source the frontend header reads. Anonymous is rejected by the
 gate; a valid token returns the user plus their live credit balance."""
 
-import sys
-from pathlib import Path
-
-import pytest
-from starlette.testclient import TestClient
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from api.app import app
 from auth import store
-
-
-@pytest.fixture
-def app_client(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
-    return TestClient(app)
 
 
 def test_me_rejects_anonymous(app_client):

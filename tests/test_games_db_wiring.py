@@ -2,16 +2,9 @@
 access, and the build endpoint charges once — credits deducted, seconds granted, re-enqueue free."""
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
-from starlette.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-import maestro.state
-from api.app import app
 from maestro.codegen import build_chain
 from maestro.codegen.staging import game_dir
 from auth import store as auth_store
@@ -23,11 +16,8 @@ from maestro.state import RunState
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
-    return TestClient(app)
+def client(app_client, tmp_runs):
+    return app_client
 
 
 def _user(handle="alice", credits=10):

@@ -1,25 +1,9 @@
 """The admin queue endpoint: role-gated (a signed-in non-admin gets 403, anonymous 401), and its
 snapshot shape covers every queue with per-queue + fleet totals."""
 
-import sys
-from pathlib import Path
-
-import pytest
-from starlette.testclient import TestClient
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from api.app import app
 from auth import store
 from db import store as db_store
 from db.estimates import QUEUE_SECONDS
-
-
-@pytest.fixture
-def app_client(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    return TestClient(app)
 
 
 def _token(handle, role):

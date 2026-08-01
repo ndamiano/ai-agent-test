@@ -5,23 +5,10 @@ The webhook credits the ledger on a (stubbed) verified event, rejects an unverif
 NOT blocked by the user-auth middleware — a provider posts server-to-server with no user token.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-from starlette.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from api.app import app
 from auth import cli, credits, store
 from auth.credits import CreditProvider, PurchaseEvent
-from db import store as db_store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
 
 
 def _ledger_rows(user_id, reason):
@@ -58,12 +45,6 @@ class _StubProvider(CreditProvider):
         if payload != self._secret:
             return None
         return PurchaseEvent(user_id=self._user_id, credits=self._credits)
-
-
-@pytest.fixture
-def app_client(tmp_path, monkeypatch):
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    return TestClient(app)
 
 
 def test_webhook_credits_the_ledger_on_a_verified_event(app_client, monkeypatch):

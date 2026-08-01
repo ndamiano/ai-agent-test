@@ -6,12 +6,7 @@ exhausted budget all come back as text instead, because a build that cannot have
 to draw one rather than left waiting for a file that is never coming.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import maestro.state
 from db import store

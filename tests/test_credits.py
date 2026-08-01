@@ -1,19 +1,8 @@
 """Credit ledger behaviour — grant/deduct/refund, atomic non-negative deduct, reconciliation."""
 
-import sys
 import threading
-from pathlib import Path
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from auth import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
 
 
 def _ledger_sum(user_id):

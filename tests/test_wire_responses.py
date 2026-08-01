@@ -1,7 +1,4 @@
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from llm_clients.wire import (
     chat_messages_to_responses_input as _chat_messages_to_responses_input,

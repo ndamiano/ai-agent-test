@@ -2,17 +2,11 @@
 endpoints (token-gated, outside the user auth gate), and the LLMConnector transport
 end-to-end against a fake in-process worker."""
 
-import sys
 import threading
 import time
 from pathlib import Path
 
 import pytest
-from starlette.testclient import TestClient
-
-from api.app import app
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import base64
 
@@ -24,8 +18,7 @@ from tools.execution_context import run_scope
 
 
 @pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
+def _refill_rate_limiter():
     # The global LLM rate limiter is a shared token bucket — earlier suite tests can drain it,
     # turning connector calls into rate-limit errors here. Refill it.
     get_llm_rate_limiter().reset()
@@ -86,11 +79,11 @@ def test_failed_job_carries_the_error():
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(app_client, monkeypatch):
     monkeypatch.setattr(wq, "_queue_settings",
                         lambda: {"token": "wsecret", "lease_seconds": 60})
     monkeypatch.setattr(wq, "CLAIM_LONG_POLL_SECONDS", 0.2)
-    return TestClient(app)
+    return app_client
 
 
 def _hdr(token="wsecret"):

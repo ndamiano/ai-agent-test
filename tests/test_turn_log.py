@@ -7,16 +7,10 @@ the row — append first, so there is never a moment with neither copy.
 """
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
-from starlette.testclient import TestClient
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import maestro.state
-from api.app import app
 from api.routers import prompts
 from auth import store as auth_store
 from db import store as db_store
@@ -114,13 +108,13 @@ def test_a_landed_turn_is_appended_and_its_row_emptied(run):
     assert row["payload"] == {} and row["result"] is None
 
 
-def test_the_archive_reads_back_exactly_as_the_row_did(run, cleared, headers):
+def test_the_archive_reads_back_exactly_as_the_row_did(run, cleared, headers, app_client):
     """The prompt log's view of a turn must not change because its body moved to disk — the shape
     is the same reconstruction, off the record rather than off the row."""
     build_id = build_chain.kickoff(run)
     job = _land(run, build_id, _reply([_write("index.html")], content="writing the page"))
 
-    view = TestClient(app).get(f"/api/admin/prompts/turns/{job['id']}", headers=headers()).json()
+    view = app_client.get(f"/api/admin/prompts/turns/{job['id']}", headers=headers()).json()
 
     assert view == prompts._turn_view(cleared[job["id"]])
     assert view["system"] and view["messages"][0]["text"] == "make a game"
@@ -201,14 +195,14 @@ def test_an_append_that_fails_leaves_the_row_holding_the_body(run, monkeypatch):
     assert row["result"]["choices"]
 
 
-def test_the_turn_index_measures_archived_turns_from_the_log(run, headers):
+def test_the_turn_index_measures_archived_turns_from_the_log(run, headers, app_client):
     """The index reads sizes and the system prompt's head off the row — which is empty once the
     body moves. It fills those in from the log rather than showing an unnamed turn of zero KB."""
     build_id = build_chain.kickoff(run)
     _land(run, build_id, _reply([_write("index.html", 3000)]))
     _land(run, build_id, _reply([_write("game.js")]))
 
-    rows = TestClient(app).get(
+    rows = app_client.get(
         f"/api/admin/prompts/turns?scope=game&game_id={run}", headers=headers()).json()
 
     # Two landed turns, read out of the log, plus the one still on the queue with its own body.

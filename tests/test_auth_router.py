@@ -1,21 +1,12 @@
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from auth import router as auth_router
 from auth import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
 
 
 def _login(handle, password, scheme="http"):

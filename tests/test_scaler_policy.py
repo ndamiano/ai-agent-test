@@ -1,10 +1,5 @@
 """Pure scaling-policy decisions: the reap rules and the scale-up drain guarantee."""
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from scaler.policy import (
     MarkWorkerTerminated,
     PodInfo,

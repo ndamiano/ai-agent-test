@@ -2,19 +2,7 @@
 backlog. paid counts every finished job we ran; billed counts only delivered, game-attributed work.
 """
 
-import sys
-from pathlib import Path
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from db import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
 def _finish(queue, exec_seconds, *, game_id, error=None):

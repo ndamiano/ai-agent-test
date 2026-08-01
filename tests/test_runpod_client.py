@@ -1,13 +1,9 @@
 """RunPod REST client: payload shape, bearer auth, idempotent terminate, loud non-2xx."""
 
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from scaler.runpod_client import RunPodClient, RunPodError
 

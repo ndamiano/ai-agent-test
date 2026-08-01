@@ -1,20 +1,8 @@
 """SqliteStatsSource over db.store: queue stats, live/stale worker filtering, and terminated-clear
 on re-register."""
 
-import sys
-from pathlib import Path
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from db import store
 from scaler.stats import SqliteStatsSource
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
 def _backdate_worker(worker_id, seconds):

@@ -1,117 +1,113 @@
+"""Broadcast routing, disconnect cleanup, and what the endpoint logs when a socket dies."""
+
 import logging
-import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import WebSocket, WebSocketDisconnect
 
 from api.routers import websocket as websocket_module
 from api.websocket.manager import ConnectionManager
 from auth.store import User
 
-
-class TestConnectionManagerBroadcast(unittest.IsolatedAsyncioTestCase):
-    """Broadcast routing + exception handling."""
-
-    async def asyncSetUp(self):
-        self.manager = ConnectionManager()
-        self.ws1 = AsyncMock(spec=WebSocket)
-        self.ws2 = AsyncMock(spec=WebSocket)
-        await self.manager.connect(self.ws1, "u1")
-        await self.manager.connect(self.ws2, "u2")
-
-    async def test_broadcast_to_user_reaches_only_that_users_sockets(self):
-        await self.manager.broadcast_to_user("u1", {"type": "status", "run_id": "r"})
-
-        self.ws1.send_json.assert_awaited_once_with({"type": "status", "run_id": "r"})
-        self.ws2.send_json.assert_not_awaited()
-
-    async def test_broadcast_to_all_reaches_every_socket(self):
-        await self.manager.broadcast_to_all({"type": "status"})
-
-        self.ws1.send_json.assert_awaited_once_with({"type": "status"})
-        self.ws2.send_json.assert_awaited_once_with({"type": "status"})
-
-    async def test_broadcast_logs_and_disconnects_failed_client(self):
-        self.ws1.send_json = AsyncMock(side_effect=ConnectionError("gone away"))
-
-        with self.assertLogs(self.manager.logger, level=logging.ERROR) as cm:
-            await self.manager.broadcast_to_all({"type": "status"})
-
-        self.assertIn("gone away", cm.output[0])
-        # ws1 removed, ws2 remains reachable
-        await self.manager.broadcast_to_user("u2", {"type": "again"})
-        self.ws2.send_json.assert_awaited_with({"type": "again"})
-        self.assertNotIn(self.ws1, self.manager._user_by_ws)
-
-    async def test_broadcast_to_unknown_user_is_noop(self):
-        await self.manager.broadcast_to_user("nobody", {"type": "status"})
-        self.ws1.send_json.assert_not_awaited()
-        self.ws2.send_json.assert_not_awaited()
+pytestmark = pytest.mark.anyio
 
 
-class TestConnectionManagerDisconnect(unittest.IsolatedAsyncioTestCase):
-    """disconnect cleans both indexes."""
-
-    async def test_disconnect_removes_connection(self):
-        manager = ConnectionManager()
-        ws = AsyncMock(spec=WebSocket)
-        await manager.connect(ws, "u1")
-
-        manager.disconnect(ws)
-
-        self.assertNotIn(ws, manager._user_by_ws)
-        self.assertNotIn("u1", manager._sockets_by_user)
-
-    async def test_disconnect_noop_for_missing_socket(self):
-        manager = ConnectionManager()
-        ws = AsyncMock(spec=WebSocket)
-        manager.disconnect(ws)  # should not raise
+@pytest.fixture
+async def two_sockets():
+    manager = ConnectionManager()
+    ws1, ws2 = AsyncMock(spec=WebSocket), AsyncMock(spec=WebSocket)
+    await manager.connect(ws1, "u1")
+    await manager.connect(ws2, "u2")
+    return manager, ws1, ws2
 
 
-class TestWebSocketEndpointLogging(unittest.IsolatedAsyncioTestCase):
-    """Tests that websocket_endpoint logs errors in its catch block."""
+async def test_broadcast_to_user_reaches_only_that_users_sockets(two_sockets):
+    manager, ws1, ws2 = two_sockets
+    await manager.broadcast_to_user("u1", {"type": "status", "run_id": "r"})
 
-    async def _run_endpoint(self, receive_raise=None):
+    ws1.send_json.assert_awaited_once_with({"type": "status", "run_id": "r"})
+    ws2.send_json.assert_not_awaited()
 
-        websocket = AsyncMock(spec=WebSocket)
-        websocket.query_params = {"token": "valid"}
-        websocket.send_json = AsyncMock()
-        websocket.receive_text = AsyncMock(
-            side_effect=receive_raise or WebSocketDisconnect(code=1000)
-        )
 
-        manager_mock = AsyncMock()
-        manager_mock.connect = AsyncMock()
-        manager_mock.disconnect = MagicMock()
+async def test_broadcast_to_all_reaches_every_socket(two_sockets):
+    manager, ws1, ws2 = two_sockets
+    await manager.broadcast_to_all({"type": "status"})
 
-        logger_mock = MagicMock()
+    ws1.send_json.assert_awaited_once_with({"type": "status"})
+    ws2.send_json.assert_awaited_once_with({"type": "status"})
 
-        with patch.object(websocket_module, "manager", manager_mock), \
-             patch.object(websocket_module, "logger", logger_mock), \
-             patch.object(websocket_module, "resolve_token",
-                          return_value=User(id="u1", handle="alice", role="user")):
-            await websocket_module.websocket_endpoint(websocket)
 
-        return websocket, logger_mock, manager_mock
+async def test_broadcast_logs_and_disconnects_failed_client(two_sockets, caplog):
+    manager, ws1, ws2 = two_sockets
+    ws1.send_json = AsyncMock(side_effect=ConnectionError("gone away"))
 
-    async def test_endpoint_logs_on_client_disconnect(self):
-        ws, logger_mock, manager_mock = await self._run_endpoint()
+    with caplog.at_level(logging.ERROR, logger=manager.logger.name):
+        await manager.broadcast_to_all({"type": "status"})
 
-        logger_mock.info.assert_called()
-        manager_mock.disconnect.assert_called_with(ws)
+    assert "gone away" in caplog.text
+    # ws1 removed, ws2 remains reachable
+    await manager.broadcast_to_user("u2", {"type": "again"})
+    ws2.send_json.assert_awaited_with({"type": "again"})
+    assert ws1 not in manager._user_by_ws
 
-    async def test_endpoint_sends_error_when_task_not_found(self):
-        ws, logger_mock, manager_mock = await self._run_endpoint(
-            receive_raise=Exception("something went wrong"),
-        )
 
-        logger_mock.error.assert_called()
-        manager_mock.disconnect.assert_called_with(ws)
+async def test_broadcast_to_unknown_user_is_noop(two_sockets):
+    manager, ws1, ws2 = two_sockets
+    await manager.broadcast_to_user("nobody", {"type": "status"})
+    ws1.send_json.assert_not_awaited()
+    ws2.send_json.assert_not_awaited()
 
-    async def test_endpoint_logs_generic_error_without_sending(self):
-        ws, logger_mock, manager_mock = await self._run_endpoint(
-            receive_raise=KeyError("some-key"),
-        )
 
-        logger_mock.error.assert_called()
-        manager_mock.disconnect.assert_called_with(ws)
+async def test_disconnect_removes_connection():
+    manager = ConnectionManager()
+    ws = AsyncMock(spec=WebSocket)
+    await manager.connect(ws, "u1")
+
+    manager.disconnect(ws)
+
+    assert ws not in manager._user_by_ws
+    assert "u1" not in manager._sockets_by_user
+
+
+async def test_disconnect_noop_for_missing_socket():
+    manager = ConnectionManager()
+    manager.disconnect(AsyncMock(spec=WebSocket))   # should not raise
+
+
+async def _run_endpoint(receive_raise=None):
+    websocket = AsyncMock(spec=WebSocket)
+    websocket.query_params = {"token": "valid"}
+    websocket.send_json = AsyncMock()
+    websocket.receive_text = AsyncMock(
+        side_effect=receive_raise or WebSocketDisconnect(code=1000)
+    )
+
+    manager_mock = AsyncMock()
+    manager_mock.connect = AsyncMock()
+    manager_mock.disconnect = MagicMock()
+
+    logger_mock = MagicMock()
+
+    with patch.object(websocket_module, "manager", manager_mock), \
+         patch.object(websocket_module, "logger", logger_mock), \
+         patch.object(websocket_module, "resolve_token",
+                      return_value=User(id="u1", handle="alice", role="user")):
+        await websocket_module.websocket_endpoint(websocket)
+
+    return websocket, logger_mock, manager_mock
+
+
+async def test_endpoint_logs_on_client_disconnect():
+    ws, logger_mock, manager_mock = await _run_endpoint()
+
+    logger_mock.info.assert_called()
+    manager_mock.disconnect.assert_called_with(ws)
+
+
+@pytest.mark.parametrize("raised", [Exception("something went wrong"), KeyError("some-key")])
+async def test_endpoint_logs_a_failed_receive(raised):
+    ws, logger_mock, manager_mock = await _run_endpoint(receive_raise=raised)
+
+    logger_mock.error.assert_called()
+    manager_mock.disconnect.assert_called_with(ws)

@@ -1,26 +1,10 @@
 """The auth gate as it actually runs on the app: every router rejects an anonymous request,
 a valid token gets through, the WebSocket authenticates itself, and there is no signup route."""
 
-import sys
-from pathlib import Path
-
 import pytest
-from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-from api.app import app
 from auth import store
-from db import store as db_store
-
-
-@pytest.fixture
-def app_client(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    # No `with` — we don't want the app's startup handlers (tool registration) in a unit test.
-    return TestClient(app)
 
 
 # One path per mounted router; the gate is a single app-level middleware, so covering the

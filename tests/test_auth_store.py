@@ -1,19 +1,10 @@
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import sqlite3
 
 import auth.store as s
 from auth import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "auth.db")
 
 
 def test_password_is_hashed_not_stored_plaintext(tmp_path):

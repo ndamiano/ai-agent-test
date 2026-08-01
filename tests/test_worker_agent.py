@@ -1,29 +1,13 @@
 """Worker agent — claims, forwards the payload to the local target without leaking the worker
 token, and lands result/error with measured exec time."""
 
-import sys
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import requests
 
 from worker.agent import Agent
-
-
-class _Resp:
-    def __init__(self, status_code=200, body=None, text=""):
-        self.status_code = status_code
-        self._body = body or {}
-        self.text = text
-
-    def json(self):
-        return self._body
-
-    def raise_for_status(self):
-        pass
+from fakes import FakeResponse
 
 
 def _agent():
@@ -39,8 +23,8 @@ def test_execute_forwards_body_and_strips_the_worker_token():
     def post(url, **kw):
         calls.append((url, kw))
         if url.startswith("http://gpu"):
-            return _Resp(200, {"output": ["ok"]})
-        return _Resp(200, {"ok": True})
+            return FakeResponse(200, {"output": ["ok"]})
+        return FakeResponse(200, {"ok": True})
 
     a.session.post.side_effect = post
     a.execute({"id": "j1", "payload": {"kind": "llm", "body": {"model": "m", "messages": []}}})
@@ -64,8 +48,8 @@ def test_execute_reports_upstream_errors():
 
     def post(url, **kw):
         if url.startswith("http://gpu"):
-            return _Resp(500, text="failed to load")
-        return _Resp(200, {"ok": True})
+            return FakeResponse(500, text="failed to load")
+        return FakeResponse(200, {"ok": True})
 
     a.session.post.side_effect = post
     a.execute({"id": "j1", "payload": {"body": {}}})
@@ -85,10 +69,10 @@ def test_execute_returns_while_the_result_is_still_uploading():
 
     def post(url, **kw):
         if url.startswith("http://gpu"):
-            return _Resp(200, {"output": ["ok"]})
+            return FakeResponse(200, {"output": ["ok"]})
         gate.wait(5)   # a slow /worker/complete (big GLB on a thin uplink)
         completed.set()
-        return _Resp(200, {"ok": True})
+        return FakeResponse(200, {"ok": True})
 
     a.session.post.side_effect = post
     a.execute({"id": "j1", "payload": {"path": "/x", "body": {}}})
@@ -104,12 +88,12 @@ def test_run_drains_uploads_before_deregister():
 
     def post(url, **kw):
         if url.startswith("http://gpu"):
-            return _Resp(200, {"output": ["ok"]})
+            return FakeResponse(200, {"output": ["ok"]})
         if url.endswith("/worker/claim"):
             a.stopping = True
-            return _Resp(200, {"job": {"id": "j1", "payload": {"path": "/x", "body": {}}}})
+            return FakeResponse(200, {"job": {"id": "j1", "payload": {"path": "/x", "body": {}}}})
         order.append(url.rsplit("/", 1)[-1])
-        return _Resp(200, {"ok": True})
+        return FakeResponse(200, {"ok": True})
 
     a.session.post.side_effect = post
     a.run()
@@ -125,7 +109,7 @@ def test_claim_body_carries_pod_id_and_wait_seconds(monkeypatch):
     a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
               idle_exit_seconds=10)
     a.session = MagicMock()
-    a.session.post.return_value = _Resp(200, {"job": None})
+    a.session.post.return_value = FakeResponse(200, {"job": None})
     a.claim()
     body = a.session.post.call_args.kwargs["json"]
     assert body["pod_id"] == "pod-abc"
@@ -134,7 +118,7 @@ def test_claim_body_carries_pod_id_and_wait_seconds(monkeypatch):
 
 def test_idle_exit_zero_sends_no_wait_seconds():
     a = _agent()
-    a.session.post.return_value = _Resp(200, {"job": None})
+    a.session.post.return_value = FakeResponse(200, {"job": None})
     a.claim()
     assert "wait_seconds" not in a.session.post.call_args.kwargs["json"]
 
@@ -143,7 +127,7 @@ def test_null_claim_with_idle_exit_deregisters_and_stops():
     a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
               idle_exit_seconds=5)
     a.session = MagicMock()
-    a.session.post.return_value = _Resp(200, {"job": None})
+    a.session.post.return_value = FakeResponse(200, {"job": None})
     a.run()   # returns instead of looping forever
     assert _posts_to(a, "/worker/deregister") == 1
 
@@ -157,8 +141,8 @@ def test_idle_exit_zero_never_exits_on_a_null_claim():
             calls["n"] += 1
             if calls["n"] >= 3:
                 a.stopping = True
-            return _Resp(200, {"job": None})
-        return _Resp(200, {"ok": True})
+            return FakeResponse(200, {"job": None})
+        return FakeResponse(200, {"ok": True})
 
     a.session.post.side_effect = post
     a.run()
@@ -167,7 +151,7 @@ def test_idle_exit_zero_never_exits_on_a_null_claim():
 
 def test_sigterm_drain_deregisters():
     a = _agent()
-    a.session.post.return_value = _Resp(200, {"ok": True})
+    a.session.post.return_value = FakeResponse(200, {"ok": True})
     a.stopping = True
     a.run()
     assert _posts_to(a, "/worker/deregister") == 1
@@ -189,11 +173,11 @@ def test_comfy_image_uploads_init_images_before_submit():
     def post(url, **kw):
         calls.append((url, kw))
         if url.endswith("/upload/image"):
-            return _Resp(200, {"name": "init_x.png"})
-        return _Resp(200, {"prompt_id": "p1"})
+            return FakeResponse(200, {"name": "init_x.png"})
+        return FakeResponse(200, {"prompt_id": "p1"})
 
     a.session.post.side_effect = post
-    a.session.get.return_value = _Resp(200, {"p1": {"outputs": {}}})
+    a.session.get.return_value = FakeResponse(200, {"p1": {"outputs": {}}})
 
     result, err = handlers.comfy_image(a, {
         "kind": "comfy_image", "workflow": {},
@@ -215,7 +199,7 @@ def test_comfy_image_upload_failure_never_submits():
 
     def post(url, **kw):
         calls.append(url)
-        return _Resp(500, text="disk full")
+        return FakeResponse(500, text="disk full")
 
     a.session.post.side_effect = post
     result, err = handlers.comfy_image(a, {

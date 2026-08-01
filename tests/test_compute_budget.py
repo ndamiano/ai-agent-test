@@ -6,22 +6,13 @@ so measured spend alone reads near-zero right up to the moment a hundred queued 
 therefore reserves each job's per-queue estimate and admits against grant − used − reserved.
 """
 
-import sys
 import threading
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from db import queue_client, store
 from db.estimates import estimate_seconds
 from tools.execution_context import run_scope
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
 def _game(seconds: float = 1000.0, game_id: str = "g1") -> str:

@@ -4,12 +4,7 @@ The WebSocket bus (_emit) is stubbed, so these run with no live model. Nothing h
 the prompt stage runs no inference at all.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import maestro.codegen.run as run_mod
 from maestro.state import RunState

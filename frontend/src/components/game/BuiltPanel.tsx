@@ -22,7 +22,7 @@ const Stage: React.FC<{ runId: string; cover: GameAsset | null; version: number;
                 : <div className="absolute inset-0"><Sigil seed={runId} /></div>}
             {playUrl && (
                 <LinkButton href={playUrl} target="_blank" rel="noreferrer" size="lg"
-                    className="relative shadow-[0_10px_40px_-12px_rgba(242,112,63,0.9)]">
+                    className="relative shadow-[0_10px_40px_-12px_rgb(var(--c-ember)/0.9)]">
                     ▶ Play
                 </LinkButton>
             )}

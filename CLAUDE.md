@@ -308,6 +308,9 @@ lists a run's snapshots and `--restore <run_id> <ref>` puts the game back to one
 **Play a build:** open `runtime/games/<run_id>/index.html` — a game is plain browser files, but a
 3D one needs http, not file:// (`<script type="module">` is CORS-blocked from a file origin).
 **Run backend:** `source venv/bin/activate && python run.py`  •  **Frontend:** `cd frontend && npm run dev`
+The frontend's palette is CSS variables in `src/index.css`; `tailwind.config.js` only names them,
+so a colour change hot-reloads. Editing the CONFIG (a new name, a font) needs the dev server
+restarted — Node caches the ESM config, and a stale one drops every custom class silently.
 **Run tests:** `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`  •  frontend:
 `cd frontend && npm test` (vitest)
 **Run the llm worker's target:** `llama-server` needs

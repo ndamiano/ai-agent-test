@@ -2,25 +2,39 @@
 @tailwind components;
 @tailwind utilities;
 
-/* The palette, mirrored from tailwind.config.js for the handful of rules that are not utility
-   classes. Plain CSS on purpose: @apply here resolves against the Tailwind config at build time,
-   so a theme edit turns every stylesheet into a hard PostCSS error until the process restarts. */
+/* The palette lives here, as RGB channels, and tailwind.config.js only names them. Editing a
+   value is then a stylesheet edit that hot-reloads; putting the values in the config instead
+   means a dev-server restart for every tweak, because Node caches the ESM config for the life
+   of the process. */
 :root {
-    --ink: #0B0E15;
-    --bone: #ECE7DC;
-    --ember: #F2703F;
+    --c-ink: 11 14 21;
+    --c-panel: 19 24 38;
+    --c-sunken: 14 18 32;
+    --c-well: 8 11 18;
+    --c-edge: 35 43 61;
+    --c-bone: 236 231 220;
+    --c-slate: 152 161 180;
+    --c-dim: 109 118 137;
+    /* The accent belongs to one idea: making the thing. Build, Play, the live pulse. */
+    --c-ember: 242 112 63;
+    --c-ember-ink: 21 10 5;
+    /* Held back for the budget meter alone, so it still reads as its own signal. */
+    --c-mana: 126 107 217;
+    --c-live: 79 180 119;
+    --c-wait: 217 164 65;
+    --c-fail: 224 92 85;
 }
 
 @layer base {
     body {
-        background-color: var(--ink);
-        color: var(--bone);
+        background-color: rgb(var(--c-ink));
+        color: rgb(var(--c-bone));
         font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
         -webkit-font-smoothing: antialiased;
     }
 
     :focus-visible {
-        outline: 2px solid var(--ember);
+        outline: 2px solid rgb(var(--c-ember));
         outline-offset: 2px;
     }
 }

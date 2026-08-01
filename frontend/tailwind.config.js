@@ -1,25 +1,28 @@
 /** @type {import('tailwindcss').Config} */
+
+// Names only — every value is a CSS variable defined in src/index.css, so tuning a colour is a
+// stylesheet edit that hot-reloads instead of a config edit that needs the dev server restarted.
+const hue = (name) => `rgb(var(--c-${name}) / <alpha-value>)`
+
 export default {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        ink: '#0B0E15',
-        panel: '#131826',
-        sunken: '#0E1220',
-        well: '#080B12',
-        edge: '#232B3D',
-        bone: '#ECE7DC',
-        slate: '#98A1B4',
-        dim: '#6D7689',
-        // The accent belongs to one idea: making the thing. Build, Play, the live pulse.
-        ember: '#F2703F',
-        'ember-ink': '#150A05',
-        // Held back for the budget meter alone, so it still reads as its own signal.
-        mana: '#7E6BD9',
-        live: '#4FB477',
-        wait: '#D9A441',
-        fail: '#E05C55',
+        ink: hue('ink'),
+        panel: hue('panel'),
+        sunken: hue('sunken'),
+        well: hue('well'),
+        edge: hue('edge'),
+        bone: hue('bone'),
+        slate: hue('slate'),
+        dim: hue('dim'),
+        ember: hue('ember'),
+        'ember-ink': hue('ember-ink'),
+        mana: hue('mana'),
+        live: hue('live'),
+        wait: hue('wait'),
+        fail: hue('fail'),
       },
       fontFamily: {
         display: ['"Iowan Old Style"', '"Palatino Linotype"', 'Palatino', '"Liberation Serif"', 'Georgia', 'serif'],

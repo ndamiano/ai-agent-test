@@ -43,8 +43,7 @@ Whatever the genre, whatever the request, the build ends with something that ope
 - **On trial:** `generate_media` entered unmeasured (2026-07-28). What settles it: whether the model
   calls it, uses the returned path verbatim, and still draws a fallback shape. An unused schema
   costs every turn of every build.
-- **Work lives in:** `tasks/build_loop.md`, `tasks/quality_backlog.md` (stale — see the drift note
-  at the bottom).
+- **Work lives in:** `tasks/build_loop.md`, `tasks/quality_backlog.md`.
 
 ### Stage 2 — Any game asked for comes back good — **NOT STARTED**
 
@@ -72,9 +71,13 @@ Someone tries an idea, hates it, tries again, without doing arithmetic first.
 - **Landed:** exec-second metering debited to the owning game, the compute budget that admits or
   refuses jobs, and the queue-driven autoscaler (workers self-exit on drain; pods come up on
   backlog). Builds run concurrently rather than serializing behind one queue.
-- **Open:** the actual numbers. Real cost/time/failure per game is still unmeasured
-  (`tasks/unit_economics.md`), which means the price is also unset. This is the cheapest open item
-  on the board and it blocks every paid stage.
+- **Measured 2026-07-31 (dev box, `tasks/unit_economics.md`):** a finished game costs **~$0.11** of
+  GPU at the rented-5090 rate — median 386 GPU-s including every fix, p90 $0.58, worst $2.26. 95%
+  of the spend is llm turns, 5% art. 31% of first builds ended failed, measured against the 80- and
+  120-turn caps in force that week.
+- **Open:** the same table off rented pods (cold start and a different serving stack are not in
+  these seconds), a failure rate at the 200-turn cap, and the price itself. Cheap to do, and it
+  blocks every paid stage.
 
 ---
 
@@ -160,14 +163,3 @@ Things we would love to make once the above stands:
 - **`src/worldgen/`** — a standalone procedural world generator, currently unwired. It produced the
   one thing nothing else did: real scale. Re-pointing it to emit data a game reads is an open
   decision, not a dependency.
-
----
-
-## Doc drift — known stale, not yet fixed
-
-- `tasks/quality_backlog.md` and `tasks/launch_plan.md` both predate the kit deletion. They
-  reference `module.py`, `fix_classes.py`, `kit_api.md` and `docs/codegen_rebuild_plan.md` — all
-  gone — and both assume **launch narrow on one genre**, which the vision's breadth-first ordering
-  replaced.
-- `CLAUDE.md`'s north star still reads "any game + local." The local-first requirement was retired
-  in `vision.md`; cheap open-weight hardware replaced it.

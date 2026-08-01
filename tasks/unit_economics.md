@@ -1,14 +1,15 @@
 # Unit Economics — Cost per Game & Credit Pricing
 
-Verified: 2026-07-25
+Verified: 2026-07-31
 
 ## Why
 Know COGS and set a pricing hypothesis so credits are priced above cost. Not an MVP blocker (validate
 demand first), but the number that decides whether this is a business at all and what a credit costs.
 
 ## Owner's data + decisions (Background)
-- **COGS baseline:** renting a **5090 (≈ owner's own hardware)** generates a game in **~1 hour for
-  ~$0.99**. That's the base compute cost per game.
+- **COGS baseline:** a rented **5090** costs **$0.99/hr**. Measured GPU per game is in
+  § MEASURED below (~$0.11 median, build plus every fix); the planning figure was one full
+  GPU-hour, and the margin sketch further down still reads against it.
 - **Pricing hypothesis:** **1 game credit = $5.00** for a base game. Premium builds cost **more
   credits** (e.g. 2).
 - **Premium is TWO axes, not just speed** — "more credits" can buy either or both:
@@ -49,6 +50,48 @@ demand first), but the number that decides whether this is a business at all and
   time. Higher-quality (larger LLM + stronger image models) adds its own COGS (bigger model = more
   GPU/VRAM/time, or an API bill) — measure it before pricing; "better" is not free.
 
+## MEASURED — 2026-07-31, dev box (240 builds / 9,907 jobs, window 2026-07-25 → 07-31)
+
+Straight from `data/platform.db`: GPU-seconds are the metered `jobs.exec_seconds` the game was
+actually debited, attributed by `jobs.build_id` / `jobs.game_id`. Dollars are those seconds priced
+at the **RunPod 5090 on-demand $0.99/hr** rate above ($0.000275/GPU-s).
+
+| Unit | median | mean | p90 | max |
+|---|---|---|---|---|
+| First build, succeeded | 248 s · **$0.068** | 344 s · $0.095 | 601 s · $0.165 | — |
+| First build, failed | 117 s · $0.032 | 312 s · $0.086 | 638 s · $0.176 | — |
+| One fix | 88 s · $0.024 | 145 s · $0.040 | 378 s · $0.104 | — |
+| **Whole game (build + every fix)** | 386 s · **$0.106** | — | 2 095 s · $0.576 | 8 220 s · $2.26 |
+| Last-3d slice, succeeded build | 402 s · $0.111 | 501 s · $0.138 | 767 s · $0.211 | — |
+
+Shape of the spend: **llm 94.7%, image 3.3%, mesh 2.0%.** First-build wall-clock median **5.3 min**
+(mean 7.2, outliers >6h excluded — they are paused sessions, not compute). llm turns per first
+build: median 44, mean 62, max 255.
+
+**What the numbers say:**
+1. **Compute is a rounding error against the $5 credit.** A finished game costs ~$0.11 of GPU;
+   p90 including every fix is $0.58, and the most expensive game on record (42 fixes) is $2.26.
+   The per-game costs worth chasing are the ones under "Fixed costs" below — storage, egress,
+   processor fee — not the card.
+2. **Assets are 5% of spend.** llm turns are the budget.
+3. **`SECONDS_PER_CREDIT = 14_400` is a runaway backstop, not a cost control** — 37× the median
+   game and 6× p90; one game in 57 reached 59% of it. The budget refusal will not fire on a
+   healthy build.
+4. **31% of first builds end `failed`** (20 of 65 resolved; 45 succeeded), against the 80- and
+   120-turn caps in force that week. Causes: 5 turn-cap, 4 llm-target-down, 1 server 500,
+   10 unattributed. **26% of games need ≥1 fix** across the window, 52% in the last three days.
+   A failed build costs $0.03 median, so the cost of a retry is the person's time, which makes
+   this a quality item rather than an economics one.
+5. **Asset-side reliability is unmeasured:** 315 of 777 `image` jobs failed — 250 "pending longer
+   than 1800s with no worker", 65 connection-refused to ComfyUI, both artifacts of a box with no
+   image worker running.
+
+**Caveats, so these numbers are not over-read:** one dev box, not a rental; five different local
+models across the window; ninfer vs llama.cpp differ >2× in tok/s, so GPU-seconds on a rented pod
+will not match one-for-one; and prod adds pod cold-start (~14 s llm/image, ~116 s mesh) that never
+appears in `exec_seconds`. The dollar column is a *conversion of measured seconds*, not an
+observed invoice.
+
 ## Fixed costs (the part per-game margin ignores)
 Per-game margin is gross; **fixed monthly costs come off the top** and set the break-even volume.
 Owner's rough view: scales to **a few hundred $/month** at some point. Components:
@@ -84,12 +127,15 @@ Sell already-generated games from a catalog at some price, and pay the creator a
     the marketplace is the surface where that right is exercised; rev-split terms live there.
 
 ## Tasks
-- [ ] **Measure real cost/time per game** across a few genres on the actual rental (5090), not the
-      estimate — including asset generation, not just the LLM loop.
-      → done when: a dated cost/time-per-genre table is recorded in this section
-- [ ] **Measure failure/retry rate** — how often a build thrashes or produces a bad game needing a
-      re-run. This sets effective COGS and the refund rate.
-      → done when: a dated failure/retry-rate percentage is recorded in this section
+- [~] **Measure real cost/time per game** — done on the DEV BOX (§ MEASURED 2026-07-31: median
+      $0.11/game, 95% of it llm). Still open: the same table off the actual RENTAL, where pod
+      cold-start and a different serving stack change the seconds, and split by genre rather than
+      pooled.
+      → done when: a dated cost/time-per-genre table from rented pods is recorded in this section
+- [~] **Measure failure/retry rate** — dev-box figures recorded (§ MEASURED 2026-07-31: 31% of
+      first builds failed, 26–52% of games took ≥1 fix). Still open: the same rate at the 200-turn
+      cap, and a cause on the builds row so 10-in-20 failures are not unattributed.
+      → done when: a dated failure/retry-rate percentage at the 200-turn cap, with causes attributed
 - [ ] **Verify the premium tiers** — (a) faster: A100 $/hr × build time vs the credit price;
       (b) higher-quality: larger-LLM + stronger-image-model COGS (GPU/VRAM/time or API) vs its credit
       price. Confirm each is actually better/faster AND still profitable.
@@ -112,6 +158,9 @@ Sell already-generated games from a catalog at some price, and pay the creator a
 Not an MVP blocker — validate demand in the private alpha first (manual credit grants, no real
 pricing). Do the measurement DURING the alpha (real builds = real cost/failure data), then set price
 before the paid stage.
+
+**The next measurement pass waits for the ten showcase games** (`nicknotes.md` § Game showcase) —
+they are the build set the rental numbers, the failure rate and the price should be read off.
 
 ## Parked
 - Exact credit pack sizes + any subscription vs one-off (floor is decided: $10 minimum, see the

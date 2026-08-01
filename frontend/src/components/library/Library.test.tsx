@@ -22,6 +22,16 @@ describe('Library', () => {
         expect(onNew).toHaveBeenCalled()
     })
 
+    // Making a game is the point of the product, so it leads the shelf rather than trailing it.
+    it('puts making a new one first, ahead of every game', () => {
+        vi.spyOn(api, 'getGameAssets').mockResolvedValue([])
+        shelf([game(), game({ run_id: 'r2', title: 'Forest Cafe' })])
+
+        const cards = screen.getAllByRole('button')
+
+        expect(cards[0].textContent).toContain('Make a new game')
+    })
+
     it('covers a built game with its own first rendered image', async () => {
         vi.spyOn(api, 'getGameAssets').mockResolvedValue([
             { id: 'village', kind: 'image', status: 'ready', prompt: 'a village' },

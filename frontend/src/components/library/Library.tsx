@@ -37,8 +37,8 @@ export const Library: React.FC<{
                 {loading && games.length === 0 && <p className="text-slate text-sm">Loading…</p>}
 
                 <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(190px,1fr))]">
-                    {games.map(g => <GameCard key={g.run_id} game={g} onOpen={() => onOpen(g.run_id)} />)}
                     <NewGameCard onClick={onNew} />
+                    {games.map(g => <GameCard key={g.run_id} game={g} onOpen={() => onOpen(g.run_id)} />)}
                 </div>
             </div>
         </div>

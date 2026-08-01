@@ -1,96 +1,81 @@
 # Quality Backlog — from RUNS to GOOD
 
-Verified: 2026-07-25
+Verified: 2026-07-31
+
+Rewritten 2026-07-31. The previous file described the kit/gate era — `module.py`'s check list,
+`fix_classes.py`, a dozen prompt files, `runtime/kit_api*.md`, the scaffold templates,
+`docs/codegen_rebuild_plan.md` Phase 7. All of it is deleted. What survived the rewrite is the
+guardrails, which were never about that machinery.
 
 ## Why
-The north star is *good* output, not *valid* output. The local gates
-(`src/maestro/codegen/module.py`: planned → data → authored → contracted → typechecks →
-single_mover → runs → plays → renders → scrolls) prove a game RUNS and its controls DO
-something — nothing judges whether it's FUN or well-written. Judge-in-loop is THE lever, and
-the plan (do not re-litigate) is: climb the prompt surface + cheap local heuristics NOW, and
-the vision play-critic LAST (`docs/codegen_rebuild_plan.md` Phase 7 — frontier, cloud,
-explicitly out of local scope). Blame context before model: a bad build is a prompting/plumbing
-bug until the exact prompt has been dumped and read.
+A build ends with a game that RUNS. Whether it is worth playing is a human judgement and stays one
+(`CLAUDE.md`: a gate may only detect broken, never "bad"). So this file is not a list of things to
+gate — it is the list of what makes builds better, in the order the evidence supports: a standing
+battery to notice regressions, then the prompt surface, then a snippet, then a primitive.
 
-## Background (VERIFIED 2026-07-23)
-- Gate list: `CodegenModule.checks` in `src/maestro/codegen/module.py`; each `Error.code`
-  routes to a fix shape in `src/maestro/codegen/build_chain.py` via
-  `src/maestro/codegen/fix_classes.py`.
-- The climbable prompt surface: `src/maestro/codegen/prompts/*.txt` (spec_draft, plan_game,
-  design_data, author_file, fix_loop, fix_data, plan_assets, plan_meshes, reskin_draw,
-  reskin_mesh, contract_rules, contract_invariant, `fix_kinds/*.txt`), the injected kit docs
-  `runtime/kit_api.md` / `runtime/kit_api_3d.md` / `runtime/kit_catalog.md`, and the scaffold
-  sources `src/maestro/codegen/scaffold_templates/*.ts.tmpl` (real TS we own, climbable like
-  prompts).
-- Iteration workflow: NONE. Q1 writes it — a babysat launch → monitor → grade → root-cause → fix →
-  rebuild loop, and a grading bar built on the why-chain/nonsense test.
-- Current CLI: `cd src && python -m maestro.codegen.run "<request>"`; fix path
-  `--fix <run_id> "<note>"`; play via `runtime/index.html?game=<slug>`.
-- Phase 7 (`docs/codegen_rebuild_plan.md`): T7.1 self-play metrics (solvable/non-trivial/fair,
-  computable local-ish), T7.2 play-critic (vision+control agent judging fun/feel).
+## Background (VERIFIED 2026-07-31)
+- **The whole climbable surface is one file:** `src/maestro/codegen/prompts/build.txt`. There is no
+  scaffold, no kit doc, no per-call prompt set. Every line in it is read on every turn of every
+  build, so a line that does not earn its place costs the whole run.
+- **The only gate is `index.html` exists.** Nothing machine-side judges a finished game.
+- **Play a build:** `runtime/games/<run_id>/index.html` (3D needs http, not `file://`), or `/play`
+  in the app. **Fix a build:** `cd src && python -m maestro.codegen.run --fix <run_id> "<note>"`.
+- **What has been measured** lives in `docs/experiments.md`. A change to the loop that cannot point
+  at a row there has not earned its place.
+- **Known recurring defects** (2026-07-27 25-game grid), none yet earning more than a prompt line:
+  3D scenes lit near-black (2/4, both models), fixed canvas with no window scaling (every 2D game),
+  silent games (all four arcade + the deck-builder), arrow-keys-only input.
 
 ## Guardrails
-- **REJECT making local gates judge "good".** Gates stay deterministic invariants; quality
-  judgment is skills-workflow now, play-critic later. No LLM-judge `Check` on the local model.
-- **REJECT chasing the scroll-gate false positive** — known-open by choice (single-screen
-  arcade games can't satisfy it; the model inflates the world chasing it). Don't "fix" games
-  to green it.
-- **Re-run before rejecting a prompt change** — seed/sampling variance is real (spec-draft
-  variance alone can flip `world`/scheme). One bad output is noise.
+- **A gate may only detect BROKEN, never "bad."** No LLM-judge in the loop, no "the game must do X"
+  check (`CLAUDE.md`).
+- **Blame the context before the model** — a bad build is a prompting/plumbing bug until the exact
+  prompt has been dumped and read.
+- **Re-run before rejecting a prompt change** — sampling variance is real. One bad output is noise.
+- **A prompt fix states a general law; examples only illustrate.** Never encode the game that
+  triggered it, and validate on the battery rather than the motivating case.
 - **Never ship a bad example, even labelled as a failure** — examples get copied regardless of
-  framing. Proven law; it survives the stack rewrite.
-- Genre battery before keeping any prompt change: platformer / top-down arcade / grid-turn /
-  3D world RPG. A win on one that regresses another is not a win.
+  framing.
+- **Genre battery before keeping any change:** platformer / top-down arcade / grid-turn / 3D world
+  RPG. A win on one that regresses another is not a win.
 
 ## Tasks
 
-### Q1 — Write the iteration skills against codegen (unblocks everything else)
-- [ ] An iterate skill: launch via `python -m maestro.codegen.run`, monitor
-      `runs/<id>/build_state.json`, root-cause → fix → rebuild. Two rules it must hold:
-      /proc-not-pgrep liveness, and blame the context before the model.
-      Verify: run one build end-to-end by the skill's own text.
-      → done when: `python -m maestro.codegen.run "<req>"` finishes and `runs/<id>/build_state.json` has `"phase": "done"`
-- [ ] A grade skill: the calibrated bar + why-chain/nonsense test, pointed at generated games'
-      dialogue and playable feel via `runtime/index.html?game=<slug>`. Needs a gold example to
-      grade against — pick one from a real build and check it in.
-      → done when: the skill file exists and names a gold example that is checked in
-- [ ] Pick ONE gold spec per genre-battery slot and record it in the skill (the old gold A/B
-      premise pattern). Verify: two graders (you, cold) reach the same verdict on one build.
-      → done when: the skill file has a dated table naming one spec each for platformer/top-down/grid-turn/3D-RPG
+### Q1 — A standing battery (unblocks everything else)
+Nothing is run on a cadence today, so a regression between experiments is invisible.
+- [ ] A repeatable battery run: fixed request list (the four genre slots above), one build each,
+      results recorded with the model, the harness commit, and the cost/time per build.
+      → done when: one dated battery result table exists in `docs/experiments.md` produced by a
+        command that can be re-run unchanged
+- [ ] A grading bar written down — what "playable", "shallow" and "good" mean concretely enough
+      that a cold reader reaches the same verdict on the same build.
+      → done when: the bar is written in this file and two gradings of one build agree
 
-### Q2 — Prompt hill-climb (the standing grind)
-- [ ] Build the tracking table here: every file in the Background prompt-surface list →
-      what call it backs → last climbed → verdict. Include kit_api*.md and scaffold templates.
-      → done when: this file has a table row for every file in src/maestro/codegen/prompts/*.txt, scaffold_templates/*.tmpl and runtime/kit_api*.md/kit_catalog.md
-- [ ] One climb pass per prompt: baseline build → grade (Q1 skills) → hypothesis → change →
-      rebuild → keep only if better across the battery. Files: the prompt under test only.
-      → done when: the Q2 tracking table has a non-empty "last climbed"/"verdict" for ≥1 file
-- [ ] `spec_draft.txt` first — a wrong spec is a wrong everything, and it's human-gated so a
-      better draft is pure win. Watch for the known variance flipping `world`/scheme.
-      → done when: the tracking table's `spec_draft.txt` row has a non-empty verdict
+### Q2 — The four known defects (prompt line → snippet → primitive)
+Each is a prompt line first. A primitive only after a prompt line has failed twice, across two
+models (`CLAUDE.md`, "Adding a capability").
+- [ ] 3D scenes lit near-black — say what is true ("light the scene so the player can see"), not
+      what is forbidden. Validate on the 3D slot plus one 2D slot to confirm no cost elsewhere.
+      → done when: a battery row shows the 3D build lit, with the diff to `build.txt` named
+- [ ] Fixed canvas, no window scaling — every 2D game on the grid.
+      → done when: a battery row shows a 2D build resizing with the window
+- [ ] Silent games — no sound at all in any arcade build.
+      → done when: a battery row shows a build that makes sound
+- [ ] Arrow-keys-only input — bind WASD and the arrows.
+      → done when: a battery row shows both bindings live
 
-### Q3 — Cheap local "good" heuristics (Phase 7 T7.1, early slice)
-- [ ] Self-play depth heuristic: a NEW runner (`runtime/depth.mjs` — the old `probe.mjs` was
-      deleted with the probe gate) doing a scripted-input run that checks the game is non-trivial
-      (e.g. random-input run should LOSE more often than no-input; win requires acting). Test:
-      fixture game in `runtime/games/` that trivially wins fails the heuristic.
-      → done when: `runtime/depth.mjs` exists and a trivially-winning fixture in `runtime/games/` fails it
-- [ ] Report, NEVER gate. "The game must be non-trivial" is a DOES-X constraint, so it can only
-      ever be a report — making it blocking is the exact shape `CLAUDE.md` forbids (it is why the
-      probe is gone). Collect verdicts across builds; a blocking version is not a later phase.
-      → done when: verdicts appear in `events_for` (db/store.py) for ≥3 builds and no `Check` in `module.py` wires it
-
-### Q4 — Play-critic (deferred, cloud — comes LAST)
-- [ ] Design only when Q1–Q3 plateau: vision+control agent plays the staged `/play` build,
-      judges fun/feel against a rubric, emits fix notes into the existing
-      `--fix <run_id> "<note>"` path (the human-note fix already classifies to `default`).
-      Do not start before the local surface is climbed.
-      → done when: `docs/codegen_rebuild_plan.md`'s T7.2 bullet is expanded into a rubric + architecture section
+### Q3 — Settle `generate_media`
+It entered unmeasured (2026-07-28). An unused schema costs every turn of every build, so a tool
+that fails this comes back out.
+- [ ] Measure, on the battery: does the model CALL it; does it use the returned path VERBATIM; does
+      it still draw a fallback shape while the file is missing.
+      → done when: a dated row in `docs/experiments.md` answers all three, with a keep/cut verdict
 
 ## Parked
-- VN-era items (per-branch continuity, combat/economy depth checks, puzzle-depth, revise_node
-  tooling, the eval rubric CLI) — all referenced deleted IR machinery; re-derive from scratch
-  if a codegen analog is ever needed.
-- Scroll-gate false positive — open by choice, see Guardrails.
-- LLM-judge as a local gate — rejected for now (a 30B judging its own output adds noise, not
-  signal); the play-critic slot owns judgment.
+- **A play-critic.** A design has to answer the judge-then-fix measurement first — 208 of one
+  build's 227 steps, and a worse round 2 than round 1 (`docs/experiments.md`). Only once Q1–Q3
+  plateau.
+- **Cheap local depth heuristics** (a scripted-input run that reports whether the game is
+  non-trivial). Report-only by construction: "the game must be non-trivial" is a does-X constraint
+  and can never be a gate. Depends on the battery.
+- **LLM-judge as a gate** — rejected. A 30B judging its own output adds noise, not signal.

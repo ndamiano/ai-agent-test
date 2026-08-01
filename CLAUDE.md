@@ -4,9 +4,9 @@ An AI platform that makes things. The goal is simple: user says "make me a game"
 good game exists. The AI quality is the product — everything else (UI, install, visuals) is
 scaffolding.
 
-The north star is **any game + local**: ask for a game you imagine, get a real, playable game, and
-every generation runs on a local GPU (a 5090-class card, a ~30B model) — no cloud in the build loop.
-"Good" is the constraint we consciously bend today; breadth and local-first come first.
+The north star is **any game**: ask for a game you imagine, get a real, playable game in a browser.
+"Good" is the constraint we consciously bend today — breadth comes first. Every build runs on an
+open-weight model on a modest rented card (a 5090-class card, a ~30B model).
 
 See `docs/roadmap.md` for status, `docs/architecture.md` for the layer above this one (processes,
 state, trust boundaries, what pins the control plane to one box), and `docs/experiments.md` for what

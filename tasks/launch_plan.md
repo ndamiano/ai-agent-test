@@ -1,17 +1,19 @@
 # Launch Plan — Current → Business
 
-Verified: 2026-07-25
+Verified: 2026-07-31
 
 The **meta-doc**: sequences the scattered platform + quality work into an ordered path to first
 dollar, and defines each stage's bar. Points into the other task files rather than restating them.
 
 ## The two axes (why "product vs business" is slightly false)
-- **Can it make a GOOD game?** (quality/product) — `quality_backlog.md`, `asset_quality.md`, modules.
+- **Can it make a GOOD game?** (quality/product) — `quality_backlog.md`, `asset_quality.md`,
+  `build.txt`.
 - **Can a stranger pay + get one safely?** (business/infra) — auth, payments, deploy, safety, scale.
 
 They're separable, but a business that ships bad games churns — so a **minimum reliability bar is a
-business requirement**, and you do **NOT need genre breadth to launch**. Launch narrow +
-good, expand later.
+business requirement**. Reliability is measured across the genre battery, not on one genre: the
+ordering is breadth first (`docs/vision.md`, `docs/roadmap.md` product stage 1), because a maker
+who picks from a menu of supported genres is not describing the game in their head.
 
 ## Stage 0a — Pre-alpha (immediate — validate it FUNCTIONS)
 Before demand validation, prove the loop works for a non-owner. Inference stays on the owner's PC
@@ -34,9 +36,11 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       (deploy) DONE (Dockerfile + compose + named-volume persistence + `scripts/deploy.sh` +
       `docs/deploy.md`); validated on a second box, non-owner drove the full loop. T1 (CI) now
       exists too (`.github/workflows/ci.yml`).
-- [ ] **Reliably good on ONE genre** — narrow to the best-working path (VN/dialogue). Judge-in-loop
-      (`quality_backlog.md` §1) + an acceptable failure rate + refund-on-fail. Breadth deferred. NOT STARTED.
-      → done when: `quality_backlog.md`'s Q1 items are all checked and a VN failure-rate figure is in `unit_economics.md`
+- [ ] **Reliably running across the genre battery** — platformer / top-down arcade / grid-turn /
+      3D world RPG, at an acceptable failure rate, with refund-on-fail. NOT STARTED (the battery
+      itself is `quality_backlog.md` Q1).
+      → done when: `quality_backlog.md`'s Q1 items are all checked and a per-battery failure-rate
+        figure is in `unit_economics.md`
 - [x] **Delivery works** — the `/play` web harness serves the staged bundle
       (`runtime/games/<id>/`, cookie-gated). Browser play IS the product (decision 2026-07-23):
       the old Ren'Py/Godot download made sense when games were desktop builds; a downloadable
@@ -47,7 +51,9 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       hash-matching) — don't hand it to anyone outside a trusted circle without Phase 2.
 - [x] **Minimal legal** — alpha-tier ToS + privacy note live (`frontend/public/terms.html` +
       `privacy.html`, linked from login with 18+ acceptance). Counsel review before paid.
-- [ ] **Measure** — real cost/time/failure per game (`unit_economics.md`) during these builds.
+- [~] **Measure** — real cost/time/failure per game (`unit_economics.md`) during these builds.
+      Dev box measured (median ~$0.11/game, 31% first-build failure); the rented-pod numbers and a
+      200-turn-cap failure rate are open.
       → done when: `unit_economics.md`'s "Measure real cost/time per game" and "failure/retry rate" items are checked
 
 **Exit:** people use it, want it, and you have real COGS/failure data.
@@ -82,8 +88,8 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
 - [ ] **Ownership / resale tier** — the 100-credit resell path + "contact me" baseline + site listing
       (`legal_ops.md`, `unit_economics.md`).
       → done when: `legal_ops.md`'s IP-ownership item is checked and `grep -rn "resale" src/api/` is non-empty
-- [ ] **Breadth + polish** — `game_media.md`, `game_style.md`, `asset_quality.md`, kit widening
-      (new primitive families) — the growth engine, now that the business stands.
+- [ ] **Polish + richer output** — `game_media.md`, `game_style.md`, `asset_quality.md` — the
+      growth engine, now that the business stands.
       → done when: `game_media.md`, `game_style.md`, and `asset_quality.md` each have zero remaining `- [ ]` lines
 
 ## "Minimum to charge $1"

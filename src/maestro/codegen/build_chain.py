@@ -73,7 +73,7 @@ def pause(run_id: str) -> bool:
         if cursor.build_id and db_store.cancel_pending_build_turn(cursor.build_id, "paused by hand"):
             cursor.step = max(0, cursor.step - 1)
         build_state.save(rs.run_dir, cursor)
-        _emit("build_paused", run_id, step=cursor.step)
+        _emit("build_paused", run_id, build_id=cursor.build_id, step=cursor.step)
         return True
     finally:
         lock.release()
@@ -107,7 +107,7 @@ def resume(run_id: str) -> None:
     if cursor is not None and cursor.paused:
         cursor.paused = False
         build_state.save(rs.run_dir, cursor)
-        _emit("build_resumed", run_id, step=cursor.step)
+        _emit("build_resumed", run_id, build_id=cursor.build_id, step=cursor.step)
     advance(run_id)
 
 
@@ -140,7 +140,7 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
                           "done when it is fixed.")
     build_state.save(rs.run_dir, cursor)
     db_store.set_status(run_id, "building")
-    _emit("build_started", run_id, max_steps=max_steps, started_at=cursor.t0)
+    _emit("build_started", run_id, build_id=build_id, max_steps=max_steps, started_at=cursor.t0)
     # wait=True: this first advance must never be dropped by a lock another finalize still holds.
     advance(run_id, wait=True)
 
@@ -265,7 +265,7 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
         db_store.build_finished(cursor.build_id, attempt or ("succeeded" if ok else "failed"),
                                 steps=cursor.step)
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
-    _emit("build_done", run_id, ok=ok, steps=cursor.step)
+    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step)
 
 
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:
@@ -299,10 +299,11 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
         db_store.set_status(run_id, "failed")
         if cursor.build_id:
             db_store.build_finished(cursor.build_id, "failed", steps=cursor.step)
-        _emit("build_done", run_id, ok=False, steps=cursor.step, error=f"compute exhausted: {e}")
+        _emit("build_done", run_id, build_id=cursor.build_id, ok=False, steps=cursor.step,
+              error=f"compute exhausted: {e}")
 
 
 def _emit_step(run_id: str, cursor: BuildCursor, summary: str) -> None:
-    _emit("build_step", run_id, step=cursor.step, max_steps=cursor.max_steps, summary=summary,
-          elapsed=time.time() - cursor.t0)
+    _emit("build_step", run_id, build_id=cursor.build_id, step=cursor.step,
+          max_steps=cursor.max_steps, summary=summary, elapsed=time.time() - cursor.t0)
     logger.info("build %s step %d: %s", run_id, cursor.step, summary)

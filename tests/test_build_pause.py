@@ -115,6 +115,17 @@ def test_pause_announces_itself_once(run, tmp_path, events):
     assert [k for k, _ in events] == ["build_paused"]
 
 
+def test_a_build_event_names_its_build(run, tmp_path, events, monkeypatch):
+    """A game's log holds its build and every fix, so an event without the id is unattributable."""
+    monkeypatch.setattr(build_chain, "_enqueue_turn", lambda *a, **k: None)
+    monkeypatch.setattr(build_chain.build_steps, "step",
+                        lambda *a, **k: build_steps.Infer([], [], 100, report="x"))
+    build_chain.advance(run, {"choices": []})
+    build_chain.pause(run)
+
+    assert events and all(kw.get("build_id") == "b1" for _, kw in events)
+
+
 def test_resume_clears_the_flag_and_announces_it(run, tmp_path, events, monkeypatch):
     monkeypatch.setattr(build_chain, "advance", lambda *a, **k: None)
     build_chain.pause(run)

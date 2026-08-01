@@ -7,19 +7,9 @@ continuation lands INSIDE the completion transaction and before the batch is cou
 finalize is claimed exactly once no matter who gets there first.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from db import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
 def _game(seconds: float = 10_000.0, game_id: str = "g1") -> str:
@@ -209,7 +199,7 @@ def test_early_finalize_mid_build_defers_staging(_asset_env):
     store.set_status("g1", "building")
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
-    assert events == [("assets_done", {"ok": True, "rendered": []})]
+    assert events == [("assets_done", {"build_id": None, "ok": True, "rendered": []})]
 
 
 def test_finalize_after_a_built_game_stages(_asset_env):

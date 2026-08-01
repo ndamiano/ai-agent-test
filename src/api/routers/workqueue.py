@@ -167,8 +167,8 @@ def _land(body: "CompleteBody", continuation: Optional[Dict], queue: Optional[st
     outcome = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
                                     body.exec_seconds, body.gpu_type, continuation)
     if outcome is not None and outcome["game_id"]:
-        _emit("job_done", outcome["game_id"], job_id=body.job_id, queue=queue,
-              ok=body.error is None, exec_seconds=body.exec_seconds)
+        _emit("job_done", outcome["game_id"], build_id=outcome["build_id"], job_id=body.job_id,
+              queue=queue, ok=body.error is None, exec_seconds=body.exec_seconds)
     return outcome
 
 

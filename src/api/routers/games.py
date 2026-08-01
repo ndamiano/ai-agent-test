@@ -346,7 +346,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
 
     def _run(build_id: str):
         db_store.build_started(build_id)
-        _emit("assets_started", run_id)
+        _emit("assets_started", run_id, build_id=build_id)
         try:
             # Returns once the asset jobs are ENQUEUED. assets_done and build_finished are the
             # batch finalize's job, since the render outlives this thread by minutes.
@@ -356,7 +356,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             db_store.build_finished(build_id, "failed")
         except Exception:
             logger.exception("asset render failed for %s", run_id)
-            _emit("assets_done", run_id, ok=False, rendered=[])
+            _emit("assets_done", run_id, build_id=build_id, ok=False, rendered=[])
             db_store.build_finished(build_id, "failed")
         finally:
             with _active_lock:

@@ -487,7 +487,8 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
             batch_complete = left == 0
     return {"batch_id": row["batch_id"], "batch_complete": batch_complete,
             "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
-            "game_id": row["game_id"], "continuation_id": continuation_id}
+            "game_id": row["game_id"], "build_id": row["build_id"],
+            "continuation_id": continuation_id}
 
 
 def get_job(job_id: str) -> Optional[Dict]:

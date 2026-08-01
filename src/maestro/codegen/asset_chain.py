@@ -94,8 +94,8 @@ def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
 
     ok = status in ("built", "building")
     logger.info("assets %s: rendered %d/%d asset(s)", run_id, len(rendered), len(ids))
-    _emit("assets_done", run_id, ok=ok, rendered=sorted(rendered))
     build_id = next((j["build_id"] for j in jobs if j["build_id"]), None)
+    _emit("assets_done", run_id, build_id=build_id, ok=ok, rendered=sorted(rendered))
     if build_id:
         db_store.build_finished(build_id, "succeeded" if ok else "failed")
 

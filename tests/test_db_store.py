@@ -1,18 +1,8 @@
 """Platform db — games ownership/lifecycle, the charge contract, builds, and the event log."""
 
-import sys
 from pathlib import Path
 
-import pytest
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 from db import store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
 
 
 def test_create_and_owner():
@@ -89,6 +79,19 @@ def test_events_append_and_replay_after_id():
 
     later = store.events_for("g1", after_id=events[0]["id"])
     assert [e["kind"] for e in later] == ["build_step"]
+
+
+def test_an_event_names_the_build_it_came_from():
+    """A game holds its build and every fix after it, so the log is only readable per build."""
+    store.create_game("g1", "u1")
+    b1 = store.create_build("g1")
+    b2 = store.create_build("g1", kind="fix")
+    store.record_event("g1", "build_step", {"step": 1}, b1)
+    store.record_event("g1", "build_step", {"step": 1}, b2)
+    store.record_event("g1", "prompt_proposed", {"title": "Moon Miner"})   # no build yet
+
+    events = store.events_for("g1")
+    assert [e["build_id"] for e in events] == [b1, b2, None]
 
 
 def test_event_payload_survives_non_json_values():

@@ -30,6 +30,17 @@ def seed_vendor(run_dir) -> None:
             shutil.copy2(src, dst)
 
 
+def has_authored_files(run_dir) -> bool:
+    """Has a build written anything into the game folder? The vendored renderer is seeded there
+    before the model runs, so its presence says nothing — this is what tells a run with a dead
+    build's leftovers apart from one with an empty folder."""
+    d = game_dir(run_dir)
+    if not d.is_dir():
+        return False
+    vendored = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
+    return any(p.is_file() and p.name not in vendored for p in d.rglob("*"))
+
+
 def entry_path(run_dir) -> Path:
     return game_dir(run_dir) / ENTRY
 

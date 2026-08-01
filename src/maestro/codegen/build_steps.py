@@ -22,7 +22,7 @@ from typing import List, Optional, Union
 from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import asset_use, turn_log
 from maestro.codegen.staging import game_dir
-from maestro.services import parse_args
+from maestro.services import parse_args, parse_args_checked
 from maestro.tool_calls import parse_tool_calls
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,13 @@ _NUDGES = [
 
 def _nudge(streak: int) -> str:
     return _NUDGES[min(streak, len(_NUDGES)) - 1]
+
+
+# What a reply too big to land is answered with, wherever it surfaces — as a cut-off argument, as a
+# cut-off reply, or as the server refusing to parse its own model's output. The remedy is the same
+# one every time, so the model reads the same sentence rather than three descriptions of one event.
+_TOO_BIG = ("Write the file in smaller pieces: split the game across several files, or write one "
+            "section at a time. Do not repeat a whole large file to change a small part of it.")
 
 
 # Satisfiable by naming nothing, so a finished game passes it on the next turn. A bar the model
@@ -156,15 +163,30 @@ def _n_ctx() -> int:
     return int((settings_manager.get_settings().get("llm") or {}).get("n_ctx") or 32768)
 
 
-def step(spec, run_dir, tools, cursor, result) -> Outcome:
+def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> Outcome:
     """One turn: apply the completed turn's tool calls, then ask for the next. `None` is no turn to
     apply (re-ask as-is); `{}` is a turn that ran and returned nothing, which the no-call branch
-    answers."""
+    answers. `error` is a turn the WORKER could not deliver, which is neither."""
     if not cursor.started:
         cursor.started = True
         cursor.system = (_PROMPTS / "build.txt").read_text(encoding="utf-8")
         cursor.history = [{"role": "user", "content": cursor.request or _request_from(spec)}]
         return _infer(run_dir, cursor)
+
+    if error:
+        # The reply never reached us: an oversized tool call comes back as a 500 from the inference
+        # server's OWN argument parser, and the model that wrote it hears nothing. Told only that it
+        # said nothing, it resends the same oversized call and the build dies four turns later
+        # (measured 2026-08-01: build 2ac37ea38256, one 64 KB write_file, four identical 500s).
+        cursor.turn += 1
+        cursor.no_call_streak += 1
+        cursor.history.append({"role": "user", "content":
+                               "The inference server could not read your last reply, so nothing "
+                               f"was saved. It reported: {_clip(error, 200)}\n\nA reply too large "
+                               f"to parse is the usual cause. {_TOO_BIG}"})
+        if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
+            return Done(f"stalled: {cursor.no_call_streak} turns the server could not read")
+        return _infer(run_dir, cursor, report=f"turn rejected by the server: {_clip(error, 80)}")
 
     if result is None:
         return _infer(run_dir, cursor, report="re-sent the turn that never ran")
@@ -185,9 +207,7 @@ def step(spec, run_dir, tools, cursor, result) -> Outcome:
         cursor.history.append({"role": "assistant", "content": content[-2000:]})
         cursor.history.append({"role": "user", "content":
                                "Your last response was cut off by the output token limit, so "
-                               "nothing was saved. Write the file in smaller pieces: split the game "
-                               "across several files, or write one section at a time. Do not repeat "
-                               "a whole large file to change a small part of it."})
+                               f"nothing was saved. {_TOO_BIG}"})
         return _infer(run_dir, cursor)
 
     if not calls:
@@ -287,7 +307,23 @@ def _tool_content(res) -> str:
     return json.dumps(res)[:_MAX_TOOL_CHARS]
 
 
+def _cut_off(tc) -> bool:
+    """Did this call's argument JSON stop mid-write? The model reached the output cap while
+    streaming a big `content`, so the arguments are unterminated and nothing can be recovered from
+    them. parse_args answers {} — which reaches the tool as a MISSING argument, and a model told it
+    forgot `path` resends the same oversized call (measured 2026-08-01: a 64 KB write_file reported
+    as KeyError: 'path', then four turns the server itself refused, then a dead build)."""
+    return not parse_args_checked(tc["function"].get("arguments"))[1]
+
+
 def _apply(tools, cursor, tc) -> None:
+    if _cut_off(tc):
+        res = {"ok": False, "error": "Your reply hit the output token limit part-way through this "
+                                     f"call's arguments, so the call never ran. {_TOO_BIG}"}
+        cursor.actions.append(f"{tc['function']['name']} — cut off by the output limit")
+        cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                               "content": _tool_content(res)})
+        return
     try:
         res = _dispatch(tools, cursor, tc)
     except Exception as e:

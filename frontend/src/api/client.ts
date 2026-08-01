@@ -124,6 +124,10 @@ export const api = {
     // the only thing that writes it.
     buildGame: (runId: string, prompt?: string) =>
         request<{ status: string; run_id: string }>(`/api/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ prompt }) }),
+    // The same build, over an emptied game folder: the model opens on nothing instead of on the
+    // last attempt's files.
+    regenerateGame: (runId: string, prompt?: string) =>
+        request<{ status: string; run_id: string }>(`/api/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ prompt, fresh: true }) }),
 
     pauseGame: (runId: string) =>
         request<{ status: string }>(`/api/games/${runId}/pause`, { method: 'POST' }),

@@ -266,6 +266,79 @@ def test_truncated_reply_is_told_nothing_was_saved(tmp_path, tools):
     assert "cut off" in cursor.history[-1]["content"]
 
 
+def _raw_reply(name, raw_args):
+    """A reply whose tool-call arguments are the literal string given — what a call cut off at the
+    output cap looks like, which `_reply` (which serializes a dict) can never produce."""
+    return {"choices": [{"message": {"role": "assistant", "content": "",
+                                     "tool_calls": [{"id": "c0", "type": "function",
+                                                     "function": {"name": name,
+                                                                  "arguments": raw_args}}]}}],
+            "usage": {}}
+
+
+def test_a_call_cut_off_mid_argument_says_so_and_writes_nothing(tmp_path, tools):
+    """The measured build-killer: a 64 KB write_file cut at the output cap parses to no arguments,
+    which reached the model as `KeyError: 'path'` — so it resent the same oversized call until the
+    server itself refused it."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _raw_reply("write_file", '{"path":"story.js","content":"const STORY = {\\n  '))
+    said = cursor.history[-1]["content"]
+    assert "output token limit" in said and "never ran" in said
+    assert "KeyError" not in said
+    assert not (tmp_path / "game" / "story.js").exists()
+
+
+def test_a_call_that_takes_no_arguments_is_not_read_as_cut_off(tmp_path, tools):
+    """`{}` is a whole argument list, not a truncated one — list_files carries exactly that."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor, _raw_reply("list_files", "{}"))
+    assert "output token limit" not in cursor.history[-1]["content"]
+    assert json.loads(cursor.history[-1]["content"])["ok"] is True
+
+
+def test_a_turn_the_server_refused_is_not_a_turn_that_said_nothing(tmp_path, tools):
+    """A 500 from the server's own tool-call parser reaches the driver as an error and no message.
+    Told only 'that reply contained no tool call', the model resends what earned the 500."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = build_steps.step({}, tmp_path, tools, cursor, {},
+                           error="Status 500: Failed to parse tool call arguments as JSON")
+    assert isinstance(out, build_steps.Infer)
+    said = cursor.history[-1]["content"]
+    assert "could not read your last reply" in said
+    assert "Failed to parse tool call arguments" in said
+    assert "smaller pieces" in said
+    assert "no tool call" not in said
+
+
+def test_a_refused_error_is_clipped_before_it_reaches_the_transcript(tmp_path, tools):
+    """The 500 body carries the whole oversized argument back — 48 KB of it, in one build."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor, {}, error="Status 500: " + "x" * 50_000)
+    assert len(cursor.history[-1]["content"]) < 1000
+
+
+def test_a_build_the_server_keeps_refusing_gives_up(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = None
+    for _ in range(build_steps._NO_CALL_GIVE_UP):
+        out = build_steps.step({}, tmp_path, tools, cursor, {}, error="Status 500: nope")
+    assert isinstance(out, build_steps.Done) and "could not read" in out.report
+
+
+def test_a_landed_turn_after_a_refusal_clears_the_streak(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor, {}, error="Status 500: nope")
+    build_steps.step({}, tmp_path, tools, cursor, _reply(calls=[("list_files", {})]))
+    assert cursor.no_call_streak == 0
+
+
 def test_turn_cap_ends_the_build(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})

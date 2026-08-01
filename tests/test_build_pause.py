@@ -76,7 +76,7 @@ def test_a_turn_that_lands_during_a_pause_is_kept(run, tmp_path, events, monkeyp
     pause withholds is the NEXT turn, not the paid-for one."""
     enqueued = []
 
-    def applies(spec, run_dir, tools, cursor, result):
+    def applies(spec, run_dir, tools, cursor, result, error=None):
         cursor.history.append({"role": "tool", "content": "ok"})
         return build_steps.Infer([], [], 100, report="wrote index.html")
 
@@ -142,7 +142,7 @@ def test_resume_re_enqueues_the_cancelled_turn(run, tmp_path, monkeypatch):
     monkeypatch.setattr(build_chain, "_enqueue_turn",
                         lambda run_id, cursor, inf: enqueued.append(inf))
     monkeypatch.setattr(build_chain.build_steps, "step",
-                        lambda spec, run_dir, tools, cursor, result: build_steps.Infer(
+                        lambda spec, run_dir, tools, cursor, result, error=None: build_steps.Infer(
                             [], [], 100, report="re-sent" if result is None else "applied"))
     build_chain.pause(run)
     build_chain.resume(run)

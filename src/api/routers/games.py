@@ -26,7 +26,7 @@ from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
                                     regenerate_asset)
-from maestro.codegen.staging import game_dir, is_staged
+from maestro.codegen.staging import game_dir, has_authored_files, is_staged
 from maestro.codegen.run import create_run, set_prompt
 from tools.safety import log_violation, screen_text
 from maestro.state import RunState
@@ -42,6 +42,8 @@ class NewGameBody(BaseModel):
 
 class BuildBody(BaseModel):
     prompt: Optional[str] = None
+    # Start over on an EMPTY game folder instead of carrying the last attempt's files forward.
+    fresh: bool = False
 
 
 class FixBody(BaseModel):
@@ -156,6 +158,8 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "status": status,
         "queue_position": None,   # kept for the client shape; builds don't queue behind each other
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
+        # Whether a previous attempt left files behind — what the from-scratch build would discard.
+        "has_game": has_authored_files(state.run_dir),
         "play_url": f"/play/games/{run_id}/index.html" if built else None,
         "credits_spent": row.get("credits_spent", 0),
         # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
@@ -248,6 +252,10 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     so the build is the only thing that writes it. The driver reads it from disk, not from this
     request — a build outlives the process that started it.
 
+    `fresh` is the from-scratch button: it empties the game folder first, so the model opens on
+    nothing rather than on a dead build's half-written files. Without it a re-trigger carries them
+    forward, which is what a resumed build wants and what a second attempt does not.
+
     A run is charged ONCE, gated on a durable `charged` flag: the first enqueue deducts
     `cost(spec)`; every later enqueue for the same run (a re-trigger, a resume after a dead build)
     finds it already flagged and never re-charges. Charged stays charged — there is no automatic
@@ -274,7 +282,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     _require_compute(run_id)
 
     # kickoff seeds the game folder before enqueueing the first llm turn, so it touches disk.
-    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build", fresh=body.fresh)
     return {"status": "building", "run_id": run_id, "queue_position": 0}
 
 

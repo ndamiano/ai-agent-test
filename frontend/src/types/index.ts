@@ -17,6 +17,8 @@ export interface GameDetail {
     building: boolean
     status: GameStatus
     assets_exist: boolean
+    // A previous attempt left files in the game folder — what a from-scratch build discards.
+    has_game: boolean
     play_url: string | null
     // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
     // uncharged (no bar). Raw seconds — especially seconds_used — are deliberately never surfaced.

@@ -110,15 +110,19 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
         finally { setActing(false) }
     }
 
-    const build = async () => {
+    // `fresh` empties the game folder first. A retry otherwise opens on the last attempt's files,
+    // which the model reads and believes — and then re-asks for art it already has.
+    const startBuild = async (fresh: boolean) => {
         setActing(true); setBuilding(true); setStatus('running')
-        try { await api.buildGame(runId, promptText); onChanged() }
+        try { await (fresh ? api.regenerateGame : api.buildGame)(runId, promptText); onChanged() }
         catch (e) {
             setBuilding(false); setStatus('idle')
             setError(buildErrorMessage(e, 'Build failed'))
         }
         finally { setActing(false); refreshBalance() }  // a build spends credits — resync the header
     }
+    const build = () => startBuild(false)
+    const regenerate = () => startBuild(true)
     const pause = () => { setStatus('paused'); act(() => api.pauseGame(runId), 'Pause failed', false) }
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
     const stop = () => act(() => api.stopGame(runId), 'Stop failed', false)
@@ -166,6 +170,9 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                         {!building && detail.built && (
                             <Button variant="ghost" onClick={build} disabled={acting}>Rebuild from the request</Button>
                         )}
+                        {!building && detail.has_game && (
+                            <Button variant="ghost" onClick={regenerate} disabled={acting}>Start over from scratch</Button>
+                        )}
                     </div>
                 </div>
 
@@ -193,6 +200,11 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                             <Button variant="primary" size="md" onClick={build} disabled={acting}>
                                 Build it · 1 credit
                             </Button>
+                            {detail.has_game && (
+                                <Button variant="ghost" size="md" onClick={regenerate} disabled={acting}>
+                                    Start over from scratch
+                                </Button>
+                            )}
                         </div>
                     </div>
                 )}

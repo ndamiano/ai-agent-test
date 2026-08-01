@@ -8,7 +8,7 @@ wrote as TEXT lives in maestro/tool_calls.py — see test_tool_calls.py.
 
 import pytest
 
-from maestro.services import parse_args
+from maestro.services import parse_args, parse_args_checked
 
 _ADD_SCHEMA = {"type": "function", "function": {
     "name": "add_item",
@@ -33,3 +33,15 @@ def test_parse_args_handles_dict_json_and_fenced():
 def test_parse_args_unparseable_returns_empty():
     assert parse_args("not json at all") == {}
     assert parse_args("[1, 2, 3]") == {}   # a non-dict json value is not args
+
+
+def test_no_arguments_and_unreadable_arguments_are_told_apart():
+    """Both answer {}, and only one is a failure: a call cut off at the output cap has arguments
+    that cannot be read, while list_files legitimately carries none."""
+    assert parse_args_checked("{}") == ({}, True)
+    assert parse_args_checked("") == ({}, True)
+    assert parse_args_checked(None) == ({}, True)
+    assert parse_args_checked({"a": 1}) == ({"a": 1}, True)
+    assert parse_args_checked('```json\n{"a": 1}\n```') == ({"a": 1}, True)
+    assert parse_args_checked('{"path":"story.js","content":"const S = {\\n  ') == ({}, False)
+    assert parse_args_checked("[1, 2, 3]") == ({}, False)

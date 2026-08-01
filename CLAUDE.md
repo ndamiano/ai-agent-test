@@ -118,7 +118,16 @@ src/
                          process is free to die). Never more than one turn in flight per run, and
                          advance runs only in the control-plane process (completion handler +
                          reaper), so an in-process lock serializes them. kickoff/pause/resume/stop/
-                         is_active/status_of are the API/CLI entry points. `stop` ends a build where
+                         is_active/status_of are the API/CLI entry points. `kickoff(fresh=True)` is
+                         the FROM-SCRATCH build: empty the game folder, then seed. Only the button
+                         asks for it — a plain re-trigger, a resume and a fix all carry the folder
+                         forward on purpose. It snapshots before deleting and preempts the art the
+                         last attempt is still waiting on, since a render in flight would land in
+                         the new folder and write itself into a manifest that never asked for it.
+                         Without it a second attempt opens on the dead build's half-written files:
+                         the model reads them, believes them, and re-asks for art it already has
+                         under new ids (measured 2026-08-01: three naming schemes for one cast, 40
+                         renders, no finished game). `stop` ends a build where
                          it stands and KEEPS what it wrote: playability is judged as it is at the
                          step cap (an index.html), while the builds row records `stopped` — a run
                          ended by hand over a game that runs is not a run that failed. `pause`
@@ -131,15 +140,23 @@ src/
                          still-pending asset jobs before giving up — gameplay beats art. A landed
                          turn is ARCHIVED to the run dir before its jobs row is emptied
                          (`turn_log`) — append first, so there is never a moment with neither copy.
-      build_steps.py     the turn MACHINE: step(spec, run_dir, tools, cursor, result) -> Infer|Done.
+      build_steps.py     the turn MACHINE: step(spec, run_dir, tools, cursor, result, error)
+                         -> Infer|Done.
                          A `result` of None is NO TURN TO APPLY (a resume, a reaper re-drive) and
                          re-asks from the transcript as it stands; `{}` is a turn that ran and
-                         answered with nothing, which the nudge branch handles. Collapsing the two
-                         scolded the model for a reply it never sent and burned a turn.
+                         answered with nothing, which the nudge branch handles; an `error` is a turn
+                         the WORKER could not deliver, which is neither. Collapsing any two of the
+                         three scolds the model for a reply it never sent and burns a turn.
                          Owns the six tool schemas, the transcript, compaction, the DONE-NUDGE
-                         (`cursor.done_nudged` — asked once, then the next `done` is taken), and the
-                         out-of-output-tokens branch (a cut-off reply saved NOTHING — say so, rather
-                         than letting the model believe the file landed). A failing call resent with
+                         (`cursor.done_nudged` — asked once, then the next `done` is taken), and
+                         every way a reply TOO BIG TO LAND arrives — all three answered with the one
+                         remedy (write it in pieces), because they are one event: the reply cut off
+                         before any tool call, the call whose ARGUMENTS stop mid-write (unreadable,
+                         so nothing ran — reported as the truncation it is, never as the missing
+                         `path` it parses to), and the 500 the inference server's own tool-call
+                         parser returns for an oversized call. Measured 2026-08-01: one 64 KB
+                         write_file reported as `KeyError: 'path'`, resent identically, four server
+                         500s scored as silence, a dead build at step 28. A failing call resent with
                          identical arguments is COUNTED and the count told back; what to do instead
                          is the model's call. That count is keyed PER CALL, not against the previous
                          one: a model stuck on an edit re-reads the file between attempts, and a
@@ -189,7 +206,9 @@ src/
                          the 249th the cut). A window that stops short says where the rest is and
                          that a file this size is worth splitting.
       staging.py         where a game lives (runs/<id>/game/) and how it reaches the browser: copy
-                         the folder to runtime/games/<slug>/. No bundle, no transform. Also the SEED
+                         the folder to runtime/games/<slug>/. No bundle, no transform.
+                         `has_authored_files` discounts the seed, so it says whether a BUILD wrote
+                         anything — which is what offers the from-scratch button. Also the SEED
                          (seed_vendor): the game folder starts holding the vendored renderer and
                          nothing else, since everything placed there steers the first list_files.
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
@@ -238,6 +257,9 @@ src/
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is
                          fire-and-forget through build_chain.kickoff, not run.py.
     services.py          parse_args — any argument shape a local model returns → a dict.
+                         parse_args_checked also says whether anything was READABLE: a call cut off
+                         at the output cap and a call that carries no arguments both answer {}, and
+                         only one of them is a failure.
     tool_calls.py        recovering a tool call the model wrote as TEXT, when the server's own
                          parser didn't claim it. A registry of encodings (Hermes/Qwen, DeepSeek,
                          Mistral, Llama python-tag, two XML forms, named object, arg-shape), tried
@@ -313,8 +335,11 @@ a build carrying the older "draw a plain shape at that spot" line orphaned 7 of 
   `max(n_ctx − 16k, n_ctx/3) × 3.5` chars, where the 16k is the build turn's own output cap
   (`build_steps.MAX_TOKENS`) and 3.5 chars/token was measured on live code-heavy payloads, not the
   4:1 prose heuristic. The local router never reports its window, so set `n_ctx` to the server's
-  `-c`: too large and nothing trims until the prompt has already overflowed. `llm.max_tokens` is
-  only the connector's default ceiling — the build path passes its own.
+  `-c`: too large and nothing trims until the prompt has already overflowed. Too SMALL is the other
+  failure and it does not announce itself — a build whose files no longer fit one read-everything
+  round compacts every turn, forgets, re-reads, and grinds to the turn cap (measured 2026-08-01: a
+  visual novel at `-c 32768`, 31 compactions, ~100 of 120 turns spent re-reading its own five
+  files). `llm.max_tokens` is only the connector's default ceiling — the build path passes its own.
 - The WIRE format is the WORKER's, not a setting here: the control plane enqueues a CANONICAL chat
   request and the worker translates it for whatever its own target serves (`worker.agent --api
   chat|responses`, default `chat`; see `llm_clients/wire.py`). `responses` is the only local

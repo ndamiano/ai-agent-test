@@ -14,6 +14,7 @@ the control-plane process — an in-process lock serializes those.
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 import time
 from typing import Dict, Optional
@@ -22,7 +23,7 @@ from db import store as db_store
 from llm_clients.connector import get_connector
 from maestro.codegen import asset_use, build_state, build_steps, snapshots, turn_log
 from maestro.codegen.build_state import BuildCursor
-from maestro.codegen.staging import entry_path, stage_for_play
+from maestro.codegen.staging import entry_path, game_dir, stage_for_play
 from maestro.codegen.tools import build_tools
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -43,14 +44,17 @@ def _lock_for(run_id: str) -> threading.Lock:
         return lk
 
 
-def kickoff(run_id: str, *, kind: str = "build", note: str = "",
+def kickoff(run_id: str, *, kind: str = "build", note: str = "", fresh: bool = False,
             max_steps: Optional[int] = None) -> str:
-    """Create the build attempt row and start the build. Returns the build_id."""
+    """Create the build attempt row and start the build. Returns the build_id.
+
+    `fresh` starts over an EMPTY game folder — the from-scratch button, and only that. A plain
+    re-trigger and a resume carry the folder forward, and a fix edits it on purpose."""
     if max_steps is None:
         max_steps = 200
     build_id = db_store.create_build(run_id, kind=kind)
     db_store.build_started(build_id)
-    start_build(run_id, build_id, kind=kind, note=note, max_steps=max_steps)
+    start_build(run_id, build_id, kind=kind, note=note, fresh=fresh, max_steps=max_steps)
     return build_id
 
 
@@ -124,13 +128,15 @@ def status_of(run_id: str) -> Optional[Dict]:
 
 
 def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = "",
-                max_steps: int = 200) -> None:
+                fresh: bool = False, max_steps: int = 200) -> None:
     """Kick a build off: write the initial cursor and advance once (which enqueues the first llm
     turn, then returns). A FIX re-enters the same turn machine with the note as its request — the
     model lists and reads the files itself, so there is nothing to hand it up front."""
     rs = RunState(run_id)
     if rs.read_spec() is None:
         raise ValueError(f"no prompt for run {run_id!r}")
+    if fresh:
+        _clear_game(rs)
     _seed(rs)
 
     cursor = BuildCursor(build_id=build_id, kind=kind, max_steps=max_steps, t0=time.time())
@@ -146,6 +152,23 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
     advance(run_id, wait=True)
 
 
+def _clear_game(rs: RunState) -> None:
+    """Empty the game folder before a fresh build, and stop the art the last one is still waiting on.
+
+    A second attempt at the same prompt otherwise opens on the dead build's half-written files: the
+    model reads them, believes them, and re-asks for art it already has under new ids (measured
+    2026-08-01: three naming schemes for one cast, 40 renders, no finished game). Snapshotted
+    first — the history is in git, so `--restore` still reaches what this deletes."""
+    d = game_dir(rs.run_dir)
+    if not d.exists():
+        return
+    snapshots.take(rs.run_dir, "before-rebuild")
+    # A render still in flight would land in the new build's folder and write itself into a manifest
+    # that no longer asked for it.
+    db_store.abandon_pending_batch_jobs(rs.run_id, "superseded: the game was rebuilt")
+    shutil.rmtree(d)
+
+
 def _seed(rs: RunState) -> None:
     """The game folder, holding only the vendored renderer. Everything placed here shows up in the
     model's first `list_files` and steers what it builds, so nothing else is."""
@@ -157,8 +180,8 @@ def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Opt
                   job_id: str, exec_seconds: float) -> None:
     """Drive the next step after a build llm turn lands, and ARCHIVE the turn that just landed. The
     result arrives in raw Responses shape off the queue — normalize it to chat before applying. A
-    worker-reported error (or a lost result) becomes an empty turn the machine handles rather than
-    a stall."""
+    worker-reported error is carried THROUGH: a turn the server refused is not a turn that answered
+    with nothing, and the model can only act on the difference if it is told which one happened."""
     raw = result if (error is None and result) else {}
     advance(run_id, get_connector().to_chat(raw),
             landed={"job_id": job_id, "exec_seconds": exec_seconds, "error": error})
@@ -194,7 +217,8 @@ def _advance_locked(run_id: str, result: Optional[Dict], landed: Optional[Dict] 
     if cursor.paused and result is None:
         return   # nothing to apply, and a re-drive (reaper, resume race) must not restart a parked build
     tools = build_tools(rs)
-    outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result)
+    outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result,
+                               error=(landed or {}).get("error"))
 
     if isinstance(outcome, build_steps.Infer):
         if cursor.paused:

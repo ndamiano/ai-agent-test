@@ -2,13 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The palette, mirrored from tailwind.config.js for the handful of rules that are not utility
+   classes. Plain CSS on purpose: @apply here resolves against the Tailwind config at build time,
+   so a theme edit turns every stylesheet into a hard PostCSS error until the process restarts. */
+:root {
+    --ink: #0B0E15;
+    --bone: #ECE7DC;
+    --ember: #F2703F;
+}
+
 @layer base {
     body {
-        @apply bg-ink text-bone font-sans antialiased;
+        background-color: var(--ink);
+        color: var(--bone);
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        -webkit-font-smoothing: antialiased;
     }
 
     :focus-visible {
-        @apply outline-none ring-2 ring-ember ring-offset-2 ring-offset-ink;
+        outline: 2px solid var(--ember);
+        outline-offset: 2px;
     }
 }
 

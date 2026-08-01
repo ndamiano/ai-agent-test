@@ -18,10 +18,10 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBounda
     render() {
         if (this.state.hasError) {
             return (
-                <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+                <div className="min-h-screen bg-ink flex items-center justify-center">
                     <div className="text-white text-center">
                         <h1 className="text-2xl font-semibold mb-4">Something went wrong</h1>
-                        <p className="text-gray-400">
+                        <p className="text-slate">
                             An error occurred in the application. Please refresh the page to continue.
                         </p>
                     </div>

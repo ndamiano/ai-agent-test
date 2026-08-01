@@ -14,7 +14,7 @@ export interface FeedEntry {
 
 export interface RunStream {
     feed: FeedEntry[]
-    progress: { step: number } | null
+    progress: { step: number; summary: string | null } | null
     startedAt: number | null  // seconds epoch, for the elapsed timer
     skinning: boolean
 }
@@ -107,11 +107,11 @@ export function foldStream(events: NormEvent[]): RunStream {
 
         switch (e.type) {
             case 'build_started':
-                progress = { step: 0 }
+                progress = { step: 0, summary: null }
                 if (e.started_at != null) startedAt = e.started_at
                 break
             case 'build_step':
-                progress = { step: e.step ?? 0 }
+                progress = { step: e.step ?? 0, summary: e.summary ?? null }
                 // build_step carries elapsed since start; recover the absolute start from it so the
                 // timer stays accurate even when the build_started event was never seen (reload).
                 if (e.elapsed != null) startedAt = e.at / 1000 - e.elapsed

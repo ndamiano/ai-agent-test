@@ -7,7 +7,7 @@ function App() {
     const { token } = useAuth()
 
     return (
-        <div className="min-h-screen bg-gray-900">
+        <div className="min-h-screen bg-ink">
             <ErrorBoundary>
                 {token ? <Layout /> : <LoginScreen />}
             </ErrorBoundary>

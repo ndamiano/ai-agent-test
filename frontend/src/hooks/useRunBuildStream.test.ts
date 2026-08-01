@@ -40,7 +40,7 @@ describe('foldStream', () => {
             row(1, 'build_started', 100, { started_at: 100 }),
             row(2, 'build_step', 130, { step: 4, summary: 'wrote index.html', elapsed: 30 }),
         ], []))
-        expect(s.progress).toEqual({ step: 4 })
+        expect(s.progress).toEqual({ step: 4, summary: 'wrote index.html' })
         expect(s.startedAt).toBeCloseTo(100)  // 130 - elapsed 30
         expect(s.feed.map(f => f.text)).toEqual([
             'build started',

@@ -37,13 +37,13 @@ describe('AssetGallery', () => {
         expect(blob).not.toHaveBeenCalled()
     })
 
-    it('shows a pending asset as pending rather than a broken image', async () => {
+    it('shows an unrendered asset as queued rather than a broken image', async () => {
         vi.spyOn(api, 'getGameAssets').mockResolvedValue([asset({ status: 'pending' })])
         const blob = vi.spyOn(api, 'getAssetBlobUrl').mockResolvedValue('blob:goblin')
 
         gallery()
 
-        await waitFor(() => expect(screen.getByText('pending')).toBeTruthy())
+        await waitFor(() => expect(screen.getByText('queued')).toBeTruthy())
         expect(screen.queryByAltText('goblin')).toBeNull()
         expect(blob).not.toHaveBeenCalled()
     })

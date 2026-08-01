@@ -173,14 +173,9 @@ Owned here; `scaleout.md` S3 and `production_hardening.md` H4 were the same item
       defer past beta.
       → done when: a test enqueues user A ×20 then user B ×1 and B is claimed before A's tail.
 
-## P5 — Signed-in account is invisible in the UI
-- [ ] Show which account the browser is signed in as (top-left of the app shell), plus a sign-out.
-      Today nothing on screen says it, so "which account is this build charged to" is a guess —
-      and with manual account creation (`auth/cli.py`) a dev and a real account look identical.
-      The client already fetches `/auth/me` (`frontend/src/api/client.ts:111`) — this is placement,
-      not new API.
-      → done when: the signed-in email (or handle) is visible on every page without opening
-      devtools.
+## P5 — Signed-in account in the UI — DONE 2026-07-31
+- [x] The app header carries the signed-in handle next to the credit balance and the sign-out
+      control, on every page.
 
 ## P6 — Release hygiene
 - [ ] Versioning + tags; a changelog (could be fed from `tasks/finished.md`).

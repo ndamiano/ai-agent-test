@@ -12,18 +12,18 @@ const fmtAge = (s: number | null): string =>
 
 const Stat: React.FC<{ label: string; value: React.ReactNode; hint?: string }> = ({ label, value, hint }) => (
     <div title={hint}>
-        <div className="text-gray-500 text-[10px] font-semibold uppercase tracking-wide">{label}</div>
-        <div className="text-gray-200 text-sm font-mono mt-0.5">{value}</div>
+        <div className="text-slate text-xs font-semibold uppercase tracking-wide">{label}</div>
+        <div className="text-bone text-sm font-mono mt-0.5">{value}</div>
     </div>
 )
 
 const QueueCard: React.FC<{ row: QueueRow }> = ({ row }) => {
     const active = row.pending + row.claimed > 0
     return (
-        <div className="bg-[#141414] border border-white/[0.06] rounded-lg p-4">
+        <div className="bg-panel border border-edge rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
                 <span className="text-white font-semibold text-sm capitalize">{row.queue}</span>
-                <span className={`text-[11px] font-mono ${active ? 'text-amber-400' : 'text-gray-500'}`}>
+                <span className={`text-xs font-mono ${active ? 'text-wait' : 'text-slate'}`}>
                     {row.pending} pending · {row.claimed} claimed
                 </span>
             </div>
@@ -63,8 +63,8 @@ const AdminPanel: React.FC = () => {
         return () => clearInterval(id)
     }, [load])
 
-    if (error) return <div className="p-6 text-sm text-red-400">{error}</div>
-    if (!data) return <div className="p-6 text-sm text-gray-500">Loading queue stats…</div>
+    if (error) return <div className="p-6 text-sm text-fail">{error}</div>
+    if (!data) return <div className="p-6 text-sm text-slate">Loading queue stats…</div>
 
     const t = data.totals
     return (
@@ -72,15 +72,15 @@ const AdminPanel: React.FC = () => {
             <div className="max-w-4xl mx-auto space-y-4">
                 <div className="flex items-baseline justify-between">
                     <h2 className="text-white font-semibold text-sm">Inference queues</h2>
-                    <span className="text-gray-500 text-[11px]">GPU-seconds · refreshes every {POLL_MS / 1000}s</span>
+                    <span className="text-slate text-xs">GPU-seconds · refreshes every {POLL_MS / 1000}s</span>
                 </div>
 
                 <div className="grid gap-3">
                     {data.queues.map(q => <QueueCard key={q.queue} row={q} />)}
                 </div>
 
-                <div className="bg-[#0f0f0f] border border-white/[0.06] rounded-lg p-4">
-                    <div className="text-gray-400 text-xs font-semibold mb-3">Fleet totals</div>
+                <div className="bg-ink border border-edge rounded-lg p-4">
+                    <div className="text-slate text-xs font-semibold mb-3">Fleet totals</div>
                     <div className="grid grid-cols-4 gap-y-3 gap-x-2">
                         <Stat label="In queue" value={t.pending + t.claimed} hint="pending + claimed, all queues" />
                         <Stat label="Workers" value={t.workers_live} hint="live workers, all queues" />

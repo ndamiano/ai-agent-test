@@ -1,62 +1,65 @@
 import React, { useState } from 'react'
-import GamesPanel from './GamesPanel'
+import Studio from './Studio'
 import AdminPanel from './AdminPanel'
 import PromptsPanel from './PromptsPanel'
 import { useAuth } from '../contexts/AuthContext'
 
 type Tab = 'games' | 'admin' | 'prompts'
 
+const TAB_LABEL: Record<Tab, string> = { games: 'Games', admin: 'Admin', prompts: 'Prompts' }
+
 const Layout: React.FC = () => {
     const [tab, setTab] = useState<Tab>('games')
     const { user, balance, logout } = useAuth()
 
-    // The admin tab is operator-only. The server enforces it (require_admin → 403); this just hides
-    // the entry point from ordinary users so it never shows.
+    // The admin tabs are operator-only. The server enforces it (require_admin → 403); this just
+    // hides the entry point from ordinary users so it never shows.
     const tabs: Tab[] = user?.role === 'admin' ? ['games', 'admin', 'prompts'] : ['games']
 
     return (
-        <div className="h-screen flex flex-col overflow-hidden bg-[#0f0f0f]">
-
-            <div className="flex-shrink-0 border-b border-white/[0.06] px-4 py-2 flex items-center justify-between bg-[#0f0f0f]">
-                <div className="flex items-center gap-4">
-                    <div className="text-white font-semibold text-sm tracking-wide">Maestro</div>
-                    <div className="flex gap-1">
-                        {tabs.map(t => (
-                            <button
-                                key={t}
-                                onClick={() => setTab(t)}
-                                className={`px-3 py-1 rounded text-xs font-medium transition-colors capitalize ${
-                                    tab === t
-                                        ? 'bg-white/10 text-white'
-                                        : 'text-gray-500 hover:text-gray-300'
-                                }`}
-                            >
-                                {t}
-                            </button>
-                        ))}
+        <div className="h-screen flex flex-col overflow-hidden bg-ink">
+            <header className="flex-shrink-0 border-b border-edge bg-sunken px-4 py-2.5
+                               flex items-center justify-between gap-4">
+                <div className="flex items-center gap-5">
+                    <div className="font-display text-lg tracking-wide flex items-center gap-2.5">
+                        <span className="w-[18px] h-[18px] rotate-45 border-[1.5px] border-ember relative
+                                         after:absolute after:inset-[3px] after:bg-ember after:opacity-50" />
+                        Maestro
                     </div>
+                    {tabs.length > 1 && (
+                        <nav className="flex gap-1">
+                            {tabs.map(t => (
+                                <button key={t} onClick={() => setTab(t)}
+                                    className={`px-3 py-1 rounded text-sm transition-colors ${
+                                        tab === t ? 'bg-bone/10 text-bone' : 'text-slate hover:text-bone'
+                                    }`}>
+                                    {TAB_LABEL[t]}
+                                </button>
+                            ))}
+                        </nav>
+                    )}
                 </div>
-                <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-300" title="credit balance">
-                        {balance ?? '—'} <span className="text-gray-500">credits</span>
+
+                <div className="flex items-center gap-4 text-sm">
+                    <span className="flex items-center gap-2 font-mono text-xs" title="credit balance">
+                        <span className="w-2 h-2 rounded-full bg-mana" />
+                        {balance ?? '—'} <span className="text-slate">credits</span>
                     </span>
+                    {user && <span className="text-bone">{user.handle}</span>}
                     {user && (
-                        <button
-                            onClick={logout}
-                            className="text-gray-500 hover:text-gray-300 transition-colors text-xs"
-                            title={`Sign out ${user.handle}`}
-                        >
+                        <button onClick={logout}
+                            className="text-slate hover:text-bone transition-colors text-sm">
                             Sign out
                         </button>
                     )}
                 </div>
-            </div>
+            </header>
 
-            <div className="flex-1 overflow-hidden">
-                {tab === 'games' && <GamesPanel />}
+            <main className="flex-1 overflow-hidden">
+                {tab === 'games' && <Studio />}
                 {tab === 'admin' && <AdminPanel />}
                 {tab === 'prompts' && <PromptsPanel />}
-            </div>
+            </main>
         </div>
     )
 }

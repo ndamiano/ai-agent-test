@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, ApiError } from '../api/client'
 import type { PromptBucket, PromptDetail, PromptMessage, PromptScope, PromptTurn } from '../types'
-import { Badge } from './cockpit/Badge'
-import type { Tone } from './cockpit/Badge'
+import { Pill } from './ui/Pill'
+import type { Tone } from './ui/Pill'
 
 // The prompt FILE a turn came from isn't recorded, so the system prompt's first line is the
 // closest thing to a turn's name.
@@ -19,11 +19,11 @@ export const bucketLabel = (b: PromptBucket): string =>
 const TURN_CAP = 2000
 
 const STATUS_TONE: Record<string, Tone> = {
-    done: 'green', failed: 'red', pending: 'gray', claimed: 'amber',
+    done: 'live', failed: 'fail', pending: 'idle', claimed: 'wait',
 }
 
 const ROLE_TONE: Record<string, string> = {
-    user: 'text-blue-300', assistant: 'text-green-300', tool: 'text-amber-300',
+    user: 'text-mana', assistant: 'text-live', tool: 'text-wait',
 }
 
 const clock = (t: number) => new Date(t * 1000).toLocaleTimeString()
@@ -41,20 +41,20 @@ const Section: React.FC<{ title: string; sub?: string; body: string; open?: bool
             setTimeout(() => setCopied(false), 1200)
         }
         return (
-            <div className="border border-white/[0.06] rounded">
-                <div className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-white/[0.03]">
+            <div className="border border-edge rounded">
+                <div className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-bone/[0.03]">
                     <button onClick={() => setShow(s => !s)} className="flex items-center gap-2 flex-1 text-left min-w-0">
-                        <span className="text-gray-500 text-[10px]">{show ? '▾' : '▸'}</span>
-                        <span className="text-gray-300 text-[11px] font-semibold uppercase tracking-wide">{title}</span>
-                        {sub && <span className="text-gray-600 text-[10px] font-mono truncate">{sub}</span>}
+                        <span className="text-slate text-xs">{show ? '▾' : '▸'}</span>
+                        <span className="text-bone text-xs font-semibold uppercase tracking-wide">{title}</span>
+                        {sub && <span className="text-dim text-xs font-mono truncate">{sub}</span>}
                     </button>
                     <button onClick={copy} title="copy this block"
-                        className="text-gray-600 hover:text-gray-300 text-[10px] flex-shrink-0">
+                        className="text-dim hover:text-bone text-xs flex-shrink-0">
                         {copied ? 'copied' : 'copy'}
                     </button>
                 </div>
                 {show && (
-                    <pre className={`mx-2.5 mb-2.5 bg-black/40 rounded px-2.5 py-2 text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto ${tone || 'text-gray-300'}`}>
+                    <pre className={`mx-2.5 mb-2.5 bg-sunken rounded px-2.5 py-2 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto ${tone || 'text-bone'}`}>
                         {body}
                     </pre>
                 )}
@@ -71,18 +71,18 @@ const TurnDetail: React.FC<{ detail: PromptDetail }> = ({ detail }) => {
     return (
         <div className="space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
-                <Badge label={detail.stage || 'llm'} tone="blue" />
-                <Badge label={detail.status} tone={STATUS_TONE[detail.status] || 'gray'} />
-                <span className="text-gray-500 text-[11px] font-mono">{detail.model}</span>
-                {detail.reasoning && <span className="text-gray-500 text-[11px]">reasoning: {detail.reasoning}</span>}
-                {detail.exec_seconds != null && <span className="text-gray-500 text-[11px]">{detail.exec_seconds.toFixed(1)}s</span>}
+                <Pill label={detail.stage || 'llm'} tone="accent" />
+                <Pill label={detail.status} tone={STATUS_TONE[detail.status] || 'idle'} />
+                <span className="text-slate text-xs font-mono">{detail.model}</span>
+                {detail.reasoning && <span className="text-slate text-xs">reasoning: {detail.reasoning}</span>}
+                {detail.exec_seconds != null && <span className="text-slate text-xs">{detail.exec_seconds.toFixed(1)}s</span>}
                 {usage.prompt_tokens != null && (
-                    <span className="text-gray-500 text-[11px]">{usage.prompt_tokens} in / {usage.completion_tokens} out</span>
+                    <span className="text-slate text-xs">{usage.prompt_tokens} in / {usage.completion_tokens} out</span>
                 )}
-                <span className="text-gray-600 text-[10px] font-mono ml-auto">{detail.id}</span>
+                <span className="text-dim text-xs font-mono ml-auto">{detail.id}</span>
             </div>
 
-            {detail.error && <div className="text-red-400 text-[11px] font-mono">{detail.error}</div>}
+            {detail.error && <div className="text-fail text-xs font-mono">{detail.error}</div>}
 
             <Section title="Whole prompt" sub="system + every message, as sent" body={whole} open={false} />
             <Section title="System prompt" sub={`${detail.system.length} chars`} body={detail.system || '(none)'} />
@@ -100,10 +100,10 @@ const TurnDetail: React.FC<{ detail: PromptDetail }> = ({ detail }) => {
             {detail.response ? (<>
                 {detail.response.text && <Section title="Response" body={detail.response.text} />}
                 {detail.response.tool_calls.map((tc, i) => (
-                    <Section key={i} title={`Response · tool call → ${tc.name}`} body={tc.arguments} tone="text-amber-300" />
+                    <Section key={i} title={`Response · tool call → ${tc.name}`} body={tc.arguments} tone="text-wait" />
                 ))}
             </>) : (
-                <div className="text-gray-600 text-[11px]">nothing came back for this turn</div>
+                <div className="text-dim text-xs">nothing came back for this turn</div>
             )}
         </div>
     )
@@ -125,15 +125,15 @@ const BucketList: React.FC<{
     const total = buckets.reduce((n, b) => n + b.turns, 0)
 
     return (
-        <div className="w-64 flex-shrink-0 border-r border-white/[0.06] flex flex-col min-h-0">
+        <div className="w-64 flex-shrink-0 border-r border-edge flex flex-col min-h-0">
             <div className="px-2.5 py-2 flex-shrink-0">
                 <input value={q} onChange={e => setQ(e.target.value)} placeholder="filter games…"
-                    className="w-full bg-black/40 border border-white/[0.1] rounded text-[11px] text-gray-200 px-2 py-1" />
+                    className="w-full bg-sunken border border-edge rounded text-xs text-bone px-2 py-1" />
             </div>
             <button onClick={() => onPick('all', null)}
-                className={`text-left px-2.5 py-1.5 border-b border-white/[0.04] ${scope === 'all' ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
-                <div className="text-gray-200 text-[11px]">All turns</div>
-                <div className="text-gray-600 text-[10px] font-mono">{total} across {buckets.length} buckets</div>
+                className={`text-left px-2.5 py-1.5 border-b border-edge/60 ${scope === 'all' ? 'bg-bone/[0.07]' : 'hover:bg-bone/[0.03]'}`}>
+                <div className="text-bone text-xs">All turns</div>
+                <div className="text-dim text-xs font-mono">{total} across {buckets.length} buckets</div>
             </button>
             <div className="flex-1 overflow-y-auto">
                 {rows.map(b => {
@@ -141,9 +141,9 @@ const BucketList: React.FC<{
                     return (
                         <button key={b.game_id ?? 'platform'}
                             onClick={() => onPick(b.game_id === null ? 'platform' : 'game', b.game_id)}
-                            className={`w-full text-left px-2.5 py-1.5 border-b border-white/[0.04] ${active ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
-                            <div className="text-gray-200 text-[11px] truncate">{bucketLabel(b)}</div>
-                            <div className="text-gray-600 text-[10px] font-mono flex gap-1.5">
+                            className={`w-full text-left px-2.5 py-1.5 border-b border-edge/60 ${active ? 'bg-bone/[0.07]' : 'hover:bg-bone/[0.03]'}`}>
+                            <div className="text-bone text-xs truncate">{bucketLabel(b)}</div>
+                            <div className="text-dim text-xs font-mono flex gap-1.5">
                                 <span>{b.turns} turns</span>
                                 {b.mode && <span>{b.mode}</span>}
                                 <span className="ml-auto">{day(b.last_at)}</span>
@@ -193,15 +193,15 @@ const TurnRow: React.FC<{
     indent?: boolean
 }> = ({ turn, index, selected, onPick, indent }) => (
     <button onClick={() => onPick(turn.id)}
-        className={`w-full text-left py-1.5 pr-2.5 border-b border-white/[0.04] ${indent ? 'pl-5' : 'pl-2.5'} ${selected ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
+        className={`w-full text-left py-1.5 pr-2.5 border-b border-edge/60 ${indent ? 'pl-5' : 'pl-2.5'} ${selected ? 'bg-bone/[0.07]' : 'hover:bg-bone/[0.03]'}`}>
         <div className="flex items-center gap-1.5">
-            <span className="text-gray-600 text-[10px] font-mono w-7">{index}</span>
-            <span className="text-gray-400 text-[10px]">{turn.metadata?.stage || 'llm'}</span>
-            <span className="text-gray-600 text-[10px] font-mono ml-auto">{kb(turn.payload_chars)}</span>
-            {turn.status !== 'done' && <span className="text-amber-400 text-[10px]">{turn.status}</span>}
+            <span className="text-dim text-xs font-mono w-7">{index}</span>
+            <span className="text-slate text-xs">{turn.metadata?.stage || 'llm'}</span>
+            <span className="text-dim text-xs font-mono ml-auto">{kb(turn.payload_chars)}</span>
+            {turn.status !== 'done' && <span className="text-wait text-xs">{turn.status}</span>}
         </div>
-        <div className="text-gray-300 text-[11px] truncate">{turnLabel(turn)}</div>
-        <div className="text-gray-600 text-[10px] font-mono">
+        <div className="text-bone text-xs truncate">{turnLabel(turn)}</div>
+        <div className="text-dim text-xs font-mono">
             {clock(turn.created_at)} · {turn.n_messages ?? 0} msg
             {turn.exec_seconds != null ? ` · ${turn.exec_seconds.toFixed(1)}s` : ''}
         </div>
@@ -281,17 +281,17 @@ const PromptsPanel: React.FC = () => {
         <div className="h-full flex min-h-0">
             <BucketList buckets={buckets} scope={scope} gameId={gameId} onPick={pick} />
 
-            <div className="w-80 flex-shrink-0 border-r border-white/[0.06] flex flex-col min-h-0">
+            <div className="w-80 flex-shrink-0 border-r border-edge flex flex-col min-h-0">
                 <div className="px-2.5 py-2 flex-shrink-0 flex items-center gap-2">
                     <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="filter turns…"
-                        className="flex-1 bg-black/40 border border-white/[0.1] rounded text-[11px] text-gray-200 px-2 py-1" />
+                        className="flex-1 bg-sunken border border-edge rounded text-xs text-bone px-2 py-1" />
                     <button onClick={() => setGrouped(g => !g)} title="group turns by their system prompt"
-                        className={`px-1.5 py-1 rounded text-[10px] ${grouped ? 'bg-white/10 text-gray-200' : 'text-gray-500 hover:text-gray-300'}`}>
+                        className={`px-1.5 py-1 rounded text-xs ${grouped ? 'bg-bone/10 text-bone' : 'text-slate hover:text-bone'}`}>
                         group
                     </button>
-                    <button onClick={loadBuckets} title="reload" className="text-gray-500 hover:text-gray-300 text-[11px]">↻</button>
+                    <button onClick={loadBuckets} title="reload" className="text-slate hover:text-bone text-xs">↻</button>
                 </div>
-                <div className="text-gray-600 text-[10px] px-2.5 pb-1 font-mono">
+                <div className="text-dim text-xs px-2.5 pb-1 font-mono">
                     {rows.length} of {turns.length} turns
                     {grouped && ` · ${groups.length} prompts`}
                     {turns.length >= TURN_CAP && ' (newest ' + TURN_CAP + ')'}
@@ -301,13 +301,13 @@ const PromptsPanel: React.FC = () => {
                         ? groups.map(g => (
                             <div key={g.hash}>
                                 <button onClick={() => toggleGroup(g.hash)}
-                                    className="w-full text-left px-2.5 py-1.5 bg-white/[0.03] border-b border-white/[0.06] hover:bg-white/[0.06]">
+                                    className="w-full text-left px-2.5 py-1.5 bg-bone/[0.03] border-b border-edge hover:bg-bone/[0.06]">
                                     <div className="flex items-center gap-1.5">
-                                        <span className="text-gray-500 text-[10px]">{open.has(g.hash) ? '▾' : '▸'}</span>
-                                        <span className="text-gray-200 text-[11px] truncate flex-1">{g.label}</span>
-                                        <span className="text-gray-500 text-[10px] font-mono">×{g.turns.length}</span>
+                                        <span className="text-slate text-xs">{open.has(g.hash) ? '▾' : '▸'}</span>
+                                        <span className="text-bone text-xs truncate flex-1">{g.label}</span>
+                                        <span className="text-slate text-xs font-mono">×{g.turns.length}</span>
                                     </div>
-                                    <div className="text-gray-600 text-[10px] font-mono pl-3.5">
+                                    <div className="text-dim text-xs font-mono pl-3.5">
                                         {/* Two prompts can open with the same line and differ below — the hash is what tells them apart. */}
                                         {g.hash.slice(0, 6)} · {Math.round(g.systemChars / 1024 * 10) / 10}KB system · {g.execSeconds.toFixed(0)}s total
                                     </div>
@@ -322,15 +322,15 @@ const PromptsPanel: React.FC = () => {
                             <TurnRow key={t.id} turn={t} index={t.index} selected={selected === t.id}
                                 onPick={setSelected} />
                         ))}
-                    {turns.length === 0 && <div className="text-gray-600 text-[11px] px-2.5 py-2">no llm turns here</div>}
+                    {turns.length === 0 && <div className="text-dim text-xs px-2.5 py-2">no llm turns here</div>}
                 </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 py-3 min-w-0">
-                {error && <div className="text-red-400 text-[11px] mb-2">{error}</div>}
-                {loading && <div className="text-gray-500 text-[11px]">loading turn…</div>}
+                {error && <div className="text-fail text-xs mb-2">{error}</div>}
+                {loading && <div className="text-slate text-xs">loading turn…</div>}
                 {detail && <TurnDetail detail={detail} />}
-                {!detail && !loading && <div className="text-gray-600 text-[11px]">pick a turn to read its prompt</div>}
+                {!detail && !loading && <div className="text-dim text-xs">pick a turn to read its prompt</div>}
             </div>
         </div>
     )

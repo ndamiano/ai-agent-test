@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatElapsed, stageFor, budgetFraction, shouldAdoptPrompt } from './GamesPanel'
+import { formatElapsed, stageFor, budgetFraction, shouldAdoptPrompt } from './state'
 
 describe('shouldAdoptPrompt', () => {
     it('fills the box on the first load', () => {

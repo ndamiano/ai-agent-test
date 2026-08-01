@@ -24,7 +24,7 @@ export const useAssets = (runId: string, version: number): GameAsset[] | null =>
 // `version` is in the deps because a regenerated file swaps under an unchanged id and status.
 export const useAssetBlob = (runId: string, asset: GameAsset | null, version: number): string | null => {
     const [url, setUrl] = useState<string | null>(null)
-    const previewable = asset?.kind === 'image' && asset.status === 'ready'
+    const previewable = !!asset && asset.kind !== 'mesh' && asset.status === 'ready'
     const assetId = asset?.id
 
     useEffect(() => {

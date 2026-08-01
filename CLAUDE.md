@@ -66,7 +66,10 @@ If output ever moves back to TypeScript it comes back for free and is worth it i
 — and the second `done` ends the build. It costs one turn, and it is asked ONCE: a model told twice
 that it is not finished starts inventing work. Measured over a 17-cell grid (2026-07-30, see
 `docs/experiments.md`): it was best or joint-best on three of four game requests, while every arm
-that bought depth by splitting authoring across builds shipped load-blocking defects instead.
+that bought depth by splitting authoring across builds shipped load-blocking defects instead. That
+one turn also carries the ART AUDIT (`asset_use`), because it is the only moment a build hears
+whether the art it asked for is in the game — and because a second turn spent on it would be the
+second telling that starts the inventing.
 
 **"Did it deliver?" is a HUMAN question.** A build ends when the model calls `done` twice (or hits
 its step cap) and nothing machine-side judges the result. The human plays it and says what to change:
@@ -77,8 +80,14 @@ score WORSE in round 2 than round 1, because each fix broke a claim that already
 
 **The game asks for its own art, as it writes the code that uses it.** `generate_media(id, prompt,
 kind)` enqueues one render and answers IMMEDIATELY with the path the file will appear at
-(`assets/<id>.png`, or `.glb` for `kind: "mesh"`); the model writes that path into the game and draws
-its own shape until the file lands. The asset stage is then free: no planning call, no source
+(`assets/<id>.png`, or `.glb` for `kind: "mesh"`); the model writes that path into the game as it
+writes the code that uses it. `kind` is **sprite | tile | scene | mesh**, and it is the one thing
+the tool needs that the prose cannot carry: a sprite is matted and cropped to its subject because
+the game draws it ON its own background, while a tile and a scene ARE that background and keep the
+whole frame. Rendering all four through the one item-icon path is what shipped a game's floor tiles
+matted down to a handful of planks — it said "tile" in every prompt and nothing could hear it. The
+MATTE is the whole of what a kind changes: the sampler is flux schnell at cfg 1.0, where ComfyUI
+skips the uncond pass, so the negative prompt reaches nothing and never did. The asset stage is then free: no planning call, no source
 rewrite, no static analysis of what the game spawns, and the GPU draws art while the llm turns keep
 writing code. `game/assets.json` is written by `request_media`, never by the model: it is the record
 the gallery lists, the top-up re-renders from, and the regenerate re-prompts against. One request is
@@ -185,8 +194,16 @@ src/
                          nothing else, since everything placed there steers the first list_files.
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
                          runs: enqueue ONE `image` job, record the ask in assets.json, answer with
-                         the path. Nothing plans, rewrites or inspects the game's source. `kind:
-                         "mesh"` chains image → TRELLIS. An already-rendered file, a blocked prompt
+                         the path. Nothing plans, rewrites or inspects the game's source. `kind`
+                         picks the workflow and what a landed render owes: sprite is matted and
+                         autocropped, tile and scene keep the whole frame, mesh chains image →
+                         TRELLIS (its image leg renders as a sprite — TRELLIS lifts a cut-out
+                         subject). `check_render` reads the alpha of what landed against the kind
+                         that was asked for and records a `defect` on the manifest entry: a matte
+                         that never ran, one that ate the subject, a background full of holes. It
+                         may only find BROKEN — whether a picture suits the game is the same human
+                         question as whether the game plays right, so the gallery SHOWS the defect
+                         and nothing acts on it. An already-rendered file, a blocked prompt
                          and a refused budget are all answered, never retried blind. A REPEATED id
                          is answered ONCE and then obeyed — the done-nudge shape: the first repeat
                          says "not requeued, call again to replace it", the second re-renders and
@@ -199,9 +216,21 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
+      asset_use.py       does the game LOAD the art it asked for — static analysis over the game's
+                         own source, no model and no GPU. Two facts: an asset the source never
+                         names (paid for, never seen) and an `assets/…` path in neither the manifest
+                         nor the folder (a broken image, and no top-up can fill it because nothing
+                         ever asked). An asset still RENDERING is neither — it is in the manifest,
+                         so the source naming it is right. It rides the DONE-NUDGE, which is already
+                         the one place the build asks what is unfinished and is asked ONCE.
+                         Matching is generous one way and literal the other so the count
+                         under-reports: an id named ANYWHERE counts as loaded (a game may build
+                         `"assets/" + id + ".png"` at runtime), while a missing path must be written
+                         out in full. The vendored renderer is not the game's source — GLTFLoader
+                         discusses `assets/` paths in its comments.
       asset_chain.py     what a finished asset job does NEXT — the names in its `metadata.then`: a
                          CONTINUATION to enqueue (mesh_from_image), OPERATIONS on this result
-                         (save_sprite / decimate), and the batch's FINALIZE. This module owns those
+                         (save_sprite / save_flat / decimate), and the batch's FINALIZE. It owns those
                          names so the queue stays a generic transport that never learns what an
                          asset is.
       prompts/           build.txt
@@ -250,10 +279,25 @@ line has failed twice, across two models. Open ledger from the 2026-07-27 grid, 
 more than a prompt line: 3D scenes lit near-black (2/4, both models), fixed canvas with no window
 scaling (every 2D game), silent games (all four arcade + the deck-builder), arrow-keys-only input.
 
-`generate_media` entered UNMEASURED (2026-07-28) — art is the one capability no `write_file` can
-stand in for. What settles it is a battery run against the manifest prompt line: whether the model
-calls it, uses the returned path verbatim, and still draws a fallback shape. An
+`generate_media` entered UNMEASURED (2026-07-28) and is still unsettled — art is the one capability
+no `write_file` can stand in for. Counted over the 35 staged games (2026-08-01): 19 called it at
+all, 308 asks, 27 of them meshes across 6 builds — and the asks RATION. One 3D village asked for
+five NPC portraits and a lighthouse while building five shops, a farm, lamp posts and every interior
+out of 27 code primitives. So the prompt no longer tells the model to draw a plain shape at the spot
+and the tool no longer prices a render in minutes: both framed art as a thing that might not arrive,
+and a model that believes that draws a prism and moves on. What settles it is COVERAGE — how much of
+what the player sees got art — not call-at-all, and the same run has to show that a build whose art
+never lands still renders, since nothing now tells the model to draw something in the meantime. An
 unused schema costs every turn of every build, so a tool that fails that comes back out.
+
+Coverage, counted (2026-08-01, `asset_use.audit` over the 35 staged games): 352 assets asked for,
+**128 rendered and never referenced by the game's source**, and **115 `assets/…` paths referenced
+that were never asked for**. One ghost game asked for all 11 of its assets before writing a line of
+code, wrote the game with 89 canvas primitives, read its own `assets.json`, and loaded none of them.
+One card game rendered 67 and used none, while shipping 114 paths under an `assets/cards/` folder
+that does not exist. The tool answers with a path and never learns whether the path was used, so
+until the audit nothing in the loop could see either half. Orphaning is NOT the recent prompt edit:
+a build carrying the older "draw a plain shape at that spot" line orphaned 7 of its 8.
 
 **Adding a build STAGE** (beyond build/asset): register a driver keyed on `metadata.stage` in the
 `/worker/complete` dispatch — the queue stays a generic transport.

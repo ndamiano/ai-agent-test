@@ -24,7 +24,7 @@ describe('Library', () => {
 
     it('covers a built game with its own first rendered image', async () => {
         vi.spyOn(api, 'getGameAssets').mockResolvedValue([
-            { id: 'village', kind: 'image', status: 'ready', prompt: 'a village' },
+            { id: 'village', kind: 'sprite', status: 'ready', prompt: 'a village', defect: null },
         ])
         vi.spyOn(api, 'getAssetBlobUrl').mockResolvedValue('blob:village')
 

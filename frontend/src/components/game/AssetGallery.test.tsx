@@ -5,7 +5,7 @@ import { api } from '../../api/client'
 import type { GameAsset } from '../../types'
 
 const asset = (over: Partial<GameAsset> = {}): GameAsset =>
-    ({ id: 'goblin', kind: 'image', status: 'ready', prompt: 'a goblin', ...over })
+    ({ id: 'goblin', kind: 'sprite', status: 'ready', prompt: 'a goblin', defect: null, ...over })
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -22,6 +22,18 @@ describe('AssetGallery', () => {
 
         await waitFor(() => expect(screen.getByAltText('goblin')).toBeTruthy())
         expect(api.getAssetBlobUrl).toHaveBeenCalledWith('r1', 'goblin')
+    })
+
+    // A defect is what code could tell was BROKEN about a landed render, never whether it suits
+    // the game — so it is shown next to the picture for the person who can answer that.
+    it('says what a landed render came back broken as', async () => {
+        vi.spyOn(api, 'getGameAssets').mockResolvedValue(
+            [asset({ defect: 'the background was not removed' })])
+        vi.spyOn(api, 'getAssetBlobUrl').mockResolvedValue('blob:goblin')
+
+        gallery()
+
+        await waitFor(() => expect(screen.getByText('the background was not removed')).toBeTruthy())
     })
 
     // A mesh is megabytes and has no in-browser preview, so the gallery must not pull its bytes

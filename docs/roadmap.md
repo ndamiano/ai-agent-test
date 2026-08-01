@@ -40,9 +40,17 @@ Whatever the genre, whatever the request, the build ends with something that ope
 - **Open:** no standing battery is *run* on a schedule — the grids were one-off experiments. The
   known recurring defects from those grids, none yet earning more than a prompt line: 3D scenes lit
   near-black, fixed canvas with no window scaling, silent games, arrow-keys-only input.
-- **On trial:** `generate_media` entered unmeasured (2026-07-28). What settles it: whether the model
-  calls it, uses the returned path verbatim, and still draws a fallback shape. An unused schema
-  costs every turn of every build.
+- **On trial:** `generate_media` entered unmeasured (2026-07-28). What settles it is COVERAGE — how
+  much of what the player sees got art — not whether it is called at all. An unused schema costs
+  every turn of every build. First count (2026-08-01, `asset_use`): of 352 assets asked for across
+  the staged games, 128 rendered and were never referenced and 115 referenced paths were never asked
+  for. The done-nudge now carries both lists; whether telling the model changes the number is the
+  open question. Its `kind` (sprite/tile/scene/mesh, 2026-08-01) is not yet measured
+  either: before it, every ask rendered through the one item-icon workflow, so a game's floor tiles
+  came back matted to fragments. The matte is all a kind changes — at cfg 1.0 the negative is inert.
+  A landed render is now checked against its kind and the defect shown in the gallery — BROKEN only,
+  never whether the picture suits the game, which stays the same human question as whether the game
+  plays right.
 - **Work lives in:** `tasks/build_loop.md`, `tasks/quality_backlog.md`.
 
 ### Stage 2 — Any game asked for comes back good — **NOT STARTED**

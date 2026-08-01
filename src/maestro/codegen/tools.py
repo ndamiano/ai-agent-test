@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from maestro.codegen.assets import request_media
+from maestro.codegen.assets import DEFAULT_KIND, request_media
 from maestro.codegen.staging import game_dir
 
 MAX_READ_CHARS = 20_000   # one read's ceiling; past this the read returns a WINDOW and says so.
@@ -122,9 +122,9 @@ def build_tools(state) -> dict:
         p.write_text(body.replace(old, new), encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(new)}
 
-    def generate_media(id=None, prompt=None, kind="image", **_) -> dict:
+    def generate_media(id=None, prompt=None, kind=DEFAULT_KIND, **_) -> dict:
         # `kind` is the one argument with a default, because the schema offers it as optional.
-        return request_media(state.run_id, state.run_dir, id, prompt, kind or "image")
+        return request_media(state.run_id, state.run_dir, id, prompt, kind or DEFAULT_KIND)
 
     def _reported(fn):
         """A tool result is a BOUNDARY: anything the call raises comes back as text the model can

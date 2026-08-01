@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
-from maestro.codegen import turn_log
+from maestro.codegen import asset_use, turn_log
 from maestro.codegen.staging import game_dir
 from maestro.services import parse_args
 from maestro.tool_calls import parse_tool_calls
@@ -60,6 +60,14 @@ _DONE_NUDGE = (
     "shows, whether every button does something. Build what you find, then call done again. If "
     "nothing is missing, call done again."
 )
+
+
+def _done_nudge(run_dir) -> str:
+    """The nudge, plus whatever the art audit found. It rides the nudge rather than a turn of its
+    own because the nudge is already the one place the build asks what is unfinished — and it is
+    asked ONCE, so a model told twice does not start inventing work."""
+    art = asset_use.report(asset_use.audit(run_dir))
+    return f"{_DONE_NUDGE} {art}" if art else _DONE_NUDGE
 
 
 @dataclass
@@ -118,15 +126,20 @@ EDIT_SCHEMA = {"type": "function", "function": {
                    "required": ["path", "old_text", "new_text"]}}}
 MEDIA_SCHEMA = {"type": "function", "function": {
     "name": "generate_media",
-    "description": ("Have an artist draw an image or a 3D model for the game. Returns the path the "
-                    "file will appear at, right away — the drawing itself takes about a minute."),
+    "description": ("Have an artist draw an image or a 3D model for the game. Returns the path for "
+                    "the art."),
     "parameters": {"type": "object",
                    "properties": {"id": {"type": "string",
                                          "description": "Short name: letters, digits, - and _."},
                                   "prompt": {"type": "string",
                                              "description": "What to draw, described for an artist."},
-                                  "kind": {"type": "string", "enum": ["image", "mesh"],
-                                           "description": "image (a .png) or mesh (a .glb model)."}},
+                                  "kind": {"type": "string",
+                                           "enum": ["sprite", "tile", "scene", "mesh"],
+                                           "description":
+                                               "sprite: one subject, cut out, drawn on top of the "
+                                               "game. tile: a surface the game repeats, fills its "
+                                               "frame. scene: a whole picture the game draws "
+                                               "behind everything. mesh: a 3D model."}},
                    "required": ["id", "prompt"]}}}
 DONE_SCHEMA = {"type": "function", "function": {
     "name": "done",
@@ -197,7 +210,7 @@ def step(spec, run_dir, tools, cursor, result) -> Outcome:
                     # one call, and no round is left with its `tool` half missing.
                     cursor.done_nudged = True
                     cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                           "content": _DONE_NUDGE})
+                                           "content": _done_nudge(run_dir)})
                     continue
                 cursor.finished = True
                 cursor.summary = _clip(args.get("summary", ""), 400)

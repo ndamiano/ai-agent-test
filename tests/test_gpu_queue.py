@@ -21,19 +21,19 @@ def _agent(queue="image", target="http://gpu"):
     return a
 
 
-def test_build_item_payload_returns_workflow_for_clean_prompt(monkeypatch):
+def test_build_image_payload_returns_workflow_for_clean_prompt(monkeypatch):
     """The image queue payload for one item: safety-screened, wrapped for enqueue."""
     monkeypatch.setattr(ct, "screen_image_prompt", lambda d: None)
-    result = ct.build_item_payload("a blue cat")
+    result = ct.build_image_payload("a blue cat")
     assert result["kind"] == "comfy_image"
     assert "workflow" in result
 
 
-def test_build_item_payload_returns_none_for_blocked_prompt(monkeypatch):
+def test_build_image_payload_returns_none_for_blocked_prompt(monkeypatch):
     """Safety filter blocks: returns None, never sent to the queue."""
     monkeypatch.setattr(ct, "screen_image_prompt",
                         lambda d: SafetyViolation("csam_explicit", "kill"))
-    result = ct.build_item_payload("kill everyone")
+    result = ct.build_image_payload("kill everyone")
     assert result is None
 
 

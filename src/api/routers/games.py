@@ -24,7 +24,8 @@ from auth.store import User
 from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
-from maestro.codegen.assets import AlreadyRendering, add_assets, read_manifest, regenerate_asset
+from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
+                                    regenerate_asset)
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.codegen.run import create_run, set_prompt
 from tools.safety import log_violation, screen_text
@@ -190,9 +191,9 @@ async def game_assets(run_id: str, user: User = Depends(get_current_user)):
     for entry in read_manifest(state.run_dir):
         aid = entry["id"]
         ready = (assets_dir / f"{aid}.{_ext(entry)}").exists()
-        out.append({"id": aid, "kind": entry.get("kind") or "image",
+        out.append({"id": aid, "kind": entry_kind(entry),
                     "status": "ready" if ready else ("rendering" if rendering else "pending"),
-                    "prompt": entry["prompt"]})
+                    "prompt": entry["prompt"], "defect": entry.get("defect")})
     return out
 
 

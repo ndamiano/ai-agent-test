@@ -123,6 +123,25 @@ def test_the_first_done_is_answered_not_accepted(tmp_path, tools):
                                   "content": build_steps._DONE_NUDGE}
 
 
+def test_the_nudge_carries_what_the_art_audit_found(tmp_path, tools):
+    """The one place the build already asks what is unfinished. A build that asked for art and drew
+    the game without it has no other moment to hear so — generate_media answers with a path and
+    never learns whether the path was used."""
+    game = tmp_path / "game"
+    game.mkdir(parents=True, exist_ok=True)
+    (game / "assets.json").write_text(
+        '{"images": [{"id": "ghost", "file": "assets/ghost.png", "prompt": "a ghost"}]}')
+    (game / "game.js").write_text("ctx.fillRect(0, 0, 32, 32)")
+
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor, _reply(calls=[("done", {"summary": "shipped"})]))
+
+    nudge = cursor.history[-1]["content"]
+    assert build_steps._DONE_NUDGE in nudge
+    assert "ghost" in nudge
+
+
 def test_done_ends_the_build(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})

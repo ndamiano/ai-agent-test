@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from db import store as db_store
-from maestro.codegen.assets import asset_path, autocrop
+from maestro.codegen.assets import asset_path, autocrop, check_render, render_kind, set_defect
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -49,6 +49,19 @@ def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
 CONTINUATIONS = {"mesh_from_image": _mesh_from_image}
 
 
+def _record_defect(md: Dict, dst: Path) -> None:
+    """What a render came back BROKEN as, on the manifest entry the gallery and the top-up read.
+    Soft: a check that cannot run must not cost the game its art."""
+    try:
+        defect = check_render(dst, render_kind(md.get("kind") or "sprite"))
+    except Exception as e:
+        logger.warning("render check %s failed: %s", md["asset_id"], e)
+        return
+    if defect:
+        logger.warning("assets %s: %s rendered broken — %s", md["run_id"], md["asset_id"], defect)
+    set_defect(RunState(md["run_id"]).run_dir, md["asset_id"], defect)
+
+
 def _save_sprite(md: Dict, result: Dict) -> None:
     src = _first_image(result)
     if src is None:
@@ -59,6 +72,18 @@ def _save_sprite(md: Dict, result: Dict) -> None:
         autocrop(dst)
     except Exception as e:
         logger.warning("autocrop %s failed: %s", md["asset_id"], e)
+    _record_defect(md, dst)
+
+
+def _save_flat(md: Dict, result: Dict) -> None:
+    """A tile or a backdrop: it IS the background, so it keeps the whole frame the sampler drew.
+    No matte to crop to, and autocrop on an opaque image is a no-op that only ever misfires."""
+    src = _first_image(result)
+    if src is None:
+        return
+    dst = asset_path(md["run_id"], md["asset_id"], "png")
+    Path(src).replace(dst)
+    _record_defect(md, dst)
 
 
 def _decimate(md: Dict, result: Dict) -> None:
@@ -71,7 +96,7 @@ def _decimate(md: Dict, result: Dict) -> None:
     _decimate_glb(str(dst))
 
 
-OPERATIONS = {"save_sprite": _save_sprite, "decimate": _decimate}
+OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate}
 
 
 def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:

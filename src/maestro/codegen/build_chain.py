@@ -20,7 +20,7 @@ from typing import Dict, Optional
 
 from db import store as db_store
 from llm_clients.connector import get_connector
-from maestro.codegen import build_state, build_steps, snapshots, turn_log
+from maestro.codegen import asset_use, build_state, build_steps, snapshots, turn_log
 from maestro.codegen.build_state import BuildCursor
 from maestro.codegen.staging import entry_path, stage_for_play
 from maestro.codegen.tools import build_tools
@@ -266,8 +266,13 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     if cursor.build_id:
         db_store.build_finished(cursor.build_id, attempt or ("succeeded" if ok else "failed"),
                                 steps=cursor.step)
+    art = asset_use.audit(rs.run_dir)
+    if art["unreferenced"] or art["missing"]:
+        logger.warning("build %s art: %d asked for and never loaded, %d loaded and never asked for",
+                       run_id, len(art["unreferenced"]), len(art["missing"]))
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
-    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step)
+    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step,
+          art_unreferenced=art["unreferenced"], art_missing=art["missing"])
 
 
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:

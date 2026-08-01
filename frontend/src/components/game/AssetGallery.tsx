@@ -27,10 +27,11 @@ const StatusNote: React.FC<{ status: GameAsset['status'] }> = ({ status }) => (
 const CardShell: React.FC<{
     id: string
     status: GameAsset['status']
+    defect?: string | null
     right?: React.ReactNode
     onRegenerate: (prompt: string, mode: RegenMode) => void
     children: React.ReactNode
-}> = ({ id, status, right, onRegenerate, children }) => {
+}> = ({ id, status, defect, right, onRegenerate, children }) => {
     const [open, setOpen] = useState(false)
     const [prompt, setPrompt] = useState('')
     const [mode, setMode] = useState<RegenMode>('full')
@@ -54,6 +55,9 @@ const CardShell: React.FC<{
                         className="text-slate hover:text-bone disabled:opacity-30 text-sm leading-none">↻</button>
                 </div>
             </div>
+            {defect && status === 'ready' && (
+                <p className="px-2 pb-1.5 text-[11px] leading-snug text-ember/90">{defect}</p>
+            )}
             {open && (
                 <div className="px-2 pb-2 flex flex-col gap-1.5">
                     <div className="flex gap-1">
@@ -104,12 +108,12 @@ const AssetCard: React.FC<{
     onRegenerate: (prompt: string, mode: RegenMode) => void
 }> = ({ runId, asset, version, regenerating, onRegenerate }) => {
     const status = regenerating ? 'rendering' : asset.status
-    const isImage = asset.kind === 'image'
+    const isImage = asset.kind !== 'mesh'
     const url = useAssetBlob(runId, regenerating ? null : asset, version)
     const ready = status === 'ready'
 
     return (
-        <CardShell id={asset.id} status={status} onRegenerate={onRegenerate}
+        <CardShell id={asset.id} status={status} defect={asset.defect} onRegenerate={onRegenerate}
             right={!isImage && ready ? <MeshDownload runId={runId} assetId={asset.id} /> : undefined}>
             {!ready ? <StatusNote status={status} />
                 : isImage

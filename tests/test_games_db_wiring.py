@@ -225,7 +225,8 @@ def test_assets_report_per_asset_status(client):
 
     assets = client.get(f"/api/games/{run_id}/assets", headers=headers).json()
     by_id = {a["id"]: a for a in assets}
-    assert by_id["hero"] == {"id": "hero", "kind": "image", "status": "ready", "prompt": "a hero"}
+    assert by_id["hero"] == {"id": "hero", "kind": "sprite", "status": "ready",
+                             "prompt": "a hero", "defect": None}
     assert by_id["slime"]["status"] == "pending"
 
 

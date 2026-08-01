@@ -16,7 +16,7 @@ const useCover = (runId: string, built: boolean): string | null => {
         let made: string | null = null
         api.getGameAssets(runId)
             .then(assets => {
-                const cover = assets.find(a => a.kind === 'image' && a.status === 'ready')
+                const cover = assets.find(a => a.kind !== 'mesh' && a.status === 'ready')
                 if (!cover || !live) return null
                 return api.getAssetBlobUrl(runId, cover.id)
             })

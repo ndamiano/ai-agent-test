@@ -6,7 +6,7 @@ import type { GameAsset } from '../../types'
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const asset = (over: Partial<GameAsset> = {}): GameAsset =>
-    ({ id: 'goblin', kind: 'image', status: 'ready', prompt: 'a goblin', ...over })
+    ({ id: 'goblin', kind: 'sprite', status: 'ready', prompt: 'a goblin', defect: null, ...over })
 
 const panel = (over: Partial<React.ComponentProps<typeof WorkingPanel>> = {}) => render(
     <WorkingPanel runId="r1" paused={false} step={47} summary="wrote race_day.js" elapsedSec={372}

@@ -53,14 +53,26 @@ def test_a_mesh_answers_with_a_glb_path_and_chains_trellis(run_dir):
     assert md["then"]["enqueue"] == "mesh_from_image"
 
 
+@pytest.mark.parametrize("kind,op", [("sprite", "save_sprite"), ("tile", "save_flat"),
+                                     ("scene", "save_flat")])
+def test_only_a_sprite_is_matted_and_cropped(run_dir, kind, op):
+    """A tile and a scene ARE the background — matting one leaves the ragged fragments of a floor
+    that used to be a floor, and cropping to the "subject" finishes the job."""
+    request_media(RUN, run_dir, "art", "some art", kind=kind)
+    md = _image_jobs()[0]["metadata"]
+    assert md["kind"] == kind
+    assert md["then"]["operations"] == [op]
+
+
 def test_the_request_is_recorded_in_the_manifest(run_dir):
     """The model never writes assets.json — this file is the platform's record of what was asked
     for, and it is what the gallery, the top-up and the regenerate all read."""
     request_media(RUN, run_dir, "goblin", "a snarling goblin")
     request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
     assert read_manifest(run_dir) == [
-        {"id": "goblin", "file": "assets/goblin.png", "prompt": "a snarling goblin"},
-        {"id": "hut", "file": "assets/hut.glb", "prompt": "a thatched hut", "kind": "mesh"},
+        {"id": "goblin", "file": "assets/goblin.png", "kind": "sprite",
+         "prompt": "a snarling goblin"},
+        {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut"},
     ]
 
 
@@ -144,7 +156,7 @@ def test_an_unknown_kind_is_refused(run_dir):
 
 
 def test_a_blocked_prompt_tells_the_model_to_draw_it_instead(run_dir, monkeypatch):
-    monkeypatch.setattr(assets, "build_item_payload", lambda *a, **kw: None)
+    monkeypatch.setattr(assets, "build_image_payload", lambda *a, **kw: None)
     out = request_media(RUN, run_dir, "goblin", "something refused")
     assert out["ok"] is False and "draw this one with code" in out["error"]
     assert read_manifest(run_dir) == []
@@ -160,11 +172,11 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
     assert read_manifest(run_dir) == []
 
 
-def test_the_tool_reaches_the_queue_and_defaults_to_an_image(run_dir):
+def test_the_tool_reaches_the_queue_and_defaults_to_a_sprite(run_dir):
     tools = build_tools(RunState(RUN))
     out = tools["generate_media"](id="goblin", prompt="a snarling goblin")
     assert out == {"ok": True, "path": "assets/goblin.png", "status": "rendering"}
-    assert _image_jobs()[0]["metadata"]["kind"] == "image"
+    assert _image_jobs()[0]["metadata"]["kind"] == "sprite"
 
 
 def test_the_tool_reports_a_missing_argument_rather_than_guessing(run_dir):

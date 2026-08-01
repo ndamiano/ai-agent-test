@@ -48,7 +48,7 @@ export const BuiltPanel: React.FC<{
     runId, detail, assets, assetsVersion, budget, rendering, acting, onRender,
     note, setNote, onFix, promptText, setPromptText,
 }) => {
-    const cover = assets?.find(a => a.kind === 'image' && a.status === 'ready') ?? null
+    const cover = assets?.find(a => a.kind !== 'mesh' && a.status === 'ready') ?? null
 
     return (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">

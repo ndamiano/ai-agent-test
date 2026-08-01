@@ -32,12 +32,17 @@ from PIL import Image
 from db import store as db_store
 from maestro.codegen.staging import game_dir
 from maestro.state import RunState
-from tools.comfyui_tools import build_item_payload
+from tools.comfyui_tools import MATTED_KINDS, build_image_payload
 from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
 
 MANIFEST = "assets.json"
+
+# What the game can ask for. A sprite sits ON the game's background, a tile and a scene ARE one,
+# and a mesh renders as a sprite first because TRELLIS turns a matted subject into geometry.
+KINDS = ("sprite", "tile", "scene", "mesh")
+DEFAULT_KIND = "sprite"
 
 _active: set = set()
 _active_lock = threading.Lock()
@@ -73,6 +78,37 @@ def asset_path(run_id: str, asset_id: str, ext: str) -> Path:
     d = game_dir(RunState(run_id).run_dir) / "assets"
     d.mkdir(parents=True, exist_ok=True)
     return d / f"{asset_id}.{ext}"
+
+
+def render_kind(kind: str) -> str:
+    """The kind the IMAGE leg renders as. A mesh's image is the subject TRELLIS lifts into
+    geometry, so it is drawn and matted exactly like a sprite."""
+    return "sprite" if kind == "mesh" else kind
+
+
+def check_render(path: Path, kind: str) -> Optional[str]:
+    """A defect in a finished render, or None. BROKEN only — nothing here has an opinion about
+    whether the picture is any good, because code cannot have one.
+
+    What it can read is the alpha channel against what the kind asked for. A matted sprite that
+    came back fully opaque is a scene the matte never cut, and the game will composite a square of
+    someone else's background onto its own; one that came back empty is a subject the matte ate.
+    A tile or a scene is the reverse — it fills its frame, so transparency in one is a hole."""
+    im = Image.open(path).convert("RGBA")
+    total = im.width * im.height
+    if not total:
+        return "the render is empty"
+    hist = im.split()[-1].histogram()
+    opaque = sum(hist[200:]) / total
+    if kind in MATTED_KINDS:
+        if opaque > 0.98:
+            return ("the background was not removed — this render is a full opaque square, so it "
+                    "will show its own background wherever the game draws it")
+        if opaque < 0.02:
+            return "almost nothing is left after the background was removed"
+    elif opaque < 0.9:
+        return f"a {kind} must fill its frame, and {(1 - opaque) * 100:.0f}% of this one is transparent"
+    return None
 
 
 def autocrop(path: Path, pad_frac: float = 0.06) -> None:
@@ -133,7 +169,27 @@ def _update(run_dir, asset_id: str, **fields) -> None:
     p.write_text(json.dumps({"images": entries}, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = "image") -> Dict:
+def set_defect(run_dir, asset_id: str, defect: Optional[str]) -> None:
+    """Record (or clear) what a landed render came back broken as."""
+    _update(run_dir, asset_id, defect=defect)
+
+
+def entry_kind(entry: Dict) -> str:
+    return entry.get("kind") or DEFAULT_KIND
+
+
+def _then_for(kind: str) -> Dict:
+    """What a finished render owes. A mesh's image leg chains TRELLIS; a matted kind is cropped to
+    its subject on the way in and an unmatted one must not be, since cropping a tile to its
+    "subject" is how a floor becomes a handful of planks."""
+    if kind == "mesh":
+        return {"enqueue": "mesh_from_image", "finalize": "assets"}
+    op = "save_sprite" if render_kind(kind) in MATTED_KINDS else "save_flat"
+    return {"operations": [op], "finalize": "assets"}
+
+
+def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
+                  kind: str = DEFAULT_KIND) -> Dict:
     """ONE asset. Enqueues the render and answers with the path the file will appear at, so the
     model can write code against it on the same turn.
 
@@ -143,8 +199,9 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = 
         return {"ok": False, "error": "id must be 1-64 characters of letters, digits, - or _"}
     if not (prompt or "").strip():
         return {"ok": False, "error": "prompt is required: describe what to draw"}
-    if kind not in ("image", "mesh"):
-        return {"ok": False, "error": f"kind must be 'image' or 'mesh', not {kind!r}"}
+    if kind not in KINDS:
+        return {"ok": False,
+                "error": f"kind must be one of {', '.join(KINDS)} — not {kind!r}"}
 
     mesh = kind == "mesh"
     ext = "glb" if mesh else "png"
@@ -162,12 +219,11 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = 
                 "note": "not requeued — this id already has art. Call again with the prompt you "
                         "want to replace it with, or use a different id to draw something new."}
 
-    payload = build_item_payload(prompt)
+    payload = build_image_payload(prompt, render_kind(kind))
     if payload is None:
         return {"ok": False, "error": "that prompt was refused by the safety filter — "
                                       "draw this one with code instead"}
-    then = ({"enqueue": "mesh_from_image", "finalize": "assets"} if mesh
-            else {"operations": ["save_sprite"], "finalize": "assets"})
+    then = _then_for(kind)
     try:
         # No build_id: this batch's finalize would otherwise close the BUILD's row the moment the
         # first sprite lands, while the model is still writing the game.
@@ -179,10 +235,9 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str, kind: str = 
     if existing:
         # The manifest holds the prompt a regenerate re-prompts against, so a confirmed replace
         # rewrites it rather than leaving the record describing art that no longer exists.
-        _update(run_dir, asset_id, prompt=prompt, replace_asked=None)
+        _update(run_dir, asset_id, prompt=prompt, replace_asked=None, defect=None)
     else:
-        _record(run_dir, {"id": asset_id, "file": rel, "prompt": prompt,
-                          **({"kind": "mesh"} if mesh else {})})
+        _record(run_dir, {"id": asset_id, "file": rel, "kind": kind, "prompt": prompt})
     logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
     return {"ok": True, "path": rel, "status": "rendering"}
 
@@ -216,10 +271,11 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
     batch_id = uuid.uuid4().hex[:16]
     enqueued = 0
     for e in entries:
-        mesh = e.get("kind") == "mesh"
-        queue, payload, then = "image", build_item_payload(e["prompt"]), (
-            {"enqueue": "mesh_from_image", "finalize": "assets"} if mesh
-            else {"operations": ["save_sprite"], "finalize": "assets"})
+        kind = entry_kind(e)
+        mesh = kind == "mesh"
+        queue = "image"
+        payload = build_image_payload(e["prompt"], render_kind(kind))
+        then = _then_for(kind)
         src = asset_path(run_id, e["id"], "src.png")
         if mesh and src.exists():
             # A mesh needs ComfyUI and then TRELLIS, and one GPU can only hold one of them, so a
@@ -234,7 +290,7 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
             db_store.enqueue_job(queue, payload, game_id=run_id, build_id=build_id,
                                  batch_id=batch_id,
                                  metadata={"run_id": run_id, "asset_id": e["id"],
-                                           "kind": e.get("kind") or "image", "then": then})
+                                           "kind": kind, "then": then})
         except db_store.InsufficientCompute as err:
             logger.error("assets %s: budget refused after %d job(s): %s", run_id, enqueued, err)
             break
@@ -271,22 +327,20 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     # blocking connector, which reads the owning game off the run scope rather than an argument.
     with run_scope(run_id):
         prompt = _merge_prompt(entry["prompt"], note)
+    kind = entry_kind(entry)
     init_b64 = None
     if mode == "img2img":
-        mesh = entry.get("kind") == "mesh"
-        src = asset_path(run_id, asset_id, "src.png" if mesh else "png")
+        src = asset_path(run_id, asset_id, "src.png" if kind == "mesh" else "png")
         if src.exists():
             init_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
-    payload = build_item_payload(prompt, init_image_b64=init_b64)
+    payload = build_image_payload(prompt, render_kind(kind), init_image_b64=init_b64)
     if payload is None:
         return {"ok": False, "error": "the prompt was blocked by the safety filter"}
-    mesh = entry.get("kind") == "mesh"
-    then = ({"enqueue": "mesh_from_image", "finalize": "assets"} if mesh
-            else {"operations": ["save_sprite"], "finalize": "assets"})
     batch_id = uuid.uuid4().hex[:16]
     db_store.enqueue_job("image", payload, game_id=run_id, batch_id=batch_id,
                          metadata={"run_id": run_id, "asset_id": asset_id,
-                                   "kind": entry.get("kind") or "image", "then": then})
+                                   "kind": kind, "then": _then_for(kind)})
+    _update(state.run_dir, asset_id, defect=None)
     return {"ok": True, "batch_id": batch_id, "prompt": prompt}
 
 

@@ -39,13 +39,15 @@ export interface DurableEventRow {
 // fetched separately from the authed blob route (never the public /play mount), so there is no url
 // here — the gallery builds an object URL from an authed fetch. `status`: ready (on disk),
 // rendering (a batch is live), or pending (declared, not yet rendered).
-export type AssetKind = 'image' | 'mesh'
+export type AssetKind = 'sprite' | 'tile' | 'scene' | 'mesh'
 export type AssetStatus = 'ready' | 'rendering' | 'pending'
 export interface GameAsset {
     id: string
     kind: AssetKind
     status: AssetStatus
     prompt: string
+    // What the render came back BROKEN as, if anything — never whether it is any good.
+    defect: string | null
 }
 
 // The prompt log (admin-only): every llm turn any game spent, reconstructed from the durable jobs

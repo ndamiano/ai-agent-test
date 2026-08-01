@@ -22,8 +22,9 @@ RUN npm ci
 # lives here. The one subprocess is node, decimating a finished TRELLIS GLB to game weight.
 FROM python:3.12-slim AS runtime
 
-# curl for the compose healthcheck; node for runtime/decimate.mjs.
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+# curl for the compose healthcheck; git for a run's game history (maestro.codegen.snapshots);
+# node for runtime/decimate.mjs.
+RUN apt-get update && apt-get install -y --no-install-recommends curl git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 

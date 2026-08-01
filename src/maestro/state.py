@@ -9,6 +9,8 @@ Inside it:
                           archive, once the jobs row that carried it is emptied
   - game/                 the browser files the model wrote — written directly by
                           maestro.codegen.tools
+  - game.git/             that folder's history (maestro.codegen.snapshots) — the repo sits beside
+                          the work tree so nothing shows up inside game/
 """
 
 import json

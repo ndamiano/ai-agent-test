@@ -44,12 +44,11 @@ it, the way the probe deletion was.
 - [ ] Re-run after any loop change and diff, per the guardrail.
       → done when: standing.
 
-## B5 — Snapshot the game folder at built states
-A fix round re-edits code that already worked, so regressions are structurally likely, and nothing
-preserves the last-green artifact.
-- [ ] Snapshot `game/` at each finalize that produced a playable game, and before a fix build,
-      retrievable per run.
-      → done when: a run dir holds ≥2 recoverable built states and a test asserts one restores.
+## B5 — The game folder's history — DONE 2026-07-31
+A fix round re-edits code that already worked, so regressions are structurally likely.
+- [x] Every run's game folder is a git work tree (`runs/<id>/game.git`, repo beside the tree):
+      a commit at each playable finalize and before each fix, `--history` / `--restore <ref>` on
+      the CLI. `git` is now in the prod image.
 
 ## B6 — The error gate: load the page, feed back what THREW
 Measured 2026-07-30 across the 9-cell depth grid: 3 of 9 games did not load at all, and no check in

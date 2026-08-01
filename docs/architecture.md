@@ -91,7 +91,7 @@ transport that never learns what an asset is.
 |---|---|---|
 | accounts, sessions, credit ledger | `auth.db` (SQLite) | `MAESTRO_DATA_DIR` |
 | games, builds, jobs, events, workers, compute budget | `platform.db` (SQLite, WAL) | `MAESTRO_DATA_DIR` |
-| run dirs — spec, build cursor, turn log, game source | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
+| run dirs — spec, build cursor, turn log, game source + its git history | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
 | staged playable games | `runtime/games/<slug>/` | local filesystem, served at `/play` |
 | structured config the env can't express | `src/config/settings.json` | host bind mount |
 

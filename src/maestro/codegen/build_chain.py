@@ -20,7 +20,7 @@ from typing import Dict, Optional
 
 from db import store as db_store
 from llm_clients.connector import get_connector
-from maestro.codegen import build_state, build_steps, turn_log
+from maestro.codegen import build_state, build_steps, snapshots, turn_log
 from maestro.codegen.build_state import BuildCursor
 from maestro.codegen.staging import entry_path, stage_for_play
 from maestro.codegen.tools import build_tools
@@ -135,6 +135,7 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
 
     cursor = BuildCursor(build_id=build_id, kind=kind, max_steps=max_steps, t0=time.time())
     if kind == "fix":
+        snapshots.take(rs.run_dir, "before-fix")
         cursor.request = ("The game is already written and playable. A person played it and "
                           f"reported this:\n{note}\n\nRead the files and fix exactly that. Call "
                           "done when it is fixed.")
@@ -260,6 +261,7 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     build_state.save(rs.run_dir, cursor)
     if ok:
         stage_for_play(rs.run_dir, run_id)
+        snapshots.take(rs.run_dir, "built")
     db_store.set_status(run_id, "built" if ok else "failed")
     if cursor.build_id:
         db_store.build_finished(cursor.build_id, attempt or ("succeeded" if ok else "failed"),

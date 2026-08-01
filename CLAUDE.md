@@ -158,6 +158,15 @@ src/
                          rounds `build_steps.compact` dropped and the note that replaced them, so a
                          replay shows what was really sent. A FIX appends its own meta and never
                          truncates. The prompt log reads bodies from here once the row is empty.
+      snapshots.py       the game folder's HISTORY, in git: `runs/<id>/game.git` is the repo and
+                         `game/` its work tree, so nothing appears inside the folder the model
+                         lists, staging copies and /play serves. A commit at every finalize that
+                         produced a playable game, and one before a fix edits — a fix re-edits code
+                         that already worked, so the last playable version is exactly what it can
+                         destroy. Everything in the folder is committed, art included: a restore
+                         that leaves half the game at another version is not a restore. git is a
+                         BOUNDARY — a snapshot that cannot be taken is logged and the build carries
+                         on, since losing history is not a reason to lose a game.
       tools.py           list_files / read_file / write_file / edit_file / generate_media — the
                          smallest surface that works, and kept that way. A path is resolved and must
                          land inside the game folder. Every failure is REPORTED to the model as text
@@ -294,7 +303,8 @@ unused schema costs every turn of every build, so a tool that fails that comes b
 **Run a build (CLI):** `cd src && python -m maestro.codegen.run "<request>"` (the request is the
 prompt → build). `--new "<request>"` stops with the prompt on disk so it can be edited first,
 `--build <run_id>` builds that prompt, `--fix <run_id> "<note>"` applies a playtest note, and
-`--assets <run_id>` re-renders the art the game asked for and never got.
+`--assets <run_id>` re-renders the art the game asked for and never got, `--history <run_id>`
+lists a run's snapshots and `--restore <run_id> <ref>` puts the game back to one and re-stages it.
 **Play a build:** open `runtime/games/<run_id>/index.html` — a game is plain browser files, but a
 3D one needs http, not file:// (`<script type="module">` is CORS-blocked from a file origin).
 **Run backend:** `source venv/bin/activate && python run.py`  •  **Frontend:** `cd frontend && npm run dev`

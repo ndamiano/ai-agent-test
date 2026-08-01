@@ -208,6 +208,31 @@ def _cli_assets(run_id: str) -> int:
     return 0
 
 
+def _cli_history(run_id: str) -> int:
+    from maestro.codegen import snapshots
+    rows = snapshots.list_snapshots(RunState(run_id).run_dir)
+    if not rows:
+        print(f"{run_id} has no snapshots yet")
+        return 1
+    for r in rows:
+        print(f"  {r['id']}  {r['at']}  {r['label']}")
+    return 0
+
+
+def _cli_restore(run_id: str, ref: str) -> int:
+    from maestro.codegen import snapshots
+    from maestro.codegen.staging import stage_for_play
+    rs = RunState(run_id)
+    try:
+        snapshots.restore(rs.run_dir, ref)
+    except ValueError as e:
+        print(e)
+        return 1
+    stage_for_play(rs.run_dir, run_id)
+    print(f"{run_id} restored to {ref} and re-staged")
+    return 0
+
+
 _HELP = """maestro — write a prompt, build a game, render its art.
 
 usage:
@@ -216,6 +241,8 @@ usage:
   python -m maestro.codegen.run --build <run_id>          build the prompt on disk
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
   python -m maestro.codegen.run --assets <run_id>         render the art the game declared
+  python -m maestro.codegen.run --history <run_id>        list the run's snapshots
+  python -m maestro.codegen.run --restore <run_id> <ref>  put the game back to one, and re-stage
   python -m maestro.codegen.run --help | -h              show this help
 """
 
@@ -240,6 +267,14 @@ if __name__ == "__main__":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')
         sys.exit(_cli_assets(sys.argv[2]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--history":
+        if len(sys.argv) < 3:
+            sys.exit("usage: python -m maestro.codegen.run --history <run_id>")
+        sys.exit(_cli_history(sys.argv[2]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--restore":
+        if len(sys.argv) < 4:
+            sys.exit("usage: python -m maestro.codegen.run --restore <run_id> <ref>")
+        sys.exit(_cli_restore(sys.argv[2], sys.argv[3]))
     if len(sys.argv) < 2:
         sys.exit('usage: python -m maestro.codegen.run "<request>"   |   --fix <run_id> "<note>"')
     sys.exit(_cli(" ".join(sys.argv[1:])))

@@ -15,7 +15,7 @@ export const FixNote: React.FC<{
             placeholder="The lighthouse door doesn't open when I press E" />
         <div className="flex items-center gap-3 flex-wrap">
             <Button variant="primary" onClick={onSubmit} disabled={busy || !note.trim()}>Send it back</Button>
-            <span className="text-xs text-dim">It keeps everything else and changes that.</span>
+            <span className="text-xs text-dim">The model reads the game and works on that note.</span>
         </div>
     </section>
 )

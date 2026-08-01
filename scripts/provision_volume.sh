@@ -49,14 +49,15 @@ VOL = sys.argv[1]
 
 # dest dir, repo id, filename in repo, expected bytes (0 = skip the size check), revision
 #
-# The LLM is pinned to a commit, not `main`. The home box also holds a 22,853,663,008-byte
-# UD-Q4_K_XL carrying MTP/next-token tensors, hand-downloaded from an unrecorded source — it serves
-# identically here because nothing passes --spec-type, and an unreproducible blob has no business
-# being the thing every pod loads.
+# The LLM is pinned to a commit, not `main`. It is the DENSE 27B, not the 35B-A3B MoE this volume
+# was first provisioned with: the MoE is faster per token, but the window is what a build lives or
+# dies on and the 27B's is what the box was moved to. The home box serves the same weights through
+# ninfer (a .ninfer conversion, 16.3 GiB), which llama.cpp cannot read — same model, different
+# container, and a pod has only llama.cpp.
 FILES = [
-    (f"{VOL}/models/LLM", "unsloth/Qwen3.6-35B-A3B-GGUF",
-     "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf", 22360456160,
-     "a483e9e6cbd595906af30beda3187c2663a1118c"),
+    (f"{VOL}/models/LLM", "unsloth/Qwen3.6-27B-GGUF",
+     "Qwen3.6-27B-UD-Q4_K_XL.gguf", 17612564704,
+     "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"),
     (f"{VOL}/comfy/models/checkpoints", "Comfy-Org/flux1-schnell",
      "flux1-schnell-fp8.safetensors", 17236328572, None),
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet",

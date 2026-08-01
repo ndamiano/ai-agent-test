@@ -14,10 +14,19 @@ set -euo pipefail
 # thinks in content and truncates at the output cap before ever emitting the message/tool call
 # (measured: whole authoring turns lost as 16K-token reasoning blobs). enable_thinking=false
 # switches the template itself; verified locally: zero reasoning tokens, clean tool calls.
+#
+# -c must match LLM_N_CTX on the control plane: it is what the input budget is computed from, and a
+# window larger than the server's is one that never trims until the prompt has already overflowed.
+# llama.cpp preallocates ALL of it at load, so the KV quant is not an optimisation here but what
+# decides whether the model loads at all: the dense 27B keeps 64 layers × 4 kv heads × 256, which is
+# 136 KiB/token at q8_0 — 17.0 GiB for this window, over a 32 GiB card once the weights are in.
+# q4_0 halves it. -fa is required for the quantized cache to be used.
 /app/llama-server \
     --models-dir "$MODELS_DIR" \
     --host 127.0.0.1 --port "$LLAMA_PORT" \
-    -ngl 99 -c 32768 --jinja --reasoning-budget 0 \
+    -ngl 99 -c 131072 -fa on \
+    --cache-type-k q4_0 --cache-type-v q4_0 \
+    --jinja --reasoning-budget 0 \
     --chat-template-kwargs '{"enable_thinking":false}' &
 llama_pid=$!
 

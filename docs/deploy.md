@@ -147,13 +147,13 @@ provisioning.
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v4 .
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v5 .
 docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v4 .
 docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v12 .
 docker push ndamiano100/maestro-worker:mesh-v12   # etc.
 ```
 
-Deployed tags: `llm-v4`, `image-v4`, `mesh-v12`. Bump the tag on every push — RunPod caches images
+Deployed tags: `llm-v5`, `image-v4`, `mesh-v12`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
 
 Make one RunPod **template** per image (container image + volume mount at `/workspace`; no ports).

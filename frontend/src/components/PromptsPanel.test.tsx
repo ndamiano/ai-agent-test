@@ -69,14 +69,17 @@ describe('PromptsPanel', () => {
         const getOne = vi.spyOn(api, 'getPromptTurn').mockResolvedValue(detail)
 
         render(<PromptsPanel />)
-        await waitFor(() => expect(screen.getByText('Moon Miner')).toBeTruthy())
+        // The bucket list and the turn list load on separate promises — wait for both, or the
+        // group is still empty when the click below expands it.
+        await waitFor(() => expect(screen.getByText('2 of 2 turns · 2 prompts')).toBeTruthy())
+        expect(screen.getByText('Moon Miner')).toBeTruthy()
         expect(screen.getByText('Platform (chat + spec drafts)')).toBeTruthy()
 
         // Two system prompts ⇒ two collapsed headers, no turn rows yet.
         expect(screen.getAllByText('You author ONE file.')).toHaveLength(1)
-        expect(screen.getByText('2 of 2 turns · 2 prompts')).toBeTruthy()
 
         fireEvent.click(screen.getByText('You author ONE file.'))          // expand the group
+        await waitFor(() => expect(screen.getAllByText('You author ONE file.')).toHaveLength(2))
         const [, row] = screen.getAllByText('You author ONE file.')        // header, then the turn
         fireEvent.click(row)
 

@@ -6,8 +6,10 @@ it started. There is no build step and no transform: staging copies the folder t
 `runtime/games/<slug>/`, which is what `/play` serves.
 """
 
+import re
 import shutil
 from pathlib import Path
+from typing import Optional
 
 RUNTIME_DIR = Path(__file__).resolve().parents[3] / "runtime"
 GAME_DIR = "game"
@@ -47,6 +49,22 @@ def entry_path(run_dir) -> Path:
 
 def is_staged(slug: str) -> bool:
     return (RUNTIME_DIR / "games" / slug / ENTRY).exists()
+
+
+_TITLE = re.compile(r"<title[^>]*>\s*(.*?)\s*</title>", re.IGNORECASE | re.DOTALL)
+
+
+def staged_title(slug: str) -> Optional[str]:
+    """The name the MODEL gave the game — its staged index.html's <title> — or None when there
+    is no staging, no tag, or an empty one."""
+    entry = RUNTIME_DIR / "games" / slug / ENTRY
+    if not entry.is_file():
+        return None
+    match = _TITLE.search(entry.read_text(encoding="utf-8", errors="replace")[:4096])
+    if not match:
+        return None
+    title = " ".join(match.group(1).split())
+    return title[:80] or None
 
 
 def stage_for_play(run_dir, slug: str) -> str:

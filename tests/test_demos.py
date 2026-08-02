@@ -117,3 +117,12 @@ def test_grant_tables_cap_instead_of_growing_forever():
     for i in range(playgrants.MAX_LIVE):
         assert playgrants.issue_handoff("u", f"r{i}") is not None
     assert playgrants.issue_handoff("u", "one-more") is None
+
+
+def test_a_built_game_is_named_by_its_own_title_tag(client, staged_game, demo_listed):
+    run_id = _game(staged_game)
+    gd = api.app._runtime / "games" / run_id
+    (gd / "index.html").write_text(
+        "<head><title>  The Cursed \n Curio  </title></head><body>x</body>", encoding="utf-8")
+    demo_listed.append(run_id)
+    assert client.get("/api/demos").json()[0]["title"] == "The Cursed Curio"

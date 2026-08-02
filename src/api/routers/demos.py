@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from auth import playgrants
 from config.settings_manager import settings_manager
 from db import store as db_store
-from maestro.codegen.staging import is_staged
+from maestro.codegen.staging import is_staged, staged_title
 from maestro.state import RunState
 
 router = APIRouter()
@@ -34,7 +34,7 @@ async def list_demos():
         row = db_store.game(run_id) or {}
         spec = RunState(run_id).read_spec() or {}
         out.append({"run_id": run_id,
-                    "title": row.get("title") or run_id,
+                    "title": staged_title(run_id) or row.get("title") or run_id,
                     "prompt": spec.get("request", "")})
     return out
 

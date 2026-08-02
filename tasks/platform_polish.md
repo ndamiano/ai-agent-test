@@ -129,6 +129,15 @@ more code and more ways to be subtly wrong than a second hostname. Don't ship `A
       remains is the prod standup item above — until `play.origin` is set in prod, games still
       share the app origin.
 
+## P1.5 — Stateless play grants (polish, deliberately deferred 2026-08-01)
+- [ ] Grants live in memory (`auth/playgrants.py`), so every deploy/restart wipes live play
+      sessions — a player mid-game gets "failed to load" until they press Play again. Owner's
+      ruling: a refresh is an acceptable cost right now; fix when players are strangers. The
+      shape: HMAC-signed `(user_id, run_id, expiry)` with a secret persisted under `data_dir` —
+      the cookie carries the signed triple, no server table, restart-proof. Keep the handoff
+      token single-use (that one is fine ephemeral; 60s).
+      → done when: a play session survives `docker compose restart` without a re-click.
+
 ## P2 — Payments
 - [ ] Concrete `CreditProvider.verify` for the chosen processor.
       → done when: `grep -rn "NotImplementedError" src/auth/credits.py` is empty.

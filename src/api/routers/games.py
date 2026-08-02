@@ -27,7 +27,7 @@ from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
                                     regenerate_asset)
-from maestro.codegen.staging import game_dir, has_authored_files, is_staged
+from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
 from maestro.codegen.run import create_run, set_prompt
 from tools.safety import log_violation, screen_text
 from maestro.state import RunState
@@ -90,7 +90,8 @@ def _require_compute(run_id: str) -> None:
 
 @router.get("", response_model=List[Dict])
 async def list_games(user: User = Depends(get_current_user)):
-    """Lightweight summary of the caller's games — db rows only, no per-row file reads."""
+    """Lightweight summary of the caller's games. A built game is named by its own <title> — the
+    name the model gave it — falling back to the prompt-derived row title."""
     games: List[Dict] = []
     for row in db_store.list_games(user.id):
         if not row["title"] and row["status"] == "draft":
@@ -98,7 +99,7 @@ async def list_games(user: User = Depends(get_current_user)):
         active = build_chain.status_of(row["id"])
         games.append({
             "run_id": row["id"],
-            "title": row["title"],
+            "title": staged_title(row["id"]) or row["title"],
             "status": row["status"],
             "built": _built(row["id"]),
             "building": active is not None,
@@ -153,7 +154,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     return {
         "run_id": run_id,
         "prompt": spec_data.get("request", ""),
-        "title": spec_data.get("title", ""),
+        "title": staged_title(run_id) or spec_data.get("title", ""),
         "built": built,
         "building": active is not None,
         "status": status,

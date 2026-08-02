@@ -120,8 +120,10 @@ def _billing_rows(now: float):
 
 
 def _parse_time(value: str) -> float:
+    """RunPod's docs say date-time; the wire says '2026-08-01 19:00:00' — accept both. 0.0 (never
+    inside any window) for anything else, so a format surprise shows as missing spend, not a 500."""
     try:
-        return calendar.timegm(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S"))
+        return calendar.timegm(time.strptime(value[:19].replace(" ", "T"), "%Y-%m-%dT%H:%M:%S"))
     except (ValueError, TypeError):
         return 0.0
 

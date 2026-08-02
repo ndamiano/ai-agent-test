@@ -59,7 +59,9 @@ def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
 
     now = time.time()
     iso = admin._iso
-    hourly = [{"time": iso(now - 3600), "amount": 0.5, "timeBilledMs": 3_600_000,
+    # The wire format: space-separated, NOT the ISO "T" the docs imply.
+    wire = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now - 3600))
+    hourly = [{"time": wire, "amount": 0.5, "timeBilledMs": 3_600_000,
                "gpuTypeId": "NVIDIA GeForce RTX 5090"}]
     daily = [{"time": iso(now - 2 * 24 * 3600), "amount": 2.0, "timeBilledMs": 7_200_000,
               "gpuTypeId": "NVIDIA GeForce RTX 5090"},

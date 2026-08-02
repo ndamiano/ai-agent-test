@@ -13,10 +13,13 @@ not a measurement.
 
 DEFAULT_SECONDS = 60.0
 
+# Tuned 2026-08-02 against jobs.exec_seconds (n=1801/228/11): p50 3.0/2.3/32.5, p90 12.4/9.0/51.8.
+# Each sits near p90 — reservations cover a typical-heavy job without 10x over-holding a game's
+# grant during an art burst (image was 45 against a 2.3s median).
 QUEUE_SECONDS = {
-    "llm": 30.0,
-    "image": 45.0,
-    "mesh": 240.0,
+    "llm": 15.0,
+    "image": 8.0,
+    "mesh": 90.0,
 }
 
 

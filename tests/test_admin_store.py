@@ -51,12 +51,12 @@ def test_gpu_seconds_window_bounds_on_finished_at():
 def test_backlog_seconds_sums_unfinished_estimates():
     store.create_game("g1", "u1")
     store.charge_game("g1", 1, 10_000)
-    # llm est is 30s/job; two pending → 60.
+    from db.estimates import QUEUE_SECONDS
     store.enqueue_job("llm", {}, game_id="g1")
     store.enqueue_job("llm", {}, game_id="g1")
-    assert store.backlog_seconds("llm") == 60.0
+    assert store.backlog_seconds("llm") == 2 * QUEUE_SECONDS["llm"]
 
     store.worker_seen("w1", "llm")
     claimed = store.claim_job("llm", "w1", 60)
     store.complete_job(claimed["id"], "w1", {"ok": True}, None, exec_seconds=12.0)
-    assert store.backlog_seconds("llm") == 30.0
+    assert store.backlog_seconds("llm") == QUEUE_SECONDS["llm"]

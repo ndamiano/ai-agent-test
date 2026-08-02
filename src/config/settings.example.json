@@ -60,7 +60,7 @@
           "NVIDIA RTX PRO 4500 Blackwell"
         ],
         "max_workers": 3,
-        "scale_up_depth_per_worker": 10,
+        "scale_up_depth_per_worker": 50,
         "scale_up_max_age_seconds": 300,
         "cooldown_seconds": 90,
         "idle_exit_seconds": 30,

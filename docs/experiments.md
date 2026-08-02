@@ -8,6 +8,44 @@ at a row here has not earned its place.
 
 ---
 
+## The style anchor (2026-08-01, prod, qwen3.6_27b via ninfer, n_ctx 131072)
+
+One line added to build.txt — *"A game's art shares one visual style. Pick the style before the
+first generate_media call and name it in every prompt"* — after two screenshots showed the failure
+it aims at: a flat-shaded procedural village hosting a photoreal TRELLIS mesh and a photoreal
+portrait billboard. The hypothesis: the incoherence is per-asset style drift, not asset-ness, and
+the style named in the image prompt is also what the mesh chain lifts from.
+
+Ran as a three-game battery on prod (the mesh scale normalization and the binary/vendor read
+guards landed the same day and are in every arm).
+
+### What it measured
+**Style naming: 15/15.** Snail race asked for 11 assets, every prompt carrying "cartoon (game
+sprite) style"; Island Village asked for 4, every prompt carrying "warm sunset lighting / earthy
+tones / minimalist". Owner judgment on the snail race: visually consistent in play.
+
+**The 2D/3D split is WIRING, not asking and not style.** Snail race referenced 11 of 11. Island
+Village referenced 0 of 4 — it asked for ground/wall/floor tiles and a sky, then shipped
+flat-shaded materials anyway, past the done-nudge audit naming all four. In 2D, using art is
+`drawImage`; in three.js it is TextureLoader + material plumbing the model never crossed. Ladder
+position: a snippet-tier candidate, unrun.
+
+**The model declined meshes on its own.** Island Village under the style line built its whole
+village and cast procedurally — zero mesh asks, zero portrait billboards — independently arriving
+at the owner's own judgment of the earlier screenshots ("way more coherent with the built 3D
+models"). One game; not yet a law.
+
+**Cursed Curation (the generate_media showcase, "dozens of distinct objects" in the request):
+~15 distinct items, owner-judged best of the three.** The demand-side pull worked where
+prompt-side pushes had rationed at 5.
+
+### The ruling
+The line stays — it moved style coherence at one line of per-turn cost and nothing regressed.
+Coverage in 2D looks solved when the REQUEST wants art; 3D texture wiring is the open half, and
+mesh usage in 3D is parked until a build shows a style-anchored mesh joining a scene it belongs in.
+
+---
+
 ## The depth arms (2026-07-30, qwen3.6_27b, n_ctx 131072)
 
 ### The question

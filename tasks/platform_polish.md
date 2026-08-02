@@ -146,6 +146,15 @@ more code and more ways to be subtly wrong than a second hostname. Don't ship `A
       git history), so the button is honest.
       → done when: a fix round can be reverted from the game page with no terminal.
 
+## P1.7 — Engine visibility in the worker row (2026-08-02)
+- [ ] The llm entrypoint picks ninfer or llama.cpp by card + driver and only the pod's boot log
+      says which. The worker row records gpu_type but not engine, so the admin panel can't show
+      that a pod is serving at fallback speed (62 vs 194 tok/s for the same rent). Needs a field
+      through worker register → workers column → admin queues row, and an entrypoint edit —
+      bundle with the next llm image bump (llm-v8), not its own.
+      → done when: the admin queue card shows the engine beside the card, and a fallback pod is
+      visibly a fallback.
+
 ## P2 — Payments
 - [ ] Concrete `CreditProvider.verify` for the chosen processor.
       → done when: `grep -rn "NotImplementedError" src/auth/credits.py` is empty.

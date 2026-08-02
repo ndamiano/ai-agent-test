@@ -19,13 +19,22 @@ const Stage: React.FC<{
     onPlay: () => void
 }> = ({ runId, cover, version, sessionUrl, onPlay }) => {
     const url = useAssetBlob(runId, cover, version)
+    const frameRef = React.useRef<HTMLIFrameElement>(null)
 
     return (
         <div className="relative aspect-video rounded-md border border-edge bg-sunken overflow-hidden grid place-items-center">
             {sessionUrl ? (
-                <iframe src={sessionUrl} title="the game"
-                    allow="fullscreen; gamepad; autoplay"
-                    className="absolute inset-0 w-full h-full border-0" />
+                <>
+                    <iframe ref={frameRef} src={sessionUrl} title="the game"
+                        allow="fullscreen; gamepad; autoplay"
+                        className="absolute inset-0 w-full h-full border-0" />
+                    <button onClick={() => frameRef.current?.requestFullscreen()}
+                        title="fullscreen"
+                        className="absolute top-2 right-2 px-2 py-1 rounded bg-ink/70 text-bone/80
+                                   hover:text-bone text-sm transition-colors">
+                        ⛶
+                    </button>
+                </>
             ) : (
                 <>
                     {url

@@ -12,6 +12,7 @@ interface Demo { run_id: string; title: string; prompt: string }
 const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
     const [session, setSession] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
+    const frameRef = React.useRef<HTMLIFrameElement>(null)
 
     const play = async () => {
         setBusy(true)
@@ -24,9 +25,19 @@ const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
         <div className="border border-edge rounded-md bg-panel overflow-hidden flex flex-col">
             <div className="relative aspect-video bg-sunken grid place-items-center">
                 {session
-                    ? <iframe src={session} title={demo.title}
-                        allow="fullscreen; gamepad; autoplay"
-                        className="absolute inset-0 w-full h-full border-0" />
+                    ? (
+                        <>
+                            <iframe ref={frameRef} src={session} title={demo.title}
+                                allow="fullscreen; gamepad; autoplay"
+                                className="absolute inset-0 w-full h-full border-0" />
+                            <button onClick={() => frameRef.current?.requestFullscreen()}
+                                title="fullscreen"
+                                className="absolute top-2 right-2 px-2 py-1 rounded bg-ink/70 text-bone/80
+                                           hover:text-bone text-sm transition-colors">
+                                ⛶
+                            </button>
+                        </>
+                    )
                     : (
                         <>
                             <div className="absolute inset-0 opacity-60"><Sigil seed={demo.run_id} /></div>

@@ -32,7 +32,9 @@
     // Capture phase, so failed <img>/<script>/<link> loads (which never bubble) land here too.
     window.addEventListener('error', (e) => {
         if (e.target && e.target !== window && (e.target.src || e.target.href)) {
-            post('resource', 'failed to load ' + (e.target.src || e.target.href))
+            const url = e.target.src || e.target.href
+            // An EMPTY src reflects as the document's own URL — a clearing idiom, not a failure.
+            if (url !== location.href) post('resource', 'failed to load ' + url)
             return
         }
         post('error', e.message || 'uncaught error', {

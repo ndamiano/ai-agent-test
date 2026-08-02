@@ -231,9 +231,12 @@ vary. On an older driver ninfer dies at `cudaGetDeviceCount` (`cudaErrorInsuffic
 the pod boot-loops, billing until the boot-deadline reaper collects it — measured 2026-08-01, two
 pods in a row. So the entrypoint (`llm-v7`) reads `nvidia-smi` name AND driver version: ninfer on
 a 5090 at r580+, llama.cpp (the base image's own CUDA 12.8 build, fine on old drivers) on
-everything else. A 5090 behind an old driver at GGUF speed is the accepted cost — a create-time
-`allowedCudaVersions` filter could steer pods to ninfer-capable hosts, but its accepted values are
-unverified against RunPod's API; revisit if old-driver draws stay common. That is why
+everything else. Old-driver draws proved common (3 of 4 on 2026-08-02), so the scaler now sends a
+create-time CUDA floor: `queues.<name>.allowed_cuda_versions` (prod llm: `["13.0"]` — RunPod's
+"13.0" means an r580+ host, which runs the CUDA 13.1 ninfer via minor-version compatibility). The
+floor rides only the HEAD gpu ask and is dropped when the create widens to fallback cards — those
+serve the GGUF on any driver, and a slow pod beats no pod. The entrypoint driver gate stays as the
+belt to this suspender. That is why
 the volume holds the model twice (`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~34 GiB
 together) and why an llm pod needs `LLM_MODEL` in its env: ninfer refuses any request whose `model`
 is not its `--model-id`, and the autoscaler delivers the control plane's `llm.model` at create.

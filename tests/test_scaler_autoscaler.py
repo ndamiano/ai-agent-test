@@ -108,3 +108,21 @@ def test_no_cooldown_when_no_pod_was_created():
     client.create_pod.side_effect = RunPodError("no capacity")
     _start(a)
     assert "llm" not in a._last_scale_up   # nothing started, so the next tick may try again
+
+
+def test_cuda_floor_rides_the_head_ask_and_drops_on_widen():
+    """The floor exists so the preferred card lands where its engine runs; the fallback cards
+    run on any driver, so requiring it there would just shrink the pool."""
+    a, client = _scaler()
+    qcfg = {**QCFG, "allowed_cuda_versions": ["13.0"]}
+    client.create_pod.side_effect = [RunPodError("no 13.0 5090 host"), {"id": "pod1"}]
+    _start(a, qcfg)
+    head, widened = client.create_pod.call_args_list
+    assert head.kwargs["allowed_cuda_versions"] == ["13.0"]
+    assert widened.kwargs["allowed_cuda_versions"] is None
+
+
+def test_no_cuda_floor_configured_sends_none():
+    a, client = _scaler()
+    _start(a)
+    assert client.create_pod.call_args.kwargs["allowed_cuda_versions"] is None

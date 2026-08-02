@@ -5,7 +5,7 @@ create-time env merges with or replaces the template's env (the one unverified R
 see deploy.md for the one-time manual check).
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -30,7 +30,8 @@ class RunPodClient:
 
     def create_pod(self, name: str, template_id: str, gpu_type_ids: List[str],
                    network_volume_id: str, env: Dict[str, str],
-                   cloud_type: str = "SECURE", gpu_count: int = 1) -> Dict:
+                   cloud_type: str = "SECURE", gpu_count: int = 1,
+                   allowed_cuda_versions: Optional[List[str]] = None) -> Dict:
         body = {
             "name": name,
             "templateId": template_id,
@@ -40,6 +41,8 @@ class RunPodClient:
             "env": env,
             "cloudType": cloud_type,
         }
+        if allowed_cuda_versions:
+            body["allowedCudaVersions"] = list(allowed_cuda_versions)
         return self._checked(
             self.session.post(f"{self.base_url}/pods", json=body, timeout=60)).json()
 

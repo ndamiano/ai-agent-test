@@ -23,6 +23,12 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // The Play button's session URL is relative in same-origin mode — without this rule the
+      // dev server answers /handoff with the SPA shell instead of the grant redirect.
+      '/handoff': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
 })

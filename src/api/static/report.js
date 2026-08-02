@@ -47,13 +47,25 @@
         })
     })
 
+    // Error message/stack and a DOM event's properties are non-enumerable — JSON.stringify
+    // renders both as "{}".
+    const show = (a) => {
+        if (typeof a === 'string') return a
+        if (a instanceof Error) return a.message ? a.name + ': ' + a.message : String(a)
+        if (typeof Event !== 'undefined' && a instanceof Event) {
+            const t = a.target
+            return a.type + ' event' + (t && (t.src || t.href) ? ' on ' + (t.src || t.href) : '')
+        }
+        try {
+            const s = JSON.stringify(a)
+            return s === '{}' ? String(a) : s
+        } catch (_) { return String(a) }
+    }
+
     for (const level of ['error', 'warn']) {
         const original = console[level].bind(console)
         console[level] = (...args) => {
-            post('console-' + level, args.map((a) => {
-                if (typeof a === 'string') return a
-                try { return JSON.stringify(a) } catch (_) { return String(a) }
-            }).join(' ').slice(0, 2000))
+            post('console-' + level, args.map(show).join(' ').slice(0, 2000))
             original(...args)
         }
     }

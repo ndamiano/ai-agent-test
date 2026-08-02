@@ -162,6 +162,27 @@ def test_read_missing_file_is_an_error(tools):
     assert tools["read_file"](path="nope.js")["ok"] is False
 
 
+def test_read_vendor_renderer_names_its_purpose_instead_of_its_4k_lines(tools, tmp_path):
+    # Only the seeded copy at the game root is vendor; the model's own file under a subdir with
+    # a colliding name stays readable.
+    (tmp_path / "game" / "GLTFLoader.js").write_text("// thousands of lines of loader\n")
+    r = tools["read_file"](path="GLTFLoader.js")
+    assert r["ok"] is False
+    assert "vendored renderer" in r["error"] and "import" in r["error"].lower()
+    (tmp_path / "game" / "lib").mkdir()
+    (tmp_path / "game" / "lib" / "GLTFLoader.js").write_text("// mine\n")
+    assert tools["read_file"](path="lib/GLTFLoader.js")["ok"] is True
+
+
+def test_read_binary_names_itself_instead_of_leaking_bytes(tools, tmp_path):
+    (tmp_path / "game" / "assets").mkdir()
+    (tmp_path / "game" / "assets" / "hut.glb").write_bytes(b"glTF\x02\x00\x00\x00" + b"\x00" * 64)
+    r = tools["read_file"](path="assets/hut.glb")
+    assert r["ok"] is False
+    assert "binary" in r["error"] and "hut.glb" in r["error"]
+    assert "�" not in r["error"]
+
+
 def test_list_files_skips_scratch(tools, tmp_path):
     (tmp_path / "game" / "_transcript.jsonl").write_text("x")
     assert [f["path"] for f in tools["list_files"]()["files"]] == ["game.js"]

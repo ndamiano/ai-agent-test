@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 
 from maestro.codegen.assets import DEFAULT_KIND, request_media
-from maestro.codegen.staging import game_dir
+from maestro.codegen.staging import RUNTIME_DIR, game_dir
+
+_VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
 MAX_READ_CHARS = 20_000   # one read's ceiling; past this the read returns a WINDOW and says so.
                           # Higher than build_steps._MAX_TOOL_CHARS is a promise the transcript cuts.
@@ -62,6 +64,17 @@ def build_tools(state) -> dict:
         p = _safe(root, path)
         if not p.exists():
             return {"ok": False, "error": f"no such file: {path}"}
+        if p.name in _VENDOR_FILES and p.parent == root:
+            return {"ok": False,
+                    "error": f"{path} is the vendored renderer — library code shipped with every "
+                             "game, not this game's own. Import it (e.g. `import * as THREE from "
+                             "'./three.module.js'`) and use the standard three.js API; nothing "
+                             "inside it needs reading."}
+        if b"\x00" in p.read_bytes()[:8192]:
+            return {"ok": False,
+                    "error": f"{path} is a binary file ({p.stat().st_size} bytes), not text — "
+                             "there is nothing in it to read. The game loads it at runtime by "
+                             "its path; nothing about its contents is needed to write that code."}
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
         total = len(lines)
         start = max(int(offset or 1), 1) - 1

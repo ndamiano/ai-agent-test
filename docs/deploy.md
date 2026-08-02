@@ -217,11 +217,11 @@ VOL=/workspace bash scripts/provision_volume.sh
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
 docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v6 .
 docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v6 .
-docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v13 .
-docker push ndamiano100/maestro-worker:mesh-v13   # etc.
+docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
+docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
 
-Deployed tags (what the TEMPLATES name, checked live 2026-08-02): `llm-v8`, `image-v6`, `mesh-v12`.
+Deployed tags (what the TEMPLATES name, checked live 2026-08-02): `llm-v8`, `image-v6`, `mesh-v17`.
 Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
 
@@ -256,17 +256,24 @@ Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (
 match `workqueue.token` on the control plane), plus `LLM_MODEL` on an llm pod. No pod exposes a
 port: the inference server binds `127.0.0.1`.
 
-**Mesh cold start (measured on a 5090 pod, 2026-07-23).** A pod reaches WARM — able to serve at
-steady speed — in ~116s of the ~330s it used to take, and a claimed job never pays boot:
+**Mesh cold start (measured on 5090 pods, 2026-08-02, `mesh-v17`).** A pod reaches WARM — able to
+serve at steady speed — in ~25s in-container (~60-70s with pod create + pull), from ~63s/~113s
+before, and a claimed job never pays boot:
 
 | phase | seconds | what removed the old cost |
 |---|---|---|
-| pod create → container running (13.7GB pull) | ~45 | image size — the remaining lever |
-| stage 9.7GB volume → `/dev/shm` | ~5 | @2.7GB/s; the FUSE mount does NOT retain page cache, so prefaulting in place bought nothing and only loading from RAM holds |
-| torch/trellis import | ~10 | |
-| pipeline load | ~4 | skip default init (37s of a 43s load, all overwritten by the checkpoint) + load only the tier's 6 models, not all 8 |
-| warmup mesh | ~35 | lazy encoders (DINOv3/BiRefNet) + first-use kernel compile, paid once at boot |
-| every real job | ~13 | |
+| pod create → container running (13.9GB pull) | ~35-45 | image size — the remaining lever |
+| stage 11.3GB volume → `/dev/shm` (ckpts + encoders) | ~6 | @~2GB/s; the FUSE mount does NOT retain page cache, so only loading from RAM holds. Encoders ride along since 2026-08-02 — they read at pipeline construct off the same mount |
+| torch/trellis import | ~10 | overlaps staging |
+| pipeline load | ~7 | skip default init (37s of a 43s load, all overwritten by the checkpoint) + load only the tier's 6 models, not all 8 |
+| warmup mesh | ~11 | was ~52s: 38s of it was flex_gemm RE-AUTOTUNING every sparse-conv config per boot — its persistent cache defaulted to container disk. `FLEX_GEMM_AUTOTUNE_CACHE_PATH` now points at the volume: the first pod ever pays, every pod after loads (25KB json, keyed by device name). Real jobs stop paying 30-50s on unseen shape keys too — the cache accumulates |
+| every real job | ~8-13 | |
+
+The warmup's per-stage timers print on every boot (`[trellis] stage <name>: Ns`), and
+`TRELLIS_WARMUP_TIMING=1` adds a second timed generate for boot profiling — the delta against the
+first is the one-time cost, attributed. The triton kernel cache stays on the volume UNSTAGED: its
+`.so` files are dlopen'd and tmpfs is noexec (measured: "failed to map segment" kills the warmup),
+and its reads were never the cost.
 
 The entrypoint gates worker registration on `/health` reporting `"warm": true`. That costs no
 wall-clock (nothing can generate earlier) and keeps `exec_seconds` honest — otherwise the first

@@ -92,20 +92,40 @@ def weight_files(weights: str, names) -> list:
 
 
 def stage_weights(weights: str, names, stage_root: str, streams: int = 8):
-    """Copy the checkpoints this tier needs onto tmpfs and load from THERE.
+    """Copy everything the pipeline will read onto tmpfs and load from THERE.
 
     Measured on a pod: bulk-reading the same files streams at 2.7GB/s, yet the load right after
     still took 47.8s — the FUSE mount does not keep the pages, so safetensors' mmap re-reads
     every byte at ~200MB/s. Reading once into RAM and loading from RAM is the only version of
     this that the filesystem cannot undo.
 
+    That covers the checkpoints AND the encoders (DINOv3, BiRefNet), which read through
+    transformers at pipeline construct off the same mount; the staged pipeline configs are
+    rewritten to the staged copies. Two things are deliberately NOT staged: the hub cache
+    (nothing this pipeline serves reads it — CLIP is trainer-only code, and DINOv3 loads from
+    the encoders dir the configs name) and the triton kernel cache (60MB whose .so files must be
+    dlopen'd, which tmpfs's noexec forbids — measured "failed to map segment"; its reads were
+    never the cost).
+
     Returns (path_to_load_from, seconds). Falls back to the volume when the copy will not fit or
-    fails: a slow pod beats a dead one.
+    fails — per part: a slow pod beats a dead one.
     """
     import shutil
     from concurrent.futures import ThreadPoolExecutor
 
+    def tree_files(root):
+        return [os.path.join(r, f) for r, _, fs in os.walk(root) for f in fs]
+
+    def copy_tree(files, src_root, dst_root, pool):
+        def one(src):
+            dst = os.path.join(dst_root, os.path.relpath(src, src_root))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(src, dst)
+        list(pool.map(one, files))
+
     paths = weight_files(weights, names)
+    enc_src = os.path.join(os.path.dirname(weights), "encoders")
+    lazy = [(enc_src, os.path.join(stage_root, "encoders"))] if os.path.isdir(enc_src) else []
     need = sum(os.path.getsize(p) for p in paths)
     t0 = time.time()
     try:
@@ -117,29 +137,53 @@ def stage_weights(weights: str, names, stage_root: str, streams: int = 8):
                   f"need {need * 1.15 / 1e9:.1f} GB — loading off the volume", flush=True)
             return weights, 0.0
 
-        def copy(src):
-            rel = os.path.relpath(src, weights)
-            shutil.copyfile(src, os.path.join(stage_root, rel))
-            # Each checkpoint's sidecar config is what names its class — tiny, and the loader
-            # refuses the file without it.
-            cfg = f"{os.path.splitext(src)[0]}.json"
-            if os.path.exists(cfg):
-                shutil.copyfile(cfg, os.path.join(
-                    stage_root, os.path.relpath(cfg, weights)))
-
         with ThreadPoolExecutor(max_workers=streams) as pool:
+            def copy(src):
+                rel = os.path.relpath(src, weights)
+                shutil.copyfile(src, os.path.join(stage_root, rel))
+                # Each checkpoint's sidecar config is what names its class — tiny, and the loader
+                # refuses the file without it.
+                cfg = f"{os.path.splitext(src)[0]}.json"
+                if os.path.exists(cfg):
+                    shutil.copyfile(cfg, os.path.join(
+                        stage_root, os.path.relpath(cfg, weights)))
+
             list(pool.map(copy, paths))
-        for top in ("pipeline.json", "texturing_pipeline.json"):
-            src = os.path.join(weights, top)
-            if os.path.exists(src):
-                shutil.copyfile(src, os.path.join(stage_root, top))
+            for top in ("pipeline.json", "texturing_pipeline.json"):
+                src = os.path.join(weights, top)
+                if os.path.exists(src):
+                    shutil.copyfile(src, os.path.join(stage_root, top))
     except OSError as e:
         print(f"[trellis] staging failed ({e}) — loading off the volume", flush=True)
         return weights, 0.0
 
+    ckpt_gb = need
+    try:
+        lazy_files = [(files, src, dst) for src, dst in lazy
+                      if (files := tree_files(src))]
+        lazy_need = sum(os.path.getsize(f) for files, _, _ in lazy_files for f in files)
+        if shutil.disk_usage(stage_root).free < lazy_need * 1.15:
+            raise OSError(f"{lazy_need / 1e9:.1f} GB of encoders won't fit")
+        with ThreadPoolExecutor(max_workers=streams) as pool:
+            for files, src, dst in lazy_files:
+                copy_tree(files, src, dst, pool)
+        for top in ("pipeline.json", "texturing_pipeline.json"):
+            p = os.path.join(stage_root, top)
+            if os.path.exists(p):
+                with open(p) as f:
+                    body = f.read()
+                with open(p, "w") as f:
+                    f.write(body.replace(enc_src, os.path.join(stage_root, "encoders")))
+        need += lazy_need
+    except OSError as e:
+        # The ckpt stage above already landed whole — keep it. Configs are unrewritten and
+        # the env untouched, so the lazy half simply loads off the volume as before.
+        print(f"[trellis] encoder staging skipped ({e}) — encoders load off the volume",
+              flush=True)
+
     dt = time.time() - t0
-    print(f"[trellis] staged {need / 1e9:.1f} GB to {stage_root} in {dt:.1f}s "
-          f"({need / dt / 1e6:.0f} MB/s, {streams} streams)", flush=True)
+    print(f"[trellis] staged {need / 1e9:.1f} GB ({ckpt_gb / 1e9:.1f} ckpts) to {stage_root} "
+          f"in {dt:.1f}s ({need / dt / 1e6:.0f} MB/s, {streams} streams)", flush=True)
     return stage_root, dt
 
 
@@ -248,6 +292,35 @@ class TrellisEngine:
             print(f"[trellis] loaded in {t2 - t0:.1f}s "
                   f"(from_pretrained {t1 - t0:.1f}s, cuda {t2 - t1:.1f}s)", flush=True)
 
+    @contextlib.contextmanager
+    def _stage_timers(self):
+        """Print how long each pipeline stage takes while the wrapped block runs — the warmup's
+        wall-clock has hidden a 35s one-time cost between the sampler progress bars, and only a
+        per-stage split can say which stage owns it."""
+        stages = ("preprocess_image", "get_cond", "sample_sparse_structure", "sample_shape_slat",
+                  "sample_tex_slat", "decode_shape_slat", "decode_tex_slat", "decode_latent")
+        saved = {}
+        for name in stages:
+            fn = getattr(self._pipe, name, None)
+            if fn is None:
+                continue
+            saved[name] = fn
+
+            def timed(fn=fn, name=name):
+                def wrapper(*a, **k):
+                    t = time.time()
+                    result = fn(*a, **k)
+                    print(f"[trellis] stage {name}: {time.time() - t:.1f}s", flush=True)
+                    return result
+                return wrapper
+
+            setattr(self._pipe, name, timed())
+        try:
+            yield
+        finally:
+            for name, fn in saved.items():
+                setattr(self._pipe, name, fn)
+
     def warmup(self):
         """Run one throwaway mesh before the worker registers.
 
@@ -267,9 +340,17 @@ class TrellisEngine:
             # keyed on texture resolution would otherwise go unwarmed). Only decimation is dropped
             # — it bounds output size, not which kernels compile.
             self._ensure()
-            self._generate(img, self.ptype, texture=self.texture, decimation=20000)
+            with self._stage_timers():
+                self._generate(img, self.ptype, texture=self.texture, decimation=20000)
             self.warmup_seconds = round(time.time() - t0, 1)
             print(f"[trellis] warmed in {self.warmup_seconds:.1f}s", flush=True)
+            if os.environ.get("TRELLIS_WARMUP_TIMING"):
+                # A second throwaway mesh, timed per stage: its delta against the first IS the
+                # one-time cost, attributed. Boot-profiling only — it burns ~13s of pod time.
+                t1 = time.time()
+                with self._stage_timers():
+                    self._generate(img, self.ptype, texture=self.texture, decimation=20000)
+                print(f"[trellis] second warmup generate: {time.time() - t1:.1f}s", flush=True)
         except Exception as e:
             self.warmup_error = str(e)[:300]
             print(f"[trellis] warmup FAILED after {time.time() - t0:.1f}s: {self.warmup_error}",
@@ -310,8 +391,11 @@ class TrellisEngine:
             with torch.inference_mode():
                 t0 = time.time()
                 mesh = self._pipe.run(img, pipeline_type=ptype)[0]
+                ts = time.time()
                 mesh.simplify(16777216)
                 t1 = time.time()
+                if t1 - ts > 1:
+                    print(f"[trellis] simplify {t1 - ts:.1f}s", flush=True)
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
                     coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,

@@ -95,6 +95,13 @@ ENV PYTHONPATH=/opt/maestro/src \
     TRANSFORMERS_OFFLINE=1 \
     TRITON_CACHE_DIR=/workspace/triton-cache
 
+# flex_gemm persists its autotune picks (ON by default) — but to ~/.flex_gemm, which is container
+# disk that dies with the pod, so every boot re-benchmarked every sparse-conv config: measured
+# 32.8s of a 41.3s warmup, and 30-50s again on early real jobs whose shapes miss the in-memory
+# cache. On the volume the first pod pays once and the cache accumulates across pods (keyed by
+# device name, so the 5090/fallback-card split handles itself).
+ENV FLEX_GEMM_AUTOTUNE_CACHE_PATH=/workspace/flex-gemm-autotune.json
+
 # Build-time smoke: the exact interpreter the server runs under can import the CUDA stack.
 RUN python -c "import torch, triton"
 

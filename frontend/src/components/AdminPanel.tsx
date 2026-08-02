@@ -1,11 +1,84 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../api/client'
-import type { AdminQueues, QueueRow } from '../types'
+import type { AdminCosts, AdminQueues, QueueRow } from '../types'
 
 const POLL_MS = 5000
 
 export const fmtSecs = (s: number): string =>
     s >= 3600 ? `${(s / 3600).toFixed(1)}h` : `${Math.round(s)}s`
+
+const fmtUsd = (n: number): string => `$${n.toFixed(2)}`
+
+// Cost is fetched once and on demand, never on the poll — the backend caches, but RunPod's
+// ledger is not a thing to lean on every five seconds.
+const CostPanel: React.FC = () => {
+    const [costs, setCosts] = useState<AdminCosts | null>(null)
+    const [busy, setBusy] = useState(false)
+
+    const load = useCallback(async () => {
+        setBusy(true)
+        try { setCosts(await api.getAdminCosts()) }
+        catch { /* leave the last snapshot up */ }
+        finally { setBusy(false) }
+    }, [])
+
+    useEffect(() => { load() }, [load])
+
+    if (!costs) return <div className="text-slate text-xs">Loading costs…</div>
+
+    return (
+        <div className="bg-ink border border-edge rounded-lg p-4 space-y-3">
+            <div className="flex items-baseline justify-between">
+                <div className="text-slate text-xs font-semibold">
+                    Effective cost {costs.runpod_reachable ? '(RunPod ledger)' : '— ledger unreachable, our logs only'}
+                </div>
+                <button onClick={load} disabled={busy}
+                    className="text-xs text-slate hover:text-bone transition-colors disabled:opacity-40">
+                    {busy ? 'refreshing…' : 'refresh'}
+                </button>
+            </div>
+
+            <table className="w-full text-sm font-mono">
+                <thead>
+                    <tr className="text-slate text-xs text-left">
+                        <th className="font-semibold pb-1">window</th>
+                        <th className="font-semibold pb-1">spend</th>
+                        <th className="font-semibold pb-1" title="spend ÷ billed pod wall-clock — cold start and failures included">$/GPU·h</th>
+                        <th className="font-semibold pb-1" title="job exec seconds ÷ billed pod wall-clock">util</th>
+                        <th className="font-semibold pb-1" title="billed wall-clock the jobs didn't use: cold start, idle, boot loops">overhead</th>
+                        <th className="font-semibold pb-1">jobs ✓/✗</th>
+                    </tr>
+                </thead>
+                <tbody className="text-bone">
+                    {costs.windows.map(w => (
+                        <tr key={w.label}>
+                            <td className="py-0.5">{w.label}</td>
+                            <td>{w.runpod ? fmtUsd(w.runpod.amount_usd) : '—'}</td>
+                            <td>{w.derived.usd_per_gpu_hour != null ? fmtUsd(w.derived.usd_per_gpu_hour) : '—'}</td>
+                            <td>{w.derived.utilization != null ? `${Math.round(w.derived.utilization * 100)}%` : '—'}</td>
+                            <td>{w.derived.overhead_seconds != null ? fmtSecs(w.derived.overhead_seconds) : '—'}</td>
+                            <td>{w.jobs.done}/{w.jobs.failed}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+
+            {costs.windows.at(-1)?.runpod && (
+                <div className="text-xs text-slate">
+                    30d by card: {costs.windows.at(-1)!.runpod!.by_gpu.map(g =>
+                        `${g.gpu.replace('NVIDIA ', '').replace('GeForce ', '')} ${fmtUsd(g.amount_usd)} (${fmtSecs(g.billed_seconds)})`,
+                    ).join(' · ')}
+                </div>
+            )}
+            {costs.ghost_30d && costs.ghost_30d.pods > 0 && (
+                <div className="text-xs text-wait">
+                    ghost spend 30d: {fmtUsd(costs.ghost_30d.amount_usd)} across {costs.ghost_30d.pods} pod{costs.ghost_30d.pods === 1 ? '' : 's'} that
+                    billed {fmtSecs(costs.ghost_30d.billed_seconds)} and never worked a job
+                </div>
+            )}
+        </div>
+    )
+}
 
 const fmtAge = (s: number | null): string =>
     s == null ? '—' : s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`
@@ -78,6 +151,8 @@ const AdminPanel: React.FC = () => {
                 <div className="grid gap-3">
                     {data.queues.map(q => <QueueCard key={q.queue} row={q} />)}
                 </div>
+
+                <CostPanel />
 
                 <div className="bg-ink border border-edge rounded-lg p-4">
                     <div className="text-slate text-xs font-semibold mb-3">Fleet totals</div>

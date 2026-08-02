@@ -138,6 +138,14 @@ more code and more ways to be subtly wrong than a second hostname. Don't ship `A
       token single-use (that one is fine ephemeral; 60s).
       → done when: a play session survives `docker compose restart` without a re-click.
 
+## P1.6 — Fix-round history in the UI (2026-08-02)
+- [ ] Snapshots + restore exist (`snapshots.py`, CLI `--history`/`--restore`) and saved a demo
+      game tonight — but only via ssh. Before strangers use fixes at all, the game page needs
+      "try a fix, keep it or toss it": list the snapshots, one-click restore (re-stage included),
+      current version marked. Restore is already non-destructive (the discarded round stays in
+      git history), so the button is honest.
+      → done when: a fix round can be reverted from the game page with no terminal.
+
 ## P2 — Payments
 - [ ] Concrete `CreditProvider.verify` for the chosen processor.
       → done when: `grep -rn "NotImplementedError" src/auth/credits.py` is empty.

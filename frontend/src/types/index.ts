@@ -134,6 +134,25 @@ export interface QueueRow {
     billed_24h: number
 }
 
+// Effective cost (GET /api/admin/costs): RunPod's own billing joined against our job/worker
+// logs. `runpod` is null when the ledger is unreachable; derived is {} then too.
+export interface CostWindow {
+    label: string
+    runpod: { amount_usd: number; billed_seconds: number
+              by_gpu: { gpu: string; amount_usd: number; billed_seconds: number }[] } | null
+    jobs: { done: number; failed: number; exec_seconds: number; failed_exec_seconds: number }
+    workers: { count: number; wall_seconds: number }
+    derived: { usd_per_gpu_hour?: number; utilization?: number; overhead_seconds?: number }
+}
+
+export interface AdminCosts {
+    generated_at: number
+    cache_seconds: number
+    runpod_reachable: boolean
+    windows: CostWindow[]
+    ghost_30d: { pods: number; amount_usd: number; billed_seconds: number } | null
+}
+
 export interface AdminQueues {
     queues: QueueRow[]
     totals: {

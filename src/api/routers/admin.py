@@ -3,6 +3,7 @@ user gets a 403. Read-only today: the inference-queue snapshot (depth, fleet, GP
 the operator watches to size the fleet and see what the cards are costing.
 """
 
+import calendar
 import time
 from typing import Any, Dict, List
 
@@ -79,3 +80,129 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
         totals["billed_24h"] += day["billed"]
 
     return {"queues": queues, "totals": totals}
+
+
+# ── Costs: RunPod's ledger joined against our job/worker logs ────────────────────────────────
+#
+# Our jobs record EXEC time; RunPod bills pod WALL-CLOCK — cold starts, idle linger, warmup and
+# boot-loop pods that never worked at all. The join is the point: the gap between the two IS the
+# overhead, and a pod RunPod billed that no worker row ever claimed is GHOST spend (measured
+# 2026-08-01: two ninfer boot-loops billed ~15 min each, invisible to every jobs-derived number).
+
+_WINDOWS = [("24h", 24), ("7d", 7 * 24), ("30d", 30 * 24)]
+_COST_CACHE_TTL = 300.0
+_cost_cache: Dict[str, Any] = {"at": 0.0, "data": None}
+
+
+def _iso(ts: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def _billing_rows(now: float):
+    """Three fetches: hourly for the 24h window (day buckets truncate it), daily for 7d/30d,
+    and per-pod for ghost accounting. None ⇒ no key or the API refused — the panel still shows
+    our half."""
+    from config.settings_manager import settings_manager
+    from scaler.runpod_client import RunPodClient
+    key = (settings_manager.get_settings().get("runpod") or {}).get("api_key")
+    if not key:
+        return None
+    client = RunPodClient(key)
+    try:
+        return {
+            "hourly_24h": client.billing_pods(_iso(now - 24 * 3600), _iso(now), bucket="hour"),
+            "daily_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now), bucket="day"),
+            "pods_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now),
+                                            bucket="week", grouping="podId"),
+        }
+    except Exception:
+        return None
+
+
+def _parse_time(value: str) -> float:
+    try:
+        return calendar.timegm(time.strptime(value[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _sum_rows(rows: List[Dict], since: float) -> Dict[str, Any]:
+    total, seconds, by_gpu = 0.0, 0.0, {}
+    for r in rows:
+        if _parse_time(r.get("time", "")) < since:
+            continue
+        amount = float(r.get("amount") or 0)
+        secs = float(r.get("timeBilledMs") or 0) / 1000.0
+        total += amount
+        seconds += secs
+        gpu = r.get("gpuTypeId") or "unknown"
+        slot = by_gpu.setdefault(gpu, {"gpu": gpu, "amount_usd": 0.0, "billed_seconds": 0.0})
+        slot["amount_usd"] += amount
+        slot["billed_seconds"] += secs
+    return {"amount_usd": round(total, 4), "billed_seconds": seconds,
+            "by_gpu": sorted(by_gpu.values(), key=lambda g: -g["amount_usd"])}
+
+
+def _worker_wall(rows: List[Dict], since: float, now: float) -> float:
+    wall = 0.0
+    for w in rows:
+        start = max(float(w["started_at"] or since), since)
+        end = float(w["terminated_at"] or w["last_seen_at"] or now)
+        wall += max(0.0, min(end, now) - start)
+    return wall
+
+
+def _window(label: str, hours: int, billing_rows, jobs, workers_wall, worker_count) -> Dict:
+    exec_seconds = jobs["done"]["exec_seconds"] + jobs["failed"]["exec_seconds"]
+    out: Dict[str, Any] = {
+        "label": label,
+        "runpod": billing_rows,
+        "jobs": {"done": jobs["done"]["n"], "failed": jobs["failed"]["n"],
+                 "exec_seconds": exec_seconds,
+                 "failed_exec_seconds": jobs["failed"]["exec_seconds"]},
+        "workers": {"count": worker_count, "wall_seconds": workers_wall},
+    }
+    derived: Dict[str, Any] = {}
+    if billing_rows and billing_rows["billed_seconds"] > 0:
+        hours_billed = billing_rows["billed_seconds"] / 3600.0
+        derived["usd_per_gpu_hour"] = round(billing_rows["amount_usd"] / hours_billed, 4)
+        derived["utilization"] = round(exec_seconds / billing_rows["billed_seconds"], 4)
+        derived["overhead_seconds"] = max(0.0, billing_rows["billed_seconds"] - exec_seconds)
+    out["derived"] = derived
+    return out
+
+
+@router.get("/costs")
+async def get_costs(_: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Effective cost, three windows. Cached: RunPod's billing API must not ride the panel's
+    5-second poll."""
+    now = time.time()
+    if _cost_cache["data"] is not None and now - _cost_cache["at"] < _COST_CACHE_TTL:
+        return _cost_cache["data"]
+
+    billing = _billing_rows(now)
+    windows = []
+    for label, hours in _WINDOWS:
+        since = now - hours * 3600
+        rows = None
+        if billing is not None:
+            source = billing["hourly_24h"] if hours <= 24 else billing["daily_30d"]
+            rows = _sum_rows(source, since)
+        jobs = db_store.jobs_finished_totals(since=since)
+        workers = [w for w in db_store.workers_since(since) if w.get("source") == "runpod"]
+        windows.append(_window(label, hours, rows, jobs,
+                               _worker_wall(workers, since, now), len(workers)))
+
+    ghost = None
+    if billing is not None:
+        known = {w.get("pod_id") for w in db_store.workers_since(0.0)}
+        ghost_rows = [r for r in billing["pods_30d"] if r.get("podId") not in known]
+        ghost = {"pods": len({r.get("podId") for r in ghost_rows}),
+                 "amount_usd": round(sum(float(r.get("amount") or 0) for r in ghost_rows), 4),
+                 "billed_seconds": sum(float(r.get("timeBilledMs") or 0) / 1000.0
+                                       for r in ghost_rows)}
+
+    data = {"generated_at": now, "cache_seconds": _COST_CACHE_TTL,
+            "runpod_reachable": billing is not None, "windows": windows, "ghost_30d": ghost}
+    _cost_cache.update(at=now, data=data)
+    return data

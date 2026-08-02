@@ -46,3 +46,66 @@ def test_totals_sum_the_queue_rows(app_client):
                           headers={"Authorization": f"Bearer {token}"}).json()
     assert body["totals"]["paid_all"] == 100.0
     assert body["totals"]["billed_all"] == 100.0
+
+
+def _billing(rows_hourly, rows_daily, rows_pods):
+    return {"hourly_24h": rows_hourly, "daily_30d": rows_daily, "pods_30d": rows_pods}
+
+
+def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
+    import time
+
+    from api.routers import admin
+
+    now = time.time()
+    iso = admin._iso
+    hourly = [{"time": iso(now - 3600), "amount": 0.5, "timeBilledMs": 3_600_000,
+               "gpuTypeId": "NVIDIA GeForce RTX 5090"}]
+    daily = [{"time": iso(now - 2 * 24 * 3600), "amount": 2.0, "timeBilledMs": 7_200_000,
+              "gpuTypeId": "NVIDIA GeForce RTX 5090"},
+             {"time": iso(now - 20 * 24 * 3600), "amount": 4.0, "timeBilledMs": 14_400_000,
+              "gpuTypeId": "NVIDIA RTX PRO 4500 Blackwell"}]
+    pods = [{"podId": "known", "amount": 5.0, "timeBilledMs": 20_000_000},
+            {"podId": "boot-looper", "amount": 1.5, "timeBilledMs": 1_800_000}]
+    monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily, pods))
+    admin._cost_cache.update(at=0.0, data=None)
+
+    db_store.worker_seen("w1", "llm", gpu_type="5090", source="runpod", pod_id="known")
+    job_id = db_store.enqueue_job("llm", {"p": 1})
+    db_store.claim_job("llm", "w1", lease_seconds=120)
+    db_store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=600)
+
+    token = _token("root", "admin")
+    body = app_client.get("/api/admin/costs",
+                          headers={"Authorization": f"Bearer {token}"}).json()
+
+    assert body["runpod_reachable"] is True
+    day = next(w for w in body["windows"] if w["label"] == "24h")
+    assert day["runpod"]["amount_usd"] == 0.5
+    assert day["jobs"]["done"] == 1 and day["jobs"]["exec_seconds"] == 600
+    # $0.50 for 1 billed GPU-hour; 600 exec seconds of it used.
+    assert day["derived"]["usd_per_gpu_hour"] == 0.5
+    assert day["derived"]["utilization"] == round(600 / 3600, 4)
+    assert day["derived"]["overhead_seconds"] == 3000
+
+    month = next(w for w in body["windows"] if w["label"] == "30d")
+    assert month["runpod"]["amount_usd"] == 6.0
+    assert {g["gpu"] for g in month["runpod"]["by_gpu"]} == {
+        "NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 4500 Blackwell"}
+
+    # The boot-looper pod billed money but never registered a worker: ghost spend.
+    assert body["ghost_30d"] == {"pods": 1, "amount_usd": 1.5, "billed_seconds": 1800.0}
+
+
+def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, monkeypatch):
+    from api.routers import admin
+
+    monkeypatch.setattr(admin, "_billing_rows", lambda _now: None)
+    admin._cost_cache.update(at=0.0, data=None)
+    token = _token("root2", "admin")
+    body = app_client.get("/api/admin/costs",
+                          headers={"Authorization": f"Bearer {token}"}).json()
+    assert body["runpod_reachable"] is False
+    assert body["ghost_30d"] is None
+    assert all(w["runpod"] is None and w["derived"] == {} for w in body["windows"])
+    assert all("jobs" in w for w in body["windows"])

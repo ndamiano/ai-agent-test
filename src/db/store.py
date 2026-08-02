@@ -777,6 +777,30 @@ def gpu_seconds(queue: str, since: Optional[float] = None) -> Dict:
     return {"paid": row["paid"], "billed": row["billed"]}
 
 
+def jobs_finished_totals(since: Optional[float] = None) -> Dict:
+    """Finished-job counts and exec time by outcome, all queues — the cost panel's our-side half."""
+    clause = "AND finished_at >= ?" if since is not None else ""
+    args = [since] if since is not None else []
+    out = {"done": {"n": 0, "exec_seconds": 0.0}, "failed": {"n": 0, "exec_seconds": 0.0}}
+    with _db() as conn:
+        for row in conn.execute(
+                "SELECT status, COUNT(*) AS n, COALESCE(SUM(exec_seconds), 0) AS s "
+                f"FROM jobs WHERE finished_at IS NOT NULL {clause} GROUP BY status", args):
+            if row["status"] in out:
+                out[row["status"]] = {"n": row["n"], "exec_seconds": row["s"]}
+    return out
+
+
+def workers_since(since: float) -> List[Dict]:
+    """Worker rows alive at any point after `since` — for wall-clock and ghost accounting."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, queue, gpu_type, source, pod_id, started_at, last_seen_at, terminated_at "
+            "FROM workers WHERE COALESCE(terminated_at, last_seen_at) >= ? OR terminated_at IS NULL",
+            (since,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def record_event(game_id: str, kind: str, payload: Dict, build_id: Optional[str] = None) -> None:
     with _db() as conn:
         conn.execute(

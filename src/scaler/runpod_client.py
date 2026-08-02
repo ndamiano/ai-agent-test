@@ -47,6 +47,17 @@ class RunPodClient:
         return self._checked(
             self.session.get(f"{self.base_url}/pods", timeout=30)).json()
 
+    def billing_pods(self, start_iso: str, end_iso: str, bucket: str = "day",
+                     grouping: str = "gpuTypeId") -> List[Dict]:
+        """Billing rows for the window — RunPod's ledger, the ground truth on what pods COST
+        (wall-clock: cold starts, idle linger and boot-loop failures included, none of which our
+        job rows can see)."""
+        return self._checked(self.session.get(
+            f"{self.base_url}/billing/pods",
+            params={"startTime": start_iso, "endTime": end_iso,
+                    "bucketSize": bucket, "grouping": grouping},
+            timeout=30)).json()
+
     def terminate_pod(self, pod_id: str) -> None:
         r = self.session.delete(f"{self.base_url}/pods/{pod_id}", timeout=30)
         if r.status_code == 404:

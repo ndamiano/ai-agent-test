@@ -18,6 +18,9 @@ from typing import Dict, Optional, Tuple
 
 HANDOFF_TTL_SECONDS = 60
 GRANT_TTL_SECONDS = 4 * 3600
+# Both tables are unbounded only by issuance rate, and the demo surface issues without auth — the
+# cap is a memory floor, far above organic use; per-IP throttling belongs to the proxy.
+MAX_LIVE = 10_000
 
 _lock = threading.Lock()
 _handoffs: Dict[str, Tuple[str, str, float]] = {}  # token -> (user_id, run_id, expires_at)
@@ -29,13 +32,15 @@ def _prune(table: Dict[str, Tuple[str, str, float]], now: float) -> None:
         table.pop(k, None)
 
 
-def issue_handoff(user_id: str, run_id: str) -> str:
+def issue_handoff(user_id: str, run_id: str) -> Optional[str]:
     """A short-lived, single-use token the SPA passes to the game origin. It rides in a URL and
-    lands in access logs, which the TTL and single use make acceptable."""
+    lands in access logs, which the TTL and single use make acceptable. None ⇒ at the cap."""
     token = secrets.token_urlsafe(32)
     now = time.time()
     with _lock:
         _prune(_handoffs, now)
+        if len(_handoffs) >= MAX_LIVE:
+            return None
         _handoffs[token] = (user_id, run_id, now + HANDOFF_TTL_SECONDS)
     return token
 
@@ -52,11 +57,13 @@ def redeem_handoff(token: Optional[str]) -> Optional[Tuple[str, str]]:
     return entry[0], entry[1]
 
 
-def issue_grant(user_id: str, run_id: str) -> str:
+def issue_grant(user_id: str, run_id: str) -> Optional[str]:
     token = secrets.token_urlsafe(32)
     now = time.time()
     with _lock:
         _prune(_grants, now)
+        if len(_grants) >= MAX_LIVE:
+            return None
         _grants[token] = (user_id, run_id, now + GRANT_TTL_SECONDS)
     return token
 

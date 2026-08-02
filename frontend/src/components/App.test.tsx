@@ -35,10 +35,21 @@ describe('auth gate', () => {
         vi.unstubAllGlobals()
     })
 
-    it('shows the login screen when there is no token', () => {
+    it('shows the landing page, not a login form, when there is no token', () => {
         setAuthToken(null)
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] }))
+        window.history.pushState(null, '', '/')
+        renderApp()
+        expect(screen.getByText(/describe a game/i)).toBeTruthy()
+        expect(screen.queryByRole('button', { name: /^sign in$/i })).toBeNull()
+    })
+
+    it('serves the sign-in form at /login', () => {
+        setAuthToken(null)
+        window.history.pushState(null, '', '/login')
         renderApp()
         expect(screen.getByRole('button', { name: /sign in/i })).toBeTruthy()
+        window.history.pushState(null, '', '/')
     })
 
     it('shows the app (not the login screen) when a token is present, and renders the balance', async () => {

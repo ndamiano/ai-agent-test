@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { Link } from '../router'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Field'
 
@@ -44,6 +45,10 @@ const LoginScreen: React.FC = () => {
                 <Button type="submit" variant="primary" size="md" disabled={busy || !handle || !password}>
                     {busy ? 'Signing in…' : 'Sign in'}
                 </Button>
+
+                <Link to="/" className="text-xs text-dim text-center hover:text-slate transition-colors">
+                    ← Back to the demos
+                </Link>
 
                 <p className="text-xs text-dim text-center leading-relaxed">
                     By signing in you confirm you are 18+ and accept the{' '}

@@ -65,6 +65,9 @@ class SettingsManager:
                 "origin": os.getenv("MAESTRO_PLAY_ORIGIN", ""),
                 "app_origin": os.getenv("MAESTRO_APP_ORIGIN", ""),
             },
+            # Run ids playable by ANYONE from the landing page — the owner's curation, not a flag
+            # any build can set. Empty list ⇒ no public demo surface at all.
+            "demo_games": [],
             # EXCEPT "queues", which it replaces wholesale: the file must carry complete queue blocks.
             "runpod": {
                 "enabled": os.getenv("RUNPOD_ENABLED", "false").lower() == "true",

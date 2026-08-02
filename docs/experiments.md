@@ -8,6 +8,107 @@ at a row here has not earned its place.
 
 ---
 
+## The audio candidates (2026-08-01, local 5090, 58 generations)
+
+### The question
+Games ship silent — "silent games (all four arcade + the deck-builder)" has sat on the open ledger
+since the 2026-07-27 grid. Before spending a prompt line or a queue on it, which open-weight audio
+models can we actually run, under a license we can use without thinking about it, fast enough that
+art does not starve gameplay for GPU?
+
+Two candidates were installed locally and run against a game-shaped battery. Licenses were read off
+the HuggingFace repo `card_data`, not off blog posts — the trap here is models whose CODE is
+permissive and whose WEIGHTS are not.
+
+| candidate | license | what it is |
+|---|---|---|
+| ACE-Step 1.5 | **MIT** (code + weights) | text-to-music, native ComfyUI support since 1.5 |
+| MOSS-SoundEffect v2.0 | **Apache 2.0** (code + weights) | text-to-SFX, DiT + flow matching, 48 kHz |
+
+Ruled out on license, all of them weights-side: Stable Audio 3.0 / Small-SFX (Stability Community
+License), MusicGen / AudioGen / AudioCraft (weights CC-BY-NC 4.0 against MIT code), AudioLDM 2 and
+Tango 2 (NC). Permissive but wrong shape: HeartMuLa-oss-3B (Apache 2.0 both halves, but RTF ≈ 1.0 —
+~90× slower than ACE-Step turbo — and lyrics-oriented), YuE (Apache 2.0, slow).
+
+### Method
+The two halves ran differently, and **that difference is itself the finding**. ACE-Step went through
+ComfyUI's own native nodes over `POST /prompt` → poll `/history` → `/view`, the identical path the
+production image worker already uses, with sampler settings lifted from ComfyUI's shipped templates
+rather than guessed. MOSS has no native node: it ran in-process from its own pipeline in an isolated
+venv, which is the TRELLIS shape — a server of its own.
+
+ACE-Step: 5 game-music briefs (chiptune boss, pastoral village, menu loop, space combat, playful
+puzzle) × 6 configs, plus a duration sweep — 34 runs. MOSS: 8 game sounds × 25/50/100 steps — 24
+runs. Every cell succeeded. All 58 outputs verified byte-distinct.
+
+### What it measured
+
+**ACE-Step 1.5, 60 s of music, warm:**
+
+| config | wall | peak VRAM |
+|---|---|---|
+| turbo-1.7b, **planner off** | **1.8 s** | 12.7 GB |
+| turbo-1.7b | 4.3 s | 20.4 GB |
+| turbo-4b | 5.4 s | 20.4 GB |
+| xl_turbo-4b | 5.6 s | 29.3 GB |
+| base-4b (50 steps) | 8.6 s | 20.4 GB |
+| xl_sft-4b (50 steps) | 11.5 s | 25.4 GB |
+
+**Duration is linear, with no coherence cliff:** turbo at 30/60/120 s → 2.3 / 4.5 / 8.9 s;
+xl_turbo → 3.0 / 5.8 / 11.7 s. **Model load is negligible** — cold 4.5 s against warm 4.3 s, so a
+scale-to-zero audio pod pays pod boot and almost nothing else, unlike mesh's ~116 s.
+
+**The `generate_audio_codes` toggle is a 2.5× lever** (4.3 s → 1.8 s, and 20.4 GB → 12.7 GB). It is
+the planner LLM. Whether the quality is worth 2.5× is an ear question, and both arms are in the grid
+for exactly that reason.
+
+**MOSS-SoundEffect v2.0:** 2.1–3.1 s at 25 steps, 4.0 s at 50, 8.0 s at 100 — flat 19.6 GB
+regardless of step count, 48 kHz, pipeline load 7.1 s.
+
+**Three environment findings that will bite whoever integrates this:**
+- **xformers has no kernel for ACE-Step's attention on Blackwell** (`NotImplementedError` on
+  `memory_efficient_attention_forward`, bf16 `(1,375,16,128)`). ComfyUI needs
+  `--use-pytorch-cross-attention`. The image worker's instance would need it too.
+- **The box has no ffmpeg.** MOSS's `save_audio` routes through torchaudio → torchcodec → ffmpeg and
+  failed on all 24 clips while the diffusion itself was fine; writing the waveform with `soundfile`
+  fixed it. ACE-Step is immune — ComfyUI writes MP3 itself, and also offers Opus.
+- **xl_turbo peaks at 29.3 GB of 32.6.** It cannot co-reside with anything. Only the non-XL turbo
+  variants (12.7–20.4 GB) have room to share a card.
+
+### Measurement hygiene, recorded because it cost a re-run
+The first ACE pass was contaminated twice over: **ComfyUI caches node outputs**, so a byte-identical
+graph returns in 0.25 s without generating, and VRAM carried between configs until one cell hit
+32.0 GB of 32.6 and measured thrash (8.4 s) rather than the model (5.5 s). The numbers above come
+from a clean re-run with an unload between configs. A grid driven through ComfyUI must free between
+arms or it measures its own cache.
+
+### Ladder position — unrun, NOT implemented
+The integration shape was designed and is deliberately not built. For music it is a new queue and
+worker but **no new server**, since ComfyUI already serves it: a `t2music.json` workflow, a
+`build_music_payload`, `save_audio` in `asset_chain.OPERATIONS`, one `MEDIA_SCHEMA` enum value, an
+`EXT = {"image":"png","mesh":"glb","music":"ogg"}` table replacing the `"glb" if mesh else "png"`
+ternary at its four sites, and `comfy_image` widened to collect any ComfyUI output type rather than
+only `["images"]`. A separate queue rather than riding `image` because prod is already
+one-queue-per-card and `start_from_manifest` already records that a one-GPU box holds one model at a
+time. **The number that would overturn that is unmeasured**: whether flux1-schnell-fp8 and ACE-Step
+turbo co-reside on 32 GB. The attempt ran inside ninfer's headroom and measured thrash.
+
+MOSS is further down the ladder than music, not beside it. It needs the full TRELLIS-shaped lift —
+its own server, handler kind, queue, worker and pod class, at 19.6 GB resident — while a WebAudio
+oscillator costs zero infrastructure and beats a diffusion model at a 0.2 s arcade blip. The open
+ledger item is not "we cannot generate SFX", it is that games come out silent; if a prompt line does
+not get a five-line beep out of the model, a MOSS pod renders nothing either. MOSS earns its pod for
+foley and ambience, after music ships and not alongside it.
+
+### The ruling
+Both models are good and both are usable. Nothing is being implemented yet — this entry exists so
+that when it is, it starts from numbers rather than from the survey again. Artifacts live outside
+the repo in `/home/nick/audio-grid` (harnesses, `results_clean.json`, `moss_results.json`, and a
+results page with every clip playable); weights in `Documents/models/Audio`, symlinked into
+ComfyUI's own `models/` and deliberately not into the production `models/Image` tree.
+
+---
+
 ## The style anchor (2026-08-01, prod, qwen3.6_27b via ninfer, n_ctx 131072)
 
 One line added to build.txt — *"A game's art shares one visual style. Pick the style before the

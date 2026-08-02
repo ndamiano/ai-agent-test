@@ -34,7 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import (admin, billing, games, prompts, system, websocket, workqueue)
+from api.routers import (admin, billing, demos, games, prompts, system, websocket, workqueue)
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
@@ -93,6 +93,8 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
+# Public by design (auth/deps.py PUBLIC_PREFIXES) — the landing page's demo games.
+app.include_router(demos.router, prefix="/api/demos", tags=["demos"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(prompts.router, prefix="/api/admin/prompts", tags=["admin"])
@@ -186,10 +188,12 @@ async def handoff(t: str = ""):
     if redeemed is None:
         raise HTTPException(status_code=403, detail="expired or invalid play token")
     user_id, run_id = redeemed
+    grant = playgrants.issue_grant(user_id, run_id)
+    if grant is None:
+        raise HTTPException(status_code=429, detail="too many open sessions — try again shortly")
     response = RedirectResponse(f"/play/games/{run_id}/index.html", status_code=302)
     response.headers.append("set-cookie", _GRANT_COOKIE_TMPL.format(
-        token=playgrants.issue_grant(user_id, run_id),
-        max_age=playgrants.GRANT_TTL_SECONDS, run_id=run_id))
+        token=grant, max_age=playgrants.GRANT_TTL_SECONDS, run_id=run_id))
     return response
 
 

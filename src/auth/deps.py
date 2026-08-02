@@ -20,6 +20,9 @@ from auth.store import User, resolve_token
 # single-use play token — see auth/playgrants.py). The API docs exist only in dev (see
 # api/app.py), so they're public only there.
 PUBLIC_PATHS = {"/", "/auth/login", "/api/billing/webhook", "/handoff"}
+# The landing page's demo surface: list + per-game session mint, both read-only and limited
+# server-side to the owner-curated `demo_games` list (routers/demos.py).
+PUBLIC_PREFIXES = ("/api/demos",)
 if os.getenv("MAESTRO_DEV") == "1":
     PUBLIC_PATHS |= {"/docs", "/redoc", "/openapi.json"}
 
@@ -64,7 +67,8 @@ def install_auth(app) -> None:
     @app.middleware("http")
     async def _auth_gate(request: Request, call_next):
         path = request.url.path
-        if request.method == "OPTIONS" or path in PUBLIC_PATHS:
+        if request.method == "OPTIONS" or path in PUBLIC_PATHS \
+                or path.startswith(PUBLIC_PREFIXES):
             return await call_next(request)
         # The static game harness — cookie-gated, ownership-checked (a separate model, see below).
         if path == "/play" or path.startswith("/play/"):

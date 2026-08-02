@@ -97,7 +97,9 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 9
+    # 10: the grid's rules plus the style anchor (docs/experiments.md "The style anchor" —
+    # 15/15 prompts style-named across the 2026-08-01 battery).
+    assert system.count("\n- ") == 10
     assert "three.module.js" in system and "generate_media" in system
     # assets.json is written by the platform, so naming it here would invite the model to write it.
     for absent in ("assets.json", "WASD", "window"):

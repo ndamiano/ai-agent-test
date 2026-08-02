@@ -84,12 +84,17 @@ start_llama_cpp() {
 }
 
 gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
-echo "card: ${gpu:-unknown}"
+driver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
+echo "card: ${gpu:-unknown}  driver: ${driver:-unknown}"
 
 # ninfer serves the same model ~60% faster and is compiled for sm_120a — a 5090 and nothing else,
-# so this is a capability test, not a preference. Any other card serves the GGUF through
-# llama.cpp, which is why both artifacts sit on the volume.
-if [[ "$gpu" == *"5090"* ]] && [ -f "$NINFER_MODEL" ]; then
+# so this is a capability test, not a preference. The driver is PART of the capability: ninfer is
+# a CUDA 13.1 build and needs the host driver at r580+ — RunPod hosts vary, and on an older one
+# ninfer dies at cudaGetDeviceCount (measured 2026-08-01: a 5090 pod boot-looping on
+# cudaErrorInsufficientDriver until the boot-deadline reaper collected it). A 5090 behind an old
+# driver serves the GGUF instead — slower beats a pod that bills and never claims. Any other card
+# serves the GGUF through llama.cpp, which is why both artifacts sit on the volume.
+if [[ "$gpu" == *"5090"* ]] && [ -f "$NINFER_MODEL" ] && [ "${driver%%.*}" -ge 580 ] 2>/dev/null; then
     start_ninfer
 else
     start_llama_cpp

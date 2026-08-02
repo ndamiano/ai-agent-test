@@ -106,7 +106,10 @@ Deployed off the owner's box, manual accounts, granted credits, no payments.
   pinned same-origin CORS, per-handle login throttle, `/docs` dev-only, 7-day session TTL,
   containment CSP on `/play`; safety Phase 1 (fail-closed CSAM-adjacent block on prompt input and
   the image seam); alpha-tier ToS + privacy with 18+ acceptance; all GPU work on worker-pull queues
-  with the autoscaler live.
+  with the autoscaler live; URL routing + settings page + in-page iframe play with console-error
+  capture and a human-gated fix modal (2026-08-01); origin isolation code complete behind
+  `play.origin` — brand domains owned (gamesummoner.com / gamesummonerusercontent.com), prod
+  standup is the open half (`tasks/platform_polish.md` P1).
 - **Open:** the economics measurement (stage 3 above), and enough product-track progress that
   showing it to people is worth their time.
 - **Detail:** `tasks/launch_plan.md` Stage 0.

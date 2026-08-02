@@ -113,9 +113,63 @@ curl -s -o /dev/null -w "%{http_code}\n" $BASE/                 # 200 (SPA)
 curl -s -o /dev/null -w "%{http_code}\n" $BASE/api/games/       # 401 (gated)
 ```
 
-Then in a browser: log in as a test account → request a game → confirm it builds → play it at
-`/play/games/<run_id>/index.html`. The build needs an `llm` worker running or its first turn times
-out.
+Then in a browser: log in as a test account → request a game → confirm it builds → press Play on
+the game page (the iframe rides the /handoff flow). The build needs an `llm` worker running or its
+first turn times out.
+
+## Public domains: gamesummoner.com + gamesummonerusercontent.com
+
+Two REGISTRABLE domains, deliberately: the app lives on `gamesummoner.com`, games (model-authored
+JS) are served from `gamesummonerusercontent.com`. Separate registrable domains — not a subdomain —
+because cookies are domain-scoped, and a subdomain of the app's domain could toss a `Domain=`
+cookie onto the app (session fixation). One process serves both hostnames; the host-split
+middleware (`api/app.py` `_host_split`) makes each host serve ONLY its own surface: the game host
+answers `/play` + `/handoff` + `/healthz` and 404s the rest (a game's `fetch('/api/…')` resolves
+to a host with no API on it — that IS the isolation), and the app host 404s `/play`.
+
+Serving them means direct inbound 443 — Tailscale Funnel serves only `ts.net` names. Box side is
+DONE (2026-08-01): ufw active (OpenSSH + 80 + 443 + 41641/udp; it was inactive before, not the
+41641-only posture this doc used to claim), caddy 2.6 from Ubuntu universe installed and running,
+and the app container now binds `127.0.0.1:8000` (compose) — it was `0.0.0.0`, which serves the
+app to the internet on :8000 because Docker's iptables chain bypasses ufw entirely. Funnel and
+caddy both proxy via loopback, so nothing else changed.
+
+`/etc/caddy/Caddyfile` as deployed — `default_bind` pins caddy to the PUBLIC IP because tailscaled
+(Funnel) already owns 443 on the tailnet IP and a wildcard `:443` bind collides with it:
+
+```
+{
+    default_bind 137.184.59.143
+}
+gamesummoner.com {
+    reverse_proxy 127.0.0.1:8000
+}
+gamesummonerusercontent.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+DNS (the one registrar-side step): A records for both apexes → `137.184.59.143`. Caddy is already
+running and retries ACME on its own, so certs appear without a touch once DNS propagates. Then
+point the app at the split in the bind-mounted `settings.json` (env: `MAESTRO_PLAY_ORIGIN` /
+`MAESTRO_APP_ORIGIN`) and `docker compose restart` (settings load at process start):
+
+```json
+"play": {
+  "origin": "https://gamesummonerusercontent.com",
+  "app_origin": "https://gamesummoner.com"
+}
+```
+
+Leave both empty (the default) and everything rides one origin — dev and the funnel-only alpha
+deploy keep working unchanged. Split smoke test:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://gamesummoner.com/healthz               # 200
+curl -s -o /dev/null -w "%{http_code}\n" https://gamesummoner.com/play/games/x/index.html   # 404 (no games on the app host)
+curl -s -o /dev/null -w "%{http_code}\n" https://gamesummonerusercontent.com/api/games  # 404 (no API on the game host)
+curl -s -o /dev/null -w "%{http_code}\n" https://gamesummonerusercontent.com/handoff    # 403 (alive, refuses a bare visit)
+```
 
 ---
 
@@ -167,12 +221,19 @@ docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v13 .
 docker push ndamiano100/maestro-worker:mesh-v13   # etc.
 ```
 
-Deployed tags: `llm-v6`, `image-v5`, `mesh-v13`. Bump the tag on every push — RunPod caches images
+Deployed tags: `llm-v7`, `image-v5`, `mesh-v13`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
 
 **The llm image carries BOTH engines and picks at boot.** ninfer serves the same 27B ~60% faster
-but is compiled for `sm_120a`, so it runs on a 5090 and nowhere else; the entrypoint reads
-`nvidia-smi --query-gpu=name` and starts ninfer on a 5090, llama.cpp on anything else. That is why
+but is compiled for `sm_120a`, so it runs on a 5090 and nowhere else — and the HOST DRIVER is part
+of the capability: ninfer is a CUDA 13.1 build, which needs the host at r580+, and RunPod hosts
+vary. On an older driver ninfer dies at `cudaGetDeviceCount` (`cudaErrorInsufficientDriver`) and
+the pod boot-loops, billing until the boot-deadline reaper collects it — measured 2026-08-01, two
+pods in a row. So the entrypoint (`llm-v7`) reads `nvidia-smi` name AND driver version: ninfer on
+a 5090 at r580+, llama.cpp (the base image's own CUDA 12.8 build, fine on old drivers) on
+everything else. A 5090 behind an old driver at GGUF speed is the accepted cost — a create-time
+`allowedCudaVersions` filter could steer pods to ninfer-capable hosts, but its accepted values are
+unverified against RunPod's API; revisit if old-driver draws stay common. That is why
 the volume holds the model twice (`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~34 GiB
 together) and why an llm pod needs `LLM_MODEL` in its env: ninfer refuses any request whose `model`
 is not its `--model-id`, and the autoscaler delivers the control plane's `llm.model` at create.
@@ -266,17 +327,17 @@ disappears (self-terminate or reaper within `stale_worker_seconds`).
 Flagged in the pre-open security audit; hardened 2026-07-23. Task breakdown + status:
 `tasks/platform_polish.md` P1.
 
-- **Untrusted generated JS in the browser** — CONTAINED, not isolated. Every `/play` response
-  carries a CSP (`api/app.py` `_PLAY_CSP`) pinning scripted loads + network to this origin, with
-  `object-src`, `base-uri`, `frame-ancestors` and `form-action` all `'none'`: generated code can't
-  pull external scripts, and fetch/XHR/WS can't leave. Exfiltration is NOT fully closed — no CSP
+- **Untrusted generated JS in the browser** — contained everywhere, ISOLATED once `play.origin`
+  is set. Every `/play` response carries a CSP (`api/app.py` `_PLAY_CSP_BASE`) pinning scripted
+  loads + network to its own origin, framed only by the app origin: generated code can't pull
+  external scripts, and fetch/XHR/WS can't leave. Exfiltration is NOT fully closed — no CSP
   directive governs top-level navigation, so a `location =` to an external URL still leaves. The
-  game shares the app origin, and therefore its localStorage, where the session bearer token lives;
-  what makes that safe today is the ownership gate on `/play/games/<id>`, so a game only runs in its
-  OWNER's browser and the token it can read is already its own. The first non-owner view — a share
-  link, a storefront, or an admin bypass — makes it account takeover. TRUE origin isolation is
-  REQUIRED before any game-sharing feature ships — see `tasks/platform_polish.md` P1 for the shape
-  and the verified constraints.
+  play surface holds no readable credential in ANY mode (the grant cookie is HttpOnly and
+  path-scoped to one game — see `auth/playgrants.py`), but with `play.origin` unset the game still
+  shares the app origin's localStorage, where the session bearer token lives; the ownership check
+  at play-session mint is what keeps that token the game's own. Before any game is viewable by a
+  NON-owner, deploy the split domains (above) — on the split, game code runs on a host that serves
+  no API and holds no app storage. Residue: `tasks/platform_polish.md` P1.
 - **Login throttle is the only rate limit.** `src/auth/ratelimit.py` caps online password guessing
   per handle (429 + `Retry-After`). Nothing else is capped: there is no conversational surface,
   builds charge credits before enqueue, every GPU job admits against the game's compute budget, the

@@ -8,7 +8,10 @@ services:
     environment:
       MAESTRO_DATA_DIR: /data
     ports:
-      - "${PORT:-8000}:8000"
+      # Loopback only: everything that reaches the app goes through a local proxy (Caddy on
+      # 80/443, Tailscale Funnel) — a 0.0.0.0 bind bypasses ufw via Docker's own iptables chain
+      # and serves the app to the whole internet on :8000.
+      - "127.0.0.1:${PORT:-8000}:8000"
     restart: unless-stopped
 
     volumes:

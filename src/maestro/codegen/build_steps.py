@@ -64,8 +64,9 @@ _TOO_BIG = ("Write the file in smaller pieces: split the game across several fil
 _DONE_NUDGE = (
     "Not finished yet. Call list_files, then name anything a player meets in the first thirty "
     "seconds that is missing or unfinished — how they learn the controls, what the first screen "
-    "shows, whether every button does something. Build what you find, then call done again. If "
-    "nothing is missing, call done again."
+    "shows, whether every button does something. Every name your code uses must be declared "
+    "somewhere — a variable referenced but never defined crashes the game on load. Build what "
+    "you find, then call done again. If nothing is missing, call done again."
 )
 
 

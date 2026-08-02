@@ -239,7 +239,11 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
     else:
         _record(run_dir, {"id": asset_id, "file": rel, "kind": kind, "prompt": prompt})
     logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
-    return {"ok": True, "path": rel, "status": "rendering"}
+    out = {"ok": True, "path": rel, "status": "rendering"}
+    if mesh:
+        out["note"] = ("the model will span exactly 1 unit at its longest side — scale it in the "
+                       "scene to its real-world size (person ≈ 1.7 units, building ≈ 6+).")
+    return out
 
 
 def start_from_manifest(run_id: str, run_dir, build_id: Optional[str] = None) -> Optional[str]:

@@ -84,7 +84,9 @@ kind)` enqueues one render and answers IMMEDIATELY with the path the file will a
 writes the code that uses it. `kind` is **sprite | tile | scene | mesh**, and it is the one thing
 the tool needs that the prose cannot carry: a sprite is matted and cropped to its subject because
 the game draws it ON its own background, while a tile and a scene ARE that background and keep the
-whole frame. Rendering all four through the one item-icon path is what shipped a game's floor tiles
+whole frame. A mesh lands normalized to 1 unit at its longest side (decimate enforces it) and the
+tool's answer says so — placement code cannot discover scale any other way, and an untold model
+shipped a knee-high lighthouse (2026-08-01). Rendering all four through the one item-icon path is what shipped a game's floor tiles
 matted down to a handful of planks — it said "tile" in every prompt and nothing could hear it. The
 MATTE is the whole of what a kind changes: the sampler is flux schnell at cfg 1.0, where ComfyUI
 skips the uncond pass, so the negative prompt reaches nothing and never did. The asset stage is then free: no planning call, no source

@@ -5,7 +5,7 @@
 // Foliage-like meshes (thousands of disconnected leaf shells) resist topological collapse — for
 // those, fall back to meshopt's SLOPPY simplifier, which ignores topology and hits the budget.
 //   node decimate.mjs <in.glb> <out.glb> [maxTris=20000]
-import { NodeIO } from "@gltf-transform/core";
+import { NodeIO, getBounds } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { weld, simplify, quantize, prune, dedup } from "@gltf-transform/functions";
 import { MeshoptSimplifier } from "meshoptimizer";
@@ -55,6 +55,24 @@ if (countTris() > maxTris * 5) {
   }
 }
 
+// Normalize scale: longest side becomes exactly 1 unit, so a game can scale every mesh to its
+// real-world size from one known fact instead of guessing per file.
+let span = 0;
+for (const scene of doc.getRoot().listScenes()) {
+  const b = getBounds(scene);
+  span = Math.max(span, ...[0, 1, 2].map((i) => b.max[i] - b.min[i]));
+}
+if (span > 0 && Math.abs(span - 1) > 1e-3) {
+  const s = 1 / span;
+  for (const scene of doc.getRoot().listScenes())
+    for (const node of scene.listChildren()) {
+      const sc = node.getScale();
+      node.setScale([sc[0] * s, sc[1] * s, sc[2] * s]);
+      const t = node.getTranslation();
+      node.setTranslation([t[0] * s, t[1] * s, t[2] * s]);
+    }
+}
+
 await doc.transform(quantize(), prune());
 await io.write(outPath, doc);
-console.log(JSON.stringify({ before, after: countTris(), sloppy }));
+console.log(JSON.stringify({ before, after: countTris(), sloppy, span }));

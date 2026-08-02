@@ -48,6 +48,8 @@ def test_the_path_comes_back_before_the_render(run_dir):
 def test_a_mesh_answers_with_a_glb_path_and_chains_trellis(run_dir):
     out = request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
     assert out["path"] == "assets/hut.glb"
+    # The one fact placement code cannot discover: the mesh arrives normalized to 1 unit.
+    assert "1 unit" in out["note"]
     md = _image_jobs()[0]["metadata"]
     assert md["kind"] == "mesh"
     assert md["then"]["enqueue"] == "mesh_from_image"

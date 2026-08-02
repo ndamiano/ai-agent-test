@@ -36,7 +36,7 @@ export const WorkingPanel: React.FC<{
                 <div className="flex items-start gap-3">
                     <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 bg-ember ${paused ? 'opacity-40' : 'animate-pulse'}`} />
                     <p className="text-[15px] leading-relaxed">
-                        {paused ? 'Paused. Nothing is running.' : summary || 'Starting the build…'}
+                        {paused ? 'The ritual is paused. Nothing is running.' : summary || 'Drawing the circle…'}
                     </p>
                 </div>
 
@@ -62,8 +62,8 @@ export const WorkingPanel: React.FC<{
 
                 {budget != null && (
                     <section className="flex flex-col gap-2">
-                        <Meter value={budget} label="Compute left" />
-                        <span className="text-xs text-dim">What this game has left to spend.</span>
+                        <Meter value={budget} label="Mana left" />
+                        <span className="text-xs text-dim">The mana this summoning has left to spend.</span>
                     </section>
                 )}
 

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { useWebSocket } from '../contexts/WebSocketContext'
 import type { Game } from '../types'
+import type { Route } from '../router'
+import { useRouter } from '../router'
 import { CreateGame } from './create/CreateGame'
 import { GameView } from './game/GameView'
 import { Library } from './library/Library'
@@ -11,14 +13,12 @@ const LIST_REFRESH_EVENTS = new Set([
     'build_done', 'assets_started', 'assets_done',
 ])
 
-type View = { kind: 'library' } | { kind: 'create' } | { kind: 'game'; runId: string }
-
-const Studio: React.FC = () => {
+const Studio: React.FC<{ route: Extract<Route, { kind: 'library' | 'create' | 'game' }> }> = ({ route }) => {
+    const { navigate } = useRouter()
     const { messages } = useWebSocket()
     const [games, setGames] = useState<Game[]>([])
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [view, setView] = useState<View>({ kind: 'library' })
     const seenMsgs = useRef(0)
 
     const refresh = useCallback(() => {
@@ -39,23 +39,21 @@ const Studio: React.FC = () => {
         if (fresh.some(m => LIST_REFRESH_EVENTS.has(m.type))) refresh()
     }, [messages, refresh])
 
-    const openLibrary = () => setView({ kind: 'library' })
-
-    if (view.kind === 'create') {
+    if (route.kind === 'create') {
         return (
-            <CreateGame onCancel={openLibrary}
-                onCreated={runId => { setView({ kind: 'game', runId }); refresh() }} />
+            <CreateGame onCancel={() => navigate('/')}
+                onCreated={runId => { navigate(`/game/${runId}`, { replace: true }); refresh() }} />
         )
     }
 
-    if (view.kind === 'game') {
-        return <GameView runId={view.runId} onChanged={refresh} onBack={openLibrary} />
+    if (route.kind === 'game') {
+        return <GameView runId={route.runId} onChanged={refresh} onBack={() => navigate('/')} />
     }
 
     return (
         <Library games={games} loading={loading} error={error}
-            onOpen={runId => setView({ kind: 'game', runId })}
-            onNew={() => setView({ kind: 'create' })} />
+            onOpen={runId => navigate(`/game/${runId}`)}
+            onNew={() => navigate('/new')} />
     )
 }
 

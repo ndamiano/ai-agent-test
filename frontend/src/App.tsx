@@ -2,6 +2,7 @@ import Layout from './components/Layout'
 import LoginScreen from './components/LoginScreen'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useAuth } from './contexts/AuthContext'
+import { RouterProvider } from './router'
 
 function App() {
     const { token } = useAuth()
@@ -9,7 +10,7 @@ function App() {
     return (
         <div className="min-h-screen bg-ink">
             <ErrorBoundary>
-                {token ? <Layout /> : <LoginScreen />}
+                {token ? <RouterProvider><Layout /></RouterProvider> : <LoginScreen />}
             </ErrorBoundary>
         </div>
     )

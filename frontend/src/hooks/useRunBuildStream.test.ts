@@ -43,7 +43,7 @@ describe('foldStream', () => {
         expect(s.progress).toEqual({ step: 4, summary: 'wrote index.html' })
         expect(s.startedAt).toBeCloseTo(100)  // 130 - elapsed 30
         expect(s.feed.map(f => f.text)).toEqual([
-            'build started',
+            '☄ the summoning begins',
             'step 4: wrote index.html',
         ])
     })
@@ -52,12 +52,12 @@ describe('foldStream', () => {
         const s = foldStream(mergeEvents([
             row(1, 'build_done', 100, { ok: false, error: 'compute exhausted: budget refused' }),
         ], []))
-        expect(s.feed.map(f => f.text)).toEqual(['✗ build failed — compute exhausted: budget refused'])
+        expect(s.feed.map(f => f.text)).toEqual(['✗ the summoning fizzled — compute exhausted: budget refused'])
     })
 
     it('falls back to a bare failure line when build_done carries no error', () => {
         const s = foldStream(mergeEvents([row(1, 'build_done', 100, { ok: false })], []))
-        expect(s.feed.map(f => f.text)).toEqual(['✗ build failed'])
+        expect(s.feed.map(f => f.text)).toEqual(['✗ the summoning fizzled'])
     })
 
     it('tracks the skinning flag across asset start/done', () => {

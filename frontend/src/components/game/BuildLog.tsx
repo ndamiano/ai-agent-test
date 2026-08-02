@@ -15,9 +15,13 @@ export const BuildLog: React.FC<{ feed: FeedEntry[]; defaultOpen?: boolean }> = 
     feed, defaultOpen = false,
 }) => {
     const [open, setOpen] = useState(defaultOpen)
-    const endRef = useRef<HTMLDivElement>(null)
+    const boxRef = useRef<HTMLDivElement>(null)
 
-    useEffect(() => { if (open) endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [feed.length, open])
+    // Scroll the log's own container, never scrollIntoView — that walks every scrollable ancestor
+    // and yanks the whole page down a line per event whenever the page itself scrolls.
+    useEffect(() => {
+        if (open && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight
+    }, [feed.length, open])
 
     const rows = feed.length > MAX_ROWS ? feed.slice(-MAX_ROWS) : feed
 
@@ -26,16 +30,16 @@ export const BuildLog: React.FC<{ feed: FeedEntry[]; defaultOpen?: boolean }> = 
             <button onClick={() => setOpen(o => !o)}
                 className="flex items-center gap-2 text-sm text-slate hover:text-bone transition-colors self-start">
                 <span className="text-dim text-xs">{open ? '▾' : '▸'}</span>
-                Build log
+                Summoning log
                 <span className="font-mono text-xs text-dim">{feed.length}</span>
             </button>
             {open && (
-                <div className="bg-well border border-edge rounded px-3 py-2 h-40 overflow-y-auto
-                                font-mono text-xs leading-relaxed">
+                <div ref={boxRef}
+                    className="bg-well border border-edge rounded px-3 py-2 h-40 overflow-y-auto
+                               font-mono text-xs leading-relaxed">
                     {rows.length === 0
-                        ? <div className="text-dim">nothing yet</div>
+                        ? <div className="text-dim">the circle is quiet</div>
                         : rows.map(e => <div key={e.key} className={TONE[e.tone]}>{e.text}</div>)}
-                    <div ref={endRef} />
                 </div>
             )}
         </div>

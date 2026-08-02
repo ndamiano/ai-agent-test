@@ -23,7 +23,7 @@ describe('WorkingPanel', () => {
 
     it('says so before the first step lands', () => {
         panel({ step: null, summary: null })
-        expect(screen.getByText(/starting the build/i)).toBeTruthy()
+        expect(screen.getByText(/drawing the circle/i)).toBeTruthy()
         expect(screen.getByText('—')).toBeTruthy()
     })
 

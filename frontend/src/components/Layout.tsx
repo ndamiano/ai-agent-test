@@ -1,40 +1,52 @@
-import React, { useState } from 'react'
+import React, { useEffect } from 'react'
 import Studio from './Studio'
 import AdminPanel from './AdminPanel'
 import PromptsPanel from './PromptsPanel'
+import SettingsPage from './settings/SettingsPage'
 import { useAuth } from '../contexts/AuthContext'
+import { Link, parseRoute, useRouter } from '../router'
 
-type Tab = 'games' | 'admin' | 'prompts'
-
-const TAB_LABEL: Record<Tab, string> = { games: 'Games', admin: 'Admin', prompts: 'Prompts' }
+const NAV: { to: string; label: string; adminOnly?: boolean }[] = [
+    { to: '/', label: 'Games' },
+    { to: '/admin', label: 'Admin', adminOnly: true },
+    { to: '/prompts', label: 'Prompts', adminOnly: true },
+]
 
 const Layout: React.FC = () => {
-    const [tab, setTab] = useState<Tab>('games')
-    const { user, balance, logout } = useAuth()
+    const { path, navigate } = useRouter()
+    const { user, balance } = useAuth()
+    const route = parseRoute(path)
 
-    // The admin tabs are operator-only. The server enforces it (require_admin → 403); this just
-    // hides the entry point from ordinary users so it never shows.
-    const tabs: Tab[] = user?.role === 'admin' ? ['games', 'admin', 'prompts'] : ['games']
+    // The admin surfaces are operator-only. The server enforces it (require_admin → 403); this
+    // just keeps a non-admin from landing on an empty error page via a typed URL.
+    const isAdmin = user?.role === 'admin'
+    const blocked = (route.kind === 'admin' || route.kind === 'prompts') && user != null && !isAdmin
+    useEffect(() => { if (blocked) navigate('/', { replace: true }) }, [blocked, navigate])
+
+    const nav = NAV.filter(n => isAdmin || !n.adminOnly)
+    const navActive = (to: string) =>
+        to === '/' ? ['library', 'create', 'game'].includes(route.kind) : path === to
 
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-ink">
             <header className="flex-shrink-0 border-b border-edge bg-sunken px-4 py-2.5
                                flex items-center justify-between gap-4">
                 <div className="flex items-center gap-5">
-                    <div className="font-display text-lg tracking-wide flex items-center gap-2.5">
+                    <Link to="/" className="font-display text-lg tracking-wide flex items-center gap-2.5
+                                            hover:text-ember transition-colors">
                         <span className="w-[18px] h-[18px] rotate-45 border-[1.5px] border-ember relative
                                          after:absolute after:inset-[3px] after:bg-ember after:opacity-50" />
                         Maestro
-                    </div>
-                    {tabs.length > 1 && (
+                    </Link>
+                    {nav.length > 1 && (
                         <nav className="flex gap-1">
-                            {tabs.map(t => (
-                                <button key={t} onClick={() => setTab(t)}
+                            {nav.map(n => (
+                                <Link key={n.to} to={n.to}
                                     className={`px-3 py-1 rounded text-sm transition-colors ${
-                                        tab === t ? 'bg-bone/10 text-bone' : 'text-slate hover:text-bone'
+                                        navActive(n.to) ? 'bg-bone/10 text-bone' : 'text-slate hover:text-bone'
                                     }`}>
-                                    {TAB_LABEL[t]}
-                                </button>
+                                    {n.label}
+                                </Link>
                             ))}
                         </nav>
                     )}
@@ -45,20 +57,24 @@ const Layout: React.FC = () => {
                         <span className="w-2 h-2 rounded-full bg-mana" />
                         {balance ?? '—'} <span className="text-slate">credits</span>
                     </span>
-                    {user && <span className="text-bone">{user.handle}</span>}
                     {user && (
-                        <button onClick={logout}
-                            className="text-slate hover:text-bone transition-colors text-sm">
-                            Sign out
-                        </button>
+                        <Link to="/settings" title="settings"
+                            className={`transition-colors ${
+                                route.kind === 'settings' ? 'text-bone' : 'text-slate hover:text-bone'
+                            }`}>
+                            {user.handle}
+                        </Link>
                     )}
                 </div>
             </header>
 
             <main className="flex-1 overflow-hidden">
-                {tab === 'games' && <Studio />}
-                {tab === 'admin' && <AdminPanel />}
-                {tab === 'prompts' && <PromptsPanel />}
+                {route.kind === 'settings' && <SettingsPage />}
+                {route.kind === 'admin' && isAdmin && <AdminPanel />}
+                {route.kind === 'prompts' && isAdmin && <PromptsPanel />}
+                {(route.kind === 'library' || route.kind === 'create' || route.kind === 'game') && (
+                    <Studio route={route} />
+                )}
             </main>
         </div>
     )

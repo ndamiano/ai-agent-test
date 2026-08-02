@@ -68,28 +68,29 @@ export function mergeEvents(rows: DurableEventRow[], live: WebSocketMessage[]): 
     return [...replayPrefix, ...liveEvents].sort((a, b) => a.at - b.at)
 }
 
+// Summoner-voiced frame lines; the step lines stay literal because they carry the real content.
 const feedLine = (e: NormEvent): { text: string; tone: FeedTone } | null => {
     switch (e.type) {
         case 'build_started':
-            return { text: 'build started', tone: 'info' }
+            return { text: '☄ the summoning begins', tone: 'info' }
         case 'build_step':
             return { text: `step ${e.step}: ${e.summary}`, tone: 'info' }
         case 'build_paused':
-            return { text: '⏸ paused', tone: 'warn' }
+            return { text: '⏸ the ritual rests', tone: 'warn' }
         case 'build_resumed':
-            return { text: '▶ resumed', tone: 'info' }
+            return { text: '▶ the chant resumes', tone: 'info' }
         case 'build_done':
             return e.ok
-                ? { text: '✓ build complete', tone: 'good' }
-                : { text: `✗ build failed${e.error ? ` — ${e.error}` : ''}`, tone: 'bad' }
+                ? { text: '✓ the summoning is complete', tone: 'good' }
+                : { text: `✗ the summoning fizzled${e.error ? ` — ${e.error}` : ''}`, tone: 'bad' }
         case 'assets_started':
-            return { text: '⏳ skinning assets…', tone: 'info' }
+            return { text: '⏳ conjuring the art…', tone: 'info' }
         case 'assets_done':
             return e.ok
-                ? { text: `✓ assets rendered (${e.rendered ?? 0})`, tone: 'good' }
-                : { text: '✗ asset skin failed', tone: 'bad' }
+                ? { text: `✓ art conjured (${e.rendered ?? 0})`, tone: 'good' }
+                : { text: '✗ the art conjuring failed', tone: 'bad' }
         case 'prompt_updated':
-            return { text: '✎ prompt edited', tone: 'info' }
+            return { text: '✎ the incantation was edited', tone: 'info' }
         default:
             return null  // prompt_proposed, build_queued, … only refresh state — no feed line
     }

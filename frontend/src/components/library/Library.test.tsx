@@ -58,8 +58,8 @@ describe('Library', () => {
     it('says which games are working', () => {
         shelf([game({ built: false, building: true }), game({ run_id: 'r2', title: 'Forest Cafe' })])
 
-        expect(screen.getByText('working')).toBeTruthy()
-        expect(screen.getByText('2 made · 1 working')).toBeTruthy()
+        expect(screen.getByText('summoning')).toBeTruthy()
+        expect(screen.getByText('2 summoned · 1 summoning')).toBeTruthy()
     })
 
     it('opens the game that was clicked', () => {

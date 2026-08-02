@@ -28,7 +28,7 @@ export const Library: React.FC<{
                     <h2 className="font-display text-2xl">Your games</h2>
                     {games.length > 0 && (
                         <span className="text-xs text-dim font-mono">
-                            {games.length} made{working > 0 && ` · ${working} working`}
+                            {games.length} summoned{working > 0 && ` · ${working} summoning`}
                         </span>
                     )}
                 </div>

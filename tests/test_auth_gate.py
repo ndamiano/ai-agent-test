@@ -45,9 +45,13 @@ def test_bad_token_is_rejected(app_client):
 
 def test_api_docs_do_not_exist_outside_dev(app_client):
     """MAESTRO_DEV is unset in tests, so this asserts the PROD shape: the docs routes are never
-    registered (schema enumeration for free) and their paths aren't whitelisted by the gate."""
+    registered (schema enumeration for free) and their paths aren't whitelisted by the gate. The
+    SPA fallback may answer these paths with the app shell (or 404 without a dist build) — what
+    must never come back is the interactive docs or the schema."""
     for path in ("/docs", "/redoc", "/openapi.json"):
-        assert app_client.get(path).status_code == 404, path
+        r = app_client.get(path)
+        assert r.status_code in (200, 404), path
+        assert "swagger" not in r.text.lower() and "openapi" not in r.text.lower(), path
     paths = {getattr(r, "path", "") for r in app_client.app.routes}
     assert not paths & {"/docs", "/redoc", "/openapi.json"}
 

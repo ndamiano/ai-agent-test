@@ -11,23 +11,24 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from starlette.responses import JSONResponse
 
+from auth import playgrants
 from auth.store import User, resolve_token
-from db import store as db_store
 
-# Reachable without a token: the health probe, the login endpoint, and the payment webhook
+# Reachable without a token: the health probe, the login endpoint, the payment webhook
 # (server-to-server — no user token; authed by the provider's signature, verified inside the
-# CreditProvider, never by this gate). The API docs exist only in dev (see api/app.py), so
-# they're public only there.
-PUBLIC_PATHS = {"/", "/auth/login", "/api/billing/webhook"}
+# CreditProvider, never by this gate), and /handoff (it authenticates itself by redeeming a
+# single-use play token — see auth/playgrants.py). The API docs exist only in dev (see
+# api/app.py), so they're public only there.
+PUBLIC_PATHS = {"/", "/auth/login", "/api/billing/webhook", "/handoff"}
 if os.getenv("MAESTRO_DEV") == "1":
     PUBLIC_PATHS |= {"/docs", "/redoc", "/openapi.json"}
 
-# The /play game harness is static HTML/JS the browser loads with plain <script>/<img>/fetch — no
-# way to attach a Bearer header to those sub-resource requests. So /play alone authenticates by a
-# cookie (`maestro_play`) the browser sends automatically, scoped to Path=/play so it NEVER rides
-# any /api or /auth request: the whole API surface stays strictly header-only, cookie-immune (and
-# thus CSRF-immune). This cookie is the single, deliberate deviation from that model — see the
-# /play branch in `install_auth`.
+# A staged game is static HTML/JS the browser loads with plain <script>/<img>/fetch — no way to
+# attach a Bearer header to those sub-resource requests. So /play alone authenticates by a grant
+# cookie the browser sends automatically, minted by /handoff and scoped to Path=/play/games/<id>/
+# so it never rides any /api or /auth request (the API stays header-only, cookie-immune, CSRF-
+# immune) and never rides another game's requests either. This cookie is the single, deliberate
+# deviation from the header-only model — see `_play_gate` below and auth/playgrants.py.
 PLAY_COOKIE = "maestro_play"
 
 
@@ -85,16 +86,17 @@ def install_auth(app) -> None:
         return await call_next(request)
 
     async def _play_gate(request: Request, call_next):
-        """Gate a /play request by the `maestro_play` cookie (never the Authorization header — the
-        static harness can't set one on its sub-resource fetches). A valid session is required for
-        every /play path; a per-game bundle/asset under /play/games/<id>/ ALSO requires ownership,
-        so one signed-in user can't open another's game by guessing its run id."""
-        user = resolve_token(request.cookies.get(PLAY_COOKIE))
-        if user is None:
-            return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        """Gate a /play request by the grant cookie (never the Authorization header — the static
+        game can't set one on its sub-resource fetches). A grant is minted by /handoff after the
+        ownership check, names ONE game, and the browser's own Path scoping means game A's
+        requests never even carry game B's grant; the run-id check here is the server-side half
+        of that same rule, so a hand-crafted request can't stretch a grant either."""
         parts = request.url.path.split("/")  # ["", "play", "games", "<id>", ...]
-        if len(parts) >= 4 and parts[2] == "games":
-            if db_store.owner_of(parts[3]) != user.id:
-                return JSONResponse(status_code=403, content={"detail": "not your game"})
-        request.state.user = user
+        if len(parts) < 4 or parts[2] != "games":
+            return JSONResponse(status_code=404, content={"detail": "not found"})
+        grant = playgrants.resolve_grant(request.cookies.get(PLAY_COOKIE))
+        if grant is None:
+            return JSONResponse(status_code=401, content={"detail": "authentication required"})
+        if grant[1] != parts[3]:
+            return JSONResponse(status_code=403, content={"detail": "not this game's grant"})
         return await call_next(request)

@@ -274,7 +274,7 @@ src/
 ```
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits, the
-/play cookie gate), `db/` (games/builds/events/jobs/workers + the compute budget), `worker/` (the
+/play handoff + per-game grant-cookie gate — `playgrants.py`), `db/` (games/builds/events/jobs/workers + the compute budget), `worker/` (the
 pull-side GPU worker), `scaler/` (the RunPod autoscaler), `api/` (FastAPI routers), `llm_clients/`,
 `tools/`, `config/`, and `frontend/` (the React SPA, served same-origin by the API). For their
 contracts see the module docstrings — they are the authority. How the pieces sit as PROCESSES —
@@ -363,6 +363,12 @@ a build carrying the older "draw a plain shape at that spot" line orphaned 7 of 
   call there outside a scope spends GPU nobody is charged for.
 - `data_dir` (env `MAESTRO_DATA_DIR`, default `<repo>/data`) — where platform.db + auth.db live;
   control-plane state, deliberately not under `working_directory`.
+- `play.origin` / `play.app_origin` (env `MAESTRO_PLAY_ORIGIN`/`MAESTRO_APP_ORIGIN`) — set BOTH to
+  serve games from their own registrable domain (prod: `gamesummonerusercontent.com` framed by
+  `gamesummoner.com`); empty means one origin. Either way /play auth is the handoff flow: the SPA
+  mints a single-use token (`POST /api/games/<id>/play-session`), `/handoff` redeems it into a
+  per-game path-scoped grant cookie, and the served `index.html` gets the console reporter
+  injected on the way out (game folder stays pristine). See docs/deploy.md "Public domains".
 - `runpod.*` — the autoscaler (see `src/scaler/` + docs/deploy.md): `enabled`, `api_key`,
   `network_volume_id`, `cp_url` (the pod-reachable control-plane URL) and per-queue `queues.<name>`
   scaling blocks (template_id, gpu_type_ids, max_workers, thresholds, idle_exit_seconds). The

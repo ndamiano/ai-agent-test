@@ -6,6 +6,10 @@
     "reasoning": "none",
     "n_ctx": 32768
   },
+  "play": {
+    "origin": "",
+    "app_origin": ""
+  },
   "workqueue": {
     "token": "",
     "job_timeout_seconds": 900,

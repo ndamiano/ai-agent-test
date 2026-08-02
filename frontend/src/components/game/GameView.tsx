@@ -8,13 +8,15 @@ import { Button } from '../ui/Button'
 import { Pill } from '../ui/Pill'
 import { PromptBox } from './PromptBox'
 import { BuiltPanel } from './BuiltPanel'
+import { ErrorFixModal } from './ErrorFixModal'
 import { WorkingPanel } from './WorkingPanel'
 import { useAssets } from './useAssets'
+import { useConsoleReports } from './useConsoleReports'
 import { budgetFraction, shouldAdoptPrompt, stageFor } from './state'
 
 const STATUS_PILL: Record<string, { label: string; tone: 'live' | 'wait' | 'idle' }> = {
-    running: { label: 'working', tone: 'wait' },
-    fixing: { label: 'fixing', tone: 'wait' },
+    running: { label: 'summoning', tone: 'wait' },
+    fixing: { label: 'mending', tone: 'wait' },
     paused: { label: 'paused', tone: 'idle' },
     built: { label: 'built', tone: 'live' },
 }
@@ -39,6 +41,16 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     // Bumped on assets_done so the manifest and every rendered file are re-read.
     const [assetsVersion, setAssetsVersion] = useState(0)
     const assets = useAssets(runId, assetsVersion)
+    // A live play session: the handoff URL in the iframe, and the game origin whose reporter
+    // messages we accept. Cleared whenever a build/fix starts — the game under it is changing.
+    const [session, setSession] = useState<{ url: string; origin: string } | null>(null)
+    const [errorsOpen, setErrorsOpen] = useState(false)
+    const { reports, clear: clearReports } = useConsoleReports(
+        session ? (session.origin || window.location.origin) : null)
+
+    const closePlay = useCallback(() => {
+        setSession(null); setErrorsOpen(false); clearReports()
+    }, [clearReports])
 
     const load = useCallback(() => {
         let cancelled = false
@@ -60,7 +72,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
         return () => { cancelled = true }
     }, [runId])
 
-    useEffect(() => { setRenderPending(false); return load() }, [load])
+    useEffect(() => { setRenderPending(false); closePlay(); return load() }, [load, closePlay])
 
     useEffect(() => {
         if (!building || stream.startedAt == null) { setElapsedSec(0); return }
@@ -113,7 +125,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     // `fresh` empties the game folder first. A retry otherwise opens on the last attempt's files,
     // which the model reads and believes — and then re-asks for art it already has.
     const startBuild = async (fresh: boolean) => {
-        setActing(true); setBuilding(true); setStatus('running')
+        setActing(true); setBuilding(true); setStatus('running'); closePlay()
         try { await (fresh ? api.regenerateGame : api.buildGame)(runId, promptText); onChanged() }
         catch (e) {
             setBuilding(false); setStatus('idle')
@@ -127,12 +139,22 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
     const stop = () => act(() => api.stopGame(runId), 'Stop failed', false)
     const renderArt = () => act(async () => { setRenderPending(true); await api.renderAssets(runId) }, 'Render failed', false)
+    const sendFix = (note: string) => {
+        closePlay()
+        act(async () => { await api.fixGame(runId, note); setBuilding(true); setStatus('fixing') }, 'Fix failed', false)
+    }
     const submitFix = () => {
         const note = fixNote.trim()
         if (!note) return
         setFixNote('')
-        act(async () => { await api.fixGame(runId, note); setBuilding(true); setStatus('fixing') }, 'Fix failed', false)
+        sendFix(note)
     }
+    // Each mount of the game gets its own single-use handoff URL — a reused one 403s.
+    const play = () => act(async () => setSession(await api.playSession(runId)), 'Could not start the game', false)
+    const openTab = () => act(async () => {
+        const s = await api.playSession(runId)
+        window.open(s.url, '_blank', 'noopener')
+    }, 'Could not start the game', false)
 
     if (loading && !detail) return <div className="p-8 text-slate text-sm">Loading…</div>
     if (error && !detail) return <div className="p-8 text-fail text-sm">{error}</div>
@@ -189,7 +211,14 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                     <BuiltPanel runId={runId} detail={detail} assets={assets} assetsVersion={assetsVersion}
                         budget={budget} rendering={stream.skinning || renderPending} acting={acting}
                         onRender={renderArt} note={fixNote} setNote={setFixNote} onFix={submitFix}
-                        promptText={promptText} setPromptText={setPromptText} />
+                        promptText={promptText} setPromptText={setPromptText}
+                        sessionUrl={session?.url ?? null} onPlay={play} onOpenTab={openTab}
+                        errorCount={reports.length} onShowErrors={() => setErrorsOpen(true)} />
+                )}
+
+                {errorsOpen && reports.length > 0 && (
+                    <ErrorFixModal reports={reports} busy={acting}
+                        onSend={sendFix} onClose={() => setErrorsOpen(false)} />
                 )}
 
                 {stage === 'ready' && (

@@ -2,8 +2,6 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
-from starlette.requests import Request
-from starlette.responses import Response
 
 from auth import router as auth_router
 from auth import store
@@ -16,10 +14,8 @@ def _clear_throttle():
 
 
 def _login(handle, password):
-    request = Request({"type": "http", "scheme": "http", "headers": [],
-                       "method": "POST", "path": "/auth/login", "query_string": b""})
     return asyncio.run(auth_router.login(
-        auth_router.LoginRequest(handle=handle, password=password), request, Response()))
+        auth_router.LoginRequest(handle=handle, password=password)))
 
 
 def test_throttle_blocks_after_max_failures():

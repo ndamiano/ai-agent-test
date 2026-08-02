@@ -57,6 +57,14 @@ class SettingsManager:
                 "lease_seconds": int(os.getenv("WORKQUEUE_LEASE", "120"))
             },
             # _merge is one level deep, so a settings.json "runpod" block merges over these keys —
+            # Where games are served FROM (the untrusted origin) and the one origin allowed to
+            # frame them. Both empty ⇒ games ride the app origin, framed by 'self'. Set BOTH to
+            # split: origin must be a separate REGISTRABLE domain (cookies are domain-scoped — a
+            # subdomain of the app's domain shares the jar and can toss cookies onto it).
+            "play": {
+                "origin": os.getenv("MAESTRO_PLAY_ORIGIN", ""),
+                "app_origin": os.getenv("MAESTRO_APP_ORIGIN", ""),
+            },
             # EXCEPT "queues", which it replaces wholesale: the file must carry complete queue blocks.
             "runpod": {
                 "enabled": os.getenv("RUNPOD_ENABLED", "false").lower() == "true",

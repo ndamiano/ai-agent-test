@@ -100,6 +100,11 @@ export const api = {
         try { await fetch('/auth/logout', { method: 'POST', headers: authHeaders() }) }
         catch { /* offline / already-dead token — local clear still applies */ }
     },
+    changePassword: (currentPassword: string, newPassword: string) =>
+        request<{ ok: boolean }>('/auth/password', {
+            method: 'POST',
+            body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+        }),
 
     listGames: () =>
         request<Game[]>('/api/games'),
@@ -128,6 +133,12 @@ export const api = {
     // last attempt's files.
     regenerateGame: (runId: string, prompt?: string) =>
         request<{ status: string; run_id: string }>(`/api/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ prompt, fresh: true }) }),
+
+    // A play session: a single-use handoff URL for the iframe (or a new tab) — each mount of the
+    // game needs a fresh one. `origin` is the game origin ('' ⇒ games share the app origin); the
+    // reporter-message listener verifies against it.
+    playSession: (runId: string) =>
+        request<{ url: string; origin: string }>(`/api/games/${runId}/play-session`, { method: 'POST' }),
 
     pauseGame: (runId: string) =>
         request<{ status: string }>(`/api/games/${runId}/pause`, { method: 'POST' }),

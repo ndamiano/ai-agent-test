@@ -130,10 +130,13 @@ These are load-bearing; breaking one is a redesign, not a bug fix.
   any queue and post any result. Workers are trusted infrastructure, not tenants.
 - **Inference servers.** Bound to `127.0.0.1` on the worker's own box, never exposed. A reachable
   one is an unauthenticated GPU.
-- **Generated game code.** Runs in the user's browser on the app's origin, contained by a CSP on
-  every `/play` response — but *not* isolated, and it can reach the origin's localStorage. What
-  makes that safe today is the ownership gate: a game only runs in its owner's browser. True origin
-  isolation is required before any sharing feature. Detail: `deploy.md` § Known deferred risks.
+- **Generated game code.** Runs in the user's browser in an iframe, contained by a CSP on every
+  `/play` response and admitted by a per-game grant cookie the handoff flow mints
+  (`auth/playgrants.py`) — the play surface holds no credential its JS can read. With
+  `play.origin` set, games are served from their own registrable domain and the host-split
+  middleware keeps the API off that host entirely — true origin isolation, required before any
+  sharing feature; unset, the game still shares the app origin's localStorage and the ownership
+  check at play-session mint is what keeps that safe. Detail: `deploy.md` § Known deferred risks.
 
 ---
 

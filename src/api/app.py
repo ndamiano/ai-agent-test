@@ -101,45 +101,143 @@ app.include_router(workqueue.router, prefix="/worker", tags=["workqueue"])
 
 # Serve the built frontend same-origin (one process, one Funnel port, no CORS). Mounted LAST so
 # the API routers above win; skipped when dist/ is absent (dev runs the Vite server instead).
+import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+
+from auth import playgrants
+from auth.deps import PLAY_COOKIE
 
 # Serve staged games so the SPA can open a built one (mounted before the SPA catch-all).
 # /play runs MODEL-AUTHORED JS, so every response carries a CSP that pins scripted loads and network
 # to this origin. This is NOT full exfiltration protection: top-level navigation is governed by no
 # CSP directive (`navigate-to` was specified and abandoned), so a `location =` to an external URL
-# still leaves. form-action must be set explicitly — it does NOT fall back to default-src. The game
-# shares the app origin, so it shares localStorage; the ownership gate is what keeps the token it
-# can read its own. Containment, not isolation — SHARING requires true origin isolation, see
-# tasks/platform_polish.md P1. 'unsafe-inline' is for index.html's own bootstrap script;
+# still leaves. form-action must be set explicitly — it does NOT fall back to default-src.
+# 'unsafe-inline' is for index.html's own bootstrap script (and the injected reporter);
 # eval stays blocked. blob: + data: in img-src (blob: in connect-src too) are for GLTFLoader's
 # embedded GLB textures: it decodes them through same-document object URLs (ImageBitmapLoader
 # fetches them, so connect-src governs as well), and EXT_texture_webp's support DETECTION loads a
 # 1-px data: probe image — blocking either rejects the whole GLB and the game silently plays as
 # bare boxes (shipped, twice: first blob:, then the data: probe). Neither grants anything
 # cross-origin — the bytes already live in the page.
-_PLAY_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
-             "connect-src 'self' blob:; img-src 'self' blob: data:; "
-             "style-src 'self' 'unsafe-inline'; "
-             "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
-             "form-action 'none'")
+# frame-ancestors is the app origin and nothing else: the SPA's game page frames the game, and no
+# other site may. With `play.origin` set, games live on their own registrable domain where 'self'
+# would be the WRONG origin — the app origin is named explicitly; unset, the two are one origin.
+_PLAY_CSP_BASE = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                  "connect-src 'self' blob:; img-src 'self' blob: data:; "
+                  "style-src 'self' 'unsafe-inline'; "
+                  "object-src 'none'; base-uri 'none'; frame-ancestors {frame_ancestors}; "
+                  "form-action 'none'")
+
+
+def _play_settings() -> tuple[str, str]:
+    play = settings_manager.get_settings().get("play") or {}
+    return (play.get("origin", "") or "").rstrip("/"), (play.get("app_origin", "") or "").rstrip("/")
+
+
+def _play_csp_header() -> str:
+    _, app_origin = _play_settings()
+    return _PLAY_CSP_BASE.format(frame_ancestors=app_origin or "'self'")
 
 
 @app.middleware("http")
 async def _play_csp(request, call_next):
     response = await call_next(request)
     if request.url.path == "/play" or request.url.path.startswith("/play/"):
-        response.headers["Content-Security-Policy"] = _PLAY_CSP
+        response.headers["Content-Security-Policy"] = _play_csp_header()
+    return response
+
+
+# With games on their own domain, one process serves two hostnames — and the split only isolates
+# if each host serves ONLY its own surface. A game's fetch('/api/…') resolves to the GAME host, so
+# the game host must hold no API; and the app host must serve no game, or the isolation is opt-in.
+@app.middleware("http")
+async def _host_split(request, call_next):
+    play_origin, _ = _play_settings()
+    if play_origin:
+        path = request.url.path
+        on_game_surface = (path == "/handoff" or path == "/play" or path.startswith("/play/"))
+        host = request.headers.get("host", "").lower()
+        if host == urlsplit(play_origin).netloc.lower():
+            if not on_game_surface and path != "/healthz":
+                return Response(status_code=404)
+        elif on_game_surface:
+            return Response(status_code=404)
+    return await call_next(request)
+
+
+_GRANT_COOKIE_TMPL = (PLAY_COOKIE + "={token}; Max-Age={max_age}; Path=/play/games/{run_id}/; "
+                      "HttpOnly; Secure; SameSite=None; Partitioned")
+
+
+@app.get("/handoff", include_in_schema=False)
+async def handoff(t: str = ""):
+    """The game origin's front door: redeem a single-use play token (minted on the app origin by
+    POST /api/games/<id>/play-session, after the ownership check) and 302 into the game, setting
+    the grant cookie its sub-resource loads will ride. The cookie is HttpOnly + host-only +
+    Path-scoped to this one game — the game origin never holds a credential its JS can read, and
+    game A never sends game B's grant. SameSite=None + Partitioned because the game runs in an
+    iframe on the app origin: a cross-site subresource context, where Lax/Strict cookies are
+    never sent and unpartitioned third-party cookies are blocked outright."""
+    redeemed = playgrants.redeem_handoff(t)
+    if redeemed is None:
+        raise HTTPException(status_code=403, detail="expired or invalid play token")
+    user_id, run_id = redeemed
+    response = RedirectResponse(f"/play/games/{run_id}/index.html", status_code=302)
+    response.headers.append("set-cookie", _GRANT_COOKIE_TMPL.format(
+        token=playgrants.issue_grant(user_id, run_id),
+        max_age=playgrants.GRANT_TTL_SECONDS, run_id=run_id))
     return response
 
 
 _runtime = Path(__file__).resolve().parents[2] / "runtime"
+_RUN_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+_HEAD_TAG = re.compile(r"<head[^>]*>", re.IGNORECASE)
+_reporter_js = (Path(__file__).parent / "static" / "report.js").read_text(encoding="utf-8")
+
+
+@app.get("/play/games/{run_id}/index.html", include_in_schema=False)
+async def play_index(run_id: str):
+    """Serve a game's index.html with the console reporter injected on the way out. The model
+    cannot be relied on to include the tag, and staging stays "no bundle, no transform" — the
+    game folder on disk is exactly what the model wrote. Registered before the /play static
+    mount, so this route wins for index.html and the mount serves everything else."""
+    if not _RUN_ID.match(run_id):
+        raise HTTPException(status_code=404, detail="not found")
+    index = _runtime / "games" / run_id / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    html = index.read_text(encoding="utf-8", errors="replace")
+    tag = f"<script>{_reporter_js}</script>"
+    match = _HEAD_TAG.search(html)
+    if match:
+        html = html[:match.end()] + tag + html[match.end():]
+    else:
+        html = tag + html
+    return HTMLResponse(html)
+
+
 if _runtime.is_dir():
     app.mount("/play", StaticFiles(directory=_runtime, html=True), name="play")
 
 _frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="spa")
+    from fastapi.responses import FileResponse
+
+    _dist_root = _frontend_dist.resolve()
+
+    # The SPA routes by URL (/game/<id>, /settings, …), so a deep link or reload must get
+    # index.html back, not a 404 — a plain StaticFiles mount only serves paths that exist on disk.
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def spa(spa_path: str):
+        if spa_path.split("/", 1)[0] in {"api", "auth", "worker", "play"}:
+            raise HTTPException(status_code=404, detail="not found")
+        candidate = (_dist_root / spa_path).resolve() if spa_path else _dist_root
+        if candidate.is_file() and candidate.is_relative_to(_dist_root):
+            return FileResponse(candidate)
+        return FileResponse(_dist_root / "index.html")
 
 __all__ = ["app"]

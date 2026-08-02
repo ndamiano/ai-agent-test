@@ -16,8 +16,8 @@ process-global inference state that concurrent builds still share.
 ## Background (points at code — do not restate it here)
 - Payments: `src/auth/credits.py` (`CreditProvider` ABC; `UnconfiguredProvider` refuses every
   event), `src/api/routers/billing.py` (public webhook path), `src/auth/cli.py` (manual grants).
-- Isolation: `src/api/app.py` `_PLAY_CSP`, `src/auth/deps.py` (`maestro_play` cookie, Path=/play,
-  ownership-checked).
+- Isolation: `src/api/app.py` (`_PLAY_CSP_BASE`, `_host_split`, `/handoff`), `src/auth/deps.py`
+  (`_play_gate`), `src/auth/playgrants.py` (handoff tokens + per-game grant cookies).
 - Inference globals: `src/llm_clients/connector.py:240-255` (`_cached_connector`),
   `src/llm_clients/rate_limiter.py:68` (`_llm_rate_limiter`, one 2 req/s bucket for all builds).
 - Scheduling: `src/db/store.py` `claim_job` (FIFO on `created_at`).
@@ -71,13 +71,15 @@ authed-blob-URL alternative stays viable but needs the engine's `assetBase` fetc
 more code and more ways to be subtly wrong than a second hostname. Don't ship `ACAO: null` +
 `SameSite=None` — that opens cross-site asset reads from any sandboxed context.
 
-- [ ] **Game origin is a SETTING, not a constant** — `play.origin` in `settings.json`, read by the
-      CSP builder, the handoff redirect, and the SPA's iframe `src`. First item because it un-blocks
-      the whole task from the domain decision, and because the hosting shape below is expected to
-      change once: moving game origins must be one settings value, never a code edit.
-      → done when: no hostname/origin literal for games exists in `src/`; a settings change moves
-      the game origin with no code edit.
-- [ ] **Stand the game origin up on prod: `{brand}usercontent.com`, a SEPARATE registrable domain.**
+- [x] **Game origin is a SETTING, not a constant** (2026-08-01) — `play.origin` + `play.app_origin`
+      in `settings.json` (env `MAESTRO_PLAY_ORIGIN`/`MAESTRO_APP_ORIGIN`), read by the CSP builder,
+      the host-split middleware, and the play-session URL the SPA's iframe loads. Empty ⇒ one
+      origin; no hostname literal for games exists in `src/`.
+- [ ] **Stand the game origin up on prod: `gamesummonerusercontent.com`** (domains owned
+      2026-08-01; runbook section written — DNS, ufw 80/443, Caddy, the settings block: see
+      docs/deploy.md "Public domains"). A separate REGISTRABLE domain, never a subdomain and never
+      a port split (cookies ignore ports); the grant cookie NEVER carries `Domain=` (host-only —
+      tested in test_play_auth.py).
       Cookies are domain-scoped, not origin-scoped, so any two names under one registrable domain
       share a cookie space and the game origin can TOSS a `Domain=`-scoped cookie onto the app
       (session fixation) even though `HttpOnly` stops it reading one. A distinct registrable domain
@@ -91,59 +93,41 @@ more code and more ways to be subtly wrong than a second hostname. Don't ship `A
       ignore port and the jar stays shared — a half-fix.
       The rule is absolute either way: `maestro_play` and the play cookie NEVER carry a `Domain=`
       attribute (host-only today — `auth/router.py:29-38` — keep it).
-- [ ] **Handoff: authenticate the PLAYER without a readable credential on the game origin.** The
-      game origin must hold nothing game JS can read or replay elsewhere.
-      1. SPA (app origin, holds the bearer) → `POST /api/games/<id>/play-token`; server runs the
-         visibility/ownership predicate, returns a short-lived (~60s) single-use signed token.
-      2. SPA sets the iframe `src` to `<play.origin>/handoff?t=<token>`.
-      3. The game origin validates and 302s to the game's `index.html`, setting a cookie that is
-         `HttpOnly` (JS cannot read it), host-only (no `Domain=`), `SameSite=Lax`, short max-age,
-         and **`Path=/games/<slug>/`** — the path scope is what stops game A ambiently fetching
-         game B's files with the viewer's credential.
-      4. Sub-resource loads carry it automatically — this satisfies the "no header auth into /play"
-         guardrail above rather than violating it.
-      The token rides in a URL and lands in the game origin's access log; 60s + single-use makes
-      that acceptable. An auto-submitting POST form removes even that if wanted.
-      → done when: the app-origin bearer token is provably absent from the game origin, and a game
-      cannot fetch another game's files with the viewer's cookie.
-- [ ] **CSP deltas, both origins.** `frame-ancestors 'none'` in `_PLAY_CSP` (`api/app.py:122`) will
-      BLOCK the new iframe — it must become `frame-ancestors <app origin>`, that origin only. On the
-      game origin `connect-src 'self'` now resolves to a host with no API on it, which is the point.
-      → done when: framing works from the app origin and is refused from any other.
+- [x] **Handoff: authenticate the PLAYER without a readable credential on the game origin**
+      (2026-08-01, `auth/playgrants.py` + `POST /api/games/<id>/play-session` + `GET /handoff`).
+      As specced, with two deltas: `SameSite=None; Secure; Partitioned` instead of Lax — the game
+      runs in a cross-site IFRAME, where Lax cookies are never sent and unpartitioned third-party
+      cookies are blocked outright — and this is now the ONLY /play auth (login mints no play
+      cookie; the session-mirror cookie is gone, so the app-origin bearer never had a copy on the
+      game surface to begin with). Single-use, expiry, per-game path scoping and the no-`Domain=`
+      rule are all tested in test_play_auth.py.
+- [x] **CSP deltas, both origins** (2026-08-01). `frame-ancestors` is the app origin when
+      `play.origin` is set, `'self'` otherwise — never 'none', never a second origin. The
+      `_host_split` middleware is what makes `connect-src 'self'` resolve to a host with no API on
+      it (tested: game host 404s `/api/games`, app host 404s `/play`).
 - [x] **`form-action 'none'`** (2026-07-31, `api/app.py` `_PLAY_CSP`). `connect-src` governs
       fetch/XHR/WS only and `form-action` does not fall back to `default-src`, so a form POST to an
       external URL was permitted. Top-level navigation remains unrestricted (`navigate-to` never
       shipped) — exfiltration is narrowed, not closed, and only the ownership gate makes it
       unreachable. Add the same directive to the game origin's CSP when it exists.
-- [ ] **Console reporter → the human-note fix path.** With the game cross-origin, the parent's
-      `window.onerror` gets a scrubbed `"Script error."` with no file, line, or stack — the capture
-      must live INSIDE the game document and `postMessage` out. Serve `index.html` on the game
-      origin through a route that injects `<script src="/_harness/report.js">` into `<head>` on the
-      way out: the model cannot be relied on to include the tag, and `staging.py` stays "no bundle,
-      no transform" with the game folder pristine. The reporter hooks `window.addEventListener
-      ('error', …, true)` (capture phase also catches failed `<img>`/`<script>` loads),
-      `unhandledrejection`, and `console.error`/`warn`.
-      Parent verifies `e.origin === <play.origin>` on every message and treats the payload as
-      untrusted display data ONLY. The parent must never grow a branch that ACTS on a message from
-      the child — that rebuilds the hole through a different door.
-      Volume: a throw inside `requestAnimationFrame` emits ~60 identical errors/second. Dedupe on
-      `(message, first stack frame)`, keep a count instead of repeats, ring-buffer with a hard cap.
-      → done when: a game that throws produces a deduped error list in the parent, and a test
-      asserts a `postMessage` from any other origin is ignored.
-- [ ] **Human-gated auto-fix (the modal), one round.** Deduped errors → a modal: "we detected N
-      errors — send to the model to fix? add notes" + send/close. Send routes into the EXISTING
-      `fix_from_note` turn machine (the note is the error list plus the human's text); no new
-      pipeline. Stays human-triggered: a console error is a legitimate signal under the CLAUDE.md
-      rule (it detects BROKEN, and satisfying it IS the goal — one of the few that qualify), but the
-      measured failure mode is the LOOP, not the signal — judge-then-fix rounds spent 208 of one
-      build's 227 steps and scored WORSE in round 2 because each fix broke a claim that worked.
-      Automatic firing only after the captured lists have been eyeballed across a battery, and
-      capped at one round even then.
-      → done when: the modal sends a fix note through `fix_from_note` and nothing fires without a
-      human click.
-- [ ] TRUE origin isolation, required BEFORE any game is viewable by a non-owner.
-      → done when: a game served to a non-owner runs from an origin that cannot read the API, with
-      a test asserting the isolated document cannot reach `/api/games`.
+- [x] **Console reporter → the human-note fix path** (2026-08-01). As specced, one delta: the
+      reporter is injected INLINE into `index.html` as it is served (`api/app.py` `play_index`,
+      source `api/static/report.js`) rather than as a `src=` tag — a separate script URL would need
+      its own public-path hole through the play gate, since the grant cookie is path-scoped to the
+      game and would not ride a `/_harness/` fetch. The game folder stays pristine (tested).
+      Reporter hooks error-capture-phase / unhandledrejection / console.error+warn, caps its own
+      sends; the parent (`useConsoleReports.ts`) verifies `e.origin`, treats payloads as display
+      data only, dedupes on (kind, message, frame) with counts and a hard cap (tested). The parent
+      has no branch that acts on a child message — keep it that way.
+- [x] **Human-gated auto-fix (the modal), one round** (2026-08-01, `ErrorFixModal.tsx`). Deduped
+      errors + the human's optional note → the EXISTING fix path (`api.fixGame` →
+      `fix_from_note`); nothing fires without a click. The rule stands: automatic firing only
+      after the captured lists have been eyeballed across a battery, and capped at one round even
+      then — the measured failure mode is the LOOP (208 of 227 steps, round 2 worse than round 1).
+- [ ] TRUE origin isolation, required BEFORE any game is viewable by a non-owner. Code side landed
+      2026-08-01 (the host-split test asserts the game host cannot reach `/api/games`); what
+      remains is the prod standup item above — until `play.origin` is set in prod, games still
+      share the app origin.
 
 ## P2 — Payments
 - [ ] Concrete `CreditProvider.verify` for the chosen processor.

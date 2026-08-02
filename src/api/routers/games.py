@@ -17,10 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from auth import store
+from auth import playgrants, store
 from auth.billing import SECONDS_PER_CREDIT, cost
 from auth.deps import get_current_user
 from auth.store import User
+from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import build_chain
@@ -160,12 +161,25 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         # Whether a previous attempt left files behind — what the from-scratch build would discard.
         "has_game": has_authored_files(state.run_dir),
-        "play_url": f"/play/games/{run_id}/index.html" if built else None,
         "credits_spent": row.get("credits_spent", 0),
         # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
         # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
         "budget_pct_remaining": _budget_pct(row, run_id),
     }
+
+
+@router.post("/{run_id}/play-session", response_model=Dict)
+async def play_session(run_id: str, user: User = Depends(get_current_user)):
+    """Mint a play session for a built game: a single-use handoff URL the SPA points its iframe
+    (or a new tab) at. The bearer token proves ownership HERE, on the app origin; what reaches
+    the game origin is only the short-lived token — see auth/playgrants.py. `origin` is what the
+    parent page must verify reporter postMessages against ('' ⇒ games share the app origin)."""
+    _require_state(run_id, user)
+    if not _built(run_id):
+        raise HTTPException(status_code=409, detail="not built yet")
+    origin = (settings_manager.get_settings().get("play") or {}).get("origin", "").rstrip("/")
+    token = playgrants.issue_handoff(user.id, run_id)
+    return {"url": f"{origin}/handoff?t={token}", "origin": origin}
 
 
 def _budget_pct(row: Dict, run_id: str) -> Optional[float]:

@@ -7,6 +7,7 @@ Rules:
 - Plain HTML/CSS/JavaScript. Multiple files are fine (use <script src>), one file is fine too.
 - three.module.js is already in the project directory. A 3D game imports it from "./three.module.js"; a 2D game ignores it and draws on a canvas.
 - For things the player should see call generate_media with an id, a description and the kind of thing it is. It will give you a path for a file, use that path exactly.
+- A game's art shares one visual style. Pick the style before the first generate_media call and name it in every prompt.
 - Write real, finished code. No placeholders, no TODOs, no "implement this later".
 - Work in small steps: write a file, then keep going. Re-read a file before you edit it.
 - Put every call that does not depend on another one in the SAME reply. Reading four files is one reply carrying four read_file calls.

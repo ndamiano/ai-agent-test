@@ -38,9 +38,12 @@ RUN git init /opt/ComfyUI/custom_nodes/ComfyUI-RMBG \
     && pip install --no-cache-dir opencv-python-headless "huggingface-hub>=0.19.0" timm
 
 # The RMBG node resolves its weights as folder_paths.models_dir/RMBG/BiRefNet and ignores
-# extra_model_paths.yaml, so ComfyUI's models dir has to BE the volume path. Dangling until the
-# volume mounts at run time. Outputs/temp stay on container disk — the volume holds weights only.
-RUN rm -rf /opt/ComfyUI/models && ln -s /workspace/comfy/models /opt/ComfyUI/models
+# extra_model_paths.yaml, so ComfyUI's models dir has to BE a real path the entrypoint controls:
+# /opt/comfy-models is a per-folder symlink tree it builds at boot — every folder the volume's,
+# except the weights this pod loads, which point at the tmpfs copy staged there (see the
+# entrypoint for why the volume cannot be loaded from directly). Dangling until then.
+# Outputs/temp stay on container disk — the volume holds weights only.
+RUN rm -rf /opt/ComfyUI/models && ln -s /opt/comfy-models /opt/ComfyUI/models
 
 RUN pip install --no-cache-dir requests
 COPY src/worker /opt/maestro/src/worker

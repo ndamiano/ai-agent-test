@@ -14,6 +14,9 @@ set -euo pipefail
 # name there and alias here.
 : "${LLM_MODEL:?LLM_MODEL is required — it is what the control plane names in every request}"
 
+boot_t0=$(date +%s)
+mark() { echo "[boot +$(( $(date +%s) - boot_t0 ))s] $*"; }
+
 # The engine each branch started, and where it answers. `wait_engine URL PATH TRIES` polls the
 # health path and dies loudly if the process goes before it answers.
 engine_pid=""
@@ -52,7 +55,7 @@ start_ninfer() {
     # ninfer answers nothing until the whole artifact is resident, so this waits on a 17 GiB pull
     # off the network volume, not on a process.
     wait_engine "$target" /health 150
-    echo "ninfer up as $LLM_MODEL: $(curl -s "$target/v1/models" | head -c 400)"
+    mark "ninfer up as $LLM_MODEL: $(curl -s "$target/v1/models" | head -c 400)"
 }
 
 start_llama_cpp() {
@@ -80,12 +83,12 @@ start_llama_cpp() {
     # The router answers /models before any weights load (models load on first request), so this
     # waits for the process, not for the 16 GB pull off the network volume.
     wait_engine "$target" /models 60
-    echo "llama-server up: $(curl -s "$target/models" | head -c 400)"
+    mark "llama-server up: $(curl -s "$target/models" | head -c 400)"
 }
 
 gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
 driver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
-echo "card: ${gpu:-unknown}  driver: ${driver:-unknown}"
+mark "card: ${gpu:-unknown}  driver: ${driver:-unknown}"
 
 # ninfer serves the same model ~60% faster and is compiled for sm_120a — a 5090 and nothing else,
 # so this is a capability test, not a preference. The driver is PART of the capability: ninfer is

@@ -69,15 +69,18 @@ llama-server \
 
 `--chat-template-kwargs` is load-bearing: without it Qwen3.6 thinks in `content` until authoring turns truncate at the output cap before the tool call, and `--reasoning-budget 0` alone does not stop it.
 
-The model **id** is the GGUF filename stem (e.g. `Qwen3.6-35B-A3B-UD-Q4_K_XL`). Set the block to:
+The model **id** is the GGUF filename stem (e.g. `Qwen3.6-27B-UD-Q4_K_XL`). Set the block to:
 
 ```json
 "llm": {
-  "model": "Qwen3.6-35B-A3B-UD-Q4_K_XL",
+  "model": "Qwen3.6-27B-UD-Q4_K_XL",
   "reasoning": "none",
   "n_ctx": 32768
 }
 ```
+
+The same string is the alias an autoscaled pod serves under, whichever engine its card runs — a
+ninfer pod rejects any request naming something else.
 
 A GPU serves one backend. Running the LLM and ComfyUI on one card means both must fit resident at once.
 

@@ -53,7 +53,6 @@ python -m worker.agent \
     --queue mesh \
     --target "http://127.0.0.1:$TRELLIS_PORT" \
     --source runpod \
-    ${GPU_TYPE:+--gpu-type "$GPU_TYPE"} \
     ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &
 agent_pid=$!
 

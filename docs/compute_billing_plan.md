@@ -65,7 +65,9 @@ table's real `exec_seconds`.
 second per GPU-second (an H100 at $2.89/GPU-hr would debit ~3×), buying either speed or better
 models out of the same grant. Today every job row records the `gpu_type` that ran it, but the debit
 is unweighted — 1 second is 1 second whatever the card. The recorded `gpu_type` is what a multiplier
-would key on when it lands.
+would key on when it lands, and it is only worth keying on because the WORKER reads it off the
+device: rows before 2026-08-01 carry the type the scaler asked RunPod for, which was 5090 on every
+row while the bill was entirely RTX PRO 4500.
 
 ---
 

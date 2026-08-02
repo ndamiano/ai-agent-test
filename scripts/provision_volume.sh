@@ -38,8 +38,8 @@ echo "using interpreter: $("$PY" -c 'import sys; print(sys.executable, sys.versi
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export HF_HOME="$VOL/hf-cache"
 
-mkdir -p "$VOL/models/LLM" "$VOL/comfy/models/checkpoints" "$VOL/comfy/models/RMBG/BiRefNet" \
-         "$VOL/trellis2-weights" "$VOL/hf-cache"
+mkdir -p "$VOL/models/LLM" "$VOL/models/ninfer" "$VOL/comfy/models/checkpoints" \
+         "$VOL/comfy/models/RMBG/BiRefNet" "$VOL/trellis2-weights" "$VOL/hf-cache"
 
 "$PY" - "$VOL" <<'PY'
 import os, shutil, sys
@@ -51,13 +51,20 @@ VOL = sys.argv[1]
 #
 # The LLM is pinned to a commit, not `main`. It is the DENSE 27B, not the 35B-A3B MoE this volume
 # was first provisioned with: the MoE is faster per token, but the window is what a build lives or
-# dies on and the 27B's is what the box was moved to. The home box serves the same weights through
-# ninfer (a .ninfer conversion, 16.3 GiB), which llama.cpp cannot read — same model, different
-# container, and a pod has only llama.cpp.
+# dies on and the 27B's is what the box was moved to.
+#
+# The SAME model ships twice, in two containers, because a pod's card decides which engine can run
+# it: ninfer serves ~60% more tok/s but is compiled for sm_120a and reads only its own artifact,
+# while llama.cpp reads only the GGUF and runs anywhere. Both live here so one image can pick at
+# boot — the volume holds ~34 GiB for one model, which is the price of not caring which card
+# RunPod hands out.
 FILES = [
     (f"{VOL}/models/LLM", "unsloth/Qwen3.6-27B-GGUF",
      "Qwen3.6-27B-UD-Q4_K_XL.gguf", 17612564704,
      "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"),
+    (f"{VOL}/models/ninfer", "neroued/Qwen3.6-27B-nvfp4-NInfer",
+     "qwen3_6_27b_nvfp4.ninfer", 18324064000,
+     "610abfadfd8102791f1a7317d243463843e14758"),
     (f"{VOL}/comfy/models/checkpoints", "Comfy-Org/flux1-schnell",
      "flux1-schnell-fp8.safetensors", 17236328572, None),
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet",
@@ -122,6 +129,7 @@ echo
 # du only — a RunPod network volume is MooseFS-backed, so df reports the whole cluster, never
 # this volume's usage or quota.
 echo "== volume contents =="
-du -sh "$VOL/models/LLM" "$VOL/comfy/models" "$VOL/trellis2-weights" "$VOL/hf-cache" "$VOL"
+du -sh "$VOL/models/LLM" "$VOL/models/ninfer" "$VOL/comfy/models" "$VOL/trellis2-weights" \
+       "$VOL/hf-cache" "$VOL"
 echo "== anything that is not a weight (expect only the two BiRefNet .py) =="
 find "$VOL" \( -name .cache -o -name "*.py" -o -name "__pycache__" \) -maxdepth 6

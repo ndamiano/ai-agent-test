@@ -142,24 +142,54 @@ One image per queue, weights on a RunPod **network volume** (the image is code, 
 weights), so a pod boots without re-downloading 60 GB. Pods never talk to Hugging Face after
 provisioning.
 
+The volume also speaks the **S3 API**, which is how a single file reaches it without renting
+anything — a full provision is 60 GB at datacenter bandwidth and wants a pod, but one added or
+retired artifact is a `cp`/`rm` from the home box:
+
+```bash
+aws s3 ls --profile runpod --region eu-ro-1 \
+    --endpoint-url https://s3api-eu-ro-1.runpod.io s3://<volume-id>/ --recursive --human-readable
+aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1.runpod.io \
+    /var/tmp/ninfer-models/qwen3_6_27b_nvfp4.ninfer s3://<volume-id>/models/ninfer/
+```
+
+The bucket name IS the network volume id, and the region/endpoint pair is the datacenter the volume
+lives in — a volume in another datacenter answers on its own endpoint or not at all.
+
 ```bash
 # 1. one-time: populate the volume. Any cheap pod with it mounted; no GPU used.
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v5 .
-docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v4 .
-docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v12 .
-docker push ndamiano100/maestro-worker:mesh-v12   # etc.
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v6 .
+docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v5 .
+docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v13 .
+docker push ndamiano100/maestro-worker:mesh-v13   # etc.
 ```
 
-Deployed tags: `llm-v5`, `image-v4`, `mesh-v12`. Bump the tag on every push — RunPod caches images
+Deployed tags: `llm-v6`, `image-v5`, `mesh-v13`. Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
+
+**The llm image carries BOTH engines and picks at boot.** ninfer serves the same 27B ~60% faster
+but is compiled for `sm_120a`, so it runs on a 5090 and nowhere else; the entrypoint reads
+`nvidia-smi --query-gpu=name` and starts ninfer on a 5090, llama.cpp on anything else. That is why
+the volume holds the model twice (`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~34 GiB
+together) and why an llm pod needs `LLM_MODEL` in its env: ninfer refuses any request whose `model`
+is not its `--model-id`, and the autoscaler delivers the control plane's `llm.model` at create.
+The ninfer build stage compiles a pinned commit of github.com/Neroued/ninfer — it needs CUDA 13.1
+(the base image ships 12.8 for llama.cpp; only `libcudart.so.13` is added).
+
+**Deploy the control plane BEFORE pointing the llm template at `llm-v6`.** `LLM_MODEL` has no
+default and the entrypoint refuses to start without one, so an `llm-v6` pod created by a control
+plane that does not yet send it exits 1 at boot — and RunPod restarts an exited container and keeps
+billing. Nothing recovers it until `boot_deadline_seconds` (900) expires, and the scaler creates a
+replacement in the meantime. The reverse order is free: an older image ignores `LLM_MODEL` and only
+stops reporting `GPU_TYPE`, which the worker now reads off the device anyway.
 
 Make one RunPod **template** per image (container image + volume mount at `/workspace`; no ports).
 Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (`WORKER_TOKEN` must
-match `workqueue.token` on the control plane). No pod exposes a port: the inference server binds
-`127.0.0.1`.
+match `workqueue.token` on the control plane), plus `LLM_MODEL` on an llm pod. No pod exposes a
+port: the inference server binds `127.0.0.1`.
 
 **Mesh cold start (measured on a 5090 pod, 2026-07-23).** A pod reaches WARM — able to serve at
 steady speed — in ~116s of the ~330s it used to take, and a claimed job never pays boot:
@@ -208,7 +238,10 @@ Settings block (`settings.json` → `runpod`; env: `RUNPOD_ENABLED`, `RUNPOD_API
   not localhost).
 - `tick_seconds` (15) — scaling-loop cadence. `stale_worker_seconds` (180) — a worker row silent
   this long is dead.
-- `queues.<name>` — per-queue policy: `template_id`, `gpu_type_ids` (a list),
+- `queues.<name>` — per-queue policy: `template_id`, `gpu_type_ids` (a PRIORITY-ORDERED list: the
+  scaler creates with the first entry alone, and retries with the whole list only if RunPod refuses
+  — asking for all of them at once gets whichever card RunPod prefers to hand out, and the cards are
+  not substitutes, since ninfer serves only a 5090),
   `max_workers`, `scale_up_depth_per_worker` (add when pending ÷ effective workers hits this),
   `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`, `idle_exit_seconds`
   (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this

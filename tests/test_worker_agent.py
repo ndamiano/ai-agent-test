@@ -1,12 +1,15 @@
 """Worker agent — claims, forwards the payload to the local target without leaking the worker
 token, and lands result/error with measured exec time."""
 
+import subprocess
 import threading
 from unittest.mock import MagicMock
 
+import pytest
 import requests
 
-from worker.agent import Agent
+import worker.agent as worker_agent
+from worker.agent import Agent, detect_gpu
 from fakes import FakeResponse
 
 
@@ -207,3 +210,49 @@ def test_comfy_image_upload_failure_never_submits():
 
     assert result is None and "/upload/image" in err
     assert calls == ["http://gpu/upload/image"]
+
+
+def test_claim_carries_the_card():
+    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
+              gpu_type="NVIDIA RTX PRO 4500 Blackwell")
+    a.session = MagicMock()
+    a.session.post.return_value = FakeResponse(200, {"job": None})
+    a.claim()
+    assert a.session.post.call_args.kwargs["json"]["gpu_type"] == "NVIDIA RTX PRO 4500 Blackwell"
+
+
+def test_the_card_is_read_off_the_device_the_worker_woke_up_on(monkeypatch):
+    """Never what someone asked RunPod for: gpuTypeIds is a preference list, and recording the
+    request reported 5090 for 879 prod jobs billed as RTX PRO 4500."""
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(worker_agent, "Agent", FakeAgent)
+    monkeypatch.setattr(worker_agent, "detect_gpu", lambda: "NVIDIA RTX PRO 4500 Blackwell")
+    worker_agent.main(["--token", "wsecret"])
+    assert captured["gpu_type"] == "NVIDIA RTX PRO 4500 Blackwell"
+
+
+def test_no_one_outside_the_box_may_name_the_card():
+    with pytest.raises(SystemExit):
+        worker_agent.main(["--token", "wsecret", "--gpu-type", "NVIDIA GeForce RTX 5090"])
+
+
+def test_detect_gpu_reads_the_first_device_name(monkeypatch):
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **kw: subprocess.CompletedProcess(a, 0, "NVIDIA RTX PRO 4500 Blackwell\n", ""))
+    assert detect_gpu() == "NVIDIA RTX PRO 4500 Blackwell"
+
+
+def test_detect_gpu_survives_a_box_without_nvidia_smi(monkeypatch):
+    def boom(*a, **kw):
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert detect_gpu() is None   # a CPU box registers, it just records no card

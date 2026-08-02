@@ -21,6 +21,7 @@ import os
 import queue as queue_mod
 import signal
 import socket
+import subprocess
 import threading
 import time
 import uuid
@@ -32,6 +33,23 @@ from worker.handlers import HANDLERS
 logger = logging.getLogger("worker")
 
 HEARTBEAT_INTERVAL = 45.0
+
+
+def detect_gpu() -> str | None:
+    """The card this process is ACTUALLY running on, asked of the device itself.
+
+    RunPod's create-time gpuTypeIds is a preference list, not an assignment, so the type the
+    scaler asked for is not the type the pod got — a control plane that records its own request
+    reports whatever is first in settings, forever (measured 2026-08-01: 879 prod jobs recorded
+    as 5090 while the bill was entirely RTX PRO 4500)."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10, check=True).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("gpu detection failed (%s) — jobs will record no gpu_type", e)
+        return None
+    names = [line.strip() for line in out.splitlines() if line.strip()]
+    return names[0] if names else None
 
 
 class Agent:
@@ -176,7 +194,6 @@ def main(argv=None) -> int:
                         help="wire format the target serves (llm queue only)")
     parser.add_argument("--token", default=os.environ.get("WORKER_TOKEN", ""))
     parser.add_argument("--worker-id", default=None)
-    parser.add_argument("--gpu-type", default=None)
     parser.add_argument("--source", default="local")
     parser.add_argument("--idle-exit-seconds", type=float,
                         default=float(os.environ.get("IDLE_EXIT_SECONDS", "0")),
@@ -187,8 +204,10 @@ def main(argv=None) -> int:
         parser.error("--token (or WORKER_TOKEN) is required")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+    # Detected here and nowhere else: there is no --gpu-type, because the card is a fact about the
+    # box this process woke up on and nothing outside it is entitled to say otherwise.
     agent = Agent(args.server, args.target, args.queue, args.token, api=args.api,
-                  worker_id=args.worker_id, gpu_type=args.gpu_type, source=args.source,
+                  worker_id=args.worker_id, gpu_type=detect_gpu(), source=args.source,
                   idle_exit_seconds=args.idle_exit_seconds)
 
     def _stop(signum, frame):

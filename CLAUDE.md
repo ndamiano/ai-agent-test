@@ -344,10 +344,12 @@ a build carrying the older "draw a plain shape at that spot" line orphaned 7 of 
   request and the worker translates it for whatever its own target serves (`worker.agent --api
   chat|responses`, default `chat`; see `llm_clients/wire.py`). `responses` is the only local
   dialect that honors `reasoning.effort`; `chat` is the universal one, for engines that serve only
-  it (ninfer). On `chat` the worker sends `presence_penalty: 0` explicitly — ninfer defaults it to
-  1.0, which degrades long structured output — and turns `reasoning: "none"` into the
-  `enable_thinking` template switch. Adding an engine is a branch in `worker/handlers.llm`, never a
-  change here.
+  it (ninfer). On `chat` a canonical body passes through minus `reasoning`, so THINKING AND SAMPLING
+  ARE LAUNCH FLAGS on the target server, not request fields: llama-server takes
+  `--chat-template-kwargs '{"enable_thinking":false}'`, ninfer takes `--no-thinking` and
+  `--presence-penalty 0` (its sampler defaults to Qwen3 thinking defaults, penalty 1.0 among them,
+  which degrades long structured output). Adding an engine is a branch in `worker/handlers.llm`,
+  never a change here.
 - The worker-pull queue is the ONLY transport to a GPU — llm, sprite/mesh images (queue `image`)
   and TRELLIS meshes (queue `mesh`) alike. There is no `enabled` flag and no endpoint setting on
   this side: the control plane touches no GPU at all, and a queue with no worker means every job on
@@ -365,6 +367,11 @@ a build carrying the older "draw a plain shape at that spot" line orphaned 7 of 
   `network_volume_id`, `cp_url` (the pod-reachable control-plane URL) and per-queue `queues.<name>`
   scaling blocks (template_id, gpu_type_ids, max_workers, thresholds, idle_exit_seconds). The
   `queues` dict in settings.json replaces the default wholesale — carry complete blocks.
+  `gpu_type_ids` is PRIORITY-ORDERED: the scaler asks for the head alone and widens to the whole
+  list only when RunPod refuses that create, since the cards are not substitutes (ninfer serves
+  only a 5090). Which card a pod GOT is the worker's to report, from the device — a control plane
+  that records its own request records the first list entry forever (measured 2026-08-01: 879 prod
+  jobs stamped 5090, the bill entirely RTX PRO 4500).
 - **Model categories** `large`/`medium`/`small` carry one knob, `message_budget_chars`, and it is
   only the FALLBACK: when `llm.n_ctx` is set the input budget is derived from the window instead
   (above), so the category decides nothing on a configured box.
@@ -386,6 +393,10 @@ restarted — Node caches the ESM config, and a stale one drops every custom cla
 `--chat-template-kwargs '{"enable_thinking":false}'` — load-bearing, and `--reasoning-budget 0`
 alone is a no-op: without it Qwen3.6 thinks in `content` and authoring turns truncate at the output
 cap before the tool call. Full invocation + the other local services: `tasks/nicknotes.md`.
+On a 5090 the target is ninfer instead — same weights in its own artifact, ~60% more tok/s, and
+compiled for `sm_120a` alone. The autoscaled llm image carries both and picks by reading the card
+at boot (docs/deploy.md); `llm.model` must be what the engine answers to, so it reaches the pod as
+`LLM_MODEL` and becomes ninfer's `--model-id`.
 
 ---
 

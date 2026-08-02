@@ -92,9 +92,10 @@ class Autoscaler:
                 now - self._last_scale_up.get(queue, 0.0),
             )
             for action in actions:
-                self._execute(action, queue, qcfg, rp, token, now)
+                self._execute(action, queue, qcfg, rp, token,
+                              (settings.get("llm") or {}).get("model", ""), now)
 
-    def _execute(self, action, queue: str, qcfg: Dict, rp: Dict, token: str,
+    def _execute(self, action, queue: str, qcfg: Dict, rp: Dict, token: str, llm_model: str,
                  now: float) -> None:
         try:
             if isinstance(action, StartPod):
@@ -102,19 +103,15 @@ class Autoscaler:
                 env = {
                     "CP_URL": rp.get("cp_url", ""),
                     "WORKER_TOKEN": token,
-                    "GPU_TYPE": (qcfg.get("gpu_type_ids") or [""])[0],
                     "IDLE_EXIT_SECONDS": str(qcfg.get("idle_exit_seconds", 10)),
                 }
-                self._client.create_pod(
-                    name=name,
-                    template_id=qcfg["template_id"],
-                    gpu_type_ids=qcfg["gpu_type_ids"],
-                    network_volume_id=rp.get("network_volume_id", ""),
-                    env=env,
-                    cloud_type=rp.get("cloud_type", "SECURE"),
-                )
+                if queue == "llm":
+                    # An llm pod picks its engine by the card it got, and ninfer answers only
+                    # requests naming its --model-id. The pod cannot read settings, so the model
+                    # string every request will carry is delivered at create.
+                    env["LLM_MODEL"] = llm_model
+                self._start_pod(name, queue, qcfg, rp, env)
                 self._last_scale_up[queue] = now
-                logger.info("scale-up %s: created pod %s", queue, name)
             elif isinstance(action, TerminatePod):
                 self._client.terminate_pod(action.pod_id)
                 if action.worker_id:
@@ -124,3 +121,32 @@ class Autoscaler:
                 self._stats.mark_worker_terminated(action.worker_id)
         except RunPodError as e:
             logger.error("action %r on queue %s failed: %s", action, queue, e)
+
+    def _start_pod(self, name: str, queue: str, qcfg: Dict, rp: Dict, env: Dict) -> None:
+        """Create one pod, PREFERRING the first gpu_type_ids entry.
+
+        The list is a preference set RunPod satisfies by availability, and it documents no
+        priority order — asking for all of them at once is asking for whichever is cheapest to
+        hand out. So ask for the head alone first and widen only when that create is refused: the
+        cards differ in what they can serve (ninfer needs a 5090), which makes the fallback a real
+        downgrade rather than a substitution."""
+        ids = list(qcfg["gpu_type_ids"])
+        attempts = [ids[:1], ids] if len(ids) > 1 else [ids]
+        for i, attempt in enumerate(attempts):
+            try:
+                self._client.create_pod(
+                    name=name,
+                    template_id=qcfg["template_id"],
+                    gpu_type_ids=attempt,
+                    network_volume_id=rp.get("network_volume_id", ""),
+                    env=env,
+                    cloud_type=rp.get("cloud_type", "SECURE"),
+                )
+            except RunPodError as e:
+                if i == len(attempts) - 1:
+                    raise
+                logger.warning("scale-up %s: create with %s refused (%s) — widening to %s",
+                               queue, ids[0], e, ids)
+                continue
+            logger.info("scale-up %s: created pod %s on %s", queue, name, attempt)
+            return

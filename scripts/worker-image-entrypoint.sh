@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 vol, stage, tree = sys.argv[1], sys.argv[2], sys.argv[3]
 # What this pod loads: the flux checkpoint (the one ckpt_name every live workflow names) and the
-# BiRefNet matte weights. Everything else on the volume is other queues' or dead paths.
+# BiRefNet matte weights. Everything else on the volume belongs to other queues.
 flux = os.path.join(vol, "checkpoints", "flux1-schnell-fp8.safetensors")
 rmbg = os.path.join(vol, "RMBG")
 

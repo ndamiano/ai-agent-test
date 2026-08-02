@@ -103,9 +103,8 @@ def stage_weights(weights: str, names, stage_root: str, streams: int = 8):
     transformers at pipeline construct off the same mount; the staged pipeline configs are
     rewritten to the staged copies. Two things are deliberately NOT staged: the hub cache
     (nothing this pipeline serves reads it — CLIP is trainer-only code, and DINOv3 loads from
-    the encoders dir the configs name) and the triton kernel cache (60MB whose .so files must be
-    dlopen'd, which tmpfs's noexec forbids — measured "failed to map segment"; its reads were
-    never the cost).
+    the encoders dir the configs name) and the triton kernel cache (its .so files are dlopen'd,
+    and tmpfs mounts are noexec — a staged copy fails to load with "failed to map segment").
 
     Returns (path_to_load_from, seconds). Falls back to the volume when the copy will not fit or
     fails — per part: a slow pod beats a dead one.
@@ -294,9 +293,9 @@ class TrellisEngine:
 
     @contextlib.contextmanager
     def _stage_timers(self):
-        """Print how long each pipeline stage takes while the wrapped block runs — the warmup's
-        wall-clock has hidden a 35s one-time cost between the sampler progress bars, and only a
-        per-stage split can say which stage owns it."""
+        """Print how long each pipeline stage takes while the wrapped block runs. One-time costs
+        hide between the sampler progress bars (a 33s flex_gemm autotune lived there unseen);
+        only a per-stage split says which stage owns the time."""
         stages = ("preprocess_image", "get_cond", "sample_sparse_structure", "sample_shape_slat",
                   "sample_tex_slat", "decode_shape_slat", "decode_tex_slat", "decode_latent")
         saved = {}
@@ -345,8 +344,8 @@ class TrellisEngine:
             self.warmup_seconds = round(time.time() - t0, 1)
             print(f"[trellis] warmed in {self.warmup_seconds:.1f}s", flush=True)
             if os.environ.get("TRELLIS_WARMUP_TIMING"):
-                # A second throwaway mesh, timed per stage: its delta against the first IS the
-                # one-time cost, attributed. Boot-profiling only — it burns ~13s of pod time.
+                # A second throwaway mesh, timed per stage: its delta against the first
+                # isolates each stage's one-time cost. Boot-profiling only — ~13s of pod time.
                 t1 = time.time()
                 with self._stage_timers():
                     self._generate(img, self.ptype, texture=self.texture, decimation=20000)

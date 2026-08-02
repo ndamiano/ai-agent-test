@@ -113,7 +113,7 @@ def _billing_rows(now: float):
             "hourly_24h": client.billing_pods(_iso(now - 24 * 3600), _iso(now), bucket="hour"),
             "daily_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now), bucket="day"),
             "pods_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now),
-                                            bucket="week", grouping="podId"),
+                                            bucket="day", grouping="podId"),
         }
     except Exception:
         return None
@@ -197,12 +197,18 @@ async def get_costs(_: User = Depends(require_admin)) -> Dict[str, Any]:
 
     ghost = None
     if billing is not None:
-        known = {w.get("pod_id") for w in db_store.workers_since(0.0)}
-        ghost_rows = [r for r in billing["pods_30d"] if r.get("podId") not in known]
+        all_workers = db_store.workers_since(0.0)
+        known = {w.get("pod_id") for w in all_workers}
+        # Pods billed before the first worker row existed aren't ghosts — they predate pod
+        # tracking entirely. The metric only judges the era it can see.
+        tracking_from = min((float(w["started_at"]) for w in all_workers), default=now)
+        ghost_rows = [r for r in billing["pods_30d"]
+                      if r.get("podId") not in known and _parse_time(r.get("time", "")) >= tracking_from]
         ghost = {"pods": len({r.get("podId") for r in ghost_rows}),
                  "amount_usd": round(sum(float(r.get("amount") or 0) for r in ghost_rows), 4),
                  "billed_seconds": sum(float(r.get("timeBilledMs") or 0) / 1000.0
-                                       for r in ghost_rows)}
+                                       for r in ghost_rows),
+                 "tracking_from": tracking_from}
 
     data = {"generated_at": now, "cache_seconds": _COST_CACHE_TTL,
             "runpod_reachable": billing is not None, "windows": windows, "ghost_30d": ghost}

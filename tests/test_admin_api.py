@@ -67,8 +67,11 @@ def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
               "gpuTypeId": "NVIDIA GeForce RTX 5090"},
              {"time": iso(now - 20 * 24 * 3600), "amount": 4.0, "timeBilledMs": 14_400_000,
               "gpuTypeId": "NVIDIA RTX PRO 4500 Blackwell"}]
-    pods = [{"podId": "known", "amount": 5.0, "timeBilledMs": 20_000_000},
-            {"podId": "boot-looper", "amount": 1.5, "timeBilledMs": 1_800_000}]
+    pods = [{"podId": "known", "time": iso(now - 3600), "amount": 5.0, "timeBilledMs": 20_000_000},
+            {"podId": "boot-looper", "time": iso(now + 60), "amount": 1.5, "timeBilledMs": 1_800_000},
+            # Billed before any worker row existed: predates tracking, NOT a ghost.
+            {"podId": "prehistoric", "time": iso(now - 29 * 24 * 3600), "amount": 9.0,
+             "timeBilledMs": 30_000_000}]
     monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily, pods))
     admin._cost_cache.update(at=0.0, data=None)
 
@@ -96,7 +99,8 @@ def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
         "NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 4500 Blackwell"}
 
     # The boot-looper pod billed money but never registered a worker: ghost spend.
-    assert body["ghost_30d"] == {"pods": 1, "amount_usd": 1.5, "billed_seconds": 1800.0}
+    ghost = body["ghost_30d"]
+    assert (ghost["pods"], ghost["amount_usd"], ghost["billed_seconds"]) == (1, 1.5, 1800.0)
 
 
 def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, monkeypatch):

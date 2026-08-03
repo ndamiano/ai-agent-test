@@ -4,6 +4,8 @@ export interface Game {
     built: boolean
     building: boolean
     paused: boolean
+    // A charged plan whose build was never pressed — the create page offers to resume it.
+    unstarted_plan: boolean
 }
 
 export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 'built'
@@ -22,6 +24,8 @@ export interface GameDetail {
     // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
     // uncharged (no bar). Raw seconds — especially seconds_used — are deliberately never surfaced.
     budget_pct_remaining: number | null
+    // The saved stage plan of a charged-but-never-built enhancement, for resuming; null otherwise.
+    plan: string[] | null
 }
 
 // One row of the durable build/spec event log (GET /api/games/:id/events). Written by the backend's

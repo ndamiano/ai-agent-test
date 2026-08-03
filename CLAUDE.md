@@ -269,14 +269,20 @@ src/
                          Stage advance rides the post-finalize seam strictly AFTER the error
                          gate: a stage is only stacked onto a game that loads clean. CLI:
                          `run --staged "<request>"`. Web: POST /api/games/enhance plans WITHOUT
-                         building (run created, small compute allowance, NO credit deduction — an
-                         abandoned enhancement costs nothing) and the SPA shows the user's text
-                         and the editable stage list side by side; Build sends the stage texts to
-                         /build, which saves the plan and builds stage 1 — the boxes' contents ARE
-                         what builds, so THE PROMPT IS THE ARTIFACT holds stage by stage.
-                         Enhancement is a checkbox (default on); opting out gets a one-time
-                         recommendation notice whose "don't show again" lives in localStorage. A
-                         plain build clears any stale stage plan.
+                         building, and planning is where the CREDIT is charged — it is the game's
+                         first inference, and any free inference path is a cost leak (a one-off
+                         llm call on the autoscaled queue bills ~40s of pod wall-clock for ~3s of
+                         work). The plan call meters against the grant it just bought; re-planning
+                         the same run (body run_id) never charges again, and a paid plan builds on
+                         ITS run whether staged or plain. The plan is saved beside the run, so the
+                         create page offers a charged-but-never-built plan for resume
+                         ("unstarted_plan" on the list, "plan" on the detail). The SPA shows the
+                         user's text and the editable stage list side by side; a one-stage plan
+                         still shows review — nothing builds unseen. Build sends the stage texts
+                         to /build — the boxes' contents ARE what builds, so THE PROMPT IS THE
+                         ARTIFACT holds stage by stage. Enhancement is a checkbox (default on);
+                         opting out gets a one-time recommendation notice whose "don't show
+                         again" lives in localStorage. A plain build clears any stale stage plan.
       error_gate.py      the ERROR GATE — after a playable finalize, open the staged game in a
                          headless browser (playwright chromium, an ephemeral static server, one
                          click + Enter + Space to get past a title screen) and re-enter the fix

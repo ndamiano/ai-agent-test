@@ -25,12 +25,34 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
     const [enhance, setEnhance] = useState(true)
     const [notice, setNotice] = useState(false)
     // A returned plan puts the page in review: the user reads and edits the stages, and pressing
-    // Build on them is the approval — what is on screen is byte for byte what builds.
+    // Build on them is the approval — what is on screen is byte for byte what builds. The plan is
+    // already paid for, so leaving review and planning again reuses the same run.
     const [planRunId, setPlanRunId] = useState<string | null>(null)
     const [stages, setStages] = useState<string[] | null>(null)
+    const [resumable, setResumable] = useState<string | null>(null)
     const { refreshBalance } = useAuth()
 
-    useEffect(() => track('create_opened'), [])
+    useEffect(() => {
+        track('create_opened')
+        api.listGames()
+            .then(games => setResumable(games.find(g => g.unstarted_plan)?.run_id ?? null))
+            .catch(() => { /* the banner is best-effort */ })
+    }, [])
+
+    const resume = async () => {
+        if (!resumable) return
+        setBusy(true); setError(null)
+        try {
+            const detail = await api.getGame(resumable)
+            if (!detail.plan) { setResumable(null); return }
+            setText(detail.prompt)
+            setPlanRunId(detail.run_id)
+            setStages(detail.plan)
+            setResumable(null)
+        } catch (e) {
+            setError(buildErrorMessage(e, 'Could not load the unstarted build'))
+        } finally { setBusy(false) }
+    }
 
     const createPlain = async () => {
         setBusy(true); setError(null)
@@ -47,14 +69,8 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
     const plan = async () => {
         setBusy(true); setError(null); setEnhance(true)
         try {
-            const res = await api.enhancePrompt(text)
+            const res = await api.enhancePrompt(text, planRunId ?? undefined)
             track('enhance_planned', { run_id: res.run_id, stages: res.stages.length })
-            if (res.stages.length < 2) {
-                // A plan that came back as one stage has nothing to review — build it plain.
-                const { run_id } = await api.buildGame(res.run_id, text)
-                track('build_started', { run_id, source: 'create', staged: false })
-                onCreated(run_id); return
-            }
             setPlanRunId(res.run_id)
             setStages(res.stages)
         } catch (e) {
@@ -67,7 +83,21 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
         setBusy(true); setError(null)
         try {
             const { run_id } = await api.buildStages(planRunId, stages)
-            track('build_started', { run_id, source: 'create', staged: true })
+            track('build_started', { run_id, source: 'create', staged: stages.length > 1 })
+            onCreated(run_id)
+        } catch (e) {
+            setError(buildErrorMessage(e, 'Could not start the build'))
+        } finally { setBusy(false); refreshBalance() }
+    }
+
+    // A paid plan builds plain on ITS run — a fresh createGame here would charge a second credit.
+    const buildPaidPlain = async () => {
+        if (!planRunId) return
+        setBusy(true); setError(null)
+        try {
+            const { run_id } = await api.buildGame(planRunId, text)
+            track('enhance_skipped', { run_id })
+            track('build_started', { run_id, source: 'create', staged: false })
             onCreated(run_id)
         } catch (e) {
             setError(buildErrorMessage(e, 'Could not start the build'))
@@ -76,6 +106,7 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
 
     const create = () => {
         if (enhance) { void plan(); return }
+        if (planRunId) { void buildPaidPlain(); return }
         if (shouldShowNotice()) { setNotice(true); return }
         void createPlain()
     }
@@ -99,6 +130,13 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
                     </p>
                 </div>
 
+                {resumable && !reviewing && (
+                    <div className="flex items-center gap-3 border border-edge rounded px-3 py-2">
+                        <span className="text-sm text-slate flex-1">You have an unstarted build in progress.</span>
+                        <Button variant="quiet" size="sm" onClick={resume} disabled={busy}>Open it</Button>
+                    </div>
+                )}
+
                 {reviewing ? (
                     <>
                         <div className="flex flex-col gap-1">
@@ -108,7 +146,9 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
                         {stages.map((s, i) => (
                             <div key={i} className="flex flex-col gap-1">
                                 <span className="text-xs text-dim">
-                                    {i === 0 ? 'Stage 1 — built first, playable on its own' : `Stage ${i + 1} — added once the game runs`}
+                                    {stages.length === 1 ? 'The build request'
+                                        : i === 0 ? 'Stage 1 — built first, playable on its own'
+                                            : `Stage ${i + 1} — added once the game runs`}
                                 </span>
                                 <TextArea value={s} disabled={busy} rows={4} spellCheck={false}
                                     onChange={e => setStages(stages.map((t, j) => (j === i ? e.target.value : t)))}
@@ -118,12 +158,13 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
                         <div className="flex items-center gap-3 flex-wrap">
                             <Button variant="primary" size="md" onClick={buildPlanned}
                                 disabled={busy || stages.every(s => !s.trim())}>
-                                {busy ? 'Starting…' : 'Build it · 1 credit'}
+                                {busy ? 'Starting…' : 'Build it'}
                             </Button>
                             <Button variant="ghost" size="md" disabled={busy}
-                                onClick={() => { setStages(null); setPlanRunId(null) }}>
+                                onClick={() => setStages(null)}>
                                 Back to my words
                             </Button>
+                            <span className="text-xs text-dim">Already paid for — building starts no new charge.</span>
                         </div>
                     </>
                 ) : (
@@ -135,7 +176,9 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
 
                         <div className="flex items-center gap-3 flex-wrap">
                             <Button variant="primary" size="md" onClick={create} disabled={busy || !text.trim()}>
-                                {busy ? (enhance ? 'Planning…' : 'Starting…') : 'Build it · 1 credit'}
+                                {busy ? (enhance ? 'Planning…' : 'Starting…')
+                                    : enhance ? (planRunId ? 'Plan it again' : 'Plan it · 1 credit')
+                                        : planRunId ? 'Build it' : 'Build it · 1 credit'}
                             </Button>
                             <label className="flex items-center gap-2 text-xs text-dim cursor-pointer">
                                 <input type="checkbox" checked={enhance} disabled={busy}

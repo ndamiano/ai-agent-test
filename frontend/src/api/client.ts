@@ -153,9 +153,10 @@ export const api = {
     getAssetBlobUrl: async (runId: string, assetId: string): Promise<string> =>
         URL.createObjectURL(await (await send(`/api/games/${runId}/assets/${assetId}`)).blob()),
     // Plan the prompt into build stages without building — the user reads and edits the plan,
-    // and pressing Build on it is the approval. The run exists after this call but is uncharged.
-    enhancePrompt: (prompt: string) =>
-        request<{ run_id: string; prompt: string; stages: string[] }>('/api/games/enhance', { method: 'POST', body: JSON.stringify({ prompt }) }),
+    // and pressing Build on it is the approval. Planning is where the credit is charged; passing
+    // runId re-plans that already-charged run (no second charge).
+    enhancePrompt: (prompt: string, runId?: string) =>
+        request<{ run_id: string; prompt: string; stages: string[] }>('/api/games/enhance', { method: 'POST', body: JSON.stringify({ prompt, run_id: runId }) }),
     // `prompt` is the text in the box: pressing Build is what approves it, so the build call is
     // the only thing that writes it.
     buildGame: (runId: string, prompt?: string) =>

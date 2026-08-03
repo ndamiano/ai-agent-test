@@ -37,13 +37,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# What an enhancement's plan call may spend — one small llm call, granted (never deducted) so an
-# abandoned enhancement costs the user nothing while the queue's budget gate stays closed to zero.
-ENHANCE_SECONDS = 120
-
-
 class NewGameBody(BaseModel):
     prompt: str
+
+
+class EnhanceBody(BaseModel):
+    prompt: str
+    # Re-plan an already-charged run (the user went back to their words) — no second charge.
+    run_id: Optional[str] = None
 
 
 class BuildBody(BaseModel):
@@ -105,14 +106,20 @@ async def list_games(user: User = Depends(get_current_user)):
         if not row["title"] and row["status"] == "draft":
             continue   # created but has no prompt yet — nothing to show
         active = build_chain.status_of(row["id"])
+        built = _built(row["id"])
         games.append({
             "run_id": row["id"],
             "title": staged_title(row["id"]) or row["title"],
             "status": row["status"],
-            "built": _built(row["id"]),
+            "built": built,
             "building": active is not None,
             "paused": bool(active and active["paused"]),
             "mtime": row["updated_at"],
+            # A charged plan whose build was never pressed — the create page offers to resume it.
+            # "Never pressed" is the builds table: a pressed build leaves a row even if it fails.
+            "unstarted_plan": (active is None and not built and row.get("credits_spent", 0) > 0
+                               and not db_store.builds_for(row["id"])
+                               and (RunState(row["id"]).run_dir / stage_plan.STATE_FILE).exists()),
         })
     games.sort(key=lambda g: g["mtime"], reverse=True)
     return games
@@ -147,15 +154,17 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
 
 
 @router.post("/enhance", response_model=Dict)
-async def enhance_prompt(body: NewGameBody, user: User = Depends(get_current_user)):
+async def enhance_prompt(body: EnhanceBody, user: User = Depends(get_current_user)):
     """Plan the user's request into build stages, WITHOUT building. Returns the run, the original
     text, and the stage texts for the user to read and edit — pressing Build on them is the
     approval, so nothing here is hidden rewriting.
 
-    The run is created now so the plan's llm call has a game to ride the queue under; it gets a
-    small compute allowance and NO credit deduction — an abandoned enhancement must cost the
-    user nothing, and `is_charged` stays false so the build charges normally. A plan that fails
-    answers with the request as its one stage, and the client falls back to the plain flow."""
+    Planning is where the credit is charged: it is the game's first inference, and any free
+    inference path is a cost leak (a one-off llm call on the autoscaled queue bills ~40s of pod
+    wall-clock for ~3s of work). The plan call itself meters against the grant it just bought.
+    `run_id` re-plans an already-charged run — the user went back to their words and pressed
+    Plan again, and their credit covers every re-plan. The plan is SAVED beside the run, so an
+    abandoned plan can be picked back up from the create page."""
     text = body.prompt.strip()
     if not text:
         raise HTTPException(status_code=400, detail="the prompt is empty")
@@ -164,10 +173,28 @@ async def enhance_prompt(body: NewGameBody, user: User = Depends(get_current_use
         log_violation(violation, user_id=user.id, source="enhance")
         raise HTTPException(status_code=400, detail="this prompt can't be built")
 
-    run_id = await asyncio.to_thread(create_run, user.id)
+    if body.run_id is not None:
+        state = _require_state(body.run_id, user)
+        if not db_store.is_charged(body.run_id):
+            raise HTTPException(status_code=409, detail="this run was never planned")
+        if build_chain.is_active(body.run_id):
+            raise HTTPException(status_code=409, detail="build already in progress")
+        run_id = body.run_id
+    else:
+        price = cost({"request": text})
+        if store.balance(user.id) < price:
+            raise HTTPException(status_code=402, detail={
+                "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+        run_id = await asyncio.to_thread(create_run, user.id)
+        if not store.deduct(user.id, price, "build", run_id):
+            raise HTTPException(status_code=402, detail={
+                "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+        db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
+        state = RunState(run_id)
+
     await asyncio.to_thread(set_prompt, run_id, text, event="prompt_proposed")
-    db_store.charge_game(run_id, 0, ENHANCE_SECONDS)
     plan = await asyncio.to_thread(stage_plan.plan, text, run_id)
+    await asyncio.to_thread(stage_plan.save, state.run_dir, text, plan)
     return {"run_id": run_id, "prompt": text, "stages": plan}
 
 
@@ -199,6 +226,9 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
         # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
         "budget_pct_remaining": _budget_pct(row, run_id),
+        # The saved stage plan, for resuming a charged-but-never-built enhancement.
+        "plan": (stage_plan.saved(state.run_dir) or {}).get("stages")
+                if (status == "idle" and not built) else None,
     }
 
 

@@ -322,7 +322,7 @@ def test_regenerate_bad_asset_id_is_400(client):
     assert r.status_code == 400
 
 
-def test_enhance_plans_stages_without_building_or_charging(client, monkeypatch):
+def test_enhance_charges_the_credit_and_saves_the_plan(client, monkeypatch):
     from maestro.codegen import stages as stage_plan
     user, headers = _user()
     started = []
@@ -333,12 +333,61 @@ def test_enhance_plans_stages_without_building_or_charging(client, monkeypatch):
     r = client.post("/api/games/enhance", headers=headers, json={"prompt": "card rpg for ante"})
     assert r.status_code == 200
     body = r.json()
-    assert body["prompt"] == "card rpg for ante"
     assert body["stages"] == ["build the duel alone", "add the world"]
-    assert started == []                                        # nothing built
-    assert auth_store.balance(user.id) == 10                    # nothing deducted
-    assert not db_store.is_charged(body["run_id"])              # build will charge normally
-    assert RunState(body["run_id"]).read_spec()["request"] == "card rpg for ante"
+    assert started == []                                        # nothing built yet
+    assert auth_store.balance(user.id) == 9                     # planning IS the charge
+    assert db_store.is_charged(body["run_id"])
+    saved = stage_plan.saved(RunState(body["run_id"]).run_dir)
+    assert saved["stages"] == body["stages"]                    # resumable from disk
+
+    # The build that follows never charges again.
+    client.post(f"/api/games/{body['run_id']}/build", headers=headers,
+                json={"stages": body["stages"]})
+    assert auth_store.balance(user.id) == 9
+
+
+def test_replanning_a_paid_run_charges_nothing(client, monkeypatch):
+    from maestro.codegen import stages as stage_plan
+    user, headers = _user()
+    monkeypatch.setattr(stage_plan, "plan", lambda text, rid: ["one", "two"])
+    first = client.post("/api/games/enhance", headers=headers,
+                        json={"prompt": "card rpg"}).json()
+
+    monkeypatch.setattr(stage_plan, "plan", lambda text, rid: ["duel first", "then world"])
+    again = client.post("/api/games/enhance", headers=headers,
+                        json={"prompt": "card rpg, but cozier", "run_id": first["run_id"]})
+    assert again.status_code == 200
+    assert again.json()["run_id"] == first["run_id"]
+    assert again.json()["stages"] == ["duel first", "then world"]
+    assert auth_store.balance(user.id) == 9                     # one credit total
+    assert RunState(first["run_id"]).read_spec()["request"] == "card rpg, but cozier"
+
+
+def test_enhance_with_no_credits_is_402_and_creates_nothing(client, monkeypatch):
+    user, headers = _user(credits=0)
+    r = client.post("/api/games/enhance", headers=headers, json={"prompt": "a maze game"})
+    assert r.status_code == 402
+    assert client.get("/api/games", headers=headers).json() == []
+
+
+def test_an_unbuilt_plan_is_offered_for_resume(client, monkeypatch):
+    from maestro.codegen import stages as stage_plan
+    user, headers = _user()
+    monkeypatch.setattr(stage_plan, "plan", lambda text, rid: ["one", "two"])
+    run_id = client.post("/api/games/enhance", headers=headers,
+                         json={"prompt": "card rpg"}).json()["run_id"]
+
+    (row,) = client.get("/api/games", headers=headers).json()
+    assert row["unstarted_plan"] is True
+    detail = client.get(f"/api/games/{run_id}", headers=headers).json()
+    assert detail["plan"] == ["one", "two"]
+
+    # Once Build is pressed, it stops being offered — a pressed build leaves a builds row.
+    monkeypatch.setattr(build_chain, "kickoff",
+                        lambda rid, **kw: db_store.create_build(rid))
+    client.post(f"/api/games/{run_id}/build", headers=headers, json={"stages": ["one", "two"]})
+    (row,) = client.get("/api/games", headers=headers).json()
+    assert row["unstarted_plan"] is False
 
 
 def test_staged_build_stores_plan_and_builds_stage_one(client, monkeypatch):

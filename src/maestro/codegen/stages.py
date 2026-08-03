@@ -25,7 +25,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,14 @@ def save(run_dir, request: str, stages: List[str]) -> None:
     (Path(run_dir) / STATE_FILE).write_text(
         json.dumps({"request": request, "stages": stages, "next": 1}, indent=2),
         encoding="utf-8")
+
+
+def saved(run_dir) -> Optional[Dict]:
+    """The stored plan, or None — what the create page resumes an unbuilt enhancement from."""
+    path = Path(run_dir) / STATE_FILE
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def next_note(run_dir) -> Optional[str]:

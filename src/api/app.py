@@ -41,6 +41,7 @@ from auth.deps import install_auth
 from auth.router import router as auth_router
 from config.settings_manager import settings_manager
 from db.reaper import Reaper
+from tools.db_backup import DbBackup
 from scaler.autoscaler import Autoscaler
 from scaler.runpod_client import RunPodClient
 from scaler.stats import SqliteStatsSource
@@ -60,6 +61,9 @@ async def startup_event():
         app.state.reaper.start()
         logging.info("Queue reaper started")
 
+        app.state.db_backup = DbBackup()
+        app.state.db_backup.start()
+
         _settings = settings_manager.get_settings()
         _rp = _settings.get("runpod") or {}
         if _rp.get("enabled") and _rp.get("api_key"):
@@ -78,6 +82,8 @@ async def shutdown_event():
     try:
         if getattr(app.state, "autoscaler", None):
             app.state.autoscaler.stop()
+        if getattr(app.state, "db_backup", None):
+            app.state.db_backup.stop()
         if getattr(app.state, "reaper", None):
             app.state.reaper.stop()
         await event_bus.shutdown()

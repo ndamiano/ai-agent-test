@@ -46,9 +46,10 @@ def _db_path() -> Path:
     return Path(settings_manager.get_settings()["data_dir"]).resolve() / "auth.db"
 
 
-# WAL is what Litestream replicates, and switching journal_mode needs a lock the busy handler
-# does not cover — so it is applied once per process per path, as in db/store. The mode is sticky
-# on the file, so the first connection ever is the only one that actually switches.
+# WAL keeps readers and the online-backup snapshot consistent under writers, and switching
+# journal_mode needs a lock the busy handler does not cover — so it is applied once per process
+# per path, as in db/store. The mode is sticky on the file, so the first connection ever is the
+# only one that actually switches.
 _WAL_APPLIED: set = set()
 _WAL_LOCK = threading.Lock()
 
@@ -162,6 +163,8 @@ def _insert_user(conn, handle: str, password: str, role: str) -> User:
         )
     except sqlite3.IntegrityError:
         raise HandleTakenError(f"handle {handle!r} already exists")
+    from tools.db_backup import mark_dirty
+    mark_dirty()
     return user
 
 
@@ -295,6 +298,9 @@ def _log_txn(conn, user_id: str, delta: int, reason: str, run_id: Optional[str])
         "VALUES (?, ?, ?, ?, ?, ?)",
         (uuid.uuid4().hex[:16], user_id, delta, reason, run_id, time.time()),
     )
+    # Every credit movement lands here — money rows snapshot ahead of the backup interval.
+    from tools.db_backup import mark_dirty
+    mark_dirty()
 
 
 def balance(user_id: str) -> int:

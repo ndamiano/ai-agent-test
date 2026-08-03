@@ -17,8 +17,7 @@ control-plane config, and prod never dials out. Contract details: `docs/architec
   toolchain, then a `python:3.12-slim` runtime installs deps and copies `run.py` + `src/` +
   `runtime/` + the built SPA, and runs as non-root.
 - `docker-compose.yml` — the `app` service (build, `.env`, the two named volumes, the
-  `settings.json` bind mount, healthcheck) + the `litestream` service (continuous DB replication —
-  see `docs/backups.md`, and `litestream.yml` at the repo root for its config).
+  `settings.json` bind mount, healthcheck).
 - `.env.example` — every knob; copy to `.env` and edit.
 - `scripts/provision.sh` — one-time host setup.
 - `scripts/deploy.sh` — ship dev → prod.
@@ -41,10 +40,10 @@ Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY
 `MAESTRO_DATA_DIR` off `/data`, and never `docker volume rm` either volume — that wipes accounts and
 games.
 
-Surviving the BOX is `docs/backups.md`: Litestream streams both DBs to S3 continuously (the
-`litestream` compose service — its `LITESTREAM_*` vars belong in `.env`), every settled run
-uploads its own archive with a nightly `--archive-all` sweep behind it, and the restore drill
-there is the proof either one works.
+Surviving the BOX is `docs/backups.md`: a control-plane thread snapshots both DBs to the bucket
+(every 15 minutes, sooner on account/credit writes), every settled run uploads its own archive
+with a nightly `--archive-all` sweep behind it, and the restore drill there is the proof either
+one works.
 
 ## Node in the image
 

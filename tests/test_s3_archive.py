@@ -170,3 +170,24 @@ def test_archive_missing_backfills_only_the_absent(bucket, monkeypatch):
     assert archive.archive_missing() == 1          # only r2
     assert "runs/r2.tar.gz" in fake.objects
     assert fake.objects["runs/r1.tar.gz"] == uploaded_before["runs/r1.tar.gz"]
+
+
+def test_the_key_prefix_separates_boxes(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(s3, "_cfg", lambda: {"endpoint": "s3.example.com", "region": "r",
+                                             "bucket": "b", "access_key": "a", "secret_key": "s",
+                                             "prefix": "dev/"})
+
+    class Resp:
+        status_code = 200
+        headers = {"Content-Length": "1"}
+        content = b"x"
+        text = ""
+
+    def fake_request(method, url, headers=None, data=None, timeout=None):
+        seen["url"] = url
+        return Resp()
+
+    monkeypatch.setattr(s3.requests, "request", fake_request)
+    s3.head("db/platform/latest.db.gz")
+    assert "/b/dev/db/platform/latest.db.gz" in seen["url"]

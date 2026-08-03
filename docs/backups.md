@@ -26,8 +26,10 @@ Deliberately NOT backed up:
 ## Secrets to provision (never committed)
 
 One application key, in the `s3` block of `src/config/settings.json`: `endpoint`, `region`,
-`bucket`, `access_key`, `secret_key`. The names are S3's; B2 issues the same pair as
-keyID (→ `access_key`) and applicationKey (→ `secret_key`). Both backup mechanisms read it; both idle with a log line
+`bucket`, `access_key`, `secret_key`, `prefix`. The names are S3's; B2 issues the same pair as
+keyID (→ `access_key`) and applicationKey (→ `secret_key`). `prefix` keeps boxes sharing a
+bucket out of each other's keys — prod runs unprefixed, every other box sets one (`"dev/"`):
+a dev snapshot overwriting prod's `latest` would be a poisoned restore. Both backup mechanisms read it; both idle with a log line
 when it is empty — a bucket that is not there must never cost a build anything. Set the bucket's
 lifecycle to keep only the last version of each object: `latest` keys are overwritten every
 snapshot, and hidden prior versions otherwise accumulate silently.

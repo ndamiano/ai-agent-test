@@ -73,7 +73,8 @@
     "region": "nyc3",
     "bucket": "",
     "access_key": "",
-    "secret_key": ""
+    "secret_key": "",
+    "prefix": ""
   },
   "payments": {
     "stripe_secret_key": "",

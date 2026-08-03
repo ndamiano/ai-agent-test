@@ -69,6 +69,9 @@ def sign_headers(*, method: str, host: str, uri: str, region: str, access_key: s
 def _request(method: str, key: str, data: bytes = b"") -> requests.Response:
     c = _cfg()
     endpoint = c["endpoint"].replace("https://", "").replace("http://", "").rstrip("/")
+    # Boxes sharing a bucket MUST NOT share keys — a dev snapshot overwriting prod's `latest`
+    # is a poisoned restore. Prod runs unprefixed; every other box sets one (e.g. "dev/").
+    key = (c.get("prefix") or "") + key
     uri = "/" + quote(f"{c['bucket']}/{key}", safe="/-_.~")
     payload_hash = hashlib.sha256(data).hexdigest() if data else EMPTY_SHA256
     amz_date = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

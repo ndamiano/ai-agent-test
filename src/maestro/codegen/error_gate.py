@@ -235,9 +235,11 @@ def _save_state(run_dir, state: Dict) -> None:
     _state_path(run_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def after_build(run_id: str) -> None:
+def after_build(run_id: str) -> bool:
     """Probe a just-finalized playable build; a thrown error re-enters the fix machine with ONE
     error's note. Runs outside the run's advance lock (kickoff blocks until it is free).
+    Returns whether a fix build was started — a caller with its own next step (a stage advance)
+    must stand down while the gate is still converging.
 
     Two stops besides a clean probe: MAX_ROUNDS spent (a game the gate cannot converge belongs
     to a human), and the same first error twice running (a fix that changed nothing will not
@@ -256,7 +258,7 @@ def after_build(run_id: str) -> None:
             logger.info("error gate: %s clean after %d fix round(s)", run_id, state["rounds"])
         state["last_message"] = None
         _save_state(rs.run_dir, state)
-        return
+        return False
 
     first = errors[0]
     logger.info("error gate: %s threw %d error(s); first: %s", run_id, len(errors),
@@ -264,13 +266,14 @@ def after_build(run_id: str) -> None:
     if state["rounds"] >= MAX_ROUNDS:
         logger.warning("error gate: %s still throwing after %d rounds — leaving it to a human",
                        run_id, state["rounds"])
-        return
+        return False
     if state["last_message"] == first["message"]:
         logger.warning("error gate: %s repeated the same error two rounds running — stopping",
                        run_id)
-        return
+        return False
 
     state["rounds"] += 1
     state["last_message"] = first["message"]
     _save_state(rs.run_dir, state)
     build_chain.kickoff(run_id, kind="fix", note=note_for(first, gdir))
+    return True

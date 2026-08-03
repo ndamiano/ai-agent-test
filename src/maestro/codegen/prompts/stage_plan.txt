@@ -1,0 +1,20 @@
+You are the AI that will build this browser game. You will build it across several BUILDS: the first build makes a small, complete, playable game out of the hardest core system alone, and each later build adds one more part to the game that already works.
+
+Below is what the user asked for. Write the build plan as 2 to 4 stages:
+- Stage 1 is a request for a complete playable game containing only the hardest core system. Someone could play stage 1's game on its own.
+- Each later stage is a short note telling the builder what to ADD to the game that already exists, and ends by saying what must keep working the way it already does.
+- Every stage is a few sentences of plain prose in the user's casual voice. No bullet points, no headers, no numbers for their own sake.
+- Every requirement the user stated must appear in exactly one stage. Before answering, check the request against your stages: a requirement that appears in none of them means the plan is wrong.
+- Each later stage adds a SYSTEM the game does not have yet. "More content", "more variety", "polish" or "atmosphere" is not a stage.
+- Do not add technical constraints of your own (nothing about file counts, storage, libraries, or what art may be used).
+
+Answer with exactly this shape, nothing else:
+
+STAGE 1: <the stage 1 request>
+STAGE 2: <the stage 2 note>
+STAGE 3: <the stage 3 note, if needed>
+STAGE 4: <the stage 4 note, if needed>
+
+<request>
+{request}
+</request>

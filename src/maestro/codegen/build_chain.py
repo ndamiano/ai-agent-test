@@ -298,10 +298,20 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step,
           art_unreferenced=art["unreferenced"], art_missing=art["missing"])
     if ok and attempt is None:
-        # The gate probes AFTER the lock this finalize holds is released — its kickoff blocks on
-        # the same lock, so running it inline here would deadlock. A build stopped by hand is not
-        # probed: the human ended it, and an auto-fix would restart what they stopped.
-        threading.Thread(target=error_gate.after_build, args=(run_id,), daemon=True).start()
+        # Post-finalize runs AFTER the lock this finalize holds is released — a kickoff blocks on
+        # the same lock, so running it inline here would deadlock. A build stopped by hand gets
+        # neither gate nor stage: the human ended it, and an auto-build would restart what they
+        # stopped.
+        threading.Thread(target=_post_finalize, args=(run_id,), daemon=True).start()
+
+
+def _post_finalize(run_id: str) -> None:
+    """The error gate first, the next stage only on a clean probe — a stage is never stacked onto
+    a game that does not load. A gate fix's own finalize re-enters here, so the stage advances as
+    soon as the gate converges."""
+    from maestro.codegen import stages
+    if not error_gate.after_build(run_id):
+        stages.advance(run_id)
 
 
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:

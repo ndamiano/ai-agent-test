@@ -8,15 +8,16 @@ curated exactly like membership. Playing costs nothing meterable — the files a
 grant is an in-memory entry — and the games run on the play origin, which holds no API and no
 credential (auth/playgrants.py)."""
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from auth import playgrants
 from config.settings_manager import settings_manager
 from db import store as db_store
 from maestro.codegen import stages
-from maestro.codegen.staging import is_staged, staged_title
+from maestro.codegen.staging import RUNTIME_DIR, is_staged, staged_title
 from maestro.state import RunState
 
 router = APIRouter()
@@ -25,14 +26,28 @@ router = APIRouter()
 TIERS = ("showcase", "oneshot")
 
 
-def _demo_tiers() -> Dict[str, List[str]]:
+def _demo_tiers() -> Dict[str, List[Dict]]:
+    """Each tier's entries: {"id": run_id, "thumb": path-inside-the-game or None}. The thumb is
+    curation like the listing itself — the owner names one of the game's own files."""
     cfg = settings_manager.get_settings().get("demo_games") or {}
-    return {tier: [str(x) for x in cfg.get(tier) or []] for tier in TIERS}
+    out: Dict[str, List[Dict]] = {}
+    for tier in TIERS:
+        out[tier] = [{"id": str(e["id"]), "thumb": e.get("thumb")}
+                     for e in (cfg.get(tier) or []) if isinstance(e, dict) and e.get("id")]
+    return out
 
 
 def _demo_ids() -> List[str]:
     tiers = _demo_tiers()
-    return [run_id for tier in TIERS for run_id in tiers[tier]]
+    return [e["id"] for tier in TIERS for e in tiers[tier]]
+
+
+def _thumb_of(run_id: str) -> Optional[str]:
+    for tier in TIERS:
+        for e in _demo_tiers()[tier]:
+            if e["id"] == run_id:
+                return e.get("thumb")
+    return None
 
 
 @router.get("", response_model=List[Dict])
@@ -44,7 +59,8 @@ async def list_demos():
     out = []
     tiers = _demo_tiers()
     for tier in TIERS:
-        for run_id in tiers[tier]:
+        for entry in tiers[tier]:
+            run_id = entry["id"]
             if not is_staged(run_id):
                 continue
             row = db_store.game(run_id) or {}
@@ -56,8 +72,23 @@ async def list_demos():
             out.append({"run_id": run_id,
                         "title": staged_title(run_id) or row.get("title") or run_id,
                         "prompt": plan.get("request") or spec.get("request", ""),
-                        "tier": tier})
+                        "tier": tier,
+                        "thumb_url": f"/api/demos/{run_id}/thumb" if entry.get("thumb") else None})
     return out
+
+
+@router.get("/{run_id}/thumb")
+async def demo_thumb(run_id: str):
+    """The one image the owner picked from the game's own staged files. Public like the list —
+    it is the card's face — but only for listed games, and never a path outside the game."""
+    thumb = _thumb_of(run_id)
+    if not thumb:
+        raise HTTPException(status_code=404, detail="no thumb")
+    base = (RUNTIME_DIR / "games" / run_id).resolve()
+    path = (base / thumb).resolve()
+    if not path.is_relative_to(base) or not path.is_file():
+        raise HTTPException(status_code=404, detail="no thumb")
+    return FileResponse(path)
 
 
 @router.post("/{run_id}/play-session", response_model=Dict)

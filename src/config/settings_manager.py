@@ -65,9 +65,11 @@ class SettingsManager:
                 "origin": os.getenv("MAESTRO_PLAY_ORIGIN", ""),
                 "app_origin": os.getenv("MAESTRO_APP_ORIGIN", ""),
             },
-            # Run ids playable by ANYONE from the landing page — the owner's curation, not a flag
+            # Games playable by ANYONE from the landing page — the owner's curation, not a flag
             # any build can set. Two tiers: "showcase" is what the machine can achieve, "oneshot"
-            # is a single prompt's first result kept untouched. Both empty ⇒ no demo surface.
+            # is a single prompt's first result kept untouched. Entries are
+            # {"id": run_id, "thumb": "assets/….webp"} — thumb optional, a file of the game's own,
+            # the card's face. Both tiers empty ⇒ no demo surface.
             "demo_games": {"showcase": [], "oneshot": []},
             # EXCEPT "queues", which it replaces wholesale: the file must carry complete queue blocks.
             "runpod": {

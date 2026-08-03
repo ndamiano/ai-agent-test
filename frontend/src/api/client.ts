@@ -132,7 +132,8 @@ export const api = {
         request<Game[]>('/api/games'),
     // The landing page's demo surface — public, owner-curated server-side.
     listDemos: () =>
-        request<{ run_id: string; title: string; prompt: string; tier: 'showcase' | 'oneshot' }[]>('/api/demos'),
+        request<{ run_id: string; title: string; prompt: string; tier: 'showcase' | 'oneshot';
+                  thumb_url: string | null }[]>('/api/demos'),
     demoPlaySession: (runId: string) =>
         request<{ url: string; origin: string }>(`/api/demos/${runId}/play-session`, { method: 'POST' }),
     // Make a new game: the prompt becomes the run and the build starts. Nothing exists server-side

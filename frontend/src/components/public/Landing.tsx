@@ -5,14 +5,21 @@ import { SectionLabel } from '../ui/Field'
 import { Sigil } from '../ui/Sigil'
 import { Link } from '../../router'
 
-interface Demo { run_id: string; title: string; prompt: string; tier: 'showcase' | 'oneshot' }
+interface Demo {
+    run_id: string; title: string; prompt: string
+    tier: 'showcase' | 'oneshot'; thumb_url: string | null
+}
+
+const CLAMP_AT = 160
 
 // One demo card: the prompt that summoned it, and the game itself — playable in place. The
 // pairing IS the pitch; a video would be a weaker claim than the game running.
 const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
     const [session, setSession] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
+    const [expanded, setExpanded] = useState(false)
     const frameRef = React.useRef<HTMLIFrameElement>(null)
+    const clamped = demo.prompt.length > CLAMP_AT && !expanded
 
     const play = async () => {
         setBusy(true)
@@ -40,7 +47,10 @@ const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
                     )
                     : (
                         <>
-                            <div className="absolute inset-0 opacity-60"><Sigil seed={demo.run_id} /></div>
+                            {demo.thumb_url
+                                ? <img src={demo.thumb_url} alt=""
+                                    className="absolute inset-0 w-full h-full object-cover opacity-80" />
+                                : <div className="absolute inset-0 opacity-60"><Sigil seed={demo.run_id} /></div>}
                             <Button variant="primary" size="md" onClick={play} disabled={busy}
                                 className="relative">
                                 ▶ Play it
@@ -50,7 +60,15 @@ const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
             </div>
             <div className="px-4 py-3 flex flex-col gap-1.5">
                 <SectionLabel>The words that summoned it</SectionLabel>
-                <p className="text-sm text-slate leading-relaxed">{demo.prompt}</p>
+                <p className="text-sm text-slate leading-relaxed">
+                    {clamped ? `${demo.prompt.slice(0, CLAMP_AT).trimEnd()}… ` : `${demo.prompt} `}
+                    {demo.prompt.length > CLAMP_AT && (
+                        <button onClick={() => setExpanded(e => !e)}
+                            className="text-dim underline hover:text-slate transition-colors">
+                            {expanded ? 'less' : 'see more'}
+                        </button>
+                    )}
+                </p>
             </div>
         </div>
     )
@@ -77,25 +95,19 @@ const Landing: React.FC = () => {
             <main className="max-w-5xl mx-auto px-6 py-14 flex flex-col gap-14">
                 <section className="text-center flex flex-col items-center gap-4">
                     <h1 className="font-display text-4xl md:text-5xl leading-tight max-w-2xl">
-                        Describe a game. A while later, it exists.
+                        Describe a game and Maestro summons it into reality.
                     </h1>
                     <p className="text-slate max-w-xl leading-relaxed">
-                        Maestro takes the game you imagine — a sentence, a paragraph, however you'd
-                        say it to a friend — and summons a real, playable browser game from it.
-                        Art and all.
-                    </p>
-                    <p className="text-xs text-dim">
-                        Private alpha. Accounts are limited — if you have one,{' '}
-                        <Link to="/login" className="underline hover:text-slate">sign in</Link>.
+                        The game you imagine — a sentence, a paragraph, however you'd say it to a
+                        friend — becomes a real, playable browser game. Art and all.
                     </p>
                 </section>
 
                 {demos.some(d => d.tier === 'showcase') && (
                     <section className="flex flex-col gap-5">
-                        <h2 className="font-display text-2xl text-center">What's possible</h2>
+                        <h2 className="font-display text-2xl text-center">Iterated</h2>
                         <p className="text-sm text-slate text-center max-w-xl mx-auto">
-                            Games grown the full way — staged summons, playtest notes, another pass
-                            until it plays right.
+                            Immediately playable, incrementally improved.
                         </p>
                         <div className="grid gap-6 md:grid-cols-2">
                             {demos.filter(d => d.tier === 'showcase')
@@ -106,10 +118,9 @@ const Landing: React.FC = () => {
 
                 {demos.some(d => d.tier === 'oneshot') && (
                     <section className="flex flex-col gap-5">
-                        <h2 className="font-display text-2xl text-center">What one sentence gets you</h2>
+                        <h2 className="font-display text-2xl text-center">One-shotted</h2>
                         <p className="text-sm text-slate text-center max-w-xl mx-auto">
-                            Typed once, kept exactly as it first came out of the cauldron — no
-                            retries, no notes, no second pour.
+                            No improvements made — didn't need any. You might still want some.
                         </p>
                         <div className="grid gap-6 md:grid-cols-2">
                             {demos.filter(d => d.tier === 'oneshot')

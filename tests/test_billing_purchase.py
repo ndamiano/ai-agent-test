@@ -231,3 +231,12 @@ def test_a_refund_event_takes_the_credits_back_even_below_zero(app_client, monke
     # Negative balance blocks the next purchase-priced action (the build path's balance check).
     assert app_client.post("/api/games", headers=hdr,
                            json={"prompt": "another game"}).status_code == 402
+
+
+def test_history_hides_abandoned_checkouts(app_client):
+    user, hdr = _authed_user("henry")
+    app_client.post("/api/billing/purchase", json={"package_id": "1"}, headers=hdr)  # never completed
+    done = _completed_purchase(app_client, hdr, package_id="5")
+
+    rows = app_client.get("/api/billing/purchases", headers=hdr).json()
+    assert [r["id"] for r in rows] == [done]

@@ -37,6 +37,12 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# The error gate's headless browser — --with-deps pulls the chromium shared libs a slim image
+# lacks. Installed as root before the user switch; the app user reads the shared cache.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright
+
 # Preserve the layout app.py's static-mount math depends on:
 # Path(__file__).resolve().parents[2] from /app/src/api/app.py == /app, so dist lands at
 # /app/frontend/dist, runtime/ at /app/runtime, and run.py inserts /app/src on sys.path.

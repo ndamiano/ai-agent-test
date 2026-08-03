@@ -83,10 +83,12 @@ def complete_purchase(purchase_id: str, user: User = Depends(get_current_user)):
 
 @router.get("/purchases")
 def purchase_history(user: User = Depends(get_current_user)):
+    """Money that moved: completed and refunded rows. A `started` row is an abandoned checkout
+    the user cannot act on — listing it reads as an unfinishable obligation."""
     return [{"id": p.id, "package_id": p.package_id, "credits": p.credits,
              "usd_cents": p.usd_cents, "status": p.status, "created_at": p.created_at,
              "completed_at": p.completed_at}
-            for p in store.list_purchases(user.id)]
+            for p in store.list_purchases(user.id) if p.status != "started"]
 
 
 @router.post("/webhook")

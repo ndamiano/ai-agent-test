@@ -24,7 +24,10 @@ from tools.build_events import _emit
 router = APIRouter()
 
 CLAIM_LONG_POLL_SECONDS = 25.0
-_CLAIM_POLL_INTERVAL = 0.5
+# A build is a serial chain of turns, so scan cadence is paid once per turn. Ticks are a
+# lock-free peek — idle workers cost reads, not writer-lock churn. Postgres LISTEN/NOTIFY
+# replaces the scan outright when that migration lands.
+_CLAIM_POLL_INTERVAL = 0.05
 
 # Fire-and-forget completion work. asyncio holds only weak references to tasks, so an unheld
 # task can be collected mid-run.
@@ -88,10 +91,13 @@ async def claim(body: ClaimBody, request: Request):
         else max(0.0, min(body.wait_seconds, CLAIM_LONG_POLL_SECONDS))
     loop = asyncio.get_running_loop()
     deadline = loop.time() + window
+    first = True
     while True:
-        job = await asyncio.to_thread(db_store.claim_job, body.queue, body.worker_id, lease)
-        if job is not None:
-            return {"job": {"id": job["id"], "queue": job["queue"], "payload": job["payload"]}}
+        if first or await asyncio.to_thread(db_store.queue_has_work, body.queue):
+            job = await asyncio.to_thread(db_store.claim_job, body.queue, body.worker_id, lease)
+            if job is not None:
+                return {"job": {"id": job["id"], "queue": job["queue"], "payload": job["payload"]}}
+        first = False
         if loop.time() >= deadline:
             return {"job": None}
         await asyncio.sleep(_CLAIM_POLL_INTERVAL)

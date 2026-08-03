@@ -126,3 +126,16 @@ def test_a_claimed_turn_is_left_to_its_worker():
     store.claim_job("llm", "w1", 60)
     assert store.cancel_pending_build_turn(bid, "paused by hand") == 0
     assert store.get_job(turn)["status"] == "claimed"
+
+
+def test_queue_has_work_sees_pending_and_lapsed_leases():
+    store.enqueue_job("llm", {"k": 1})
+    assert store.queue_has_work("llm") is True
+    assert store.queue_has_work("image") is False
+
+    job = store.claim_job("llm", "w1", lease_seconds=60)
+    assert store.queue_has_work("llm") is False          # claimed with a live lease
+
+    with store._db() as conn:                            # lapse the lease
+        conn.execute("UPDATE jobs SET lease_expires_at = 0 WHERE id = ?", (job["id"],))
+    assert store.queue_has_work("llm") is True           # requeue-able counts as work

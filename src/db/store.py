@@ -376,6 +376,20 @@ def abandon_pending_batch_jobs(game_id: str, error: str) -> int:
     return cur.rowcount
 
 
+def queue_has_work(queue: str) -> bool:
+    """Lock-free peek for the claim long-poll's scan ticks: a pending row, or a claimed one whose
+    lease lapsed. Even a no-match UPDATE takes the WAL writer lock, so idle workers scanning at
+    50ms must read, not attempt to claim. The peek→claim race is harmless — the claim UPDATE
+    stays atomic, so two peekers resolve to one claimant."""
+    now = time.time()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM jobs WHERE queue = ? AND (status = 'pending' "
+            "OR (status = 'claimed' AND lease_expires_at < ?)) LIMIT 1",
+            (queue, now)).fetchone()
+    return row is not None
+
+
 def claim_job(queue: str, worker_id: str, lease_seconds: float) -> Optional[Dict]:
     """Atomically claim the oldest pending job on `queue` (requeueing expired leases first).
     Returns the job dict with a decoded payload, or None if the queue is empty."""

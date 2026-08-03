@@ -24,7 +24,7 @@ from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import cheapest_seconds
-from maestro.codegen import build_chain
+from maestro.codegen import build_chain, stages as stage_plan
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
                                     regenerate_asset)
 from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
@@ -37,12 +37,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# What an enhancement's plan call may spend — one small llm call, granted (never deducted) so an
+# abandoned enhancement costs the user nothing while the queue's budget gate stays closed to zero.
+ENHANCE_SECONDS = 120
+
+
 class NewGameBody(BaseModel):
     prompt: str
 
 
 class BuildBody(BaseModel):
     prompt: Optional[str] = None
+    # The user's edit of an ENHANCED plan: stage texts, exactly as shown in the box. Stage 1 is
+    # the build's prompt and the rest auto-advance after it — the box's contents ARE what builds.
+    stages: Optional[List[str]] = None
     # Start over on an EMPTY game folder instead of carrying the last attempt's files forward.
     fresh: bool = False
 
@@ -136,6 +144,31 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
     _require_compute(run_id)
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
     return {"run_id": run_id, "status": "building"}
+
+
+@router.post("/enhance", response_model=Dict)
+async def enhance_prompt(body: NewGameBody, user: User = Depends(get_current_user)):
+    """Plan the user's request into build stages, WITHOUT building. Returns the run, the original
+    text, and the stage texts for the user to read and edit — pressing Build on them is the
+    approval, so nothing here is hidden rewriting.
+
+    The run is created now so the plan's llm call has a game to ride the queue under; it gets a
+    small compute allowance and NO credit deduction — an abandoned enhancement must cost the
+    user nothing, and `is_charged` stays false so the build charges normally. A plan that fails
+    answers with the request as its one stage, and the client falls back to the plain flow."""
+    text = body.prompt.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="the prompt is empty")
+    violation = screen_text(text)
+    if violation is not None:
+        log_violation(violation, user_id=user.id, source="enhance")
+        raise HTTPException(status_code=400, detail="this prompt can't be built")
+
+    run_id = await asyncio.to_thread(create_run, user.id)
+    await asyncio.to_thread(set_prompt, run_id, text, event="prompt_proposed")
+    db_store.charge_game(run_id, 0, ENHANCE_SECONDS)
+    plan = await asyncio.to_thread(stage_plan.plan, text, run_id)
+    return {"run_id": run_id, "prompt": text, "stages": plan}
 
 
 @router.get("/{run_id}", response_model=Dict)
@@ -280,15 +313,32 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     state = _require_state(run_id, user)
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="build already in progress")
-    if body.prompt is not None:
-        violation = screen_text(body.prompt)
-        if violation is not None:
-            log_violation(violation, user_id=user.id, source="prompt_edit")
-            raise HTTPException(status_code=400, detail="this prompt can't be built")
-        try:
-            await asyncio.to_thread(set_prompt, run_id, body.prompt)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+    if body.stages is not None:
+        texts = [s.strip() for s in body.stages if s.strip()]
+        if not texts:
+            raise HTTPException(status_code=400, detail="the stage list is empty")
+        for text in texts:
+            violation = screen_text(text)
+            if violation is not None:
+                log_violation(violation, user_id=user.id, source="stage_edit")
+                raise HTTPException(status_code=400, detail="this prompt can't be built")
+        original = (state.read_spec() or {}).get("request", texts[0])
+        if len(texts) > 1:
+            await asyncio.to_thread(stage_plan.save, state.run_dir, original, texts)
+        await asyncio.to_thread(set_prompt, run_id, texts[0])
+    else:
+        # A build without a stage list is the user choosing the plain flow — a plan left by an
+        # earlier enhancement must not auto-advance under it.
+        (state.run_dir / stage_plan.STATE_FILE).unlink(missing_ok=True)
+        if body.prompt is not None:
+            violation = screen_text(body.prompt)
+            if violation is not None:
+                log_violation(violation, user_id=user.id, source="prompt_edit")
+                raise HTTPException(status_code=400, detail="this prompt can't be built")
+            try:
+                await asyncio.to_thread(set_prompt, run_id, body.prompt)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
     spec_data = state.read_spec()
     if not db_store.is_charged(run_id):
         price = cost(spec_data)

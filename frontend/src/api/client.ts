@@ -130,10 +130,18 @@ export const api = {
     // The caller owns the URL and must revokeObjectURL it when done.
     getAssetBlobUrl: async (runId: string, assetId: string): Promise<string> =>
         URL.createObjectURL(await (await send(`/api/games/${runId}/assets/${assetId}`)).blob()),
+    // Plan the prompt into build stages without building — the user reads and edits the plan,
+    // and pressing Build on it is the approval. The run exists after this call but is uncharged.
+    enhancePrompt: (prompt: string) =>
+        request<{ run_id: string; prompt: string; stages: string[] }>('/api/games/enhance', { method: 'POST', body: JSON.stringify({ prompt }) }),
     // `prompt` is the text in the box: pressing Build is what approves it, so the build call is
     // the only thing that writes it.
     buildGame: (runId: string, prompt?: string) =>
         request<{ status: string; run_id: string }>(`/api/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ prompt }) }),
+    // The staged variant: the stage texts exactly as shown in the box. Stage 1 is the build's
+    // prompt; the rest auto-advance server-side after each clean finalize.
+    buildStages: (runId: string, stages: string[]) =>
+        request<{ status: string; run_id: string }>(`/api/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ stages }) }),
     // The same build, over an emptied game folder: the model opens on nothing instead of on the
     // last attempt's files.
     regenerateGame: (runId: string, prompt?: string) =>

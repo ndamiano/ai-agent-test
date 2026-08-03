@@ -322,6 +322,54 @@ def test_regenerate_bad_asset_id_is_400(client):
     assert r.status_code == 400
 
 
+def test_enhance_plans_stages_without_building_or_charging(client, monkeypatch):
+    from maestro.codegen import stages as stage_plan
+    user, headers = _user()
+    started = []
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(rid) or "bid")
+    monkeypatch.setattr(stage_plan, "plan",
+                        lambda text, rid: ["build the duel alone", "add the world"])
+
+    r = client.post("/api/games/enhance", headers=headers, json={"prompt": "card rpg for ante"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["prompt"] == "card rpg for ante"
+    assert body["stages"] == ["build the duel alone", "add the world"]
+    assert started == []                                        # nothing built
+    assert auth_store.balance(user.id) == 10                    # nothing deducted
+    assert not db_store.is_charged(body["run_id"])              # build will charge normally
+    assert RunState(body["run_id"]).read_spec()["request"] == "card rpg for ante"
+
+
+def test_staged_build_stores_plan_and_builds_stage_one(client, monkeypatch):
+    from maestro.codegen import stages as stage_plan
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "card rpg for ante", "title": "Card RPG"})
+    started = []
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(kw) or "bid")
+
+    r = client.post(f"/api/games/{run_id}/build", headers=headers,
+                    json={"stages": ["the duel alone", "add the world"]})
+    assert r.status_code == 200
+    assert len(started) == 1
+    assert RunState(run_id).read_spec()["request"] == "the duel alone"
+    saved = json.loads((RunState(run_id).run_dir / stage_plan.STATE_FILE).read_text())
+    assert saved["stages"] == ["the duel alone", "add the world"]
+    assert saved["request"] == "card rpg for ante"              # the original survives the plan
+
+
+def test_plain_build_clears_a_stale_stage_plan(client, monkeypatch):
+    from maestro.codegen import stages as stage_plan
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "card rpg", "title": "Card RPG"})
+    stage_plan.save(RunState(run_id).run_dir, "card rpg", ["one", "two"])
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
+
+    r = client.post(f"/api/games/{run_id}/build", headers=headers, json={"prompt": "card rpg"})
+    assert r.status_code == 200
+    assert not (RunState(run_id).run_dir / stage_plan.STATE_FILE).exists()
+
+
 def test_regenerate_out_of_compute_is_402(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})

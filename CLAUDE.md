@@ -246,6 +246,26 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
+      stages.py          STAGED CONSTRUCTION — the hardest system gets a whole build to itself,
+                         then the game grows by fix builds (measured 2026-08-02/03: a duel built
+                         alone earned a dedicated AI module; the same duel inside the full
+                         request earned zero opponent code — seven staged chains produced the
+                         battery's strongest games). `plan` is one small llm call
+                         (prompts/stage_plan.txt): stage 1 a complete playable game of the core
+                         system, each later stage ADDS one system and names what must keep
+                         working; a plan that fails degrades to one stage, the request as-is.
+                         The plan lives in runs/<id>/stages.json WITH the original request.
+                         Stage advance rides the post-finalize seam strictly AFTER the error
+                         gate: a stage is only stacked onto a game that loads clean. CLI:
+                         `run --staged "<request>"`. Web: POST /api/games/enhance plans WITHOUT
+                         building (run created, small compute allowance, NO credit deduction — an
+                         abandoned enhancement costs nothing) and the SPA shows the user's text
+                         and the editable stage list side by side; Build sends the stage texts to
+                         /build, which saves the plan and builds stage 1 — the boxes' contents ARE
+                         what builds, so THE PROMPT IS THE ARTIFACT holds stage by stage.
+                         Enhancement is a checkbox (default on); opting out gets a one-time
+                         recommendation notice whose "don't show again" lives in localStorage. A
+                         plain build clears any stale stage plan.
       error_gate.py      the ERROR GATE — after a playable finalize, open the staged game in a
                          headless browser (playwright chromium, an ephemeral static server, one
                          click + Enter + Space to get past a title screen) and re-enter the fix

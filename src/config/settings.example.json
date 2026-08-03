@@ -67,5 +67,12 @@
         "boot_deadline_seconds": 900
       }
     }
+  },
+  "s3": {
+    "endpoint": "nyc3.digitaloceanspaces.com",
+    "region": "nyc3",
+    "bucket": "",
+    "access_key": "",
+    "secret_key": ""
   }
 }

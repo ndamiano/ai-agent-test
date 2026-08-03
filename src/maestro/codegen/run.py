@@ -268,6 +268,8 @@ usage:
   python -m maestro.codegen.run --build <run_id>          build the prompt on disk
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
   python -m maestro.codegen.run --assets <run_id>         render the art the game declared
+  python -m maestro.codegen.run --evict <run_id>          archive to the bucket, reclaim the disk
+  python -m maestro.codegen.run --rehydrate <run_id>      pull an evicted run back and re-stage
   python -m maestro.codegen.run --history <run_id>        list the run's snapshots
   python -m maestro.codegen.run --restore <run_id> <ref>  put the game back to one, and re-stage
   python -m maestro.codegen.run --help | -h              show this help
@@ -298,6 +300,18 @@ if __name__ == "__main__":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')
         sys.exit(_cli_assets(sys.argv[2]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--evict":
+        if len(sys.argv) < 3:
+            sys.exit("usage: python -m maestro.codegen.run --evict <run_id>")
+        from maestro.codegen import archive as _archive
+        _archive.evict(sys.argv[2])
+        print(f"evicted {sys.argv[2]} — rehydrates on play/fix, or --rehydrate")
+        sys.exit(0)
+    if len(sys.argv) >= 2 and sys.argv[1] == "--rehydrate":
+        if len(sys.argv) < 3:
+            sys.exit("usage: python -m maestro.codegen.run --rehydrate <run_id>")
+        from maestro.codegen import archive as _archive
+        sys.exit(0 if _archive.rehydrate(sys.argv[2]) else 1)
     if len(sys.argv) >= 2 and sys.argv[1] == "--history":
         if len(sys.argv) < 3:
             sys.exit("usage: python -m maestro.codegen.run --history <run_id>")

@@ -111,18 +111,39 @@ def check_render(path: Path, kind: str) -> Optional[str]:
     return None
 
 
-def autocrop(path: Path, pad_frac: float = 0.06) -> None:
+# Measured 2026-08-03 on live card art: WebP q90 is 10.5x smaller than the PNG at the SAME 1024
+# resolution, while downscaling to 768 PNG bought only 1.5x. Full resolution stays; the bytes go.
+WEBP_QUALITY = 90
+
+
+def save_image(im: Image.Image, path: Path) -> None:
+    """One writer for rendered art: the format rides the path's suffix, and webp always carries
+    the one quality the pipeline uses — PIL's default (80) is a silent downgrade."""
+    if path.suffix.lower() == ".webp":
+        im.save(path, "WEBP", quality=WEBP_QUALITY)
+    else:
+        im.save(path)
+
+
+def autocrop_image(im: Image.Image, pad_frac: float = 0.06) -> Image.Image:
     """Tighten a matted sprite to its opaque subject. ComfyUI renders on a 1024 frame with wide
     transparent margins, so a sprite drawn at a small on-screen size shows the subject at a fraction
     of its box — cropping to the alpha bbox (plus a small margin) makes it fill the box."""
-    im = Image.open(path).convert("RGBA")
     bbox = im.split()[-1].getbbox()
     if not bbox:
-        return
+        return im
     pad = int(max(im.width, im.height) * pad_frac)
     box = (max(0, bbox[0] - pad), max(0, bbox[1] - pad),
            min(im.width, bbox[2] + pad), min(im.height, bbox[3] + pad))
-    im.crop(box).save(path)
+    return im.crop(box)
+
+
+def autocrop(path: Path, pad_frac: float = 0.06) -> None:
+    save_image(autocrop_image(Image.open(path).convert("RGBA"), pad_frac), path)
+
+
+def _ext(entry: Dict) -> str:
+    return "glb" if entry.get("kind") == "mesh" else "webp"
 
 
 def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
@@ -130,8 +151,7 @@ def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
     that already rendered."""
     out = []
     for e in entries:
-        ext = "glb" if e.get("kind") == "mesh" else "png"
-        if not asset_path(run_id, e["id"], ext).exists():
+        if not asset_path(run_id, e["id"], _ext(e)).exists():
             out.append(e)
     return out
 
@@ -204,7 +224,7 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
                 "error": f"kind must be one of {', '.join(KINDS)} — not {kind!r}"}
 
     mesh = kind == "mesh"
-    ext = "glb" if mesh else "png"
+    ext = "glb" if mesh else "webp"
     rel = f"assets/{asset_id}.{ext}"
     existing = next((e for e in read_manifest(run_dir) if e["id"] == asset_id), None)
     if not existing and asset_path(run_id, asset_id, ext).exists():
@@ -334,7 +354,7 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     kind = entry_kind(entry)
     init_b64 = None
     if mode == "img2img":
-        src = asset_path(run_id, asset_id, "src.png" if kind == "mesh" else "png")
+        src = asset_path(run_id, asset_id, "src.png" if kind == "mesh" else "webp")
         if src.exists():
             init_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
     payload = build_image_payload(prompt, render_kind(kind), init_image_b64=init_b64)

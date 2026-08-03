@@ -24,7 +24,7 @@ from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import cheapest_seconds
-from maestro.codegen import build_chain, stages as stage_plan
+from maestro.codegen import archive, build_chain, stages as stage_plan
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
                                     regenerate_asset)
 from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
@@ -211,6 +211,8 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
     _require_state(run_id, user)
     if not _built(run_id):
         raise HTTPException(status_code=409, detail="not built yet")
+    # An evicted game is a download away from playable — pull it back before minting a session.
+    await asyncio.to_thread(archive.ensure_local, run_id)
     origin = (settings_manager.get_settings().get("play") or {}).get("origin", "").rstrip("/")
     token = playgrants.issue_handoff(user.id, run_id)
     if token is None:
@@ -226,11 +228,11 @@ def _budget_pct(row: Dict, run_id: str) -> Optional[float]:
 
 
 _ASSET_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
-_MEDIA = {"png": "image/png", "glb": "model/gltf-binary"}
+_MEDIA = {"webp": "image/webp", "glb": "model/gltf-binary"}
 
 
 def _ext(entry: Dict) -> str:
-    return "glb" if entry.get("kind") == "mesh" else "png"
+    return "glb" if entry.get("kind") == "mesh" else "webp"
 
 
 @router.get("/{run_id}/assets", response_model=List[Dict])
@@ -313,6 +315,8 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     state = _require_state(run_id, user)
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="build already in progress")
+    # A build or fix on an evicted run must open on its real files, not an empty seed.
+    await asyncio.to_thread(archive.ensure_local, run_id)
     if body.stages is not None:
         texts = [s.strip() for s in body.stages if s.strip()]
         if not texts:
@@ -399,6 +403,7 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
     _require_compute(run_id)
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="a build or fix is already running for this run")
+    await asyncio.to_thread(archive.ensure_local, run_id)
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="fix", note=body.note)
     return {"status": "fixing", "run_id": run_id, "queue_position": 0}
 

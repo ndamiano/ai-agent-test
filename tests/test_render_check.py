@@ -99,4 +99,4 @@ def test_a_flat_kind_is_saved_whole(run_dir, tmp_path):
     asset_chain.run_operations({"run_id": RUN, "asset_id": "floor", "kind": "tile",
                                 "then": {"operations": ["save_flat"]}},
                                {"images": [{"file": str(src)}]})
-    assert Image.open(run_dir / "game" / "assets" / "floor.png").size == (128, 128)
+    assert Image.open(run_dir / "game" / "assets" / "floor.webp").size == (128, 128)

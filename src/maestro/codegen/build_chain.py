@@ -308,10 +308,11 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
 def _post_finalize(run_id: str) -> None:
     """The error gate first, the next stage only on a clean probe — a stage is never stacked onto
     a game that does not load. A gate fix's own finalize re-enters here, so the stage advances as
-    soon as the gate converges."""
-    from maestro.codegen import stages
-    if not error_gate.after_build(run_id):
-        stages.advance(run_id)
+    soon as the gate converges — and only a SETTLED chain (no fix kicked, no stage left) is
+    archived, so the bucket holds finished games rather than one snapshot per intermediate."""
+    from maestro.codegen import archive, stages
+    if not error_gate.after_build(run_id) and not stages.advance(run_id):
+        archive.archive(run_id)
 
 
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:

@@ -217,11 +217,11 @@ def test_assets_empty_before_the_game_declares_any(client):
 def test_assets_report_per_asset_status(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    # hero.png is on disk (rendered), slime.png is planned but not yet rendered → pending.
+    # hero.webp is on disk (rendered), slime is planned but not yet rendered → pending.
     _write_assets(run_id,
-                  {"images": [{"id": "hero", "file": "assets/hero.png", "prompt": "a hero"},
-                              {"id": "slime", "file": "assets/slime.png", "prompt": "a slime"}]},
-                  files=[("hero.png", b"PNGDATA")])
+                  {"images": [{"id": "hero", "file": "assets/hero.webp", "prompt": "a hero"},
+                              {"id": "slime", "file": "assets/slime.webp", "prompt": "a slime"}]},
+                  files=[("hero.webp", b"WEBPDATA")])
 
     assets = client.get(f"/api/games/{run_id}/assets", headers=headers).json()
     by_id = {a["id"]: a for a in assets}
@@ -233,13 +233,13 @@ def test_assets_report_per_asset_status(client):
 def test_asset_blob_streams_and_guards(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
+    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]},
-                  files=[("hero.png", b"PNGDATA")])
+                  files=[("hero.webp", b"WEBPDATA")])
 
     ok = client.get(f"/api/games/{run_id}/assets/hero", headers=headers)
-    assert ok.status_code == 200 and ok.content == b"PNGDATA"
-    assert ok.headers["content-type"] == "image/png"
+    assert ok.status_code == 200 and ok.content == b"WEBPDATA"
+    assert ok.headers["content-type"] == "image/webp"
 
     assert client.get(f"/api/games/{run_id}/assets/nope", headers=headers).status_code == 404
     assert client.get(f"/api/games/{run_id}/assets/bad!id", headers=headers).status_code == 400
@@ -257,7 +257,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
 
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
+    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]})
     db_store.charge_game(run_id, 1, 10_000.0)   # grant compute so the enqueue is admitted
     # The merge is an LLM call; the note-vs-original contract is tested on _merge_prompt itself.
@@ -286,7 +286,7 @@ def test_regenerate_merge_is_attributed_to_the_game(client, monkeypatch):
 
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.png",
+    _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]})
     db_store.charge_game(run_id, 1, 10_000.0)
     seen = {}

@@ -89,8 +89,9 @@ score WORSE in round 2 than round 1, because each fix broke a claim that already
 
 **The game asks for its own art, as it writes the code that uses it.** `generate_media(id, prompt,
 kind)` enqueues one render and answers IMMEDIATELY with the path the file will appear at
-(`assets/<id>.png`, or `.glb` for `kind: "mesh"`); the model writes that path into the game as it
-writes the code that uses it. `kind` is **sprite | tile | scene | mesh**, and it is the one thing
+(`assets/<id>.webp`, or `.glb` for `kind: "mesh"`); the model writes that path into the game as it
+writes the code that uses it. Art saves as WebP q90 at full 1024 resolution — measured 2026-08-03
+at 10.5x smaller than the same-resolution png, where downscaling to 768 bought only 1.5x. `kind` is **sprite | tile | scene | mesh**, and it is the one thing
 the tool needs that the prose cannot carry: a sprite is matted and cropped to its subject because
 the game draws it ON its own background, while a tile and a scene ARE that background and keep the
 whole frame. A mesh lands normalized to 1 unit at its longest side (decimate enforces it) and the
@@ -195,6 +196,16 @@ src/
                          rounds `build_steps.compact` dropped and the note that replaced them, so a
                          replay shows what was really sent. A FIX appends its own meta and never
                          truncates. The prompt log reads bodies from here once the row is empty.
+      archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
+                         `requests` — a wrong signature is a loud 403 and the payload hash rides
+                         the request, so a signing bug cannot silently succeed. A settled
+                         finalize (no gate fix kicked, no stage left) uploads the whole run dir
+                         as one tar.gz. `evict` reclaims local disk and REFUSES without a
+                         verified remote copy or under an active build; `rehydrate` pulls it
+                         back and re-stages; `ensure_local` hooks play-session/build/fix so an
+                         evicted game is a download away. A boundary like snapshots: an
+                         unconfigured bucket logs and stands aside. CLI: --evict / --rehydrate.
+                         Config: the `s3` block in settings.json (endpoint/region/bucket/keys).
       snapshots.py       the game folder's HISTORY, in git: `runs/<id>/game.git` is the repo and
                          `game/` its work tree, so nothing appears inside the folder the model
                          lists, staging copies and /play serves. A commit at every finalize that

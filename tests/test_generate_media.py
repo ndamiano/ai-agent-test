@@ -41,7 +41,7 @@ def _image_jobs():
 
 def test_the_path_comes_back_before_the_render(run_dir):
     out = request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    assert out == {"ok": True, "path": "assets/goblin.png", "status": "rendering"}
+    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "rendering"}
     assert len(_image_jobs()) == 1
 
 
@@ -72,7 +72,7 @@ def test_the_request_is_recorded_in_the_manifest(run_dir):
     request_media(RUN, run_dir, "goblin", "a snarling goblin")
     request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
     assert read_manifest(run_dir) == [
-        {"id": "goblin", "file": "assets/goblin.png", "kind": "sprite",
+        {"id": "goblin", "file": "assets/goblin.webp", "kind": "sprite",
          "prompt": "a snarling goblin"},
         {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut"},
     ]
@@ -112,7 +112,7 @@ def test_a_confirmed_repeat_replaces_the_art_and_the_prompt(run_dir):
     request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
     out = request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
 
-    assert out == {"ok": True, "path": "assets/goblin.png", "status": "rendering"}
+    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "rendering"}
     assert len(_image_jobs()) == 2
     entries = read_manifest(run_dir)
     assert len(entries) == 1, "a replacement rewrites its record rather than adding one"
@@ -134,9 +134,9 @@ def test_a_replacement_is_answered_again_before_the_next_one(run_dir):
 def test_an_already_rendered_asset_is_not_paid_for_again(run_dir):
     """A fix or a resumed build re-runs the same code path over a folder that already has its art."""
     (run_dir / "game" / "assets").mkdir(parents=True, exist_ok=True)
-    (run_dir / "game" / "assets" / "goblin.png").write_bytes(b"\x89PNG")
+    (run_dir / "game" / "assets" / "goblin.webp").write_bytes(b"RIFFwebp")
     out = request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    assert out == {"ok": True, "path": "assets/goblin.png", "status": "ready"}
+    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "ready"}
     assert _image_jobs() == []
 
 
@@ -177,7 +177,7 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
 def test_the_tool_reaches_the_queue_and_defaults_to_a_sprite(run_dir):
     tools = build_tools(RunState(RUN))
     out = tools["generate_media"](id="goblin", prompt="a snarling goblin")
-    assert out == {"ok": True, "path": "assets/goblin.png", "status": "rendering"}
+    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "rendering"}
     assert _image_jobs()[0]["metadata"]["kind"] == "sprite"
 
 

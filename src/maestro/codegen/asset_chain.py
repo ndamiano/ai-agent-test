@@ -14,8 +14,11 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from PIL import Image
+
 from db import store as db_store
-from maestro.codegen.assets import asset_path, autocrop, check_render, render_kind, set_defect
+from maestro.codegen.assets import (asset_path, autocrop_image, check_render, render_kind,
+                                    save_image, set_defect)
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -66,12 +69,16 @@ def _save_sprite(md: Dict, result: Dict) -> None:
     src = _first_image(result)
     if src is None:
         return
-    dst = asset_path(md["run_id"], md["asset_id"], "png")
-    Path(src).replace(dst)
+    # The worker renders png; the game holds webp. Crop before the one encode — cropping a webp
+    # would decode and re-encode it, paying the quality cost twice.
+    dst = asset_path(md["run_id"], md["asset_id"], "webp")
     try:
-        autocrop(dst)
+        im = Image.open(src).convert("RGBA")
+        save_image(autocrop_image(im), dst)
+        Path(src).unlink(missing_ok=True)
     except Exception as e:
         logger.warning("autocrop %s failed: %s", md["asset_id"], e)
+        save_image(Image.open(src).convert("RGBA"), dst)
     _record_defect(md, dst)
 
 
@@ -81,8 +88,9 @@ def _save_flat(md: Dict, result: Dict) -> None:
     src = _first_image(result)
     if src is None:
         return
-    dst = asset_path(md["run_id"], md["asset_id"], "png")
-    Path(src).replace(dst)
+    dst = asset_path(md["run_id"], md["asset_id"], "webp")
+    save_image(Image.open(src), dst)
+    Path(src).unlink(missing_ok=True)
     _record_defect(md, dst)
 
 

@@ -59,6 +59,7 @@ export type Route =
     | { kind: 'create' }
     | { kind: 'game'; runId: string }
     | { kind: 'settings' }
+    | { kind: 'credits' }
     | { kind: 'admin' }
     | { kind: 'prompts' }
 
@@ -67,6 +68,7 @@ export type Route =
 export const parseRoute = (path: string): Route => {
     if (path === '/new') return { kind: 'create' }
     if (path === '/settings') return { kind: 'settings' }
+    if (path === '/credits') return { kind: 'credits' }
     if (path === '/admin') return { kind: 'admin' }
     if (path === '/prompts') return { kind: 'prompts' }
     const game = path.match(/^\/game\/([A-Za-z0-9_-]+)$/)

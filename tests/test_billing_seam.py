@@ -41,6 +41,12 @@ class _StubProvider(CreditProvider):
     def __init__(self, user_id, credits_n, secret=b"ok"):
         self._user_id, self._credits, self._secret = user_id, credits_n, secret
 
+    def start_checkout(self, purchase_id, package):
+        raise AssertionError("the webhook path never opens a checkout")
+
+    def confirm_checkout(self, provider_ref):
+        raise AssertionError("the webhook path never confirms a checkout")
+
     def verify(self, payload, headers):
         if payload != self._secret:
             return None
@@ -69,8 +75,9 @@ def test_webhook_rejects_an_unverified_event_and_credits_nothing(app_client, mon
 
 
 def test_webhook_refuses_cleanly_on_the_default_provider(app_client):
-    """The default `UnconfiguredProvider`, unpatched. The route is public, so its refusal must be
-    the same clean 400 an unverified event gets — a raise would hand any caller a 500 + traceback."""
+    """The default `FakeInstantProvider`, unpatched — it verifies no webhook. The route is public,
+    so its refusal must be the same clean 400 an unverified event gets — a raise would hand any
+    caller a 500 + traceback."""
     user = store.create_user("alice", "pw")
 
     r = app_client.post("/api/billing/webhook", content=b"anything")

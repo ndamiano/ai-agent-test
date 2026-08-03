@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../contexts/AuthContext'
+import { Link } from '../../router'
 import { Button } from '../ui/Button'
 import { SectionLabel, TextInput } from '../ui/Field'
 
@@ -46,7 +47,14 @@ const SettingsPage: React.FC = () => {
                     <div className="border border-edge rounded-md bg-sunken px-4 py-3 flex flex-col gap-2">
                         <Row label="Handle">{user?.handle ?? '—'}</Row>
                         <Row label="Role">{user?.role ?? '—'}</Row>
-                        <Row label="Credits">{balance ?? '—'}</Row>
+                        <Row label="Credits">
+                            <span className="flex items-baseline gap-3">
+                                <span>{balance ?? '—'}</span>
+                                <Link to="/credits" className="text-ember text-xs hover:underline">
+                                    Buy credits
+                                </Link>
+                            </span>
+                        </Row>
                     </div>
                 </section>
 

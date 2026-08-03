@@ -4,6 +4,7 @@ import Studio from './Studio'
 import AdminPanel from './AdminPanel'
 import PromptsPanel from './PromptsPanel'
 import SettingsPage from './settings/SettingsPage'
+import CreditsPage from './credits/CreditsPage'
 import { useAuth } from '../contexts/AuthContext'
 import { Link, parseRoute, useRouter } from '../router'
 
@@ -56,10 +57,13 @@ const Layout: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-4 text-sm">
-                    <span className="flex items-center gap-2 font-mono text-xs" title="credit balance">
+                    <Link to="/credits" title="credit balance — buy credits"
+                        className={`flex items-center gap-2 font-mono text-xs transition-colors ${
+                            route.kind === 'credits' ? 'text-bone' : 'hover:text-bone'
+                        }`}>
                         <span className="w-2 h-2 rounded-full bg-mana" />
                         {balance ?? '—'} <span className="text-slate">credits</span>
-                    </span>
+                    </Link>
                     {user && (
                         <Link to="/settings" title="settings"
                             className={`transition-colors ${
@@ -73,6 +77,7 @@ const Layout: React.FC = () => {
 
             <main className="flex-1 overflow-hidden">
                 {route.kind === 'settings' && <SettingsPage />}
+                {route.kind === 'credits' && <CreditsPage />}
                 {route.kind === 'admin' && isAdmin && <AdminPanel />}
                 {route.kind === 'prompts' && isAdmin && <PromptsPanel />}
                 {(route.kind === 'library' || route.kind === 'create' || route.kind === 'game') && (

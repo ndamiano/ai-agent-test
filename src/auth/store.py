@@ -85,6 +85,17 @@ def _db():
             run_id     TEXT,
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS purchases (
+            id           TEXT PRIMARY KEY,
+            user_id      TEXT NOT NULL REFERENCES users(id),
+            package_id   TEXT NOT NULL,
+            credits      INTEGER NOT NULL,
+            usd_cents    INTEGER NOT NULL,
+            provider_ref TEXT,
+            status       TEXT NOT NULL,
+            created_at   REAL NOT NULL,
+            completed_at REAL
+        );
         """
     )
     try:
@@ -208,12 +219,16 @@ def balance(user_id: str) -> int:
     return row["credits"] if row else 0
 
 
+def _apply_grant(conn, user_id: str, n: int, reason: str, run_id: Optional[str]) -> int:
+    conn.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (n, user_id))
+    _log_txn(conn, user_id, n, reason, run_id)
+    row = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row["credits"] if row else 0
+
+
 def grant(user_id: str, n: int, reason: str = "grant", run_id: Optional[str] = None) -> int:
     with _db() as conn:
-        conn.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (n, user_id))
-        _log_txn(conn, user_id, n, reason, run_id)
-        row = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
-    return row["credits"] if row else 0
+        return _apply_grant(conn, user_id, n, reason, run_id)
 
 
 def deduct(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> bool:
@@ -233,3 +248,77 @@ def deduct(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> b
 def refund(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> int:
     """Return `n` credits for a build that never ran. Returns the new balance."""
     return grant(user_id, n, reason, run_id)
+
+
+# A purchase is the storefront's record of one checkout: what was bought, for how much, and
+# whether the provider confirmed it. The credits themselves still move only through the ledger —
+# `complete_purchase` flips the row and grants in ONE transaction, so the started→completed flip
+# is the exactly-once gate.
+@dataclass(frozen=True)
+class Purchase:
+    id: str
+    user_id: str
+    package_id: str
+    credits: int
+    usd_cents: int
+    provider_ref: Optional[str]
+    status: str
+    created_at: float
+    completed_at: Optional[float]
+
+
+def _row_to_purchase(row: sqlite3.Row) -> Purchase:
+    return Purchase(id=row["id"], user_id=row["user_id"], package_id=row["package_id"],
+                    credits=row["credits"], usd_cents=row["usd_cents"],
+                    provider_ref=row["provider_ref"], status=row["status"],
+                    created_at=row["created_at"], completed_at=row["completed_at"])
+
+
+def create_purchase(user_id: str, package_id: str, credits: int, usd_cents: int) -> Purchase:
+    purchase = Purchase(id=uuid.uuid4().hex[:16], user_id=user_id, package_id=package_id,
+                        credits=credits, usd_cents=usd_cents, provider_ref=None,
+                        status="started", created_at=time.time(), completed_at=None)
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO purchases (id, user_id, package_id, credits, usd_cents, status, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (purchase.id, purchase.user_id, purchase.package_id, purchase.credits,
+             purchase.usd_cents, purchase.status, purchase.created_at),
+        )
+    return purchase
+
+
+def set_purchase_ref(purchase_id: str, provider_ref: str) -> None:
+    with _db() as conn:
+        conn.execute("UPDATE purchases SET provider_ref = ? WHERE id = ?",
+                     (provider_ref, purchase_id))
+
+
+def get_purchase(purchase_id: str) -> Optional[Purchase]:
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    return _row_to_purchase(row) if row else None
+
+
+def complete_purchase(purchase_id: str) -> Optional[int]:
+    """Flip started→completed and grant the purchase's credits, atomically. Returns the new
+    balance if THIS call did the granting, None if the purchase was already completed (or is
+    unknown) — the caller that gets None knows nothing was credited by it."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE purchases SET status = 'completed', completed_at = ? "
+            "WHERE id = ? AND status = 'started'",
+            (time.time(), purchase_id),
+        )
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute("SELECT user_id, credits FROM purchases WHERE id = ?",
+                           (purchase_id,)).fetchone()
+        return _apply_grant(conn, row["user_id"], row["credits"], "purchase", None)
+
+
+def list_purchases(user_id: str) -> List[Purchase]:
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM purchases WHERE user_id = ? ORDER BY created_at DESC",
+                            (user_id,)).fetchall()
+    return [_row_to_purchase(r) for r in rows]

@@ -90,6 +90,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 
+export interface CreditPackage {
+    id: string
+    credits: number
+    usd_cents: number
+}
+
+export interface PurchaseRow {
+    id: string
+    package_id: string
+    credits: number
+    usd_cents: number
+    status: string
+    created_at: number
+    completed_at: number | null
+}
+
 export const api = {
     login: (handle: string, password: string) =>
         request<{ token: string; user: { id: string; handle: string; role: string } }>(
@@ -167,6 +183,19 @@ export const api = {
     regenerateAsset: (runId: string, assetId: string, prompt: string, mode: 'full' | 'img2img' = 'full') =>
         request<{ status: string; run_id: string; asset_id: string }>(
             `/api/games/${runId}/assets/${assetId}/regenerate`, { method: 'POST', body: JSON.stringify({ prompt, mode }) }),
+
+    listPackages: () =>
+        request<CreditPackage[]>('/api/billing/packages'),
+    // Start→complete is the whole checkout today (the provider confirms instantly server-side);
+    // a redirect leg slots in between when a real processor arrives.
+    startPurchase: (packageId: string) =>
+        request<{ purchase_id: string; status: string }>(
+            '/api/billing/purchase', { method: 'POST', body: JSON.stringify({ package_id: packageId }) }),
+    completePurchase: (purchaseId: string) =>
+        request<{ status: string; credits: number; balance: number }>(
+            `/api/billing/purchase/${purchaseId}/complete`, { method: 'POST' }),
+    listPurchases: () =>
+        request<PurchaseRow[]>('/api/billing/purchases'),
 
     getAdminQueues: () =>
         request<AdminQueues>('/api/admin/queues'),

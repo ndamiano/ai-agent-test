@@ -122,8 +122,10 @@ Deployed off the owner's box, manual accounts, granted credits, no payments.
 ### Public beta, paid — first dollar — **BLOCKED on product stage 2**
 
 - **Bar:** paying users, positive unit economics confirmed, no safety or legal gaps.
-- **Needs:** a payment provider wired (`get_provider()` returns a real one), a price set from real
-  data, safety Phase 2 (classifier/hash-matching — Phase 1 is keyword/pattern only and is not
+- **Needs:** a real payment provider behind `get_provider()` — the storefront itself landed
+  2026-08-03 ($5/credit packages, fake instant provider, ledger-backed history), so the gap is
+  exactly one provider implementation; price called 2026-08-03 ($5 = 1 credit = 3h compute);
+  safety Phase 2 (classifier/hash-matching — Phase 1 is keyword/pattern only and is not
   enough for strangers), the full `tasks/legal_ops.md` checklist with counsel review, and the
   game-execution sandbox.
 - **Detail:** `tasks/launch_plan.md` Stage 1.

@@ -5,8 +5,8 @@ import ErrorBoundary from './components/ErrorBoundary'
 import { useAuth } from './contexts/AuthContext'
 import { RouterProvider, useRouter } from './router'
 
-// Signed out, the site is the pitch: the landing page with playable demos, and /login for the
-// people who have an account. Signed in, every path belongs to the app.
+// Signed out, the site is the pitch: the landing page with playable demos, and /login to sign
+// in or redeem an invite code. Signed in, every path belongs to the app.
 const PublicSite = () => {
     const { path } = useRouter()
     return path === '/login' ? <LoginScreen /> : <Landing />

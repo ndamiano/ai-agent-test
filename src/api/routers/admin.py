@@ -1,15 +1,18 @@
 """Operator-only surfaces. Everything here is gated by `require_admin`, so a signed-in ordinary
-user gets a 403. Read-only today: the inference-queue snapshot (depth, fleet, GPU-second spend)
-the operator watches to size the fleet and see what the cards are costing, and the usage rollup
-(user-action events by kind by day — see routers/events.py for the intake).
+user gets a 403: the inference-queue snapshot (depth, fleet, GPU-second spend) the operator
+watches to size the fleet and see what the cards are costing, the usage rollup (user-action
+events by kind by day — see routers/events.py for the intake), and the invite codes that gate
+beta signup.
 """
 
 import calendar
 import time
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
+from auth import store as auth_store
 from auth.deps import require_admin
 from auth.store import User
 from config.settings_manager import settings_manager
@@ -97,6 +100,40 @@ async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dic
         "days": [{"day": d, "users": users.get(d, 0), "kinds": by_day[d]}
                  for d in sorted(by_day, reverse=True)],
     }
+
+
+# ── Invite codes: what gates beta signup ─────────────────────────────────────────────────────
+
+
+class InviteCreateRequest(BaseModel):
+    count: int = 1
+    max_uses: int = 1
+
+
+@router.post("/invites")
+async def create_invites(body: InviteCreateRequest, admin: User = Depends(require_admin)):
+    if not 1 <= body.count <= 100:
+        raise HTTPException(status_code=400, detail="count must be between 1 and 100")
+    try:
+        codes = [auth_store.create_invite(admin.handle, body.max_uses)
+                 for _ in range(body.count)]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"codes": codes}
+
+
+@router.get("/invites")
+async def list_invites(_: User = Depends(require_admin)):
+    return {"invites": auth_store.list_invites()}
+
+
+@router.post("/invites/{code}/disable")
+async def disable_invite(code: str, _: User = Depends(require_admin)):
+    try:
+        auth_store.disable_invite(code)
+    except auth_store.InviteCodeError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True}
 
 
 # ── Costs: RunPod's ledger joined against our job/worker logs ────────────────────────────────

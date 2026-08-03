@@ -14,12 +14,13 @@ from starlette.responses import JSONResponse
 from auth import playgrants
 from auth.store import User, resolve_token
 
-# Reachable without a token: the health probe, the login endpoint, the payment webhook
+# Reachable without a token: the health probe, the login + invite-code signup endpoints, the
+# payment webhook
 # (server-to-server — no user token; authed by the provider's signature, verified inside the
 # CreditProvider, never by this gate), and /handoff (it authenticates itself by redeeming a
 # single-use play token — see auth/playgrants.py). The API docs exist only in dev (see
 # api/app.py), so they're public only there.
-PUBLIC_PATHS = {"/", "/auth/login", "/api/billing/webhook", "/handoff"}
+PUBLIC_PATHS = {"/", "/auth/login", "/auth/signup", "/api/billing/webhook", "/handoff"}
 # The landing page's demo surface: list + per-game session mint, both read-only and limited
 # server-side to the owner-curated `demo_games` list (routers/demos.py).
 PUBLIC_PREFIXES = ("/api/demos",)

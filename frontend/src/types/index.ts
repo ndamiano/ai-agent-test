@@ -118,6 +118,16 @@ export interface PromptDetail {
     } | null
 }
 
+// An invite code as the admin surface lists it (GET /api/admin/invites).
+export interface AdminInvite {
+    code: string
+    created_by: string
+    created_at: number
+    max_uses: number
+    uses: number
+    disabled: number
+}
+
 // Admin queue snapshot (GET /api/admin/queues). GPU-SECONDS only — no dollar conversion.
 export interface QueueRow {
     queue: string

@@ -12,6 +12,7 @@ interface AuthContextValue {
     user: AuthUser | null
     balance: number | null
     login: (handle: string, password: string) => Promise<void>
+    signup: (handle: string, password: string, inviteCode: string) => Promise<void>
     logout: () => Promise<void>
     refreshBalance: () => Promise<void>
 }
@@ -62,8 +63,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(res.token)
     }, [])
 
+    const signup = useCallback(async (handle: string, password: string, inviteCode: string) => {
+        const res = await api.signup(handle, password, inviteCode)
+        setAuthToken(res.token)
+        setUser(res.user)
+        setToken(res.token)
+    }, [])
+
     return (
-        <AuthContext.Provider value={{ token, user, balance, login, logout, refreshBalance }}>
+        <AuthContext.Provider value={{ token, user, balance, login, signup, logout, refreshBalance }}>
             {children}
         </AuthContext.Provider>
     )

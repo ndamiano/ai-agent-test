@@ -5,7 +5,8 @@ salt; session tokens are opaque random secrets stored only as a sha256 hash, so 
 yields neither passwords nor usable tokens. Every operation opens a short-lived connection, so
 the store is safe to call from the API threads and the background build threads alike.
 
-Accounts are created through `create_user` (wired to the admin CLI) — there is no signup path.
+Accounts are created through `create_user` (wired to the admin CLI) or `signup` (the invite-code
+beta signup): both share `_insert_user`, so the handle/password rules have one source.
 """
 
 import hashlib
@@ -77,6 +78,14 @@ def _db():
             user_id    TEXT NOT NULL REFERENCES users(id),
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS invite_codes (
+            code       TEXT PRIMARY KEY,
+            created_by TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            max_uses   INTEGER NOT NULL DEFAULT 1,
+            uses       INTEGER NOT NULL DEFAULT 0,
+            disabled   INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS credit_transactions (
             id         TEXT PRIMARY KEY,
             user_id    TEXT NOT NULL REFERENCES users(id),
@@ -129,22 +138,36 @@ def _row_to_user(row: sqlite3.Row) -> User:
     return User(id=row["id"], handle=row["handle"], role=row["role"])
 
 
-def create_user(handle: str, password: str, role: str = "user") -> User:
+class HandleTakenError(ValueError):
+    pass
+
+
+class InviteCodeError(ValueError):
+    pass
+
+
+def _insert_user(conn, handle: str, password: str, role: str) -> User:
+    """The one place the handle/password rules live — CLI create and invite signup both land here."""
     handle = handle.strip()
     if not handle:
         raise ValueError("handle is required")
     if not password:
         raise ValueError("password is required")
     user = User(id=uuid.uuid4().hex[:12], handle=handle, role=role)
-    with _db() as conn:
-        if conn.execute("SELECT 1 FROM users WHERE handle = ?", (handle,)).fetchone():
-            raise ValueError(f"handle {handle!r} already exists")
+    try:
         conn.execute(
             "INSERT INTO users (id, handle, password_hash, role, credits, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (user.id, user.handle, _hash_password(password), role, 0, time.time()),
         )
+    except sqlite3.IntegrityError:
+        raise HandleTakenError(f"handle {handle!r} already exists")
     return user
+
+
+def create_user(handle: str, password: str, role: str = "user") -> User:
+    with _db() as conn:
+        return _insert_user(conn, handle, password, role)
 
 
 def set_password(handle: str, password: str) -> None:
@@ -201,6 +224,67 @@ def resolve_token(token: Optional[str]) -> Optional[User]:
 def revoke_token(token: str) -> None:
     with _db() as conn:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
+
+
+# ── Invite codes: what gates beta signup — unguessable, admin-minted, use-counted ────────────
+
+# No 0/o/1/l/i — codes get read aloud and retyped. 8 chars over 31 symbols ≈ 40 bits, which with
+# the per-IP signup throttle is out of guessing range.
+_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
+def _generate_code() -> str:
+    def quad() -> str:
+        return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(4))
+    return f"gs-{quad()}-{quad()}"
+
+
+def create_invite(created_by: str, max_uses: int = 1) -> str:
+    if max_uses < 1:
+        raise ValueError("max_uses must be at least 1")
+    code = _generate_code()
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO invite_codes (code, created_by, created_at, max_uses, uses, disabled) "
+            "VALUES (?, ?, ?, ?, 0, 0)",
+            (code, created_by, time.time(), max_uses),
+        )
+    return code
+
+
+def list_invites() -> List[dict]:
+    with _db() as conn:
+        rows = conn.execute("SELECT * FROM invite_codes ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def disable_invite(code: str) -> None:
+    with _db() as conn:
+        cur = conn.execute("UPDATE invite_codes SET disabled = 1 WHERE code = ?", (code,))
+        if cur.rowcount == 0:
+            raise InviteCodeError(f"no invite code {code!r}")
+
+
+def signup(handle: str, password: str, code: str) -> User:
+    """Redeem an invite code and create the account, atomically: one transaction holds both the
+    guarded use-increment and the user insert, so a failed signup (taken handle) rolls the burn
+    back and two racers on a code's last use can't both get through — the `uses < max_uses`
+    guard admits exactly one."""
+    code = code.strip().lower()
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM invite_codes WHERE code = ?", (code,)).fetchone()
+        if row is None:
+            raise InviteCodeError("invalid invite code")
+        if row["disabled"]:
+            raise InviteCodeError("this invite code has been disabled")
+        cur = conn.execute(
+            "UPDATE invite_codes SET uses = uses + 1 WHERE code = ? AND disabled = 0 "
+            "AND uses < max_uses",
+            (code,),
+        )
+        if cur.rowcount == 0:
+            raise InviteCodeError("this invite code has no uses left")
+        return _insert_user(conn, handle, password, "user")
 
 
 # Balance lives on the user row; every change also lands a signed row in credit_transactions, so

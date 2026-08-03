@@ -126,8 +126,9 @@ These are load-bearing; breaking one is a redesign, not a bug fix.
 ## Trust boundaries
 
 - **API.** Bearer sessions; every route gated by middleware except explicit public paths. The
-  WebSocket authenticates itself (HTTP middleware never sees the socket scope). No self-serve
-  signup — accounts are created by CLI.
+  WebSocket authenticates itself (HTTP middleware never sees the socket scope). Account creation
+  is by CLI or the invite-code signup route — a code is admin-minted, use-counted, and redeemed
+  atomically with the user insert; signup is throttled per client IP.
 - **`/worker`.** A single shared bearer token (`WORKQUEUE_TOKEN`). Any holder can claim any job on
   any queue and post any result. Workers are trusted infrastructure, not tenants.
 - **Inference servers.** Bound to `127.0.0.1` on the worker's own box, never exposed. A reachable

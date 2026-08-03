@@ -315,7 +315,8 @@ src/
                          data the game reads is an open decision, not a dependency.
 ```
 
-The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits, the
+The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,
+invite-code signup — the only self-serve account path, admin-minted codes, per-IP throttled — the
 /play handoff + per-game grant-cookie gate — `playgrants.py`), `db/` (games/builds/events/jobs/workers + the compute budget), `worker/` (the
 pull-side GPU worker), `scaler/` (the RunPod autoscaler), `api/` (FastAPI routers), `llm_clients/`,
 `tools/`, `config/`, and `frontend/` (the React SPA, served same-origin by the API). For their

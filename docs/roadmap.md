@@ -133,7 +133,9 @@ Deployed off the owner's box, manual accounts, granted credits, no payments.
 ### Public release — open and scaling — **NOT STARTED**
 
 - **Bar:** open to the public, scales without falling over.
-- **Needs:** self-serve signup (there is deliberately no public signup route today), and whatever
+- **Needs:** open self-serve signup (invite-code signup landed 2026-08-03 — admin-minted codes,
+  per-IP throttled, atomic redemption; "open" means dropping the invite gate, a policy call, not
+  code), and whatever
   the beta's load teaches about the autoscaler's ceilings.
 - **Detail:** `tasks/launch_plan.md` Stage 2.
 

@@ -53,3 +53,9 @@ class LoginThrottle:
 
 
 login_throttle = LoginThrottle()
+
+# Signup has no handle to key on (the account doesn't exist yet), so it throttles by client IP —
+# the thing being defended is the invite-code space, and a guesser has one address. Behind a
+# proxy that collapses every client to its own address this becomes one shared window; signup is
+# a rare act during an invite-gated beta, so that trade is accepted.
+signup_throttle = LoginThrottle()

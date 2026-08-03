@@ -99,16 +99,19 @@ docker compose exec app printenv <VAR>     # confirm the value landed
 (This bites `CP_URL` and `WORKQUEUE_TOKEN` in particular — a stale value leaves workers unable to
 claim while `.env` on disk looks correct.)
 
-## Accounts (no signup — manual only)
+## Accounts (invite-gated signup, or manual)
 
-The CLI lives at `/app/src/auth/cli.py`; the container WORKDIR is `/app`, so run it from `/app/src`:
+Self-serve signup exists at `/login` ("Create an account") and is gated by invite codes: mint a
+batch in the admin panel (`/admin` → Invite codes) or hand one out per person — a code carries
+`max_uses` and can be disabled. Manual provisioning still works; the CLI lives at
+`/app/src/auth/cli.py`; the container WORKDIR is `/app`, so run it from `/app/src`:
 
 ```bash
 docker compose exec -w /app/src app python -m auth.cli create <handle>   # prompts for a password
 docker compose exec -w /app/src app python -m auth.cli grant  <handle> <n>
 ```
 
-Accounts start at 0 credits.
+Accounts start at 0 credits either way.
 
 ## Smoke test (do this before handing out the URL)
 

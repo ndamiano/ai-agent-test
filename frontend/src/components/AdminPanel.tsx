@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../api/client'
-import type { AdminAnalytics, AdminCosts, AdminQueues, QueueRow } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, QueueRow } from '../types'
+import { Button } from './ui/Button'
+import { TextInput } from './ui/Field'
 
 const POLL_MS = 5000
 
@@ -80,6 +82,9 @@ const CostPanel: React.FC = () => {
     )
 }
 
+const inviteStatus = (i: AdminInvite): string =>
+    i.disabled ? 'disabled' : i.uses >= i.max_uses ? 'spent' : 'active'
+
 // Usage is fetched once and on demand, like costs — nobody sizes a fleet off page views.
 const UsagePanel: React.FC = () => {
     const [data, setData] = useState<AdminAnalytics | null>(null)
@@ -134,6 +139,111 @@ const UsagePanel: React.FC = () => {
                         </table>
                     </div>
                 )}
+        </div>
+    )
+}
+
+// Invite codes: minted here, redeemed on the public signup form. Loaded once and after every
+// action — no poll, the list only changes through this panel or a signup.
+const InvitePanel: React.FC = () => {
+    const [invites, setInvites] = useState<AdminInvite[] | null>(null)
+    const [count, setCount] = useState('1')
+    const [maxUses, setMaxUses] = useState('1')
+    const [busy, setBusy] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    const load = useCallback(async () => {
+        try { setInvites((await api.getAdminInvites()).invites) }
+        catch { setError('Failed to load invite codes.') }
+    }, [])
+
+    useEffect(() => { load() }, [load])
+
+    const create = async (e: React.FormEvent) => {
+        e.preventDefault()
+        setBusy(true)
+        setError(null)
+        try {
+            await api.createAdminInvites(parseInt(count) || 1, parseInt(maxUses) || 1)
+            await load()
+        } catch (err) {
+            setError(err instanceof ApiError && typeof err.body === 'string' ? err.body : 'Failed to create codes.')
+        } finally {
+            setBusy(false)
+        }
+    }
+
+    const disable = async (code: string) => {
+        setError(null)
+        try {
+            await api.disableAdminInvite(code)
+            await load()
+        } catch {
+            setError('Failed to disable the code.')
+        }
+    }
+
+    return (
+        <div className="bg-ink border border-edge rounded-lg p-4 space-y-3">
+            <div className="text-slate text-xs font-semibold">Invite codes</div>
+
+            <form onSubmit={create} className="flex items-center gap-2">
+                <label className="text-xs text-slate flex items-center gap-1.5">
+                    count
+                    <TextInput type="number" min={1} max={100} value={count}
+                        onChange={e => setCount(e.target.value)} className="!w-20" />
+                </label>
+                <label className="text-xs text-slate flex items-center gap-1.5">
+                    max uses
+                    <TextInput type="number" min={1} value={maxUses}
+                        onChange={e => setMaxUses(e.target.value)} className="!w-20" />
+                </label>
+                <Button type="submit" variant="primary" disabled={busy}>
+                    {busy ? 'Creating…' : 'Create codes'}
+                </Button>
+            </form>
+
+            {error && <div className="text-fail text-xs">{error}</div>}
+
+            {!invites ? (
+                <div className="text-slate text-xs">Loading invite codes…</div>
+            ) : invites.length === 0 ? (
+                <div className="text-slate text-xs">No invite codes yet.</div>
+            ) : (
+                <table className="w-full text-sm font-mono">
+                    <thead>
+                        <tr className="text-slate text-xs text-left">
+                            <th className="font-semibold pb-1">code</th>
+                            <th className="font-semibold pb-1">uses</th>
+                            <th className="font-semibold pb-1">by</th>
+                            <th className="font-semibold pb-1">created</th>
+                            <th className="font-semibold pb-1">status</th>
+                            <th className="pb-1" />
+                        </tr>
+                    </thead>
+                    <tbody className="text-bone">
+                        {invites.map(i => (
+                            <tr key={i.code}>
+                                <td className="py-0.5 select-all">{i.code}</td>
+                                <td>{i.uses}/{i.max_uses}</td>
+                                <td>{i.created_by}</td>
+                                <td>{new Date(i.created_at * 1000).toLocaleDateString()}</td>
+                                <td className={inviteStatus(i) === 'active' ? 'text-wait' : 'text-slate'}>
+                                    {inviteStatus(i)}
+                                </td>
+                                <td className="text-right">
+                                    {inviteStatus(i) === 'active' && (
+                                        <button onClick={() => disable(i.code)}
+                                            className="text-xs text-fail/80 hover:text-fail transition-colors">
+                                            disable
+                                        </button>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
         </div>
     )
 }
@@ -213,6 +323,8 @@ const AdminPanel: React.FC = () => {
                 <UsagePanel />
 
                 <CostPanel />
+
+                <InvitePanel />
 
                 <div className="bg-ink border border-edge rounded-lg p-4">
                     <div className="text-slate text-xs font-semibold mb-3">Fleet totals</div>

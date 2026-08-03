@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AdminCosts, AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -85,8 +85,8 @@ async function send(path: string, init?: RequestInit, retries = 2): Promise<Resp
     }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    return (await send(path, init)).json() as Promise<T>
+async function request<T>(path: string, init?: RequestInit, retries?: number): Promise<T> {
+    return (await send(path, init, retries)).json() as Promise<T>
 }
 
 
@@ -107,9 +107,15 @@ export interface PurchaseRow {
 }
 
 export const api = {
+    // No 429 retry on the auth forms: the throttle's Retry-After runs to minutes, and sleeping it
+    // out would hang the form where "throttled" should show.
     login: (handle: string, password: string) =>
         request<{ token: string; user: { id: string; handle: string; role: string } }>(
-            '/auth/login', { method: 'POST', body: JSON.stringify({ handle, password }) }),
+            '/auth/login', { method: 'POST', body: JSON.stringify({ handle, password }) }, 0),
+    // Beta signup: the invite code is what admits the account; success signs the new user in.
+    signup: (handle: string, password: string, inviteCode: string) =>
+        request<{ token: string; user: { id: string; handle: string; role: string } }>(
+            '/auth/signup', { method: 'POST', body: JSON.stringify({ handle, password, invite_code: inviteCode }) }, 0),
     me: () =>
         request<{ id: string; handle: string; role: string; balance: number }>('/auth/me'),
     logout: async () => {
@@ -199,6 +205,14 @@ export const api = {
 
     getAdminQueues: () =>
         request<AdminQueues>('/api/admin/queues'),
+    getAdminInvites: () =>
+        request<{ invites: AdminInvite[] }>('/api/admin/invites'),
+    createAdminInvites: (count: number, maxUses: number) =>
+        request<{ codes: string[] }>('/api/admin/invites', {
+            method: 'POST', body: JSON.stringify({ count, max_uses: maxUses }),
+        }),
+    disableAdminInvite: (code: string) =>
+        request<{ ok: boolean }>(`/api/admin/invites/${encodeURIComponent(code)}/disable`, { method: 'POST' }),
     getAdminCosts: () =>
         request<AdminCosts>('/api/admin/costs'),
     getAdminAnalytics: (days = 14) =>

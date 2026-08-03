@@ -1,5 +1,6 @@
 """The auth gate as it actually runs on the app: every router rejects an anonymous request,
-a valid token gets through, the WebSocket authenticates itself, and there is no signup route."""
+a valid token gets through, the WebSocket authenticates itself, and the only account-creation
+surface is the invite-gated /auth/signup."""
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
@@ -56,12 +57,14 @@ def test_api_docs_do_not_exist_outside_dev(app_client):
     assert not paths & {"/docs", "/redoc", "/openapi.json"}
 
 
-def test_no_signup_route_exists_on_the_app(app_client):
+def test_signup_is_the_only_account_creation_route(app_client):
     paths = {getattr(r, "path", "") for r in app_client.app.routes}
     assert "/auth/login" in paths
+    assert "/auth/signup" in paths
+    # signup reached without a token (422 = body validation, i.e. it got PAST the gate).
+    assert app_client.post("/auth/signup").status_code == 422
     # /worker/deregister is worker-fleet plumbing, not a signup surface.
-    assert not any("signup" in p or ("register" in p and not p.endswith("/deregister"))
-                   for p in paths)
+    assert not any("register" in p and not p.endswith("/deregister") for p in paths)
 
 
 def test_websocket_requires_a_token(app_client):

@@ -15,28 +15,47 @@ const when = (epochSeconds: number): string =>
 
 const CreditsPage: React.FC = () => {
     const { balance, refreshBalance } = useAuth()
+    const [enabled, setEnabled] = useState<boolean | null>(null)
     const [packages, setPackages] = useState<CreditPackage[]>([])
     const [history, setHistory] = useState<PurchaseRow[]>([])
     const [buying, setBuying] = useState<string | null>(null)
     const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
     useEffect(() => {
-        api.listPackages().then(setPackages).catch(() => {})
+        api.listPackages().then(r => { setEnabled(r.enabled); setPackages(r.packages) }).catch(() => {})
         api.listPurchases().then(setHistory).catch(() => {})
-    }, [])
+
+        // Back from the provider's payment page: the result params say which purchase and how
+        // it went. Completion re-asks the provider server-side, so a hand-typed success URL
+        // grants nothing.
+        const params = new URLSearchParams(window.location.search)
+        const purchase = params.get('purchase')
+        if (!purchase) return
+        window.history.replaceState(null, '', window.location.pathname)
+        if (params.get('result') !== 'success') {
+            setMessage({ text: 'The purchase was cancelled.', ok: false })
+            return
+        }
+        api.completePurchase(purchase)
+            .then(async done => {
+                await refreshBalance()
+                setHistory(await api.listPurchases())
+                setMessage({ text: `${done.credits} credit${done.credits === 1 ? '' : 's'} added.`, ok: true })
+            })
+            .catch(e => setMessage({
+                text: e instanceof Error ? e.message : 'The purchase did not complete.', ok: false }))
+    }, [refreshBalance])
 
     const buy = useCallback(async (pkg: CreditPackage) => {
         setBuying(pkg.id); setMessage(null)
         try {
-            const { purchase_id } = await api.startPurchase(pkg.id)
-            const done = await api.completePurchase(purchase_id)
-            await refreshBalance()
-            setHistory(await api.listPurchases())
-            setMessage({ text: `${done.credits} credit${done.credits === 1 ? '' : 's'} added.`, ok: true })
+            const { checkout_url } = await api.startPurchase(pkg.id)
+            window.location.assign(checkout_url)
         } catch (e) {
-            setMessage({ text: e instanceof Error ? e.message : 'The purchase did not complete.', ok: false })
-        } finally { setBuying(null) }
-    }, [refreshBalance])
+            setMessage({ text: e instanceof Error ? e.message : 'The purchase could not start.', ok: false })
+            setBuying(null)
+        }
+    }, [])
 
     return (
         <div className="h-full overflow-y-auto">
@@ -51,7 +70,10 @@ const CreditsPage: React.FC = () => {
 
                 <section className="flex flex-col gap-3">
                     <SectionLabel>Buy credits</SectionLabel>
-                    <p className="text-sm text-slate">One credit summons one game build.</p>
+                    {enabled === false && (
+                        <p className="text-sm text-dim">Purchases aren't available yet.</p>
+                    )}
+                    {enabled && <p className="text-sm text-slate">One credit summons one game build.</p>}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         {packages.map(pkg => (
                             <div key={pkg.id}

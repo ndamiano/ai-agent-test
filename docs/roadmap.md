@@ -122,9 +122,11 @@ Deployed off the owner's box, manual accounts, granted credits, no payments.
 ### Public beta, paid — first dollar — **BLOCKED on product stage 2**
 
 - **Bar:** paying users, positive unit economics confirmed, no safety or legal gaps.
-- **Needs:** a real payment provider behind `get_provider()` — the storefront itself landed
-  2026-08-03 ($5/credit packages, fake instant provider, ledger-backed history), so the gap is
-  exactly one provider implementation; price called 2026-08-03 ($5 = 1 credit = 3h compute);
+- **Needs:** live Stripe keys — the storefront and the Stripe integration landed 2026-08-03
+  ($5/credit packages, hosted Checkout, signed-webhook + redirect-return completion, store
+  disabled whenever keys are absent), so the gap is a live-mode Stripe account (business
+  identity + bank), which waits on the entity decision in `tasks/legal_ops.md`; price called
+  2026-08-03 ($5 = 1 credit = 3h compute);
   safety Phase 2 (classifier/hash-matching — Phase 1 is keyword/pattern only and is not
   enough for strangers), the full `tasks/legal_ops.md` checklist with counsel review, and the
   game-execution sandbox.

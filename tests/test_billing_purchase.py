@@ -1,9 +1,35 @@
 """The credits storefront: the package catalog, start→complete through the provider seam, and the
 purchase history. Completion grants through the ledger exactly once — a double-complete is
-answered, not re-credited."""
+answered, not re-credited. With no provider configured the store is disabled and refuses."""
+
+import pytest
 
 from auth import store
 from auth.billing import PACKAGES
+from auth.credits import Checkout, CreditProvider
+
+
+class _PaidProvider(CreditProvider):
+    """A checkout that the provider reports as paid — what a completed Stripe session answers."""
+
+    def start_checkout(self, purchase_id, package, success_url, cancel_url):
+        return Checkout(ref=f"cs_{purchase_id}", url=f"https://pay.example/{purchase_id}")
+
+    def confirm_checkout(self, provider_ref):
+        return provider_ref.startswith("cs_")
+
+    def verify(self, payload, headers):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def paid_provider(monkeypatch):
+    # get_provider re-reads settings on every call, so the patch lands on the router's imported
+    # names, not on the module-level cache it would overwrite.
+    import api.routers.billing as billing_router
+    provider = _PaidProvider()
+    monkeypatch.setattr(billing_router, "get_provider", lambda: provider)
+    monkeypatch.setattr(billing_router, "store_enabled", lambda: True)
 
 
 def _authed_user(handle="alice"):
@@ -31,9 +57,10 @@ def test_packages_list_the_catalog_at_flat_pricing(app_client):
     r = app_client.get("/api/billing/packages", headers=hdr)
     assert r.status_code == 200
     body = r.json()
-    assert [(p["id"], p["credits"], p["usd_cents"]) for p in body] == \
+    assert body["enabled"] is True
+    assert [(p["id"], p["credits"], p["usd_cents"]) for p in body["packages"]] == \
         [(p.id, p.credits, p.usd_cents) for p in PACKAGES]
-    for p in body:
+    for p in body["packages"]:
         assert p["usd_cents"] == p["credits"] * 500
 
 
@@ -42,6 +69,7 @@ def test_purchase_grants_credits_exactly_once(app_client):
 
     started = app_client.post("/api/billing/purchase", json={"package_id": "5"}, headers=hdr)
     assert started.status_code == 200
+    assert started.json()["checkout_url"].startswith("https://pay.example/")
     assert store.balance(user.id) == 0  # starting is not paying
 
     done = app_client.post(
@@ -111,3 +139,32 @@ def test_history_is_scoped_to_the_caller(app_client):
     app_client.post(f"/api/billing/purchase/{pid}/complete", headers=alice_hdr)
 
     assert app_client.get("/api/billing/purchases", headers=bob_hdr).json() == []
+
+
+def test_disabled_store_reports_and_refuses(app_client, monkeypatch):
+    import api.routers.billing as billing_router
+    monkeypatch.setattr(billing_router, "store_enabled", lambda: False)
+    user, hdr = _authed_user("carol")
+
+    r = app_client.get("/api/billing/packages", headers=hdr)
+    assert r.json() == {"enabled": False, "packages": []}
+    assert app_client.post("/api/billing/purchase", json={"package_id": "1"},
+                           headers=hdr).status_code == 503
+    assert store.list_purchases(user.id) == []
+
+
+def test_unpaid_checkout_never_grants(app_client, monkeypatch):
+    """The provider's word, not the client's return visit, is what authorizes the grant."""
+    class Unpaid(_PaidProvider):
+        def confirm_checkout(self, provider_ref):
+            return False
+
+    import api.routers.billing as billing_router
+    unpaid = Unpaid()
+    monkeypatch.setattr(billing_router, "get_provider", lambda: unpaid)
+    user, hdr = _authed_user("dave")
+    pid = app_client.post("/api/billing/purchase", json={"package_id": "1"},
+                          headers=hdr).json()["purchase_id"]
+    r = app_client.post(f"/api/billing/purchase/{pid}/complete", headers=hdr)
+    assert r.status_code == 402
+    assert store.balance(user.id) == 0

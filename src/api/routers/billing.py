@@ -1,9 +1,11 @@
 """Billing — the credits storefront and the payment-provider webhook.
 
 The storefront routes are user-authed like any other /api surface: list the package catalog,
-open a purchase, complete it, list past purchases. Money moves (or, today, pretends to) inside
-the active `CreditProvider`; credits move only through the ledger, via the purchase row's
-started→completed flip (`store.complete_purchase`), so completing twice grants once.
+open a purchase (answering with the provider's hosted checkout URL), complete it, list past
+purchases. With no provider configured the store is disabled: packages report it, purchase
+refuses 503. Money moves inside the active `CreditProvider`; credits move only through the
+ledger, via the purchase row's started→completed flip (`store.complete_purchase`), so
+completing twice grants once.
 
 The webhook is the one PUBLIC path here (registered in `auth.deps.PUBLIC_PATHS`): a provider
 POSTs server-to-server with no user token, authenticated instead by its signature, verified
@@ -17,9 +19,10 @@ from pydantic import BaseModel
 
 from auth import store
 from auth.billing import PACKAGES, package_by_id
-from auth.credits import get_provider
+from auth.credits import get_provider, store_enabled
 from auth.deps import get_current_user
 from auth.store import User
+from config.settings_manager import settings_manager
 
 router = APIRouter()
 logger = logging.getLogger("auth")
@@ -31,18 +34,30 @@ class PurchaseBody(BaseModel):
 
 @router.get("/packages")
 def list_packages(user: User = Depends(get_current_user)):
-    return [{"id": p.id, "credits": p.credits, "usd_cents": p.usd_cents} for p in PACKAGES]
+    if not store_enabled():
+        return {"enabled": False, "packages": []}
+    return {"enabled": True,
+            "packages": [{"id": p.id, "credits": p.credits, "usd_cents": p.usd_cents}
+                         for p in PACKAGES]}
 
 
 @router.post("/purchase")
-def start_purchase(body: PurchaseBody, user: User = Depends(get_current_user)):
+def start_purchase(body: PurchaseBody, request: Request,
+                   user: User = Depends(get_current_user)):
+    if not store_enabled():
+        raise HTTPException(status_code=503, detail="purchases are not available")
     package = package_by_id(body.package_id)
     if package is None:
         raise HTTPException(status_code=404, detail="unknown package")
     purchase = store.create_purchase(user.id, package.id, package.credits, package.usd_cents)
-    ref = get_provider().start_checkout(purchase.id, package)
-    store.set_purchase_ref(purchase.id, ref)
-    return {"purchase_id": purchase.id, "status": "started"}
+    origin = ((settings_manager.get_settings().get("play") or {}).get("app_origin", "").rstrip("/")
+              or str(request.base_url).rstrip("/"))
+    checkout = get_provider().start_checkout(
+        purchase.id, package,
+        success_url=f"{origin}/credits?purchase={purchase.id}&result=success",
+        cancel_url=f"{origin}/credits?purchase={purchase.id}&result=cancelled")
+    store.set_purchase_ref(purchase.id, checkout.ref)
+    return {"purchase_id": purchase.id, "status": "started", "checkout_url": checkout.url}
 
 
 @router.post("/purchase/{purchase_id}/complete")
@@ -70,10 +85,18 @@ def purchase_history(user: User = Depends(get_current_user)):
 
 @router.post("/webhook")
 async def purchase_webhook(request: Request):
+    """Stripe's completion push. The redirect-return also completes; whichever lands first wins
+    and the other is the idempotent no-op — `complete_purchase`'s started→completed flip is the
+    exactly-once gate either way."""
     payload = await request.body()
     event = get_provider().verify(payload, request.headers)
     if event is None:
         raise HTTPException(status_code=400, detail="unverified purchase event")
-    balance = store.grant(event.user_id, event.credits, "purchase")
-    logger.info("purchase credited: user=%s +%d -> %d", event.user_id, event.credits, balance)
-    return {"credited": event.credits, "balance": balance}
+    purchase = store.get_purchase(event.purchase_id)
+    if purchase is None:
+        raise HTTPException(status_code=400, detail="unknown purchase")
+    balance = store.complete_purchase(purchase.id)
+    if balance is not None:
+        logger.info("purchase completed via webhook: user=%s +%d -> %d",
+                    purchase.user_id, purchase.credits, balance)
+    return {"status": "completed"}

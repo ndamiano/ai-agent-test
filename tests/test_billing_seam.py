@@ -1,14 +1,15 @@
 """T4 buy-credits seam: the admin grant CLI and the provider webhook.
 
 CLI grant credits a real handle (balance up, txn logged) and fails cleanly on an unknown handle.
-The webhook credits the ledger on a (stubbed) verified event, rejects an unverified one, and is
+The webhook completes a purchase on a (stubbed) verified event, rejects an unverified one, and is
 NOT blocked by the user-auth middleware — a provider posts server-to-server with no user token.
 """
 
 import pytest
 
-from auth import cli, credits, store
-from auth.credits import CreditProvider, PurchaseEvent
+from auth import cli, store
+from auth.billing import PACKAGES
+from auth.credits import CreditProvider, Checkout, PurchaseEvent
 
 
 def _ledger_rows(user_id, reason):
@@ -38,10 +39,10 @@ def test_cli_grant_on_unknown_handle_fails_cleanly():
 class _StubProvider(CreditProvider):
     """Verifies iff the payload carries a matching secret — stands in for signature checking."""
 
-    def __init__(self, user_id, credits_n, secret=b"ok"):
-        self._user_id, self._credits, self._secret = user_id, credits_n, secret
+    def __init__(self, purchase_id, secret=b"ok"):
+        self._purchase_id, self._secret = purchase_id, secret
 
-    def start_checkout(self, purchase_id, package):
+    def start_checkout(self, purchase_id, package, success_url, cancel_url):
         raise AssertionError("the webhook path never opens a checkout")
 
     def confirm_checkout(self, provider_ref):
@@ -50,23 +51,39 @@ class _StubProvider(CreditProvider):
     def verify(self, payload, headers):
         if payload != self._secret:
             return None
-        return PurchaseEvent(user_id=self._user_id, credits=self._credits)
+        return PurchaseEvent(purchase_id=self._purchase_id)
 
 
-def test_webhook_credits_the_ledger_on_a_verified_event(app_client, monkeypatch):
+def _started_purchase(user_id):
+    pkg = PACKAGES[1]
+    purchase = store.create_purchase(user_id, pkg.id, pkg.credits, pkg.usd_cents)
+    store.set_purchase_ref(purchase.id, "cs_test_ref")
+    return purchase
+
+
+def test_webhook_completes_the_purchase_on_a_verified_event(app_client, monkeypatch):
     user = store.create_user("alice", "pw")
-    monkeypatch.setattr(credits, "_provider", _StubProvider(user.id, 25))
+    purchase = _started_purchase(user.id)
+    import api.routers.billing as billing_router
+    stub = _StubProvider(purchase.id)
+    monkeypatch.setattr(billing_router, "get_provider", lambda: stub)
 
     r = app_client.post("/api/billing/webhook", content=b"ok")
     assert r.status_code == 200
-    assert r.json() == {"credited": 25, "balance": 25}
-    assert store.balance(user.id) == 25
-    assert [row["delta"] for row in _ledger_rows(user.id, "purchase")] == [25]
+    assert store.balance(user.id) == purchase.credits
+    assert [row["delta"] for row in _ledger_rows(user.id, "purchase")] == [purchase.credits]
+
+    # A webhook redelivery (or the redirect-return racing it) grants nothing more.
+    app_client.post("/api/billing/webhook", content=b"ok")
+    assert store.balance(user.id) == purchase.credits
 
 
 def test_webhook_rejects_an_unverified_event_and_credits_nothing(app_client, monkeypatch):
     user = store.create_user("alice", "pw")
-    monkeypatch.setattr(credits, "_provider", _StubProvider(user.id, 25))
+    purchase = _started_purchase(user.id)
+    import api.routers.billing as billing_router
+    stub = _StubProvider(purchase.id)
+    monkeypatch.setattr(billing_router, "get_provider", lambda: stub)
 
     r = app_client.post("/api/billing/webhook", content=b"tampered")
     assert r.status_code == 400
@@ -74,10 +91,10 @@ def test_webhook_rejects_an_unverified_event_and_credits_nothing(app_client, mon
     assert _ledger_rows(user.id, "purchase") == []
 
 
-def test_webhook_refuses_cleanly_on_the_default_provider(app_client):
-    """The default `FakeInstantProvider`, unpatched — it verifies no webhook. The route is public,
-    so its refusal must be the same clean 400 an unverified event gets — a raise would hand any
-    caller a 500 + traceback."""
+def test_webhook_refuses_cleanly_with_no_provider_configured(app_client):
+    """The default `NoProvider`, unpatched — it verifies no webhook. The route is public, so its
+    refusal must be the same clean 400 an unverified event gets — a raise would hand any caller
+    a 500 + traceback."""
     user = store.create_user("alice", "pw")
 
     r = app_client.post("/api/billing/webhook", content=b"anything")
@@ -89,7 +106,9 @@ def test_webhook_refuses_cleanly_on_the_default_provider(app_client):
 def test_webhook_is_not_blocked_by_the_user_auth_gate(app_client, monkeypatch):
     # No Authorization header — a gated route 401s, but the webhook reaches its handler (here a
     # clean 400 from the provider refusing) rather than being turned away at the gate.
-    monkeypatch.setattr(credits, "_provider", _StubProvider("nobody", 1, secret=b"never"))
+    import api.routers.billing as billing_router
+    stub = _StubProvider("nothing", secret=b"never")
+    monkeypatch.setattr(billing_router, "get_provider", lambda: stub)
     assert app_client.get("/api/games").status_code == 401
     r = app_client.post("/api/billing/webhook", content=b"anything")
     assert r.status_code == 400

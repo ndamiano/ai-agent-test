@@ -191,12 +191,13 @@ export const api = {
         request<{ status: string; run_id: string; asset_id: string }>(
             `/api/games/${runId}/assets/${assetId}/regenerate`, { method: 'POST', body: JSON.stringify({ prompt, mode }) }),
 
+    // `enabled: false` (no payment provider configured) hides the storefront.
     listPackages: () =>
-        request<CreditPackage[]>('/api/billing/packages'),
-    // Start→complete is the whole checkout today (the provider confirms instantly server-side);
-    // a redirect leg slots in between when a real processor arrives.
+        request<{ enabled: boolean; packages: CreditPackage[] }>('/api/billing/packages'),
+    // Answers with the provider's hosted checkout URL; the user pays there and returns to
+    // /credits, where the result params drive completePurchase.
     startPurchase: (packageId: string) =>
-        request<{ purchase_id: string; status: string }>(
+        request<{ purchase_id: string; status: string; checkout_url: string }>(
             '/api/billing/purchase', { method: 'POST', body: JSON.stringify({ package_id: packageId }) }),
     completePurchase: (purchaseId: string) =>
         request<{ status: string; credits: number; balance: number }>(

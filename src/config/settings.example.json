@@ -74,5 +74,9 @@
     "bucket": "",
     "access_key": "",
     "secret_key": ""
+  },
+  "payments": {
+    "stripe_secret_key": "",
+    "stripe_webhook_secret": ""
   }
 }

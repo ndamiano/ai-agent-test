@@ -40,6 +40,9 @@ or paid access.** Capture it now so it's not a scramble at launch.
       (`frontend/src/components/LoginScreen.tsx`); a real gate for mature-but-legal content at
       public signup is open (illegal content is blocked separately — `safety_filter.md`).
       → done when: the owner has decided what the public-signup age gate is, and it is recorded here
+- [ ] **Product tax code** — checkout sessions carry Stripe tax code `txcd_10000000` (general
+      electronically supplied services) because the managed-payments account requires one. Confirm
+      with counsel/accountant that this is the right classification for game-build credits.
 - [ ] **Compute-grant expiry** — owner wants a purchased game's remaining compute time to expire
       after some window, and will not enact it before counsel review: prepaid grants brush
       gift-card / stored-value law in some jurisdictions (expiry limits, escheatment). Ask the

@@ -116,6 +116,9 @@ class StripeProvider(CreditProvider):
             "line_items[0][price_data][unit_amount]": str(package.usd_cents),
             "line_items[0][price_data][product_data][name]":
                 f"{package.credits} credit{'s' if package.credits != 1 else ''}",
+            # Managed-payments accounts refuse a session without a product tax code. General
+            # electronically-supplied services; confirming it is on the counsel checklist.
+            "line_items[0][price_data][product_data][tax_code]": "txcd_10000000",
         })
         return Checkout(ref=session["id"], url=session["url"])
 

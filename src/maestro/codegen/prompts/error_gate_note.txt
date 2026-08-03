@@ -1,0 +1,8 @@
+The finished game throws an error when it is opened in a browser. Fix this one error, and keep the game playing the way it already does:
+
+{message}
+
+Where it lives:
+{address}
+
+{parse_note}

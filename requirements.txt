@@ -4,3 +4,4 @@ pydantic==2.12.5
 requests==2.32.5
 jsonschema==4.26.0
 pillow==12.2.0
+playwright==1.61.0

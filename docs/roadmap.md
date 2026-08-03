@@ -14,8 +14,10 @@ opens before the product stage it sells has cleared.
 ## Where we are — 2026-07-31
 
 A build is one model, six tools, and a transcript, writing plain HTML/CSS/JS. It asks for its own
-art while it writes the code that uses it. The only gate is that `index.html` exists; whether the
-game is any good is a question a person answers by playing it.
+art while it writes the code that uses it. Two gates stand between a build and `built`: an
+`index.html` exists, and the error gate — the staged game is opened headless and an uncaught
+error re-enters the fix machine, one error per round (rebuilt 2026-08-02 from the 2026-07-30
+measurement). Whether the game is any *good* is a question a person answers by playing it.
 
 The platform under that is further along than the games are: auth, credits, exec-second metering,
 containerized deploy, a worker-pull queue with three GPU queues and a RunPod autoscaler — all

@@ -21,7 +21,7 @@ from typing import Dict, Optional
 
 from db import store as db_store
 from llm_clients.connector import get_connector
-from maestro.codegen import asset_use, build_state, build_steps, snapshots, turn_log
+from maestro.codegen import asset_use, build_state, build_steps, error_gate, snapshots, turn_log
 from maestro.codegen.build_state import BuildCursor
 from maestro.codegen.staging import entry_path, game_dir, stage_for_play
 from maestro.codegen.tools import build_tools
@@ -297,6 +297,11 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
     _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step,
           art_unreferenced=art["unreferenced"], art_missing=art["missing"])
+    if ok and attempt is None:
+        # The gate probes AFTER the lock this finalize holds is released — its kickoff blocks on
+        # the same lock, so running it inline here would deadlock. A build stopped by hand is not
+        # probed: the human ended it, and an auto-fix would restart what they stopped.
+        threading.Thread(target=error_gate.after_build, args=(run_id,), daemon=True).start()
 
 
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:

@@ -50,10 +50,19 @@ watched itself write the files, so without it the model edits code it no longer 
 **A GATE MAY ONLY DETECT BROKEN, NEVER "BAD".** A constraint the model builds to satisfy is only
 safe when satisfying it IS the goal. "must not crash" can only be met by not crashing; "the game
 must DO X" is legitimately false for some games, so no edit satisfies it and the loop grinds to its
-cap while the model contorts the design to appease it. Today the only thing standing between a build
-and `built` is **`index.html` exists** — without one there is nothing for a browser to open.
-Everything past that is a HUMAN judgement: a game that runs but plays wrong is obvious to a person
-and near-impossible for code, so the gap stays VISIBLE rather than filled with a proxy.
+cap while the model contorts the design to appease it. Two things stand between a build and
+`built`: **`index.html` exists** — without one there is nothing for a browser to open — and the
+**error gate** (`error_gate.py`): after a playable finalize, the staged game is opened in a
+headless browser and an uncaught exception re-enters the fix machine with that ONE error and its
+address. An uncaught exception satisfies the guardrail — `this._doIdle is not a function` can only
+be met by defining it. Measured 2026-07-30 (docs/experiments.md) and rebuilt 2026-08-02 after a
+25-game day shipped five load-dead games the pipeline never saw: nine of nine broken cells went to
+zero unattended, and the rules that made it converge are all load-bearing (one error per fix build,
+node supplies the file:line a browser SyntaxError omits, a parse note says fix the whole file).
+The gate loads and pokes past a title screen, nothing more — teaching it to play would be a
+"must DO X" gate in disguise. Everything past that is a HUMAN judgement: a game that runs but
+plays wrong is obvious to a person and near-impossible for code, so the gap stays VISIBLE rather
+than filled with a proxy.
 
 `tsc` used to be the contract gate, and it earned its place against `engine.d.ts` — types to check
 *against*. Measured on the same 25-game grid after the kit came out: unfiltered `--checkJs` reported
@@ -237,6 +246,17 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
+      error_gate.py      the ERROR GATE — after a playable finalize, open the staged game in a
+                         headless browser (playwright chromium, an ephemeral static server, one
+                         click + Enter + Space to get past a title screen) and re-enter the fix
+                         machine with the FIRST uncaught error and its address. One error per fix
+                         build; node --check supplies the file:line a browser SyntaxError omits
+                         (tried as module then script — authored games import three); a
+                         redeclaration note lists every declaration site; a parse note says fix
+                         the whole file. Stops on MAX_ROUNDS, on the same error two rounds
+                         running, and never touches a build a human stopped. A probe that cannot
+                         run logs and stands aside — the gate is a boundary like snapshots.
+                         Round state in runs/<id>/error_gate.json.
       asset_use.py       does the game LOAD the art it asked for — static analysis over the game's
                          own source, no model and no GPU. Two facts: an asset the source never
                          names (paid for, never seen) and an `assets/…` path in neither the manifest

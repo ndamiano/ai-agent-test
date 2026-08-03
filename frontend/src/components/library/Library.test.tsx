@@ -5,7 +5,8 @@ import { api } from '../../api/client'
 import type { Game } from '../../types'
 
 const game = (over: Partial<Game> = {}): Game =>
-    ({ run_id: 'r1', title: 'Island Village', built: true, building: false, paused: false, ...over })
+    ({ run_id: 'r1', title: 'Island Village', built: true, building: false, paused: false,
+       unstarted_plan: false, ...over })
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 

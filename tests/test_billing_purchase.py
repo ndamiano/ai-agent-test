@@ -168,3 +168,22 @@ def test_unpaid_checkout_never_grants(app_client, monkeypatch):
     r = app_client.post(f"/api/billing/purchase/{pid}/complete", headers=hdr)
     assert r.status_code == 402
     assert store.balance(user.id) == 0
+
+
+def test_checkout_returns_to_the_callers_origin_in_dev(app_client, monkeypatch):
+    """With no app_origin configured, the return URL is the SPA's origin from the request —
+    landing on the API port is a different origin whose localStorage holds no session."""
+    import api.routers.billing as billing_router
+    seen = {}
+
+    class Capturing(_PaidProvider):
+        def start_checkout(self, purchase_id, package, success_url, cancel_url):
+            seen["success"] = success_url
+            return super().start_checkout(purchase_id, package, success_url, cancel_url)
+
+    capturing = Capturing()
+    monkeypatch.setattr(billing_router, "get_provider", lambda: capturing)
+    _, hdr = _authed_user("erin")
+    app_client.post("/api/billing/purchase", json={"package_id": "1"},
+                    headers={**hdr, "Origin": "http://localhost:5173"})
+    assert seen["success"].startswith("http://localhost:5173/credits?purchase=")

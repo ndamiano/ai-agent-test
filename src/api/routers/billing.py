@@ -50,7 +50,11 @@ def start_purchase(body: PurchaseBody, request: Request,
     if package is None:
         raise HTTPException(status_code=404, detail="unknown package")
     purchase = store.create_purchase(user.id, package.id, package.credits, package.usd_cents)
+    # Where Stripe sends the payer back: the configured app origin in prod; in dev, the SPA's
+    # own origin from the request (the vite server, not the API it proxies to) — landing on the
+    # API port is a different origin whose localStorage holds no session.
     origin = ((settings_manager.get_settings().get("play") or {}).get("app_origin", "").rstrip("/")
+              or (request.headers.get("origin") or "").rstrip("/")
               or str(request.base_url).rstrip("/"))
     checkout = get_provider().start_checkout(
         purchase.id, package,

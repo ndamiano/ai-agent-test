@@ -107,18 +107,21 @@ async def list_games(user: User = Depends(get_current_user)):
             continue   # created but has no prompt yet — nothing to show
         active = build_chain.status_of(row["id"])
         built = _built(row["id"])
+        pressed = bool(db_store.builds_for(row["id"]))
+        # A stage finalize stages a playable game, but the chain isn't done — reporting built
+        # between stages flashes a play button that reads as done-then-not.
+        staging_on = pressed and stage_plan.mid_chain(RunState(row["id"]).run_dir)
         games.append({
             "run_id": row["id"],
             "title": staged_title(row["id"]) or row["title"],
             "status": row["status"],
-            "built": built,
-            "building": active is not None,
+            "built": built and not staging_on,
+            "building": active is not None or staging_on,
             "paused": bool(active and active["paused"]),
             "mtime": row["updated_at"],
             # A charged plan whose build was never pressed — the create page offers to resume it.
-            # "Never pressed" is the builds table: a pressed build leaves a row even if it fails.
             "unstarted_plan": (active is None and not built and row.get("credits_spent", 0) > 0
-                               and not db_store.builds_for(row["id"])
+                               and not pressed
                                and (RunState(row["id"]).run_dir / stage_plan.STATE_FILE).exists()),
         })
     games.sort(key=lambda g: g["mtime"], reverse=True)
@@ -204,17 +207,21 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     row = db_store.game(run_id) or {}
     built = _built(run_id)
     active = build_chain.status_of(run_id)
+    staging_on = (stage_plan.mid_chain(state.run_dir)
+                  and bool(db_store.builds_for(run_id)))
     if active:
         live = "fixing" if active["kind"] == "fix" else "building"
         status = "paused" if active["paused"] else live
+    elif staging_on:
+        status = "building"     # between stages: the chain is the build, not the last finalize
     else:
         status = "built" if built else "idle"
     return {
         "run_id": run_id,
         "prompt": spec_data.get("request", ""),
         "title": staged_title(run_id) or spec_data.get("title", ""),
-        "built": built,
-        "building": active is not None,
+        "built": built and not staging_on,
+        "building": active is not None or staging_on,
         "status": status,
         "queue_position": None,   # kept for the client shape; builds don't queue behind each other
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),

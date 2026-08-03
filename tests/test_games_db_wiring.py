@@ -428,3 +428,31 @@ def test_regenerate_out_of_compute_is_402(client):
                     json={"prompt": "x"})
     assert r.status_code == 402
     assert r.json()["detail"]["reason"] == "compute_exhausted"
+
+
+def test_a_mid_chain_run_reports_building_not_built(client, monkeypatch, tmp_path):
+    """Every stage finalize stages a playable game, but the chain is the build — no play button
+    between stages."""
+    from maestro.codegen import stages as stage_plan
+    user, headers = _user()
+    run_id = _make_game(user.id, {"request": "a fox game", "title": "Fox"})
+    stage_plan.save(RunState(run_id).run_dir, "a fox game", ["core", "world", "polish"])
+    db_store.create_build(run_id)                  # build was pressed
+    stage_plan.next_note(RunState(run_id).run_dir)  # stage 2 consumed -> next=2, one stage left
+    game = game_dir(RunState(run_id).run_dir)
+    game.mkdir(parents=True, exist_ok=True)
+    (game / "index.html").write_text("<html>stage 2 of 3</html>")
+    from maestro.codegen.staging import stage_for_play
+    stage_for_play(RunState(run_id).run_dir, run_id)
+
+    detail = client.get(f"/api/games/{run_id}", headers=headers).json()
+    assert detail["status"] == "building"
+    assert detail["built"] is False and detail["building"] is True
+
+    (row,) = client.get("/api/games", headers=headers).json()
+    assert row["built"] is False and row["building"] is True
+
+    # The chain finishing (next == len) is what makes it built.
+    stage_plan.next_note(RunState(run_id).run_dir)
+    detail = client.get(f"/api/games/{run_id}", headers=headers).json()
+    assert detail["status"] == "built" and detail["built"] is True

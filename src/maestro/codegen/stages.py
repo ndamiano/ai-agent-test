@@ -69,6 +69,14 @@ def saved(run_dir) -> Optional[Dict]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def mid_chain(run_dir) -> bool:
+    """A chain with stages still to run. Every stage finalize stages a playable game — that is
+    the contract — but a run mid-chain must not REPORT built: the play button appearing between
+    stages reads as done-then-not."""
+    state = saved(run_dir)
+    return bool(state) and state["next"] < len(state["stages"])
+
+
 def next_note(run_dir) -> Optional[str]:
     """The next stage's note, advancing the cursor — None when there is no plan or it is spent."""
     path = Path(run_dir) / STATE_FILE

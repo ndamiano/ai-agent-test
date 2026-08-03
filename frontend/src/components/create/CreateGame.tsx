@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { api, buildErrorMessage } from '../../api/client'
+import { track } from '../../api/track'
 import { useAuth } from '../../contexts/AuthContext'
 import { Button } from '../ui/Button'
 import { TextArea } from '../ui/Field'
@@ -29,10 +30,14 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
     const [stages, setStages] = useState<string[] | null>(null)
     const { refreshBalance } = useAuth()
 
+    useEffect(() => track('create_opened'), [])
+
     const createPlain = async () => {
         setBusy(true); setError(null)
         try {
             const { run_id } = await api.createGame(text)
+            track('enhance_skipped', { run_id })
+            track('build_started', { run_id, source: 'create', staged: false })
             onCreated(run_id)
         } catch (e) {
             setError(buildErrorMessage(e, 'Could not start the build'))
@@ -43,9 +48,11 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
         setBusy(true); setError(null); setEnhance(true)
         try {
             const res = await api.enhancePrompt(text)
+            track('enhance_planned', { run_id: res.run_id, stages: res.stages.length })
             if (res.stages.length < 2) {
                 // A plan that came back as one stage has nothing to review — build it plain.
                 const { run_id } = await api.buildGame(res.run_id, text)
+                track('build_started', { run_id, source: 'create', staged: false })
                 onCreated(run_id); return
             }
             setPlanRunId(res.run_id)
@@ -60,6 +67,7 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
         setBusy(true); setError(null)
         try {
             const { run_id } = await api.buildStages(planRunId, stages)
+            track('build_started', { run_id, source: 'create', staged: true })
             onCreated(run_id)
         } catch (e) {
             setError(buildErrorMessage(e, 'Could not start the build'))

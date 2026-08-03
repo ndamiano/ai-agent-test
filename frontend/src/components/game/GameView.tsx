@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { api, buildErrorMessage } from '../../api/client'
+import { track } from '../../api/track'
 import { useWebSocket } from '../../contexts/WebSocketContext'
 import { useAuth } from '../../contexts/AuthContext'
 import { useRunBuildStream } from '../../hooks/useRunBuildStream'
@@ -126,7 +127,11 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     // which the model reads and believes — and then re-asks for art it already has.
     const startBuild = async (fresh: boolean) => {
         setActing(true); setBuilding(true); setStatus('running'); closePlay()
-        try { await (fresh ? api.regenerateGame : api.buildGame)(runId, promptText); onChanged() }
+        try {
+            await (fresh ? api.regenerateGame : api.buildGame)(runId, promptText)
+            track('build_started', { run_id: runId, source: 'game', fresh })
+            onChanged()
+        }
         catch (e) {
             setBuilding(false); setStatus('idle')
             setError(buildErrorMessage(e, 'Build failed'))
@@ -139,9 +144,13 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     const resume = () => { setStatus('running'); act(() => api.resumeGame(runId), 'Resume failed', false) }
     const stop = () => act(() => api.stopGame(runId), 'Stop failed', false)
     const renderArt = () => act(async () => { setRenderPending(true); await api.renderAssets(runId) }, 'Render failed', false)
-    const sendFix = (note: string) => {
+    const sendFix = (note: string, source = 'note') => {
         closePlay()
-        act(async () => { await api.fixGame(runId, note); setBuilding(true); setStatus('fixing') }, 'Fix failed', false)
+        act(async () => {
+            await api.fixGame(runId, note)
+            track('fix_sent', { run_id: runId, source, length: note.length })
+            setBuilding(true); setStatus('fixing')
+        }, 'Fix failed', false)
     }
     const submitFix = () => {
         const note = fixNote.trim()
@@ -150,9 +159,13 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
         sendFix(note)
     }
     // Each mount of the game gets its own single-use handoff URL — a reused one 403s.
-    const play = () => act(async () => setSession(await api.playSession(runId)), 'Could not start the game', false)
+    const play = () => act(async () => {
+        setSession(await api.playSession(runId))
+        track('game_played', { run_id: runId, mode: 'embed' })
+    }, 'Could not start the game', false)
     const openTab = () => act(async () => {
         const s = await api.playSession(runId)
+        track('game_played', { run_id: runId, mode: 'tab' })
         window.open(s.url, '_blank', 'noopener')
     }, 'Could not start the game', false)
 
@@ -218,7 +231,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
 
                 {errorsOpen && reports.length > 0 && (
                     <ErrorFixModal reports={reports} busy={acting}
-                        onSend={sendFix} onClose={() => setErrorsOpen(false)} />
+                        onSend={note => sendFix(note, 'errors')} onClose={() => setErrorsOpen(false)} />
                 )}
 
                 {stage === 'ready' && (

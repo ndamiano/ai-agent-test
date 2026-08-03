@@ -1,4 +1,4 @@
-import type { AdminCosts, AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminQueues, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -172,6 +172,8 @@ export const api = {
         request<AdminQueues>('/api/admin/queues'),
     getAdminCosts: () =>
         request<AdminCosts>('/api/admin/costs'),
+    getAdminAnalytics: (days = 14) =>
+        request<AdminAnalytics>(`/api/admin/analytics?days=${days}`),
 
     getPromptBuckets: () =>
         request<PromptBucket[]>('/api/admin/prompts/games'),

@@ -34,7 +34,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import (admin, billing, demos, games, prompts, system, websocket, workqueue)
+from api.routers import (admin, billing, demos, events, games, prompts, system, websocket,
+                         workqueue)
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
@@ -93,6 +94,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
+app.include_router(events.router, prefix="/api/events", tags=["events"])
 # Public by design (auth/deps.py PUBLIC_PREFIXES) — the landing page's demo games.
 app.include_router(demos.router, prefix="/api/demos", tags=["demos"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])

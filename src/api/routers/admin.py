@@ -1,6 +1,7 @@
 """Operator-only surfaces. Everything here is gated by `require_admin`, so a signed-in ordinary
 user gets a 403. Read-only today: the inference-queue snapshot (depth, fleet, GPU-second spend)
-the operator watches to size the fleet and see what the cards are costing.
+the operator watches to size the fleet and see what the cards are costing, and the usage rollup
+(user-action events by kind by day — see routers/events.py for the intake).
 """
 
 import calendar
@@ -80,6 +81,22 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
         totals["billed_24h"] += day["billed"]
 
     return {"queues": queues, "totals": totals}
+
+
+@router.get("/analytics")
+async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Usage funnel: per day, event counts by kind plus distinct active users. Newest day first."""
+    days = max(1, min(days, 90))
+    rollup = db_store.user_event_rollup(time.time() - days * _DAY_SECONDS)
+    by_day: Dict[str, Dict[str, int]] = {}
+    for r in rollup["kinds"]:
+        by_day.setdefault(r["day"], {})[r["kind"]] = r["n"]
+    users = {r["day"]: r["n"] for r in rollup["users"]}
+    return {
+        "kinds": sorted({r["kind"] for r in rollup["kinds"]}),
+        "days": [{"day": d, "users": users.get(d, 0), "kinds": by_day[d]}
+                 for d in sorted(by_day, reverse=True)],
+    }
 
 
 # ── Costs: RunPod's ledger joined against our job/worker logs ────────────────────────────────

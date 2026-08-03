@@ -1,9 +1,10 @@
 """Platform datastore (sqlite) — games, builds, jobs, events, workers.
 
 The authoritative index for everything the run dir can't answer cheaply: who owns which game,
-lifecycle status, compute grants/spend, the append-only build event log, the inference job queue
-and the worker fleet. The run dir stays the source of truth for the spec and build artifacts —
-rows here point at it, never duplicate it.
+lifecycle status, compute grants/spend, the append-only event log (build/spec lifecycle rows
+keyed by game_id, user-action analytics rows keyed by user_id — one table, disjoint on user_id),
+the inference job queue and the worker fleet. The run dir stays the source of truth for the spec
+and build artifacts — rows here point at it, never duplicate it.
 
 Plain parameterized SQL, short-lived connections, WAL. No sqlite-isms in the DML, so a future
 Postgres port is DDL + driver work, not a rewrite.
@@ -94,13 +95,15 @@ CREATE INDEX IF NOT EXISTS idx_jobs_batch ON jobs(batch_id, status);
 
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY,
-    game_id    TEXT NOT NULL,
+    game_id    TEXT,
+    user_id    TEXT,
     build_id   TEXT,
     kind       TEXT NOT NULL,
     payload    TEXT,
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_game ON events(game_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS workers (
     id            TEXT PRIMARY KEY,
@@ -812,9 +815,12 @@ def record_event(game_id: str, kind: str, payload: Dict, build_id: Optional[str]
 
 
 def events_for(game_id: str, after_id: int = 0, limit: int = 500) -> List[Dict]:
+    # user_id IS NULL: the build/spec lifecycle log only. A user-action row (analytics) may carry
+    # the same game_id, and the replay path would misread its kinds as lifecycle events.
     with _db() as conn:
         rows = conn.execute(
-            "SELECT * FROM events WHERE game_id = ? AND id > ? ORDER BY id LIMIT ?",
+            "SELECT * FROM events WHERE game_id = ? AND user_id IS NULL AND id > ? "
+            "ORDER BY id LIMIT ?",
             (game_id, after_id, limit),
         ).fetchall()
     out = []
@@ -823,3 +829,31 @@ def events_for(game_id: str, after_id: int = 0, limit: int = 500) -> List[Dict]:
         d["payload"] = json.loads(d["payload"]) if d["payload"] else {}
         out.append(d)
     return out
+
+
+def record_user_events(user_id: str, rows: List[Dict]) -> None:
+    """Batch-insert user-action analytics rows: {kind, payload, game_id?, created_at}."""
+    with _db() as conn:
+        conn.executemany(
+            "INSERT INTO events (game_id, user_id, kind, payload, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(r.get("game_id"), user_id, r["kind"],
+              json.dumps(r.get("payload") or {}, ensure_ascii=False, default=str),
+              r["created_at"]) for r in rows],
+        )
+
+
+def user_event_rollup(since: float) -> Dict[str, List[Dict]]:
+    """Day-bucketed user-action counts: events per (day, kind) and distinct users per day."""
+    with _db() as conn:
+        kinds = conn.execute(
+            "SELECT date(created_at, 'unixepoch') AS day, kind, COUNT(*) AS n "
+            "FROM events WHERE user_id IS NOT NULL AND created_at >= ? "
+            "GROUP BY day, kind ORDER BY day",
+            (since,)).fetchall()
+        users = conn.execute(
+            "SELECT date(created_at, 'unixepoch') AS day, COUNT(DISTINCT user_id) AS n "
+            "FROM events WHERE user_id IS NOT NULL AND created_at >= ? "
+            "GROUP BY day ORDER BY day",
+            (since,)).fetchall()
+    return {"kinds": [dict(r) for r in kinds], "users": [dict(r) for r in users]}

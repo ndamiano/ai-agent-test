@@ -153,6 +153,11 @@ export interface AdminCosts {
     ghost_30d: { pods: number; amount_usd: number; billed_seconds: number } | null
 }
 
+export interface AdminAnalytics {
+    kinds: string[]
+    days: { day: string; users: number; kinds: Record<string, number> }[]
+}
+
 export interface AdminQueues {
     queues: QueueRow[]
     totals: {

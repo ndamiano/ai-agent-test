@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react'
+import { track } from '../api/track'
 import Studio from './Studio'
 import AdminPanel from './AdminPanel'
 import PromptsPanel from './PromptsPanel'
@@ -16,6 +17,8 @@ const Layout: React.FC = () => {
     const { path, navigate } = useRouter()
     const { user, balance } = useAuth()
     const route = parseRoute(path)
+
+    useEffect(() => track('page_view', { path }), [path])
 
     // The admin surfaces are operator-only. The server enforces it (require_admin → 403); this
     // just keeps a non-admin from landing on an empty error page via a typed URL.

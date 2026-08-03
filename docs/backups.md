@@ -59,18 +59,20 @@ before trusting it, and after any change to this machinery. Order matters: DBs l
 the app first serves traffic with them.
 
 1. **Provision + configure.** On the new box: `./scripts/provision.sh`, then recreate `.env` and
-   `src/config/settings.json` (including the `s3` block) from the password manager, in
-   `/opt/maestro`.
+   `src/config/settings.json` in `/opt/maestro`. The `s3` block gets a **read-only application
+   key** minted for the occasion: a restore only reads, and a drill box holding a write key can
+   snapshot its restored DB over the real box's `latest` — read-only makes that impossible, and
+   the drill box's own backup attempts fail loudly instead. Revoke the key after.
 
 2. **Ship + build.** From the dev box: `PROD_HOST=user@new-box ./scripts/deploy.sh`. It ends with
    the app healthy but EMPTY — that first boot creates the volumes with the right ownership.
-   Stop it before it snapshots its empty DBs over the good ones: `docker compose stop app`
-   (the first snapshot is minutes away, but do not race it).
+   Stop it: `docker compose stop app`. (With the read-only key its snapshots cannot land
+   anywhere, but the restore needs the app stopped regardless.)
 
 3. **Restore both DBs from the bucket** (any S3 client or the app's own; from the host):
 
    ```bash
-   DATA_MOUNT=$(sudo docker volume inspect maestro-data -f '{{ .Mountpoint }}')
+   DATA_MOUNT=$(sudo docker volume inspect maestro_maestro-data -f '{{ .Mountpoint }}')
    docker compose run --rm --entrypoint sh -w /app/src app -c '
      python - <<EOF
    import gzip
@@ -100,7 +102,10 @@ the app first serves traffic with them.
    ```
 
    (Games can also be left to rehydrate lazily — play/build/fix pull them on touch — but the
-   drill restores eagerly so the verification below means something.)
+   drill restores eagerly so the verification below means something.) A game with no archive in
+   the bucket reports not-built after restore — its rows survive, its files do not. `runs/` in
+   the bucket only holds what archived: keep the nightly `--archive-all` sweep honest, because
+   the restore can only be as complete as it.
 
 6. **Verify — the drill is not done until all of these pass:**
 

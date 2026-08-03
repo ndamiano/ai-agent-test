@@ -1,12 +1,7 @@
 """Staged construction — the hardest system gets a whole build to itself, then the game grows.
 
-Measured 2026-08-02/03 (docs/experiments.md pending; the artifact holds the record): given the
-whole game at once, the model starves whichever system is hardest — a duel built alone earned a
-dedicated 8-function AI module, the same duel inside the full request earned zero opponent code.
-Seven staged chains across four genres produced the strongest games of the battery, every stage
-loading clean, and the one comparison where the model planned its own stages produced one of the
-strongest artifacts yet (the tower defense whose single-shot twin shipped with towers that never
-fired).
+Given the whole game at once, the model starves whichever system is hardest; a system built
+alone gets a full build's attention before the rest is added around it.
 
 The PLAN is one small llm call (prompts/stage_plan.txt): stage 1 is a complete playable game of
 the core system, each later stage ADDS one system and names what must keep working. A plan that

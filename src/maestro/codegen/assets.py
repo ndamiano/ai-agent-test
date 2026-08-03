@@ -111,8 +111,6 @@ def check_render(path: Path, kind: str) -> Optional[str]:
     return None
 
 
-# Measured 2026-08-03 on live card art: WebP q90 is 10.5x smaller than the PNG at the SAME 1024
-# resolution, while downscaling to 768 PNG bought only 1.5x. Full resolution stays; the bytes go.
 WEBP_QUALITY = 90
 
 

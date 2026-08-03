@@ -159,12 +159,10 @@ async def enhance_prompt(body: EnhanceBody, user: User = Depends(get_current_use
     text, and the stage texts for the user to read and edit — pressing Build on them is the
     approval, so nothing here is hidden rewriting.
 
-    Planning is where the credit is charged: it is the game's first inference, and any free
-    inference path is a cost leak (a one-off llm call on the autoscaled queue bills ~40s of pod
-    wall-clock for ~3s of work). The plan call itself meters against the grant it just bought.
-    `run_id` re-plans an already-charged run — the user went back to their words and pressed
-    Plan again, and their credit covers every re-plan. The plan is SAVED beside the run, so an
-    abandoned plan can be picked back up from the create page."""
+    Planning is where the credit is charged: it is the game's first inference, and it meters
+    against the grant it buys. `run_id` re-plans an already-charged run — the user went back to
+    their words and pressed Plan again, and their credit covers every re-plan. The plan is SAVED
+    beside the run, so an abandoned plan can be picked back up from the create page."""
     text = body.prompt.strip()
     if not text:
         raise HTTPException(status_code=400, detail="the prompt is empty")

@@ -1,13 +1,11 @@
 """The error gate — open the finished game in a headless browser and hear what throws.
 
-Measured 2026-07-30 (docs/experiments.md, "The error gate"): nine of nine cells with
-load-blocking defects went to zero errors unattended, under three rules that are all here.
-ONE error per fix build — seven errors in one note closed none of them, the same seven sent
-singly closed all seven. Every error carries an ADDRESS — a browser SyntaxError arrives with
-an empty stack, so node supplies the file and line, and a cross-file declaration scan supplies
-the pair for a redeclaration neither tool can locate alone. A parse error's note says to fix
-the WHOLE file — a parser reports one error per file, so a note aimed at the line named fixes
-one instance per round and grinds.
+Three rules make the fix loop converge (docs/experiments.md, "The error gate"). ONE error per
+fix build — several errors in one note close none of them. Every error carries an ADDRESS — a
+browser SyntaxError arrives with an empty stack, so node supplies the file and line, and a
+cross-file declaration scan supplies the pair for a redeclaration neither tool can locate alone.
+A parse error's note says to fix the WHOLE file — a parser reports one error per file, so a note
+aimed at the line named fixes one instance per round and grinds.
 
 An uncaught exception is one of the few signals that satisfies the BROKEN-not-bad guardrail:
 `this._doIdle is not a function` can only be met by defining it. The gate does not simulate

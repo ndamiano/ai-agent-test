@@ -1,11 +1,10 @@
 """The run dir's off-box copy, and the disk-pressure valve it enables.
 
-The droplet's disk is finite (measured 2026-08-03: 35 GB, 16 free, ~5.7 MB per game BEFORE art);
-the bucket is not. Every settled finalize uploads the whole run dir as one tar.gz — game, art,
-game.git history, turn logs — so a finished game exists off-box the moment it exists at all.
-`evict` then reclaims local disk, and it REFUSES unless the remote copy is verified first: an
-eviction that trusts a write it never checked is a deletion. `rehydrate` pulls the archive back
-and re-stages, so an evicted game is a download away from playable or fixable again.
+Every settled finalize uploads the whole run dir as one tar.gz — game, art, game.git history,
+turn logs — so a finished game exists off-box the moment it exists at all. `evict` then reclaims
+local disk, and it REFUSES unless the remote copy is verified first: an eviction that trusts a
+write it never checked is a deletion. `rehydrate` pulls the archive back and re-stages, so an
+evicted game is a download away from playable or fixable again.
 
 Archiving is a BOUNDARY like snapshots and the error gate: an unconfigured bucket or a failed
 upload logs and stands aside — losing the archive is never a reason to lose (or block) a build.

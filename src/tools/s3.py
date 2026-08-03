@@ -1,10 +1,8 @@
-"""A minimal S3-compatible client: PUT, GET, HEAD against one bucket. No new dependencies.
+"""A minimal S3-compatible client: PUT, GET, HEAD against one bucket, SigV4 over `requests`.
 
-Hand-rolled SigV4 over the `requests` we already pin, chosen deliberately over boto3 — five
-packages of supply-chain surface for two verbs. The classic hand-rolling danger (silent
-wrongness) is structurally absent here: the server recomputes the signature, so a bug is a loud
-403, and the payload's sha256 rides x-amz-content-sha256, so the bytes are verified end to end.
-The signing core is exposed (`sign_headers`) so the test suite can drive it with AWS's published
+A signing bug cannot silently succeed: the server recomputes the signature (a mismatch is a 403)
+and the payload's sha256 rides x-amz-content-sha256, so the bytes are verified end to end. The
+signing core is exposed (`sign_headers`) so the test suite can drive it with AWS's published
 SigV4 example and assert the documented signature byte for byte.
 
 Path-style addressing (https://endpoint/bucket/key) so a bucket needs no DNS of its own — Spaces,

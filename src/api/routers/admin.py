@@ -6,6 +6,7 @@ beta signup.
 """
 
 import calendar
+import logging
 import time
 from typing import Any, Dict, List
 
@@ -18,6 +19,8 @@ from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import QUEUE_SECONDS
+
+logger = logging.getLogger("admin")
 
 router = APIRouter()
 
@@ -100,6 +103,24 @@ async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dic
         "days": [{"day": d, "users": users.get(d, 0), "kinds": by_day[d]}
                  for d in sorted(by_day, reverse=True)],
     }
+
+
+@router.post("/games/{run_id}/refund")
+async def refund_build(run_id: str, admin: User = Depends(require_admin)):
+    """The goodwill refund for a failed build: the credit comes back AND the game goes — its
+    staged copy is removed and its status set revoked, so nobody keeps both the game and the
+    money. Manual and infrequent by design."""
+    owner = db_store.owner_of(run_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="no such game")
+    import shutil
+    from maestro.codegen.staging import RUNTIME_DIR
+    balance = auth_store.refund(owner, 1, "build_refund", run_id)
+    db_store.set_status(run_id, "revoked")
+    shutil.rmtree(RUNTIME_DIR / "games" / run_id, ignore_errors=True)
+    logger.info("build refund: run=%s owner=%s -> balance %d (by %s)",
+                run_id, owner, balance, admin.handle)
+    return {"status": "revoked", "balance": balance}
 
 
 # ── Invite codes: what gates beta signup ─────────────────────────────────────────────────────

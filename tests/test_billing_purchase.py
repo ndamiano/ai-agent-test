@@ -16,7 +16,7 @@ class _PaidProvider(CreditProvider):
         return Checkout(ref=f"cs_{purchase_id}", url=f"https://pay.example/{purchase_id}")
 
     def confirm_checkout(self, provider_ref):
-        return provider_ref.startswith("cs_")
+        return f"pi_{provider_ref}" if provider_ref.startswith("cs_") else None
 
     def verify(self, payload, headers):
         return None
@@ -157,7 +157,7 @@ def test_unpaid_checkout_never_grants(app_client, monkeypatch):
     """The provider's word, not the client's return visit, is what authorizes the grant."""
     class Unpaid(_PaidProvider):
         def confirm_checkout(self, provider_ref):
-            return False
+            return None
 
     import api.routers.billing as billing_router
     unpaid = Unpaid()
@@ -187,3 +187,47 @@ def test_checkout_returns_to_the_callers_origin_in_dev(app_client, monkeypatch):
     app_client.post("/api/billing/purchase", json={"package_id": "1"},
                     headers={**hdr, "Origin": "http://localhost:5173"})
     assert seen["success"].startswith("http://localhost:5173/credits?purchase=")
+
+
+def _completed_purchase(app_client, hdr, package_id="5"):
+    pid = app_client.post("/api/billing/purchase", json={"package_id": package_id},
+                          headers=hdr).json()["purchase_id"]
+    app_client.post(f"/api/billing/purchase/{pid}/complete", headers=hdr)
+    return pid
+
+
+def test_completion_records_the_payment_intent(app_client):
+    user, hdr = _authed_user("frank")
+    pid = _completed_purchase(app_client, hdr)
+    assert store.get_purchase(pid).payment_intent is not None
+
+
+def test_a_refund_event_takes_the_credits_back_even_below_zero(app_client, monkeypatch):
+    """The purchase's credits come back out on refund; spent credits mean a negative balance,
+    and a negative balance blocks every purchase-priced action via the existing balance checks."""
+    import api.routers.billing as billing_router
+    from auth.credits import RefundEvent
+
+    user, hdr = _authed_user("grace")
+    pid = _completed_purchase(app_client, hdr, package_id="1")   # +1 credit
+    pi = store.get_purchase(pid).payment_intent
+    store.deduct(user.id, 1, "build", None)                      # spends it
+
+    class Refunding(_PaidProvider):
+        def verify(self, payload, headers):
+            return RefundEvent(payment_intent=pi) if payload == b"refund" else None
+
+    refunding = Refunding()
+    monkeypatch.setattr(billing_router, "get_provider", lambda: refunding)
+    r = app_client.post("/api/billing/webhook", content=b"refund")
+    assert r.status_code == 200 and r.json() == {"status": "refunded"}
+    assert store.balance(user.id) == -1
+    assert store.get_purchase(pid).status == "refunded"
+
+    # Idempotent: a redelivered refund event revokes nothing more.
+    app_client.post("/api/billing/webhook", content=b"refund")
+    assert store.balance(user.id) == -1
+
+    # Negative balance blocks the next purchase-priced action (the build path's balance check).
+    assert app_client.post("/api/games", headers=hdr,
+                           json={"prompt": "another game"}).status_code == 402

@@ -108,13 +108,14 @@ def test_a_stripe_error_is_loud(monkeypatch):
         assert "Invalid API Key" in str(e)
 
 
-def test_confirm_checkout_is_paid_status(monkeypatch):
+def test_confirm_checkout_answers_the_payment_id_iff_paid(monkeypatch):
     monkeypatch.setattr(credits.requests, "get",
-                        lambda *a, **k: _Resp(200, {"payment_status": "paid"}))
-    assert _provider().confirm_checkout("cs_123") is True
+                        lambda *a, **k: _Resp(200, {"payment_status": "paid",
+                                                    "payment_intent": "pi_9"}))
+    assert _provider().confirm_checkout("cs_123") == "pi_9"
     monkeypatch.setattr(credits.requests, "get",
                         lambda *a, **k: _Resp(200, {"payment_status": "unpaid"}))
-    assert _provider().confirm_checkout("cs_123") is False
+    assert _provider().confirm_checkout("cs_123") is None
 
 
 # ---------------------------------------------------------------- provider selection

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from auth import store
 from auth.billing import PACKAGES, package_by_id
-from auth.credits import get_provider, store_enabled
+from auth.credits import RefundEvent, get_provider, store_enabled
 from auth.deps import get_current_user
 from auth.store import User
 from config.settings_manager import settings_manager
@@ -70,8 +70,10 @@ def complete_purchase(purchase_id: str, user: User = Depends(get_current_user)):
     if purchase is None or purchase.user_id != user.id:
         raise HTTPException(status_code=404, detail="no such purchase")
     if purchase.status == "started":
-        if not get_provider().confirm_checkout(purchase.provider_ref or ""):
+        payment_intent = get_provider().confirm_checkout(purchase.provider_ref or "")
+        if not payment_intent:
             raise HTTPException(status_code=402, detail="the provider has not confirmed payment")
+        store.set_payment_intent(purchase.id, payment_intent)
         balance = store.complete_purchase(purchase.id)
         if balance is not None:
             logger.info("purchase completed: user=%s +%d -> %d",
@@ -89,16 +91,31 @@ def purchase_history(user: User = Depends(get_current_user)):
 
 @router.post("/webhook")
 async def purchase_webhook(request: Request):
-    """Stripe's completion push. The redirect-return also completes; whichever lands first wins
-    and the other is the idempotent no-op — `complete_purchase`'s started→completed flip is the
-    exactly-once gate either way."""
+    """Stripe's push, both directions of money. Completion: the redirect-return also completes,
+    whichever lands first wins and the other is the idempotent no-op — the started→completed
+    flip is the exactly-once gate. Refunds and chargebacks: the credits come back out through
+    the mirrored completed→refunded flip, negative balance allowed — a negative balance is what
+    blocks further builds."""
     payload = await request.body()
     event = get_provider().verify(payload, request.headers)
     if event is None:
         raise HTTPException(status_code=400, detail="unverified purchase event")
+
+    if isinstance(event, RefundEvent):
+        purchase = store.purchase_by_payment_intent(event.payment_intent)
+        if purchase is None:
+            raise HTTPException(status_code=400, detail="unknown payment")
+        balance = store.refund_purchase(purchase.id)
+        if balance is not None:
+            logger.info("purchase refunded: user=%s -%d -> %d",
+                        purchase.user_id, purchase.credits, balance)
+        return {"status": "refunded"}
+
     purchase = store.get_purchase(event.purchase_id)
     if purchase is None:
         raise HTTPException(status_code=400, detail="unknown purchase")
+    if event.payment_intent:
+        store.set_payment_intent(purchase.id, event.payment_intent)
     balance = store.complete_purchase(purchase.id)
     if balance is not None:
         logger.info("purchase completed via webhook: user=%s +%d -> %d",

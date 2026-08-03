@@ -115,3 +115,40 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
     assert body["ghost_30d"] is None
     assert all(w["runpod"] is None and w["derived"] == {} for w in body["windows"])
     assert all("jobs" in w for w in body["windows"])
+
+
+def test_build_refund_regrants_and_revokes(app_client, tmp_runs):
+    """The goodwill refund: credit back, game gone — nobody keeps both."""
+    from maestro.codegen.run import create_run
+    from maestro.codegen.staging import RUNTIME_DIR
+
+    from maestro.state import RunState
+    owner = store.get_user_by_handle("owner") or store.create_user("owner", "pw")
+    run_id = create_run(owner.id)
+    RunState(run_id).write_spec({"request": "a game", "title": "A Game"})
+    staged = RUNTIME_DIR / "games" / run_id
+    staged.mkdir(parents=True, exist_ok=True)
+    (staged / "index.html").write_text("<html>the game</html>")
+
+    admin = {"Authorization": f"Bearer {_token('boss', 'admin')}"}
+    r = app_client.post(f"/api/admin/games/{run_id}/refund", headers=admin)
+    assert r.status_code == 200
+    assert r.json()["status"] == "revoked"
+    assert store.balance(owner.id) == 1
+    assert db_store.game(run_id)["status"] == "revoked"
+    assert not staged.exists()
+
+    # A revoked game cannot mint a play session.
+    owner_hdr = {"Authorization": f"Bearer {store.issue_token(owner.id)}"}
+    assert app_client.post(f"/api/games/{run_id}/play-session",
+                           headers=owner_hdr).status_code == 410
+
+
+def test_build_refund_on_unknown_run_is_404(app_client):
+    admin = {"Authorization": f"Bearer {_token('boss2', 'admin')}"}
+    assert app_client.post("/api/admin/games/nope/refund", headers=admin).status_code == 404
+
+
+def test_build_refund_requires_admin(app_client):
+    user = {"Authorization": f"Bearer {_token('pleb', 'user')}"}
+    assert app_client.post("/api/admin/games/x/refund", headers=user).status_code == 403

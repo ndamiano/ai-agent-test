@@ -46,6 +46,14 @@ class Checkout:
 class PurchaseEvent:
     """A verified webhook's claim: this purchase was paid."""
     purchase_id: str
+    payment_intent: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RefundEvent:
+    """A verified webhook's claim: this payment was refunded or charged back — the credits it
+    bought come back out, negative balance included."""
+    payment_intent: str
 
 
 class NoPurchasesError(RuntimeError):
@@ -59,13 +67,15 @@ class CreditProvider(ABC):
         """Open a checkout with the provider for this purchase."""
 
     @abstractmethod
-    def confirm_checkout(self, provider_ref: str) -> bool:
-        """Ask the provider whether this checkout was actually paid."""
+    def confirm_checkout(self, provider_ref: str) -> Optional[str]:
+        """Ask the provider whether this checkout was actually paid. Returns the provider's
+        payment id when it was (what a refund event later names), None when it was not."""
 
     @abstractmethod
-    def verify(self, payload: bytes, headers: Mapping[str, str]) -> Optional[PurchaseEvent]:
-        """Verify a raw webhook event against the provider's signature. Return the paid
-        purchase it announces, or None if it doesn't verify (nothing is credited)."""
+    def verify(self, payload: bytes,
+               headers: Mapping[str, str]) -> "Optional[PurchaseEvent | RefundEvent]":
+        """Verify a raw webhook event against the provider's signature. Return the paid or
+        refunded purchase it announces, or None if it doesn't verify (nothing moves)."""
 
 
 class NoProvider(CreditProvider):
@@ -76,10 +86,11 @@ class NoProvider(CreditProvider):
                        success_url: str, cancel_url: str) -> Checkout:
         raise NoPurchasesError("no payment provider is configured")
 
-    def confirm_checkout(self, provider_ref: str) -> bool:
-        return False
+    def confirm_checkout(self, provider_ref: str) -> Optional[str]:
+        return None
 
-    def verify(self, payload: bytes, headers: Mapping[str, str]) -> Optional[PurchaseEvent]:
+    def verify(self, payload: bytes,
+               headers: Mapping[str, str]) -> "Optional[PurchaseEvent | RefundEvent]":
         return None
 
 
@@ -122,12 +133,15 @@ class StripeProvider(CreditProvider):
         })
         return Checkout(ref=session["id"], url=session["url"])
 
-    def confirm_checkout(self, provider_ref: str) -> bool:
+    def confirm_checkout(self, provider_ref: str) -> Optional[str]:
         res = requests.get(f"{STRIPE_API}/checkout/sessions/{provider_ref}", timeout=30,
                            auth=(self._key, ""))
-        return res.status_code == 200 and res.json().get("payment_status") == "paid"
+        if res.status_code != 200 or res.json().get("payment_status") != "paid":
+            return None
+        return res.json().get("payment_intent") or provider_ref
 
-    def verify(self, payload: bytes, headers: Mapping[str, str]) -> Optional[PurchaseEvent]:
+    def verify(self, payload: bytes,
+               headers: Mapping[str, str]) -> "Optional[PurchaseEvent | RefundEvent]":
         # Stripe-Signature: t=<unix>,v1=<hmac-sha256 of "<t>.<payload>" under the whsec>.
         # Refusal is None, never a raise — the webhook is public and a raise is a 500 anyone
         # can trigger.
@@ -143,14 +157,21 @@ class StripeProvider(CreditProvider):
         if not hmac.compare_digest(expected, v1):
             return None
         event = json.loads(payload)
-        if event.get("type") != "checkout.session.completed":
-            return None
-        session = (event.get("data") or {}).get("object") or {}
-        if session.get("payment_status") != "paid":
-            return None
-        purchase_id = ((session.get("metadata") or {}).get("purchase_id")
-                       or session.get("client_reference_id"))
-        return PurchaseEvent(purchase_id=purchase_id) if purchase_id else None
+        obj = (event.get("data") or {}).get("object") or {}
+        kind = event.get("type")
+        if kind == "checkout.session.completed":
+            if obj.get("payment_status") != "paid":
+                return None
+            purchase_id = ((obj.get("metadata") or {}).get("purchase_id")
+                           or obj.get("client_reference_id"))
+            if not purchase_id:
+                return None
+            return PurchaseEvent(purchase_id=purchase_id,
+                                 payment_intent=obj.get("payment_intent"))
+        if kind in ("charge.refunded", "charge.dispute.created"):
+            pi = obj.get("payment_intent")
+            return RefundEvent(payment_intent=pi) if pi else None
+        return None
 
 
 _active: Optional[CreditProvider] = None

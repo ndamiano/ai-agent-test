@@ -96,15 +96,16 @@ def _db():
             created_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS purchases (
-            id           TEXT PRIMARY KEY,
-            user_id      TEXT NOT NULL REFERENCES users(id),
-            package_id   TEXT NOT NULL,
-            credits      INTEGER NOT NULL,
-            usd_cents    INTEGER NOT NULL,
-            provider_ref TEXT,
-            status       TEXT NOT NULL,
-            created_at   REAL NOT NULL,
-            completed_at REAL
+            id             TEXT PRIMARY KEY,
+            user_id        TEXT NOT NULL REFERENCES users(id),
+            package_id     TEXT NOT NULL,
+            credits        INTEGER NOT NULL,
+            usd_cents      INTEGER NOT NULL,
+            provider_ref   TEXT,
+            payment_intent TEXT,
+            status         TEXT NOT NULL,
+            created_at     REAL NOT NULL,
+            completed_at   REAL
         );
         """
     )
@@ -352,6 +353,7 @@ class Purchase:
     credits: int
     usd_cents: int
     provider_ref: Optional[str]
+    payment_intent: Optional[str]
     status: str
     created_at: float
     completed_at: Optional[float]
@@ -360,14 +362,16 @@ class Purchase:
 def _row_to_purchase(row: sqlite3.Row) -> Purchase:
     return Purchase(id=row["id"], user_id=row["user_id"], package_id=row["package_id"],
                     credits=row["credits"], usd_cents=row["usd_cents"],
-                    provider_ref=row["provider_ref"], status=row["status"],
+                    provider_ref=row["provider_ref"], payment_intent=row["payment_intent"],
+                    status=row["status"],
                     created_at=row["created_at"], completed_at=row["completed_at"])
 
 
 def create_purchase(user_id: str, package_id: str, credits: int, usd_cents: int) -> Purchase:
     purchase = Purchase(id=uuid.uuid4().hex[:16], user_id=user_id, package_id=package_id,
                         credits=credits, usd_cents=usd_cents, provider_ref=None,
-                        status="started", created_at=time.time(), completed_at=None)
+                        payment_intent=None, status="started", created_at=time.time(),
+                        completed_at=None)
     with _db() as conn:
         conn.execute(
             "INSERT INTO purchases (id, user_id, package_id, credits, usd_cents, status, "
@@ -382,6 +386,53 @@ def set_purchase_ref(purchase_id: str, provider_ref: str) -> None:
     with _db() as conn:
         conn.execute("UPDATE purchases SET provider_ref = ? WHERE id = ?",
                      (provider_ref, purchase_id))
+
+
+def set_payment_intent(purchase_id: str, payment_intent: str) -> None:
+    """The provider's payment id, recorded at completion — what a later refund or chargeback
+    event names, since those events never carry our purchase id."""
+    with _db() as conn:
+        conn.execute("UPDATE purchases SET payment_intent = ? WHERE id = ?",
+                     (payment_intent, purchase_id))
+
+
+def purchase_by_payment_intent(payment_intent: str) -> Optional[Purchase]:
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM purchases WHERE payment_intent = ?",
+                           (payment_intent,)).fetchone()
+    return _row_to_purchase(row) if row else None
+
+
+def revoke_credits(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> int:
+    """Subtract credits with NO floor — a refunded purchase takes its credits back even if they
+    were already spent, and a negative balance is what blocks further builds. Returns the new
+    balance."""
+    with _db() as conn:
+        conn.execute("UPDATE users SET credits = credits - ? WHERE id = ?", (n, user_id))
+        _log_txn(conn, user_id, -n, reason, run_id)
+        row = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
+        return row["credits"] if row else 0
+
+
+def refund_purchase(purchase_id: str) -> Optional[int]:
+    """Flip completed→refunded and take the credits back, atomically — the mirror of
+    complete_purchase, idempotent the same way. Returns the new balance if THIS call did the
+    revoking, None if the purchase was not in a refundable state."""
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE purchases SET status = 'refunded' WHERE id = ? AND status = 'completed'",
+            (purchase_id,),
+        )
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute("SELECT user_id, credits FROM purchases WHERE id = ?",
+                           (purchase_id,)).fetchone()
+        conn.execute("UPDATE users SET credits = credits - ? WHERE id = ?",
+                     (row["credits"], row["user_id"]))
+        _log_txn(conn, row["user_id"], -row["credits"], "purchase_refund", None)
+        bal = conn.execute("SELECT credits FROM users WHERE id = ?",
+                           (row["user_id"],)).fetchone()
+        return bal["credits"] if bal else 0
 
 
 def get_purchase(purchase_id: str) -> Optional[Purchase]:

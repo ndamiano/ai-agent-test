@@ -237,6 +237,8 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
     the game origin is only the short-lived token — see auth/playgrants.py. `origin` is what the
     parent page must verify reporter postMessages against ('' ⇒ games share the app origin)."""
     _require_state(run_id, user)
+    if (db_store.game(run_id) or {}).get("status") == "revoked":
+        raise HTTPException(status_code=410, detail="this game was refunded and revoked")
     if not _built(run_id):
         raise HTTPException(status_code=409, detail="not built yet")
     # An evicted game is a download away from playable — pull it back before minting a session.

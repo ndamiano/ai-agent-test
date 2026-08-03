@@ -5,7 +5,7 @@ import { SectionLabel } from '../ui/Field'
 import { Sigil } from '../ui/Sigil'
 import { Link } from '../../router'
 
-interface Demo { run_id: string; title: string; prompt: string }
+interface Demo { run_id: string; title: string; prompt: string; tier: 'showcase' | 'oneshot' }
 
 // One demo card: the prompt that summoned it, and the game itself — playable in place. The
 // pairing IS the pitch; a video would be a weaker claim than the game running.
@@ -90,16 +90,38 @@ const Landing: React.FC = () => {
                     </p>
                 </section>
 
-                {demos.length > 0 && (
+                {demos.some(d => d.tier === 'showcase') && (
                     <section className="flex flex-col gap-5">
-                        <h2 className="font-display text-2xl text-center">Played straight from the cauldron</h2>
-                        <div className="grid gap-6 md:grid-cols-2">
-                            {demos.map(d => <DemoCard key={d.run_id} demo={d} />)}
-                        </div>
-                        <p className="text-xs text-dim text-center">
-                            Every one of these was made by the machine from the words shown under it.
+                        <h2 className="font-display text-2xl text-center">What's possible</h2>
+                        <p className="text-sm text-slate text-center max-w-xl mx-auto">
+                            Games grown the full way — staged summons, playtest notes, another pass
+                            until it plays right.
                         </p>
+                        <div className="grid gap-6 md:grid-cols-2">
+                            {demos.filter(d => d.tier === 'showcase')
+                                .map(d => <DemoCard key={d.run_id} demo={d} />)}
+                        </div>
                     </section>
+                )}
+
+                {demos.some(d => d.tier === 'oneshot') && (
+                    <section className="flex flex-col gap-5">
+                        <h2 className="font-display text-2xl text-center">What one sentence gets you</h2>
+                        <p className="text-sm text-slate text-center max-w-xl mx-auto">
+                            Typed once, kept exactly as it first came out of the cauldron — no
+                            retries, no notes, no second pour.
+                        </p>
+                        <div className="grid gap-6 md:grid-cols-2">
+                            {demos.filter(d => d.tier === 'oneshot')
+                                .map(d => <DemoCard key={d.run_id} demo={d} />)}
+                        </div>
+                    </section>
+                )}
+
+                {demos.length > 0 && (
+                    <p className="text-xs text-dim text-center">
+                        Every one of these was made by the machine from the words shown under it.
+                    </p>
                 )}
             </main>
         </div>

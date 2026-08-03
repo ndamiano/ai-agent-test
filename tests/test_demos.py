@@ -41,19 +41,20 @@ def staged_game():
 
 @pytest.fixture
 def demo_listed(monkeypatch):
-    """Put run ids on the demo list without touching the settings file."""
+    """Put run ids on the demo list without touching the settings file. Append to a tier's list
+    to list a game under it."""
     from config.settings_manager import settings_manager
 
-    ids = []
+    tiers = {"showcase": [], "oneshot": []}
     real = settings_manager.get_settings
 
     def patched():
         s = real()
-        s["demo_games"] = list(ids)
+        s["demo_games"] = {k: list(v) for k, v in tiers.items()}
         return s
 
     monkeypatch.setattr(settings_manager, "get_settings", patched)
-    return ids
+    return tiers
 
 
 def _game(staged=None):
@@ -67,9 +68,9 @@ def _game(staged=None):
 
 def test_demo_list_is_public_and_carries_the_prompt(client, staged_game, demo_listed):
     run_id = _game(staged_game)
-    demo_listed.append(run_id)
+    demo_listed["showcase"].append(run_id)
     unstaged = _game()
-    demo_listed.append(unstaged)  # listed but not built — skipped, not an error
+    demo_listed["showcase"].append(unstaged)  # listed but not built — skipped, not an error
 
     r = client.get("/api/demos")  # no Authorization header
     assert r.status_code == 200
@@ -78,10 +79,32 @@ def test_demo_list_is_public_and_carries_the_prompt(client, staged_game, demo_li
     assert rows[0]["prompt"] == "a demo game"
 
 
+def test_a_staged_demo_shows_the_persons_words_not_stage_one(client, staged_game, demo_listed):
+    from maestro.codegen import stages as stages_mod
+    from maestro.state import RunState
+
+    run_id = _game(staged_game)
+    stages_mod.save(RunState(run_id).run_dir, "make me a fox game",
+                    ["Build a complete browser game where…", "Add a hunger system…"])
+    demo_listed["oneshot"].append(run_id)
+
+    assert client.get("/api/demos").json()[0]["prompt"] == "make me a fox game"
+
+
+def test_each_demo_carries_its_tier_showcase_first(client, staged_game, demo_listed):
+    one = _game(staged_game)
+    show = _game(staged_game)
+    demo_listed["oneshot"].append(one)
+    demo_listed["showcase"].append(show)
+
+    rows = client.get("/api/demos").json()
+    assert [(x["run_id"], x["tier"]) for x in rows] == [(show, "showcase"), (one, "oneshot")]
+
+
 def test_demo_play_session_works_without_auth_for_listed_games_only(client, staged_game, demo_listed):
     run_id = _game(staged_game)
     other = _game(staged_game)  # staged but NOT listed
-    demo_listed.append(run_id)
+    demo_listed["oneshot"].append(run_id)
 
     assert client.post(f"/api/demos/{other}/play-session").status_code == 404
     r = client.post(f"/api/demos/{run_id}/play-session")
@@ -98,7 +121,7 @@ def test_demo_surface_grants_nothing_else(client, staged_game, demo_listed):
     """The public prefix must not open the rest of /api, and a demo grant opens one game only."""
     run_id = _game(staged_game)
     other = _game(staged_game)
-    demo_listed.extend([run_id, other])
+    demo_listed["showcase"].extend([run_id, other])
 
     assert client.get("/api/games").status_code == 401
     r = client.post(f"/api/demos/{run_id}/play-session")
@@ -124,5 +147,5 @@ def test_a_built_game_is_named_by_its_own_title_tag(client, staged_game, demo_li
     gd = api.app._runtime / "games" / run_id
     (gd / "index.html").write_text(
         "<head><title>  The Cursed \n Curio  </title></head><body>x</body>", encoding="utf-8")
-    demo_listed.append(run_id)
+    demo_listed["showcase"].append(run_id)
     assert client.get("/api/demos").json()[0]["title"] == "The Cursed Curio"

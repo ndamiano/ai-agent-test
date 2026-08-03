@@ -17,6 +17,15 @@ def test_password_is_hashed_not_stored_plaintext(tmp_path):
     assert not store._verify_password("wrong", stored)
 
 
+def test_db_runs_in_wal_mode(tmp_path):
+    # Litestream replicates the WAL, so the store must open the db into it.
+    store.create_user("alice", "pw")
+    conn = sqlite3.connect(str(tmp_path / "auth.db"))
+    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    conn.close()
+    assert mode == "wal"
+
+
 def test_create_user_rejects_duplicate_handle():
     store.create_user("alice", "pw")
     with pytest.raises(ValueError):

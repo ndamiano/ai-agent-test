@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -44,12 +45,23 @@ def _db_path() -> Path:
     return Path(settings_manager.get_settings()["data_dir"]).resolve() / "auth.db"
 
 
+# WAL is what Litestream replicates, and switching journal_mode needs a lock the busy handler
+# does not cover — so it is applied once per process per path, as in db/store. The mode is sticky
+# on the file, so the first connection ever is the only one that actually switches.
+_WAL_APPLIED: set = set()
+_WAL_LOCK = threading.Lock()
+
+
 @contextmanager
 def _db():
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    with _WAL_LOCK:
+        if str(path) not in _WAL_APPLIED:
+            conn.execute("PRAGMA journal_mode=WAL")
+            _WAL_APPLIED.add(str(path))
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS users (

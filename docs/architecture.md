@@ -98,8 +98,10 @@ transport that never learns what an asset is.
 Two named Docker volumes back the first four rows (`maestro-data` → `/data`, `maestro-games` →
 `/app/runtime/games`). See `deploy.md` for the invariant.
 
-**There is no backup story.** Both databases and every run directory live on one box's volumes.
-This is a bigger near-term risk than scale.
+The box is one box, but the state is not: both DBs replicate continuously off-box via Litestream
+(they open in WAL mode for exactly this) and the runs tree is snapshotted nightly by restic, both
+to the same S3 target. Staged games are a copy of each run's `game/` and are re-staged on restore
+rather than backed up. Mechanism, secrets, and the restore drill: `docs/backups.md`.
 
 ---
 

@@ -88,7 +88,9 @@ async def demo_thumb(run_id: str):
     path = (base / thumb).resolve()
     if not path.is_relative_to(base) or not path.is_file():
         raise HTTPException(status_code=404, detail="no thumb")
-    return FileResponse(path)
+    # The deploy image's mimetypes table lacks webp — the format every render saves as.
+    media = {".webp": "image/webp"}.get(path.suffix.lower())
+    return FileResponse(path, media_type=media)
 
 
 @router.post("/{run_id}/play-session", response_model=Dict)

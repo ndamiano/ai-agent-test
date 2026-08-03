@@ -112,7 +112,9 @@ def test_a_thumb_is_served_for_listed_games_and_stays_inside_the_game(client, st
 
     rows = client.get("/api/demos").json()
     assert [x["thumb_url"] for x in rows] == [f"/api/demos/{run_id}/thumb", None]
-    assert client.get(f"/api/demos/{run_id}/thumb").content == b"not-really-webp"
+    thumb = client.get(f"/api/demos/{run_id}/thumb")
+    assert thumb.content == b"not-really-webp"
+    assert thumb.headers["content-type"] == "image/webp"
     assert client.get(f"/api/demos/{bare}/thumb").status_code == 404
     assert client.get("/api/demos/unlisted/thumb").status_code == 404
 

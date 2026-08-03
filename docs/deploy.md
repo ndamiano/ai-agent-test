@@ -42,9 +42,9 @@ Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY
 games.
 
 Surviving the BOX is `docs/backups.md`: Litestream streams both DBs to S3 continuously (the
-`litestream` compose service — its `LITESTREAM_*` vars belong in `.env`), a host cron runs
-`scripts/backup_runs.sh` (restic) over `runs/` nightly, and the restore drill there is the proof
-either one works.
+`litestream` compose service — its `LITESTREAM_*` vars belong in `.env`), every settled run
+uploads its own archive with a nightly `--archive-all` sweep behind it, and the restore drill
+there is the proof either one works.
 
 ## Node in the image
 

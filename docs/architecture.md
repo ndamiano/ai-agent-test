@@ -99,8 +99,9 @@ Two named Docker volumes back the first four rows (`maestro-data` → `/data`, `
 `/app/runtime/games`). See `deploy.md` for the invariant.
 
 The box is one box, but the state is not: both DBs replicate continuously off-box via Litestream
-(they open in WAL mode for exactly this) and the runs tree is snapshotted nightly by restic, both
-to the same S3 target. Staged games are a copy of each run's `game/` and are re-staged on restore
+(they open in WAL mode for exactly this), and every settled run uploads itself as one archive to
+the same S3 target (`maestro/codegen/archive.py`), with a nightly `--archive-all` sweep for any
+upload that failed. Staged games are a copy of each run's `game/` and are re-staged on rehydrate
 rather than backed up. Mechanism, secrets, and the restore drill: `docs/backups.md`.
 
 ---

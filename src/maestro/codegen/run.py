@@ -270,6 +270,7 @@ usage:
   python -m maestro.codegen.run --assets <run_id>         render the art the game declared
   python -m maestro.codegen.run --evict <run_id>          archive to the bucket, reclaim the disk
   python -m maestro.codegen.run --rehydrate <run_id>      pull an evicted run back and re-stage
+  python -m maestro.codegen.run --archive-all             upload every run the bucket lacks
   python -m maestro.codegen.run --history <run_id>        list the run's snapshots
   python -m maestro.codegen.run --restore <run_id> <ref>  put the game back to one, and re-stage
   python -m maestro.codegen.run --help | -h              show this help
@@ -312,6 +313,11 @@ if __name__ == "__main__":
             sys.exit("usage: python -m maestro.codegen.run --rehydrate <run_id>")
         from maestro.codegen import archive as _archive
         sys.exit(0 if _archive.rehydrate(sys.argv[2]) else 1)
+    if len(sys.argv) >= 2 and sys.argv[1] == "--archive-all":
+        from maestro.codegen import archive as _archive
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+        print(f"archived {_archive.archive_missing()} run(s) the bucket lacked")
+        sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == "--history":
         if len(sys.argv) < 3:
             sys.exit("usage: python -m maestro.codegen.run --history <run_id>")

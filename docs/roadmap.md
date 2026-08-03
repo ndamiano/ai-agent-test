@@ -113,8 +113,8 @@ Deployed off the owner's box, manual accounts, granted credits, no payments.
   2026-08-03: `play.origin` = gamesummonerusercontent.com framed by gamesummoner.com, DNS + TLS
   serving) — non-owner play (demos, sharing) is safe on the isolation front; self-hosted product
   analytics (batched `/api/events` into the durable event store, SPA funnel tracking incl. the
-  enhance-toggle A/B, admin rollup) and the backup story (Litestream + restic + a runnable
-  restore drill, `docs/backups.md`), both 2026-08-03.
+  enhance-toggle A/B, admin rollup) and the backup story (Litestream for the DBs, per-run
+  archives for the games, a runnable restore drill — `docs/backups.md`), both 2026-08-03.
 - **Open:** the economics measurement (stage 3 above), and enough product-track progress that
   showing it to people is worth their time.
 - **Detail:** `tasks/launch_plan.md` Stage 0.

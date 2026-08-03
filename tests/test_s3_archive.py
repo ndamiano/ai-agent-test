@@ -155,3 +155,18 @@ def test_rehydrate_on_a_local_run_is_a_noop_true(bucket):
 def test_rehydrate_with_no_archive_is_false(bucket):
     fake, runs, _ = bucket
     assert archive.rehydrate("ghost") is False
+
+
+def test_archive_missing_backfills_only_the_absent(bucket, monkeypatch):
+    fake, runs, _ = bucket
+    _make_run(runs, "r1")
+    _make_run(runs, "r2")
+    (runs / "r3").mkdir()                          # no game folder — never archived
+    archive.archive("r1")
+    uploaded_before = dict(fake.objects)
+
+    import tools.execution_context as ctx
+    monkeypatch.setattr(ctx, "resolve_base_path", lambda: runs.parent)
+    assert archive.archive_missing() == 1          # only r2
+    assert "runs/r2.tar.gz" in fake.objects
+    assert fake.objects["runs/r1.tar.gz"] == uploaded_before["runs/r1.tar.gz"]

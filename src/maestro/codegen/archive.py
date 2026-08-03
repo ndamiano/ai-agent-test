@@ -91,6 +91,22 @@ def rehydrate(run_id: str) -> bool:
     return True
 
 
+def archive_missing() -> int:
+    """Upload every run with a game folder the bucket lacks — the one-time backfill for runs that
+    predate archiving, and the nightly sweep that catches a finalize whose upload failed."""
+    if not s3.configured():
+        raise RuntimeError("s3 is not configured")
+    from tools.execution_context import resolve_base_path
+    runs = resolve_base_path() / "runs"
+    count = 0
+    for d in sorted(runs.iterdir()) if runs.is_dir() else []:
+        if not (d / "game").is_dir():
+            continue
+        if s3.head(_key(d.name)) is None and archive(d.name):
+            count += 1
+    return count
+
+
 def ensure_local(run_id: str) -> None:
     """The one-line hook for any path about to serve or build on a run that may be evicted."""
     from maestro.state import RunState

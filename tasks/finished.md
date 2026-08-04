@@ -8,6 +8,17 @@ Format: `- **YYYY-MM-DD** — <what shipped> (<key files/settings>)`
 
 ---
 
+- **2026-08-03** — safety Phase 2: post-gen NSFW verdict on every render (worker reports scores, control plane refuses at the save op, fail closed), artifact text gate that HOLDS a flagged build, violations table + admin view, fix/regenerate-note input screens; threshold set from a 290-render corpus (`worker/safety_vision.py`, `maestro/codegen/artifact_screen.py`, `docs/experiments.md`)
+- **2026-08-03** — payments LIVE: hand-rolled Stripe Checkout ($5/credit packages, signed webhook + redirect-return completion, store hidden without keys), refunds/chargebacks revoke credits — negative balance blocks builds; a real purchase + refund verified end to end (`src/auth/credits.py`, `src/api/routers/billing.py`)
+- **2026-08-03** — the backup story: DB snapshots (sqlite online-backup → gzip → B2, 15 min + 60s dirty debounce), per-run tar.gz archives at settled finalize + evict/rehydrate + nightly `--archive-all` sweep, restore drill executed against a scratch droplet (`tools/db_backup.py`, `tools/s3.py`, `maestro/codegen/archive.py`, `docs/backups.md`)
+- **2026-08-03** — claim long-poll tick 0.5s → 50ms behind a lock-free pending peek; queue pickup was ~15% of a staged build's wall-clock (`api/routers/workqueue.py`, `db/store.queue_has_work`)
+- **2026-08-03** — invite-code signup (admin-minted codes, per-IP throttled, atomic redemption) + self-hosted analytics (batched user events into the events table, admin rollup) (`src/auth/`, `api/routers/admin.py`)
+- **2026-08-03** — origin isolation STOOD UP in prod: `gamesummonerusercontent.com` framed by `gamesummoner.com`, DNS + TLS serving, handoff-only /play auth — the P1 standup item and with it the whole P1 section (`docs/deploy.md` "Public domains")
+- **2026-08-03** — art storage: WebP q90 at 1024² (10.5× smaller than png), existing corpus converted in place (`maestro/codegen/assets.save_image`)
+- **2026-08-02/03** — staged construction in the real pipeline: model-planned stage list, human-edited in review (prompt-is-the-artifact per stage), charge at Plan, stage advance on the post-gate finalize seam; mid-chain status honest in the UI (`maestro/codegen/stages.py`, `prompts/stage_plan.txt`)
+- **2026-08-02** — the error gate rebuilt where it was measured to belong: headless probe at finalize, one error per fix round, node-supplied addresses — nine of nine broken cells to zero unattended (`maestro/codegen/error_gate.py`, `docs/experiments.md`)
+- **2026-08-02** — pod boot optimization: tmpfs weight staging, flex_gemm autotune cache on the volume, image pod warm-register (`scripts/worker-*-entrypoint.sh`)
+
 ## Drained sections (2026-07-25)
 
 Cut from their active files after a per-file audit against HEAD; the work is in the code, the

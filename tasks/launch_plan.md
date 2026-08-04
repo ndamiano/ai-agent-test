@@ -1,6 +1,6 @@
 # Launch Plan — Current → Business
 
-Verified: 2026-07-31
+Verified: 2026-08-03
 
 The **meta-doc**: sequences the scattered platform + quality work into an ordered path to first
 dollar, and defines each stage's bar. Points into the other task files rather than restating them.
@@ -36,11 +36,12 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       (deploy) DONE (Dockerfile + compose + named-volume persistence + `scripts/deploy.sh` +
       `docs/deploy.md`); validated on a second box, non-owner drove the full loop. T1 (CI) now
       exists too (`.github/workflows/ci.yml`).
-- [ ] **Reliably running across the genre battery** — platformer / top-down arcade / grid-turn /
-      3D world RPG, at an acceptable failure rate, with refund-on-fail. NOT STARTED (the battery
-      itself is `quality_backlog.md` Q1).
-      → done when: `quality_backlog.md`'s Q1 items are all checked and a per-battery failure-rate
-        figure is in `unit_economics.md`
+- [ ] **Reliably running across the genre battery** — the battery runs regularly now
+      (`docs/experiments.md`: 25-game grids, the staged ladder), the error gate zeroed the
+      load-dead class, staged construction carries the hardest systems, and the goodwill refund
+      path exists (admin). Open half: the QUALITY bar is still the owner playing each game — no
+      per-battery failure-rate figure is written down.
+      → done when: a per-battery failure-rate figure is in `unit_economics.md`
 - [x] **Delivery works** — the `/play` web harness serves the staged bundle
       (`runtime/games/<id>/`, cookie-gated). Browser play IS the product (decision 2026-07-23):
       the old Ren'Py/Godot download made sense when games were desktop builds; a downloadable
@@ -51,9 +52,10 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       hash-matching) — don't hand it to anyone outside a trusted circle without Phase 2.
 - [x] **Minimal legal** — alpha-tier ToS + privacy note live (`frontend/public/terms.html` +
       `privacy.html`, linked from login with 18+ acceptance). Counsel review before paid.
-- [~] **Measure** — real cost/time/failure per game (`unit_economics.md`) during these builds.
-      Dev box measured (median ~$0.11/game, 31% first-build failure); the rented-pod numbers and a
-      200-turn-cap failure rate are open.
+- [~] **Measure** — real cost/time/failure per game (`unit_economics.md`). Prod now meters
+      exec-seconds per job to the owning game and the admin cost panels show paid vs billed
+      GPU-seconds per queue; what remains is writing the per-game figures into
+      `unit_economics.md`.
       → done when: `unit_economics.md`'s "Measure real cost/time per game" and "failure/retry rate" items are checked
 
 **Exit:** people use it, want it, and you have real COGS/failure data.
@@ -61,30 +63,29 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
 ## Stage 1 — Paid Beta (first dollar)
 **Goal:** charge a small cohort; validate the $5 hypothesis.
 
-- [ ] **Real payments** — `platform_polish.md` P2 with a concrete provider (Stripe or MoR).
-      → done when: `src/auth/credits.py`'s `get_provider()` returns a concrete provider, not `UnconfiguredProvider`
-- [ ] **Pricing set** — from Stage 0 data; base = 1 credit / speed-up = 2 (`unit_economics.md`).
-      → done when: `unit_economics.md`'s "Set the launch price" task is checked
-- [ ] **Safety filter proper** — `safety_filter.md` Phase 2 (non-negotiable once public-ish).
-      → done when: all six `safety_filter.md` Phase 2 items are checked
+- [x] **Real payments** — Stripe live (2026-08-03): hosted Checkout, signed webhook + redirect
+      completion, refunds/chargebacks revoke credits; a real purchase + refund verified end to end.
+- [x] **Pricing set** — $5 = 1 credit = 3h compute (2026-08-03). The old speed-up/A100 tier idea
+      is superseded by the flat price; revisit only if the economics ask for it.
+- [x] **Safety filter proper** — Phase 2 landed and deployed 2026-08-03 (`safety_filter.md`):
+      post-gen image verdicts fail closed, artifact text gate holds flagged builds, durable
+      violations + admin view. The appeal path and CSAM reporting stay parked with counsel.
 - [ ] **Legal set** — `legal_ops.md` full checklist (ToS/privacy/refunds/IP/age-gate/entity).
+      Owner ruling 2026-08-03: counsel input wanted, not gating.
       → done when: all seven `legal_ops.md` checklist items are checked
-- [ ] **Concurrency S1** — `platform_polish.md` P3 (per-run inference isolation; queue + WS routing already shipped) so N payers
-      don't collide.
-      → done when: `src/api/routers/websocket.py` routes events per-user and jobs carry per-run isolation in `src/db/store.py`
-- [ ] **Speed-up tier** — A100 rental path (verify economics first).
-      → done when: `unit_economics.md`'s "Verify the premium tiers" task is checked and an A100 queue config exists in `settings.json`
-- [ ] **Production hardening** — the four security deferrals now live in
-      `tasks/platform_polish.md` P1; land them before charging strangers.
-      → done when: `grep -rn "sandbox" src/worker/ src/maestro/` is non-empty (the remaining game-execution sandbox item)
+- [x] **Concurrency** — build-as-jobs made N concurrent builds N independent job chains, WS routes
+      per-user; the vestigial globals are `platform_polish.md` P3, polish not correctness.
+- [ ] **Production hardening residue** — `platform_polish.md` P1.8: the error-gate probe runs game
+      JS on the control-plane box with open egress. Land before strangers.
+      → done when: P1.8 is checked
 
 **Exit:** paying users, positive unit economics confirmed, no safety/legal gaps.
 
 ## Stage 2 — Public Launch & Scale
-- [ ] **Self-serve signup** — the deferred `platform_polish.md` launch-gate.
-      → done when: a public signup route exists in `src/auth/router.py` (today it has none, by design)
-- [ ] **On-demand inference** — runpod spin-up + parallel assets, both shipped (`finished.md`) — capacity is now a scaling-config question.
-      → done when: `runpod.enabled` is `true` in the production `settings.json` and `src/scaler/autoscaler.py` is live
+- [x] **Self-serve signup** — invite-code signup live (2026-08-03): public route, admin-minted
+      codes, per-IP throttled. "Open" means dropping the invite gate — a policy call, not a build.
+- [x] **On-demand inference** — the autoscaler is live on prod across all three queues; capacity
+      is a scaling-config question (`runpod.queues` in prod settings).
 - [ ] **Ownership / resale tier** — the 100-credit resell path + "contact me" baseline + site listing
       (`legal_ops.md`, `unit_economics.md`).
       → done when: `legal_ops.md`'s IP-ownership item is checked and `grep -rn "resale" src/api/` is non-empty

@@ -36,5 +36,10 @@ are released, we should regularly validate whether we can do better with what ha
       https://lohhhha.github.io/LATO.2/
 - [ ] Vibe voice from microsoft for voiceovers
       https://github.com/microsoft/VibeVoice
+- [ ] TriFlow, a better way to decimate models? I'm not sure, but worth looking into.
+      https://www.reddit.com/r/TopologyAI/comments/1vd7149/new_ai_retopology_method_generates_clean/
+      https://derkleineli.github.io/triflow/#
+- [ ] Minimax H3 video generation. Maybe not relevant? Maybe relevant? Worth investigating either way.
+      https://www.reddit.com/r/StableDiffusion/comments/1vdoqb9/repost_because_not_everyone_can_read_blurry/
 
 ## Previously investigated

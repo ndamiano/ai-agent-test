@@ -18,11 +18,14 @@ const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
     const [session, setSession] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [expanded, setExpanded] = useState(false)
-    const frameRef = React.useRef<HTMLIFrameElement>(null)
+    const stageRef = React.useRef<HTMLDivElement>(null)
     const clamped = demo.prompt.length > CLAMP_AT && !expanded
 
     const play = async () => {
         setBusy(true)
+        // Fullscreen the stage (not the iframe — it isn't mounted yet), synchronously,
+        // while the click's user activation is still valid.
+        stageRef.current?.requestFullscreen?.()?.catch(() => {})
         try { setSession((await api.demoPlaySession(demo.run_id)).url) }
         catch { /* listed-but-gone demo: the card just stays un-started */ }
         finally { setBusy(false) }
@@ -30,14 +33,14 @@ const DemoCard: React.FC<{ demo: Demo }> = ({ demo }) => {
 
     return (
         <div className="border border-edge rounded-md bg-panel overflow-hidden flex flex-col">
-            <div className="relative aspect-video bg-sunken grid place-items-center">
+            <div ref={stageRef} className="relative aspect-video bg-sunken grid place-items-center">
                 {session
                     ? (
                         <>
-                            <iframe ref={frameRef} src={session} title={demo.title}
+                            <iframe src={session} title={demo.title}
                                 allow="fullscreen; gamepad; autoplay"
                                 className="absolute inset-0 w-full h-full border-0" />
-                            <button onClick={() => frameRef.current?.requestFullscreen()}
+                            <button onClick={() => stageRef.current?.requestFullscreen?.()?.catch(() => {})}
                                 title="fullscreen"
                                 className="absolute top-2 right-2 px-2 py-1 rounded bg-ink/70 text-bone/80
                                            hover:text-bone text-sm transition-colors">

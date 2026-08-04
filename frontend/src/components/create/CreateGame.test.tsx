@@ -140,7 +140,7 @@ describe('CreateGame', () => {
 
     it('an unstarted plan is offered and resumes into review', async () => {
         vi.spyOn(api, 'listGames').mockResolvedValue([
-            { run_id: 'r7', title: 'Card RPG', built: false, building: false, paused: false, unstarted_plan: true }])
+            { run_id: 'r7', title: 'Card RPG', status: 'idle', built: false, building: false, paused: false, unstarted_plan: true }])
         vi.spyOn(api, 'getGame').mockResolvedValue({
             run_id: 'r7', prompt: 'card rpg for ante', plan: ['duel first', 'then world'],
         } as any)

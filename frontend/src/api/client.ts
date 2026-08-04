@@ -113,20 +113,37 @@ export const api = {
         request<{ token: string; user: { id: string; handle: string; role: string } }>(
             '/auth/login', { method: 'POST', body: JSON.stringify({ handle, password }) }, 0),
     // Beta signup: the invite code is what admits the account; success signs the new user in.
-    signup: (handle: string, password: string, inviteCode: string) =>
+    signup: (handle: string, password: string, inviteCode: string, email: string) =>
         request<{ token: string; user: { id: string; handle: string; role: string } }>(
-            '/auth/signup', { method: 'POST', body: JSON.stringify({ handle, password, invite_code: inviteCode }) }, 0),
+            '/auth/signup', { method: 'POST', body: JSON.stringify({ handle, password, invite_code: inviteCode, email }) }, 0),
+    // Answers ok whether or not the address has an account, so nothing downstream may report which.
+    forgotPassword: (email: string) =>
+        request<{ ok: boolean }>('/auth/forgot', { method: 'POST', body: JSON.stringify({ email }) }, 0),
+    // The emailed token stands in for the password, so this call signs the user in.
+    resetPassword: (token: string, newPassword: string) =>
+        request<{ token: string; user: { id: string; handle: string; role: string } }>(
+            '/auth/reset', { method: 'POST', body: JSON.stringify({ token, new_password: newPassword }) }, 0),
     me: () =>
-        request<{ id: string; handle: string; role: string; balance: number }>('/auth/me'),
+        request<{ id: string; handle: string; role: string; email: string; balance: number }>('/auth/me'),
     logout: async () => {
         try { await fetch('/auth/logout', { method: 'POST', headers: authHeaders() }) }
         catch { /* offline / already-dead token — local clear still applies */ }
     },
-    changePassword: (currentPassword: string, newPassword: string) =>
-        request<{ ok: boolean }>('/auth/password', {
+    // A password change revokes every session, this caller's included — the replacement token comes
+    // back on the response and storing it is what keeps the user signed in.
+    changePassword: async (currentPassword: string, newPassword: string) => {
+        const res = await request<{ ok: boolean; token: string }>('/auth/password', {
             method: 'POST',
             body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-        }),
+        }, 0)
+        setAuthToken(res.token)
+        return res
+    },
+    changeEmail: (password: string, email: string) =>
+        request<{ ok: boolean; email: string }>('/auth/email', {
+            method: 'POST',
+            body: JSON.stringify({ password, email }),
+        }, 0),
 
     listGames: () =>
         request<Game[]>('/api/games'),

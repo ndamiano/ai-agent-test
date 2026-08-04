@@ -21,7 +21,7 @@ def _ledger_rows(user_id, reason):
 
 
 def test_cli_grant_increments_balance_and_logs_a_transaction(capsys):
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice@example.com")
     assert cli.main(["grant", "alice", "50"]) == 0
     assert store.balance(user.id) == 50
     rows = _ledger_rows(user.id, "admin_grant")
@@ -62,7 +62,7 @@ def _started_purchase(user_id):
 
 
 def test_webhook_completes_the_purchase_on_a_verified_event(app_client, monkeypatch):
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice2@example.com")
     purchase = _started_purchase(user.id)
     import api.routers.billing as billing_router
     stub = _StubProvider(purchase.id)
@@ -79,7 +79,7 @@ def test_webhook_completes_the_purchase_on_a_verified_event(app_client, monkeypa
 
 
 def test_webhook_rejects_an_unverified_event_and_credits_nothing(app_client, monkeypatch):
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice3@example.com")
     purchase = _started_purchase(user.id)
     import api.routers.billing as billing_router
     stub = _StubProvider(purchase.id)
@@ -95,7 +95,7 @@ def test_webhook_refuses_cleanly_with_no_provider_configured(app_client):
     """The default `NoProvider`, unpatched — it verifies no webhook. The route is public, so its
     refusal must be the same clean 400 an unverified event gets — a raise would hand any caller
     a 500 + traceback."""
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice4@example.com")
 
     r = app_client.post("/api/billing/webhook", content=b"anything")
     assert r.status_code == 400

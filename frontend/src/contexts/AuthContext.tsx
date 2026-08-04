@@ -5,6 +5,8 @@ interface AuthUser {
     id: string
     handle: string
     role: string
+    // Only /auth/me carries it; the login and signup answers do not.
+    email?: string
 }
 
 interface AuthContextValue {
@@ -12,7 +14,9 @@ interface AuthContextValue {
     user: AuthUser | null
     balance: number | null
     login: (handle: string, password: string) => Promise<void>
-    signup: (handle: string, password: string, inviteCode: string) => Promise<void>
+    signup: (handle: string, password: string, inviteCode: string, email: string) => Promise<void>
+    resetPassword: (resetToken: string, newPassword: string) => Promise<void>
+    changePassword: (currentPassword: string, newPassword: string) => Promise<void>
     logout: () => Promise<void>
     refreshBalance: () => Promise<void>
 }
@@ -45,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!getAuthToken()) return
         try {
             const me = await api.me()
-            setUser({ id: me.id, handle: me.handle, role: me.role })
+            setUser({ id: me.id, handle: me.handle, role: me.role, email: me.email })
             setBalance(me.balance)
         } catch {
             // A 401 is handled centrally (clears the token); nothing else to do here.
@@ -63,15 +67,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(res.token)
     }, [])
 
-    const signup = useCallback(async (handle: string, password: string, inviteCode: string) => {
-        const res = await api.signup(handle, password, inviteCode)
+    const signup = useCallback(async (handle: string, password: string, inviteCode: string, email: string) => {
+        const res = await api.signup(handle, password, inviteCode, email)
         setAuthToken(res.token)
         setUser(res.user)
         setToken(res.token)
     }, [])
 
+    const resetPassword = useCallback(async (resetToken: string, newPassword: string) => {
+        const res = await api.resetPassword(resetToken, newPassword)
+        setAuthToken(res.token)
+        setUser(res.user)
+        setToken(res.token)
+    }, [])
+
+    // The old token is revoked the moment the change lands, and the websocket reconnects with
+    // whatever this holds — so the replacement has to reach the context, not only the api client.
+    const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+        const res = await api.changePassword(currentPassword, newPassword)
+        setToken(res.token)
+    }, [])
+
     return (
-        <AuthContext.Provider value={{ token, user, balance, login, signup, logout, refreshBalance }}>
+        <AuthContext.Provider value={{
+            token, user, balance, login, signup, resetPassword, changePassword, logout, refreshBalance,
+        }}>
             {children}
         </AuthContext.Provider>
     )

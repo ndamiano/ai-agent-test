@@ -13,14 +13,19 @@ const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, ch
 )
 
 const SettingsPage: React.FC = () => {
-    const { user, balance, logout } = useAuth()
+    const { user, balance, logout, refreshBalance, changePassword: applyNewPassword } = useAuth()
     const [current, setCurrent] = useState('')
     const [next, setNext] = useState('')
     const [confirm, setConfirm] = useState('')
     const [busy, setBusy] = useState(false)
     const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
+    const [newEmail, setNewEmail] = useState('')
+    const [emailPassword, setEmailPassword] = useState('')
+    const [emailBusy, setEmailBusy] = useState(false)
+    const [emailMessage, setEmailMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
     const canSubmit = current && next && confirm && !busy
+    const canSubmitEmail = newEmail && emailPassword && !emailBusy
 
     const changePassword = async () => {
         if (next !== confirm) {
@@ -29,12 +34,24 @@ const SettingsPage: React.FC = () => {
         }
         setBusy(true); setMessage(null)
         try {
-            await api.changePassword(current, next)
+            await applyNewPassword(current, next)
             setCurrent(''); setNext(''); setConfirm('')
             setMessage({ text: 'Password changed.', ok: true })
         } catch (e) {
             setMessage({ text: e instanceof Error ? e.message : 'Could not change the password', ok: false })
         } finally { setBusy(false) }
+    }
+
+    const changeEmail = async () => {
+        setEmailBusy(true); setEmailMessage(null)
+        try {
+            await api.changeEmail(emailPassword, newEmail)
+            setNewEmail(''); setEmailPassword('')
+            await refreshBalance()
+            setEmailMessage({ text: 'Email changed.', ok: true })
+        } catch (e) {
+            setEmailMessage({ text: e instanceof Error ? e.message : 'Could not change the email', ok: false })
+        } finally { setEmailBusy(false) }
     }
 
     return (
@@ -46,6 +63,7 @@ const SettingsPage: React.FC = () => {
                     <SectionLabel>Account</SectionLabel>
                     <div className="border border-edge rounded-md bg-sunken px-4 py-3 flex flex-col gap-2">
                         <Row label="Handle">{user?.handle ?? '—'}</Row>
+                        <Row label="Email">{user?.email ?? '—'}</Row>
                         <Row label="Role">{user?.role ?? '—'}</Row>
                         <Row label="Credits">
                             <span className="flex items-baseline gap-3">
@@ -56,6 +74,27 @@ const SettingsPage: React.FC = () => {
                             </span>
                         </Row>
                     </div>
+                </section>
+
+                <section className="flex flex-col gap-3">
+                    <SectionLabel>Change email</SectionLabel>
+                    <form className="flex flex-col gap-2.5"
+                        onSubmit={e => { e.preventDefault(); if (canSubmitEmail) changeEmail() }}>
+                        <TextInput type="email" autoComplete="email" placeholder="New email"
+                            value={newEmail} onChange={e => setNewEmail(e.target.value)} disabled={emailBusy} />
+                        <TextInput type="password" autoComplete="current-password" placeholder="Current password"
+                            value={emailPassword} onChange={e => setEmailPassword(e.target.value)} disabled={emailBusy} />
+                        <div className="flex items-center gap-3">
+                            <Button type="submit" variant="primary" size="md" disabled={!canSubmitEmail}>
+                                {emailBusy ? 'Changing…' : 'Change email'}
+                            </Button>
+                            {emailMessage && (
+                                <span className={`text-sm ${emailMessage.ok ? 'text-live' : 'text-fail'}`}>
+                                    {emailMessage.text}
+                                </span>
+                            )}
+                        </div>
+                    </form>
                 </section>
 
                 <section className="flex flex-col gap-3">

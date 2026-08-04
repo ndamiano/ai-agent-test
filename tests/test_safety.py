@@ -98,7 +98,7 @@ def test_a_blocked_prompt_starts_no_build_and_costs_nothing(client, monkeypatch)
         raise AssertionError("a blocked prompt must never reach the build")
     monkeypatch.setattr(build_chain, "kickoff", _explode)
 
-    u = auth_store.create_user("alice", "pw")
+    u = auth_store.create_user("alice", "pw-pass1234", email="alice@example.com")
     auth_store.grant(u.id, 5, "admin_grant")
     headers = {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
 
@@ -121,7 +121,7 @@ def test_log_violation_persists_a_row_for_the_admin_panel():
 def owned_game(client, tmp_runs, monkeypatch):
     """A built run owned by a real user, created through the API with the build itself stubbed."""
     monkeypatch.setattr(build_chain, "kickoff", lambda *a, **k: "b1")
-    u = auth_store.create_user("bob", "pw")
+    u = auth_store.create_user("bob", "pw-pass1234", email="bob@example.com")
     auth_store.grant(u.id, 5, "admin_grant")
     headers = {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
     r = client.post("/api/games", headers=headers, json={"prompt": "a space pirate game"})

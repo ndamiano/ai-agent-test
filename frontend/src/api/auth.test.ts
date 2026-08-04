@@ -58,6 +58,37 @@ describe('client auth', () => {
         expect(handler).toHaveBeenCalledTimes(1)
     })
 
+    // The change revokes every session including this one, so dropping the returned token would
+    // log the user out the moment they changed their password.
+    it('stores the replacement token a password change returns', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true, status: 200, json: async () => ({ ok: true, token: 'tok-after' }),
+        })
+        vi.stubGlobal('fetch', fetchMock)
+
+        await api.changePassword('old-password', 'a-long-password')
+
+        expect(getAuthToken()).toBe('tok-after')
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/auth/password')
+        expect(JSON.parse(init.body)).toEqual(
+            { current_password: 'old-password', new_password: 'a-long-password' })
+    })
+
+    it('sends the password alongside a new email', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true, status: 200, json: async () => ({ ok: true, email: 'new@example.com' }),
+        })
+        vi.stubGlobal('fetch', fetchMock)
+
+        await api.changeEmail('a-long-password', 'new@example.com')
+
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/auth/email')
+        expect(JSON.parse(init.body)).toEqual(
+            { password: 'a-long-password', email: 'new@example.com' })
+    })
+
     it('revokes the token server-side on logout', async () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 })
         vi.stubGlobal('fetch', fetchMock)

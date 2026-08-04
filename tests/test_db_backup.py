@@ -87,7 +87,7 @@ def test_money_and_account_writes_mark_dirty(tmp_path, monkeypatch):
     import auth.store as auth_store
     monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
     monkeypatch.setattr(db_backup, "_dirty_at", None)
-    u = auth_store.create_user("snapshot-test", "pw")
+    u = auth_store.create_user("snapshot-test", "pw-pass1234", email="snapshot-test@example.com")
     assert db_backup._dirty_at is not None
 
     monkeypatch.setattr(db_backup, "_dirty_at", None)

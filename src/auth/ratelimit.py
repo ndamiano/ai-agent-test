@@ -59,3 +59,7 @@ login_throttle = LoginThrottle()
 # proxy that collapses every client to its own address this becomes one shared window; signup is
 # a rare act during an invite-gated beta, so that trade is accepted.
 signup_throttle = LoginThrottle()
+
+# Password resets throttle per ADDRESS: the thing being defended is the person's inbox (a reset
+# form is a free mail sender aimed at whoever you name), and the address is what a sender picks.
+reset_throttle = LoginThrottle(max_failures=3)

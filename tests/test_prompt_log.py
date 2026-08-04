@@ -15,7 +15,7 @@ def client(app_client, tmp_runs):
 
 
 def _user(handle="alice", role="admin"):
-    u = auth_store.create_user(handle, "pw", role=role)
+    u = auth_store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
     auth_store.grant(u.id, 10, "admin_grant")
     return u, {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
 
@@ -61,7 +61,7 @@ def _turn(run_id=None, build_id=None, payload=_PAYLOAD, result=_RESULT):
 
 def test_buckets_cover_every_game_plus_the_platforms_own_turns(client):
     admin, headers = _user()
-    alice = auth_store.create_user("alice2", "pw")
+    alice = auth_store.create_user("alice2", "pw-pass1234", email="alice2@example.com")
     game_a, game_b = _game(admin.id, "Moon Miner"), _game(alice.id, "Cave Diver")
     _turn(game_a, db_store.create_build(game_a))
     _turn(game_a, db_store.create_build(game_a))

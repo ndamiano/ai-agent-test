@@ -7,7 +7,7 @@ from db.estimates import QUEUE_SECONDS
 
 
 def _token(handle, role):
-    store.create_user(handle, "pw", role=role)
+    store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
     return store.issue_token(store.get_user_by_handle(handle).id)
 
 
@@ -123,7 +123,7 @@ def test_build_refund_regrants_and_revokes(app_client, tmp_runs):
     from maestro.codegen.staging import RUNTIME_DIR
 
     from maestro.state import RunState
-    owner = store.get_user_by_handle("owner") or store.create_user("owner", "pw")
+    owner = store.get_user_by_handle("owner") or store.create_user("owner", "pw-pass1234", email="owner@example.com")
     run_id = create_run(owner.id)
     RunState(run_id).write_spec({"request": "a game", "title": "A Game"})
     staged = RUNTIME_DIR / "games" / run_id

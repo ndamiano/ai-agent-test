@@ -2,13 +2,19 @@
 (`python -m auth.cli`) or self-created against an admin-minted invite code; there is no open
 signup."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import store
 from auth.deps import bearer_token, get_current_user
-from auth.ratelimit import login_throttle, signup_throttle
+from auth.ratelimit import login_throttle, reset_throttle, signup_throttle
 from auth.store import User
+from config.settings_manager import settings_manager
+from tools import mailer
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,6 +50,7 @@ class SignupRequest(BaseModel):
     handle: str
     password: str
     invite_code: str
+    email: str
 
 
 @router.post("/signup")
@@ -60,16 +67,23 @@ async def signup(body: SignupRequest, request: Request):
             detail="too many signup attempts, try again later",
             headers={"Retry-After": str(wait)},
         )
-    if not body.handle.strip() or not body.password:
-        raise HTTPException(status_code=400, detail="handle and password are required")
+    if not body.handle.strip():
+        raise HTTPException(status_code=400, detail="handle is required")
     try:
-        user = store.signup(body.handle, body.password, body.invite_code)
+        user = store.signup(body.handle, body.password, body.invite_code, body.email)
     except store.InviteCodeError as e:
         signup_throttle.record_failure(key)
         raise HTTPException(status_code=403, detail=str(e))
     except store.HandleTakenError:
         signup_throttle.record_failure(key)
         raise HTTPException(status_code=409, detail="that handle is already taken")
+    except store.EmailTakenError:
+        signup_throttle.record_failure(key)
+        raise HTTPException(status_code=409, detail="that email already has an account")
+    except ValueError as e:
+        # A malformed email or a short password: the form's own fault, not the code's, so the
+        # throttle stays out of it — a typo must not cost someone their signup attempts.
+        raise HTTPException(status_code=400, detail=str(e))
     signup_throttle.clear(key)
     token = store.issue_token(user.id)
     return {
@@ -108,10 +122,100 @@ async def change_password(body: PasswordChangeRequest, user: User = Depends(get_
         login_throttle.record_failure(key)
         raise HTTPException(status_code=403, detail="current password is wrong")
     login_throttle.clear(key)
-    if not body.new_password:
-        raise HTTPException(status_code=400, detail="new password is required")
-    store.set_password(user.handle, body.new_password)
+    try:
+        store.set_password(user.handle, body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # set_password ends every session including this one — the caller changed their password,
+    # they did not ask to be signed out of the tab they did it in.
+    return {"ok": True, "token": store.issue_token(user.id)}
+
+
+class EmailChangeRequest(BaseModel):
+    password: str
+    email: str
+
+
+@router.post("/email")
+async def change_email(body: EmailChangeRequest, user: User = Depends(get_current_user)):
+    """Change the address a reset link would go to — gated on the password, since an attacker
+    holding only a session token could otherwise point recovery at themselves."""
+    key = user.handle.strip().lower()
+    wait = login_throttle.retry_after(key)
+    if wait:
+        raise HTTPException(status_code=429, detail="too many attempts, try again later",
+                            headers={"Retry-After": str(wait)})
+    if store.authenticate(user.handle, body.password) is None:
+        login_throttle.record_failure(key)
+        raise HTTPException(status_code=403, detail="password is wrong")
+    login_throttle.clear(key)
+    try:
+        email = store.set_email(user.id, body.email)
+    except store.EmailTakenError:
+        raise HTTPException(status_code=409, detail="that email already has an account")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "email": email}
+
+
+class ForgotRequest(BaseModel):
+    email: str
+
+
+@router.post("/forgot")
+async def forgot_password(body: ForgotRequest):
+    """Mail a reset link. The answer is the SAME whether or not the address has an account —
+    a differing response (or a differing latency shape) turns this into a membership oracle for
+    the whole user list. Throttled per address so it cannot be used to mail-bomb someone."""
+    email = (body.email or "").strip()
+    key = f"forgot:{email.lower()}"
+    if reset_throttle.retry_after(key):
+        return {"ok": True}
+    reset_throttle.record_failure(key)
+
+    user = store.get_user_by_email(email)
+    if user is not None and mailer.configured():
+        token = store.issue_reset_token(user.id)
+        try:
+            mailer.send(user.email, "Reset your GameSummoner password", _reset_body(token))
+        except Exception:
+            logger.exception("reset mail failed for user %s", user.id)
+    elif user is not None:
+        logger.error("password reset requested but no smtp is configured")
     return {"ok": True}
+
+
+def _reset_body(token: str) -> str:
+    origin = (settings_manager.get_settings().get("play") or {}).get("app_origin") or ""
+    link = f"{origin.rstrip('/')}/reset?t={token}"
+    return (
+        "Someone asked to reset the password on your GameSummoner account.\n\n"
+        f"{link}\n\n"
+        f"The link works once and expires in {store.RESET_TTL_SECONDS // 60} minutes.\n"
+        "If this wasn't you, ignore this message — nothing has changed.\n"
+    )
+
+
+class ResetRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/reset")
+async def reset_password(body: ResetRequest):
+    """Spend a mailed reset token and set the new password. The token is single-use in the
+    store, and setting the password ends every existing session — a reset is exactly the moment
+    someone else's session must die."""
+    try:
+        store.check_password(body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    user = store.consume_reset_token(body.token)
+    if user is None:
+        raise HTTPException(status_code=400, detail="that reset link is invalid or has expired")
+    store.set_password(user.handle, body.new_password)
+    return {"token": store.issue_token(user.id),
+            "user": {"id": user.id, "handle": user.handle, "role": user.role}}
 
 
 @router.get("/me")
@@ -122,5 +226,6 @@ async def me(user: User = Depends(get_current_user)):
         "id": user.id,
         "handle": user.handle,
         "role": user.role,
+        "email": user.email,
         "balance": store.balance(user.id),
     }

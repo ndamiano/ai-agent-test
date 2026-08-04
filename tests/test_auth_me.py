@@ -9,7 +9,7 @@ def test_me_rejects_anonymous(app_client):
 
 
 def test_me_returns_the_balance_for_a_valid_token(app_client):
-    store.create_user("alice", "pw")
+    store.create_user("alice", "pw-pass1234", email="alice@example.com")
     uid = store.get_user_by_handle("alice").id
     store.grant(uid, 10, "admin_grant")
     token = store.issue_token(uid)
@@ -26,7 +26,7 @@ def test_me_returns_the_balance_for_a_valid_token(app_client):
 
 
 def test_logout_revokes_the_token(app_client):
-    store.create_user("carol", "pw")
+    store.create_user("carol", "pw-pass1234", email="carol@example.com")
     token = store.issue_token(store.get_user_by_handle("carol").id)
     hdr = {"Authorization": f"Bearer {token}"}
 
@@ -38,7 +38,7 @@ def test_logout_revokes_the_token(app_client):
 def test_me_rejects_a_token_query_param(app_client):
     """A token in the URL is NOT accepted on HTTP routes — header-only, so tokens never leak into
     access logs / history / Referer. (The WebSocket, a separate scope, still reads its own param.)"""
-    store.create_user("bob", "pw")
+    store.create_user("bob", "pw-pass1234", email="bob@example.com")
     token = store.issue_token(store.get_user_by_handle("bob").id)
     assert app_client.get(f"/auth/me?token={token}").status_code == 401
     r = app_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})

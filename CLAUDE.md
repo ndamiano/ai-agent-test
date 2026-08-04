@@ -349,7 +349,9 @@ src/
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,
 invite-code signup — the only self-serve account path, admin-minted codes, per-IP throttled — the
-/play handoff + per-game grant-cookie gate — `playgrants.py`), `db/` (games/builds/events/jobs/workers + the compute budget), `worker/` (the
+/play handoff + per-game grant-cookie gate — `playgrants.py`; an account carries an EMAIL, which
+exists to recover it: `/auth/forgot` mails a single-use link that answers identically for an
+address with no account, and setting a password ends every session the account has), `db/` (games/builds/events/jobs/workers + the compute budget), `worker/` (the
 pull-side GPU worker), `scaler/` (the RunPod autoscaler), `api/` (FastAPI routers), `llm_clients/`,
 `tools/`, `config/`, and `frontend/` (the React SPA, served same-origin by the API). For their
 contracts see the module docstrings — they are the authority. How the pieces sit as PROCESSES —
@@ -444,6 +446,10 @@ a build carrying the older "draw a plain shape at that spot" line orphaned 7 of 
   mints a single-use token (`POST /api/games/<id>/play-session`), `/handoff` redeems it into a
   per-game path-scoped grant cookie, and the served `index.html` gets the console reporter
   injected on the way out (game folder stays pristine). See docs/deploy.md "Public domains".
+- `smtp` (host/port/username/password/from_address) — outbound mail, `tools/mailer.py`. One
+  caller: the password-reset link, whose address comes from `play.app_origin`. Unconfigured, the
+  forgot-password endpoint still answers ok (it must not report who has an account) and logs that
+  it could not send — so a box without it has no account recovery.
 - `runpod.*` — the autoscaler (see `src/scaler/` + docs/deploy.md): `enabled`, `api_key`,
   `network_volume_id`, `cp_url` (the pod-reachable control-plane URL) and per-queue `queues.<name>`
   scaling blocks (template_id, gpu_type_ids, max_workers, thresholds, idle_exit_seconds). The

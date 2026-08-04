@@ -33,7 +33,7 @@ def paid_provider(monkeypatch):
 
 
 def _authed_user(handle="alice"):
-    user = store.create_user(handle, "pw")
+    user = store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
     token = store.issue_token(user.id)
     return user, {"Authorization": f"Bearer {token}"}
 

@@ -21,7 +21,7 @@ def client(app_client, tmp_runs):
 
 
 def _user(handle="alice", credits=10):
-    u = auth_store.create_user(handle, "pw")
+    u = auth_store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
     if credits:
         auth_store.grant(u.id, credits, "admin_grant")
     return u, {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}

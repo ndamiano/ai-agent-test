@@ -55,26 +55,26 @@ def test_throttle_is_per_key():
 
 
 def test_login_429s_after_repeated_failures():
-    store.create_user("alice", "hunter2")
+    store.create_user("alice", "hunter2-pass1234", email="alice@example.com")
     for _ in range(5):
         with pytest.raises(HTTPException) as exc:
-            _login("alice", "wrong")
+            _login("alice", "wrong-pass1234")
         assert exc.value.status_code == 401
     # Sixth attempt is throttled — even a correct password is refused while blocked.
     with pytest.raises(HTTPException) as exc:
-        _login("alice", "hunter2")
+        _login("alice", "hunter2-pass1234")
     assert exc.value.status_code == 429
     assert "Retry-After" in exc.value.headers
 
 
 def test_successful_login_resets_the_counter():
-    store.create_user("alice", "hunter2")
+    store.create_user("alice", "hunter2-pass1234", email="alice2@example.com")
     for _ in range(4):
         with pytest.raises(HTTPException):
-            _login("alice", "wrong")
+            _login("alice", "wrong-pass1234")
     # A good login before the block threshold clears the streak...
-    _login("alice", "hunter2")
+    _login("alice", "hunter2-pass1234")
     # ...so the next wrong attempt is a 401, not a carried-over 429.
     with pytest.raises(HTTPException) as exc:
-        _login("alice", "wrong")
+        _login("alice", "wrong-pass1234")
     assert exc.value.status_code == 401

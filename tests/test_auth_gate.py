@@ -32,7 +32,7 @@ def test_health_and_login_are_public(app_client):
 
 
 def test_valid_token_gets_through_the_gate(app_client):
-    store.create_user("alice", "pw")
+    store.create_user("alice", "pw-pass1234", email="alice@example.com")
     token = store.issue_token(store.get_user_by_handle("alice").id)
     r = app_client.get("/api/games", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
@@ -74,7 +74,7 @@ def test_websocket_requires_a_token(app_client):
 
 
 def test_websocket_accepts_a_valid_token(app_client):
-    store.create_user("alice", "pw")
+    store.create_user("alice", "pw-pass1234", email="alice2@example.com")
     token = store.issue_token(store.get_user_by_handle("alice").id)
     with app_client.websocket_connect(f"/api/ws?token={token}") as ws:
         assert ws.receive_json()["type"] == "connected"

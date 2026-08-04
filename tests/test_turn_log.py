@@ -27,7 +27,7 @@ def run(tmp_path, monkeypatch):
     # A window small enough that a couple of file writes crosses it, so a test can drive a real
     # compaction instead of describing one.
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 4000)
-    user = auth_store.create_user("alice", "pw", role="admin")
+    user = auth_store.create_user("alice", "pw-pass1234", role="admin", email="alice@example.com")
     run_id = create_run(user.id)
     RunState(run_id).write_spec({"request": "make a game", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, 3600)
@@ -37,7 +37,7 @@ def run(tmp_path, monkeypatch):
 @pytest.fixture
 def headers():
     def _issue(handle="admin"):
-        u = auth_store.create_user(handle, "pw", role="admin")
+        u = auth_store.create_user(handle, "pw-pass1234", role="admin", email=f"{handle}@example.com")
         return {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
     return _issue
 

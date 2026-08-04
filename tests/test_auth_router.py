@@ -13,23 +13,23 @@ def _login(handle, password):
 
 
 def test_login_issues_a_working_token():
-    store.create_user("alice", "hunter2")
-    result = _login("alice", "hunter2")
+    store.create_user("alice", "hunter2-pass1234", email="alice@example.com")
+    result = _login("alice", "hunter2-pass1234")
     assert result["user"]["handle"] == "alice"
     token = result["token"]
     assert store.resolve_token(token).handle == "alice"
 
 
 def test_login_rejects_bad_credentials():
-    store.create_user("alice", "hunter2")
+    store.create_user("alice", "hunter2-pass1234", email="alice2@example.com")
     with pytest.raises(HTTPException) as exc:
-        _login("alice", "wrong")
+        _login("alice", "wrong-pass1234")
     assert exc.value.status_code == 401
 
 
 def test_login_rejects_unknown_user():
     with pytest.raises(HTTPException) as exc:
-        _login("ghost", "x")
+        _login("ghost", "x-pass1234")
     assert exc.value.status_code == 401
 
 
@@ -42,27 +42,27 @@ def test_change_password_requires_the_current_one():
     """A stolen bearer token alone must not be enough to take the account over."""
     from auth.ratelimit import login_throttle
     login_throttle.clear("alice")
-    user = store.create_user("alice", "old-pw")
+    user = store.create_user("alice", "old-pw-pass1234", email="alice3@example.com")
 
     with pytest.raises(HTTPException) as exc:
-        _change_password(user, "wrong", "new-pw")
+        _change_password(user, "wrong-pass1234", "new-pw-pass1234")
     assert exc.value.status_code == 403
-    assert store.authenticate("alice", "old-pw") is not None
+    assert store.authenticate("alice", "old-pw-pass1234") is not None
 
-    _change_password(user, "old-pw", "new-pw")
-    assert store.authenticate("alice", "new-pw") is not None
-    assert store.authenticate("alice", "old-pw") is None
+    _change_password(user, "old-pw-pass1234", "new-pw-pass1234")
+    assert store.authenticate("alice", "new-pw-pass1234") is not None
+    assert store.authenticate("alice", "old-pw-pass1234") is None
 
 
 def test_change_password_shares_the_login_throttle():
     from auth.ratelimit import login_throttle
     login_throttle.clear("alice")
-    user = store.create_user("alice", "old-pw")
+    user = store.create_user("alice", "old-pw-pass1234", email="alice4@example.com")
     for _ in range(5):
         with pytest.raises(HTTPException):
-            _change_password(user, "wrong", "new-pw")
+            _change_password(user, "wrong-pass1234", "new-pw-pass1234")
     with pytest.raises(HTTPException) as exc:
-        _change_password(user, "old-pw", "new-pw")
+        _change_password(user, "old-pw-pass1234", "new-pw-pass1234")
     assert exc.value.status_code == 429
     login_throttle.clear("alice")
 

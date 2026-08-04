@@ -13,9 +13,10 @@ def _clear_throttle():
     signup_throttle.clear("testclient")
 
 
-def _signup(client, handle="alice", password="pw", code="gs-aaaa-aaaa"):
+def _signup(client, handle="alice", password="pw-pass1234", code="gs-aaaa-aaaa", email=None):
     return client.post("/auth/signup",
-                       json={"handle": handle, "password": password, "invite_code": code})
+                       json={"handle": handle, "password": password, "invite_code": code,
+                             "email": email or f"{handle.strip() or 'blank'}@example.com"})
 
 
 def test_signup_is_public_and_returns_a_working_token(app_client):
@@ -40,7 +41,7 @@ def test_spent_code_is_403(app_client):
 
 
 def test_taken_handle_is_409_and_keeps_the_code(app_client):
-    store.create_user("alice", "pw")
+    store.create_user("alice", "pw-pass1234", email="alice@example.com")
     code = store.create_invite("root")
     assert _signup(app_client, code=code).status_code == 409
     assert _signup(app_client, handle="bob", code=code).status_code == 200
@@ -50,6 +51,24 @@ def test_blank_handle_or_password_is_400(app_client):
     code = store.create_invite("root")
     assert _signup(app_client, handle="   ", code=code).status_code == 400
     assert _signup(app_client, password="", code=code).status_code == 400
+    assert _signup(app_client, password="short", code=code).status_code == 400
+    assert _signup(app_client, email="not-an-address", code=code).status_code == 400
+
+
+def test_a_taken_email_is_409_whatever_its_case(app_client):
+    store.create_user("alice", "pw-pass1234", email="Someone@Example.com")
+    code = store.create_invite("root")
+    assert _signup(app_client, handle="bob", email="someone@example.com",
+                   code=code).status_code == 409
+
+
+def test_a_rejected_form_does_not_spend_the_throttle(app_client):
+    """A typo'd address is the person's own mistake — it must not cost them the attempts that
+    defend the invite-code space."""
+    code = store.create_invite("root")
+    for _ in range(6):
+        assert _signup(app_client, email="nope", code=code).status_code == 400
+    assert _signup(app_client, code=code).status_code == 200
 
 
 def test_signup_throttles_by_ip_after_repeated_failures(app_client):
@@ -74,7 +93,7 @@ def test_a_successful_signup_clears_the_throttle(app_client):
 
 
 def _token(handle, role):
-    store.create_user(handle, "pw", role=role)
+    store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
     return store.issue_token(store.get_user_by_handle(handle).id)
 
 
@@ -98,7 +117,7 @@ def test_admin_mints_a_batch_and_lists_usage(app_client):
     codes = r.json()["codes"]
     assert len(codes) == 3
 
-    store.signup("alice", "pw", codes[0])
+    store.signup("alice", "pw-pass1234", codes[0], "alice@example.com")
     invites = app_client.get("/api/admin/invites", headers=_auth(token)).json()["invites"]
     by_code = {i["code"]: i for i in invites}
     assert by_code[codes[0]]["uses"] == 1

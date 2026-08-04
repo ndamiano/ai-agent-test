@@ -11,6 +11,7 @@ beta signup): both share `_insert_user`, so the handle/password rules have one s
 
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
 import threading
@@ -23,12 +24,19 @@ from typing import List, Optional
 
 from config.settings_manager import settings_manager
 
-_PBKDF2_ROUNDS = 200_000
+_PBKDF2_ROUNDS = 600_000
+
+# Length is the whole password rule. Composition requirements (a symbol, a digit, mixed case)
+# shrink the search space an attacker must cover and push users toward one predictable shape.
+MIN_PASSWORD_LENGTH = 10
 
 
 # A session token stops resolving this long after it was issued, so a leaked token can't be
 # used forever — a re-login mints a fresh one.
 SESSION_TTL_SECONDS = 7 * 24 * 3600
+
+# A reset link is a password-equivalent credential that arrives over mail, so it lives briefly.
+RESET_TTL_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,7 @@ class User:
     id: str
     handle: str
     role: str = "user"
+    email: str = ""
 
 
 def _db_path() -> Path:
@@ -69,15 +78,25 @@ def _db():
         CREATE TABLE IF NOT EXISTS users (
             id            TEXT PRIMARY KEY,
             handle        TEXT UNIQUE NOT NULL,
+            email         TEXT NOT NULL,
             password_hash TEXT NOT NULL,
             role          TEXT NOT NULL DEFAULT 'user',
             credits       INTEGER NOT NULL DEFAULT 0,
             created_at    REAL NOT NULL
         );
+        -- Case-insensitive: nobody remembers which case they signed up with, and two accounts
+        -- differing only in case would race for the same reset mail.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(lower(email));
         CREATE TABLE IF NOT EXISTS sessions (
             token_hash TEXT PRIMARY KEY,
             user_id    TEXT NOT NULL REFERENCES users(id),
             created_at REAL NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS password_resets (
+            token_hash TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL REFERENCES users(id),
+            created_at REAL NOT NULL,
+            used_at    REAL
         );
         CREATE TABLE IF NOT EXISTS invite_codes (
             code       TEXT PRIMARY KEY,
@@ -137,10 +156,14 @@ def _token_hash(token: str) -> str:
 
 
 def _row_to_user(row: sqlite3.Row) -> User:
-    return User(id=row["id"], handle=row["handle"], role=row["role"])
+    return User(id=row["id"], handle=row["handle"], role=row["role"], email=row["email"])
 
 
 class HandleTakenError(ValueError):
+    pass
+
+
+class EmailTakenError(ValueError):
     pass
 
 
@@ -148,45 +171,104 @@ class InviteCodeError(ValueError):
     pass
 
 
-def _insert_user(conn, handle: str, password: str, role: str) -> User:
-    """The one place the handle/password rules live — CLI create and invite signup both land here."""
+# Deliberately permissive: something@something.tld and no spaces. A stricter pattern rejects
+# addresses that deliver, and the only proof an address is real is mail arriving at it.
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def clean_email(email: str) -> str:
+    email = (email or "").strip()
+    if not _EMAIL.match(email):
+        raise ValueError("that email address doesn't look right")
+    return email
+
+
+def check_password(password: str) -> None:
+    if len(password or "") < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+
+
+def _insert_user(conn, handle: str, password: str, role: str, email: str) -> User:
+    """The one place the handle/password/email rules live — CLI create and invite signup both
+    land here."""
     handle = handle.strip()
     if not handle:
         raise ValueError("handle is required")
-    if not password:
-        raise ValueError("password is required")
-    user = User(id=uuid.uuid4().hex[:12], handle=handle, role=role)
+    check_password(password)
+    email = clean_email(email)
+    user = User(id=uuid.uuid4().hex[:12], handle=handle, role=role, email=email)
     try:
         conn.execute(
-            "INSERT INTO users (id, handle, password_hash, role, credits, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (user.id, user.handle, _hash_password(password), role, 0, time.time()),
+            "INSERT INTO users (id, handle, email, password_hash, role, credits, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user.id, user.handle, user.email, _hash_password(password), role, 0, time.time()),
         )
-    except sqlite3.IntegrityError:
-        raise HandleTakenError(f"handle {handle!r} already exists")
+    except sqlite3.IntegrityError as e:
+        # Two unique constraints reach here; the caller answers them differently.
+        raise (EmailTakenError(f"email {email!r} already has an account")
+               if "email" in str(e) else HandleTakenError(f"handle {handle!r} already exists"))
     from tools.db_backup import mark_dirty
     mark_dirty()
     return user
 
 
-def create_user(handle: str, password: str, role: str = "user") -> User:
+def create_user(handle: str, password: str, role: str = "user", email: str = "") -> User:
     with _db() as conn:
-        return _insert_user(conn, handle, password, role)
+        return _insert_user(conn, handle, password, role, email)
 
 
 def set_password(handle: str, password: str) -> None:
-    if not password:
-        raise ValueError("password is required")
+    """Set a password and END EVERY SESSION the account has. Someone changing their password
+    after a scare is trying to evict whoever else is in — leaving other tokens live for the rest
+    of their week-long TTL is the opposite of what they asked for. The caller re-issues for the
+    session doing the change."""
+    check_password(password)
     with _db() as conn:
         cur = conn.execute("UPDATE users SET password_hash = ? WHERE handle = ?",
                            (_hash_password(password), handle))
         if cur.rowcount == 0:
             raise ValueError(f"no user {handle!r}")
+        conn.execute("DELETE FROM sessions WHERE user_id = "
+                     "(SELECT id FROM users WHERE handle = ?)", (handle,))
+    from tools.db_backup import mark_dirty
+    mark_dirty()
+
+
+def set_email(user_id: str, email: str) -> str:
+    email = clean_email(email)
+    with _db() as conn:
+        try:
+            cur = conn.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+        except sqlite3.IntegrityError:
+            raise EmailTakenError(f"email {email!r} already has an account")
+        if cur.rowcount == 0:
+            raise ValueError(f"no user {user_id!r}")
+    from tools.db_backup import mark_dirty
+    mark_dirty()
+    return email
+
+
+def delete_user(user_id: str) -> None:
+    """Remove an account and everything keyed to it in this store. Games live in the platform
+    db and are the caller's to deal with."""
+    with _db() as conn:
+        for table in ("sessions", "password_resets", "credit_transactions", "purchases"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    from tools.db_backup import mark_dirty
+    mark_dirty()
 
 
 def get_user_by_handle(handle: str) -> Optional[User]:
     with _db() as conn:
         row = conn.execute("SELECT * FROM users WHERE handle = ?", (handle,)).fetchone()
+    return _row_to_user(row) if row else None
+
+
+def get_user_by_email(email: str) -> Optional[User]:
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM users WHERE lower(email) = lower(?)",
+                           ((email or "").strip(),)).fetchone()
     return _row_to_user(row) if row else None
 
 
@@ -230,6 +312,40 @@ def revoke_token(token: str) -> None:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
 
+# ── Password resets: a mailed, single-use, short-lived credential ────────────────────────────
+
+
+def issue_reset_token(user_id: str) -> str:
+    """A fresh reset token, and every earlier one for this account dies — a user who clicks
+    "forgot" twice must not leave a spare key live in their inbox."""
+    token = secrets.token_urlsafe(32)
+    with _db() as conn:
+        conn.execute("DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL",
+                     (user_id,))
+        conn.execute("INSERT INTO password_resets (token_hash, user_id, created_at) "
+                     "VALUES (?, ?, ?)", (_token_hash(token), user_id, time.time()))
+    return token
+
+
+def consume_reset_token(token: str) -> Optional[User]:
+    """Spend a reset token, once. The claim is an UPDATE guarded on still-unused, so two
+    requests carrying the same token can never both come back with a user."""
+    if not token:
+        return None
+    cutoff = time.time() - RESET_TTL_SECONDS
+    with _db() as conn:
+        cur = conn.execute(
+            "UPDATE password_resets SET used_at = ? "
+            "WHERE token_hash = ? AND used_at IS NULL AND created_at > ?",
+            (time.time(), _token_hash(token), cutoff))
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute(
+            "SELECT u.* FROM password_resets r JOIN users u ON u.id = r.user_id "
+            "WHERE r.token_hash = ?", (_token_hash(token),)).fetchone()
+    return _row_to_user(row) if row else None
+
+
 # ── Invite codes: what gates beta signup — unguessable, admin-minted, use-counted ────────────
 
 # No 0/o/1/l/i — codes get read aloud and retyped. 8 chars over 31 symbols ≈ 40 bits, which with
@@ -269,7 +385,7 @@ def disable_invite(code: str) -> None:
             raise InviteCodeError(f"no invite code {code!r}")
 
 
-def signup(handle: str, password: str, code: str) -> User:
+def signup(handle: str, password: str, code: str, email: str = "") -> User:
     """Redeem an invite code and create the account, atomically: one transaction holds both the
     guarded use-increment and the user insert, so a failed signup (taken handle) rolls the burn
     back and two racers on a code's last use can't both get through — the `uses < max_uses`
@@ -288,7 +404,7 @@ def signup(handle: str, password: str, code: str) -> User:
         )
         if cur.rowcount == 0:
             raise InviteCodeError("this invite code has no uses left")
-        return _insert_user(conn, handle, password, "user")
+        return _insert_user(conn, handle, password, "user", email)
 
 
 # Balance lives on the user row; every change also lands a signed row in credit_transactions, so

@@ -31,7 +31,7 @@ def client(app_client, tmp_runs):
 
 
 def _user(handle="alice"):
-    u = auth_store.create_user(handle, "pw")
+    u = auth_store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
     return u, auth_store.issue_token(u.id)
 
 
@@ -72,8 +72,8 @@ def _grant_cookie(client, token, run_id):
 def test_login_sets_no_cookie(client):
     """The session token is header-only everywhere; the play surface earns its own grant via
     /handoff. Login has no cookie to set."""
-    auth_store.create_user("alice", "pw")
-    r = client.post("/auth/login", json={"handle": "alice", "password": "pw"})
+    auth_store.create_user("alice", "pw-pass1234", email="alice@example.com")
+    r = client.post("/auth/login", json={"handle": "alice", "password": "pw-pass1234"})
     assert r.status_code == 200
     assert "set-cookie" not in r.headers
 
@@ -201,7 +201,7 @@ def test_split_hosts_serve_only_their_own_surface(client, game_bundle, split_ori
     assert client.get("/handoff?t=x").status_code == 404
     # …and the game host serves nothing else.
     assert client.post("/auth/login", headers=game_host,
-                       json={"handle": "alice", "password": "pw"}).status_code == 404
+                       json={"handle": "alice", "password": "pw-pass1234"}).status_code == 404
     assert client.get("/api/games", headers=game_host).status_code == 404
 
     # The handoff lives on the game host and still works end to end there.

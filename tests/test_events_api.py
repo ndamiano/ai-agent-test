@@ -10,7 +10,7 @@ from db import store as db_store
 
 
 def _token(handle="alice", role="user"):
-    auth_store.create_user(handle, "pw", role=role)
+    auth_store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
     return auth_store.issue_token(auth_store.get_user_by_handle(handle).id)
 
 

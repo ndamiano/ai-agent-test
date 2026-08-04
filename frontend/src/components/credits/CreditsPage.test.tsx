@@ -19,7 +19,7 @@ const PACKAGES = [
 const catalog = (enabled = true) => ({ enabled, packages: enabled ? PACKAGES : [] })
 
 const me = (balance: number) =>
-    ({ id: 'u1', handle: 'alice', role: 'user', balance })
+    ({ id: 'u1', handle: 'alice', role: 'user', email: 'alice@example.com', balance })
 
 const mount = () => render(
     <RouterProvider>

@@ -79,5 +79,12 @@
   "payments": {
     "stripe_secret_key": "",
     "stripe_webhook_secret": ""
+  },
+  "smtp": {
+    "host": "",
+    "port": 587,
+    "username": "",
+    "password": "",
+    "from_address": ""
   }
 }

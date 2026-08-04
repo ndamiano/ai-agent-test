@@ -13,13 +13,13 @@ def _ledger_sum(user_id):
 
 
 def test_create_user_starts_broke_with_an_empty_ledger():
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice@example.com")
     assert store.balance(user.id) == 0
     assert _ledger_sum(user.id) == 0   # no grant-on-create — credits arrive only via grant()
 
 
 def test_deduct_reduces_balance_and_logs_a_negative_entry():
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice2@example.com")
     store.grant(user.id, 10, "admin_grant")
     assert store.deduct(user.id, 1, "build", run_id="r1") is True
     assert store.balance(user.id) == 9
@@ -27,7 +27,7 @@ def test_deduct_reduces_balance_and_logs_a_negative_entry():
 
 
 def test_deduct_refuses_to_go_negative():
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice3@example.com")
     store.grant(user.id, 5, "admin_grant")
     assert store.deduct(user.id, 5, "build") is True
     assert store.balance(user.id) == 0
@@ -37,7 +37,7 @@ def test_deduct_refuses_to_go_negative():
 
 
 def test_refund_restores_the_balance_and_reconciles():
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice4@example.com")
     store.grant(user.id, 10, "admin_grant")
     store.deduct(user.id, 3, "build", run_id="r1")
     store.refund(user.id, 3, "build_failed", run_id="r1")
@@ -46,7 +46,7 @@ def test_refund_restores_the_balance_and_reconciles():
 
 
 def test_grant_adds_and_returns_new_balance():
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice5@example.com")
     new_balance = store.grant(user.id, 5, "admin_topup")
     assert new_balance == 5
     assert store.balance(user.id) == new_balance
@@ -57,7 +57,7 @@ def test_balance_of_unknown_user_is_zero():
 
 
 def test_concurrent_deducts_of_the_last_credit_only_one_wins():
-    user = store.create_user("alice", "pw")
+    user = store.create_user("alice", "pw-pass1234", email="alice6@example.com")
     store.grant(user.id, 1, "admin_grant")
     assert store.balance(user.id) == 1
 

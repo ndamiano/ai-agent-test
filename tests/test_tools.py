@@ -1,4 +1,6 @@
 """The five tools (maestro/codegen/tools.py) — deliberately the smallest surface that works."""
+import json
+
 import pytest
 
 from maestro.codegen.tools import MAX_READ_CHARS, build_tools
@@ -160,6 +162,24 @@ def test_a_long_single_line_is_not_elided_below_the_ceiling(tmp_path):
 
 def test_read_missing_file_is_an_error(tools):
     assert tools["read_file"](path="nope.js")["ok"] is False
+
+
+def test_read_requested_but_unrendered_asset_answers_pending_not_missing(tools, tmp_path):
+    # "no such file" on a queued render reads as a failed ask and the model re-requests its art
+    # under new ids. ok=True keeps the repeat ledger quiet on a legitimate second look.
+    _game(tmp_path, {"assets.json": json.dumps({"images": [
+        {"id": "goblin", "file": "assets/goblin.webp", "kind": "sprite", "prompt": "a goblin"}]})})
+    r = tools["read_file"](path="assets/goblin.webp")
+    assert r["ok"] is True
+    assert r["pending"] is True
+    assert "do not request it again" in r["note"]
+    assert "goblin" in r["note"]
+
+
+def test_read_missing_asset_nobody_requested_is_still_an_error(tools, tmp_path):
+    _game(tmp_path, {"assets.json": json.dumps({"images": [
+        {"id": "goblin", "file": "assets/goblin.webp", "kind": "sprite", "prompt": "a goblin"}]})})
+    assert tools["read_file"](path="assets/orc.webp")["ok"] is False
 
 
 def test_read_vendor_renderer_names_its_purpose_instead_of_its_4k_lines(tools, tmp_path):

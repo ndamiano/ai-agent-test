@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from maestro.codegen.assets import DEFAULT_KIND, request_media
+from maestro.codegen.assets import DEFAULT_KIND, read_manifest, request_media
 from maestro.codegen.staging import RUNTIME_DIR, game_dir
 
 _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
@@ -63,6 +63,17 @@ def build_tools(state) -> dict:
         reachable at all."""
         p = _safe(root, path)
         if not p.exists():
+            # A requested-but-unrendered asset is not a missing file: "no such file" reads as a
+            # failed ask and the model re-requests its art under new ids. ok=True keeps the
+            # repeat ledger from scolding a legitimate second look.
+            rel = str(p.relative_to(root.resolve()))
+            entry = next((e for e in read_manifest(state.run_dir) if e.get("file") == rel), None)
+            if entry:
+                return {"ok": True, "pending": True,
+                        "note": f"{path} is queued for rendering — generate_media id "
+                                f"\"{entry['id']}\" — and will appear at exactly this path when "
+                                "the render lands. Keep loading it by this path in your code, and "
+                                "do not request it again."}
             return {"ok": False, "error": f"no such file: {path}"}
         if p.name in _VENDOR_FILES and p.parent == root:
             return {"ok": False,

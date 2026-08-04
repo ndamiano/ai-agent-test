@@ -229,6 +229,11 @@ src/
                          land inside the game folder. Every failure is REPORTED to the model as text
                          (a missing argument names itself) and never guessed at: substituting a
                          default for a missing `path` sent every write in a run to one file.
+                         `read_file` on a missing path the manifest lists as requested answers
+                         PENDING — keep the path, do not re-ask — never "no such file": the
+                         error reading as a failed ask made a build re-request its whole set
+                         under "-v2" ids (11 duplicates, 2026-08-03), and ok=True keeps the
+                         repeat ledger from scolding a legitimate second look.
                          `read_file` returns a WINDOW of whole lines from a 1-based `offset`. Both
                          halves are load-bearing: a window cut mid-line is text the model cannot
                          reproduce and it copies the cut into old_text, and without `offset` the

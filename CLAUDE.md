@@ -64,6 +64,15 @@ The gate loads and pokes past a title screen, nothing more — teaching it to pl
 plays wrong is obvious to a person and near-impossible for code, so the gap stays VISIBLE rather
 than filled with a proxy.
 
+The one exception to "broken, never bad" is the SAFETY boundary, and it is not a gate the model
+builds against — it acts after the fact and the model is never told the rule to satisfy. The
+artifact screen (`artifact_screen.py`) checks the game's own text at finalize; a hit HOLDS the
+build (status `held`: not staged, not archived, play/build/fix refused, neutral message to the
+owner). Every image render arrives with a worker-side NSFW score and the save op refuses explicit
+or verdict-less renders (`assets.render_verdict` — the worker reports, the control plane decides,
+fail closed). Every refusal persists to the violations table for the admin panel. The whole of
+what the model hears is the same as a blocked prompt: draw it with code instead.
+
 `tsc` used to be the contract gate, and it earned its place against `engine.d.ts` — types to check
 *against*. Measured on the same 25-game grid after the kit came out: unfiltered `--checkJs` reported
 54–94 errors on games that WORK (implicit-any, `getElementById` possibly-null, `let x = []` inferring
@@ -310,7 +319,13 @@ src/
                          CONTINUATION to enqueue (mesh_from_image), OPERATIONS on this result
                          (save_sprite / save_flat / decimate), and the batch's FINALIZE. It owns those
                          names so the queue stays a generic transport that never learns what an
-                         asset is.
+                         asset is. Every save runs the SAFETY policy first (`_admit`): the worker
+                         attached NSFW scores to the render, `assets.render_verdict` decides, and
+                         a refused (or verdict-less) render is deleted, marked on the manifest and
+                         recorded as a violation — a refused mesh source never reaches TRELLIS.
+      artifact_screen.py the artifact TEXT gate — the game folder's authored text through the same
+                         narrow screen as every input seam, at finalize before staging. A hit
+                         holds the build (see the safety paragraph above the architecture map).
       prompts/           build.txt
       run.py             create_run / propose_prompt / set_prompt / run_build (CLI: kickoff +
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is

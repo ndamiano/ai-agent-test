@@ -39,7 +39,7 @@ def test_save_sprite_converts_to_webp(tmp_path, monkeypatch):
     monkeypatch.setattr("maestro.codegen.asset_chain.asset_path", lambda rid, aid, ext: tmp_path / f"{aid}.{ext}")
     monkeypatch.setattr("maestro.codegen.asset_chain._record_defect", lambda md, d: None)
     OPERATIONS["save_sprite"]({"run_id": "r", "asset_id": "hero"},
-                              {"images": [{"file": str(src)}]})
+                              {"images": [{"file": str(src), "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
     out = Image.open(dst)
     assert out.format == "WEBP"
     assert out.width < 512          # cropped to the subject plus margin
@@ -51,7 +51,7 @@ def test_save_flat_converts_to_webp_without_cropping(tmp_path, monkeypatch):
     Image.new("RGBA", (64, 64), (0, 255, 0, 255)).save(src)
     monkeypatch.setattr("maestro.codegen.asset_chain.asset_path", lambda rid, aid, ext: tmp_path / f"{aid}.{ext}")
     monkeypatch.setattr("maestro.codegen.asset_chain._record_defect", lambda md, d: None)
-    OPERATIONS["save_flat"]({"run_id": "r", "asset_id": "floor"}, {"images": [{"file": str(src)}]})
+    OPERATIONS["save_flat"]({"run_id": "r", "asset_id": "floor"}, {"images": [{"file": str(src), "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
     out = Image.open(tmp_path / "floor.webp")
     assert out.format == "WEBP" and out.size == (64, 64)
     assert not src.exists()

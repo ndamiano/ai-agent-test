@@ -1,4 +1,4 @@
-export type Stage = 'building' | 'built' | 'ready'
+export type Stage = 'building' | 'built' | 'ready' | 'held'
 
 export const formatElapsed = (secs: number): string => {
     const s = Math.max(0, Math.floor(secs))

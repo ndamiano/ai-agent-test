@@ -76,7 +76,7 @@ def test_a_defect_lands_on_the_manifest_entry(run_dir, tmp_path):
     src = _png(tmp_path / "out.png", 255)
     asset_chain.run_operations({"run_id": RUN, "asset_id": "hero", "kind": "sprite",
                                 "then": {"operations": ["save_sprite"]}},
-                               {"images": [{"file": str(src)}]})
+                               {"images": [{"file": str(src), "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
     (entry,) = read_manifest(run_dir)
     assert "background was not removed" in entry["defect"]
 
@@ -86,7 +86,7 @@ def test_a_clean_render_leaves_no_defect(run_dir, tmp_path):
     src = _png(tmp_path / "out.png", 255)
     asset_chain.run_operations({"run_id": RUN, "asset_id": "floor", "kind": "tile",
                                 "then": {"operations": ["save_flat"]}},
-                               {"images": [{"file": str(src)}]})
+                               {"images": [{"file": str(src), "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
     (entry,) = read_manifest(run_dir)
     assert entry.get("defect") is None
 
@@ -98,5 +98,5 @@ def test_a_flat_kind_is_saved_whole(run_dir, tmp_path):
     src = _png(tmp_path / "out.png", 255, size=(128, 128))
     asset_chain.run_operations({"run_id": RUN, "asset_id": "floor", "kind": "tile",
                                 "then": {"operations": ["save_flat"]}},
-                               {"images": [{"file": str(src)}]})
+                               {"images": [{"file": str(src), "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
     assert Image.open(run_dir / "game" / "assets" / "floor.webp").size == (128, 128)

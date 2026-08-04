@@ -21,12 +21,14 @@ from typing import Dict, Optional
 
 from db import store as db_store
 from llm_clients.connector import get_connector
-from maestro.codegen import asset_use, build_state, build_steps, error_gate, snapshots, turn_log
+from maestro.codegen import (artifact_screen, asset_use, build_state, build_steps, error_gate,
+                             snapshots, turn_log)
 from maestro.codegen.build_state import BuildCursor
 from maestro.codegen.staging import entry_path, game_dir, stage_for_play
 from maestro.codegen.tools import build_tools
 from maestro.state import RunState
 from tools.build_events import _emit
+from tools.safety import log_violation
 
 logger = logging.getLogger(__name__)
 
@@ -280,9 +282,23 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
               attempt: Optional[str] = None) -> None:
     """`ok` is whether the GAME is playable; `attempt` is how the build ended, and they differ for
     one stopped by hand over a game that already ran."""
+    held = artifact_screen.screen_artifact(rs.run_dir) if ok else None
     cursor.phase = "done"
-    cursor.ok = ok
+    cursor.ok = ok and held is None
     build_state.save(rs.run_dir, cursor)
+    if held is not None:
+        # A held game exists only in its run dir: not staged, not snapshotted, not archived, and
+        # no stage is stacked onto it. The owner sees a neutral status; the violation row is what
+        # the admin panel reads.
+        path, violation = held
+        log_violation(violation, run_id=run_id, source=f"artifact:{path}")
+        db_store.set_status(run_id, "held")
+        if cursor.build_id:
+            db_store.build_finished(cursor.build_id, "held", steps=cursor.step)
+        logger.warning("build %s held: artifact screen hit in %s", run_id, path)
+        _emit("build_done", run_id, build_id=cursor.build_id, ok=False, steps=cursor.step,
+              held=True)
+        return
     if ok:
         stage_for_play(rs.run_dir, run_id)
         snapshots.take(rs.run_dir, "built")

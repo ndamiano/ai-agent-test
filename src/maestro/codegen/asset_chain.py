@@ -18,25 +18,43 @@ from PIL import Image
 
 from db import store as db_store
 from maestro.codegen.assets import (asset_path, autocrop_image, check_render, render_kind,
-                                    save_image, set_defect)
+                                    render_verdict, save_image, set_defect, set_refused)
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
+from tools.safety import SafetyViolation, log_violation
 
 logger = logging.getLogger(__name__)
 
 
-def _first_image(result: Optional[Dict]) -> Optional[str]:
+def _first_image(result: Optional[Dict]) -> Optional[Dict]:
     for img in (result or {}).get("images") or []:
         if img.get("file"):
-            return img["file"]
+            return img
+    return None
+
+
+def _admit(md: Dict, entry: Optional[Dict]) -> Optional[str]:
+    """The rendered file's path, iff policy admits it into the game. A refusal deletes the blob,
+    marks the manifest entry and records the violation — the file never reaches the game folder,
+    so nothing downstream (staging, archive, TRELLIS) can carry it anywhere."""
+    if entry is None:
+        return None
+    reason = render_verdict(entry)
+    if reason is None:
+        return entry["file"]
+    logger.warning("assets %s: %s refused — %s", md["run_id"], md["asset_id"], reason)
+    Path(entry["file"]).unlink(missing_ok=True)
+    set_refused(RunState(md["run_id"]).run_dir, md["asset_id"], reason)
+    log_violation(SafetyViolation("nsfw_render", reason), run_id=md["run_id"],
+                  source="image_render")
     return None
 
 
 def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
     """The image a TRELLIS job turns into a GLB. The PNG rides the payload as base64 because the
     worker is remote and cannot read the control plane's blob dir."""
-    src = _first_image(result)
+    src = _admit(md, _first_image(result))
     if src is None:
         return None
     data = Path(src).read_bytes()
@@ -66,7 +84,7 @@ def _record_defect(md: Dict, dst: Path) -> None:
 
 
 def _save_sprite(md: Dict, result: Dict) -> None:
-    src = _first_image(result)
+    src = _admit(md, _first_image(result))
     if src is None:
         return
     # The worker renders png; the game holds webp. Crop before the one encode — cropping a webp
@@ -85,7 +103,7 @@ def _save_sprite(md: Dict, result: Dict) -> None:
 def _save_flat(md: Dict, result: Dict) -> None:
     """A tile or a backdrop: it IS the background, so it keeps the whole frame the sampler drew.
     No matte to crop to, and autocrop on an opaque image is a no-op that only ever misfires."""
-    src = _first_image(result)
+    src = _admit(md, _first_image(result))
     if src is None:
         return
     dst = asset_path(md["run_id"], md["asset_id"], "webp")

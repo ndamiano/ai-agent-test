@@ -194,6 +194,42 @@ def test_comfy_image_uploads_init_images_before_submit():
     assert calls[1][0] == "http://gpu/prompt"
 
 
+def test_comfy_image_attaches_a_safety_verdict_to_every_image(monkeypatch):
+    from worker import handlers
+
+    a = _agent()
+    a.session.post.return_value = FakeResponse(200, {"prompt_id": "p1"})
+    outputs = {"9": {"images": [{"filename": "out.png"}]}}
+
+    def get(url, **kw):
+        if "/history/" in url:
+            return FakeResponse(200, {"p1": {"outputs": outputs}})
+        return FakeResponse(200, content=b"pngbytes")
+
+    a.session.get.side_effect = get
+    seen = []
+    monkeypatch.setattr(handlers.safety_vision, "classify",
+                        lambda b: seen.append(b) or {"scores": {"NSFW": 0.01, "SFW": 0.99}})
+
+    result, err = handlers.comfy_image(a, {"kind": "comfy_image", "workflow": {}})
+    assert err is None
+    assert seen == [b"pngbytes"]   # scored from the fetched bytes, before base64
+    assert result["images"][0]["safety"] == {"scores": {"NSFW": 0.01, "SFW": 0.99}}
+
+
+def test_an_unloadable_classifier_reports_an_error_not_scores(monkeypatch):
+    """The worker fails open (it still ships the render); the control plane's no-scores refusal is
+    what closes it."""
+    from worker import safety_vision
+
+    monkeypatch.setattr(safety_vision, "_loaded", None)
+    monkeypatch.setenv("SAFETY_MODEL_DIR", "/nonexistent")
+    out = safety_vision.classify(b"not an image")
+    assert "error" in out and "scores" not in out
+    # The failure is cached — the next call answers without retrying the load.
+    assert "error" in safety_vision.classify(b"x")
+
+
 def test_comfy_image_upload_failure_never_submits():
     from worker import handlers
 

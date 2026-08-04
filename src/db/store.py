@@ -105,6 +105,17 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_game ON events(game_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, created_at);
 
+CREATE TABLE IF NOT EXISTS violations (
+    id         INTEGER PRIMARY KEY,
+    user_id    TEXT,
+    game_id    TEXT,
+    source     TEXT NOT NULL,
+    category   TEXT NOT NULL,
+    matched    TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_violations_user ON violations(user_id, created_at);
+
 CREATE TABLE IF NOT EXISTS workers (
     id            TEXT PRIMARY KEY,
     queue         TEXT,
@@ -843,6 +854,25 @@ def events_for(game_id: str, after_id: int = 0, limit: int = 500) -> List[Dict]:
         d["payload"] = json.loads(d["payload"]) if d["payload"] else {}
         out.append(d)
     return out
+
+
+def record_violation(user_id: Optional[str], game_id: Optional[str], source: str,
+                     category: str, matched: str) -> None:
+    """One safety refusal, durable and keyed to the user — what the admin panel reads to see a
+    repeat offender. Carries only the matched term(s), never the flagged text."""
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO violations (user_id, game_id, source, category, matched, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, game_id, source, category, matched, time.time()),
+        )
+
+
+def list_violations(limit: int = 200) -> List[Dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM violations ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def record_user_events(user_id: str, rows: List[Dict]) -> None:

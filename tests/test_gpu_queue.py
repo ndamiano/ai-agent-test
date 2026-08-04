@@ -37,7 +37,9 @@ def test_build_image_payload_returns_none_for_blocked_prompt(monkeypatch):
     assert result is None
 
 
-def test_comfy_image_handler_submits_polls_and_fetches():
+def test_comfy_image_handler_submits_polls_and_fetches(monkeypatch):
+    monkeypatch.setattr(handlers.safety_vision, "classify",
+                        lambda b: {"scores": {"NSFW": 0.0, "SFW": 1.0}})
     a = _agent()
     a.session.post.side_effect = lambda url, **kw: FakeResponse(200, {"prompt_id": "p1"})
     gets = []
@@ -56,7 +58,8 @@ def test_comfy_image_handler_submits_polls_and_fetches():
 
     assert error is None
     assert result["images"] == [{"filename": "out.png",
-                                 "b64": base64.b64encode(PNG).decode()}]
+                                 "b64": base64.b64encode(PNG).decode(),
+                                 "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]
     assert any(u.startswith("http://gpu/view?filename=out.png") for u in gets)
 
 

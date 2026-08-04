@@ -149,6 +149,8 @@ def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
     that already rendered."""
     out = []
     for e in entries:
+        if e.get("refused"):
+            continue
         if not asset_path(run_id, e["id"], _ext(e)).exists():
             out.append(e)
     return out
@@ -190,6 +192,32 @@ def _update(run_dir, asset_id: str, **fields) -> None:
 def set_defect(run_dir, asset_id: str, defect: Optional[str]) -> None:
     """Record (or clear) what a landed render came back broken as."""
     _update(run_dir, asset_id, defect=defect)
+
+
+# Above the measured innocent ceiling (0.954): the classifier overcalls stylized game art, and a
+# lower bar refuses real builds' cows and cabbages — see docs/experiments.md 2026-08-03. The
+# pre-gen prompt screen owns steered content; this refuses only the unmistakable render.
+NSFW_REFUSE_THRESHOLD = 0.98
+
+
+def render_verdict(img_entry: Optional[Dict]) -> Optional[str]:
+    """Why a rendered image may not enter the game, or None to admit it. The worker reports
+    scores (`worker/safety_vision.py`); the DECISION lives here, so a future surface with
+    different rules is a new policy over the same verdicts. A render that arrives without
+    scores is refused too: fail closed, because this is the legal boundary."""
+    safety = (img_entry or {}).get("safety") or {}
+    scores = safety.get("scores")
+    if not scores:
+        return "no safety verdict — " + (safety.get("error") or "the render carried no scores")
+    if scores.get("NSFW", 1.0) >= NSFW_REFUSE_THRESHOLD:
+        return f"explicit content (score {scores['NSFW']:.2f})"
+    return None
+
+
+def set_refused(run_dir, asset_id: str, reason: str) -> None:
+    """Mark a manifest entry whose render was refused by policy — the top-up skips it (the same
+    prompt would render and refuse again), and a regenerate with a new note clears it."""
+    _update(run_dir, asset_id, refused=reason)
 
 
 def entry_kind(entry: Dict) -> str:
@@ -253,7 +281,7 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
     if existing:
         # The manifest holds the prompt a regenerate re-prompts against, so a confirmed replace
         # rewrites it rather than leaving the record describing art that no longer exists.
-        _update(run_dir, asset_id, prompt=prompt, replace_asked=None, defect=None)
+        _update(run_dir, asset_id, prompt=prompt, replace_asked=None, defect=None, refused=None)
     else:
         _record(run_dir, {"id": asset_id, "file": rel, "kind": kind, "prompt": prompt})
     logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
@@ -362,7 +390,7 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     db_store.enqueue_job("image", payload, game_id=run_id, batch_id=batch_id,
                          metadata={"run_id": run_id, "asset_id": asset_id,
                                    "kind": kind, "then": _then_for(kind)})
-    _update(state.run_dir, asset_id, defect=None)
+    _update(state.run_dir, asset_id, defect=None, refused=None)
     return {"ok": True, "batch_id": batch_id, "prompt": prompt}
 
 

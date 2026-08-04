@@ -20,6 +20,7 @@ const STATUS_PILL: Record<string, { label: string; tone: 'live' | 'wait' | 'idle
     fixing: { label: 'mending', tone: 'wait' },
     paused: { label: 'paused', tone: 'idle' },
     built: { label: 'built', tone: 'live' },
+    held: { label: 'unavailable', tone: 'idle' },
 }
 
 export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: () => void }> = ({
@@ -173,8 +174,10 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     if (error && !detail) return <div className="p-8 text-fail text-sm">{error}</div>
     if (!detail) return null
 
-    const stage = stageFor(building, detail.built)
-    const pill = STATUS_PILL[building ? status : detail.built ? 'built' : 'idle']
+    const held = detail.status === 'held'
+    const stage = held ? 'held' : stageFor(building, detail.built)
+    const pill = held ? STATUS_PILL.held
+        : STATUS_PILL[building ? status : detail.built ? 'built' : 'idle']
     const budget = budgetFraction(detail.budget_pct_remaining)
 
     return (
@@ -202,16 +205,22 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                         {building && (
                             <Button variant="ghost" onClick={stop} disabled={acting}>Stop and keep it</Button>
                         )}
-                        {!building && detail.built && (
+                        {!building && !held && detail.built && (
                             <Button variant="ghost" onClick={build} disabled={acting}>Rebuild from the request</Button>
                         )}
-                        {!building && detail.has_game && (
+                        {!building && !held && detail.has_game && (
                             <Button variant="ghost" onClick={regenerate} disabled={acting}>Start over from scratch</Button>
                         )}
                     </div>
                 </div>
 
                 {error && <p className="text-fail text-sm">{error}</p>}
+
+                {stage === 'held' && (
+                    <div className="max-w-2xl bg-panel border border-edge rounded-md p-6 text-sm text-slate">
+                        Something went wrong with this build — we're looking into it.
+                    </div>
+                )}
 
                 {stage === 'building' && (
                     <WorkingPanel runId={runId} paused={status === 'paused'}

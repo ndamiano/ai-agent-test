@@ -122,13 +122,12 @@ Deployed off the owner's box, manual accounts, granted credits, no payments.
 ### Public beta, paid — first dollar — **BLOCKED on product stage 2**
 
 - **Bar:** paying users, positive unit economics confirmed, no safety or legal gaps.
-- **Needs:** live Stripe keys — the storefront and the Stripe integration landed 2026-08-03
-  ($5/credit packages, hosted Checkout, signed-webhook + redirect-return completion, store
-  disabled whenever keys are absent), so the gap is a live-mode Stripe account (business
-  identity + bank), which waits on the entity decision in `tasks/legal_ops.md`; price called
-  2026-08-03 ($5 = 1 credit = 3h compute);
-  safety Phase 2 (classifier/hash-matching — Phase 1 is keyword/pattern only and is not
-  enough for strangers), the full `tasks/legal_ops.md` checklist with counsel review, and the
+- **Needs:** payments are LIVE (2026-08-03: hosted Checkout on live keys, $5/credit packages,
+  signed-webhook + redirect-return completion, refunds revoke credits — a real purchase and
+  refund verified end to end); safety Phase 2 landed 2026-08-03 (post-gen NSFW verdict on every
+  render with fail-closed control-plane policy, artifact text gate that HOLDS a flagged build,
+  durable violations + admin view — `tasks/safety_filter.md`; hash-matching stays parked pending
+  counsel). Remaining: the full `tasks/legal_ops.md` checklist with counsel review, and the
   game-execution sandbox.
 - **Detail:** `tasks/launch_plan.md` Stage 1.
 

@@ -56,8 +56,8 @@ _TERMS = _load_terms()
 
 @dataclass(frozen=True)
 class SafetyViolation:
-    category: str  # "csam_explicit" | "csam_combination"
-    matched: str    # the term(s) that triggered the block — for logging, never the full text
+    category: str  # "csam_explicit" | "csam_combination" | "nsfw_render"
+    matched: str    # the term(s) or refusal reason — for the record, never the full content
 
 
 def _first_match(patterns: List[re.Pattern], text: str) -> Optional[str]:
@@ -95,15 +95,27 @@ def screen_image_prompt(prompt: Optional[str]) -> Optional[SafetyViolation]:
 
 
 def log_violation(violation: SafetyViolation, *, user_id: Optional[str] = None,
-                   source: str = "") -> None:
-    """Log a blocked request, attributed to the authed user where available. Never logs the
-    full input text — only the matched term(s), to avoid persisting the flagged content."""
+                   source: str = "", run_id: Optional[str] = None) -> None:
+    """Log a blocked request, attributed to the authed user where available, and persist it to
+    the violations table for the admin panel. Never records the full input text — only the
+    matched term(s), to avoid persisting the flagged content."""
     if user_id is None:
         try:
             user_id = get_user_id()
         except Exception:
             user_id = None
+    if user_id is None and run_id is not None:
+        try:
+            from db import store as db_store
+            user_id = db_store.owner_of(run_id)
+        except Exception:
+            user_id = None
     logger.warning(
-        "safety_violation category=%s source=%s user_id=%s matched=%r",
-        violation.category, source, user_id or "unknown", violation.matched,
+        "safety_violation category=%s source=%s user_id=%s run_id=%s matched=%r",
+        violation.category, source, user_id or "unknown", run_id or "-", violation.matched,
     )
+    try:
+        from db import store as db_store
+        db_store.record_violation(user_id, run_id, source, violation.category, violation.matched)
+    except Exception:
+        logger.exception("violation row not recorded (source=%s)", source)

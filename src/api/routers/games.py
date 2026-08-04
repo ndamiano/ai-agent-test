@@ -97,6 +97,15 @@ def _require_compute(run_id: str) -> None:
             "seconds_remaining": max(0.0, remaining)})
 
 
+def _require_not_held(run_id: str) -> None:
+    """A held game is frozen — no play, no build, no fix — until a human has looked at it. The
+    message is deliberately neutral: what the screen matched is for the admin panel, not the
+    person probing it."""
+    if (db_store.game(run_id) or {}).get("status") == "held":
+        raise HTTPException(status_code=423,
+                            detail="something went wrong with this build — we're looking into it")
+
+
 @router.get("", response_model=List[Dict])
 async def list_games(user: User = Depends(get_current_user)):
     """Lightweight summary of the caller's games. A built game is named by its own <title> — the
@@ -106,11 +115,13 @@ async def list_games(user: User = Depends(get_current_user)):
         if not row["title"] and row["status"] == "draft":
             continue   # created but has no prompt yet — nothing to show
         active = build_chain.status_of(row["id"])
-        built = _built(row["id"])
+        held = row["status"] == "held"
+        built = _built(row["id"]) and not held
         pressed = bool(db_store.builds_for(row["id"]))
         # A stage finalize stages a playable game, but the chain isn't done — reporting built
-        # between stages flashes a play button that reads as done-then-not.
-        staging_on = pressed and stage_plan.mid_chain(RunState(row["id"]).run_dir)
+        # between stages flashes a play button that reads as done-then-not. A held run's chain
+        # is over: the hold froze it, so it must not read as still summoning.
+        staging_on = pressed and not held and stage_plan.mid_chain(RunState(row["id"]).run_dir)
         games.append({
             "run_id": row["id"],
             "title": staged_title(row["id"]) or row["title"],
@@ -207,11 +218,15 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     row = db_store.game(run_id) or {}
     built = _built(run_id)
     active = build_chain.status_of(run_id)
-    staging_on = (stage_plan.mid_chain(state.run_dir)
+    staging_on = (row.get("status") != "held"
+                  and stage_plan.mid_chain(state.run_dir)
                   and bool(db_store.builds_for(run_id)))
     if active:
         live = "fixing" if active["kind"] == "fix" else "building"
         status = "paused" if active["paused"] else live
+    elif row.get("status") == "held":
+        # A held game may still have an older staged copy on disk; held wins so nothing offers it.
+        status, built = "held", False
     elif staging_on:
         status = "building"     # between stages: the chain is the build, not the last finalize
     else:
@@ -244,6 +259,7 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
     the game origin is only the short-lived token — see auth/playgrants.py. `origin` is what the
     parent page must verify reporter postMessages against ('' ⇒ games share the app origin)."""
     _require_state(run_id, user)
+    _require_not_held(run_id)
     if (db_store.game(run_id) or {}).get("status") == "revoked":
         raise HTTPException(status_code=410, detail="this game was refunded and revoked")
     if not _built(run_id):
@@ -284,9 +300,17 @@ async def game_assets(run_id: str, user: User = Depends(get_current_user)):
     for entry in read_manifest(state.run_dir):
         aid = entry["id"]
         ready = (assets_dir / f"{aid}.{_ext(entry)}").exists()
-        out.append({"id": aid, "kind": entry_kind(entry),
-                    "status": "ready" if ready else ("rendering" if rendering else "pending"),
-                    "prompt": entry["prompt"], "defect": entry.get("defect")})
+        if ready:
+            status = "ready"
+        elif entry.get("refused"):
+            # The message is neutral on purpose — the policy's reasoning is the admin panel's.
+            status = "blocked"
+        else:
+            status = "rendering" if rendering else "pending"
+        out.append({"id": aid, "kind": entry_kind(entry), "status": status,
+                    "prompt": entry["prompt"],
+                    "defect": "this render was blocked" if status == "blocked"
+                              else entry.get("defect")})
     return out
 
 
@@ -317,6 +341,11 @@ async def regenerate_game_asset(run_id: str, asset_id: str, body: RegenerateBody
     note = body.prompt.strip()
     if not note:
         raise HTTPException(status_code=400, detail="a prompt is required")
+    _require_not_held(run_id)
+    violation = screen_text(note)
+    if violation is not None:
+        log_violation(violation, user_id=user.id, source="regenerate_note", run_id=run_id)
+        raise HTTPException(status_code=400, detail="this note can't be applied")
     _require_compute(run_id)
     out = await asyncio.to_thread(regenerate_asset, run_id, asset_id, note, body.mode)
     if not out["ok"]:
@@ -350,6 +379,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     finds it already flagged and never re-charges. Charged stays charged — there is no automatic
     refund."""
     state = _require_state(run_id, user)
+    _require_not_held(run_id)
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="build already in progress")
     # A build or fix on an evicted run must open on its real files, not an empty seed.
@@ -437,6 +467,11 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
     the same turn machine a build runs, so the two can't run at once. Progress + completion stream
     over the websocket as a build's own events (build_started, build_step, build_done)."""
     _require_state(run_id, user)
+    _require_not_held(run_id)
+    violation = screen_text(body.note)
+    if violation is not None:
+        log_violation(violation, user_id=user.id, source="fix_note", run_id=run_id)
+        raise HTTPException(status_code=400, detail="this note can't be applied")
     _require_compute(run_id)
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="a build or fix is already running for this run")

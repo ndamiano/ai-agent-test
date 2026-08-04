@@ -105,6 +105,17 @@ async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dic
     }
 
 
+@router.get("/violations")
+async def list_violations(_: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Safety refusals, newest first, with the offending account's handle — the repeat-offender
+    view. Rows carry the matched term(s) only, never the flagged text."""
+    handles = {u.id: u.handle for u in auth_store.list_users()}
+    rows = db_store.list_violations()
+    for r in rows:
+        r["handle"] = handles.get(r["user_id"])
+    return {"violations": rows}
+
+
 @router.post("/games/{run_id}/refund")
 async def refund_build(run_id: str, admin: User = Depends(require_admin)):
     """The goodwill refund for a failed build: the credit comes back AND the game goes — its

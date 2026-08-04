@@ -1,6 +1,7 @@
 export interface Game {
     run_id: string
     title: string
+    status: GameStatus
     built: boolean
     building: boolean
     paused: boolean
@@ -8,7 +9,8 @@ export interface Game {
     unstarted_plan: boolean
 }
 
-export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 'built'
+// 'held': the safety screen held the build for human review — frozen and shown as unavailable.
+export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 'built' | 'held'
 
 export interface GameDetail {
     run_id: string
@@ -45,7 +47,8 @@ export interface DurableEventRow {
 // here — the gallery builds an object URL from an authed fetch. `status`: ready (on disk),
 // rendering (a batch is live), or pending (declared, not yet rendered).
 export type AssetKind = 'sprite' | 'tile' | 'scene' | 'mesh'
-export type AssetStatus = 'ready' | 'rendering' | 'pending'
+// 'blocked': the render was refused by the safety screen; a redraw with a new prompt clears it.
+export type AssetStatus = 'ready' | 'rendering' | 'pending' | 'blocked'
 export interface GameAsset {
     id: string
     kind: AssetKind
@@ -120,6 +123,19 @@ export interface PromptDetail {
         tool_calls: { name: string; arguments: string }[]
         usage: Record<string, any>
     } | null
+}
+
+// A safety refusal as the admin surface lists it (GET /api/admin/violations). `matched` is the
+// matched term(s) or refusal reason — never the flagged content itself.
+export interface AdminViolation {
+    id: number
+    user_id: string | null
+    handle: string | null
+    game_id: string | null
+    source: string
+    category: string
+    matched: string
+    created_at: number
 }
 
 // An invite code as the admin surface lists it (GET /api/admin/invites).

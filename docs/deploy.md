@@ -252,6 +252,15 @@ is not its `--model-id`, and the autoscaler delivers the control plane's `llm.mo
 The ninfer build stage compiles a pinned commit of github.com/Neroued/ninfer — it needs CUDA 13.1
 (the base image ships 12.8 for llama.cpp; only `libcudart.so.13` is added).
 
+**The image worker carries the NSFW classifier; ship its weights before the control plane.** The
+bundle comes from `python scripts/export_safety_model.py <dir>` (a box with HF access; ~22 MB:
+`model.pt` + `config.json`) and lands on the volume as `safety/` — the entrypoint's symlink tree
+puts it at `/opt/comfy-models/safety`, where `worker/safety_vision.py` reads it. A local image
+worker reads the same layout from its own models dir (`SAFETY_MODEL_DIR` to point elsewhere).
+Order matters on first rollout: volume weights + new image tag FIRST, control plane second — the
+control plane refuses any render without a verdict, so old image workers under a new control
+plane refuse every render.
+
 **Deploy the control plane BEFORE pointing the llm template at `llm-v6`.** `LLM_MODEL` has no
 default and the entrypoint refuses to start without one, so an `llm-v6` pod created by a control
 plane that does not yet send it exits 1 at boot — and RunPod restarts an exited container and keeps

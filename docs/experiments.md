@@ -8,6 +8,36 @@ at a row here has not earned its place.
 
 ---
 
+## The NSFW render classifier's threshold (2026-08-03, local 5090, 290 renders)
+
+### The question
+Where does the refuse threshold go for the post-gen image verdict (`assets.render_verdict`,
+scores from Marqo/nsfw-image-detection-384 in `worker/safety_vision.py`)?
+
+### The run
+Every rendered asset from the local run corpus — 290 webps across 30 runs, all of it innocent
+game art — through the worker's own classify path. Two preprocessing variants (alpha composited
+onto black, the RGB-convert production default for matted sprites; and onto white), plus a
+divergence check of the worker's transform against timm's official pipeline for this model.
+
+### What it measured
+- A hand-rolled resize/normalize sat up to **0.146** off the official pipeline's probabilities;
+  `timm.data.create_transform` fed from the exported `data_config` matches to **5e-05**. The
+  worker uses the latter.
+- With exact preprocessing, the model still overcalls stylized game art: **28/290 (black) and
+  31/290 (white) innocent renders scored ≥ 0.5** — a cow at 0.946, a cabbage at 0.923, a rock
+  sprite at 0.933. Flux-schnell game sprites are out-of-distribution for a classifier trained on
+  photographic/anime NSFW.
+- The innocent ceiling across the corpus: **0.954**.
+
+### The ruling
+`NSFW_REFUSE_THRESHOLD = 0.98` — zero false positives on the corpus, while the pre-gen prompt
+screen keeps owning steered content and the classifier owns only the unmistakable case. Verdicts
+are stored on the manifest per render, so a future threshold (or a better-calibrated model for
+stylized art) re-policies old assets without re-rendering anything.
+
+---
+
 ## The audio candidates (2026-08-01, local 5090, 58 generations)
 
 ### The question

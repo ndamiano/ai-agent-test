@@ -220,3 +220,85 @@ def test_finalize_on_a_failed_build_neither_stages_nor_claims_ok(_asset_env):
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
     assert events[0][1]["ok"] is False
+
+
+# ── The safety verdict: worker scores, control-plane policy, fail closed ─────────────────────
+
+
+@pytest.fixture
+def _policy_env(monkeypatch, tmp_path):
+    from maestro.codegen import asset_chain, assets
+
+    fake_state = lambda rid: type("S", (), {"run_dir": tmp_path})()  # noqa: E731
+    monkeypatch.setattr(asset_chain, "RunState", fake_state)
+    monkeypatch.setattr(assets, "RunState", fake_state)
+    from maestro.codegen.assets import _record
+    _record(tmp_path, {"id": "goblin", "file": "assets/goblin.webp",
+                       "kind": "sprite", "prompt": "a goblin"})
+    return asset_chain, tmp_path
+
+
+def _render(tmp_path, safety=None):
+    from PIL import Image
+    p = tmp_path / "render.png"
+    Image.new("RGBA", (8, 8), (255, 0, 0, 255)).save(p)
+    entry = {"file": str(p)}
+    if safety is not None:
+        entry["safety"] = safety
+    return p, {"images": [entry]}
+
+
+def _sprite_md():
+    return {"run_id": "g1", "asset_id": "goblin", "kind": "sprite"}
+
+
+def test_a_clean_verdict_admits_the_render(_policy_env):
+    from maestro.codegen.assets import read_manifest
+    asset_chain, tmp_path = _policy_env
+    _, result = _render(tmp_path, {"scores": {"NSFW": 0.01, "SFW": 0.99}})
+    asset_chain._save_sprite(_sprite_md(), result)
+    assert (tmp_path / "game" / "assets" / "goblin.webp").exists()
+    assert not read_manifest(tmp_path)[0].get("refused")
+
+
+def test_an_explicit_verdict_refuses_and_marks_the_manifest(_policy_env):
+    from maestro.codegen.assets import read_manifest
+    asset_chain, tmp_path = _policy_env
+    src, result = _render(tmp_path, {"scores": {"NSFW": 0.99, "SFW": 0.01}})
+    asset_chain._save_sprite(_sprite_md(), result)
+    assert not (tmp_path / "game" / "assets" / "goblin.webp").exists()
+    assert not src.exists()   # the blob is deleted, not left on disk
+    assert "explicit" in read_manifest(tmp_path)[0]["refused"]
+    rows = store.list_violations()
+    assert rows and rows[0]["category"] == "nsfw_render"
+
+
+def test_a_render_without_a_verdict_is_refused(_policy_env):
+    """Fail closed: an old worker image, a classifier that failed to load — either way no scores
+    means no save."""
+    from maestro.codegen.assets import read_manifest
+    asset_chain, tmp_path = _policy_env
+    _, result = _render(tmp_path, safety=None)
+    asset_chain._save_sprite(_sprite_md(), result)
+    assert not (tmp_path / "game" / "assets" / "goblin.webp").exists()
+    assert "no safety verdict" in read_manifest(tmp_path)[0]["refused"]
+
+
+def test_a_refused_image_never_reaches_trellis(_policy_env):
+    asset_chain, tmp_path = _policy_env
+    _, result = _render(tmp_path, {"scores": {"NSFW": 0.99, "SFW": 0.01}})
+    md = {"run_id": "g1", "asset_id": "goblin", "kind": "mesh",
+          "then": {"enqueue": "mesh_from_image", "finalize": "assets"}}
+    assert asset_chain._mesh_from_image(md, result) is None
+    assert not (tmp_path / "game" / "assets" / "goblin.src.png").exists()
+
+
+def test_the_top_up_skips_a_refused_entry(_policy_env):
+    """Re-rendering the same prompt would refuse again — a regenerate with a new note is the
+    escape hatch, and it clears the marker."""
+    from maestro.codegen.assets import _pending, _update, read_manifest
+    _, tmp_path = _policy_env
+    _update(tmp_path, "goblin", refused="explicit content (score 0.97)")
+    assert _pending("g1", tmp_path, read_manifest(tmp_path)) == []
+    _update(tmp_path, "goblin", refused=None)
+    assert [e["id"] for e in _pending("g1", tmp_path, read_manifest(tmp_path))] == ["goblin"]

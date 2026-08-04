@@ -55,7 +55,7 @@ const CardShell: React.FC<{
                         className="text-slate hover:text-bone disabled:opacity-30 text-sm leading-none">↻</button>
                 </div>
             </div>
-            {defect && status === 'ready' && (
+            {defect && (status === 'ready' || status === 'blocked') && (
                 <p className="px-2 pb-1.5 text-[11px] leading-snug text-ember/90">{defect}</p>
             )}
             {open && (

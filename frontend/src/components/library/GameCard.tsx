@@ -52,11 +52,13 @@ export const GameCard: React.FC<{ game: Game; onOpen: () => void }> = ({ game, o
             </div>
             <div className="px-3 py-2.5 flex flex-col gap-1.5">
                 <span className="text-sm font-semibold leading-snug line-clamp-2">{title}</span>
-                {game.building
-                    ? <Pill label={game.paused ? 'paused' : 'summoning'} tone={game.paused ? 'idle' : 'wait'} />
-                    : game.built
-                        ? <Pill label="built" tone="live" />
-                        : <Pill label="not built" tone="idle" />}
+                {game.status === 'held'
+                    ? <Pill label="unavailable" tone="idle" />
+                    : game.building
+                        ? <Pill label={game.paused ? 'paused' : 'summoning'} tone={game.paused ? 'idle' : 'wait'} />
+                        : game.built
+                            ? <Pill label="built" tone="live" />
+                            : <Pill label="not built" tone="idle" />}
             </div>
         </button>
     )

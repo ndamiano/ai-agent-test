@@ -14,6 +14,8 @@ import time
 import urllib.parse
 import uuid
 
+from worker import safety_vision
+
 logger = logging.getLogger("worker")
 
 COMFY_POLL_TIMEOUT = 600
@@ -91,8 +93,11 @@ def comfy_image(agent, payload):
             got = _get(agent, f"{agent.target}/view?{q}", timeout=120)
             if got.status_code != 200:
                 return None, f"ComfyUI /view status {got.status_code} for {img['filename']}"
+            # Every image carries a safety verdict — scores only; the control plane's policy
+            # decides what they mean, and refuses a save that arrives without them.
             images.append({"filename": img["filename"],
-                           "b64": base64.b64encode(got.content).decode("ascii")})
+                           "b64": base64.b64encode(got.content).decode("ascii"),
+                           "safety": safety_vision.classify(got.content)})
     return {"prompt_id": prompt_id, "images": images}, None
 
 

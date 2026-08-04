@@ -75,9 +75,9 @@ measure real cost/time/failure (`unit_economics.md`). No real payments, no self-
       → done when: all seven `legal_ops.md` checklist items are checked
 - [x] **Concurrency** — build-as-jobs made N concurrent builds N independent job chains, WS routes
       per-user; the vestigial globals are `platform_polish.md` P3, polish not correctness.
-- [ ] **Production hardening residue** — `platform_polish.md` P1.8: the error-gate probe runs game
-      JS on the control-plane box with open egress. Land before strangers.
-      → done when: P1.8 is checked
+- [x] **Production hardening residue** — the error-gate probe's egress closed 2026-08-03: the
+      probed game reaches only its own ephemeral server (dead proxy + route interception +
+      WebRTC UDP disabled), every blocked request logged.
 
 **Exit:** paying users, positive unit economics confirmed, no safety/legal gaps.
 

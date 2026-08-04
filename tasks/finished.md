@@ -8,6 +8,7 @@ Format: `- **YYYY-MM-DD** — <what shipped> (<key files/settings>)`
 
 ---
 
+- **2026-08-03** — error-gate probe egress closed: the game reaches only its own ephemeral server — dead proxy as the network floor (websockets and DNS included), route interception aborts + logs everything else, WebRTC's non-proxied UDP disabled (`maestro/codegen/error_gate.py:probe`)
 - **2026-08-03** — safety Phase 2: post-gen NSFW verdict on every render (worker reports scores, control plane refuses at the save op, fail closed), artifact text gate that HOLDS a flagged build, violations table + admin view, fix/regenerate-note input screens; threshold set from a 290-render corpus (`worker/safety_vision.py`, `maestro/codegen/artifact_screen.py`, `docs/experiments.md`)
 - **2026-08-03** — payments LIVE: hand-rolled Stripe Checkout ($5/credit packages, signed webhook + redirect-return completion, store hidden without keys), refunds/chargebacks revoke credits — negative balance blocks builds; a real purchase + refund verified end to end (`src/auth/credits.py`, `src/api/routers/billing.py`)
 - **2026-08-03** — the backup story: DB snapshots (sqlite online-backup → gzip → B2, 15 min + 60s dirty debounce), per-run tar.gz archives at settled finalize + evict/rehydrate + nightly `--archive-all` sweep, restore drill executed against a scratch droplet (`tools/db_backup.py`, `tools/s3.py`, `maestro/codegen/archive.py`, `docs/backups.md`)

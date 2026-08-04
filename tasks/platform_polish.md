@@ -51,15 +51,6 @@ it gating.
       → done when: the admin queue card shows the engine beside the card, and a fallback pod is
       visibly a fallback.
 
-## P1.8 — Error-gate probe egress (found 2026-08-03, before strangers)
-- [ ] The gate's headless chromium runs user-steered game JS on the control-plane box with open
-      network egress — a hostile game could probe the box or the cloud metadata endpoint from
-      inside the probe. Origin isolation protects players; this is the server-side twin. The
-      shape: block non-localhost requests in the probe context (playwright route interception —
-      the game must reach only its own ephemeral static server).
-      → done when: a game whose JS fetches an external URL logs a blocked request in the gate
-      probe and the fetch never leaves the box.
-
 ## P3 — Inference-global residue
 Build-as-jobs dissolved the original concern: a build holds no resident connector, each turn
 re-reads settings when it builds its payload, and N concurrent builds are N independent job

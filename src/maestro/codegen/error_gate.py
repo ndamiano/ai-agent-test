@@ -56,6 +56,8 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
     Each error is {"message": ..., "stack": ...}. The page gets a click and the two keys any
     title screen answers to (Enter, Space) — enough to get past "press to start", deliberately
     no more. An environment with no browser answers [] and logs why, per the boundary rule.
+    The page has NO network egress: every request that is not the game's own ephemeral server
+    is aborted and logged.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -64,11 +66,29 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
         return []
 
     errors: List[Dict[str, str]] = []
+    blocked: List[str] = []
     with _serve(game_dir) as base_url:
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch()
+                # The probe runs the game's own JS on the control-plane box, so the game may
+                # reach ONLY the ephemeral server. The dead proxy is the floor — route
+                # interception never sees websockets, a proxied browser sends everything
+                # (DNS included) through it — and the route is the report. The WebRTC flag
+                # closes the one channel a proxy does not carry.
+                browser = pw.chromium.launch(
+                    proxy={"server": "http://127.0.0.1:9", "bypass": "127.0.0.1"},
+                    args=["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
                 page = browser.new_page()
+
+                def _no_egress(route):
+                    url = route.request.url
+                    if url.startswith(f"{base_url}/"):
+                        route.continue_()
+                    else:
+                        blocked.append(url)
+                        route.abort()
+
+                page.route("**/*", _no_egress)
                 page.on("pageerror", lambda e: errors.append(
                     {"message": str(e), "stack": getattr(e, "stack", "") or ""}))
                 try:
@@ -91,6 +111,9 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
         except Exception as e:
             logger.warning("error gate: probe could not run (%s) — build stands", e)
             return []
+    if blocked:
+        logger.warning("error gate: %s: blocked %d external request(s): %s",
+                       game_dir, len(blocked), ", ".join(sorted(set(blocked))[:5]))
     return _dedup(errors)
 
 

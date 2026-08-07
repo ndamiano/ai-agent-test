@@ -293,6 +293,67 @@ def test_a_refused_image_never_reaches_trellis(_policy_env):
     assert not (tmp_path / "game" / "assets" / "goblin.src.png").exists()
 
 
+# ── The tile post-op: quilt seamless, soft on failure ────────────────────────────────────────
+
+
+def _flat_render(tmp_path, size=160):
+    from PIL import Image
+    p = tmp_path / "render.png"
+    Image.new("RGB", (size, size), (120, 80, 40)).save(p)
+    return p, {"images": [{"file": str(p),
+                           "safety": {"scores": {"NSFW": 0.01, "SFW": 0.99}}}]}
+
+
+def _flat_md(kind):
+    return {"run_id": "g1", "asset_id": "ground", "kind": kind}
+
+
+@pytest.fixture
+def _flat_env(monkeypatch, tmp_path):
+    from maestro.codegen import asset_chain, assets
+
+    fake_state = lambda rid: type("S", (), {"run_dir": tmp_path})()  # noqa: E731
+    monkeypatch.setattr(asset_chain, "RunState", fake_state)
+    monkeypatch.setattr(assets, "RunState", fake_state)
+    from maestro.codegen.assets import _record
+    _record(tmp_path, {"id": "ground", "file": "assets/ground.webp",
+                       "kind": "tile", "prompt": "dirt ground"})
+    return asset_chain, tmp_path
+
+
+def test_a_tile_save_quilts_to_a_384_webp(_flat_env):
+    from PIL import Image
+    from maestro.codegen.assets import read_manifest
+    asset_chain, tmp_path = _flat_env
+    src, result = _flat_render(tmp_path)
+    asset_chain._save_flat(_flat_md("tile"), result)
+    dst = tmp_path / "game" / "assets" / "ground.webp"
+    assert Image.open(dst).size == (384, 384)
+    assert not src.exists()
+    assert not read_manifest(tmp_path)[0].get("defect")
+
+
+def test_a_scene_save_keeps_the_frame_it_rendered(_flat_env):
+    from PIL import Image
+    asset_chain, tmp_path = _flat_env
+    _, result = _flat_render(tmp_path)
+    asset_chain._save_flat(_flat_md("scene"), result)
+    assert Image.open(tmp_path / "game" / "assets" / "ground.webp").size == (160, 160)
+
+
+def test_a_failed_quilt_still_saves_the_raw_render(_flat_env, monkeypatch):
+    from PIL import Image
+
+    def boom(im, **kw):
+        raise RuntimeError("no quilt today")
+
+    asset_chain, tmp_path = _flat_env
+    monkeypatch.setattr(asset_chain, "quilt_tile", boom)
+    _, result = _flat_render(tmp_path)
+    asset_chain._save_flat(_flat_md("tile"), result)
+    assert Image.open(tmp_path / "game" / "assets" / "ground.webp").size == (160, 160)
+
+
 def test_the_top_up_skips_a_refused_entry(_policy_env):
     """Re-rendering the same prompt would refuse again — a regenerate with a new note is the
     escape hatch, and it clears the marker."""

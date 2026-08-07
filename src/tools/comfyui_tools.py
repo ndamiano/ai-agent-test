@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
 _TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
 _IMG2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_item.json"
+_TXT2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_tile.json"
+_IMG2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_tile.json"
 
 
 def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
@@ -31,11 +33,17 @@ def _build_background_workflow(base_workflow: dict, positive: str, negative: str
     return wf
 
 
-# INERT on the current sampler and kept only because the node must carry something: flux schnell
-# runs at cfg 1.0, and ComfyUI skips the uncond pass entirely at cfg 1, so nothing here reaches the
-# model. It is not what separates the kinds — the matte is. (The old negative banned "person" and
-# "room"; the renders that proved this came back a person and a room.)
-_NEGATIVE = "worst quality, low quality, blurry, distorted, watermark, signature, text"
+# Both samplers run at a real cfg now, so the negative reaches the model. The item negative pushes
+# away from photoreal (an anime checkpoint asked for game art); tiles measured today drift photoreal
+# and grow cracks and objects without their extra terms.
+_NEGATIVE_ITEM = "worst quality, low quality, blurry, watermark, signature, text, photo, " \
+                 "photorealistic"
+_NEGATIVE_TILE = _NEGATIVE_ITEM + ", people, person, animal, border, frame, vignette, cracks, " \
+                 "cracked ground"
+
+# NetaYume is danbooru-trained, so quality tags are on-distribution and prepend cleanly. Tiles
+# render through DreamShaperXL, where they are not, so tile positives stay verbatim.
+_POSITIVE_PREFIX_ITEM = "masterpiece, best quality, "
 
 # A sprite is composited onto the game's own background, so it is matted to its subject. A tile or
 # a backdrop IS the background: matting one leaves the ragged fragments of a floor that used to be
@@ -54,16 +62,25 @@ def _drop_matte(wf: dict) -> dict:
     return wf
 
 
+def _kind_recipe(kind: str, txt2img: bool) -> tuple:
+    """(workflow path, positive prefix, negative) for a kind: tiles render through DreamShaperXL
+    Turbo, everything else through NetaYume Lumina."""
+    if kind == "tile":
+        path = _TXT2IMG_TILE_WORKFLOW_PATH if txt2img else _IMG2IMG_TILE_WORKFLOW_PATH
+        return path, "", _NEGATIVE_TILE
+    path = _TXT2IMG_ITEM_WORKFLOW_PATH if txt2img else _IMG2IMG_ITEM_WORKFLOW_PATH
+    return path, _POSITIVE_PREFIX_ITEM, _NEGATIVE_ITEM
+
+
 def build_image_job(description: str, kind: str = "sprite") -> dict:
     """Return a {prompt, workflow_override} job dict for ONE rendered image.
 
-    `description` is the manifest's SAVED prompt and IS the positive, verbatim: the flux workflow's
-    T5 encoder reads prose as-is, danbooru quality tags are off-distribution here, and embedding the
-    prose mid-phrase ("a single {X}, one object only, ...") or salting it with tags drove subject
-    drift. What `kind` changes is whether the matte runs — never the prose, and never the negative,
-    which this sampler does not read at all."""
-    wf = _build_background_workflow(
-        _load_workflow(_TXT2IMG_ITEM_WORKFLOW_PATH), description, _NEGATIVE)
+    `description` is the manifest's SAVED prompt and the whole of the positive's substance: quality
+    tags are prepended for the anime checkpoint, but the prose is never embedded mid-phrase ("a
+    single {X}, one object only, ...") — that garbled the grammar and drove subject drift. `kind`
+    picks the model, the negative and whether the matte runs."""
+    path, prefix, negative = _kind_recipe(kind, txt2img=True)
+    wf = _build_background_workflow(_load_workflow(path), prefix + description, negative)
     wf["5"]["inputs"]["width"] = 1024
     wf["5"]["inputs"]["height"] = 1024
     if kind not in MATTED_KINDS:
@@ -73,11 +90,11 @@ def build_image_job(description: str, kind: str = "sprite") -> dict:
 
 def build_img2img_job(description: str, init_name: str, kind: str = "sprite",
                       denoise: float = 0.6) -> dict:
-    """The same workflow seeded from an EXISTING render instead of an empty latent: the init image
-    (uploaded to ComfyUI under `init_name` by the worker) is VAE-encoded and partially denoised, so
-    the output keeps the original's composition while the prompt steers the change."""
-    wf = _build_background_workflow(
-        _load_workflow(_IMG2IMG_ITEM_WORKFLOW_PATH), description, _NEGATIVE)
+    """The same per-kind workflow seeded from an EXISTING render instead of an empty latent: the
+    init image (uploaded to ComfyUI under `init_name` by the worker) is VAE-encoded and partially
+    denoised, so the output keeps the original's composition while the prompt steers the change."""
+    path, prefix, negative = _kind_recipe(kind, txt2img=False)
+    wf = _build_background_workflow(_load_workflow(path), prefix + description, negative)
     wf["50"]["inputs"]["image"] = init_name
     wf["3"]["inputs"]["denoise"] = denoise
     if kind not in MATTED_KINDS:

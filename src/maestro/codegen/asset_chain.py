@@ -22,6 +22,7 @@ from maestro.codegen.assets import (asset_path, autocrop_image, check_render, re
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
+from tools.quilting import quilt_tile
 from tools.safety import SafetyViolation, log_violation
 
 logger = logging.getLogger(__name__)
@@ -102,12 +103,21 @@ def _save_sprite(md: Dict, result: Dict) -> None:
 
 def _save_flat(md: Dict, result: Dict) -> None:
     """A tile or a backdrop: it IS the background, so it keeps the whole frame the sampler drew.
-    No matte to crop to, and autocrop on an opaque image is a no-op that only ever misfires."""
+    No matte to crop to, and autocrop on an opaque image is a no-op that only ever misfires.
+    A tile additionally gets quilted seamless — the game repeats it edge to edge, and a raw
+    render's borders never match. Soft, like snapshots: a failed post-op must not cost the game
+    its art."""
     src = _admit(md, _first_image(result))
     if src is None:
         return
     dst = asset_path(md["run_id"], md["asset_id"], "webp")
-    save_image(Image.open(src), dst)
+    im = Image.open(src)
+    if md.get("kind") == "tile":
+        try:
+            im = quilt_tile(im)
+        except Exception as e:
+            logger.warning("tile quilt %s failed, saving the raw render: %s", md["asset_id"], e)
+    save_image(im, dst)
     Path(src).unlink(missing_ok=True)
     _record_defect(md, dst)
 

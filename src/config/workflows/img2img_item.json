@@ -1,11 +1,24 @@
 {
     "4": {
         "inputs": {
-            "ckpt_name": "flux1-schnell-fp8.safetensors"
+            "ckpt_name": "NetaYume_v4_all_in_one.safetensors"
         },
         "class_type": "CheckpointLoaderSimple",
         "_meta": {
             "title": "Load Checkpoint"
+        }
+    },
+    "10": {
+        "inputs": {
+            "shift": 6.0,
+            "model": [
+                "4",
+                0
+            ]
+        },
+        "class_type": "ModelSamplingAuraFlow",
+        "_meta": {
+            "title": "Model Sampling AuraFlow"
         }
     },
     "6": {
@@ -31,7 +44,7 @@
         },
         "class_type": "CLIPTextEncode",
         "_meta": {
-            "title": "CLIP Text Encode (Negative Prompt, unused at cfg 1.0)"
+            "title": "CLIP Text Encode (Negative Prompt)"
         }
     },
     "50": {
@@ -62,13 +75,13 @@
     "3": {
         "inputs": {
             "seed": 0,
-            "steps": 4,
-            "cfg": 1.0,
-            "sampler_name": "euler",
+            "steps": 30,
+            "cfg": 4.5,
+            "sampler_name": "res_multistep",
             "scheduler": "simple",
             "denoise": 0.6,
             "model": [
-                "4",
+                "10",
                 0
             ],
             "positive": [
@@ -86,7 +99,7 @@
         },
         "class_type": "KSampler",
         "_meta": {
-            "title": "KSampler (flux schnell: 4 steps, cfg 1, partial denoise)"
+            "title": "KSampler (NetaYume Lumina: 30 steps, cfg 4.5, partial denoise)"
         }
     },
     "8": {

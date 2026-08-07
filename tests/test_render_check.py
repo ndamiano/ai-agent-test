@@ -92,11 +92,12 @@ def test_a_clean_render_leaves_no_defect(run_dir, tmp_path):
 
 
 def test_a_flat_kind_is_saved_whole(run_dir, tmp_path):
-    """save_flat does not autocrop: cropping a tile to its "subject" is how a floor becomes a
-    handful of planks."""
-    request_media(RUN, run_dir, "floor", "worn floorboards", kind="tile")
+    """save_flat does not autocrop: cropping a backdrop to its "subject" is how a scene becomes a
+    handful of planks. (A tile is the one flat kind that gets resynthesized — the quilt post-op,
+    tested with the asset chain.)"""
+    request_media(RUN, run_dir, "sky", "a starry night sky", kind="scene")
     src = _png(tmp_path / "out.png", 255, size=(128, 128))
-    asset_chain.run_operations({"run_id": RUN, "asset_id": "floor", "kind": "tile",
+    asset_chain.run_operations({"run_id": RUN, "asset_id": "sky", "kind": "scene",
                                 "then": {"operations": ["save_flat"]}},
                                {"images": [{"file": str(src), "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
-    assert Image.open(run_dir / "game" / "assets" / "floor.webp").size == (128, 128)
+    assert Image.open(run_dir / "game" / "assets" / "sky.webp").size == (128, 128)

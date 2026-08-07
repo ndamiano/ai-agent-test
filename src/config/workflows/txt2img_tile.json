@@ -1,24 +1,11 @@
 {
     "4": {
         "inputs": {
-            "ckpt_name": "NetaYume_v4_all_in_one.safetensors"
+            "ckpt_name": "DreamShaperXL_Turbo_v2_1.safetensors"
         },
         "class_type": "CheckpointLoaderSimple",
         "_meta": {
             "title": "Load Checkpoint"
-        }
-    },
-    "10": {
-        "inputs": {
-            "shift": 6.0,
-            "model": [
-                "4",
-                0
-            ]
-        },
-        "class_type": "ModelSamplingAuraFlow",
-        "_meta": {
-            "title": "Model Sampling AuraFlow"
         }
     },
     "6": {
@@ -53,21 +40,21 @@
             "height": 1024,
             "batch_size": 1
         },
-        "class_type": "EmptySD3LatentImage",
+        "class_type": "EmptyLatentImage",
         "_meta": {
-            "title": "Empty Latent Image (SD3/Lumina)"
+            "title": "Empty Latent Image"
         }
     },
     "3": {
         "inputs": {
             "seed": 0,
-            "steps": 30,
-            "cfg": 4.5,
-            "sampler_name": "res_multistep",
-            "scheduler": "simple",
+            "steps": 8,
+            "cfg": 2.5,
+            "sampler_name": "dpmpp_sde",
+            "scheduler": "karras",
             "denoise": 1.0,
             "model": [
-                "10",
+                "4",
                 0
             ],
             "positive": [
@@ -85,7 +72,7 @@
         },
         "class_type": "KSampler",
         "_meta": {
-            "title": "KSampler (NetaYume Lumina: 30 steps, cfg 4.5)"
+            "title": "KSampler (DreamShaperXL Turbo: 8 steps, cfg 2.5)"
         }
     },
     "8": {
@@ -107,32 +94,13 @@
     "9": {
         "inputs": {
             "images": [
-                "47",
+                "8",
                 0
             ]
         },
         "class_type": "PreviewImage",
         "_meta": {
             "title": "Preview Image"
-        }
-    },
-    "47": {
-        "inputs": {
-            "model": "BiRefNet-general",
-            "mask_blur": 0,
-            "mask_offset": -1,
-            "invert_output": false,
-            "refine_foreground": false,
-            "background": "Alpha",
-            "background_color": "#ffffff",
-            "image": [
-                "8",
-                0
-            ]
-        },
-        "class_type": "BiRefNetRMBG",
-        "_meta": {
-            "title": "BiRefNet Remove Background (RMBG)"
         }
     }
 }

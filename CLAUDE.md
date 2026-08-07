@@ -99,16 +99,21 @@ score WORSE in round 2 than round 1, because each fix broke a claim that already
 **The game asks for its own art, as it writes the code that uses it.** `generate_media(id, prompt,
 kind)` enqueues one render and answers IMMEDIATELY with the path the file will appear at
 (`assets/<id>.webp`, or `.glb` for `kind: "mesh"`); the model writes that path into the game as it
-writes the code that uses it. Art saves as WebP q90 at full 1024 resolution — measured 2026-08-03
-at 10.5x smaller than the same-resolution png, where downscaling to 768 bought only 1.5x. `kind` is **sprite | tile | scene | mesh**, and it is the one thing
+writes the code that uses it. Art saves as WebP q90 (measured 2026-08-03 at 10.5x smaller than
+the same-resolution png): sprites and scenes at their full 1024, a tile as the 384 seamless square
+the quilt emits. `kind` is **sprite | tile | scene | mesh**, and it is the one thing
 the tool needs that the prose cannot carry: a sprite is matted and cropped to its subject because
 the game draws it ON its own background, while a tile and a scene ARE that background and keep the
 whole frame. A mesh lands normalized to 1 unit at its longest side (decimate enforces it) and the
 tool's answer says so — placement code cannot discover scale any other way, and an untold model
 shipped a knee-high lighthouse (2026-08-01). Rendering all four through the one item-icon path is what shipped a game's floor tiles
-matted down to a handful of planks — it said "tile" in every prompt and nothing could hear it. The
-MATTE is the whole of what a kind changes: the sampler is flux schnell at cfg 1.0, where ComfyUI
-skips the uncond pass, so the negative prompt reaches nothing and never did. The asset stage is then free: no planning call, no source
+matted down to a handful of planks — it said "tile" in every prompt and nothing could hear it.
+A kind picks the MODEL, the workflow and what the landed render owes (measured across the
+2026-08-06 bake-off, see the session's artifact): sprites and scenes render through NetaYume
+Lumina — flat crisp shapes that survive being drawn small, native "white background" obedience —
+while a tile renders through DreamShaperXL Turbo and then `tools/quilting.py` (Efros-Freeman
+min-cut on a torus) makes it seamless and kills its periodic artifacts, code owning structure the
+sampler cannot. Both run at a real cfg, so the negative prompt is a live tool on every kind. The asset stage is then free: no planning call, no source
 rewrite, no static analysis of what the game spawns, and the GPU draws art while the llm turns keep
 writing code. `game/assets.json` is written by `request_media`, never by the model: it is the record
 the gallery lists, the top-up re-renders from, and the regenerate re-prompts against. One request is
@@ -250,8 +255,10 @@ src/
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
                          runs: enqueue ONE `image` job, record the ask in assets.json, answer with
                          the path. Nothing plans, rewrites or inspects the game's source. `kind`
-                         picks the workflow and what a landed render owes: sprite is matted and
-                         autocropped, tile and scene keep the whole frame, mesh chains image →
+                         picks the model, the workflow and what a landed render owes: sprite is
+                         matted and autocropped, scene keeps the whole frame, a tile is quilted
+                         seamless (`tools/quilting.py`, in `asset_chain._save_flat` — soft, a
+                         quilt that throws saves the raw render), mesh chains image →
                          TRELLIS (its image leg renders as a sprite — TRELLIS lifts a cut-out
                          subject). `check_render` reads the alpha of what landed against the kind
                          that was asked for and records a `defect` on the manifest entry: a matte

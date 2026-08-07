@@ -49,7 +49,9 @@ Whatever the genre, whatever the request, the build ends with something that ope
   for. The done-nudge now carries both lists; whether telling the model changes the number is the
   open question. Its `kind` (sprite/tile/scene/mesh, 2026-08-01) is not yet measured
   either: before it, every ask rendered through the one item-icon workflow, so a game's floor tiles
-  came back matted to fragments. The matte is all a kind changes — at cfg 1.0 the negative is inert.
+  came back matted to fragments. A kind now picks the model and the post-op (2026-08-06 bake-off):
+  sprites and scenes through NetaYume Lumina, tiles through DreamShaperXL then min-cut quilting to
+  a seamless square — and both samplers run at a real cfg, so the negative prompt works.
   A landed render is now checked against its kind and the defect shown in the gallery — BROKEN only,
   never whether the picture suits the game, which stays the same human question as whether the game
   plays right.

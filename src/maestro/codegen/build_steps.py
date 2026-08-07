@@ -135,19 +135,39 @@ EDIT_SCHEMA = {"type": "function", "function": {
 MEDIA_SCHEMA = {"type": "function", "function": {
     "name": "generate_media",
     "description": ("Have an artist draw an image or a 3D model for the game. Returns the path for "
-                    "the art."),
+                    "the art. A game's art shares one visual style: before the first call, write "
+                    "one style phrase naming medium, palette and outline (like \"painted cartoon "
+                    "style, warm forest palette, soft dark outlines\") and repeat it word for word "
+                    "in every prompt."),
     "parameters": {"type": "object",
                    "properties": {"id": {"type": "string",
                                          "description": "Short name: letters, digits, - and _."},
                                   "prompt": {"type": "string",
-                                             "description": "What to draw, described for an artist."},
+                                             "description":
+                                                 "What to draw, described for an artist. Lead "
+                                                 "with the subject, then mood and lighting, then "
+                                                 "detail — trailing detail is what the artist "
+                                                 "drops. Name colors that stand out against the "
+                                                 "game's background, and light the subject "
+                                                 "clearly."},
                                   "kind": {"type": "string",
                                            "enum": ["sprite", "tile", "scene", "mesh"],
                                            "description":
                                                "sprite: one subject, cut out, drawn on top of the "
                                                "game. tile: a surface the game repeats, fills its "
-                                               "frame. scene: a whole picture the game draws "
-                                               "behind everything. mesh: a 3D model."}},
+                                               "frame — describe real ground or wall seen from "
+                                               "directly above (\"mossy forest floor with small "
+                                               "stones, seen from directly above\"); the words "
+                                               "texture, seamless and pattern come back as noise; "
+                                               "a tile is drawn small in the game, so build it "
+                                               "from large simple shapes with minimal fine detail "
+                                               "— fine detail turns to noise at game size — and "
+                                               "in muted, low-contrast colors: the ground is the "
+                                               "backdrop the sprites must stand out against, so a "
+                                               "tile keeps the style phrase's palette but never "
+                                               "its vividness or bold outlines. "
+                                               "scene: a whole picture the game draws behind "
+                                               "everything. mesh: a 3D model."}},
                    "required": ["id", "prompt"]}}}
 DONE_SCHEMA = {"type": "function", "function": {
     "name": "done",

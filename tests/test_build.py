@@ -87,7 +87,8 @@ def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
     assert isinstance(out, build_steps.Infer)
     assert out.messages[-1]["content"] == "a card game"
     assert {t["function"]["name"] for t in out.schemas} == {
-        "list_files", "read_file", "write_file", "edit_file", "generate_media", "done"}
+        "list_files", "read_file", "write_file", "edit_file", "generate_media", "compose_scene",
+        "done"}
 
 
 def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
@@ -97,7 +98,7 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 10
+    assert system.count("\n- ") == 11
     assert "three.module.js" in system and "generate_media" in system
     assert "seeded generator" in system
     # Art-direction guidance lives on the media tool, not here, so it leaves with the tool.

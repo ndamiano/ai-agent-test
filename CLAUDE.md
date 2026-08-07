@@ -25,8 +25,9 @@ step, no engine of ours between it and the screen. Two stages:
    same act. No inference runs in this stage: a model between the person's words and the build's
    input would mean approving one text and building another. Pressing **Build** stores the edit
    and starts the build, so there is one action and one writer.
-2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model six
-   tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `done` — and a
+2. **Build (stage 2):** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model seven
+   tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`,
+   `compose_scene`, `done` — and a
    running transcript, and lets it write the game. It decides the file layout, the data shapes, the
    systems, and what art gets drawn. It calls `done` when the game is playable. The build is not a
    resident loop: each llm turn is a job on the `llm` queue and its completion drives the next turn,
@@ -173,7 +174,7 @@ src/
                          answered with nothing, which the nudge branch handles; an `error` is a turn
                          the WORKER could not deliver, which is neither. Collapsing any two of the
                          three scolds the model for a reply it never sent and burns a turn.
-                         Owns the six tool schemas, the transcript, compaction, the DONE-NUDGE
+                         Owns the seven tool schemas, the transcript, compaction, the DONE-NUDGE
                          (`cursor.done_nudged` — asked once, then the next `done` is taken), and
                          every way a reply TOO BIG TO LAND arrives — all three answered with the one
                          remedy (write it in pieces), because they are one event: the reply cut off
@@ -204,7 +205,7 @@ src/
                          the only one that lasts: a turn's request IS the transcript so far, so a
                          payload per jobs row stored the same conversation once per turn (951 MB of
                          `jobs.payload`, 26 MB for one 117-turn build). The system prompt and the
-                         six schemas are byte-identical every turn, so they ride ONE `meta` record
+                         seven schemas are byte-identical every turn, so they ride ONE `meta` record
                          and a `turn` record carries only what that turn ADDED — turn k is
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
                          rounds `build_steps.compact` dropped and the note that replaced them, so a
@@ -229,8 +230,13 @@ src/
                          that leaves half the game at another version is not a restore. git is a
                          BOUNDARY — a snapshot that cannot be taken is logged and the build carries
                          on, since losing history is not a reason to lose a game.
-      tools.py           list_files / read_file / write_file / edit_file / generate_media — the
-                         smallest surface that works, and kept that way. A path is resolved and must
+      tools.py           list_files / read_file / write_file / edit_file / generate_media /
+                         compose_scene — the smallest surface that works, and kept that way.
+                         compose_scene is scenegen's build face: it bakes a whole MAP —
+                         assets/<id>_ground.png plus <id>_scene.json (walkable grid, door cells,
+                         POIs) — synchronously into the game folder, pure CPU, and the model
+                         reads the json and wires it (verified in a real build 2026-08-06: three
+                         scenes asked for, fetched at runtime, walkable grid driving collision). A path is resolved and must
                          land inside the game folder. Every failure is REPORTED to the model as text
                          (a missing argument names itself) and never guessed at: substituting a
                          default for a missing `path` sent every write in a run to one file.
@@ -357,6 +363,16 @@ src/
                          wilderness ring: forest, POIs, roads, named regions). Currently UNWIRED —
                          it was the one thing that produced real scale, and re-pointing it to emit
                          data the game reads is an open decision, not a dependency.
+  scenegen/              scene composition behind the compose_scene build tool (bake.py is the
+                         platform face; the rest is the library: seeded layouts where every town
+                         door faces a street by construction, kit-assembled buildings that return
+                         their door cells, zone-scatter rules, procedural materials, distance
+                         bands, the light plan). Born from the 2026-08-06 24-round exploration;
+                         its laws live in the project memory doctrine. Code owns everything
+                         spatial; diffusion paints materials and parts — part sprites are
+                         code-drawn from a style-keyed palette today, rendering them through the
+                         image queue in the game's own style is the marked upgrade. Structures
+                         restyle at the PART level, never img2img over an assembled building.
 ```
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,

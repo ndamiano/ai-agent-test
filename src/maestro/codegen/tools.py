@@ -1,4 +1,5 @@
-"""The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media.
+"""The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media,
+compose_scene.
 
 Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.
@@ -150,6 +151,11 @@ def build_tools(state) -> dict:
         # `kind` is the one argument with a default, because the schema offers it as optional.
         return request_media(state.run_id, state.run_dir, id, prompt, kind or DEFAULT_KIND)
 
+    def compose_scene(id=None, archetype=None, style=None, seed=None,
+                      width_cells=None, height_cells=None, **_) -> dict:
+        from scenegen.bake import bake_scene
+        return bake_scene(root, id, archetype, style, seed, width_cells, height_cells)
+
     def _reported(fn):
         """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
         act on. Never substitute a default for a bad argument — the report is what lets it retry."""
@@ -163,4 +169,4 @@ def build_tools(state) -> dict:
     return {name: _reported(fn) for name, fn in
             {"list_files": list_files, "read_file": read_file,
              "write_file": write_file, "edit_file": edit_file,
-             "generate_media": generate_media}.items()}
+             "generate_media": generate_media, "compose_scene": compose_scene}.items()}

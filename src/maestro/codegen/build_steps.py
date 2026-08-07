@@ -169,6 +169,34 @@ MEDIA_SCHEMA = {"type": "function", "function": {
                                                "scene: a whole picture the game draws behind "
                                                "everything. mesh: a 3D model."}},
                    "required": ["id", "prompt"]}}}
+COMPOSE_SCHEMA = {"type": "function", "function": {
+    "name": "compose_scene",
+    "description": ("Have a whole MAP built: the drawn ground image plus its logic data, written "
+                    "into the project immediately. Returns the two files: assets/<id>_ground.png "
+                    "to draw as the map background, and assets/<id>_scene.json to READ — it "
+                    "carries the walkable grid, door cells and points of interest the game code "
+                    "must use. Sprites, portraits and single objects still come from "
+                    "generate_media."),
+    "parameters": {"type": "object",
+                   "properties": {"id": {"type": "string",
+                                         "description": "Short name: letters, digits, - and _."},
+                                  "archetype": {"type": "string",
+                                                "enum": ["town", "glade", "interior", "dungeon"],
+                                                "description":
+                                                    "town: streets, a plaza, buildings whose "
+                                                    "doors are listed in the scene data. glade: "
+                                                    "an organic clearing with a pond. interior: "
+                                                    "lit rooms and corridors. dungeon: dark "
+                                                    "rooms and corridors."},
+                                  "style": {"type": "string",
+                                            "description": "The game's style phrase plus setting "
+                                                           "words."},
+                                  "seed": {"type": "integer",
+                                           "description": "Layout seed — a different seed is a "
+                                                          "different map."},
+                                  "width_cells": {"type": "integer"},
+                                  "height_cells": {"type": "integer"}},
+                   "required": ["id", "archetype", "style"]}}}
 DONE_SCHEMA = {"type": "function", "function": {
     "name": "done",
     "description": "Call when the project is finished and playable.",
@@ -176,7 +204,8 @@ DONE_SCHEMA = {"type": "function", "function": {
                    "properties": {"summary": {"type": "string"}},
                    "required": ["summary"]}}}
 
-SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, MEDIA_SCHEMA, DONE_SCHEMA]
+SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, MEDIA_SCHEMA,
+           COMPOSE_SCHEMA, DONE_SCHEMA]
 
 
 def _n_ctx() -> int:
@@ -291,7 +320,8 @@ def _action_of(tc, res) -> str:
     args = parse_args(tc["function"].get("arguments"))
     target = args.get("path") or args.get("id") or ""
     verb = {"write_file": "wrote", "edit_file": "edited", "read_file": "read",
-            "generate_media": "asked for art", "list_files": "listed files"}.get(name, name)
+            "generate_media": "asked for art", "compose_scene": "built a scene",
+            "list_files": "listed files"}.get(name, name)
     line = f"{verb} {target}".strip()
     if res.get("ok", True):
         return line
@@ -377,6 +407,10 @@ def _dispatch(tools, cursor, tc) -> dict:
                  new_text=args.get("new_text"))
     elif name == "generate_media":
         res = fn(id=args.get("id"), prompt=args.get("prompt"), kind=args.get("kind"))
+    elif name == "compose_scene":
+        res = fn(id=args.get("id"), archetype=args.get("archetype"), style=args.get("style"),
+                 seed=args.get("seed"), width_cells=args.get("width_cells"),
+                 height_cells=args.get("height_cells"))
     else:
         res = fn()
     return res

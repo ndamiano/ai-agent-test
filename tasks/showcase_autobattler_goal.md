@@ -22,8 +22,11 @@ round.
   3D near-black lighting failure). No internal animation ever — all motion is whole-miniature
   transforms: lunge to attack, shake on hit, tip over + fade on death, base glow when buffed.
   One render per creature reused in shop card, tray chip and standee.
-- **Entrance beat**: pressing Fight slams the enemy board in from the right with screen shake and
-  a "FIGHT!" banner, then combat auto-plays.
+- **Entrance beat** (revised 2026-08-04): the enemy warband slams in from the right at PLANNING
+  start — the player scouts the actual enemy board while building a lineup. Pressing Fight slides
+  the two grids together until adjacent (no empty gap mid-battle), FIGHT! banner as they meet;
+  they part again for the next planning phase.
+- **Melee reach**: ~1.5 tile-widths between standee edges — swings start before contact.
 - **DOM/3D split (forced)**: 3D is the battlefield only; menu, settings, shop, tray, tooltips,
   panels are HTML/CSS over the canvas. The one 3D interaction is the drop raycast picking a cell.
 
@@ -38,8 +41,8 @@ round.
 - [ ] S1. Shop offers 4 creatures a round + shuffle, from a pool with cost tiers (1–4); higher
       tiers appear as the run advances.
 - [ ] S2. Owning three copies of a creature visibly combines them into a stronger version.
-- [ ] S3. Roster has 12+ distinct creatures; each readable at a glance (art + hover card with
-      stats and traits).
+- [ ] S3. Roster has 25+ distinct creatures (revised up from 12, playtest 2026-08-03); each
+      readable at a glance (art + hover card with stats and traits).
 
 ### Board & positioning
 - [ ] B1. Creatures are placed by drag; front/back placement changes outcomes (tanks soak in
@@ -56,7 +59,10 @@ round.
 - [ ] C1. Fights auto-resolve over ~20+ seconds and are followable: attacks animate, HP bars
       move, deaths are events, damage numbers fly.
 - [ ] C2. Abilities fire visibly and matter (a heal turns a fight, a splash clears swarms).
-- [ ] C3. Loss of a fight costs player HP scaled to surviving enemies; the scoreboard is legible.
+- [ ] C3. (revised 2026-08-04) Player HP drops ONLY on a lost round, scaled to surviving enemies
+      (~15/100 typical); unit deaths cost nothing by themselves. Round ends flash a ~2s banner
+      (won: +gold from winning + interest; lost: interest only) and roll straight into planning —
+      no button. Proper screens only at run end (HP 0 / round 12 survived).
 
 ### Opponent & run arc
 - [ ] O1. Enemy warbands escalate across ~12 rounds and vary in shape (swarm round, tank round,
@@ -70,8 +76,9 @@ round.
       place; unlit standees stay readable.
 - [ ] F2. UX friction low: hover cards, drag that works, no dead-end states, restart from the end
       screens.
-- [ ] F3. The entrance beat lands (enemy board slams in, FIGHT! banner) and battle speed /
-      mute / volume settings audibly and visibly work.
+- [x] F3. The entrance beat lands (enemy board slams in, FIGHT! banner) and battle speed /
+      mute / volume settings audibly and visibly work. (2026-08-04: sound + menus judged "fine,
+      improvable, accepted" by Nick.)
 
 ## Working rules
 - Fix notes name checklist items (e.g. "targets T2, C1"). No untargeted fixes.
@@ -80,5 +87,33 @@ round.
 - Art rides the deferred pass: build first on ninfer, render on the ComfyUI flip, judge F1 after.
 - Grades recorded per playtest below.
 
+## Status
+SHIPPED to prod showcase tier 2026-08-04 (title "Arena Combat", run 499d9fefaa43, ~52 fix
+builds from the staged one-shot, full 45-asset art coverage). Balance is the open workstream:
+fixes continue locally on the same run; re-ship = re-tar run dir → extract on prod → re-stage
+(same id, demo entry already in place). Checklist grading pending Nick's full-run verdicts.
+
 ## Playtest log
-(none yet)
+
+### 2026-08-03 — v1 (staged build 499d9fefaa43, art in)
+Overall: strong positive vibe, "first one that doesn't feel awful" — but not coherent yet.
+
+Working: standees + bases + HP bars look great; shop (4 cards, art, cost, stats+trait, shuffle)
+fully functional; buying works; trait panel live with counts and active buffs (T1 ✓, T2-planning
+✓); THREE MAGES COMBINED to M★ (S2 ✓); round counter 1/12, player HP, gold, speed slider (x2);
+combat resolves with targeting, damage numbers, HP bars, narrated log; enemies have their own
+roster (Wraith, Goblin); Support synergy applied in combat.
+
+Broken / missing, in fix order:
+1. ONE 4x3 board — enemies spawn interleaved on the player's own grid (goal: two facing grids).
+2. Fight button dead: enables only when enemies on grid, but enemies spawn inside startFight.
+3. Crash after victory: checkCombinations combos.js:43 "template is undefined"
+   (afterBattleVictory → showEndScreen path) — blocks the round loop.
+4. Back-row standees render with opaque black rectangles (alpha ignored, positional).
+5. Combat is entirely static in-place "fires at" — no melee movement/lunges (C1 partial).
+6. Only 5 units seen, all cost 3 (S3 ✗; tier pricing flat; tank/ranger/sorcerer exist in data,
+   unreached).
+7. Drag goes to the sidebar chip widget, not the 3D board; tray grows unbounded (cap ~8);
+   Clear Board button unwanted.
+8. Composition: half the frame is empty foreground.
+Unverified: E1-E3, B2, T3, C3, O1 shapes, O2 screens, O3, sounds/menu/entrance beat.

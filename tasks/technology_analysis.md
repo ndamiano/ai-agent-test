@@ -41,5 +41,12 @@ are released, we should regularly validate whether we can do better with what ha
       https://derkleineli.github.io/triflow/#
 - [ ] Minimax H3 video generation. Maybe not relevant? Maybe relevant? Worth investigating either way.
       https://www.reddit.com/r/StableDiffusion/comments/1vdoqb9/repost_because_not_everyone_can_read_blurry/
+- [ ] RTX 6000 optimizations
+      https://github.com/local-inference-lab/rtx6kpro
+- [ ] Scenema voice, seems legit good!
+      https://www.reddit.com/r/LocalLLaMA/comments/1vgfmee/scenema_audio_comes_to_comfyui_runs_on_8gb_vram/
+      https://huggingface.co/ScenemaAI/scenema-audio
+- [ ] Shieldstral, might be good for safety filtering?
+      https://huggingface.co/mistralai/Shieldstral-1.0-3B
 
 ## Previously investigated

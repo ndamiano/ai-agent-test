@@ -3,6 +3,7 @@ import { track } from '../api/track'
 import Studio from './Studio'
 import AdminPanel from './AdminPanel'
 import PromptsPanel from './PromptsPanel'
+import GradePage from './grade/GradePage'
 import SettingsPage from './settings/SettingsPage'
 import CreditsPage from './credits/CreditsPage'
 import { useAuth } from '../contexts/AuthContext'
@@ -24,7 +25,8 @@ const Layout: React.FC = () => {
     // The admin surfaces are operator-only. The server enforces it (require_admin → 403); this
     // just keeps a non-admin from landing on an empty error page via a typed URL.
     const isAdmin = user?.role === 'admin'
-    const blocked = (route.kind === 'admin' || route.kind === 'prompts') && user != null && !isAdmin
+    const blocked = (route.kind === 'admin' || route.kind === 'prompts' || route.kind === 'grade')
+        && user != null && !isAdmin
     useEffect(() => { if (blocked) navigate('/', { replace: true }) }, [blocked, navigate])
 
     const nav = NAV.filter(n => isAdmin || !n.adminOnly)
@@ -80,6 +82,7 @@ const Layout: React.FC = () => {
                 {route.kind === 'credits' && <CreditsPage />}
                 {route.kind === 'admin' && isAdmin && <AdminPanel />}
                 {route.kind === 'prompts' && isAdmin && <PromptsPanel />}
+                {route.kind === 'grade' && isAdmin && <GradePage runId={route.runId} />}
                 {(route.kind === 'library' || route.kind === 'create' || route.kind === 'game') && (
                     <Studio route={route} />
                 )}

@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, AdminViolation, DurableEventRow, Game, GameAsset, GameDetail, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, AdminViolation, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -208,6 +208,13 @@ export const api = {
     regenerateAsset: (runId: string, assetId: string, prompt: string, mode: 'full' | 'img2img' = 'full') =>
         request<{ status: string; run_id: string; asset_id: string }>(
             `/api/games/${runId}/assets/${assetId}/regenerate`, { method: 'POST', body: JSON.stringify({ prompt, mode }) }),
+
+    // The target carries the request (the reveal step needs it) and deliberately nothing that
+    // identifies the arm — a grade formed knowing which arm built the game is not evidence.
+    gradeTarget: (runId: string) =>
+        request<GradeTarget>(`/api/admin/grades/${runId}`),
+    submitGrade: (runId: string, grade: Grade) =>
+        request<{ saved: string }>(`/api/admin/grades/${runId}`, { method: 'POST', body: JSON.stringify(grade) }),
 
     // `enabled: false` (no payment provider configured) hides the storefront.
     listPackages: () =>

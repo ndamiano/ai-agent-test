@@ -221,6 +221,20 @@ and **character** has a current ceiling of 2 across everything built so far.
 
 ---
 
+## The grader
+
+`/grade/<run_id>` in the SPA is this form, with the game playable at the top of the same page.
+Operator-only, and ownership still applies — it is not a way to reach someone else's run.
+
+It walks the steps in the order above and **does not go back**: a first impression you can return
+and rewrite after scoring the dimensions is not a first impression. The page is handed the run's
+request (it needs it for the reveal) and deliberately nothing else — not the model, not the arm,
+not whether the run was staged, not the turn count or the fix rounds. What identifies the arm never
+reaches the browser.
+
+Grades are written to `<data_dir>/grades/<run_id>__<timestamp>.json`, one file per grading. Grading
+a run again after a fix build keeps both files.
+
 ## Recording
 
 Filled forms live in a gitignored directory, alongside the rest of the lab material — never in the

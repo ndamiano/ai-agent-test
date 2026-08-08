@@ -201,8 +201,20 @@ A queue with no worker means every job on it times out.
 ## RunPod worker images
 
 One image per queue, weights on a RunPod **network volume** (the image is code, the volume is
-weights), so a pod boots without re-downloading 60 GB. Pods never talk to Hugging Face after
+weights), so a pod boots without re-downloading the weights. Pods never talk to Hugging Face after
 provisioning.
+
+What the volume holds, by queue (`scripts/provision_volume.sh` is the authority):
+
+| queue | weights | GB |
+|---|---|---|
+| llm | `models/ninfer/qwen3_6_27b_nvfp4.ninfer` + `models/LLM/*.gguf` — the same model twice, one per engine | 36 |
+| image | `checkpoints/NetaYume_v4_all_in_one` (sprites, scenes), `checkpoints/DreamShaperXL_Turbo_v2_1` (tiles, scene-chain terrain), `diffusion_models/qwen_image_2512_fp8_e4m3fn` (scene-chain subjects), `diffusion_models/qwen_image_edit_2511_fp8mixed` (the scene embed) + the `text_encoders/qwen_2.5_vl_7b_fp8_scaled` and `vae/qwen_image_vae` both Qwen graphs share, `RMBG/BiRefNet` (the matte) | 69 |
+| mesh | `trellis2-weights` + `encoders/` (dinov3 mirror, BiRefNet) + the `hf-cache` pre-seed | 21 |
+| image (safety) | `comfy/models/safety/` — the NSFW classifier | 0.02 |
+
+An image checkpoint is named by a workflow in `src/config/workflows/`, so a weight that leaves
+that folder leaves the volume with it: nothing else reads them.
 
 The volume also speaks the **S3 API**, which is how a single file reaches it without renting
 anything — a full provision is 60 GB at datacenter bandwidth and wants a pod, but one added or
@@ -224,12 +236,16 @@ VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
 docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v6 .
-docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v6 .
+docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v8 .
 docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
 docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
 
-Deployed tags (what the TEMPLATES name, checked live 2026-08-02): `llm-v8`, `image-v6`, `mesh-v17`.
+Deployed tags (what the TEMPLATES name, checked live 2026-08-08): `llm-v8`, `image-v8`, `mesh-v17`.
+An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
+the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
+is no longer there. Roll the volume forward first, the template second, and retire the old weight
+last (the 2026-08-08 flux → NetaYume/DreamShaper/Qwen swap, in that order).
 Bump the tag on every push — RunPod caches images
 per host, so re-pushing a tag leaves stale copies serving on warm hosts.
 
@@ -300,18 +316,19 @@ RAM; below that the server logs `staging skipped` and loads off the volume (~48s
 
 **Image cold start (measured on a 5090 pod, 2026-08-02, `image-v6`).** Same disease the mesh had,
 same cure: the FUSE volume serves bulk reads at ~2GB/s but mmap page-faults at ~200MB/s and keeps
-no page cache, so ComfyUI's lazy checkpoint load put 70.3s of flux-off-the-volume INSIDE the first
-claimed render — billed to a user's game as exec (measured on a prod batch, 2026-08-02). The
-entrypoint now stages flux + BiRefNet (18.1GB) into `/dev/shm` at boot (9.2s, overlapped with
+no page cache, so ComfyUI's lazy checkpoint load put 70.3s of a checkpoint-off-the-volume INSIDE
+the first claimed render — billed to a user's game as exec (measured on a prod batch, 2026-08-02).
+The entrypoint now stages every weight the live workflows name, plus BiRefNet, into `/dev/shm` at
+boot (~35s for 69GB, overlapped with
 ComfyUI's own ~10s torch import), points the models tree at the staged copies (`/opt/comfy-models`,
 per-folder symlinks; untouched folders still resolve to the volume), and runs one warmup render —
 the real sprite graph at 1 step/256px, so the checkpoint load (3.8s from tmpfs), the matte's lazy
 import and the first-use kernels are all paid before the agent starts. Registration is the warm
-gate: container start → registered WARM in ~15s, first claimed render ~2s. Enqueue → first image
-on a cold queue: ~120s before, ~55s after; the remainder is RunPod pod create + pull (~30-40s on a
-host with the layers cached) + the 15s boot. Staging falls back to the volume when `/dev/shm`
-cannot hold it (logged `[stage] skipped`); a 5090 pod comes with ~126GB RAM, so the practical case
-is covered.
+gate: container start → registered WARM once staging and the warmup have both landed, first claimed
+render ~2s. The staging copy is now the boot cost rather than a free ride under the torch import —
+four checkpoints at ~2GB/s, against one 17GB flux before. Staging falls back to the volume when
+`/dev/shm` cannot hold it (logged `[stage] skipped`); a 5090 pod comes with ~126GB RAM, so 69GB of
+weights still fits.
 
 **Container restart caveat:** RunPod restarts an exited container and keeps billing — even exit 0.
 A worker deciding to die is therefore not enough to stop the meter. Two layers handle it:

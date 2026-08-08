@@ -39,6 +39,8 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 export HF_HOME="$VOL/hf-cache"
 
 mkdir -p "$VOL/models/LLM" "$VOL/models/ninfer" "$VOL/comfy/models/checkpoints" \
+         "$VOL/comfy/models/diffusion_models" "$VOL/comfy/models/text_encoders" \
+         "$VOL/comfy/models/vae" \
          "$VOL/comfy/models/RMBG/BiRefNet" "$VOL/trellis2-weights" "$VOL/hf-cache"
 
 "$PY" - "$VOL" <<'PY'
@@ -65,8 +67,22 @@ FILES = [
     (f"{VOL}/models/ninfer", "neroued/Qwen3.6-27B-nvfp4-NInfer",
      "qwen3_6_27b_nvfp4.ninfer", 18324064000,
      "610abfadfd8102791f1a7317d243463843e14758"),
-    (f"{VOL}/comfy/models/checkpoints", "Comfy-Org/flux1-schnell",
-     "flux1-schnell-fp8.safetensors", 17236328572, None),
+    # The image queue's four checkpoints, one per kind (see maestro/codegen: sprites/scenes ->
+    # NetaYume, tiles + scene-chain terrain -> DreamShaperXL Turbo, scene-chain subjects ->
+    # Qwen-Image-2512, the scene embed -> Qwen-Image-Edit-2511). The two Qwen graphs share the
+    # VL text encoder and the VAE.
+    (f"{VOL}/comfy/models/checkpoints", "duongve/NetaYume-Lumina-Image-2.0",
+     "NetaYume_v4_all_in_one.safetensors", 10620229821, None),
+    (f"{VOL}/comfy/models/checkpoints", "Lykon/dreamshaper-xl-v2-turbo",
+     "DreamShaperXL_Turbo_v2_1.safetensors", 6939220250, None),
+    (f"{VOL}/comfy/models/diffusion_models", "Comfy-Org/Qwen-Image_ComfyUI",
+     "split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors", 20430679144, None),
+    (f"{VOL}/comfy/models/diffusion_models", "Comfy-Org/Qwen-Image-Edit_ComfyUI",
+     "split_files/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors", 20533762817, None),
+    (f"{VOL}/comfy/models/text_encoders", "Comfy-Org/Qwen-Image_ComfyUI",
+     "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors", 9384670680, None),
+    (f"{VOL}/comfy/models/vae", "Comfy-Org/Qwen-Image_ComfyUI",
+     "split_files/vae/qwen_image_vae.safetensors", 253806246, None),
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet",
      "BiRefNet-general.safetensors", 0, None),
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet", "birefnet.py", 0, None),
@@ -75,12 +91,16 @@ FILES = [
 ]
 
 for dest, repo, name, want, rev in FILES:
-    path = os.path.join(dest, name)
+    # ComfyUI resolves weights by folder, so a repo that nests its files (Comfy-Org's
+    # split_files/) lands FLAT here — the name in the workflow is the basename.
+    path = os.path.join(dest, os.path.basename(name))
     if os.path.exists(path) and (want == 0 or os.path.getsize(path) == want):
         print(f"ok (present)  {name}")
         continue
     print(f"downloading   {name}  <- {repo}")
-    hf_hub_download(repo_id=repo, filename=name, local_dir=dest, revision=rev)
+    got = hf_hub_download(repo_id=repo, filename=name, local_dir=dest, revision=rev)
+    if got != path:
+        os.replace(got, path)
     got = os.path.getsize(path)
     if want and got != want:
         sys.exit(f"SIZE MISMATCH {name}: got {got}, expected {want} — wrong repo or a bad pull")
@@ -116,11 +136,14 @@ for root, dirs, _ in os.walk(VOL):
         dirs.remove(".cache")
 
 # TRELLIS pulls these at pipeline load; pre-seed HF_HOME so the first mesh job doesn't stall.
+# transformers loads ONE weight format, and these repos ship four — an unfiltered snapshot took
+# 6.9 GB of volume for the 1.6 GB safetensors it reads.
+IGNORE = ["*.bin", "*.msgpack", "*.h5", "*.onnx", "*.onnx_data"]
 for repo in ("openai/clip-vit-large-patch14",
              "camenduru/dinov3-vitl16-pretrain-lvd1689m"):
     print(f"pre-seeding   {repo}")
     try:
-        snapshot_download(repo)
+        snapshot_download(repo, ignore_patterns=IGNORE)
     except Exception as e:
         print(f"  skipped ({e}) — will fetch at runtime")
 PY

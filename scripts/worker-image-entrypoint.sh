@@ -45,9 +45,17 @@ import os, shutil, sys, time
 from concurrent.futures import ThreadPoolExecutor
 
 vol, stage, tree = sys.argv[1], sys.argv[2], sys.argv[3]
-# What this pod loads: the flux checkpoint (the one ckpt_name every live workflow names) and the
-# BiRefNet matte weights. Everything else on the volume belongs to other queues.
-flux = os.path.join(vol, "checkpoints", "flux1-schnell-fp8.safetensors")
+# What this pod loads: every weight the live workflows name — the two checkpoints, the two Qwen
+# unets with their shared encoder and VAE, and the BiRefNet matte. Everything else on the volume
+# belongs to other queues.
+FOLDERS = {
+    "checkpoints": ["NetaYume_v4_all_in_one.safetensors",
+                    "DreamShaperXL_Turbo_v2_1.safetensors"],
+    "diffusion_models": ["qwen_image_2512_fp8_e4m3fn.safetensors",
+                         "qwen_image_edit_2511_fp8mixed.safetensors"],
+    "text_encoders": ["qwen_2.5_vl_7b_fp8_scaled.safetensors"],
+    "vae": ["qwen_image_vae.safetensors"],
+}
 rmbg = os.path.join(vol, "RMBG")
 
 def tree_size(p):
@@ -73,22 +81,25 @@ def copy_chunked(src, dst, chunk=1 << 30, streams=8):
 
 t0 = time.time()
 try:
-    need = tree_size(flux) + tree_size(rmbg)
+    files = [(folder, os.path.join(vol, folder, n))
+             for folder, names in FOLDERS.items() for n in names]
+    need = sum(tree_size(p) for _, p in files) + tree_size(rmbg)
     os.makedirs(stage, exist_ok=True)
     free = shutil.disk_usage(stage).free
     if free < need * 1.1:
         print(f"[stage] skipped: {free/1e9:.1f} GB free at {stage}, need {need*1.1/1e9:.1f} GB "
               f"— loading off the volume", flush=True)
         sys.exit(0)
-    os.makedirs(os.path.join(stage, "checkpoints"), exist_ok=True)
-    copy_chunked(flux, os.path.join(stage, "checkpoints", os.path.basename(flux)))
+    for folder, src in files:
+        os.makedirs(os.path.join(stage, folder), exist_ok=True)
+        copy_chunked(src, os.path.join(stage, folder, os.path.basename(src)))
     shutil.copytree(rmbg, os.path.join(stage, "RMBG"), dirs_exist_ok=True)
 except OSError as e:
     print(f"[stage] failed ({e}) — loading off the volume", flush=True)
     sys.exit(0)
 
-# Point the live tree at the staged copies only after both landed whole.
-for name in ("checkpoints", "RMBG"):
+# Point the live tree at the staged copies only after all of them landed whole.
+for name in (*FOLDERS, "RMBG"):
     link = os.path.join(tree, name)
     tmp = link + ".new"
     os.symlink(os.path.join(stage, name), tmp)
@@ -115,7 +126,7 @@ mark "ComfyUI up: $(curl -s "http://127.0.0.1:$COMFY_PORT/system_stats" | head -
 wait "$stage_pid" || true
 mark "staging settled"
 
-# Warmup render — the same graph a sprite job runs (flux + the BiRefNet matte), one step at
+# Warmup render — the same graph a sprite job runs (NetaYume + the BiRefNet matte), one step at
 # 256px, so the checkpoint load, the matte's lazy import and the first-use CUDA kernels are all
 # paid HERE, before the worker can claim. A pod that cannot render dies at boot instead of
 # failing a user's job.
@@ -126,14 +137,15 @@ port = sys.argv[1]
 base = f"http://127.0.0.1:{port}"
 wf = {
     "4": {"class_type": "CheckpointLoaderSimple",
-          "inputs": {"ckpt_name": "flux1-schnell-fp8.safetensors"}},
+          "inputs": {"ckpt_name": "NetaYume_v4_all_in_one.safetensors"}},
+    "10": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 6.0, "model": ["4", 0]}},
     "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "warmup", "clip": ["4", 1]}},
     "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["4", 1]}},
     "5": {"class_type": "EmptySD3LatentImage",
           "inputs": {"width": 256, "height": 256, "batch_size": 1}},
     "3": {"class_type": "KSampler",
-          "inputs": {"seed": 0, "steps": 1, "cfg": 1.0, "sampler_name": "euler",
-                     "scheduler": "simple", "denoise": 1.0, "model": ["4", 0],
+          "inputs": {"seed": 0, "steps": 1, "cfg": 4.5, "sampler_name": "res_multistep",
+                     "scheduler": "simple", "denoise": 1.0, "model": ["10", 0],
                      "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
     "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
     "47": {"class_type": "BiRefNetRMBG",

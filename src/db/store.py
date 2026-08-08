@@ -23,6 +23,7 @@ from typing import Dict, List, Optional
 
 from config.settings_manager import settings_manager
 from db.estimates import estimate_seconds
+from tools.version import maestro_rev
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,8 @@ CREATE TABLE IF NOT EXISTS builds (
     seconds_used REAL NOT NULL DEFAULT 0,
     queued_at    REAL NOT NULL,
     started_at   REAL,
-    finished_at  REAL
+    finished_at  REAL,
+    maestro_rev  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_builds_game ON builds(game_id, queued_at);
 
@@ -145,6 +147,19 @@ _INITIALIZED: set = set()
 _INIT_LOCK = threading.Lock()
 
 
+# `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so a column added to _SCHEMA never
+# reaches a db that already exists. Prod's holds real games and cannot be recreated to pick one up.
+_ADDED_COLUMNS = [("builds", "maestro_rev", "TEXT")]
+
+
+def _add_missing_columns(conn) -> None:
+    for table, column, decl in _ADDED_COLUMNS:
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            logger.info("added %s.%s", table, column)
+
+
 @contextmanager
 def _db(immediate: bool = False):
     path = _db_path()
@@ -156,6 +171,7 @@ def _db(immediate: bool = False):
         if str(path) not in _INITIALIZED:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            _add_missing_columns(conn)
             _INITIALIZED.add(str(path))
     if immediate:
         # A read-then-write decision needs the write lock held across BOTH halves. sqlite's
@@ -266,8 +282,9 @@ def create_build(game_id: str, kind: str = "build") -> str:
     build_id = uuid.uuid4().hex[:12]
     with _db() as conn:
         conn.execute(
-            "INSERT INTO builds (id, game_id, kind, status, queued_at) VALUES (?, ?, ?, ?, ?)",
-            (build_id, game_id, kind, "queued", time.time()),
+            "INSERT INTO builds (id, game_id, kind, status, queued_at, maestro_rev) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (build_id, game_id, kind, "queued", time.time(), maestro_rev()),
         )
     return build_id
 

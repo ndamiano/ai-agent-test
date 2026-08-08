@@ -67,6 +67,13 @@ def _owned_spec(run_id: str, user: User) -> Dict[str, Any]:
     return spec
 
 
+def _built_by(run_id: str) -> str:
+    """The revision of the LAST build to touch this game — a fix build is part of what is being
+    graded, so the newest wins rather than the one that started it."""
+    revs = [b.get("maestro_rev") for b in db_store.builds_for(run_id) if b.get("maestro_rev")]
+    return revs[-1] if revs else "unknown"
+
+
 @router.get("/{run_id}", response_model=Dict)
 async def grade_target(run_id: str, user: User = Depends(require_admin)) -> Dict[str, Any]:
     """What the grading page is allowed to know. The request rides along because the page needs it
@@ -83,7 +90,7 @@ async def grade_target(run_id: str, user: User = Depends(require_admin)) -> Dict
 async def submit_grade(run_id: str, body: Grade,
                        user: User = Depends(require_admin)) -> Dict[str, Any]:
     _owned_spec(run_id, user)
-    name = grading.save(run_id, body.model_dump())
+    name = grading.save(run_id, body.model_dump(), maestro_rev=_built_by(run_id))
     return {"saved": name}
 
 

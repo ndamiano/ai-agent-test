@@ -126,3 +126,24 @@ def test_a_corrupt_grade_file_does_not_hide_the_rest(client, grades_dir):
 
     got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
     assert len(got) == 1
+
+
+def test_a_grade_records_the_revision_that_built_the_game(client, monkeypatch):
+    """A grade whose pipeline is unknown is an anecdote. The revision is stamped server-side and
+    never sent to the page — knowing it while grading is what the blindness exists to prevent."""
+    from db import store as db_store
+
+    owner, tok = _user()
+    run_id = _game(owner.id)
+    monkeypatch.setattr(db_store, "maestro_rev", lambda: "abc1234")
+    db_store.create_build(run_id)
+    monkeypatch.setattr(db_store, "maestro_rev", lambda: "def5678-dirty")
+    db_store.create_build(run_id, kind="fix")
+
+    assert "maestro_rev" not in client.get(f"/api/admin/grades/{run_id}",
+                                           headers=_auth(tok)).json()
+
+    client.post(f"/api/admin/grades/{run_id}", json=_filled(), headers=_auth(tok))
+    got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
+    # The LAST build wins: a fix build is part of what is being graded.
+    assert got[0]["maestro_rev"] == "def5678-dirty"

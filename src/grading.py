@@ -31,11 +31,14 @@ def _dir() -> Path:
     return path
 
 
-def save(run_id: str, grade: Dict[str, Any]) -> str:
-    """Write one grading and answer with the name it was stored under."""
+def save(run_id: str, grade: Dict[str, Any], maestro_rev: str = "unknown") -> str:
+    """Write one grading and answer with the name it was stored under.
+
+    The revision that BUILT the game is stamped here, server-side: a grade whose pipeline is
+    unknown is an anecdote, and the grader must not see it while grading."""
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     name = f"{run_id}__{stamp}.json"
-    body = {**grade, "run_id": run_id, "graded_at": stamp}
+    body = {**grade, "run_id": run_id, "graded_at": stamp, "maestro_rev": maestro_rev}
     (_dir() / name).write_text(json.dumps(body, indent=2), encoding="utf-8")
     logger.info("grade saved run=%s file=%s", run_id, name)
     return name

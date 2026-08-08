@@ -403,7 +403,12 @@ src/
                          synchronous face — interiors/dungeons; blockout.py is the SOLVER behind
                          the scene chain: the llm plans relations — counts, kinds, no positions —
                          and code places deterministically, roads by construction, walkable truth
-                         emitted, POIs snapped to the network; prompts/blockout_plan.txt is its
+                         emitted, POIs snapped to the network. Terrain features are BANDS whose
+                         depth varies along the edge, so a coast is a coastline and not a ruler,
+                         and a sand strip handed the water band's own depths follows it by
+                         construction; variety patches are cosmetic and never touch hazard or
+                         cost, so placement and roads are unchanged by them.
+                         prompts/blockout_plan.txt is its
                          hill-climbable plan prompt. The rest is the library: seeded layouts where
                          every town door faces a street by construction, kit-assembled buildings
                          that return their door cells, zone-scatter rules, procedural materials,
@@ -443,8 +448,13 @@ up front.
 **Adding a capability.** The default answer is a line in `prompts/build.txt`, not code. The order is
 **prompt line → a snippet in the repo → a primitive we own**, and a primitive only after a prompt
 line has failed twice, across two models. Open ledger from the 2026-07-27 grid, none yet earning
-more than a prompt line: 3D scenes lit near-black (2/4, both models), fixed canvas with no window
-scaling (every 2D game), silent games (all four arcade + the deck-builder), arrow-keys-only input.
+more than a prompt line: 3D scenes lit near-black (2/4, both models), silent games (all four arcade
++ the deck-builder), arrow-keys-only input. FIXED CANVAS left that ledger on 2026-08-08 and is the
+shape of a line that earns its place: two requests it was not written for, built with and without,
+2/2 against 0/2 (docs/experiments.md). A second candidate line rode along in the same run — draw
+every layer through one world-to-screen offset, written for a real map-drawn-as-a-strip bug — and
+was DROPPED: the defect did not reproduce in either control build, so the line pointed at no
+number. A prompt line is measured against a control arm or it does not ship.
 
 `generate_media` entered UNMEASURED (2026-07-28) and is still unsettled — art is the one capability
 no `write_file` can stand in for. Counted over the 35 staged games (2026-08-01): 19 called it at

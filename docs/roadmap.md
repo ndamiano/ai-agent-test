@@ -41,7 +41,8 @@ Whatever the genre, whatever the request, the build ends with something that ope
   ask for its own art; the human-note fix path.
 - **Open:** no standing battery is *run* on a schedule — the grids were one-off experiments. The
   known recurring defects from those grids, none yet earning more than a prompt line: 3D scenes lit
-  near-black, fixed canvas with no window scaling, silent games, arrow-keys-only input.
+  near-black, silent games, arrow-keys-only input. Fixed canvas left the list on 2026-08-08: one
+  line, measured 2/2 against 0/2 on the same two requests (`docs/experiments.md`).
 - **On trial:** `generate_media` entered unmeasured (2026-07-28). What settles it is COVERAGE — how
   much of what the player sees got art — not whether it is called at all. An unused schema costs
   every turn of every build. First count (2026-08-01, `asset_use`): of 352 assets asked for across

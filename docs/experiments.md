@@ -8,6 +8,45 @@ at a row here has not earned its place.
 
 ---
 
+## Sizing the canvas to the window (2026-08-08, local 5090, qwen3.6_27b via ninfer)
+
+### The question
+"Fixed canvas with no window scaling" has sat on the roadmap's recurring-defect ledger since the
+2026-07-27 grid without a prompt line, because `build.txt` is pinned against additions. A real
+build the same day also shipped a map drawn with the camera offset applied to BOTH the source and
+destination rectangles, so the ground rendered as a strip while the sprites floated correctly —
+"add a camera line too" was the obvious response. Do either of those lines earn a place?
+
+### The shape
+Two requests neither line was written for (a top-down shepherd, a side-view platformer), built
+twice each: once with two candidate lines added, once with the prompt untouched. Same model, same
+box, same session. Scored mechanically on three checks — canvas sized to the window, camera clamped
+to the world, and the ground drawn through the same offset as the sprites — with the checks written
+before the control arm finished and deliberately generous to the control.
+
+### What it measured
+| check | with the lines | without |
+|---|---|---|
+| canvas sized to the window | 2/2 | **0/2** |
+| camera clamped to the world | 2/2 | 2/2 |
+| ground shares the sprite offset | 2/2 | 2/2 |
+
+Screenshots at 2558×1319 confirm the first row: both control games render as a small fixed box in a
+field of background colour, both treatment games fill the screen.
+
+### The ruling
+**The canvas line ships; the camera line does not.** The camera defect that motivated the whole
+exercise did not reproduce in either control game — one broken game out of three top-down games
+built that day is not a recurring defect, and a line that costs every turn of every build must
+point at a number. The scorer was checked against the original broken call to prove it can see the
+bug, so the 2/2 is a real negative and not a blind check.
+
+The general law, and the reason the surviving line is worth its cost: **a defect that only appears
+at window sizes larger than the authored one is invisible to every check that runs at the authored
+size.** The first headless pass over the broken game, driven at 1100×760, reported it clean.
+
+---
+
 ## The worldgen cell recipe, generalized (2026-08-08, local 5090, 6 biomes)
 
 ### The question

@@ -91,17 +91,54 @@ def _score_placement(x: int, y: int, name: str, kind: str,
     return score
 
 
-def _edge_slice(direction: str, depth: int, w: int, h: int,
-                inboard: int = 0) -> Tuple[slice, slice]:
-    if direction == "south":
-        return slice(h - depth - inboard, h - inboard), slice(0, w)
-    if direction == "north":
-        return slice(inboard, depth + inboard), slice(0, w)
-    if direction == "east":
-        return slice(0, h), slice(w - depth - inboard, w - inboard)
-    if direction == "west":
-        return slice(0, h), slice(inboard, depth + inboard)
-    return slice(0, 0), slice(0, 0)
+def _smooth1d(rnd: random.Random, n: int, lo: float, hi: float,
+              step: int = 7) -> np.ndarray:
+    """A smooth random profile of length n in [lo, hi]: coarse control points, linear
+    interpolation. What makes a coastline a line and not a ruler."""
+    pts = [rnd.uniform(lo, hi) for _ in range(max(2, n // step + 2))]
+    xs = np.linspace(0, n - 1, len(pts))
+    return np.interp(np.arange(n), xs, pts)
+
+
+def _edge_band(direction: str, depths: np.ndarray, w: int, h: int,
+               start: Optional[np.ndarray] = None) -> np.ndarray:
+    """A band hugging one map edge whose depth varies along it. `start` pushes the band
+    inboard by a per-index amount — a sand strip handed the water band's depths follows
+    the same coastline by construction."""
+    m = np.zeros((h, w), bool)
+    along = w if direction in ("north", "south") else h
+    for i in range(along):
+        s = int(start[i]) if start is not None else 0
+        d = int(depths[i])
+        if d <= 0:
+            continue
+        if direction == "south":
+            m[max(0, h - s - d):h - s or h, i] = True
+        elif direction == "north":
+            m[s:s + d, i] = True
+        elif direction == "east":
+            m[i, max(0, w - s - d):w - s or w] = True
+        elif direction == "west":
+            m[i, s:s + d] = True
+    return m
+
+
+def _variety_patches(rnd: random.Random, h: int, w: int) -> List[np.ndarray]:
+    """Two organic blob masks over the base terrain, from coarse noise upsampled smooth.
+    Cosmetic only: variety never touches hazard or cost, so placement and roads are
+    unchanged by it."""
+    rng = np.random.default_rng(rnd.randrange(2 ** 32))
+    out = []
+    for thresh in (0.72, 0.80):
+        coarse = rng.random((h // 6 + 2, w // 6 + 2))
+        noise = ndi.zoom(coarse, (h / coarse.shape[0], w / coarse.shape[1]), order=3)
+        out.append(noise[:h, :w] > thresh)
+    return out
+
+
+_VARIETY = {"grass": ("meadow", "dirt"), "meadow": ("grass", "dirt"),
+            "sand": ("dirt",), "snow": ("rock",), "dirt": ("meadow",),
+            "rock": ("dirt",)}
 
 
 def _build_terrain(rnd: random.Random, base: str, features: List[str], w: int, h: int):
@@ -121,36 +158,43 @@ def _build_terrain(rnd: random.Random, base: str, features: List[str], w: int, h
             continue
         if "water_edge" in feat:
             direction = feat.split(":")[1] if ":" in feat else "south"
-            ys, xs = _edge_slice(direction, 6, w, h)
-            water[ys, xs] = True
-            ys2, xs2 = _edge_slice(direction, 2, w, h, 6)
-            sand[ys2, xs2] = True
+            along = w if direction in ("north", "south") else h
+            depths = _smooth1d(rnd, along, 3.5, 9.5)
+            water |= _edge_band(direction, depths, w, h)
+            sand |= _edge_band(direction, _smooth1d(rnd, along, 1.5, 4.0), w, h,
+                               start=depths)
             exclude_sides.add(direction[0].upper())
         elif "lava_edge" in feat:
             direction = feat.split(":")[1] if ":" in feat else "north"
-            ys, xs = _edge_slice(direction, 5, w, h)
-            lava[ys, xs] = True
+            along = w if direction in ("north", "south") else h
+            lava |= _edge_band(direction, _smooth1d(rnd, along, 3.0, 7.5), w, h)
             exclude_sides.add(direction[0].upper())
         elif "cliff_edge" in feat:
             direction = feat.split(":")[1] if ":" in feat else "north"
-            ys, xs = _edge_slice(direction, 5, w, h)
-            rock[ys, xs] = True
+            along = w if direction in ("north", "south") else h
+            rock |= _edge_band(direction, _smooth1d(rnd, along, 2.5, 7.5), w, h)
             exclude_sides.add(direction[0].upper())
         elif "forest_edge" in feat:
             direction = feat.split(":")[1] if ":" in feat else "north"
-            ys, xs = _edge_slice(direction, 8, w, h)
-            forest[ys, xs] = True
+            along = w if direction in ("north", "south") else h
+            forest |= _edge_band(direction, _smooth1d(rnd, along, 4.0, 11.0), w, h)
         elif "river" in feat:
             target = lava if feat.startswith("lava_river") else water
             axis = feat.split(":")[1] if ":" in feat else "north-south"
             rw = rnd.choice([2, 3])
             if axis == "north-south":
                 cx = w // 2 + rnd.randint(-4, 4)
-                target[:, cx:cx + rw] = True
+                centers = _smooth1d(rnd, h, cx - 3, cx + 3)
+                for y in range(h):
+                    c = int(centers[y])
+                    target[y, max(0, c):c + rw] = True
                 force_axis = "EW"
             else:
                 cy = h // 2 + rnd.randint(-3, 3)
-                target[cy:cy + rw, :] = True
+                centers = _smooth1d(rnd, w, cy - 3, cy + 3)
+                for x in range(w):
+                    c = int(centers[x])
+                    target[max(0, c):c + rw, x] = True
                 force_axis = "NS"
 
     labels = np.zeros((h, w), int)
@@ -161,6 +205,10 @@ def _build_terrain(rnd: random.Random, base: str, features: List[str], w: int, h
         if name not in names:
             names.append(name)
         labels[mask] = names.index(name)
+
+    variants = _VARIETY.get(base, ())
+    for mask, vname in zip(_variety_patches(rnd, h, w), variants):
+        put(mask, vname)
 
     put(sand, "sand")
     put(forest, "forest")

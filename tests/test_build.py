@@ -98,15 +98,17 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 11
+    assert system.count("\n- ") == 12
     assert "three.module.js" in system and "generate_media" in system
     assert "seeded generator" in system
+    # Pinned to its measurement: 2/2 games sized the canvas with this line, 0/2 without.
+    assert "sized to the window" in system
     # Art-direction guidance lives on the media tool, not here, so it leaves with the tool.
     media = next(t for t in out.schemas if t["function"]["name"] == "generate_media")
     assert "style phrase" in media["function"]["description"]
     assert "style" not in system
     # assets.json is written by the platform, so naming it here would invite the model to write it.
-    for absent in ("assets.json", "WASD", "window"):
+    for absent in ("assets.json", "WASD"):
         assert absent not in system
 
 

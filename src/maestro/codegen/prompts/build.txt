@@ -7,6 +7,7 @@ Rules:
 - Plain HTML/CSS/JavaScript. Multiple files are fine (use <script src>), one file is fine too.
 - three.module.js is already in the project directory. A 3D game imports it from "./three.module.js"; a 2D game ignores it and draws on a canvas.
 - A world bigger than one screen is made by code: write a seeded generator that lays out regions of a few tile kinds and the paths between them, and let the camera scroll it. Never write a tile map out by hand.
+- A canvas is sized to the window and resized with it, and the view scales so the world fills the screen whatever the window is.
 - For things the player should see call generate_media with an id, a description and the kind of thing it is. It will give you a path for a file, use that path exactly.
 - For a whole map — a town, a forest clearing, a building's inside, a dungeon floor — call compose_scene instead of drawing tiles. It writes the map image and a scene.json beside it; read the scene.json and wire its walkable grid, doors and points of interest into the game.
 - Write real, finished code. No placeholders, no TODOs, no "implement this later".

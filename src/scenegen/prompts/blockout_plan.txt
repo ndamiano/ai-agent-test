@@ -1,0 +1,84 @@
+You design the layout plan for a top-down 2D game map. Given a place description, answer
+with ONE JSON object naming the terrain, the things in the place, and spatial constraints
+between them. A solver positions everything — you name things and relate them, never give
+coordinates.
+
+Plan the WHOLE place: its named buildings and also the ordinary fabric around them —
+anonymous cottages, sheds, trees, crates, boats, lamps. A real town is a few named
+places surrounded by many plain ones.
+
+Output exactly this shape:
+
+{
+  "terrain": {"base": "grass", "features": ["water_edge:south"]},
+  "placeables": [
+    {"name": "The Salt Barrel inn", "kind": "building", "size": "medium"},
+    {"name": "cottage", "kind": "building", "size": "small", "count": 6},
+    {"name": "old lighthouse", "kind": "landmark", "size": "large"},
+    {"name": "fish market", "kind": "zone", "size": "large"},
+    {"name": "fishing boat", "kind": "decoration", "size": "small", "count": 3},
+    {"name": "pine tree", "kind": "decoration", "size": "small", "count": 8}
+  ],
+  "constraints": [
+    ["near", "The Salt Barrel inn", "fish market"],
+    ["central", "fish market"],
+    ["on_edge", "old lighthouse", "south"],
+    ["near", "fishing boat", "old lighthouse"]
+  ]
+}
+
+Fields:
+- terrain.base: the ground everyone walks on — one of grass, meadow, sand, snow, dirt, rock.
+- terrain.features: 0 to 2 large terrain features, each one of:
+  water_edge:DIR   lava_edge:DIR   forest_edge:DIR   cliff_edge:DIR   (DIR: north, south, east, west)
+  river:west-east   river:north-south   lava_river:west-east   lava_river:north-south
+- placeables: as many entries as the place needs — a real town easily holds 20 or more
+  (counts included). kind is one of:
+  building — has a door and sits on a street (houses, shops, inns, temples)
+  landmark — one striking structure (tower, statue, shrine, well)
+  zone — an open ground area (market, plaza, graveyard, training yard)
+  decoration — small scenery (tree, crate, barrel, boat, lamp, fence, garden, cart)
+  size: small, medium or large. count (optional, default 1): how many copies — use it
+  for the ordinary fabric (cottages, trees, crates). Named one-of-a-kind places get no
+  count. Names appear in the game: give distinctive places distinctive names and plain
+  things plain names.
+- constraints: one entry per relationship that matters, each one of:
+  ["near", A, B]            A ends up close to B
+  ["far", A, B]             A ends up far from B
+  ["on_edge", A, DIR]       A sits by that map edge
+  ["central", A]            A sits near the map center
+  ["beside_road", A]        A touches the street
+  ["inside", A, Z]          A stands inside zone Z
+  A, B are placeable names written exactly as in placeables. A constraint on a counted
+  placeable applies to every copy.
+
+Worked example — request: "a farming hamlet in the plains", seed 7:
+
+{
+  "terrain": {"base": "meadow", "features": ["river:north-south", "forest_edge:north"]},
+  "placeables": [
+    {"name": "The Golden Sheaf inn", "kind": "building", "size": "large"},
+    {"name": "Hobb's farmhouse", "kind": "building", "size": "medium"},
+    {"name": "grain barn", "kind": "building", "size": "medium"},
+    {"name": "farm cottage", "kind": "building", "size": "small", "count": 5},
+    {"name": "old stone windmill", "kind": "landmark", "size": "large"},
+    {"name": "harvest square", "kind": "zone", "size": "medium"},
+    {"name": "scarecrow field", "kind": "zone", "size": "large"},
+    {"name": "hay cart", "kind": "decoration", "size": "small", "count": 2},
+    {"name": "apple tree", "kind": "decoration", "size": "small", "count": 7},
+    {"name": "well", "kind": "decoration", "size": "small"}
+  ],
+  "constraints": [
+    ["central", "harvest square"],
+    ["near", "The Golden Sheaf inn", "harvest square"],
+    ["beside_road", "grain barn"],
+    ["on_edge", "scarecrow field", "east"],
+    ["far", "old stone windmill", "harvest square"],
+    ["near", "hay cart", "grain barn"],
+    ["inside", "well", "harvest square"]
+  ]
+}
+
+Answer with the JSON object only.
+
+Requested place: {request}

@@ -1,0 +1,23 @@
+{
+  "u": {"class_type": "UNETLoader",
+        "inputs": {"unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+                   "weight_dtype": "default"}},
+  "c": {"class_type": "CLIPLoader",
+        "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                   "type": "qwen_image", "device": "default"}},
+  "v": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+  "ms": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.1, "model": ["u", 0]}},
+  "li": {"class_type": "LoadImage", "inputs": {"image": ""}},
+  "p": {"class_type": "TextEncodeQwenImageEditPlus",
+        "inputs": {"prompt": "", "clip": ["c", 0], "vae": ["v", 0], "image1": ["li", 0]}},
+  "n": {"class_type": "TextEncodeQwenImageEditPlus",
+        "inputs": {"prompt": "", "clip": ["c", 0], "vae": ["v", 0], "image1": ["li", 0]}},
+  "ve": {"class_type": "VAEEncode", "inputs": {"pixels": ["li", 0], "vae": ["v", 0]}},
+  "k": {"class_type": "KSampler",
+        "inputs": {"seed": 5, "steps": 20, "cfg": 2.5, "sampler_name": "euler",
+                   "scheduler": "simple", "denoise": 1.0, "model": ["ms", 0],
+                   "positive": ["p", 0], "negative": ["n", 0], "latent_image": ["ve", 0]}},
+  "vd": {"class_type": "VAEDecode", "inputs": {"samples": ["k", 0], "vae": ["v", 0]}},
+  "s": {"class_type": "SaveImage",
+        "inputs": {"images": ["vd", 0], "filename_prefix": "scene_embed"}}
+}

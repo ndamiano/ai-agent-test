@@ -134,6 +134,13 @@ def _decimate(md: Dict, result: Dict) -> None:
 
 OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate}
 
+# The scene chain rides the same registries so the completion dispatch stays one branch:
+# its jobs are asset jobs whose `then` carries scene names.
+from maestro.codegen import scene_chain as _scene  # noqa: E402  (imports nothing from here)
+
+CONTINUATIONS.update(_scene.CONTINUATIONS)
+OPERATIONS.update(_scene.OPERATIONS)
+
 
 def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
     run_id = md["run_id"]
@@ -161,7 +168,7 @@ def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
         db_store.build_finished(build_id, "succeeded" if ok else "failed")
 
 
-FINALIZERS = {"assets": _finalize_assets}
+FINALIZERS = {"assets": _finalize_assets, **_scene.FINALIZERS}
 
 
 def build_continuation(metadata: Dict, result: Optional[Dict]) -> Optional[Dict]:

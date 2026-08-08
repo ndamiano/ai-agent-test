@@ -106,8 +106,18 @@ the plan call is a normal llm job. No new trust boundaries.
      GLBs whose subject didn't change; new camera → re-render sprites only).
    - **Concurrency** — two builds missing the same type at once must not render it twice
      or corrupt an entry; deposit is claim-then-fill like the job queue.
-   - **Storage lifecycle** — lives under data_dir not a run dir, rides the same S3
-     archive/evict/rehydrate boundary as runs.
+   - **Storage lifecycle** — the long-term plan: S3 (DO Spaces, S3-compatible — the
+     existing `tools/s3.py` SigV4 client and the settings `s3` block work as-is) is the
+     store's AUTHORITY; the droplet holds an LRU hot cache under data_dir with a disk
+     watermark (~10GB), same verified-remote-before-evict rule as archive.py. The store
+     is touched only at BUILD time (games get copies baked into their folder, /play never
+     reads it), so a cache miss costs seconds of build wall-clock, invisible to players.
+     Sizing: ~10MB/type → 1,000 types ≈ 10GB local, 25,000 ≈ one $5/mo 250GB bucket.
+     Deposit path: pod render → control plane save (where `_admit` runs) → local + Spaces
+     upload, marked verified. Store v1 may ship droplet-local — the entry format is what
+     must be right first; where bytes sleep is swappable behind it. If the 35GB droplet
+     pinches before the store exists, the lever already built is run eviction
+     (archive.py --evict).
    - **Safety** — deposits pass the same render-verdict screen as every save; a store
      entry reaches many games, so fail closed matters more here, not less.
 3. **Scene chain** — the continuation names + fan-in described above. Includes the

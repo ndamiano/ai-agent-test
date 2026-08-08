@@ -234,9 +234,12 @@ src/
                          compose_scene — the smallest surface that works, and kept that way.
                          compose_scene is scenegen's build face: it bakes a whole MAP —
                          assets/<id>_ground.png plus <id>_scene.json (walkable grid, door cells,
-                         POIs) — synchronously into the game folder, pure CPU, and the model
-                         reads the json and wires it (verified in a real build 2026-08-06: three
-                         scenes asked for, fetched at runtime, walkable grid driving collision). A path is resolved and must
+                         POIs) — and the model reads the json and wires it (verified in a real
+                         build 2026-08-06: three scenes asked for, fetched at runtime, walkable
+                         grid driving collision). Interiors/dungeons bake synchronously, pure
+                         CPU; town/glade ride the SCENE CHAIN (below): scene.json and a
+                         code-painted ground land at tool time, the diffusion picture upgrades
+                         the same path as it renders. A path is resolved and must
                          land inside the game folder. Every failure is REPORTED to the model as text
                          (a missing argument names itself) and never guessed at: substituting a
                          default for a missing `path` sent every write in a run to one file.
@@ -284,6 +287,39 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
+      scene_chain.py     compose_scene's GPU path (the 2026-08-08 validated cell recipe, see
+                         tasks/worldgen_pipeline_plan.md + docs/experiments.md). Synchronous
+                         half at tool time: one plan call (blocking llm job — the calling turn
+                         has already completed, so the queue is free), the scenegen solver,
+                         scene.json (walkable TRUTH, never diffused), a code-painted ground.
+                         Async half as jobs: store-miss subjects (Qwen-2512, image queue) each
+                         chaining TRELLIS (mesh queue) whose completion deposits
+                         subject+GLB+sprite to the asset store, plus one masked terrain img2img
+                         (DreamShaper; structural cells at 0.45 so code keeps owning where
+                         things ARE) — the BATCH FINALIZE is the fan-in barrier
+                         (claim_batch_finalize already guarantees exactly-one against the
+                         reaper): composite store sprites over the terrain, then one Qwen-Edit
+                         embedding job whose finalize drift-checks each box against the
+                         composite (detection only — broken, never bad), lands the final ground
+                         AT THE SAME PATH and re-stages. Every enqueue carries game_id, so
+                         admission and debit ride the queue like all GPU work; a refused budget
+                         at any seam leaves the best ground already on disk (code paint →
+                         terrain → composite → embed, each overwriting the last). Its names
+                         ride asset_chain's registries, so the completion dispatch stays one
+                         branch.
+      asset_store.py     the ASSET STORE: rendered object TYPES shared across games, so a mesh
+                         that cost ~30s of GPU is never paid for twice. Entry =
+                         <data_dir>/asset_store/<key>/ holding subject.png + mesh.glb +
+                         sprite.png + meta.json; every intermediate kept (dropping one forces
+                         re-paying the stage upstream), meta stamps which model made each piece
+                         so an upgrade invalidates exactly its own leg. Claim-then-fill
+                         (O_EXCL + TTL) so two builds missing one type render it once. Type
+                         RESOLUTION is one small llm call for the whole plan (flavor name →
+                         generic type + subject phrase), the style riding the KEY — a desert
+                         inn and a snow inn are different entries, which is what retires the
+                         battery's cottage-in-the-desert; fallback is the name itself, which
+                         renders right and merely reuses less. Games copy sprites out at
+                         composite time and never own entries; /play never reads the store.
       stages.py          STAGED CONSTRUCTION — the hardest system gets a whole build to itself,
                          then the game grows by fix builds (measured 2026-08-02/03: a duel built
                          alone earned a dedicated AI module; the same duel inside the full
@@ -364,10 +400,19 @@ src/
                          it was the one thing that produced real scale, and re-pointing it to emit
                          data the game reads is an open decision, not a dependency.
   scenegen/              scene composition behind the compose_scene build tool (bake.py is the
-                         platform face; the rest is the library: seeded layouts where every town
-                         door faces a street by construction, kit-assembled buildings that return
-                         their door cells, zone-scatter rules, procedural materials, distance
-                         bands, the light plan). Born from the 2026-08-06 24-round exploration;
+                         synchronous face — interiors/dungeons; blockout.py is the SOLVER behind
+                         the scene chain: the llm plans relations — counts, kinds, no positions —
+                         and code places deterministically, roads by construction, walkable truth
+                         emitted, POIs snapped to the network. Terrain features are BANDS whose
+                         depth varies along the edge, so a coast is a coastline and not a ruler,
+                         and a sand strip handed the water band's own depths follows it by
+                         construction; variety patches are cosmetic and never touch hazard or
+                         cost, so placement and roads are unchanged by them.
+                         prompts/blockout_plan.txt is its
+                         hill-climbable plan prompt. The rest is the library: seeded layouts where
+                         every town door faces a street by construction, kit-assembled buildings
+                         that return their door cells, zone-scatter rules, procedural materials,
+                         distance bands, the light plan). Born from the 2026-08-06 24-round exploration;
                          its laws live in the project memory doctrine. Code owns everything
                          spatial; diffusion paints materials and parts — part sprites are
                          code-drawn from a style-keyed palette today, rendering them through the
@@ -403,8 +448,13 @@ up front.
 **Adding a capability.** The default answer is a line in `prompts/build.txt`, not code. The order is
 **prompt line → a snippet in the repo → a primitive we own**, and a primitive only after a prompt
 line has failed twice, across two models. Open ledger from the 2026-07-27 grid, none yet earning
-more than a prompt line: 3D scenes lit near-black (2/4, both models), fixed canvas with no window
-scaling (every 2D game), silent games (all four arcade + the deck-builder), arrow-keys-only input.
+more than a prompt line: 3D scenes lit near-black (2/4, both models), silent games (all four arcade
++ the deck-builder), arrow-keys-only input. FIXED CANVAS left that ledger on 2026-08-08 and is the
+shape of a line that earns its place: two requests it was not written for, built with and without,
+2/2 against 0/2 (docs/experiments.md). A second candidate line rode along in the same run — draw
+every layer through one world-to-screen offset, written for a real map-drawn-as-a-strip bug — and
+was DROPPED: the defect did not reproduce in either control build, so the line pointed at no
+number. A prompt line is measured against a control arm or it does not ship.
 
 `generate_media` entered UNMEASURED (2026-07-28) and is still unsettled — art is the one capability
 no `write_file` can stand in for. Counted over the 35 staged games (2026-08-01): 19 called it at

@@ -153,6 +153,17 @@ def build_tools(state) -> dict:
 
     def compose_scene(id=None, archetype=None, style=None, seed=None,
                       width_cells=None, height_cells=None, **_) -> dict:
+        # Outdoor scenes render through the GPU pipeline (scene.json now, painted ground
+        # upgraded in place as the art lands); interiors stay the synchronous code bake.
+        if not id:
+            raise KeyError("id")
+        if archetype not in ("town", "glade", "interior", "dungeon"):
+            return {"ok": False,
+                    "error": "archetype must be one of town, glade, interior, dungeon"}
+        if archetype in ("town", "glade"):
+            from maestro.codegen.scene_chain import compose
+            return compose(root, state.run_id, id, archetype, style, seed,
+                           width_cells, height_cells)
         from scenegen.bake import bake_scene
         return bake_scene(root, id, archetype, style, seed, width_cells, height_cells)
 

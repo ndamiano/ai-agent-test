@@ -8,6 +8,81 @@ at a row here has not earned its place.
 
 ---
 
+## Sizing the canvas to the window (2026-08-08, local 5090, qwen3.6_27b via ninfer)
+
+### The question
+"Fixed canvas with no window scaling" has sat on the roadmap's recurring-defect ledger since the
+2026-07-27 grid without a prompt line, because `build.txt` is pinned against additions. A real
+build the same day also shipped a map drawn with the camera offset applied to BOTH the source and
+destination rectangles, so the ground rendered as a strip while the sprites floated correctly —
+"add a camera line too" was the obvious response. Do either of those lines earn a place?
+
+### The shape
+Two requests neither line was written for (a top-down shepherd, a side-view platformer), built
+twice each: once with two candidate lines added, once with the prompt untouched. Same model, same
+box, same session. Scored mechanically on three checks — canvas sized to the window, camera clamped
+to the world, and the ground drawn through the same offset as the sprites — with the checks written
+before the control arm finished and deliberately generous to the control.
+
+### What it measured
+| check | with the lines | without |
+|---|---|---|
+| canvas sized to the window | 2/2 | **0/2** |
+| camera clamped to the world | 2/2 | 2/2 |
+| ground shares the sprite offset | 2/2 | 2/2 |
+
+Screenshots at 2558×1319 confirm the first row: both control games render as a small fixed box in a
+field of background colour, both treatment games fill the screen.
+
+### The ruling
+**The canvas line ships; the camera line does not.** The camera defect that motivated the whole
+exercise did not reproduce in either control game — one broken game out of three top-down games
+built that day is not a recurring defect, and a line that costs every turn of every build must
+point at a number. The scorer was checked against the original broken call to prove it can see the
+bug, so the 2/2 is a real negative and not a blind check.
+
+The general law, and the reason the surviving line is worth its cost: **a defect that only appears
+at window sizes larger than the authored one is invisible to every check that runs at the authored
+size.** The first headless pass over the broken game, driven at 1100×760, reported it clean.
+
+---
+
+## The worldgen cell recipe, generalized (2026-08-08, local 5090, 6 biomes)
+
+### The question
+The map recipe validated on one coastal-town cell (blockout → Qwen-2512 subjects → TRELLIS
+sprites at one shared camera → DreamShaper terrain img2img → composite → Qwen-Edit-2511
+embedding; `tasks/worldgen_pipeline_plan.md`) — does it survive biomes it wasn't tuned on?
+
+### The run
+Six requests — river village, desert bazaar, volcanic mine, snow monastery, forest camp,
+farm hamlet — through the full pipeline unattended. Lab code outside the service tree;
+~35 min wall-clock total, 26 new object types rendered (subject ~20s, TRELLIS lift + 45°
+orthographic sprite ~30s each), 6 embedding passes at 134–172s.
+
+### What it measured
+**6/6 end to end, zero pipeline failures.** Layouts solved (no plan fallbacks), terrain
+differentiated per biome (lava river, snow field, sand, grass), objects kept identity
+through the embedding pass, contact shadows landed. The pipeline generalizes; the failures
+are all content:
+- **Type resolution is biome-blind.** Every "house/hut/quarters" in every biome resolved
+  to the one cached red-roof cottage — desert, volcano and snow alike. 26 of 32 types fell
+  through the keyword table to raw flavor names ("The Silent Peak Monastery"). Resolution
+  needs a style/biome dimension and something smarter than keywords.
+- **Uniform scale lies.** Telegraph-pole street lamps, a barn-sized well — one
+  VISUAL_SCALE for every kind.
+- **Forest is terrain when it should be trees.** The forest band painted as flat dark
+  green; a forest cell needs a tree-scatter rule, not a label.
+- **The style prompt can lose to the bare-ground paint.** river_village asked for lush
+  green and kept its mud at denoise 0.55.
+- **Sparse density** — big empty stretches in most cells.
+
+### The ruling
+Recipe is integration-ready; every failure maps to a work item already in
+`tasks/worldgen_pipeline_plan.md` (store type resolution, per-kind scale table, forest
+scatter, terrain palette, density). Lab code and renders live outside the repo — results
+recorded here, service code arrives only with the integration itself.
+
 ## The NSFW render classifier's threshold (2026-08-03, local 5090, 290 renders)
 
 ### The question

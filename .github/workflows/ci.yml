@@ -16,6 +16,8 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements.txt pytest httpx
+      - name: Install playwright browser
+        run: python -m playwright install --with-deps chromium
       - name: Bootstrap settings
         run: cp src/config/settings.example.json src/config/settings.json
       - name: Run tests

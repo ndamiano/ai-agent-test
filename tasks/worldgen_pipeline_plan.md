@@ -157,6 +157,20 @@ answers synchronously inside a build turn. Either the whole tool call becomes as
 collision), or the plan call rides the build's own llm turn budget synchronously. Decide at
 item 4, informed by how builds actually consumed scene.json in the battery.
 
+## Known risks (watch these two while implementing)
+
+1. **The fan-in is the one new orchestration shape.** Every existing chain is linear
+   per-asset; the scene chain waits on N types before compositing. `batch_id`
+   finalize-when-batch-empties is precedent, but new shapes in the completion path are
+   where subtle bugs live: double-fires on reaper re-drive, a preempted type stranding
+   the barrier, a store hit racing a miss for the same type. This code gets the most
+   careful tests in the change.
+2. **Type resolution decides the store's whole value, and it is unsolved.** The keyword
+   table failed 26/32 on its first battery. If resolution is bad the store is either a
+   miss-machine (no reuse, every map pays full price) or a wrong-hit machine (the
+   battery's cottage-in-the-desert). Probable answer is a small llm normalization call —
+   which is inference in a new place, with cost metering and a prompt to hill-climb.
+
 ## Visual polish (post-integration, not gating)
 
 - **Per-kind scale table** (pure code) — barrels/lamps/crates render building-scale;

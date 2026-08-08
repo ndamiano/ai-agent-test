@@ -8,6 +8,42 @@ at a row here has not earned its place.
 
 ---
 
+## The worldgen cell recipe, generalized (2026-08-08, local 5090, 6 biomes)
+
+### The question
+The map recipe validated on one coastal-town cell (blockout → Qwen-2512 subjects → TRELLIS
+sprites at one shared camera → DreamShaper terrain img2img → composite → Qwen-Edit-2511
+embedding; `tasks/worldgen_pipeline_plan.md`) — does it survive biomes it wasn't tuned on?
+
+### The run
+Six requests — river village, desert bazaar, volcanic mine, snow monastery, forest camp,
+farm hamlet — through the full pipeline unattended. Lab code outside the service tree;
+~35 min wall-clock total, 26 new object types rendered (subject ~20s, TRELLIS lift + 45°
+orthographic sprite ~30s each), 6 embedding passes at 134–172s.
+
+### What it measured
+**6/6 end to end, zero pipeline failures.** Layouts solved (no plan fallbacks), terrain
+differentiated per biome (lava river, snow field, sand, grass), objects kept identity
+through the embedding pass, contact shadows landed. The pipeline generalizes; the failures
+are all content:
+- **Type resolution is biome-blind.** Every "house/hut/quarters" in every biome resolved
+  to the one cached red-roof cottage — desert, volcano and snow alike. 26 of 32 types fell
+  through the keyword table to raw flavor names ("The Silent Peak Monastery"). Resolution
+  needs a style/biome dimension and something smarter than keywords.
+- **Uniform scale lies.** Telegraph-pole street lamps, a barn-sized well — one
+  VISUAL_SCALE for every kind.
+- **Forest is terrain when it should be trees.** The forest band painted as flat dark
+  green; a forest cell needs a tree-scatter rule, not a label.
+- **The style prompt can lose to the bare-ground paint.** river_village asked for lush
+  green and kept its mud at denoise 0.55.
+- **Sparse density** — big empty stretches in most cells.
+
+### The ruling
+Recipe is integration-ready; every failure maps to a work item already in
+`tasks/worldgen_pipeline_plan.md` (store type resolution, per-kind scale table, forest
+scatter, terrain palette, density). Lab code and renders live outside the repo — results
+recorded here, service code arrives only with the integration itself.
+
 ## The NSFW render classifier's threshold (2026-08-03, local 5090, 290 renders)
 
 ### The question

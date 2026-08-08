@@ -130,6 +130,27 @@ def test_handoff_token_is_single_use_and_validated(client, game_bundle):
     assert client.get("/handoff").status_code == 403
 
 
+def test_grant_cookie_is_storable_over_plain_http_on_localhost(client, game_bundle):
+    """A browser stores no `Secure` cookie over http://localhost, so hardcoding the cross-site
+    attributes made every local play 401 at the grant check — the handoff succeeded and the cookie
+    never survived the redirect. Localhost serves the game same-site, where Lax is enough."""
+    owner, tok = _user("alice")
+    run_id = game_bundle(_game(owner.id))
+
+    r = _play_session(client, tok, run_id)
+    assert r.status_code == 200
+    r2 = client.get(r.json()["url"], follow_redirects=False, headers={"host": "localhost:8000"})
+    assert r2.status_code == 302
+    low = r2.headers["set-cookie"].lower()
+    assert "secure" not in low and "partitioned" not in low
+    assert "samesite=lax" in low
+    assert "httponly" in low and f"path=/play/games/{run_id}/" in low
+
+    grant = r2.headers["set-cookie"].split("maestro_play=", 1)[1].split(";", 1)[0]
+    assert client.get(f"/play/games/{run_id}/main.js",
+                      cookies={"maestro_play": grant}).status_code == 200
+
+
 def test_served_index_html_carries_the_console_reporter(client, game_bundle):
     owner, tok = _user("alice")
     run_id = game_bundle(_game(owner.id))

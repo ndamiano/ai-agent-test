@@ -2,7 +2,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 # Interactive API docs are a dev convenience; in prod they hand an attacker the full route +
@@ -180,11 +180,21 @@ async def _host_split(request, call_next):
 
 
 _GRANT_COOKIE_TMPL = (PLAY_COOKIE + "={token}; Max-Age={max_age}; Path=/play/games/{run_id}/; "
-                      "HttpOnly; Secure; SameSite=None; Partitioned")
+                      "HttpOnly; {context}")
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+
+def _grant_cookie_context(host: str) -> str:
+    """`Secure; SameSite=None; Partitioned` is what an iframed game on its own domain needs, and a
+    browser stores none of it over plain http — which is every localhost dev box, where the game is
+    same-site anyway and Lax is both sufficient and storable."""
+    if host.split(":")[0].lower() in _LOCAL_HOSTS:
+        return "SameSite=Lax"
+    return "Secure; SameSite=None; Partitioned"
 
 
 @app.get("/handoff", include_in_schema=False)
-async def handoff(t: str = ""):
+async def handoff(request: Request, t: str = ""):
     """The game origin's front door: redeem a single-use play token (minted on the app origin by
     POST /api/games/<id>/play-session, after the ownership check) and 302 into the game, setting
     the grant cookie its sub-resource loads will ride. The cookie is HttpOnly + host-only +
@@ -201,7 +211,8 @@ async def handoff(t: str = ""):
         raise HTTPException(status_code=429, detail="too many open sessions — try again shortly")
     response = RedirectResponse(f"/play/games/{run_id}/index.html", status_code=302)
     response.headers.append("set-cookie", _GRANT_COOKIE_TMPL.format(
-        token=grant, max_age=playgrants.GRANT_TTL_SECONDS, run_id=run_id))
+        token=grant, max_age=playgrants.GRANT_TTL_SECONDS, run_id=run_id,
+        context=_grant_cookie_context(request.headers.get("host", ""))))
     return response
 
 

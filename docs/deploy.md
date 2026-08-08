@@ -384,8 +384,7 @@ disappears (self-terminate or reaper within `stale_worker_seconds`).
 
 ## Known deferred risks (accepted for private alpha — trusted testers)
 
-Flagged in the pre-open security audit; hardened 2026-07-23. Task breakdown + status:
-`tasks/platform_polish.md` P1.
+Flagged in the pre-open security audit; hardened 2026-07-23.
 
 - **Untrusted generated JS in the browser** — contained everywhere, ISOLATED once `play.origin`
   is set. Every `/play` response carries a CSP (`api/app.py` `_PLAY_CSP_BASE`) pinning scripted
@@ -397,7 +396,7 @@ Flagged in the pre-open security audit; hardened 2026-07-23. Task breakdown + st
   shares the app origin's localStorage, where the session bearer token lives; the ownership check
   at play-session mint is what keeps that token the game's own. Before any game is viewable by a
   NON-owner, deploy the split domains (above) — on the split, game code runs on a host that serves
-  no API and holds no app storage. Residue: `tasks/platform_polish.md` P1.
+  no API and holds no app storage.
 - **Login throttle is the only rate limit.** `src/auth/ratelimit.py` caps online password guessing
   per handle (429 + `Retry-After`). Nothing else is capped: there is no conversational surface,
   builds charge credits before enqueue, every GPU job admits against the game's compute budget, the

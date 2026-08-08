@@ -1,7 +1,7 @@
 # Experiments — what has been tried on the build loop, and what it measured
 
 A record of shapes that were tried against real builds and the numbers they produced. An entry
-belongs here once it has been RUN; a shape that has only been argued about belongs in `tasks/`.
+belongs here once it has been RUN; a shape that has only been argued about stays out of the repo.
 
 The rule this file exists to serve: **measure before changing the loop.** A change that cannot point
 at a row here has not earned its place.
@@ -52,7 +52,7 @@ size.** The first headless pass over the broken game, driven at 1100×760, repor
 ### The question
 The map recipe validated on one coastal-town cell (blockout → Qwen-2512 subjects → TRELLIS
 sprites at one shared camera → DreamShaper terrain img2img → composite → Qwen-Edit-2511
-embedding; `tasks/worldgen_pipeline_plan.md`) — does it survive biomes it wasn't tuned on?
+embedding) — does it survive biomes it wasn't tuned on?
 
 ### The run
 Six requests — river village, desert bazaar, volcanic mine, snow monastery, forest camp,
@@ -78,9 +78,8 @@ are all content:
 - **Sparse density** — big empty stretches in most cells.
 
 ### The ruling
-Recipe is integration-ready; every failure maps to a work item already in
-`tasks/worldgen_pipeline_plan.md` (store type resolution, per-kind scale table, forest
-scatter, terrain palette, density). Lab code and renders live outside the repo — results
+Recipe is integration-ready; every failure maps to a known work item (store type
+resolution, per-kind scale table, forest scatter, terrain palette, density). Lab code and renders live outside the repo — results
 recorded here, service code arrives only with the integration itself.
 
 ## The NSFW render classifier's threshold (2026-08-03, local 5090, 290 renders)

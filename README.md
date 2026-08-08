@@ -2,7 +2,7 @@
 
 An AI platform that makes things. The user says "make me a game" — a while later, a good game exists. AI output quality is the product; everything else is scaffolding.
 
-See `docs/vision.md` for the philosophy, `docs/roadmap.md` for the plan and current state, and `CLAUDE.md` for architecture and code standards.
+See `docs/vision.md` for the philosophy, `docs/roadmap.md` for the plan and current state, `CLAUDE.md` for the doctrine and code standards, `docs/build_path.md` for the build path module by module, and `docs/local_dev.md` for how to run it.
 
 ## How it works
 
@@ -121,7 +121,7 @@ src/
   scaler/       the RunPod autoscaler
   tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
   worker/       the pull-side GPU worker agent
-  worldgen/     standalone procedural world generator
+  scenegen/     scene composition behind the compose_scene build tool
 frontend/       React + Vite UI
 tests/          pytest suite
 docs/           vision, roadmap, deploy

@@ -59,7 +59,9 @@ built for a single person grading his own output.
 - **Play before reading anything.** No source, no transcript, no asset manifest, no build log, and
   not the request either. The game gets met the way a player meets it.
 - **Time-box it.** 10 minutes of play, or until you have clearly seen everything, whichever comes
-  first. Record which of the two happened — that is itself the depth signal.
+  first. Record which happened — it is itself the depth signal, and **abandoned** is a third
+  outcome, not a variant of the other two: a game you stopped playing because you wanted to stop is
+  the loudest thing a grade can record.
 - **Every score carries a note.** A number without a sentence is unusable in three months. The note
   survives; the number sorts.
 - **Grade the build you got.** Not the one a re-roll might produce. Variance is real, and the way to
@@ -77,7 +79,7 @@ tracked.
 ```
 run_id:
 date graded:
-play: ended at time-box | saw everything at <n> min
+play: time-box | saw everything | abandoned, at <n> min
 
 --- LAYER 0 — did it survive contact -------------------------------
 loads:                      y / n

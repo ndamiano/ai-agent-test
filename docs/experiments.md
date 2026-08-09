@@ -41,17 +41,29 @@ recurs, and turn that into a prompt-time change measured against a control arm. 
 across many games is a work item; low on one game is noise.
 
 ### Alongside: an LLM asked to fill in the same rubric
-Same game, same rubric, source and manifest only, no ability to run it: it answered **6 / 5** against
-the human's **1 / 1**. It was close on what is visible in code — `art_integration` 6 vs 6,
-`legibility` 6 vs 7, `moment_to_moment` 5 vs 4 — and inverted on everything requiring the game to
-run: `depth` **7 vs 1** ("30+ unique items… 20-30 minutes" — real, in `items.js`, unreachable),
-`core_loop` 4 vs 1, `visual_coherence` 7 vs 1, `character` **8 vs n/a** (it praised writing the
-player never reaches).
+Both graded games, same rubric, source and manifest only, no ability to run them. It answered
+**6/5 both times** against the human's **1/1 both times**.
 
-The game passed the error gate — it loads and throws nothing — and passed this review, and is a 1 to
-the person playing it. The failure was an unreachable state, which is not an exception and not a
-property of the code. N=1, recorded because the failure mode is clean, not because one game settles
-anything.
+Game 1 (a shop/deduction game, blocked by a layout bug): close on what is visible in code —
+`art_integration` 6 vs 6, `legibility` 6 vs 7, `moment_to_moment` 5 vs 4 — and inverted on
+everything requiring the game to run: `depth` **7 vs 1** ("30+ unique items… 20-30 minutes" — real,
+in `items.js`, unreachable), `visual_coherence` 7 vs 1, `character` **8 vs n/a** (it praised writing
+the player never reaches).
+
+Game 2 (a 3D village, abandoned as unplayable because movement and camera turn against each other):
+`moment_to_moment` **6 vs 1**, scored as *"movement is smooth and standard FPS controls work well"* —
+an assertion about the one thing that made the game unplayable. `visual_coherence` 8 vs 2,
+`art_integration` 7 vs 1, `character` 7 vs 1. Its stated biggest gap was the absence of a core loop:
+articulate, plausible, and not the reason the game failed.
+
+Both games passed the error gate — they load and throw nothing — and passed this review, and are 1s
+to the person playing them. Both failures were embodied rather than textual: an unreachable state,
+and a control scheme that is wrong only once a body is attached to it.
+
+**Unresolved, and it undercuts the above:** 6/5 twice is suspiciously constant. Whether the model is
+reading these games or emitting a default for any competent-looking codebase is not distinguishable
+from two samples that failed. The test is to hand it a game the human scores WELL; if it still says
+6/5, it is measuring nothing.
 
 ---
 

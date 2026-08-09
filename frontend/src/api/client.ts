@@ -213,6 +213,7 @@ export const api = {
     // identifies the arm — a grade formed knowing which arm built the game is not evidence.
     gradeTarget: (runId: string) =>
         request<GradeTarget>(`/api/admin/grades/${runId}`),
+    allGrades: () => request<{ grades: (Grade & { run_id: string; graded_at: string; maestro_rev: string })[] }>('/api/admin/grades'),
     submitGrade: (runId: string, grade: Grade) =>
         request<{ saved: string }>(`/api/admin/grades/${runId}`, { method: 'POST', body: JSON.stringify(grade) }),
 

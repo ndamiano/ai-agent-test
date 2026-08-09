@@ -147,3 +147,24 @@ def test_a_grade_records_the_revision_that_built_the_game(client, monkeypatch):
     got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
     # The LAST build wins: a fix build is part of what is being graded.
     assert got[0]["maestro_rev"] == "def5678-dirty"
+
+
+def test_all_grades_carries_the_revision_for_comparison(client, monkeypatch):
+    """The side-by-side is the opposite surface to the grading page: it exists to see whether a
+    change to the loop moved anything, so the revision has to be visible here."""
+    from db import store as db_store
+
+    owner, tok = _user()
+    a, b = _game(owner.id), _game(owner.id, "another game")
+    monkeypatch.setattr(db_store, "maestro_rev", lambda: "aaa1111")
+    db_store.create_build(a)
+    monkeypatch.setattr(db_store, "maestro_rev", lambda: "bbb2222")
+    db_store.create_build(b)
+
+    client.post(f"/api/admin/grades/{a}", json=dict(_filled(), considered=3), headers=_auth(tok))
+    client.post(f"/api/admin/grades/{b}", json=dict(_filled(), considered=9), headers=_auth(tok))
+
+    got = client.get("/api/admin/grades", headers=_auth(tok)).json()["grades"]
+    assert len(got) == 2
+    assert {g["run_id"]: g["maestro_rev"] for g in got} == {a: "aaa1111", b: "bbb2222"}
+    assert client.get("/api/admin/grades").status_code == 401

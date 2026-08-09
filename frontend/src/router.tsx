@@ -63,6 +63,7 @@ export type Route =
     | { kind: 'admin' }
     | { kind: 'prompts' }
     | { kind: 'grade'; runId: string }
+    | { kind: 'grades' }
 
 // Unknown paths fall back to the library rather than a 404 page — every dead link in a tool this
 // small should land somewhere useful.
@@ -72,6 +73,7 @@ export const parseRoute = (path: string): Route => {
     if (path === '/credits') return { kind: 'credits' }
     if (path === '/admin') return { kind: 'admin' }
     if (path === '/prompts') return { kind: 'prompts' }
+    if (path === '/grades') return { kind: 'grades' }
     const grade = path.match(/^\/grade\/([A-Za-z0-9_-]+)$/)
     if (grade) return { kind: 'grade', runId: grade[1] }
     const game = path.match(/^\/game\/([A-Za-z0-9_-]+)$/)

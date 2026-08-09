@@ -67,6 +67,14 @@ def _owned_spec(run_id: str, user: User) -> Dict[str, Any]:
     return spec
 
 
+@router.get("", response_model=Dict)
+async def all_grades(_: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Every grade taken, for the side-by-side. Unlike the grading page this one carries the
+    revision that built each game — the whole point here is to see whether a change to the loop
+    moved anything, which needs the pipeline version visible."""
+    return {"grades": grading.everything()}
+
+
 def _built_by(run_id: str) -> str:
     """The revision of the LAST build to touch this game — a fix build is part of what is being
     graded, so the newest wins rather than the one that started it."""

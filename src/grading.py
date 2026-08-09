@@ -44,6 +44,18 @@ def save(run_id: str, grade: Dict[str, Any], maestro_rev: str = "unknown") -> st
     return name
 
 
+def everything() -> List[Dict[str, Any]]:
+    """Every grading ever taken, newest first. The aggregate is the point: one game low on a
+    dimension is noise, the same dimension low across a battery is a work item on the loop."""
+    out = []
+    for path in sorted(_dir().glob("*.json"), reverse=True):
+        try:
+            out.append(json.loads(path.read_text(encoding="utf-8")))
+        except (ValueError, OSError):
+            logger.warning("unreadable grade file: %s", path.name)
+    return out
+
+
 def history(run_id: str) -> List[Dict[str, Any]]:
     """Every grading of one run, oldest first. A file that will not parse is skipped rather than
     raised: one corrupt grade must not hide the rest."""

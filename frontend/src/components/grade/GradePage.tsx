@@ -198,7 +198,7 @@ export const GradePage: React.FC<{ runId: string }> = ({ runId }) => {
                         )}
                         <Field label="how did play end?">
                             <div className="flex gap-2 mt-1">
-                                {['time-box', 'saw everything'].map(v => (
+                                {['time-box', 'saw everything', 'abandoned'].map(v => (
                                     <button key={v} type="button" onClick={() => set('play_ended', v)}
                                         className={`px-3 py-1 rounded text-sm border transition-colors ${
                                             grade.play_ended === v

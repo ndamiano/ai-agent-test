@@ -27,8 +27,8 @@ python -m worker.agent --server http://localhost:8000 --token <workqueue.token> 
 Defaults if omitted: server `localhost:8000`, target `localhost:1234`, queue `llm`. The token is
 `workqueue.token` from settings.json.
 
-**Tests** — `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`, frontend
-`cd frontend && npm test` (vitest). Integration tests need live services.
+**Tests** — `cd src && python -m pytest ../tests/ -q`, frontend
+`cd frontend && npm test` (vitest).
 
 ---
 

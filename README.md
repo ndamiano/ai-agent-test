@@ -95,10 +95,8 @@ Play a build by opening `runtime/games/<run_id>/index.html`. Serve a 3D one over
 ## Tests
 
 ```bash
-cd src && python -m pytest ../tests/ --ignore=../tests/integration -q
+cd src && python -m pytest ../tests/ -q
 ```
-
-Integration tests in `tests/integration/` require live services.
 
 ## Repository layout
 

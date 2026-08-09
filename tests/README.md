@@ -4,8 +4,7 @@
 bloat**: adding coverage by cloning whole files. These conventions keep the suite growing in
 quality, not count.
 
-Run: `cd src && python -m pytest ../tests/ --ignore=../tests/integration -q`
-(`tests/integration/` needs live services — skip unless testing connectors.)
+Run: `cd src && python -m pytest ../tests/ -q`
 
 ## Rules
 

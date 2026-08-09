@@ -179,8 +179,7 @@ similar lines beats a premature abstraction. No feature flags, compat shims, or 
 
 ### Tests
 Write tests for every non-trivial change — test behaviour and contracts, not implementation details.
-Run tests before reporting done. Fix failures first. Integration tests in `tests/integration/` need
-live services — skip unless testing connectors.
+Run tests before reporting done. Fix failures first.
 
 ### Code review
 After any non-trivial change, self-review the diff: security, unintended scope creep, missing tests,

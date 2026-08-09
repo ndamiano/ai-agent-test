@@ -12,7 +12,12 @@ built for a single person grading his own output.
   only detect broken; every dimension below is a judgement about *good*, which is precisely what no
   gate may act on.
 - **Not an input to the model, ever.** No score, note or dimension name is fed back into a build, a
-  prompt or a planner. The moment the model can see the rubric, it optimises the rubric.
+  prompt or a planner. The moment the model can see the rubric, it optimises the rubric. Handing one
+  back by hand does not work either — measured 2026-08-08 (`docs/experiments.md`): a 1/1 grade
+  transcribed into a fix note produced a correct fix, `core_loop` 1 → 2, `legibility` DOWN, and not a
+  better game. A fix note acts on broken; a grade measures bad.
+- **Not a per-game payoff.** The value is in the aggregate. A dimension low across many games is a
+  work item on the loop; low on one game is noise.
 - **Not a sum.** The dimensions do not add up to either verdict and there is no total. A game can be
   genuinely good while scoring low on half the list — an open-world game has no core loop worth the
   name, a story-driven one can have flat visuals and slack moment-to-moment feel and still be the

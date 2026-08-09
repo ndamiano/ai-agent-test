@@ -8,6 +8,54 @@ at a row here has not earned its place.
 
 ---
 
+## A grade as a fix note (2026-08-08, local 5090, one game)
+
+### The question
+The rubric (`docs/game_rubric.md`) produces a written judgement of a played game. The obvious next
+thought is to hand it straight back to the build. Does that produce a better game?
+
+### The run
+The first graded build — a curse-shop game, graded **1 first impression / 1 considered**. Its
+complaints were transcribed into `run --fix` in the owner's own words: the dispel step unreachable,
+the day never ending, buttons overlapping, some text unreadable.
+
+The fix succeeded in 26 steps / 84 s and found the true cause, which no one had diagnosed: the
+Examine and Cast Spell buttons were placed at fixed rows of a question grid whose height depended on
+the question count, so Cast Spell sat underneath the questions. One layout bug had produced two
+apparently separate complaints, and the dispel system and end-of-day tally — both graded `absent` —
+turned out to exist and be unreachable.
+
+### What it measured
+`core_loop` 1 → 2. The `dispel the curse` claim moved `absent` → `delivered`. **`legibility` went
+DOWN** — reaching the spell step exposed that you must cast with no information about which spell or
+ingredient applies. Every other dimension unchanged. The owner declined to re-grade it: not a better
+game.
+
+### The ruling
+**A fix note acts on BROKEN; a grade measures BAD.** The blocker was real and got fixed; what it
+exposed was a design problem, and "casting with no information is bad design" is not a defect any
+edit satisfies. This is the boundary the gates already hold, arriving from the other direction, and
+the same shape as the judge-then-fix result below — the second round undoing what the first got
+right.
+
+Grades are an AGGREGATE instrument. A dimension low across many games is a work item on the loop; a
+dimension low on one game is noise. Nothing wires a grade into the fix path.
+
+### Alongside: an LLM asked to fill in the same rubric
+Same game, same rubric, source and manifest only, no ability to run it: it answered **6 / 5** against
+the human's **1 / 1**. It was close on what is visible in code — `art_integration` 6 vs 6,
+`legibility` 6 vs 7, `moment_to_moment` 5 vs 4 — and inverted on everything requiring the game to
+run: `depth` **7 vs 1** ("30+ unique items… 20-30 minutes" — real, in `items.js`, unreachable),
+`core_loop` 4 vs 1, `visual_coherence` 7 vs 1, `character` **8 vs n/a** (it praised writing the
+player never reaches).
+
+The game passed the error gate — it loads and throws nothing — and passed this review, and is a 1 to
+the person playing it. The failure was an unreachable state, which is not an exception and not a
+property of the code. N=1, recorded because the failure mode is clean, not because one game settles
+anything.
+
+---
+
 ## Sizing the canvas to the window (2026-08-08, local 5090, qwen3.6_27b via ninfer)
 
 ### The question

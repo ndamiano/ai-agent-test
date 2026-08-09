@@ -32,14 +32,13 @@ ingredient applies. Every other dimension unchanged. The owner declined to re-gr
 game.
 
 ### The ruling
-**A fix note acts on BROKEN; a grade measures BAD.** The blocker was real and got fixed; what it
-exposed was a design problem, and "casting with no information is bad design" is not a defect any
-edit satisfies. This is the boundary the gates already hold, arriving from the other direction, and
-the same shape as the judge-then-fix result below — the second round undoing what the first got
-right.
+**A grade says what is wrong, not what to do.** It carries symptoms, so the fix it produces clears
+the reported blocker and stops there — behind this one was a design problem the grade had no way to
+name.
 
-Grades are an AGGREGATE instrument. A dimension low across many games is a work item on the loop; a
-dimension low on one game is noise. Nothing wires a grade into the fix path.
+Grades are an AGGREGATE instrument aimed at the LOOP: collect them across a battery, find what
+recurs, and turn that into a prompt-time change measured against a control arm. A dimension low
+across many games is a work item; low on one game is noise.
 
 ### Alongside: an LLM asked to fill in the same rubric
 Same game, same rubric, source and manifest only, no ability to run it: it answered **6 / 5** against

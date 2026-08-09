@@ -12,12 +12,14 @@ built for a single person grading his own output.
   only detect broken; every dimension below is a judgement about *good*, which is precisely what no
   gate may act on.
 - **Not an input to the model, ever.** No score, note or dimension name is fed back into a build, a
-  prompt or a planner. The moment the model can see the rubric, it optimises the rubric. Handing one
-  back by hand does not work either — measured 2026-08-08 (`docs/experiments.md`): a 1/1 grade
-  transcribed into a fix note produced a correct fix, `core_loop` 1 → 2, `legibility` DOWN, and not a
-  better game. A fix note acts on broken; a grade measures bad.
-- **Not a per-game payoff.** The value is in the aggregate. A dimension low across many games is a
-  work item on the loop; low on one game is noise.
+  prompt or a planner. The moment the model can see the rubric, it optimises the rubric.
+- **Not a fix note.** A grade says what is WRONG, not what to DO. Measured 2026-08-08
+  (`docs/experiments.md`): a 1/1 grade transcribed into a fix note produced a correct fix,
+  `core_loop` 1 → 2, `legibility` DOWN, and not a better game. Write the fix note from what the game
+  needs, not from the form.
+- **Not a per-game payoff.** The value is in the aggregate, and the aggregate aims at the LOOP: find
+  what recurs across a battery, turn it into a prompt-time change measured against a control arm. A
+  dimension low across many games is a work item; low on one game is noise.
 - **Not a sum.** The dimensions do not add up to either verdict and there is no total. A game can be
   genuinely good while scoring low on half the list — an open-world game has no core loop worth the
   name, a story-driven one can have flat visuals and slack moment-to-moment feel and still be the
@@ -116,6 +118,7 @@ why. `n/a` is not a zero and never counts against the game.
   core loop            _/10  ·
   moment-to-moment     _/10  ·
   legibility           _/10  ·
+  interface            _/10  ·
   depth                _/10  ·
   stakes               _/10  ·
   visual coherence     _/10  ·
@@ -170,6 +173,14 @@ measurement is cheapest.
 **legibility** — Can you tell what is happening, what you control, and what you are meant to do,
 without being told? Low means it may be a fine game that nobody can find.
 *Levers:* prompt lines, and whatever the game does about a first-run state.
+
+**interface** — The craft of the UI itself: layout, controls, readability, and whether the
+information you need to make a decision is on screen when you need it. Distinct from legibility,
+which is about understanding the GAME — a game can be perfectly understandable and still put its
+buttons on top of each other, show text that cannot be read against its background, or ask for a
+choice while withholding what the choice is between.
+*Levers:* prompt lines today. A `create_ui` tool is the candidate primitive if a line fails twice,
+and a slew of grades is what would justify building one.
 
 **depth** — How much game is there before you have seen all of it? **Twenty minutes is roughly the
 floor** — a two-minute game is not a short game, it is a bad one, and nobody would spend real money

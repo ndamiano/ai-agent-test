@@ -12,6 +12,7 @@ const DIMENSIONS: { key: string; label: string; hint: string }[] = [
     { key: 'core_loop', label: 'core loop', hint: 'a thing to do that leads to doing it again, and builds' },
     { key: 'moment_to_moment', label: 'moment-to-moment', hint: 'response, weight, timing — what it gives back for an input' },
     { key: 'legibility', label: 'legibility', hint: 'can you tell what is happening and what you control' },
+    { key: 'interface', label: 'interface', hint: 'layout, controls, readability — is what you need to decide on screen when you need it' },
     { key: 'depth', label: 'depth', hint: 'how much game before you have seen all of it (~20 min is the floor)' },
     { key: 'stakes', label: 'stakes', hint: 'can things go wrong, does it land — harshness is not the scale' },
     { key: 'visual_coherence', label: 'visual coherence', hint: 'does it look like one thing made on purpose' },

@@ -7,6 +7,7 @@ importing db.store, the reaper is isolated in db/ rather than layered under scal
 """
 
 import logging
+import os
 import threading
 
 from db import store as db_store
@@ -14,7 +15,7 @@ from db import store as db_store
 logger = logging.getLogger("reaper")
 
 TICK_SECONDS = 5.0
-STALE_PENDING_SECONDS = 1800.0
+STALE_PENDING_SECONDS = float(os.getenv("MAESTRO_STALE_PENDING_SECONDS", "1800"))
 FINALIZE_GRACE_SECONDS = 60.0
 STUCK_BUILD_GRACE_SECONDS = 60.0
 

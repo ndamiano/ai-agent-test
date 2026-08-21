@@ -70,6 +70,8 @@ whole category we do not produce at all, and it is wanted.
       is not a like-for-like trial — a safety model is judged on its false-NEGATIVE rate at a fixed
       false-positive budget, and the current classifier's threshold was set that way over 290
       renders (`docs/experiments.md`, 2026-08-03). Same method or no swap.
+- [ ] For music generation we might want to try minimax music 3
+      https://www.reddit.com/r/comfyui/comments/1vnf0p2/comfyorgminimaxmusic3_hugging_face_now_online/
 
 ## Previously investigated
 

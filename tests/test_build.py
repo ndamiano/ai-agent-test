@@ -98,8 +98,10 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 13
+    assert system.count("\n- ") == 14
     assert "three.module.js" in system and "generate_media" in system
+    # Measured 2026-08-22: the library closed three ledger items 6/6 against a control arm.
+    assert "lib/input.js" in system
     assert "seeded generator" in system
     # Pinned to its measurement: 2/2 games sized the canvas with this line, 0/2 without.
     assert "sized to the window" in system
@@ -108,8 +110,7 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     assert "style phrase" in media["function"]["description"]
     assert "style" not in system
     # assets.json is written by the platform, so naming it here would invite the model to write it.
-    for absent in ("assets.json", "WASD"):
-        assert absent not in system
+    assert "assets.json" not in system
 
 
 def test_fix_note_replaces_the_request(tmp_path, tools):
@@ -522,7 +523,7 @@ def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
     (tmp_path / "game" / "index.html").write_text("<h1>hi</h1>")
     staging.seed_vendor(tmp_path)
     assert (tmp_path / "game" / "index.html").read_text() == "<h1>hi</h1>"
-    assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["index.html", "three.module.js"]
+    assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["index.html", "lib", "three.module.js"]
 
 
 def test_seed_places_the_world_loader(tmp_path):
@@ -572,3 +573,13 @@ def test_cursor_survives_a_reload(tmp_path):
     build_state.save(tmp_path, _cursor(phase="audit", turn=7, compacted=2))
     back = build_state.load(tmp_path)
     assert (back.phase, back.turn, back.compacted) == ("audit", 7, 2)
+
+
+def test_seed_places_the_helper_library_and_leaves_edits_alone(tmp_path):
+    from maestro.codegen import staging
+    staging.seed_vendor(tmp_path)
+    lib = tmp_path / "game" / "lib"
+    assert sorted(p.name for p in lib.iterdir()) == ["audio.js", "canvas.js", "input.js", "lights.js"]
+    (lib / "input.js").write_text("// edited")
+    staging.seed_vendor(tmp_path)
+    assert (lib / "input.js").read_text() == "// edited"

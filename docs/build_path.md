@@ -8,6 +8,11 @@ one file. `docs/architecture.md` is the layer above (processes, state, trust bou
 runtime/
   vendor/three.module.js  vendored three.js (MIT, self-contained) + GLTFLoader — copied into every
                          game folder at seed, so a 3D game imports a renderer with no network fetch.
+  vendor/lib/*.js        the helper library, copied to <game>/lib/ at seed: input.js (WASD and
+                         arrows aliased, mouse, touch), audio.js (WebAudio synth, no files),
+                         canvas.js (the fixed, scaling canvas with a camera), lights.js (sun +
+                         sky + exposure for a three.js scene that is not a world). Each header
+                         comment is its API; build.txt tells the model to read the one it uses.
   games/<run_id>/        staged games, served at /play
 
 src/

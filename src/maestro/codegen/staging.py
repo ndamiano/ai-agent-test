@@ -21,15 +21,28 @@ def game_dir(run_dir) -> Path:
 
 
 def seed_vendor(run_dir) -> None:
-    """Copy the vendored renderer into the game folder. A game may fetch nothing at runtime, so a
-    3D one can only import three.js if it is already a file beside it. An existing copy is left
-    alone: a re-seed (a fix, a resumed build) must not overwrite what the model edited."""
+    """Copy the vendored renderer and the helper library into the game folder. A game may fetch
+    nothing at runtime, so a 3D one can only import three.js if it is already a file beside it.
+    An existing copy is left alone: a re-seed (a fix, a resumed build) must not overwrite what
+    the model edited."""
     d = game_dir(run_dir)
     d.mkdir(parents=True, exist_ok=True)
     for src in sorted((RUNTIME_DIR / "vendor").glob("*.js")):
         dst = d / src.name
         if not dst.exists():
             shutil.copy2(src, dst)
+    (d / "lib").mkdir(exist_ok=True)
+    for src in sorted((RUNTIME_DIR / "vendor" / "lib").glob("*.js")):
+        dst = d / "lib" / src.name
+        if not dst.exists():
+            shutil.copy2(src, dst)
+
+
+def is_vendored(path: Path, game_dir: Path) -> bool:
+    """Seeded by the platform, not written by the model: the renderer beside the entry and the
+    helper library under lib/."""
+    rel = path.relative_to(game_dir)
+    return rel.suffix == ".js" and (RUNTIME_DIR / "vendor" / rel).is_file()
 
 
 def has_authored_files(run_dir) -> bool:
@@ -39,8 +52,7 @@ def has_authored_files(run_dir) -> bool:
     d = game_dir(run_dir)
     if not d.is_dir():
         return False
-    vendored = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
-    return any(p.is_file() and p.name not in vendored for p in d.rglob("*"))
+    return any(p.is_file() and not is_vendored(p, d) for p in d.rglob("*"))
 
 
 def entry_path(run_dir) -> Path:

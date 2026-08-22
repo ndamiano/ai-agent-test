@@ -8,6 +8,75 @@ at a row here has not earned its place.
 
 ---
 
+## A helper library beside the game (2026-08-22, local 5090, qwen3.8_27b via ninfer, 6 requests × 2 arms)
+
+### The question
+
+The ladder is prompt line → snippet in the repo → primitive, and three ledger items from the
+2026-07-27 grid — 3D scenes lit near-black, silent games, arrow-keys-only input — had each earned
+a prompt line at most. The snippet rung had one existence proof, `world.js`: a loader beside the
+game with its API in a comment, which a 27B wrote a real game against. Does the same shape move
+the three ledger numbers against a control arm with neither the files nor the line?
+
+### What changed
+
+Four plain-JS modules in `runtime/vendor/lib/`, each header comment its API: `input.js` (`keys`
+with WASD and the arrows both aliased to up/down/left/right, `justPressed`, mouse, touch),
+`audio.js` (WebAudio `sfx(name)`, `tone`, seeded `music`, self-unlocking on the first gesture),
+`canvas.js` (`createCanvas` — the FIXED CANVAS line as code, with camera follow and world↔screen),
+`lights.js` (`lightScene(renderer, scene)` — sun with shadows, hemisphere, ACES exposure; its doc
+says to stay out of a `world.js` world). `seed_vendor` copies them to `<game>/lib/`, and ONE line
+in `build.txt` says they are there and to `read_file` the one you use before importing. The
+control arm had no files and no line. Same model, same gate, no image or mesh worker in either
+arm.
+
+### The run
+
+Six requests — top-down arena shooter, third-person indoor 3D dungeon (no `compose_world`),
+turn-based card battle, village with five NPC dialogue trees, four-lane rhythm game, three-level
+platformer — one single-shot build per arm, serialized on one card.
+
+### What it measured
+
+Every build in both arms loaded clean, so the load rate had nothing to gain. The library changed
+what the games HAVE:
+
+| ledger item | control | lib |
+|---|---|---|
+| WASD and arrows both bound | 4/6 | 6/6 |
+| any sound | 1/6 (the rhythm game, where sound is the request) | 6/6 |
+| 3D scene lit | near-black: one torch glow, the hero a silhouette | lit room, shadows, readable walls and floor |
+
+API misuse: none. Every imported name exists, every `view.*` member and `sfx` name is real, and
+every build read each lib it later imported BEFORE importing it, as the line asked. The
+doc-at-the-moment-of-use result (RepoCoder, DocPrompting) holds on a 27B in a build loop.
+
+### Cost, and what did not improve
+
+| request | control steps / wall | lib steps / wall |
+|---|---|---|
+| arcade | 22 / 1m46s | 10 / 2m52s |
+| cards | 29 / 3m21s | 8 / 2m29s |
+| indoor3d | 41 / 5m03s | 89 / 4m42s (stopped by hand) |
+| npcs | 16 / 2m16s | 43 / 2m53s |
+| platformer | 17 / 1m32s | 34 / 2m17s |
+| rhythm | 13 / 1m27s | 21 / 1m43s |
+
+Four lib builds took more steps: 2–4 turns reading lib docs, and the bigger games then compacted
+where the control did not, because the reads plus the game no longer fit one window. The two 2D
+games built on `createCanvas` took fewer, writing less code. Wall-clock was roughly equal; the lib
+arm's includes two one-round error-gate fixes of the games' own bugs. The next measurement is
+whether terser headers — the signature, not the prose — buy the steps back. Not measured: staged
+builds, `compose_world` games, and whether a human prefers the games.
+
+The indoor3d lib build reached a lit, complete game and then sent eighteen byte-identical failing
+`edit_file` calls against its own comment block, editing from memory after a compaction; it was
+stopped at step 89 with the finished game on disk. No lib call is in the failing edit. The repeat
+counter reached 18 and nothing ended the build — that is the harness's open edit-loop defect, and
+the control indoor3d compacted 37 rounds too.
+
+---
+
 ## A grade as a fix note (2026-08-08, local 5090, one game)
 
 ### The question

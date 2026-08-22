@@ -158,8 +158,10 @@ one that earns its place: two requests it was not written for, built with and wi
 offset, written for a real map-drawn-as-a-strip bug — and was DROPPED, because the defect did not
 reproduce in either control build, so the line pointed at no number.
 
-Open ledger from the 2026-07-27 grid, none yet earning more than a prompt line: 3D scenes lit
-near-black, silent games, arrow-keys-only input.
+The snippet rung is `runtime/vendor/lib/` — files beside the game whose header comment is the API,
+named in one line of `build.txt`. It closed the 2026-07-27 ledger (3D scenes lit near-black, silent
+games, arrow-keys-only input) 6/6 against a control arm, with zero misuse, because the doc lands in
+the window on `read_file` at the moment of use rather than in the prompt on every turn.
 
 An unused schema costs every turn of every build, so a tool that fails to earn its place comes back
 out. `generate_media` is the standing case — see the art ledger in `docs/build_path.md`.

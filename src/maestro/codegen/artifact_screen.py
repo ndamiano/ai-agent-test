@@ -12,7 +12,7 @@ assets have no text to screen.
 from pathlib import Path
 from typing import Optional, Tuple
 
-from maestro.codegen.staging import RUNTIME_DIR, game_dir
+from maestro.codegen.staging import game_dir, is_vendored
 from tools.safety import SafetyViolation, screen_text
 
 TEXT_SUFFIXES = {".html", ".js", ".css", ".json", ".txt", ".md", ".xml", ".svg"}
@@ -23,9 +23,8 @@ def screen_artifact(run_dir) -> Optional[Tuple[str, SafetyViolation]]:
     d = game_dir(run_dir)
     if not d.is_dir():
         return None
-    vendored = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
     for p in sorted(d.rglob("*")):
-        if not p.is_file() or p.suffix.lower() not in TEXT_SUFFIXES or p.name in vendored:
+        if not p.is_file() or p.suffix.lower() not in TEXT_SUFFIXES or is_vendored(p, d):
             continue
         violation = screen_text(p.read_text(encoding="utf-8", errors="replace"))
         if violation is not None:
